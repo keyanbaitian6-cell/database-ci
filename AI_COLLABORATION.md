@@ -537,8 +537,10 @@ PC版の行クリック移動が利用者の実機で動いたため、Android�
 ### Git管理を開始（2026-09-23）
 
 - private repository `https://github.com/imakurudev-eng/database.git` をコード・テスト・設計資料用の保管先として初期化した。
+- 2026-09-23に初回コミット`d04d9b9`を`main`へpush済み。GitHub上で共同作業を始められる。
 - 実データと端末固有の成果物はコミット対象外：`database/data/`、`database/reports/`、`.runtime/`、仮想環境、Android端末SQLite、実データ入りの`assets/database_seed.json`、APK・`build/`、および`sources/`。
 - 新しい環境でAndroid版を起動する場合は、`database_android/assets/database_seed.example.json`を`database_seed.json`へコピーして空の初期データを用意する。既存端末のSQLiteとバックアップは別途保持する。
+- Claudeを含む共同作業者は、変更前に`git pull --ff-only`、変更後に対象テストを実行してからコミット・pushする。実データはGitへ追加しない。
 
 ## 参考資料
 
