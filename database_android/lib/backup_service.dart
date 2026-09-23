@@ -52,21 +52,33 @@ class BackupImportPlan {
 /// (`database/core.py`'s `export_backup`/`import_backup`), so either side's
 /// file can be shared with and read by the other -- e.g. via a Google Drive
 /// folder, with no Drive API wiring in either app.
+/// 共有フォルダに置くバックアップの名前。例 database-backup-android-20260923-1140.json
+///
+/// Drive の共有フォルダには、PC版が書く database-backup-auto.json と、この
+/// ファイルが並ぶ。どちらの機械のいつの分かが名前で分かるようにしてある。
+/// 半角英数字だけ・空白なし：共有メニュー（「ドライブに保存」など）は、この名前や
+/// 共有シートの件名をそのまま保存名に使うことがあり、全角が混ざると読みにくい。
+/// 名前を固定して上書きにはしない。共有メニュー経由の保存は上書きにならず、
+/// (1)(2) と枝番が付くだけで、かえって分かりにくくなるため。
+/// PC版の「同期フォルダの最新を読み込む」は名前ではなく更新日時の新しい順に見る。
+String backupFileName(DateTime now, {String source = 'android'}) {
+  String two(int value) => value.toString().padLeft(2, '0');
+  final stamp =
+      '${now.year}${two(now.month)}${two(now.day)}'
+      '-${two(now.hour)}${two(now.minute)}${two(now.second)}';
+  final tag = source.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  return 'database-backup-${tag.isEmpty ? 'app' : tag}-$stamp.json';
+}
+
 class BackupService {
   Future<File> export(
     List<SlotRecord> records, {
     String source = 'android',
   }) async {
     final directory = await getTemporaryDirectory();
-    final stamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '')
-        .replaceAll('.', '');
-    // Plain ASCII, no spaces: some share targets (e.g. "Save to Drive") use
-    // this exact name -- or the share sheet's title/subject text -- as the
-    // saved file's name, and a half-width/full-width mix there reads oddly.
     final file = File(
-      '${directory.path}${Platform.pathSeparator}backup_$stamp.json',
+      '${directory.path}${Platform.pathSeparator}'
+      '${backupFileName(DateTime.now(), source: source)}',
     );
     final payload = {
       'format': backupFormat,
