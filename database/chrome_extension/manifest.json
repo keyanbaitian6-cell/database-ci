@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "database",
+  "version": "0.2.0",
+  "description": "長町南店・幸町店の対象画面をワンタッチでフルページ撮影します。",
+  "permissions": ["activeTab", "scripting", "downloads", "storage"],
+  "host_permissions": [
+    "https://meruhenworld.pt.teramoba2.com/nagamachiminami/*",
+    "https://meruhenworld.pt.teramoba2.com/saiwaichou/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "database：フルページ撮影"
+  },
+  "commands": {
+    "capture-full-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "windows": "Ctrl+Shift+Y"
+      },
+      "description": "database用のフルページスクリーンショットを撮影"
+    }
+  }
+}

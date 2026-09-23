@@ -1,0 +1,34 @@
+# User data, local backups, and generated reports
+database/data/
+database/reports/
+database/.runtime/
+database/.venv/
+database/.claude/
+database/.tmp.*
+database/tmp*/
+database/__pycache__/
+database/**/*.py[cod]
+
+# Flutter/Android local state and build products
+database_android/.dart_tool/
+database_android/build/
+database_android/.idea/
+database_android/*.iml
+database_android/.flutter-plugins
+database_android/.flutter-plugins-dependencies
+database_android/device-records*.sqlite3
+database_android/android/.gradle/
+database_android/android/local.properties
+database_android/android/key.properties
+database_android/android/app/*.jks
+database_android/android/app/*.keystore
+database_android/*.apk
+
+# The real seed contains personal saved records. Keep it local; copy the
+# tracked example before a clean-room development build.
+database_android/assets/database_seed.json
+
+# Synced project references and transient editor files
+sources/
+.DS_Store
+Thumbs.db
