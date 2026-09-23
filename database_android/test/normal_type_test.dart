@@ -49,4 +49,20 @@ void main() {
     expect(NormalSeries.juggler.label, 'ジャグラーシリーズ');
     expect(NormalSeries.hanahana.label, 'ハナハナシリーズ');
   });
+
+  test('「過去の記録」の種別の絞り込み', () {
+    // ノーマルタイプは両方の系列を含む
+    expect(HistoryType.normal.matches('SマイジャグラーVKD'), isTrue);
+    expect(HistoryType.normal.matches('SBﾆｭｰｷﾝｸﾞﾊﾅﾊﾅVPA-30'), isTrue);
+    expect(HistoryType.normal.matches('Lとある科学の超電磁砲2FV'), isFalse);
+    // 系列ごと
+    expect(HistoryType.juggler.matches('ファンキージャグラー2'), isTrue);
+    expect(HistoryType.juggler.matches('ドラゴンハナハナ〜閃光〜'), isFalse);
+    expect(HistoryType.hanahana.matches('ドラゴンハナハナ〜閃光〜'), isTrue);
+    expect(HistoryType.hanahana.matches('SﾏｲｼﾞｬｸﾞﾗｰV'), isFalse);
+    expect(HistoryType.normal.matches(null), isFalse);
+    // 選択肢は3つで、画面に出す名前が付いている
+    expect(HistoryType.values.length, 3);
+    expect(HistoryType.normal.label, contains('ノーマルタイプ'));
+  });
 }

@@ -572,6 +572,14 @@ PC版の行クリック移動が利用者の実機で動いたため、Android�
 - 共有フォルダ`G:\マイドライブ\database共有`には、PC版の`database-backup-auto.json`とこのファイルが並ぶ。古いAndroid分はたまるので、時々Drive側で削除する運用。
 - APK未ビルド。
 
+### Android：「過去の記録」に種別（ノーマルタイプ）の絞り込みを追加（2026-09-23）
+
+利用者の要望。ChatGPTが入れた設定推測（ジャグラー2機種・ハナハナ4機種）を見比べやすいよう、「過去の記録」で系列ごとに表示できるようにした。
+- `lib/normal_type.dart`（新規）：`NormalSeries`（juggler／hanahana）と`normalSeriesOf(machine)`、`recordsOfSeries`、`normalTypeRecords`、画面用の`HistoryType`（ノーマルタイプ／ジャグラーシリーズ／ハナハナシリーズ、`matches(machine)`）。機種名だけで判定し、半角カナ（`ｼﾞｬｸﾞﾗｰ`・`ﾊﾅﾊﾅ`）も見る。設定推測が対応していない同系列の機種もここには含まれる。
+- `lib/main.dart`の`_HistoryPageState`に「種別」のプルダウンを追加（店舗・機種の隣、既定は「すべての種別」）。選ぶと機種のプルダウンもその種別だけに絞られ、選択中の機種が外れる場合は「すべての機種」に戻す。得点の計算をやり直す判定（`_scoredFor`）にも種別を含めた。
+- テスト：`test/normal_type_test.dart`（4件）を含めAndroid68件成功、analyzeは既存info8件のみ。PC版は変更なし（84件成功）。
+- 実機での見た目は未確認。APKはこのあとビルド。
+
 プロジェクト全体はGit管理されていません。複数AIで継続作業する場合は、このファイルを更新し、変更前後の検証結果を追記してください。
 
 ### Git管理を開始（2026-09-23）

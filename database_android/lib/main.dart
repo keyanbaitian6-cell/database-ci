@@ -16,7 +16,9 @@ import 'database_service.dart';
 import 'graph_gate.dart';
 import 'import_service.dart';
 import 'models.dart';
+import 'normal_type.dart';
 import 'scoring.dart';
+import 'setting_estimate.dart';
 import 'theme.dart';
 import 'web_import_page.dart';
 
@@ -1592,6 +1594,7 @@ class ScoreCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = score.total;
+    final estimate = estimateSetting(record);
     final tier = scoreTier(total);
     final badgeText = total == null
         ? '保留'
@@ -1617,12 +1620,21 @@ class ScoreCard extends StatelessWidget {
           ],
         ),
         subtitle: Text(
-          'BIG ${record.bb}　REG ${record.rb}　最大持玉 ${record.maxHold ?? '—'}',
+          'BIG ${record.bb}　REG ${record.rb}　最大持玉 ${record.maxHold ?? '—'}'
+          '${estimate == null ? '' : '　${estimate.shortLabel}'}',
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           const Divider(),
           const Text('実績点：設定確率・明日の勝率ではありません。回転数は加点せず、少数データは中間へ補正します。'),
+          if (estimate != null) ...[
+            const SizedBox(height: 8),
+            Text(estimate.detailLabel),
+            const Text(
+              '公開BB/RB確率との適合度。設定の確定・実際の確率・翌日の予測ではありません。',
+              style: TextStyle(color: AppColors.ash, fontSize: 12),
+            ),
+          ],
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -2073,6 +2085,11 @@ class _HistoryPageState extends State<HistoryPage> {
   String store = '';
   String machine = '';
 
+  /// 種別の絞り込み。ノーマルタイプ（ジャグラー・ハナハナ）はBB/RBから設定候補を
+  /// 出せるので、系列でまとめて見比べられるようにしている。
+  /// null は「すべての種別」。
+  HistoryType? type;
+
   // 得点は、絞り込みを変えたときとデータが変わったときだけ計算する。
   // 画面を組み立て直すたびに全記録を採点し直すと、記録が増えるほど待たされる。
   Object? _scoredFor;
@@ -2087,12 +2104,19 @@ class _HistoryPageState extends State<HistoryPage> {
         .where(
           (r) =>
               (store.isEmpty || r.store == store) &&
-              (machine.isEmpty || r.machine == machine),
+              (machine.isEmpty || r.machine == machine) &&
+              (type?.matches(r.machine) ?? true),
         )
         .toList();
+    // 機種の選択肢も、選んだ種別のものだけにする。
     final machines =
-        widget.controller.records.map((r) => r.machine).toSet().toList()
+        widget.controller.records
+            .where((r) => type?.matches(r.machine) ?? true)
+            .map((r) => r.machine)
+            .toSet()
+            .toList()
           ..sort();
+    if (machine.isNotEmpty && !machines.contains(machine)) machine = '';
     final groups = <String, List<SlotRecord>>{};
     for (final record in records) {
       groups
@@ -2107,6 +2131,7 @@ class _HistoryPageState extends State<HistoryPage> {
       identityHashCode(widget.controller.records),
       store,
       machine,
+      type,
     );
     if (_scoredFor != scoredFor) {
       _scoredByKey = {};
@@ -2149,6 +2174,24 @@ class _HistoryPageState extends State<HistoryPage> {
                       ),
                     ],
                     onChanged: (v) => setState(() => store = v ?? ''),
+                  ),
+                ),
+                SizedBox(
+                  width: 290,
+                  child: DropdownButtonFormField<HistoryType?>(
+                    initialValue: type,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: '種別'),
+                    items: [
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('すべての種別'),
+                      ),
+                      ...HistoryType.values.map(
+                        (v) => DropdownMenuItem(value: v, child: Text(v.label)),
+                      ),
+                    ],
+                    onChanged: (v) => setState(() => type = v),
                   ),
                 ),
                 SizedBox(
@@ -2235,6 +2278,8 @@ class _HistoryPageState extends State<HistoryPage> {
               subtitle: Text(
                 [
                   '設定情報（手入力）：${rows[i].confirmedSetting ?? '未入力'}',
+                  if (estimateSetting(rows[i]) case final estimate?)
+                    estimate.shortLabel,
                   if (scored[i].reasons.isNotEmpty) scored[i].reasons.join('・'),
                 ].join('\n'),
               ),
@@ -2485,6 +2530,7 @@ class RackStats extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hits = record.bb + record.rb;
+    final estimate = estimateSetting(record);
     final rate = hits > 0
         ? '1/${(record.games / hits).toStringAsFixed(1)}'
         : '—';
@@ -2542,6 +2588,17 @@ class RackStats extends StatelessWidget {
           '${capturedNote(record).isEmpty ? '' : '　｜　${capturedNote(record)}'}',
           style: const TextStyle(color: AppColors.ash, fontSize: 12),
         ),
+        if (estimate != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            estimate.detailLabel,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const Text(
+            'BB/RBのみ・各設定同じ事前重みで比較。実際の設定確率や翌日の予測ではありません。',
+            style: TextStyle(color: AppColors.ash, fontSize: 12),
+          ),
+        ],
         if (score != null) ...[
           const SizedBox(height: 10),
           Wrap(

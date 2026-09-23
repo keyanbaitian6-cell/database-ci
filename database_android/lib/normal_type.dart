@@ -41,3 +41,24 @@ List<SlotRecord> normalTypeRecords(Iterable<SlotRecord> records) => [
   for (final record in records)
     if (normalSeriesOf(record.machine) != null) record,
 ];
+
+/// 「過去の記録」の種別の絞り込み。「すべての種別」は null で表す。
+enum HistoryType {
+  /// ジャグラーとハナハナをまとめて見る。
+  normal('ノーマルタイプ（ジャグラー・ハナハナ）', null),
+  juggler('ジャグラーシリーズ', NormalSeries.juggler),
+  hanahana('ハナハナシリーズ', NormalSeries.hanahana);
+
+  const HistoryType(this.label, this.series);
+
+  final String label;
+
+  /// 1つの系列だけを見るときの系列。ノーマルタイプ全体なら null。
+  final NormalSeries? series;
+
+  /// この種別に含まれる機種名か。
+  bool matches(String? machine) {
+    final found = normalSeriesOf(machine);
+    return series == null ? found != null : found == series;
+  }
+}
