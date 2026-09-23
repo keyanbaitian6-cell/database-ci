@@ -1208,8 +1208,11 @@ class _Bridge:
         payload_path.write_text(raw if isinstance(raw, str) else json.dumps(raw), encoding='utf-8')
         print(f'browser_import: received a {kind!r} submission, opening a review window...',
               flush=True)
-        subprocess.Popen([sys.executable, self.script_path, f'--confirm-{kind}',
-                          str(payload_path), self.db_path, self.reports_folder])
+        command = [sys.executable]
+        if not getattr(sys, 'frozen', False):
+            command.append(self.script_path)
+        command.extend([f'--confirm-{kind}', str(payload_path), self.db_path, self.reports_folder])
+        subprocess.Popen(command)
 
 
 def _load_payload(payload_path):
@@ -1478,7 +1481,15 @@ def run_session(db_path, reports_folder):
 if __name__ == '__main__':
     import sys
 
-    root = Path(__file__).parent
+    if getattr(sys, 'frozen', False):
+        executable_dir = Path(sys.executable).resolve().parent
+        root = next(
+            (candidate for candidate in (executable_dir.parent, executable_dir.parent.parent, executable_dir)
+             if (candidate / 'data').exists() or (candidate / 'app.py').exists()),
+            executable_dir,
+        )
+    else:
+        root = Path(__file__).parent
     args = sys.argv[1:]
     if args and args[0] in ('--confirm-table', '--confirm-graph'):
         payload_arg, db_arg, reports_arg = args[1], Path(args[2]), Path(args[3])

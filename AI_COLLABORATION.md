@@ -1,6 +1,28 @@
 # database AI共同作業メモ
 
-更新日: 2026-09-21
+## 2026-09-23：正解記録なしの運用とAndroidビルド
+
+- 利用者の確認により、BB/RB設定候補は**正解記録なしでOK**と `SETTING_ESTIMATION.md` に明記。手入力の設定情報は任意であり、未入力を低設定ラベルにしない。正解がないため的中率は検証できない。
+- AndroidリリースAPKを実SDKで `flutter build apk --release --no-pub` して成功。`database_android/build/app/outputs/flutter-apk/app-release.apk`（90,030,538バイト、2026-09-23 12:58:45、SHA-256 `B363BF5D989FA082A1DB5E4C2C966FAAD6219BB36E2EFDD0420E6160387D1A9A`）。ビルド前の変更はこの節の仕様書追記のみで、コードは前節のPC84件・Android64件成功時と同じ。実機インストールは未実施。
+
+## 2026-09-23：BB/RB設定推測の再点検と表示修正
+
+- 既存のメーカー確率表と、BB・RB・非当選の3分類尤度計算は維持。設定配分、実際の設定、サイトのG/ボーナス計上の一致は未確認であり、正解設定確率としては扱えない。
+- 保存済みDBを読み取り専用で点検。対応機種の有効489件中、最多設定のモデル内相対重み50%以上は12件、80%以上は0件。単一番号を「推測設定」と主表示するのは過度に断定的なので、PC/Androidの一覧ではモデル内中央80%の候補範囲を先に表示し、全設定が残るときは「BB/RBでは絞り込めず」と表示する。詳細では最多適合設定とそのモデル内相対重みを補足。CSV列名もこの区別に合わせた。
+- 旧「重み上位から80%」は100G・BB/RB 0回でも設定1〜6の1つを機械的に除外したため、設定順の10%〜90%分位点を含む中央範囲に変更。少ない観測量で全設定が残ることを回帰テストで確認。
+- 機種名の部分一致では将来の類似型式にも既存スペックを誤適用し得たため、保存済み8表記を正規化後に6型式の完全一致で認識する。既存の有効489件はすべて引き続き認識。新しい表記・型式は資料を確認してから追加する。
+- PC `python -m unittest discover -s tests` は84件成功。Androidは実SDK `C:\Users\keyan\flutter\bin\flutter.bat test --no-pub --reporter expanded` で64件成功。実SDKの `analyze --no-pub` は既存のinfo 8件、error/warningなし（infoにより終了コード1）。`flutter` だけでは0バイトの別ファイルを解決してしまう環境なので、検証時は実SDKの絶対パスを使う。
+- 手入力の設定情報、100点採点、翌日候補、DBの内容は変更しない。APKビルド・インストールは今回依頼されていないため実施しない。
+
+## 2026-09-23：ジャグラー・ハナハナの推測設定（BB/RBのみ）
+
+- `SETTING_ESTIMATION.md` に、対応6機種のメーカー一次資料、機種別BB/RB表、計算式と解釈上の限界を記載。
+- PC `database/setting_estimate.py` と Android `database_android/lib/setting_estimate.dart` に、同じ表・同じ3分類尤度計算を実装。各設定の事前重みは同一という仮定で、最も適合する設定とモデル内80%候補集合を表示。ニューキングハナハナVはメーカー表どおり設定Vで扱う。
+- PCの結果・履歴・日のまとめ、Androidの結果カード・履歴・グラフ詳細・CSV共有に推測設定を追加。手入力の確定設定、既存の100点採点、翌日候補、保存済みDBは変更しない。未対応機種や0Gでは表示しない。
+- PC `python -m unittest discover -s tests` は84件成功（テスト用SQLiteへの権限が必要なためサンドボックス外）。Android `flutter test` は64件成功。`flutter analyze` は既存の info 8件のみで error/warning はなし。APKのビルド・インストールは未実施。
+- 公開確率とホール表示G/BB/RBの計上方法が完全一致するか、店の設定配分、実際の設定は未確認。表示は実設定の確率や翌日の予測ではない。
+
+更新日: 2026-09-23
 
 ## 目的と対象範囲
 
@@ -559,6 +581,15 @@ PC版の行クリック移動が利用者の実機で動いたため、Android�
 - 実データと端末固有の成果物はコミット対象外：`database/data/`、`database/reports/`、`.runtime/`、仮想環境、Android端末SQLite、実データ入りの`assets/database_seed.json`、APK・`build/`、および`sources/`。
 - 新しい環境でAndroid版を起動する場合は、`database_android/assets/database_seed.example.json`を`database_seed.json`へコピーして空の初期データを用意する。既存端末のSQLiteとバックアップは別途保持する。
 - Claudeを含む共同作業者は、変更前に`git pull --ff-only`、変更後に対象テストを実行してからコミット・pushする。実データはGitへ追加しない。
+
+### PC版Windows EXEを生成（2026-09-23）
+
+利用者の依頼で、PC版がEXEとして配布できるかを確認し、PyInstaller 6.22.3でメイン画面とブラウザ取り込み補助をそれぞれビルドした。PC版はブラウザ取り込みを別プロセスで起動する設計のため、1本に無理に結合せず、`database.exe` と `database-browser.exe` の2本を含む`database/bin/`配布とした。利用者は`database/bin/database/database.exe`を起動する。
+- `app.py`と`browser_import.py`の凍結実行時のルート解決を修正し、`database/bin/database/`または`database/bin/database-browser/`から起動しても、既存の`database/data/`と`database/reports/`を参照するようにした。
+- `app.py`は補助EXEを`database/bin/database-browser/database-browser.exe`から起動し、通常のPython実行時は従来どおり`browser_import.py`を起動する。ブラウザ側の確認プロセスも凍結EXE自身を再利用する。
+- 生成物：`database/bin/database/database.exe`、`database/bin/database-browser/database-browser.exe`。WebView2・pythonnetの依存DLLを含むことを確認した。生成物・ビルドフォルダは`.gitignore`でGit対象外。
+- テスト：`cd database && .runtime\Scripts\python.exe -m unittest discover -s tests`、84件すべて成功。PyInstallerの2本のビルドも成功。
+- 未確認：実サイトを使った規約同意・HTML/SVG取り込み、別PCでのWebView2環境差。EXEが起動できることと既存DBを参照する処理は静的に確認済みだが、利用者環境での実操作確認が必要。
 
 ## 参考資料
 

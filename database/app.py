@@ -12,7 +12,18 @@ from core import (CONFIRMED_SETTING_OPTIONS, STORE_NAMES, Store, auto_backup, de
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
                   summary_report, undo_last_save)
 
-ROOT = Path(__file__).parent
+def runtime_root():
+    """Keep user data beside the project when running a packaged Windows app."""
+    if getattr(sys, 'frozen', False):
+        executable_dir = Path(sys.executable).resolve().parent
+        for candidate in (executable_dir.parent, executable_dir.parent.parent, executable_dir):
+            if (candidate / 'data').exists() or (candidate / 'app.py').exists():
+                return candidate
+        return executable_dir
+    return Path(__file__).parent
+
+
+ROOT = runtime_root()
 DATA_DIR = ROOT / 'data'
 MACHINE_DEFAULT = ''
 ALL_DAYS_LABEL = 'すべての日付'
@@ -312,9 +323,21 @@ def main():
 
     def open_browser_import():
         try:
+            if getattr(sys, 'frozen', False):
+                executable_dir = Path(sys.executable).resolve().parent
+                browser_candidates = (
+                    executable_dir / 'database-browser.exe',
+                    executable_dir.parent / 'database-browser' / 'database-browser.exe',
+                )
+                browser = next((candidate for candidate in browser_candidates if candidate.exists()), None)
+                if browser is None:
+                    raise OSError('database-browser.exe が見つかりません。database/bin の配布フォルダ一式をそろえてください。')
+                command = [str(browser), str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports')]
+            else:
+                command = [sys.executable, str(ROOT / 'browser_import.py'),
+                           str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports')]
             subprocess.Popen(
-                [sys.executable, str(ROOT / 'browser_import.py'),
-                 str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports')],
+                command,
                 cwd=str(ROOT))
             logbox.insert(
                 'end',

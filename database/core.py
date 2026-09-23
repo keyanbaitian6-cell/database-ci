@@ -10,6 +10,8 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from setting_estimate import candidate_label, estimate_setting
+
 VERSION = '2026-09-21-v9'
 MIN_REFERENCE_ROWS = 20  # Initial operational default, not statistical confidence.
 OBSERVATION_KEEP_DAYS = 30  # How long the write log keeps its lines (it is never read by the app).
@@ -1007,7 +1009,7 @@ def measurement_preview_html(row):
 
 
 def scored_rows(store, day, machine, location='nagamachiminami'):
-    return [dict(**r, score=score(r, store.references(r)))
+    return [dict(**r, score=score(r, store.references(r)), setting_estimate=estimate_setting(r))
             for r in store.rows(day, machine, location)]
 
 
@@ -1038,7 +1040,10 @@ def report(store, day, machine, folder, location='nagamachiminami'):
         total = s['total']
         max_hold_display = '—' if r.get('max_hold') is None else str(r['max_hold'])
         setting_display = r.get('confirmed_setting') or '—'
-        cells = [str(r['rack']), str(r['games']), str(r['bb']), str(r['rb']), max_hold_display, setting_display]
+        estimate = r['setting_estimate']
+        estimate_display = candidate_label(estimate)
+        cells = [str(r['rack']), str(r['games']), str(r['bb']), str(r['rb']), max_hold_display,
+                 setting_display, estimate_display]
         cells += [fmt(s[k]) for k in ('max_hold','hits','positive','retention')]
         total_text = fmt(total)
         if total is not None and s['provisional']:
@@ -1055,8 +1060,12 @@ def report(store, day, machine, folder, location='nagamachiminami'):
             evidence = '—'
         reason_tags = ''.join(f'<span class="tag">{html.escape(reason)}</span>' for reason in s['reasons']) or '—'
         graph_html = html.escape(svg, quote=True)
+        source_link = (f' <a href="{html.escape(estimate["source"], quote=True)}">出典</a>'
+                       if estimate else '')
         data_cells = (f'<td class="rack">{html.escape(cells[0])}</td>'
-                      + ''.join(f'<td>{html.escape(c)}</td>' for c in cells[1:]))
+                      + ''.join(f'<td>{html.escape(c)}</td>' for c in cells[1:6])
+                      + f'<td>{html.escape(cells[6])}{source_link}</td>'
+                      + ''.join(f'<td>{html.escape(c)}</td>' for c in cells[7:]))
         body.append(
             '<tr>' + data_cells
             + f'<td><span class="badge {tier(total)}">{html.escape(total_text)}</span></td>'
@@ -1065,8 +1074,8 @@ def report(store, day, machine, folder, location='nagamachiminami'):
               f'data-graph="{graph_html}" onclick="showGraph(this)">{svg}</button></td>'
             + f'<td>{evidence}</td>'
             + f'<td class="reasons">{reason_tags}</td></tr>')
-    header_groups = [(1, ''), (5, '表示データ'), (4, '得点内訳'), (1, '総合'), (4, '参考')]
-    header = ['台番号','表示G','BB','RB','最大持玉','設定情報','持玉 /20','当り /60','終点 /10','維持 /10',
+    header_groups = [(1, ''), (6, '表示データ'), (4, '得点内訳'), (1, '総合'), (4, '参考')]
+    header = ['台番号','表示G','BB','RB','最大持玉','設定情報（手入力）','設定候補（BB/RB）','持玉 /20','当り /60','終点 /10','維持 /10',
               '合計 /100','比較（件数/日数）','相対グラフ','確認画像','状態・注意']
     done = sum(r['score']['total'] is not None for r in results)
     totals = [r['score']['total'] for r in results if r['score']['total'] is not None]
@@ -1161,7 +1170,8 @@ a.evidence:hover{{text-decoration:underline}}
 <header><h1>database 結果</h1><div class="sub">{html.escape(STORE_NAMES[location])} ｜ {html.escape(machine)} ｜ {day} ｜ 1000円46枚 {source_html}<br>
 独自の結果評価です。出率・差枚・設定確率を表す点数ではありません。<br>
 比較：同店・同機種の過去30日、回転数が概ね半分〜2倍（最低500G）の台。当日・未来は比較に使いません。比較件数・日数・回転数が少ないほど中間へ補正します。<br>
-当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、暫定表示と欠測幅を示します。設定確率・明日の勝率は未推定です。<br>計算版：{VERSION}</div></header>
+当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、暫定表示と欠測幅を示します。<br>
+「設定候補」は公開BB/RB確率との条件付き比較です。各設定を同じ重みと仮定したモデル内中央80%候補範囲で、確定設定・実際の設定確率・翌日の予測ではありません。<br>計算版：{VERSION}</div></header>
 <section class="kpis">
 <div class="kpi"><b>{len(results)}</b><span>台数</span></div>
 <div class="kpi"><b>{done}</b><span>実績点表示</span></div>
@@ -1237,10 +1247,13 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
             rack_cell = (f'<button type="button" class="rack-btn" data-rack="{int(r["rack"])}" '
                         f'data-graph="{graph_html}" onclick="showGraph(this)">{int(r["rack"])}</button>')
             setting = r.get('confirmed_setting') or '—'
+            estimate = r['setting_estimate']
+            estimate_text = candidate_label(estimate)
             row_html.append(
                 '<tr>'
                 f'<td>{rack_cell}</td><td>{int(r.get("games") or 0):,}</td>'
-                f'<td>{html.escape(setting)}</td><td>{html.escape(total)}</td><td><span class="badge {badge}">{status}</span></td>'
+                f'<td>{html.escape(setting)}</td><td>{html.escape(estimate_text)}</td>'
+                f'<td>{html.escape(total)}</td><td><span class="badge {badge}">{status}</span></td>'
                 f'<td>{html.escape(comparison)}</td><td>{evidence}</td><td>{html.escape(reason_text)}</td>'
                 '</tr>')
         open_attribute = ' open' if index == 0 else ''
@@ -1252,7 +1265,7 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
             f'<span class="machine">{html.escape(machine)}</span>'
             f'<span class="summary">{" ｜ ".join(summary_bits)}</span></summary>'
             f'<div class="status-row"><span>参考 {official}台</span><span>暫定 {provisional}台</span><span>保留 {pending}台</span></div>'
-            '<div class="table-wrap"><table><thead><tr><th>台番号</th><th>表示G</th><th>設定情報</th><th>合計 /100</th>'
+            '<div class="table-wrap"><table><thead><tr><th>台番号</th><th>表示G</th><th>設定情報（手入力）</th><th>設定候補（BB/RB）</th><th>合計 /100</th>'
             '<th>状態</th><th>比較（件数/日数）</th><th>確認画像</th><th>補完・注意の理由</th></tr></thead><tbody>'
             + ''.join(row_html) + '</tbody></table></div></details></article>')
 
@@ -1375,12 +1388,18 @@ def summary_report(store, folder, day, top=5):
                 trend_html = '<div class="dsub" style="margin-top:14px">この台の過去データ（同じ機種）はまだありません。</div>'
             note = captured_note(r)
             note_html = f'<div class="dsub">{html.escape(note)}</div>' if note else ''
+            estimate = r['setting_estimate']
+            estimate_html = (f'<p class="dsub">BB/RBのモデル内中央80%候補範囲：{html.escape("・".join(estimate["range80"]))}'
+                             f'｜最多適合 {html.escape(estimate["setting"])}（均等仮定のモデル内相対重み {estimate["support"]:.1f}%）'
+                             f'｜実際の設定確率ではありません'
+                             f'｜<a href="{html.escape(estimate["source"], quote=True)}">メーカー確率表</a></p>'
+                             if estimate else '')
             return (f'<div class="dsub">{html.escape(label)} ｜ {html.escape(day)} ｜ {html.escape(machine)}</div>{note_html}'
                     f'<p><span class="badge {tier_name}">{html.escape(total_text)}</span> <span class="dsub">実績点（設定確率ではありません）</span></p>'
                     f'<div class="kpis"><div class="kpi"><b>{hits}回</b><span>当たり回数</span></div>'
                     f'<div class="kpi"><b>{rate}</b><span>表示当たり頻度</span></div>'
                     f'<div class="kpi"><b>{r["games"]}G</b><span>総回転</span></div></div>'
-                    f'<p class="dsub">BIG {r["bb"]}　REG {r["rb"]}　最大持玉 {hold}　｜　観測量（設定判別の信頼度ではありません）：{reliability_label(r["games"])}</p><p>{parts}</p><p class="dsub">{html.escape("・".join(sc["reasons"]))}</p>'
+                    f'<p class="dsub">BIG {r["bb"]}　REG {r["rb"]}　最大持玉 {hold}　｜　観測量（設定判別の信頼度ではありません）：{reliability_label(r["games"])}</p>{estimate_html}<p>{parts}</p><p class="dsub">{html.escape("・".join(sc["reasons"]))}</p>'
                     f'<div class="dgraph">{measurement_preview_html(r)}</div>{strip_html}{trend_html}{forecast_html}')
 
         rows = ''.join(

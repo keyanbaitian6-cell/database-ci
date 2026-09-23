@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
 import 'scoring.dart';
+import 'setting_estimate.dart';
 
 class CsvExportService {
   Future<File> create(List<SlotRecord> records) async {
@@ -27,6 +28,8 @@ class CsvExportService {
         'REG',
         '最大持玉',
         '設定情報（手入力）',
+        '最多適合設定（BB/RB・均等仮定）',
+        'モデル内中央80%候補範囲',
         '持玉点',
         '当たり点',
         '終点点',
@@ -45,6 +48,7 @@ class CsvExportService {
     ];
     for (final record in rows) {
       final score = scoreRecord(record, records);
+      final estimate = estimateSetting(record);
       final status = score.total == null
           ? '保留'
           : score.provisional
@@ -60,6 +64,8 @@ class CsvExportService {
         '${record.rb}',
         '${record.maxHold ?? ''}',
         record.confirmedSetting ?? '',
+        estimate?.setting ?? '',
+        estimate?.range80.join('・') ?? '',
         _point(score.maxHold),
         _point(score.hits),
         _point(score.positive),

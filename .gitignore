@@ -8,6 +8,9 @@ database/.tmp.*
 database/tmp*/
 database/__pycache__/
 database/**/*.py[cod]
+database/bin/
+database/build/
+database/*.spec
 
 # Flutter/Android local state and build products
 database_android/.dart_tool/
