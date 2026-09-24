@@ -162,9 +162,17 @@ ScoreTier scoreTier(double? total) {
 /// the "one accent, used deliberately" rule applied to score scanning
 /// instead of buttons.
 class ScorePill extends StatelessWidget {
-  const ScorePill({super.key, required this.text, required this.tier});
+  const ScorePill({
+    super.key,
+    required this.text,
+    required this.tier,
+    this.compact = false,
+  });
   final String text;
   final ScoreTier tier;
+
+  /// 表の1行に収める小さい版。
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -186,7 +194,9 @@ class ScorePill extends StatelessWidget {
         border = null;
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: compact
+          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 3)
+          : const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(999),
@@ -197,7 +207,7 @@ class ScorePill extends StatelessWidget {
         style: TextStyle(
           color: foreground,
           fontWeight: FontWeight.w600,
-          fontSize: 14,
+          fontSize: compact ? 13 : 14,
         ),
       ),
     );

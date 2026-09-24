@@ -59,9 +59,10 @@ const _specs = <String, _Spec>{
   ),
 };
 
-String? settingModelForMachine(String machine) {
-  var name = machine.toUpperCase().replaceAll(RegExp(r'[\s\-−‐‑–—~〜～_・]+'), '');
-  // The site mixes full-width/half-width katakana and Roman numerals.
+/// 半角カナ（濁点・半濁点付きを含む）を全角カナにそろえる。
+/// サイトの機種名は全角・半角が混ざるため、照合や検索の前に使う。
+String foldHalfWidthKana(String text) {
+  var name = text;
   const voiced = <String, String>{
     'ｶﾞ': 'ガ',
     'ｷﾞ': 'ギ',
@@ -97,6 +98,13 @@ String? settingModelForMachine(String machine) {
   for (var i = 0; i < half.length; i++) {
     name = name.replaceAll(half[i], full[i]);
   }
+  return name;
+}
+
+String? settingModelForMachine(String machine) {
+  var name = machine.toUpperCase().replaceAll(RegExp(r'[\s\-−‐‑–—~〜～_・]+'), '');
+  // The site mixes full-width/half-width katakana and Roman numerals.
+  name = foldHalfWidthKana(name);
   name = name.replaceAll('Ⅴ', 'V').replaceAll('Ⅵ', 'VI').replaceAll('ｖ', 'V');
   if (name == 'SマイジャグラーVKD') {
     return 'my_juggler_v';
