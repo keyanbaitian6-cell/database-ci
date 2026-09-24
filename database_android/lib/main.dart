@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'
+    show RenderAbstractViewport, ScrollCacheExtent;
 import 'package:path_provider/path_provider.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:share_plus/share_plus.dart';
@@ -1034,10 +1036,18 @@ class _ResultsPageState extends State<ResultsPage> {
   final _query = TextEditingController();
 
   // 全機種を縦に並べ、機種一覧から各機種の位置へ飛ぶ（アナスロと同じ並べ方）。
+  // 機種は画面に近い分だけ組み立てる（全機種・全台を一度に作ると、記録が
+  // 増えた日に開くまで何秒も待たされる）。
   final _scroll = ScrollController();
+  final _topKey = GlobalKey();
   final _listKey = GlobalKey();
   final _sectionKeys = <String, GlobalKey>{};
   final _showTop = ValueNotifier(false);
+
+  /// いま並べている機種（絞り込み後）と、グラフ表示にしている機種。
+  var _shown = <MachineSummary>[];
+  var _byMachine = <String, List<(SlotRecord, ScoreResult)>>{};
+  final _graphMachines = <String>{};
 
   /// 開いたときに表示する機種（前回見ていた機種）。1回飛んだら消す。
   late String? _jumpOnOpen = widget.controller.lastMachine;
@@ -1082,10 +1092,84 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  void _openMachine(String machine) {
+  /// [key] の部品の上端を画面の上端に合わせるときのスクロール位置。
+  /// まだ作られていなければ null。
+  double? _revealOffset(GlobalKey key) {
+    final object = key.currentContext?.findRenderObject();
+    if (object == null || !object.attached) return null;
+    return RenderAbstractViewport.of(object)
+        .getOffsetToReveal(object, 0)
+        .offset;
+  }
+
+  static const _sectionGap = 28.0;
+
+  double _estimate(int index) =>
+      _sectionGap +
+      MachineSection.estimateHeight(
+        _byMachine[_shown[index].machine]?.length ?? 0,
+        graph: _graphMachines.contains(_shown[index].machine),
+      );
+
+  /// 機種 [target] の位置の見積もり。作られている機種（無ければ上の部分）を
+  /// 起点に、間の機種の高さの見積もりを足し引きする。
+  double _estimateOffset(int target) {
+    int? below, above;
+    for (var i = 0; i < _shown.length; i++) {
+      if (_sectionKeys[_shown[i].machine]?.currentContext == null) continue;
+      if (i <= target) below = i;
+      if (i > target && above == null) above = i;
+    }
+    if (below != null) {
+      var offset = _revealOffset(_sectionKeys[_shown[below].machine]!)!;
+      for (var i = below; i < target; i++) {
+        offset += _estimate(i);
+      }
+      return offset;
+    }
+    final top = _revealOffset(_topKey);
+    final topBox = _topKey.currentContext?.size;
+    if (top != null && topBox != null) {
+      var offset = top + topBox.height + _sectionGap;
+      for (var i = 0; i < target; i++) {
+        offset += _estimate(i);
+      }
+      return offset;
+    }
+    if (above != null) {
+      var offset = _revealOffset(_sectionKeys[_shown[above].machine]!)!;
+      for (var i = target; i < above; i++) {
+        offset -= _estimate(i);
+      }
+      return offset;
+    }
+    return _scroll.offset;
+  }
+
+  Future<void> _openMachine(String machine) async {
     _machine = machine;
     widget.controller.rememberSelection(store, day, machine);
-    _jumpTo(_sectionKeys.putIfAbsent(machine, GlobalKey.new));
+    final key = _sectionKeys.putIfAbsent(machine, GlobalKey.new);
+    final target = _shown.indexWhere((s) => s.machine == machine);
+    if (target < 0 || !_scroll.hasClients) return;
+    // まだ作られていなければ、見積もった位置へ飛んで作らせてから合わせる。
+    for (var tries = 0; tries < 5 && key.currentContext == null; tries++) {
+      _scroll.jumpTo(
+        _estimateOffset(target).clamp(0.0, double.infinity).toDouble(),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
+    _jumpTo(key);
+  }
+
+  Future<void> _backToList() async {
+    if (_listKey.currentContext == null && _scroll.hasClients) {
+      _scroll.jumpTo(0);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
+    _jumpTo(_listKey);
   }
 
   @override
@@ -1120,6 +1204,8 @@ class _ResultsPageState extends State<ResultsPage> {
     for (final rows in byMachine.values) {
       rows.sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
     }
+    _shown = shown;
+    _byMachine = byMachine;
     final candidateRacks = <String, Set<int>>{};
     for (final c in candidates.candidates) {
       candidateRacks.putIfAbsent(c.record.machine, () => {}).add(c.record.rack);
@@ -1129,7 +1215,7 @@ class _ResultsPageState extends State<ResultsPage> {
       _jumpOnOpen = null;
       if (byMachine.containsKey(machine)) {
         WidgetsBinding.instance.addPostFrameCallback(
-          (_) => _jumpTo(_sectionKeys.putIfAbsent(machine, GlobalKey.new)),
+          (_) => _openMachine(machine),
         );
       }
     }
@@ -1137,115 +1223,135 @@ class _ResultsPageState extends State<ResultsPage> {
       children: [
         RefreshIndicator(
           onRefresh: widget.controller.reload,
-          // 機種一覧から各機種へ飛べるよう、全機種をまとめて組み立てる
-          // （画面外を作らない ListView だと、飛び先がまだ存在しない）。
-          child: SingleChildScrollView(
+          // 上の部分（候補・まとめ・機種一覧）と、機種ごとのまとまりを
+          // 1つずつ並べる。機種は画面に近い分だけ組み立てる。
+          child: ListView.builder(
             controller: _scroll,
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (widget.controller.message != null)
-                  Notice(text: widget.controller.message!),
-                Row(
+            scrollCacheExtent: const ScrollCacheExtent.pixels(1200),
+            itemCount: 1 + (dayRows.isEmpty ? 0 : shown.length),
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                return Column(
+                  key: _topKey,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 店舗は短い名前にして、日付が「2026-09」で切れないよう幅を回す。
-                    Expanded(
-                      flex: 2,
-                      child: storeDropdown(
-                        store!,
-                        (v) => setState(() {
-                          store = v;
-                          day = null;
-                        }),
-                        short: true,
-                      ),
+                    if (widget.controller.message != null)
+                      Notice(text: widget.controller.message!),
+                    Row(
+                      children: [
+                        // 店舗は短い名前にして、日付が「2026-09」で切れないよう幅を回す。
+                        Expanded(
+                          flex: 2,
+                          child: storeDropdown(
+                            store!,
+                            (v) => setState(() {
+                              store = v;
+                              day = null;
+                            }),
+                            short: true,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          flex: 3,
+                          child: DropdownButtonFormField<String>(
+                            initialValue: day,
+                            isExpanded: true,
+                            decoration: const InputDecoration(labelText: '日付'),
+                            items: days
+                                .map(
+                                  (v) => DropdownMenuItem(
+                                    value: v,
+                                    child: Text(dayWithWeekday(v)),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) => setState(() => day = v),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 3,
-                      child: DropdownButtonFormField<String>(
-                        initialValue: day,
-                        isExpanded: true,
-                        decoration: const InputDecoration(labelText: '日付'),
-                        items: days
-                            .map(
-                              (v) => DropdownMenuItem(
-                                value: v,
-                                child: Text(dayWithWeekday(v)),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (v) => setState(() => day = v),
+                    const SizedBox(height: 14),
+                    if (dayRows.isEmpty)
+                      const EmptyState(
+                        icon: Icons.inbox_outlined,
+                        title: '該当するデータがありません',
+                        body: '「取り込み」から一覧スクリーンショットを追加します。',
+                      )
+                    else ...[
+                      NextDayCandidatesCard(
+                        day: day!,
+                        candidates: candidates.candidates,
+                        machines: candidates.machines,
+                        judged: candidates.judged,
+                        onPick: (record) =>
+                            _openRecord(record, _scoredByKey[record.key]?.$2),
                       ),
-                    ),
+                      const SizedBox(height: 14),
+                      DaySummaryCard(entries: digest, onPick: _openRecord),
+                      const SizedBox(height: 18),
+                      Text(
+                        '設置機種一覧　${summaries.length}機種・${digest.length}台',
+                        key: _listKey,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      if (summaries.length > 6) ...[
+                        MachineSearchField(
+                          controller: _query,
+                          onChanged: () => setState(() {}),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      MachineSummaryList(
+                        summaries: shown,
+                        onPick: _openMachine,
+                      ),
+                    ],
                   ],
+                );
+              }
+              final s = shown[index - 1];
+              return Padding(
+                padding: const EdgeInsets.only(top: _sectionGap),
+                child: MachineSection(
+                  key: _sectionKeys.putIfAbsent(s.machine, GlobalKey.new),
+                  machine: s.machine,
+                  entries: byMachine[s.machine]!,
+                  candidateRacks: candidateRacks[s.machine] ?? const {},
+                  onTap: _openRecord,
+                  graph: _graphMachines.contains(s.machine),
+                  onGraphChanged: (value) => setState(
+                    () => value
+                        ? _graphMachines.add(s.machine)
+                        : _graphMachines.remove(s.machine),
+                  ),
+                  footer: Row(
+                    children: [
+                      TextButton(
+                        onPressed: _backToList,
+                        child: const Text('設置機種一覧へ戻る'),
+                      ),
+                      const Spacer(),
+                      // 機種ごとに出るので、目立たない灰色にする。
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.ash,
+                        ),
+                        onPressed: () => _deleteGroup(store!, day!, s.machine),
+                        icon: const Icon(Icons.delete_sweep_outlined),
+                        label: const Text('まとめて削除…'),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 14),
-                if (dayRows.isEmpty)
-                  const EmptyState(
-                    icon: Icons.inbox_outlined,
-                    title: '該当するデータがありません',
-                    body: '「取り込み」から一覧スクリーンショットを追加します。',
-                  )
-                else ...[
-                  NextDayCandidatesCard(
-                    day: day!,
-                    candidates: candidates.candidates,
-                    machines: candidates.machines,
-                    judged: candidates.judged,
-                    onPick: (record) =>
-                        _openRecord(record, _scoredByKey[record.key]?.$2),
-                  ),
-                  const SizedBox(height: 14),
-                  DaySummaryCard(entries: digest, onPick: _openRecord),
-                  const SizedBox(height: 18),
-                  Text(
-                    '設置機種一覧　${summaries.length}機種・${digest.length}台',
-                    key: _listKey,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  if (summaries.length > 6) ...[
-                    MachineSearchField(
-                      controller: _query,
-                      onChanged: () => setState(() {}),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  MachineSummaryList(summaries: shown, onPick: _openMachine),
-                  for (final s in shown) ...[
-                    const SizedBox(height: 28),
-                    MachineSection(
-                      key: _sectionKeys.putIfAbsent(s.machine, GlobalKey.new),
-                      machine: s.machine,
-                      entries: byMachine[s.machine]!,
-                      candidateRacks: candidateRacks[s.machine] ?? const {},
-                      onTap: _openRecord,
-                      footer: Row(
-                        children: [
-                          TextButton(
-                            onPressed: () => _jumpTo(_listKey),
-                            child: const Text('設置機種一覧へ戻る'),
-                          ),
-                          const Spacer(),
-                          TextButton.icon(
-                            onPressed: () =>
-                                _deleteGroup(store!, day!, s.machine),
-                            icon: const Icon(Icons.delete_sweep_outlined),
-                            label: const Text('まとめて削除…'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ],
-            ),
+              );
+            },
           ),
         ),
         Positioned(
@@ -1956,12 +2062,15 @@ class _HistoryPageState extends State<HistoryPage> {
   @override
   Widget build(BuildContext context) {
     final all = widget.controller.records;
+    // 機種名の判定は機種ごとに1回だけ（記録ごとに文字をそろえ直すと、
+    // 1文字打つたびに待たされる）。
+    final matched = <String, bool>{};
+    bool matches(String machine) => matched[machine] ??=
+        (type?.matches(machine) ?? true) &&
+        machineMatches(machine, _query.text);
     final days = groupHistoryByDay(
       all.where(
-        (r) =>
-            (store.isEmpty || r.store == store) &&
-            (type?.matches(r.machine) ?? true) &&
-            machineMatches(r.machine, _query.text),
+        (r) => (store.isEmpty || r.store == store) && matches(r.machine),
       ),
     );
     if (_scoredFor != identityHashCode(all)) {

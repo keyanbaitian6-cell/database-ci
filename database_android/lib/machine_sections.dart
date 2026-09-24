@@ -22,6 +22,8 @@ class MachineSection extends StatefulWidget {
     this.onLongPress,
     this.candidateRacks = const {},
     this.footer,
+    this.graph,
+    this.onGraphChanged,
   });
 
   final String machine;
@@ -37,12 +39,39 @@ class MachineSection extends StatefulWidget {
   /// 見出しの下に置く補足（「設置機種一覧へ戻る」など）。
   final Widget? footer;
 
+  /// グラフ表示か。親が覚える場合に渡す（結果タブは画面外の機種を作らないので、
+  /// 切り替えを親で覚えておかないとスクロールで戻したときに元に戻ってしまう）。
+  /// null ならこの部品の中で覚える。
+  final bool? graph;
+  final ValueChanged<bool>? onGraphChanged;
+
+  /// 画面に出す前の高さの見積もり。結果タブで、まだ作っていない機種へ飛ぶときの
+  /// 目安に使う（実際の位置は飛んだ後で合わせ直す）。
+  static double estimateHeight(int racks, {required bool graph}) {
+    const header = 48.0 + 10 + 40; // 見出し2行・間・タブ
+    const footer = 32.0 + 48; // 注記・戻るボタンの行
+    final body = graph
+        ? ((racks + 1) ~/ 2) * 190.0 + 8 + 36
+        : (racks + 2) * MachineDataTable._rowHeight + 1;
+    return header + body + footer;
+  }
+
   @override
   State<MachineSection> createState() => _MachineSectionState();
 }
 
 class _MachineSectionState extends State<MachineSection> {
-  var _graph = false;
+  var _ownGraph = false;
+
+  bool get _graph => widget.graph ?? _ownGraph;
+
+  void _setGraph(bool value) {
+    if (widget.onGraphChanged != null) {
+      widget.onGraphChanged!(value);
+    } else {
+      setState(() => _ownGraph = value);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -84,13 +113,13 @@ class _MachineSectionState extends State<MachineSection> {
             _TabButton(
               label: 'データ表示',
               selected: !_graph,
-              onTap: () => setState(() => _graph = false),
+              onTap: () => _setGraph(false),
             ),
             const SizedBox(width: 6),
             _TabButton(
               label: 'グラフ表示',
               selected: _graph,
-              onTap: () => setState(() => _graph = true),
+              onTap: () => _setGraph(true),
             ),
           ],
         ),
@@ -197,13 +226,15 @@ class MachineDataTable extends StatelessWidget {
     required double width,
     Color? color,
     double height = _rowHeight,
-  }) => Container(
+  }) => Ink(
+    // Container ではなく Ink：色付きのマスの上にもタップの波紋が見えるように。
     width: width,
     height: height,
-    alignment: Alignment.center,
     padding: const EdgeInsets.symmetric(horizontal: 4),
     decoration: BoxDecoration(color: color, border: _cellBorder),
-    child: FittedBox(fit: BoxFit.scaleDown, child: child),
+    child: Center(
+      child: FittedBox(fit: BoxFit.scaleDown, child: child),
+    ),
   );
 
   static Text _text(String value, {bool bold = false, Color? color}) => Text(
@@ -364,12 +395,13 @@ class MachineDataTable extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: fixed,
+                // マスは Ink で描くので、その下に Material を置く。
+                child: Material(color: Colors.white, child: fixed),
               ),
               Expanded(
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  child: scrolling,
+                  child: Material(color: Colors.white, child: scrolling),
                 ),
               ),
             ],

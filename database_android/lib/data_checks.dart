@@ -86,13 +86,18 @@ String capturedNote(SlotRecord record) {
   int maxDays = 10,
   int shrinkDays = 5,
 }) {
-  final first = DateTime.parse(record.day).subtract(const Duration(days: 30));
+  // 日付は YYYY-MM-DD なので文字列のまま比べる（台ごと・記録ごとに日付へ
+  // 変換し直すと、結果タブで全機種の候補を出すときに重い）。
+  final first = DateTime.parse(record.day)
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
   final rows = all
       .where(
         (r) =>
             r.store == record.store &&
             r.machine == record.machine &&
-            !DateTime.parse(r.day).isBefore(first) &&
+            r.day.compareTo(first) >= 0 &&
             r.day.compareTo(record.day) <= 0 &&
             r.games >= 500 &&
             r.bb >= 0 &&
