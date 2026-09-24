@@ -1,3 +1,4 @@
+import 'data_checks.dart';
 import 'models.dart';
 import 'setting_estimate.dart' show foldHalfWidthKana;
 
@@ -142,4 +143,108 @@ String dayWithWeekday(String day) {
   if (!isValidRecordDay(day)) return day;
   const names = ['月', '火', '水', '木', '金', '土', '日'];
   return '$day（${names[DateTime.parse(day).weekday - 1]}）';
+}
+
+/// `2026-09-23` の翌日を `9/24（木）` の形で。読めない日付は空文字。
+String nextDayLabel(String day) {
+  if (!isValidRecordDay(day)) return '';
+  const names = ['月', '火', '水', '木', '金', '土', '日'];
+  final next = DateTime.parse(day).add(const Duration(days: 1));
+  return '${next.month}/${next.day}（${names[next.weekday - 1]}）';
+}
+
+/// 当たり確率を `1/151.8` の形で。当たりが無ければ `—`（サイトの `1/0.0` は
+/// 「確率0」と読めてしまうため使わない）。
+String hitRate(int games, int hits) =>
+    games <= 0 || hits <= 0 ? '—' : '1/${(games / hits).toStringAsFixed(1)}';
+
+/// 機種の表の一番下の「平均」行。
+///
+/// 回転・BIG・REG・最大持玉・点数は台ごとの値の平均。確率は台ごとの確率の
+/// 平均ではなく、合計の回転数を合計の当たり回数で割った値（回転の少ない台の
+/// 極端な確率に引っ張られないため）。
+class RackAverages {
+  const RackAverages({
+    required this.games,
+    required this.bb,
+    required this.rb,
+    required this.combined,
+    required this.bbRate,
+    required this.rbRate,
+    required this.maxHold,
+    required this.score,
+  });
+  final int games, bb, rb;
+  final String combined, bbRate, rbRate;
+
+  /// 値のある台だけの平均。1台も無ければ null。
+  final int? maxHold;
+  final double? score;
+}
+
+RackAverages rackAverages(List<(SlotRecord, ScoreResult)> entries) {
+  final n = entries.isEmpty ? 1 : entries.length;
+  var games = 0, bb = 0, rb = 0;
+  for (final (r, _) in entries) {
+    games += r.games;
+    bb += r.bb;
+    rb += r.rb;
+  }
+  final holds = [
+    for (final (r, _) in entries)
+      if (r.maxHold != null) r.maxHold!,
+  ];
+  final scores = [
+    for (final (_, s) in entries)
+      if (s.total != null) s.total!,
+  ];
+  return RackAverages(
+    games: (games / n).round(),
+    bb: (bb / n).round(),
+    rb: (rb / n).round(),
+    combined: hitRate(games, bb + rb),
+    bbRate: hitRate(games, bb),
+    rbRate: hitRate(games, rb),
+    maxHold: holds.isEmpty
+        ? null
+        : (holds.reduce((a, b) => a + b) / holds.length).round(),
+    score: scores.isEmpty
+        ? null
+        : scores.reduce((a, b) => a + b) / scores.length,
+  );
+}
+
+/// その日の全機種の翌日候補（仮）。機種ごとに [provisionalNextDayCandidates]
+/// で選んだ台（各機種の上位4分の1）を集め、「平均より」の大きい順に並べる。
+/// 比べる相手は同じ機種の台なので、機種をまたいだ順位は目安にとどまる。
+({List<ProvisionalCandidate> candidates, int machines, int judged})
+dayCandidates(List<SlotRecord> dayRows, List<SlotRecord> all) {
+  final byMachine = <String, List<SlotRecord>>{};
+  for (final r in dayRows) {
+    byMachine.putIfAbsent(r.machine, () => []).add(r);
+  }
+  // 過去の傾向は同じ店舗・同じ機種の記録しか見ないので、先に絞ってから渡す
+  // （台ごとに全記録を見直すと、記録が増えるほど結果タブが重くなる）。
+  final history = <(String, String), List<SlotRecord>>{};
+  for (final r in all) {
+    history.putIfAbsent((r.store, r.machine), () => []).add(r);
+  }
+  final candidates = <ProvisionalCandidate>[];
+  var judged = 0;
+  for (final rows in byMachine.values) {
+    final first = rows.first;
+    final result = provisionalNextDayCandidates(
+      rows,
+      history[(first.store, first.machine)] ?? rows,
+    );
+    if (result.candidates.isNotEmpty) judged++;
+    candidates.addAll(result.candidates);
+  }
+  candidates.sort((a, b) {
+    final byIndex = b.index.compareTo(a.index);
+    if (byIndex != 0) return byIndex;
+    final byMachine = a.record.machine.compareTo(b.record.machine);
+    return byMachine != 0 ? byMachine : a.record.rack.compareTo(b.record.rack);
+  });
+  return (candidates: candidates, machines: byMachine.length, judged: judged);
 }

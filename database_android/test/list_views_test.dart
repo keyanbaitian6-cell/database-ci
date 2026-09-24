@@ -82,4 +82,80 @@ void main() {
     expect(dayWithWeekday('2026-09-27'), '2026-09-27（日）');
     expect(dayWithWeekday('2026-02-30'), '2026-02-30');
   });
+
+  test('確率は 1/xx.x、当たりが無ければ —（1/0.0 とは書かない）', () {
+    expect(hitRate(2254, 10), '1/225.4');
+    expect(hitRate(591, 0), '—');
+    expect(hitRate(0, 0), '—');
+  });
+
+  test('平均の行：数は台の平均、確率は合計どうしで割る', () {
+    SlotRecord r(int games, int bb, int rb, int? hold) => SlotRecord(
+      store: 'nagamachiminami',
+      day: '2026-09-22',
+      machine: 'テスト',
+      rack: games,
+      games: games,
+      bb: bb,
+      rb: rb,
+      maxHold: hold,
+    );
+    final avg = rackAverages([
+      (r(3000, 12, 8, 1000), score(60)),
+      (r(1000, 2, 0, null), score(null)),
+    ]);
+    expect(avg.games, 2000);
+    expect(avg.bb, 7);
+    expect(avg.rb, 4);
+    expect(avg.combined, '1/181.8'); // 4000 / 22
+    expect(avg.bbRate, '1/285.7'); // 4000 / 14
+    expect(avg.rbRate, '1/500.0'); // 4000 / 8
+    expect(avg.maxHold, 1000);
+    expect(avg.score, 60);
+  });
+
+  test('翌日の表示：月末をまたいでも正しい日と曜日', () {
+    expect(nextDayLabel('2026-09-23'), '9/24（木）');
+    expect(nextDayLabel('2026-09-30'), '10/1（木）');
+    expect(nextDayLabel('bad'), '');
+  });
+
+  test('その日の翌日候補：機種ごとの候補を集め、平均よりの大きい順', () {
+    // 2機種×5台×4日。台番号が小さいほど当たりが軽い。
+    final all = <SlotRecord>[
+      for (final machine in ['A', 'B'])
+        for (final day in [
+          '2026-09-20',
+          '2026-09-21',
+          '2026-09-22',
+          '2026-09-23',
+        ])
+          for (var rack = 1; rack <= 5; rack++)
+            SlotRecord(
+              store: 'nagamachiminami',
+              day: day,
+              machine: machine,
+              rack: machine == 'A' ? rack : rack + 10,
+              games: 3000,
+              bb: 30 - rack * (machine == 'A' ? 3 : 2),
+              rb: 10,
+            ),
+    ];
+    final dayRows = [
+      for (final r in all)
+        if (r.day == '2026-09-23') r,
+    ];
+    final result = dayCandidates(dayRows, all);
+    expect(result.machines, 2);
+    expect(result.judged, 2);
+    // 各機種 5台中 判定5台 → 上位 ceil(5/4)=2台ずつ。
+    expect(result.candidates.length, 4);
+    expect({for (final c in result.candidates) c.record.rack}, {1, 2, 11, 12});
+    for (var i = 1; i < result.candidates.length; i++) {
+      expect(
+        result.candidates[i - 1].index >= result.candidates[i].index,
+        isTrue,
+      );
+    }
+  });
 }
