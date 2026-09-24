@@ -88,7 +88,7 @@ class _MachineSectionState extends State<MachineSection> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    widget.machine,
+                    displayMachineName(widget.machine),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -620,7 +620,7 @@ class NextDayCandidatesCard extends StatefulWidget {
 }
 
 class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
-  static const _first = 10;
+  static const _first = 7;
   var _all = false;
 
   @override
@@ -759,7 +759,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          c.record.machine,
+                          displayMachineName(c.record.machine),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

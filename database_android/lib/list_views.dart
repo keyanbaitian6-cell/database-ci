@@ -10,6 +10,18 @@ const storeShortNames = <String, String>{
 
 String storeShortName(String store) => storeShortNames[store] ?? store;
 
+/// 画面に出す機種名。長町南の一覧は半角カナ（例：`ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3`）で読みにくい
+/// ので、表示だけ全角カナにそろえる。保存している名前（照合・検索・削除の
+/// 範囲に使う）は変えない。
+String displayMachineName(String machine) => foldHalfWidthKana(machine);
+
+/// 機種名の並び順。表示している名前（全角にそろえた名前）の順に並べる。
+/// 保存している名前のままだと、半角カナの機種が漢字の機種より後ろに回る。
+int compareMachineNames(String a, String b) {
+  final byDisplay = displayMachineName(a).compareTo(displayMachineName(b));
+  return byDisplay != 0 ? byDisplay : a.compareTo(b);
+}
+
 /// 機種名の検索用に文字をそろえる。
 ///
 /// サイトの機種名は全角・半角カナ、全角英字が混ざる（例：`ｼﾞｬｸﾞﾗｰ`）。
@@ -59,7 +71,7 @@ class MachineSummary {
   final int? bestRack;
 }
 
-/// その日の台を機種ごとにまとめる。並びは機種名順（従来のプルダウンと同じ）。
+/// その日の台を機種ごとにまとめる。並びは表示する機種名の順。
 List<MachineSummary> summarizeMachines(
   Iterable<(SlotRecord, ScoreResult)> entries,
 ) {
@@ -67,7 +79,7 @@ List<MachineSummary> summarizeMachines(
   for (final entry in entries) {
     byMachine.putIfAbsent(entry.$1.machine, () => []).add(entry);
   }
-  final names = byMachine.keys.toList()..sort();
+  final names = byMachine.keys.toList()..sort(compareMachineNames);
   return [
     for (final name in names)
       () {
@@ -125,7 +137,9 @@ List<(String, List<HistoryGroup>)> groupHistoryByDay(
           for (final entry
               in groups[day]!.entries.toList()..sort((a, b) {
                 final byStore = a.key.$1.compareTo(b.key.$1);
-                return byStore != 0 ? byStore : a.key.$2.compareTo(b.key.$2);
+                return byStore != 0
+                    ? byStore
+                    : compareMachineNames(a.key.$2, b.key.$2);
               }))
             HistoryGroup(
               day,

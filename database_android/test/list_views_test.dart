@@ -158,4 +158,25 @@ void main() {
       );
     }
   });
+
+  test('表示用の機種名：半角カナを全角にそろえ、それ以外は変えない', () {
+    expect(displayMachineName('ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3'), 'ゴーゴージャグラー3');
+    expect(displayMachineName('ﾌｧﾝｷｰｼﾞｬｸﾞﾗｰ2KT'), 'ファンキージャグラー2KT');
+    expect(displayMachineName('SBﾆｭｰｷﾝｸﾞﾊﾅﾊﾅV PA-30'), 'SBニューキングハナハナV PA-30');
+    expect(displayMachineName('L 防振り FN'), 'L 防振り FN');
+    expect(displayMachineName('Sハナハナホウオウ～天翔～EX-30'), 'Sハナハナホウオウ～天翔～EX-30');
+  });
+
+  test('機種の並び：半角カナの機種も全角にそろえた名前の順に並ぶ', () {
+    final list = summarizeMachines([
+      (rec(1, machine: 'L戦国乙女5L8'), score(50)),
+      (rec(2, machine: 'ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3'), score(50)),
+      (rec(3, machine: 'キングハナハナ'), score(50)),
+    ]);
+    expect(list.map((s) => displayMachineName(s.machine)).toList(), [
+      'L戦国乙女5L8',
+      'キングハナハナ',
+      'ゴーゴージャグラー3',
+    ]);
+  });
 }

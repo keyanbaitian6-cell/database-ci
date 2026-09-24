@@ -988,7 +988,7 @@ class _ConflictCard extends StatelessWidget {
           children: [
             Text(
               '${storeNames[local.store] ?? local.store}｜${local.day}｜'
-              '${local.machine}｜${local.rack}番台',
+              '${displayMachineName(local.machine)}｜${local.rack}番台',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 6),
@@ -1397,7 +1397,7 @@ class _ResultsPageState extends State<ResultsPage> {
       if (machine != null)
         (
           label: 'この機種だけ',
-          detail: '$shop　$day　$machine',
+          detail: '$shop　$day　${displayMachineName(machine)}',
           store: store,
           machine: machine,
           count: count(store: store, machine: machine),
@@ -1565,7 +1565,7 @@ class DaySummaryCard extends StatelessWidget {
                         child: Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Text(
-                            '${entry.key}　${entry.value.length}台：${entry.value.join('、')}',
+                            '${displayMachineName(entry.key)}　${entry.value.length}台：${entry.value.join('、')}',
                           ),
                         ),
                       ),
@@ -1591,7 +1591,7 @@ class DaySummaryCard extends StatelessWidget {
                       // （以前は機種名に押し出されて「710…」と切れていた）。
                       Expanded(
                         child: Text(
-                          e.$1.machine,
+                          displayMachineName(e.$1.machine),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -2227,7 +2227,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    group.machine,
+                    displayMachineName(group.machine),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w600),
@@ -2389,7 +2389,7 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
       builder: (context) => AlertDialog(
         title: const Text('記録を削除しますか？'),
         content: Text(
-          '${record.day}\n${storeNames[record.store]}\n${record.machine}\n${record.rack}番台の記録を削除します。',
+          '${record.day}\n${storeNames[record.store]}\n${displayMachineName(record.machine)}\n${record.rack}番台の記録を削除します。',
         ),
         actions: [
           TextButton(
@@ -2417,7 +2417,7 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${record.machine}\n${record.rack}番台'),
+              Text('${displayMachineName(record.machine)}\n${record.rack}番台'),
               const SizedBox(height: 8),
               const Text(
                 '確定・根拠ありの情報だけを手入力で残します。採点には影響しません。',
@@ -2550,7 +2550,7 @@ class MachineSummaryList extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            summaries[i].machine,
+                            displayMachineName(summaries[i].machine),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w600),
@@ -2760,7 +2760,7 @@ class RackStats extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          record.machine,
+          displayMachineName(record.machine),
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
         if (score != null) ...[

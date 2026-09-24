@@ -109,12 +109,14 @@ ThemeData buildAppTheme() => ThemeData(
     indicatorColor: AppColors.appleBlue,
     elevation: 0,
     surfaceTintColor: Colors.transparent,
+    // 選んだタブの名前は青い丸の外（白地）に出るので、白ではなく濃い色にする
+    // （白だと背景に溶けて見えなかった）。アイコンは青い丸の上なので白のまま。
     labelTextStyle: WidgetStateProperty.resolveWith(
       (states) => TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w600,
         color: states.contains(WidgetState.selected)
-            ? Colors.white
+            ? AppColors.carbon
             : AppColors.ash,
       ),
     ),
