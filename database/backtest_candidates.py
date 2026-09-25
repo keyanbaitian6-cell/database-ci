@@ -2,7 +2,9 @@
 
 For every store, machine and day D that also has data for D+1, the candidates
 are chosen exactly as the app does (``provisional_next_day_candidates``), using
-only records up to D. The same racks are then looked up on D+1 and compared
+only records dated up to D. This does not prove those records had already been
+saved by D; late imports can make this a hindsight comparison. The same racks
+are then looked up on D+1 and compared
 with the racks that could be judged but were not chosen.
 
 Run from database/:
@@ -250,11 +252,12 @@ def summarize(entries, trials, out=print):
     out('')
     out(f'翌日に{MIN_GAMES}G未満・データなしで比べられなかった候補：{missing}件（空き台・未取得の可能性）')
     out('注意：p値は「偶然でもこの差が出る割合」の目安。件数が少ないうちは結論を出さないこと。')
+    out('注意：記録日だけで過去データを制限しています。後日取得した古い記録が混ざる場合、当時の予測精度ではありません。')
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--csv', type=Path, help='旧形式の詳細CSV（現在の7列共有CSVは非対応）')
+    parser.add_argument('--csv', type=Path, help='旧形式の詳細CSV（現在の9列共有CSV単体は非対応）')
     parser.add_argument('--json', type=Path, help='バックアップ JSON')
     parser.add_argument('--trials', type=int, default=5000)
     parser.add_argument('--details', action='store_true', help='台ごとの結果を reports/ に書く')

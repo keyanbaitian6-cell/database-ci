@@ -20,6 +20,7 @@ class CsvExportService {
       [
         '日付',
         '機種名',
+        '台番号',
         '採点結果',
         'G数',
         '最大持ち球',
@@ -33,6 +34,7 @@ class CsvExportService {
       lines.add([
         record.day,
         record.machine,
+        '${record.rack}',
         _scoreResult(score.total, score.provisional),
         '${record.games}',
         '${record.maxHold ?? ''}',
