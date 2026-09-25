@@ -1049,10 +1049,7 @@ class _ResultsPageState extends State<ResultsPage> {
   var _byMachine = <String, List<(SlotRecord, ScoreResult)>>{};
   final _graphMachines = <String>{};
 
-  /// 開いたときに表示する機種（前回見ていた機種）。1回飛んだら消す。
-  late String? _jumpOnOpen = widget.controller.lastMachine;
-
-  /// 最後に機種一覧から選んだ機種。次に開いたときにそこへ飛ぶために覚える。
+  /// 最後に選んだ機種。選択状態の保存に使うが、画面を開いたときの移動には使わない。
   late String? _machine = widget.controller.lastMachine;
 
   @override
@@ -1209,15 +1206,6 @@ class _ResultsPageState extends State<ResultsPage> {
     final candidateRacks = <String, Set<int>>{};
     for (final c in candidates.candidates) {
       candidateRacks.putIfAbsent(c.record.machine, () => {}).add(c.record.rack);
-    }
-    if (_jumpOnOpen != null) {
-      final machine = _jumpOnOpen!;
-      _jumpOnOpen = null;
-      if (byMachine.containsKey(machine)) {
-        WidgetsBinding.instance.addPostFrameCallback(
-          (_) => _openMachine(machine),
-        );
-      }
     }
     return Stack(
       children: [

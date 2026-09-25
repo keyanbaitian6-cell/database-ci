@@ -81,7 +81,7 @@ def load_csv(path: Path):
         if missing:
             raise ValueError(
                 'このCSVはバックテストに必要な列がありません。'
-                '現在の共有用CSVでは店舗・日付・台番号を省いているため、'
+                '現在の共有用CSVでは店舗・台番号を省いているため、'
                 'databaseのバックアップJSON（--json）かPCデータベースを使ってください。'
             )
         for raw in reader:

@@ -18,6 +18,7 @@ class CsvExportService {
       });
     final lines = <List<String>>[
       [
+        '日付',
         '機種名',
         '採点結果',
         'G数',
@@ -30,6 +31,7 @@ class CsvExportService {
     for (final record in rows) {
       final score = scoreRecord(record, records);
       lines.add([
+        record.day,
         record.machine,
         _scoreResult(score.total, score.provisional),
         '${record.games}',

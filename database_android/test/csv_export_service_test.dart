@@ -3,7 +3,7 @@ import 'package:database_android/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('CSVは共有用の7項目だけを出力する', () {
+  test('CSVは日付を含む共有用の8項目を出力する', () {
     final lines = CsvExportService.buildLines([
       const SlotRecord(
         store: 'saiwaichou',
@@ -19,6 +19,7 @@ void main() {
     ]);
 
     expect(lines.first, [
+      '日付',
       '機種名',
       '採点結果',
       'G数',
@@ -28,9 +29,10 @@ void main() {
       '設定情報',
     ]);
     expect(lines, hasLength(2));
-    expect(lines[1], hasLength(7));
-    expect(lines[1][0], 'テスト機種');
-    expect(lines[1][1], startsWith('暫定 '));
-    expect(lines[1].sublist(2), ['2408', '2111', '11', '6', '5以上']);
+    expect(lines[1], hasLength(8));
+    expect(lines[1][0], '2026-09-22');
+    expect(lines[1][1], 'テスト機種');
+    expect(lines[1][2], startsWith('暫定 '));
+    expect(lines[1].sublist(3), ['2408', '2111', '11', '6', '5以上']);
   });
 }
