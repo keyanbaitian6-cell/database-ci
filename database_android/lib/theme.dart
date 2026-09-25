@@ -20,6 +20,12 @@ class AppColors {
 
 const _cardRadius = 8.0;
 
+/// 字間。Material の既定は +0.1〜+0.5 と字を広げるが、Apple の文字組みは
+/// 大きい文字ほど少しずつ詰める（参考資料：本文17pxで-0.016em）。大きさは
+/// 変えず、字間だけを寄せる。日本語が窮屈にならないよう、資料の値より控えめ。
+TextStyle _tracking(double spacing, {Color? color}) =>
+    TextStyle(letterSpacing: spacing, color: color);
+
 ThemeData buildAppTheme() => ThemeData(
   useMaterial3: true,
   scaffoldBackgroundColor: AppColors.frost,
@@ -39,11 +45,15 @@ ThemeData buildAppTheme() => ThemeData(
     backgroundColor: Colors.white,
     foregroundColor: AppColors.carbon,
     elevation: 0,
+    // 下へスクロールしても影を出さない（影ではなく細い線で区切る）。
+    scrolledUnderElevation: 0,
     surfaceTintColor: Colors.transparent,
+    shape: Border(bottom: BorderSide(color: AppColors.hairline)),
     titleTextStyle: TextStyle(
       color: AppColors.carbon,
       fontSize: 20,
       fontWeight: FontWeight.w600,
+      letterSpacing: -0.3,
     ),
   ),
   cardTheme: CardThemeData(
@@ -144,9 +154,22 @@ ThemeData buildAppTheme() => ThemeData(
       borderRadius: BorderRadius.circular(_cardRadius),
     ),
   ),
-  textTheme: const TextTheme(
-    bodyMedium: TextStyle(color: AppColors.carbon),
-    bodySmall: TextStyle(color: AppColors.ash),
+  textTheme: TextTheme(
+    displayLarge: _tracking(-0.5),
+    displayMedium: _tracking(-0.5),
+    displaySmall: _tracking(-0.4),
+    headlineLarge: _tracking(-0.4),
+    headlineMedium: _tracking(-0.3),
+    headlineSmall: _tracking(-0.3),
+    titleLarge: _tracking(-0.3),
+    titleMedium: _tracking(-0.2),
+    titleSmall: _tracking(-0.15),
+    bodyLarge: _tracking(-0.2),
+    bodyMedium: _tracking(-0.15, color: AppColors.carbon),
+    bodySmall: _tracking(-0.1, color: AppColors.ash),
+    labelLarge: _tracking(-0.1),
+    labelMedium: _tracking(0),
+    labelSmall: _tracking(0),
   ),
 );
 

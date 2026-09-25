@@ -784,22 +784,28 @@ class AppShell extends StatelessWidget {
         ],
       ),
       body: SafeArea(child: pages[controller.tab]),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: controller.tab,
-        onDestinationSelected: controller.setTab,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.score_outlined),
-            selectedIcon: Icon(Icons.score),
-            label: '結果',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.add_a_photo_outlined),
-            selectedIcon: Icon(Icons.add_a_photo),
-            label: '取り込み',
-          ),
-          NavigationDestination(icon: Icon(Icons.history), label: '過去の記録'),
-        ],
+      // 下のタブの上にも、上のバーと同じ細い線を引く（影は使わない）。
+      bottomNavigationBar: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppColors.hairline)),
+        ),
+        child: NavigationBar(
+          selectedIndex: controller.tab,
+          onDestinationSelected: controller.setTab,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.score_outlined),
+              selectedIcon: Icon(Icons.score),
+              label: '結果',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.add_a_photo_outlined),
+              selectedIcon: Icon(Icons.add_a_photo),
+              label: '取り込み',
+            ),
+            NavigationDestination(icon: Icon(Icons.history), label: '過去の記録'),
+          ],
+        ),
       ),
     );
   }
