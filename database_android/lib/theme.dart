@@ -109,12 +109,14 @@ ThemeData buildAppTheme() => ThemeData(
     indicatorColor: AppColors.appleBlue,
     elevation: 0,
     surfaceTintColor: Colors.transparent,
+    // 選んだタブの名前は青い丸の外（白地）に出るので、白ではなく濃い色にする
+    // （白だと背景に溶けて見えなかった）。アイコンは青い丸の上なので白のまま。
     labelTextStyle: WidgetStateProperty.resolveWith(
       (states) => TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w600,
         color: states.contains(WidgetState.selected)
-            ? Colors.white
+            ? AppColors.carbon
             : AppColors.ash,
       ),
     ),
@@ -162,9 +164,17 @@ ScoreTier scoreTier(double? total) {
 /// the "one accent, used deliberately" rule applied to score scanning
 /// instead of buttons.
 class ScorePill extends StatelessWidget {
-  const ScorePill({super.key, required this.text, required this.tier});
+  const ScorePill({
+    super.key,
+    required this.text,
+    required this.tier,
+    this.compact = false,
+  });
   final String text;
   final ScoreTier tier;
+
+  /// 表の1行に収める小さい版。
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -186,7 +196,9 @@ class ScorePill extends StatelessWidget {
         border = null;
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: compact
+          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 3)
+          : const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(999),
@@ -197,7 +209,7 @@ class ScorePill extends StatelessWidget {
         style: TextStyle(
           color: foreground,
           fontWeight: FontWeight.w600,
-          fontSize: 14,
+          fontSize: compact ? 13 : 14,
         ),
       ),
     );
