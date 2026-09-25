@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import 'candidate_log.dart';
 import 'models.dart';
 
 const backupFormat = 'database-backup';
@@ -74,22 +75,37 @@ class BackupService {
   Future<File> export(
     List<SlotRecord> records, {
     String source = 'android',
+    List<CandidateSnapshot> candidates = const [],
   }) async {
     final directory = await getTemporaryDirectory();
     final file = File(
       '${directory.path}${Platform.pathSeparator}'
       '${backupFileName(DateTime.now(), source: source)}',
     );
-    final payload = {
-      'format': backupFormat,
-      'version': backupVersion,
-      'exported_at': DateTime.now().toIso8601String(),
-      'source': source,
-      'records': records.map((r) => r.toJson()).toList(),
-    };
+    final payload = backupPayload(
+      records,
+      source: source,
+      candidates: candidates,
+    );
     await file.writeAsString(jsonEncode(payload), flush: true);
     return file;
   }
+
+  /// The JSON object [export] writes.
+  Map<String, dynamic> backupPayload(
+    List<SlotRecord> records, {
+    String source = 'android',
+    List<CandidateSnapshot> candidates = const [],
+  }) => {
+    'format': backupFormat,
+    'version': backupVersion,
+    'exported_at': DateTime.now().toIso8601String(),
+    'source': source,
+    'records': records.map((r) => r.toJson()).toList(),
+    // 翌日候補（仮）の記録。PC版は読まずに無視する（Android版だけが持つ）。
+    if (candidates.isNotEmpty)
+      'candidate_snapshots': [for (final c in candidates) c.toJson()],
+  };
 
   bool _validRaw(Map<String, dynamic> raw) {
     final storeOk = storeNames.containsKey(raw['store']);
@@ -167,6 +183,10 @@ class BackupService {
       if (incoming.graph != null && local.graph == null) {
         graphOnly.add(
           incoming.copyWith(
+            firstCapturedAt: earliestTimestamp(
+              incoming.firstCapturedAt,
+              local.firstCapturedAt,
+            ),
             detailUrl: incoming.detailUrl ?? local.detailUrl,
             maxHold: incoming.maxHold ?? local.maxHold,
             previousStart: incoming.previousStart ?? local.previousStart,
@@ -213,6 +233,14 @@ class BackupService {
           List.generate(a.length, (i) => i).every((i) => _sameJson(a[i], b[i]));
     }
     return a == b;
+  }
+
+  /// バックアップに入っている翌日候補の記録。無い・読めないものは飛ばす。
+  List<CandidateSnapshot> candidatesFromJson(String jsonText) {
+    final decoded = jsonDecode(jsonText);
+    final raw = decoded is Map ? decoded['candidate_snapshots'] : null;
+    if (raw is! List) return const [];
+    return [for (final item in raw) ?CandidateSnapshot.tryFromJson(item)];
   }
 
   BackupImportPlan planFromJson(String jsonText, List<SlotRecord> existing) {

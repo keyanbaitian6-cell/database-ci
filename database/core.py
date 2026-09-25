@@ -91,6 +91,12 @@ def measurement_metrics(measurement, tolerance=1.0):
                 positive_score=positive, retention_score=retention)
 
 
+def _timestamp(value):
+    """ISO time for ordering; one without an offset is taken as this PC's time."""
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.astimezone()
+
+
 class Store:
     def __init__(self, path):
         self.path = Path(path)
@@ -147,6 +153,14 @@ class Store:
                     merged.pop('graph', None)
                     merged.pop('graph_measurement', None)
                 merged.update({k: v for k, v in row.items() if v is not None})
+                # First save time never moves on a re-capture (same as Android's
+                # first_captured_at). A row saved before this existed stays unknown.
+                firsts = [v for v in (json.loads(old[0]).get('first_captured_at') if old else None,
+                                      row.get('first_captured_at')) if v]
+                if firsts:
+                    merged['first_captured_at'] = min(firsts, key=_timestamp)
+                elif not old:
+                    merged['first_captured_at'] = datetime.now().astimezone().isoformat()
                 self._log_observation(row)
                 self.db.execute('INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) DO UPDATE SET payload=excluded.payload', (*key, json.dumps(merged, ensure_ascii=False)))
 

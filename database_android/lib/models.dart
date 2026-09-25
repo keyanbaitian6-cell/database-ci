@@ -10,6 +10,29 @@ const storeNames = <String, String>{
 /// 採点や設定推測の入力には使わず、記録の注記としてだけ扱います。
 const confirmedSettingOptions = <String>['4以上', '5以上', '6'];
 
+/// [time] as ISO 8601 with its UTC offset, e.g. `2026-09-26T23:05:12.345+09:00`.
+///
+/// `DateTime.toIso8601String()` leaves the offset out for local times, so a
+/// later reader cannot tell which time zone the phone was in. New timestamps
+/// kept for analysis use this form instead.
+String timestampWithOffset(DateTime time) {
+  final local = time.toLocal();
+  final offset = local.timeZoneOffset;
+  final sign = offset.isNegative ? '-' : '+';
+  final minutes = offset.inMinutes.abs();
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${local.toIso8601String()}$sign${two(minutes ~/ 60)}:${two(minutes % 60)}';
+}
+
+/// The earlier of two timestamps; an unreadable or missing one loses.
+String? earliestTimestamp(String? a, String? b) {
+  final ta = a == null ? null : DateTime.tryParse(a);
+  final tb = b == null ? null : DateTime.tryParse(b);
+  if (ta == null) return tb == null ? null : b;
+  if (tb == null) return a;
+  return tb.isBefore(ta) ? b : a;
+}
+
 /// DateTime.parse normalizes overflowing days; record keys must not do that.
 bool isValidRecordDay(String? value) {
   if (value == null || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
@@ -109,6 +132,7 @@ class SlotRecord {
     this.graph,
     this.detailUrl,
     this.capturedAt,
+    this.firstCapturedAt,
     this.confirmedSetting,
   });
 
@@ -134,6 +158,12 @@ class SlotRecord {
   /// like with like. Null on data saved before this was recorded.
   final String? capturedAt;
 
+  /// When this rack's record was first saved on any device (ISO 8601 with
+  /// offset). Unlike [capturedAt] it never moves on a re-capture, so a later
+  /// check can tell what was already known at a given time. Null on records
+  /// saved before this was kept -- their first capture time is unknown.
+  final String? firstCapturedAt;
+
   /// ユーザーが根拠を確認して入力した設定情報。未入力は null。
   final String? confirmedSetting;
 
@@ -152,6 +182,7 @@ class SlotRecord {
     GraphMeasurement? graph,
     String? detailUrl,
     String? capturedAt,
+    String? firstCapturedAt,
     String? confirmedSetting,
     bool clearConfirmedSetting = false,
   }) => SlotRecord(
@@ -167,6 +198,7 @@ class SlotRecord {
     graph: graph ?? this.graph,
     detailUrl: detailUrl ?? this.detailUrl,
     capturedAt: capturedAt ?? this.capturedAt,
+    firstCapturedAt: firstCapturedAt ?? this.firstCapturedAt,
     confirmedSetting: clearConfirmedSetting
         ? null
         : confirmedSetting ?? this.confirmedSetting,
@@ -189,6 +221,7 @@ class SlotRecord {
         : null,
     detailUrl: json['detail_url'] as String?,
     capturedAt: json['captured_at'] as String?,
+    firstCapturedAt: json['first_captured_at'] as String?,
     confirmedSetting:
         confirmedSettingOptions.contains(json['confirmed_setting'])
         ? json['confirmed_setting'] as String
@@ -209,6 +242,7 @@ class SlotRecord {
     if (graph != null) 'graph_measurement': graph!.toJson(),
     if (detailUrl != null) 'detail_url': detailUrl,
     if (capturedAt != null) 'captured_at': capturedAt,
+    if (firstCapturedAt != null) 'first_captured_at': firstCapturedAt,
     if (confirmedSetting != null) 'confirmed_setting': confirmedSetting,
   };
 

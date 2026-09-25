@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import 'candidate_log.dart';
 import 'models.dart';
 
 class DatabaseService {
@@ -14,7 +15,7 @@ class DatabaseService {
     final path = p.join(await getDatabasesPath(), 'database.sqlite3');
     _database = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE records (
@@ -33,6 +34,7 @@ class DatabaseService {
             value TEXT NOT NULL
           )
         ''');
+        await _createCandidateSnapshots(db);
       },
       onUpgrade: (db, oldVersion, _) async {
         if (oldVersion < 2) {
@@ -48,10 +50,50 @@ class DatabaseService {
             'value': '1',
           }, conflictAlgorithm: ConflictAlgorithm.ignore);
         }
+        if (oldVersion < 3) await _createCandidateSnapshots(db);
       },
     );
     await _seedIfNeeded(_database!);
     return _database!;
+  }
+
+  /// 翌日候補（仮）の記録（candidate_log.dart）。同じ機種・日付・時刻は1件だけ。
+  static Future<void> _createCandidateSnapshots(Database db) => db.execute('''
+    CREATE TABLE IF NOT EXISTS candidate_snapshots (
+      store TEXT NOT NULL,
+      day TEXT NOT NULL,
+      machine TEXT NOT NULL,
+      taken_at TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      PRIMARY KEY (store, day, machine, taken_at)
+    )
+  ''');
+
+  Future<List<CandidateSnapshot>> loadCandidateSnapshots() async {
+    final db = await database;
+    final rows = await db.query('candidate_snapshots', columns: ['payload']);
+    return [
+      for (final row in rows)
+        ?CandidateSnapshot.tryFromJson(jsonDecode(row['payload'] as String)),
+    ];
+  }
+
+  /// 追記だけ。すでにある（同じ機種・日付・時刻の）記録は書き換えない。
+  Future<void> saveCandidateSnapshots(
+    Iterable<CandidateSnapshot> snapshots,
+  ) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final s in snapshots) {
+      batch.insert('candidate_snapshots', {
+        'store': s.store,
+        'day': s.day,
+        'machine': s.machine,
+        'taken_at': s.takenAt,
+        'payload': jsonEncode(s.toJson()),
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+    await batch.commit(noResult: true);
   }
 
   Future<void> _seedIfNeeded(Database db) async {

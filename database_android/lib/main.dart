@@ -12,6 +12,7 @@ import 'package:quick_actions/quick_actions.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'backup_service.dart';
+import 'candidate_log.dart';
 import 'csv_export_service.dart';
 import 'data_checks.dart';
 import 'database_service.dart';
@@ -71,6 +72,10 @@ class AppController extends ChangeNotifier {
   final csvExporter = CsvExportService();
   final backupService = BackupService();
   List<SlotRecord> records = [];
+
+  /// 翌日候補（仮）の記録（candidate_log.dart）。バックアップにも入る。
+  List<CandidateSnapshot> candidateSnapshots = [];
+  Map<String, CandidateSnapshot> _latestCandidates = {};
   String? message;
   int tab = 0;
 
@@ -112,6 +117,7 @@ class AppController extends ChangeNotifier {
     _undoLabel = null;
     message = '取り消しました：$label';
     await reload();
+    await _logCandidates([for (final (saved, _) in entries) saved]);
     return '取り消しました：$label';
   });
 
@@ -249,6 +255,49 @@ class AppController extends ChangeNotifier {
           (record) => record.machine != normalizeMachineName(record.machine),
         );
     if (requiresMigration) await database.replaceAll(records);
+    try {
+      candidateSnapshots = await database.loadCandidateSnapshots();
+      _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
+    } catch (error) {
+      debugPrint('翌日候補の記録を読み込めませんでした: $error');
+    }
+  }
+
+  /// 取り込みで変わった翌日候補を、時刻付きで残す（candidate_log.dart）。
+  /// 記録に失敗しても、取り込んだ台の保存は取り消さない。
+  Future<void> _logCandidates(List<SlotRecord> saved) async {
+    try {
+      final changed = changedCandidateSnapshots(
+        saved: saved,
+        all: records,
+        latest: _latestCandidates,
+        now: DateTime.now(),
+      );
+      if (changed.isEmpty) return;
+      await database.saveCandidateSnapshots(changed);
+      candidateSnapshots = [...candidateSnapshots, ...changed];
+      for (final c in changed) {
+        _latestCandidates[c.groupKey] = c;
+      }
+    } catch (error) {
+      debugPrint('翌日候補を記録できませんでした: $error');
+    }
+  }
+
+  /// バックアップにあった候補の記録のうち、手元にないものを足す。
+  Future<int> _importCandidates(List<CandidateSnapshot> incoming) async {
+    final have = {
+      for (final c in candidateSnapshots) '${c.groupKey}|${c.takenAt}',
+    };
+    final fresh = [
+      for (final c in incoming)
+        if (have.add('${c.groupKey}|${c.takenAt}')) c,
+    ];
+    if (fresh.isEmpty) return 0;
+    await database.saveCandidateSnapshots(fresh);
+    candidateSnapshots = [...candidateSnapshots, ...fresh];
+    _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
+    return fresh.length;
   }
 
   List<SlotRecord> _normalizeRecords(List<SlotRecord> source) {
@@ -278,6 +327,10 @@ class AppController extends ChangeNotifier {
         detailUrl:
             newestNumbers.detailUrl ?? current.detailUrl ?? record.detailUrl,
         capturedAt: newestNumbers.capturedAt ?? current.capturedAt,
+        firstCapturedAt: earliestTimestamp(
+          record.firstCapturedAt,
+          current.firstCapturedAt,
+        ),
         confirmedSetting:
             newestNumbers.confirmedSetting ??
             current.confirmedSetting ??
@@ -320,6 +373,7 @@ class AppController extends ChangeNotifier {
   ) => _write(() async {
     machine = normalizeMachineName(machine);
     final old = {for (final record in records) record.key: record};
+    final now = DateTime.now();
     final saved = rows.map((row) {
       final key = '$store|$day|$machine|${row.rack}';
       final previous = old[key];
@@ -343,7 +397,11 @@ class AppController extends ChangeNotifier {
         previousStart: row.previousStart ?? previous?.previousStart,
         graph: changed ? null : previous?.graph,
         detailUrl: row.detailUrl ?? old[key]?.detailUrl,
-        capturedAt: DateTime.now().toIso8601String(),
+        capturedAt: now.toIso8601String(),
+        // 初めて保存した時刻だけを残す。以前から保存済みで時刻がない台は不明のまま。
+        firstCapturedAt:
+            previous?.firstCapturedAt ??
+            (previous == null ? timestampWithOffset(now) : null),
         confirmedSetting: old[key]?.confirmedSetting,
       );
     }).toList();
@@ -352,6 +410,7 @@ class AppController extends ChangeNotifier {
     message = '${saved.length}台を保存しました。';
     tab = 0;
     _mergeRecords(saved);
+    await _logCandidates(saved);
   });
 
   CaptureAnalysis resolveWebGraph(CaptureAnalysis captured) {
@@ -413,6 +472,7 @@ class AppController extends ChangeNotifier {
               item.rack == rack,
         )
         .firstOrNull;
+    final now = DateTime.now();
     final record = SlotRecord(
       store: store,
       day: day,
@@ -424,7 +484,10 @@ class AppController extends ChangeNotifier {
       maxHold: maxHold,
       previousStart: existing?.previousStart,
       detailUrl: existing?.detailUrl,
-      capturedAt: DateTime.now().toIso8601String(),
+      capturedAt: now.toIso8601String(),
+      firstCapturedAt:
+          existing?.firstCapturedAt ??
+          (existing == null ? timestampWithOffset(now) : null),
       confirmedSetting: existing?.confirmedSetting,
       graph: GraphMeasurement(
         baselineY: points[0].dy,
@@ -446,6 +509,7 @@ class AppController extends ChangeNotifier {
     message = '$rack番台を採点しました。';
     tab = returnToBrowser ? 1 : 0;
     _mergeRecords([record]);
+    await _logCandidates([record]);
   });
 
   /// 取り込みミスなどを、機種ごと・日付ごとにまとめて削除する。消した台数を返す。
@@ -469,6 +533,7 @@ class AppController extends ChangeNotifier {
     _undoEntries = [for (final r in targets) (r, r)];
     message = '$whereの記録を削除しました（${targets.length}台）。';
     await reload();
+    await _logCandidates(targets);
     return targets.length;
   });
 
@@ -477,6 +542,7 @@ class AppController extends ChangeNotifier {
     _rememberUndo('${record.rack}番台の削除', [record]);
     message = '${record.rack}番台の記録を削除しました。';
     await reload();
+    await _logCandidates([record]);
   });
 
   /// Save a user-confirmed setting annotation. It deliberately does not feed
@@ -517,7 +583,15 @@ class AppController extends ChangeNotifier {
               (day == null || r.day == day),
         )
         .toList();
-    return backupService.export(filtered);
+    return backupService.export(
+      filtered,
+      candidates: [
+        for (final c in candidateSnapshots)
+          if ((store == null || c.store == store) &&
+              (day == null || c.day == day))
+            c,
+      ],
+    );
   }
 
   /// Reads a backup file's JSON and applies its safe records (new and
@@ -534,6 +608,7 @@ class AppController extends ChangeNotifier {
           '${plan.graphOnly.length}件にグラフ、${plan.settingOnly.length}件に設定情報を追加しました。';
       await reload();
     }
+    await _importCandidates(backupService.candidatesFromJson(jsonText));
     return plan;
   });
 
@@ -631,7 +706,13 @@ class AppController extends ChangeNotifier {
         // 上書きしても、手元が持っている個別台リンクは失わない。
         chosen = [
           for (final r in chosen)
-            r.copyWith(detailUrl: r.detailUrl ?? byKey[r.key]?.detailUrl),
+            r.copyWith(
+              detailUrl: r.detailUrl ?? byKey[r.key]?.detailUrl,
+              firstCapturedAt: earliestTimestamp(
+                r.firstCapturedAt,
+                byKey[r.key]?.firstCapturedAt,
+              ),
+            ),
         ];
         await database.saveAll(chosen);
         _rememberUndo('バックアップの競合反映', chosen);

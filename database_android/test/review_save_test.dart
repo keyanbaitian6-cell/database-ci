@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:database_android/candidate_log.dart';
 import 'package:database_android/database_service.dart';
 import 'package:database_android/main.dart';
 import 'package:database_android/models.dart';
@@ -6,7 +7,15 @@ import 'package:database_android/import_service.dart';
 
 class MemoryDatabase extends DatabaseService {
   List<SlotRecord> rows = [];
+  List<CandidateSnapshot> snapshots = [];
   bool failWrite = false;
+  @override
+  Future<List<CandidateSnapshot>> loadCandidateSnapshots() async =>
+      List.of(snapshots);
+  @override
+  Future<void> saveCandidateSnapshots(
+    Iterable<CandidateSnapshot> incoming,
+  ) async => snapshots.addAll(incoming);
   @override
   Future<List<SlotRecord>> loadAll() async => List.of(rows);
   @override
@@ -102,5 +111,45 @@ void main() {
     await app.undoLastSave();
     expect(db.rows.single.encode(), old.encode());
     expect(await app.undoLastSave(), contains('ありません'));
+  });
+
+  test('新しく保存した台だけ初回取り込み時刻を持ち、取り込み直しても動かない', () async {
+    Future<void> saveNew() => app.saveTable(old.store, old.day, old.machine, [
+      EditableRow(
+        rack: 704,
+        games: 3000,
+        bb: 20,
+        rb: 5,
+        maxHold: 2000,
+        previousStart: null,
+      ),
+    ]);
+    await saveNew();
+    final first = app.records.firstWhere((r) => r.rack == 704).firstCapturedAt;
+    expect(first, isNotNull);
+    expect(first, matches(RegExp(r'[+-]\d\d:\d\d$')));
+    await saveNew();
+    expect(app.records.firstWhere((r) => r.rack == 704).firstCapturedAt, first);
+    // 以前から保存済みで時刻のない台は、取り込み直しても「不明」のまま。
+    await save();
+    expect(
+      app.records.firstWhere((r) => r.rack == 703).firstCapturedAt,
+      isNull,
+    );
+  });
+
+  test('取り込みのたびに翌日候補を記録し、同じ中身なら増やさない', () async {
+    await save();
+    expect(db.snapshots, hasLength(1));
+    expect(
+      db.snapshots.single.groupKey,
+      '${old.store}|${old.day}|${old.machine}',
+    );
+    expect(db.snapshots.single.total, 1);
+    await save();
+    expect(db.snapshots, hasLength(1));
+    await save(games: 3500);
+    expect(db.snapshots, hasLength(1)); // 1台だけでは候補も指数も出ない
+    expect(app.candidateSnapshots, hasLength(1));
   });
 }

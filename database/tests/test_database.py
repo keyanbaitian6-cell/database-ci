@@ -1252,4 +1252,31 @@ class BackupSharingTests(unittest.TestCase):
         return path
 
 
+class FirstCapturedTests(unittest.TestCase):
+    def test_first_capture_time_is_kept_and_only_moves_earlier(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save([row(rack=1)])
+            first = db.payload_map([('nagamachiminami', '2026-09-13', 'テスト', 1)])[0]['first_captured_at']
+            self.assertRegex(first, r'[+-]\d\d:\d\d$')
+            db.save([dict(row(rack=1), games=3600)])
+            again = db.payload_map([('nagamachiminami', '2026-09-13', 'テスト', 1)])[0]
+            self.assertEqual(again['first_captured_at'], first)
+            # A backup that saw the rack earlier (on the phone) wins; a later one never does.
+            db.save([dict(row(rack=1), first_captured_at='2026-09-13T22:00:00+09:00')])
+            db.save([dict(row(rack=1), first_captured_at='2030-01-01T00:00:00+09:00')])
+            kept = db.payload_map([('nagamachiminami', '2026-09-13', 'テスト', 1)])[0]
+            self.assertEqual(kept['first_captured_at'], '2026-09-13T22:00:00+09:00')
+            db.close()
+
+    def test_rows_saved_before_first_capture_existed_stay_unknown(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            key = ('nagamachiminami', '2026-09-13', 'テスト', 2)
+            db.restore_payloads([(key, row(rack=2))])
+            db.save([dict(row(rack=2), games=3600)])
+            self.assertNotIn('first_captured_at', db.payload_map([key])[0])
+            db.close()
+
+
 if __name__ == '__main__': unittest.main()
