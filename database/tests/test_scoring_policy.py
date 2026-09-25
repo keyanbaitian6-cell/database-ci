@@ -74,6 +74,13 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(score(sample(games=0), references())['total'])
         self.assertIsNone(score(sample(bb=-1), references())['total'])
 
+    def test_500_games_or_less_is_not_scored(self):
+        for games in (1, 499, 500):
+            s = score(sample(games=games), references())
+            self.assertIsNone(s['total'])
+            self.assertEqual(s['reasons'], ['500G以下のため採点なし'])
+        self.assertIsNotNone(score(sample(games=501), references())['total'])
+
     def test_corrected_points_override_stale_raw_curve(self):
         r = sample(graph=dict(path='M0,200 L1,300', baseline=200))
         self.assertEqual(score(r, references())['positive'], 10)

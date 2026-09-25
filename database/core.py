@@ -12,7 +12,7 @@ from pathlib import Path
 
 from setting_estimate import candidate_label, estimate_setting
 
-VERSION = '2026-09-21-v9'
+VERSION = '2026-09-25-v10'
 MIN_REFERENCE_ROWS = 20  # Initial operational default, not statistical confidence.
 OBSERVATION_KEEP_DAYS = 30  # How long the write log keeps its lines (it is never read by the app).
 HISTORY_REPORT_DAYS = 14    # How many of the most recent dates the history page draws.
@@ -26,6 +26,8 @@ MAX_POSITIVE_SCORE = 10
 MAX_RETENTION_SCORE = 10
 SHRINK_GAMES = 1500  # Policy parameters, not a fitted probability model.
 SHRINK_DAYS = 3
+# 当日この回転数以下の台は採点しない（利用者の指定、2026-09-25）。
+MIN_SCORED_GAMES = 500
 # 出玉のコンプリート上限。利用者の記録（最大持玉19,008枚で打ち止め）から採用した値で、
 # 規則の条文を確認したものではない。機種ごとの上限の違いも見ていない。
 COMPLETE_HOLD = 19000
@@ -887,6 +889,9 @@ def score(row, reference, provisional_reference=None):
              coverage=0, missing_low=None, missing_high=None, status='pending', reasons=[])
     if s['games'] is None:
         s['reasons'].append('未稼働・回転数なし')
+        return s
+    if row['games'] <= MIN_SCORED_GAMES:
+        s['reasons'].append(f'{MIN_SCORED_GAMES}G以下のため採点なし')
         return s
     if any(row.get(k) is not None and row[k] < 0 for k in ('bb', 'rb', 'max_hold')):
         s['reasons'].append('負の数値を確認してください')

@@ -41,6 +41,14 @@ void main() {
     }
     expect(spinScore(0), isNull);
   });
+  test('当日500G以下の台は採点しない', () {
+    for (final g in [1, 499, 500]) {
+      final score = scoreRecord(sample(games: g), refs());
+      expect(score.total, isNull);
+      expect(score.reasons, ['500G以下のため採点なし']);
+    }
+    expect(scoreRecord(sample(games: 501), refs()).total, isNotNull);
+  });
   test('手計算 .2の立方根の縮約係数・満点との比較で83.4点', () {
     // v9: 掛け算ではなく相乗平均。
     // weight = (3000/4500 * 30/50 * 3/6)^(1/3) = .2^(1/3) = .584804

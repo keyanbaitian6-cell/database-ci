@@ -60,12 +60,12 @@ class ScoringTests(unittest.TestCase):
         self.assertTrue(result['provisional'])
 
     def test_zero_events_are_shrunk_in_a_short_session(self):
-        r = dict(row(), games=300, bb=0, rb=0, max_hold=0,
+        r = dict(row(), games=600, bb=0, rb=0, max_hold=0,
                  graph_measurement=dict(baseline_y=100, peak_y=80, end_y=120))
         refs = [dict(row('2026-09-12', i), games=500, bb=1, rb=1, max_hold=1)
                 for i in range(20)]
-        # 300Gで当たり0・持玉0でも、自動的に0点にはせず中間へ寄せる
-        # （v9の相乗平均で 21.77 + 7.26 + 0 + 0 = 29.0）。
+        # 600Gで当たり0・持玉0でも、自動的に0点にはせず中間へ寄せる
+        # （v9の相乗平均で 20.13 + 6.71 + 0 + 0 = 26.8。500G以下は採点しない）。
         result = score(r, refs)
         self.assertGreater(result['total'], 20)
         self.assertLess(result['total'], 40)

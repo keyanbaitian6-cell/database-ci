@@ -3,10 +3,13 @@ import 'dart:math';
 import 'models.dart';
 
 // Policy, not a fitted setting/win probability model. See SCORING_POLICY.md.
-const scoringVersion = '2026-09-21-v9';
+const scoringVersion = '2026-09-25-v10';
 const minimumReferenceRows = 20;
 const shrinkGames = 1500.0;
 const shrinkDays = 3.0;
+
+/// 当日この回転数以下の台は採点しない（利用者の指定、2026-09-25）。
+const minScoredGames = 500;
 
 /// 出玉のコンプリート上限。利用者の記録（最大持玉19,008枚で打ち止め）から採用した値で、
 /// 規則の条文を確認したものではない。機種ごとの上限の違いも見ていない。
@@ -107,6 +110,15 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
       provisional: true,
       referenceCount: 0,
       reasons: [row.games <= 0 ? '未稼働・回転数なし' : '負の数値を確認してください'],
+    );
+  }
+  if (row.games <= minScoredGames) {
+    // 回転数の項目（常に0点）はPC版と同じく出す。合計は出さない。
+    return ScoreResult(
+      games: 0,
+      provisional: true,
+      referenceCount: 0,
+      reasons: ['${minScoredGames}G以下のため採点なし'],
     );
   }
   final refs = comparisonPool(row, all);
