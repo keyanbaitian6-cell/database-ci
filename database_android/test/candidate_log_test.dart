@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:database_android/backup_service.dart';
 import 'package:database_android/candidate_log.dart';
 import 'package:database_android/data_checks.dart';
+import 'package:database_android/database_service.dart';
 import 'package:database_android/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -211,6 +212,41 @@ void main() {
     expect(
       SlotRecord.fromJson(incoming.toJson()).firstCapturedAt,
       '2026-09-24T08:00:00+09:00',
+    );
+  });
+
+  test('機種名の表記ゆれ（+区切り）の台を別の台として追加しない', () {
+    final service = BackupService();
+    final local = rec('2026-09-15', 301, 12, machine: 'L X FN');
+    final plus = local.toJson()..['machine'] = 'L+X+FN';
+    final plan = service.plan([plus], [local]);
+    expect(plan.added, isEmpty);
+    expect(plan.unchanged, hasLength(1));
+    // 同じバックアップに両方の表記があっても、中身が同じなら中止しない。
+    final both = service.plan([plus, local.toJson()], const []);
+    expect(both.added.single.machine, 'L X FN');
+  });
+
+  test('時差付きの取得時刻は端末の時刻に直して表示する', () {
+    final stamp = DateTime(2026, 9, 18, 23, 30);
+    final withOffset = rec(
+      '2026-09-18',
+      1,
+      9,
+    ).copyWith(capturedAt: timestampWithOffset(stamp));
+    final plain = rec(
+      '2026-09-18',
+      1,
+      9,
+    ).copyWith(capturedAt: stamp.toIso8601String());
+    expect(capturedNote(withOffset), '取得 09/18 23:30');
+    expect(capturedNote(plain), '取得 09/18 23:30');
+  });
+
+  test('新しい版のDBを古い版が開こうとしたら止める', () async {
+    await expectLater(
+      refuseDowngrade(Object(), 4, 3),
+      throwsA(isA<DatabaseTooNewException>()),
     );
   });
 }

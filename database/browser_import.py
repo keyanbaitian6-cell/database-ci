@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 from PIL import Image, ImageDraw
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
-from core import (STORE_NAMES, Store, auto_backup, day_fully_graphed, duplicate_warning,
+from core import (STORE_NAMES, Store, normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
                   machine_progress, progress_text, remember_for_undo, undo_last_save)
 
 BROWSER_URLS = {
@@ -40,12 +40,6 @@ class TableExtractionError(ValueError):
 
 class GraphExtractionError(ValueError):
     pass
-
-
-def normalize_machine_name(value):
-    if not value:
-        return ''
-    return ' '.join(str(value).replace('+', ' ').split())
 
 
 def is_allowed_url(url):

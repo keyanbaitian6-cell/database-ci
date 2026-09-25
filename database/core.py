@@ -91,6 +91,37 @@ def measurement_metrics(measurement, tolerance=1.0):
                 positive_score=positive, retention_score=retention)
 
 
+def normalize_machine_name(value):
+    """Same machine, one spelling: '+' and runs of spaces become one space.
+
+    Old PC rows and some site pages spell spaces as '+'. Compared as-is, the
+    same rack is saved twice under two machine names (Android does the same
+    in ``normalizeMachineName``).
+    """
+    if not value:
+        return ''
+    return ' '.join(str(value).replace('+', ' ').split())
+
+
+def _merge_spellings(kept, other):
+    """One payload from two spellings of the same rack (Android's rule).
+
+    The side with more games has the newer numbers; a graph, link or setting
+    only one side has is kept; the first capture time is the earlier one.
+    """
+    newest, older = (kept, other) if kept.get('games', 0) >= other.get('games', 0) else (other, kept)
+    merged = {**older, **{k: v for k, v in newest.items() if v is not None}}
+    if not (newest.get('graph') or newest.get('graph_measurement')):
+        for k in ('graph', 'graph_measurement'):
+            if older.get(k):
+                merged[k] = older[k]
+    firsts = [v for v in (kept.get('first_captured_at'), other.get('first_captured_at')) if v]
+    if firsts:
+        merged['first_captured_at'] = min(firsts, key=_timestamp)
+    merged['machine'] = normalize_machine_name(merged.get('machine'))
+    return merged
+
+
 def _timestamp(value):
     """ISO time for ordering; one without an offset is taken as this PC's time."""
     parsed = datetime.fromisoformat(value)
@@ -104,7 +135,41 @@ class Store:
         self.db = sqlite3.connect(self.path)
         self.db.execute('CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, captured_at TEXT NOT NULL, payload TEXT NOT NULL)')
         self._ensure_store_schema()
+        self._merge_machine_spellings()
         self.db.commit()
+
+    def _merge_machine_spellings(self):
+        """Fold rows saved under a '+'-spelled machine name into the normal one.
+
+        Runs once per open and does nothing when every name is already
+        normalized. A copy of the database is kept first, as the store
+        migration above does.
+        """
+        rows = self.db.execute('SELECT store,day,machine,rack,payload FROM days').fetchall()
+        odd = [r for r in rows if r[2] != normalize_machine_name(r[2])]
+        if not odd:
+            return
+        backup_path = self.path.with_name(self.path.stem + '.pre-machine-name-fix' + self.path.suffix)
+        if self.path.exists() and not backup_path.exists():
+            backup = sqlite3.connect(backup_path)
+            try:
+                self.db.backup(backup)
+            finally:
+                backup.close()
+        with self.db:
+            for location, day, machine, rack, raw in odd:
+                name = normalize_machine_name(machine)
+                payload = dict(json.loads(raw), machine=name)
+                twin = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
+                                       (location, day, name, rack)).fetchone()
+                if twin:
+                    payload = _merge_spellings(json.loads(twin[0]), payload)
+                self.db.execute('DELETE FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
+                                (location, day, machine, rack))
+                self.db.execute('INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) '
+                                'DO UPDATE SET payload=excluded.payload',
+                                (location, day, name, rack, json.dumps(payload, ensure_ascii=False)))
+        self._machine_cache = {}
 
     def _ensure_store_schema(self):
         columns = [row[1] for row in self.db.execute('PRAGMA table_info(days)')]
@@ -140,6 +205,7 @@ class Store:
         self._machine_cache = {}
         with self.db:
             for row in rows:
+                row = dict(row, machine=normalize_machine_name(row.get('machine')))
                 if row.get('kind_code') != 21 or row.get('store') not in STORE_NAMES:
                     raise ValueError('対象は長町南店・幸町店の1000円46枚スロットのみです。')
                 date.fromisoformat(row['day'])
@@ -406,6 +472,8 @@ def plan_backup_import(store, records):
         if not _valid_backup_record(record):
             skipped.append(record)
             continue
+        # Compare with one spelling, or a '+'-spelled copy is added as a new rack.
+        record = dict(record, machine=normalize_machine_name(record['machine']))
         key = (record['store'], record['day'], record['machine'], int(record['rack']))
         if key in seen:
             if seen[key] != record:

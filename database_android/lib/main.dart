@@ -34,9 +34,41 @@ export 'machine_sections.dart' show signedIndex;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final controller = AppController();
-  await controller.initialize();
+  try {
+    await controller.initialize();
+  } catch (error) {
+    // 新しい版で作られたデータを古い版が書き換えないよう、ここで止める。
+    // それ以外の失敗でも、真っ白な画面で固まらず理由を出す。
+    runApp(
+      StartupErrorApp(
+        message: error is DatabaseTooNewException
+            ? error.message
+            : '起動できませんでした。記録は変更していません。\n$error',
+      ),
+    );
+    return;
+  }
   runApp(DatabaseApp(controller: controller));
   _setUpLauncherShortcuts(controller);
+}
+
+/// 起動できないときに理由だけを出す画面。データには触れない。
+class StartupErrorApp extends StatelessWidget {
+  const StartupErrorApp({super.key, required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    theme: buildAppTheme(),
+    home: Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Center(child: Text(message, textAlign: TextAlign.center)),
+        ),
+      ),
+    ),
+  );
 }
 
 /// Long-press menu on the app icon: jump straight to importing or to results.
@@ -60,9 +92,6 @@ void _setUpLauncherShortcuts(AppController controller) {
     ShortcutItem(type: 'results', localizedTitle: '結果を見る'),
   ]);
 }
-
-String normalizeMachineName(String value) =>
-    value.replaceAll('+', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 
 class AppController extends ChangeNotifier {
   AppController({DatabaseService? database})
@@ -101,10 +130,15 @@ class AppController extends ChangeNotifier {
     return result;
   }
 
-  void _rememberUndo(String label, List<SlotRecord> rows) {
-    final byKey = {for (final r in records) r.key: r};
+  /// [before] は保存する直前にDBから読んだ内容（無かった台は含まない）。
+  /// 画面用の一覧は古いことがあるので、取り消しの控えには使わない。
+  void _rememberUndo(
+    String label,
+    List<SlotRecord> rows,
+    Map<String, SlotRecord> before,
+  ) {
     _undoLabel = label;
-    _undoEntries = [for (final r in rows) (r, byKey[r.key])];
+    _undoEntries = [for (final r in rows) (r, before[r.key])];
   }
 
   Future<String> undoLastSave() => _write(() async {
@@ -116,7 +150,7 @@ class AppController extends ChangeNotifier {
     _undoEntries = null;
     _undoLabel = null;
     message = '取り消しました：$label';
-    await reload();
+    await _reloadNow();
     await _logCandidates([for (final (saved, _) in entries) saved]);
     return '取り消しました：$label';
   });
@@ -247,14 +281,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _loadUiState();
-    final loaded = await database.loadAll();
-    records = _normalizeRecords(loaded);
-    final requiresMigration =
-        loaded.length != records.length ||
-        loaded.any(
-          (record) => record.machine != normalizeMachineName(record.machine),
-        );
-    if (requiresMigration) await database.replaceAll(records);
+    await _loadNormalizedRecords();
     try {
       candidateSnapshots = await database.loadCandidateSnapshots();
       _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
@@ -300,6 +327,19 @@ class AppController extends ChangeNotifier {
     return fresh.length;
   }
 
+  /// DBを読み、機種名の表記ゆれをそろえて一覧にする。そろえた結果が
+  /// DBと違えば（取り込みで `+` 区切りが入った等）、DBも書き直す。
+  Future<void> _loadNormalizedRecords() async {
+    final loaded = await database.loadAll();
+    records = _normalizeRecords(loaded);
+    final requiresMigration =
+        loaded.length != records.length ||
+        loaded.any(
+          (record) => record.machine != normalizeMachineName(record.machine),
+        );
+    if (requiresMigration) await database.replaceAll(records);
+  }
+
   List<SlotRecord> _normalizeRecords(List<SlotRecord> source) {
     final merged = <String, SlotRecord>{};
     for (final original in source) {
@@ -335,6 +375,7 @@ class AppController extends ChangeNotifier {
             newestNumbers.confirmedSetting ??
             current.confirmedSetting ??
             record.confirmedSetting,
+        extra: {...current.extra, ...newestNumbers.extra},
       );
     }
     return merged.values.toList();
@@ -360,8 +401,14 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> reload() async {
-    records = await database.loadAll();
+  /// 画面から読み直す（引っ張って更新）。保存と同じ順番待ちに入れるので、
+  /// 保存の途中で読んだ古い一覧が、保存後の一覧を上書きすることはない。
+  Future<void> reload() => _write(_reloadNow);
+
+  /// 書き込みの順番待ちの中から呼ぶ読み直し（[_write] の中で [reload] を
+  /// 呼ぶと、自分の終わりを待って止まってしまう）。
+  Future<void> _reloadNow() async {
+    await _loadNormalizedRecords();
     notifyListeners();
   }
 
@@ -372,7 +419,10 @@ class AppController extends ChangeNotifier {
     List<EditableRow> rows,
   ) => _write(() async {
     machine = normalizeMachineName(machine);
-    final old = {for (final record in records) record.key: record};
+    // 残すべきグラフ・設定情報などは、画面用の一覧ではなくDBから読む。
+    final old = await database.loadByKeys([
+      for (final row in rows) '$store|$day|$machine|${row.rack}',
+    ]);
     final now = DateTime.now();
     final saved = rows.map((row) {
       final key = '$store|$day|$machine|${row.rack}';
@@ -403,10 +453,11 @@ class AppController extends ChangeNotifier {
             previous?.firstCapturedAt ??
             (previous == null ? timestampWithOffset(now) : null),
         confirmedSetting: old[key]?.confirmedSetting,
+        extra: previous?.extra ?? const {},
       );
     }).toList();
     await database.saveAll(saved);
-    _rememberUndo('$machineの一覧${saved.length}台', saved);
+    _rememberUndo('$machineの一覧${saved.length}台', saved, old);
     message = '${saved.length}台を保存しました。';
     tab = 0;
     _mergeRecords(saved);
@@ -463,15 +514,9 @@ class AppController extends ChangeNotifier {
     bool returnToBrowser = false,
   }) => _write(() async {
     machine = normalizeMachineName(machine);
-    final existing = records
-        .where(
-          (item) =>
-              item.store == store &&
-              item.day == day &&
-              item.machine == machine &&
-              item.rack == rack,
-        )
-        .firstOrNull;
+    final key = '$store|$day|$machine|$rack';
+    final before = await database.loadByKeys([key]);
+    final existing = before[key];
     final now = DateTime.now();
     final record = SlotRecord(
       store: store,
@@ -489,6 +534,7 @@ class AppController extends ChangeNotifier {
           existing?.firstCapturedAt ??
           (existing == null ? timestampWithOffset(now) : null),
       confirmedSetting: existing?.confirmedSetting,
+      extra: existing?.extra ?? const {},
       graph: GraphMeasurement(
         baselineY: points[0].dy,
         peakY: points[1].dy,
@@ -505,7 +551,7 @@ class AppController extends ChangeNotifier {
       ),
     );
     await database.saveAll([record]);
-    _rememberUndo('$rack番台のグラフ', [record]);
+    _rememberUndo('$rack番台のグラフ', [record], before);
     message = '$rack番台を採点しました。';
     tab = returnToBrowser ? 1 : 0;
     _mergeRecords([record]);
@@ -532,16 +578,17 @@ class AppController extends ChangeNotifier {
     _undoLabel = '$whereの削除（${targets.length}台）';
     _undoEntries = [for (final r in targets) (r, r)];
     message = '$whereの記録を削除しました（${targets.length}台）。';
-    await reload();
+    await _reloadNow();
     await _logCandidates(targets);
     return targets.length;
   });
 
   Future<void> deleteRecord(SlotRecord record) => _write(() async {
+    final before = await database.loadByKeys([record.key]);
     await database.deleteRecord(record);
-    _rememberUndo('${record.rack}番台の削除', [record]);
+    _rememberUndo('${record.rack}番台の削除', [record], before);
     message = '${record.rack}番台の記録を削除しました。';
-    await reload();
+    await _reloadNow();
     await _logCandidates([record]);
   });
 
@@ -553,12 +600,19 @@ class AppController extends ChangeNotifier {
         if (value != null && !confirmedSettingOptions.contains(value)) {
           throw ArgumentError.value(value, 'value', '設定情報が不正です。');
         }
-        final updated = record.copyWith(
+        // 画面が持っている台は古いことがある（グラフ保存の前など）。DBの
+        // 今の内容に設定情報だけを足し、グラフなどを巻き戻さない。
+        final before = await database.loadByKeys([record.key]);
+        final current = before[record.key];
+        if (current == null) {
+          throw StateError('${record.rack}番台の記録が見つかりません。画面を更新してください。');
+        }
+        final updated = current.copyWith(
           confirmedSetting: value,
           clearConfirmedSetting: value == null,
         );
         await database.saveAll([updated]);
-        _rememberUndo('${record.rack}番台の設定情報', [updated]);
+        _rememberUndo('${record.rack}番台の設定情報', [updated], before);
         message = value == null
             ? '${record.rack}番台の設定情報を解除しました。'
             : '${record.rack}番台に「$value」を記録しました。';
@@ -601,12 +655,15 @@ class AppController extends ChangeNotifier {
   Future<BackupImportPlan> importBackup(String jsonText) => _write(() async {
     final plan = backupService.planFromJson(jsonText, records);
     if (plan.toSave.isNotEmpty) {
+      final before = await database.loadByKeys([
+        for (final r in plan.toSave) r.key,
+      ]);
       await database.saveAll(plan.toSave);
-      _rememberUndo('バックアップの取り込み', plan.toSave);
+      _rememberUndo('バックアップの取り込み', plan.toSave, before);
       message =
           'バックアップから${plan.added.length}件追加、'
           '${plan.graphOnly.length}件にグラフ、${plan.settingOnly.length}件に設定情報を追加しました。';
-      await reload();
+      await _reloadNow();
     }
     await _importCandidates(backupService.candidatesFromJson(jsonText));
     return plan;
@@ -699,26 +756,27 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  Future<void> applyBackupOverrides(List<SlotRecord> chosen) =>
-      _write(() async {
-        if (chosen.isEmpty) return;
-        final byKey = {for (final r in records) r.key: r};
-        // 上書きしても、手元が持っている個別台リンクは失わない。
-        chosen = [
-          for (final r in chosen)
-            r.copyWith(
-              detailUrl: r.detailUrl ?? byKey[r.key]?.detailUrl,
-              firstCapturedAt: earliestTimestamp(
-                r.firstCapturedAt,
-                byKey[r.key]?.firstCapturedAt,
-              ),
+  Future<void> applyBackupOverrides(List<SlotRecord> chosen) => _write(
+    () async {
+      if (chosen.isEmpty) return;
+      final byKey = await database.loadByKeys([for (final r in chosen) r.key]);
+      // 上書きしても、手元が持っている個別台リンクは失わない。
+      chosen = [
+        for (final r in chosen)
+          r.copyWith(
+            detailUrl: r.detailUrl ?? byKey[r.key]?.detailUrl,
+            firstCapturedAt: earliestTimestamp(
+              r.firstCapturedAt,
+              byKey[r.key]?.firstCapturedAt,
             ),
-        ];
-        await database.saveAll(chosen);
-        _rememberUndo('バックアップの競合反映', chosen);
-        message = '${chosen.length}件を取り込んだ内容で上書きしました。';
-        await reload();
-      });
+          ),
+      ];
+      await database.saveAll(chosen);
+      _rememberUndo('バックアップの競合反映', chosen, byKey);
+      message = '${chosen.length}件を取り込んだ内容で上書きしました。';
+      await _reloadNow();
+    },
+  );
 
   void setTab(int value) {
     tab = value;

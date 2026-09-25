@@ -1279,4 +1279,46 @@ class FirstCapturedTests(unittest.TestCase):
             db.close()
 
 
+class MachineSpellingTests(unittest.TestCase):
+    def test_plus_spelled_machine_is_saved_under_the_normal_name(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save([dict(row(rack=1), machine='L+X+FN')])
+            self.assertEqual([r['machine'] for r in db.rows()], ['L X FN'])
+            db.close()
+
+    def test_backup_with_plus_spelling_does_not_add_a_second_rack(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save([dict(row(rack=1), machine='L X FN')])
+            plan = plan_backup_import(db, [dict(row(rack=1), machine='L+X+FN')])
+            self.assertEqual(plan['new'], [])
+            self.assertEqual(len(plan['unchanged']), 1)
+            db.close()
+
+    def test_existing_plus_rows_are_merged_once_with_a_copy_kept(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            path = Path(folder) / 'test.db'
+            db = Store(path)
+            graph = dict(baseline_y=200, peak_y=100, trough_y=250, end_y=180)
+            db.save([dict(row(rack=1), machine='L X FN')])
+            # A '+' twin with the graph and an earlier first capture, plus a '+' row with no twin.
+            db.db.execute('INSERT INTO days VALUES(?,?,?,?,?)', (
+                'nagamachiminami', '2026-09-13', 'L+X+FN', 1, json.dumps(dict(
+                    row(rack=1), machine='L+X+FN', graph_measurement=graph,
+                    first_captured_at='2026-09-13T22:00:00+09:00'), ensure_ascii=False)))
+            db.db.execute('INSERT INTO days VALUES(?,?,?,?,?)', (
+                'nagamachiminami', '2026-09-13', 'A+B', 2,
+                json.dumps(dict(row(rack=2), machine='A+B'), ensure_ascii=False)))
+            db.db.commit()
+            db.close()
+            db = Store(path)
+            rows = sorted(db.rows(), key=lambda r: r['rack'])
+            self.assertEqual([(r['machine'], r['rack']) for r in rows], [('L X FN', 1), ('A B', 2)])
+            self.assertEqual(rows[0]['graph_measurement'], graph)
+            self.assertEqual(rows[0]['first_captured_at'], '2026-09-13T22:00:00+09:00')
+            self.assertTrue((Path(folder) / 'test.pre-machine-name-fix.db').exists())
+            db.close()
+
+
 if __name__ == '__main__': unittest.main()

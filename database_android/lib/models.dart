@@ -10,6 +10,14 @@ const storeNames = <String, String>{
 /// 採点や設定推測の入力には使わず、記録の注記としてだけ扱います。
 const confirmedSettingOptions = <String>['4以上', '5以上', '6'];
 
+/// 機種名の表記ゆれ（`+` 区切り・連続した空白）をそろえる。
+///
+/// サイトやPC版の古い記録では空白が `+` になっていることがある。そろえずに
+/// 比べると、同じ台が別の機種として二重に保存される。保存・読み込み・
+/// バックアップの取り込みでは必ずこれを通す。
+String normalizeMachineName(String value) =>
+    value.replaceAll('+', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+
 /// [time] as ISO 8601 with its UTC offset, e.g. `2026-09-26T23:05:12.345+09:00`.
 ///
 /// `DateTime.toIso8601String()` leaves the offset out for local times, so a
@@ -134,7 +142,31 @@ class SlotRecord {
     this.capturedAt,
     this.firstCapturedAt,
     this.confirmedSetting,
+    this.extra = const {},
   });
+
+  /// JSON の項目のうち、このアプリが知らないもの（新しい版やPC版が足した
+  /// 項目）。読み書きの途中で落とさず、そのまま書き戻す。
+  final Map<String, Object?> extra;
+
+  /// このアプリが読み書きする項目。これ以外は [extra] に残す。
+  static const knownKeys = {
+    'store',
+    'kind_code',
+    'day',
+    'machine',
+    'rack',
+    'games',
+    'bb',
+    'rb',
+    'max_hold',
+    'previous_start',
+    'graph_measurement',
+    'detail_url',
+    'captured_at',
+    'first_captured_at',
+    'confirmed_setting',
+  };
 
   final String store;
   final String day;
@@ -185,6 +217,7 @@ class SlotRecord {
     String? firstCapturedAt,
     String? confirmedSetting,
     bool clearConfirmedSetting = false,
+    Map<String, Object?>? extra,
   }) => SlotRecord(
     store: store ?? this.store,
     day: day ?? this.day,
@@ -202,6 +235,7 @@ class SlotRecord {
     confirmedSetting: clearConfirmedSetting
         ? null
         : confirmedSetting ?? this.confirmedSetting,
+    extra: extra ?? this.extra,
   );
 
   factory SlotRecord.fromJson(Map<String, dynamic> json) => SlotRecord(
@@ -226,9 +260,14 @@ class SlotRecord {
         confirmedSettingOptions.contains(json['confirmed_setting'])
         ? json['confirmed_setting'] as String
         : null,
+    extra: {
+      for (final entry in json.entries)
+        if (!knownKeys.contains(entry.key)) entry.key: entry.value,
+    },
   );
 
   Map<String, dynamic> toJson() => {
+    ...extra,
     'store': store,
     'kind_code': 21,
     'day': day,

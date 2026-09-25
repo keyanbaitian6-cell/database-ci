@@ -68,7 +68,9 @@ String reliabilityLabel(int games) =>
 
 /// "取得 09/18 23:48" (+ a warning when read well before closing), or ''.
 String capturedNote(SlotRecord record) {
-  final stamp = DateTime.tryParse(record.capturedAt ?? '');
+  // 時差付き（PC版の `+09:00` 等）は世界標準時で読まれるので、端末の時刻に
+  // 直してから表示する。直さないと23:30の取得が14:30の「途中経過」に見える。
+  final stamp = DateTime.tryParse(record.capturedAt ?? '')?.toLocal();
   if (stamp == null) return '';
   String two(int v) => v.toString().padLeft(2, '0');
   final text =

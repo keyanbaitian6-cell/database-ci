@@ -7,6 +7,24 @@ import 'package:sqflite/sqflite.dart';
 import 'candidate_log.dart';
 import 'models.dart';
 
+/// 端末のDBが、このアプリより新しい版で作られている（古いAPKを上書きで
+/// 入れた等）。古い版がそのまま書き込むと、新しい版だけが知っている項目
+/// （初回取り込み時刻・翌日候補の記録など）を落としてしまうので起動を止める。
+class DatabaseTooNewException implements Exception {
+  const DatabaseTooNewException(this.found, this.supported);
+  final int found;
+  final int supported;
+  String get message =>
+      'このデータは新しい版のアプリで作られています（データ版$found、このアプリは$supportedまで）。\n'
+      '記録を守るため、この古い版では開きません。最新のアプリを入れ直してください。';
+  @override
+  String toString() => message;
+}
+
+/// sqflite の onDowngrade。何もしないと版番号を黙って下げて開いてしまう。
+Future<void> refuseDowngrade(Object db, int oldVersion, int newVersion) =>
+    Future.error(DatabaseTooNewException(oldVersion, newVersion));
+
 class DatabaseService {
   Database? _database;
 
@@ -52,6 +70,7 @@ class DatabaseService {
         }
         if (oldVersion < 3) await _createCandidateSnapshots(db);
       },
+      onDowngrade: refuseDowngrade,
     );
     await _seedIfNeeded(_database!);
     return _database!;
@@ -147,6 +166,33 @@ class DatabaseService {
           ),
         )
         .toList();
+  }
+
+  /// 指定した台の、DBにある今の内容（無い台は含まない）。
+  Future<Map<String, SlotRecord>> loadByKeys(Iterable<String> keys) async {
+    final unique = keys.toSet().toList();
+    if (unique.isEmpty) return {};
+    final db = await database;
+    final found = <String, SlotRecord>{};
+    // SQLite の引数の上限にかからないよう、少しずつ読む。
+    for (var i = 0; i < unique.length; i += 200) {
+      final chunk = unique.sublist(i, (i + 200).clamp(0, unique.length));
+      final rows = await db.query(
+        'records',
+        columns: ['payload'],
+        where: 'record_key IN (${List.filled(chunk.length, '?').join(',')})',
+        whereArgs: chunk,
+      );
+      for (final row in rows) {
+        final record = SlotRecord.fromJson(
+          Map<String, dynamic>.from(
+            jsonDecode(row['payload'] as String) as Map,
+          ),
+        );
+        found[record.key] = record;
+      }
+    }
+    return found;
   }
 
   Future<void> saveAll(Iterable<SlotRecord> records) async {

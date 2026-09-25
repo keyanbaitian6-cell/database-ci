@@ -146,18 +146,24 @@ class BackupService {
         skipped++;
         continue;
       }
-      final incoming = SlotRecord.fromJson(raw);
-      // 比較順が違うだけの同一JSONも同じ記録として扱う。
+      final parsed = SlotRecord.fromJson(raw);
+      // 機種名の表記ゆれ（`+` 区切り）をそろえてから比べる。そろえないと、
+      // 手元の同じ台が別の機種として二重に追加される。
+      final incoming = parsed.copyWith(
+        machine: normalizeMachineName(parsed.machine),
+      );
+      final normalizedJson = incoming.toJson();
+      // 比較順や機種名の表記が違うだけの同一記録も、同じ記録として扱う。
       final previousRaw = seen[incoming.key];
       if (previousRaw != null) {
-        if (!_sameJson(jsonDecode(previousRaw), raw)) {
+        if (!_sameJson(jsonDecode(previousRaw), normalizedJson)) {
           throw FormatException(
             '${incoming.rack}番台の異なる記録がバックアップ内で重複しています。保存せず中止しました。',
           );
         }
         continue;
       }
-      seen[incoming.key] = jsonEncode(raw);
+      seen[incoming.key] = jsonEncode(normalizedJson);
       final local = byKey[incoming.key];
       if (local == null) {
         added.add(incoming);

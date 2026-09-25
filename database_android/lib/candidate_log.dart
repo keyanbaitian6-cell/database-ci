@@ -72,7 +72,7 @@ class CandidateSnapshot {
       return CandidateSnapshot(
         store: store,
         day: day,
-        machine: machine,
+        machine: normalizeMachineName(machine),
         takenAt: takenAt,
         total: (raw['total'] as num).toInt(),
         eligible: (raw['eligible'] as num).toInt(),
