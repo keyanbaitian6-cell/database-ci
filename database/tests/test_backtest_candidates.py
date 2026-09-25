@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backtest_candidates import collect, permutation_p, summarize  # noqa: E402
+from backtest_candidates import collect, load_csv, permutation_p, summarize  # noqa: E402
 
 
 def sample(strong_racks, seed, days=40, racks=12):
@@ -55,6 +55,11 @@ class BacktestCandidatesTest(unittest.TestCase):
         lines = []
         summarize([], trials=10, out=lines.append)
         self.assertTrue(any('比べられません' in line for line in lines))
+
+    def test_rejects_compact_android_csv_with_clear_guidance(self):
+        path = Path(__file__).resolve().parent / 'fixtures' / 'compact_android.csv'
+        with self.assertRaisesRegex(ValueError, 'バックアップJSON（--json）'):
+            load_csv(path)
 
 
 if __name__ == '__main__':

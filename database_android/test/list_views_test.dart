@@ -36,7 +36,7 @@ void main() {
     expect(machineMatches('何でも', '  '), isTrue);
   });
 
-  test('機種一覧：機種名順に台数・平均・最高・グラフ未取得をまとめる', () {
+  test('機種一覧：台数順に並べ、台数・平均・最高・グラフ未取得をまとめる', () {
     final list = summarizeMachines([
       (rec(3, machine: 'B'), score(50)),
       (rec(1, machine: 'A'), score(80)),
@@ -51,6 +51,26 @@ void main() {
     expect(a.best, 80);
     expect(a.bestRack, 1);
     expect(a.noGraph, 3);
+  });
+
+  test('設置機種一覧：台数の多い順、同数なら機種名順', () {
+    final list = summarizeMachines([
+      (rec(1, machine: 'C'), score(50)),
+      (rec(2, machine: 'C'), score(50)),
+      (rec(1, machine: 'A'), score(50)),
+      (rec(2, machine: 'A'), score(50)),
+      (rec(1, machine: 'B'), score(50)),
+      (rec(2, machine: 'B'), score(50)),
+      (rec(3, machine: 'B'), score(50)),
+      (rec(4, machine: 'B'), score(50)),
+      (rec(5, machine: 'B'), score(50)),
+    ]);
+
+    expect([for (final s in list) '${s.machine}:${s.racks}'], [
+      'B:5',
+      'A:2',
+      'C:2',
+    ]);
   });
 
   test('機種一覧：採点できた台が無ければ平均・最高は空', () {

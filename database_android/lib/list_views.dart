@@ -71,7 +71,7 @@ class MachineSummary {
   final int? bestRack;
 }
 
-/// その日の台を機種ごとにまとめる。並びは表示する機種名の順。
+/// その日の台を機種ごとにまとめる。台数の多い順、同数なら機種名順。
 List<MachineSummary> summarizeMachines(
   Iterable<(SlotRecord, ScoreResult)> entries,
 ) {
@@ -79,9 +79,8 @@ List<MachineSummary> summarizeMachines(
   for (final entry in entries) {
     byMachine.putIfAbsent(entry.$1.machine, () => []).add(entry);
   }
-  final names = byMachine.keys.toList()..sort(compareMachineNames);
-  return [
-    for (final name in names)
+  final summaries = [
+    for (final name in byMachine.keys)
       () {
         final rows = byMachine[name]!;
         final scored = [
@@ -106,6 +105,11 @@ List<MachineSummary> summarizeMachines(
         );
       }(),
   ];
+  summaries.sort((a, b) {
+    final byCount = b.racks.compareTo(a.racks);
+    return byCount != 0 ? byCount : compareMachineNames(a.machine, b.machine);
+  });
+  return summaries;
 }
 
 /// 過去の記録の1行ぶん（ある日・ある店舗・ある機種の台）。

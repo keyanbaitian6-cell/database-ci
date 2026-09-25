@@ -7,7 +7,7 @@ with the racks that could be judged but were not chosen.
 
 Run from database/:
     .runtime/Scripts/python.exe backtest_candidates.py            # PC data
-    .runtime/Scripts/python.exe backtest_candidates.py --csv x.csv  # Android CSV
+    .runtime/Scripts/python.exe backtest_candidates.py --csv x.csv  # legacy detailed CSV
     .runtime/Scripts/python.exe backtest_candidates.py --json x.json  # backup
 
 Never changes any record. Prints a short summary (no rack-level data) and,
@@ -75,7 +75,16 @@ def load_json(path: Path):
 def load_csv(path: Path):
     rows = []
     with path.open(encoding='utf-8-sig', newline='') as f:
-        for raw in csv.DictReader(f):
+        reader = csv.DictReader(f)
+        required = {'店舗', '日付', '機種名', '台番号', '総回転数', 'BIG', 'REG'}
+        missing = required - set(reader.fieldnames or ())
+        if missing:
+            raise ValueError(
+                'このCSVはバックテストに必要な列がありません。'
+                '現在の共有用CSVでは店舗・日付・台番号を省いているため、'
+                'databaseのバックアップJSON（--json）かPCデータベースを使ってください。'
+            )
+        for raw in reader:
             store = STORE_CODES.get(raw['店舗'], raw['店舗'])
             total = str(raw.get('合計点') or '').strip()
             rows.append(dict(store=store, day=raw['日付'], machine=raw['機種名'],
@@ -245,14 +254,17 @@ def summarize(entries, trials, out=print):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--csv', type=Path, help='Android の「CSVを共有」で書き出したファイル')
+    parser.add_argument('--csv', type=Path, help='旧形式の詳細CSV（現在の7列共有CSVは非対応）')
     parser.add_argument('--json', type=Path, help='バックアップ JSON')
     parser.add_argument('--trials', type=int, default=5000)
     parser.add_argument('--details', action='store_true', help='台ごとの結果を reports/ に書く')
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parent
     if args.csv:
-        rows = load_csv(args.csv)
+        try:
+            rows = load_csv(args.csv)
+        except ValueError as error:
+            parser.error(str(error))
     elif args.json:
         rows = load_json(args.json)
     else:
