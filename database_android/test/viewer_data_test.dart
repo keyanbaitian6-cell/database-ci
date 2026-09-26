@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:database_android/models.dart';
 import 'package:database_android/scoring.dart';
 import 'package:database_android/viewer_data.dart';
+import 'package:database_android/viewer_main.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, dynamic> raw(
@@ -55,5 +56,19 @@ void main() {
 
   test('形の違うJSONは読まない', () {
     expect(() => ViewerData.parse('{"x": 1}'), throwsFormatException);
+  });
+
+  test('比較に使える前の日の数を数える（少なければ注意を出す）', () {
+    SlotRecord on(String day, String store) =>
+        SlotRecord.fromJson({...raw(1), 'day': day, 'store': store});
+    final all = [
+      on('2026-09-26', 'saiwaichou'),
+      on('2026-09-25', 'saiwaichou'),
+      on('2026-09-24', 'saiwaichou'),
+      on('2026-08-01', 'saiwaichou'), // 30日より前
+      on('2026-09-25', 'nagamachiminami'), // 別の店舗
+    ];
+    expect(historyDays(all, 'saiwaichou', '2026-09-26'), 2);
+    expect(historyDays(all, 'saiwaichou', '2026-09-24'), 0);
   });
 }

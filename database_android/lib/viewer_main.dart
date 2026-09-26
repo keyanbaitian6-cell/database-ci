@@ -29,6 +29,21 @@ class ViewerApp extends StatelessWidget {
   );
 }
 
+/// [store] の [day] より前の30日間に、記録がある日の数（採点の比較に使える日数）。
+int historyDays(List<SlotRecord> all, String store, String day) {
+  final first = DateTime.parse(day)
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
+  return {
+    for (final r in all)
+      if (r.store == store &&
+          r.day.compareTo(first) >= 0 &&
+          r.day.compareTo(day) < 0)
+        r.day,
+  }.length;
+}
+
 class ViewerHome extends StatefulWidget {
   const ViewerHome({super.key});
   @override
@@ -238,6 +253,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       _scoredFor = key;
     }
     final summaries = summarizeMachines(_digest);
+    final history = day == null ? 0 : historyDays(all, store, day);
     final shown = [
       for (final s in summaries)
         if (machineMatches(s.machine, _query.text)) s,
@@ -247,6 +263,14 @@ class _ViewerHomeState extends State<ViewerHome> {
       children: [
         if (_error != null) Notice(text: _error!),
         Notice(text: _sourceText(data)),
+        if (day != null && history < 3)
+          Notice(
+            text:
+                'このバックアップには、この日より前の記録が$history日分しかありません。'
+                '採点は前の30日分と比べるため、点数が中立（50〜60点前後）に寄っています。'
+                '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、'
+                'Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。',
+          ),
         if (_loading) const LinearProgressIndicator(),
         Row(
           children: [
