@@ -411,7 +411,21 @@ class _ViewerHomeState extends State<ViewerHome> {
                 decoration: const InputDecoration(labelText: '日付'),
                 items: [
                   for (final v in days)
-                    DropdownMenuItem(value: v, child: Text(dayWithWeekday(v))),
+                    DropdownMenuItem(
+                      value: v,
+                      child: Builder(builder: (context) {
+                        final event = data.dateEventFor(store, v);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(dayWithWeekday(v)),
+                            if (event != null)
+                              Text(event.name, style: const TextStyle(fontSize: 11, color: AppColors.appleBlue)),
+                          ],
+                        );
+                      }),
+                    ),
                 ],
                 onChanged: (v) => setState(() => _day = v),
               ),

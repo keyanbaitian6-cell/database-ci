@@ -14,6 +14,7 @@ import 'backup_service.dart';
 import 'candidate_log.dart';
 import 'csv_export_service.dart';
 import 'data_checks.dart';
+import 'date_events.dart';
 import 'database_service.dart';
 import 'graph_gate.dart';
 import 'graph_preview.dart';
@@ -141,6 +142,57 @@ class AppController extends ChangeNotifier {
 
   /// DBに残す小さな状態（前回の書き出し時刻・候補の記録に失敗した回数）。
   Map<String, String> appState = {};
+
+  /// 店舗・日付ごとのイベント名。台の採点や候補計算には使わない。
+  Map<String, DateEvent> dateEvents = {};
+
+  DateEvent? dateEventFor(String? store, String? day) =>
+      store == null || day == null ? null : dateEvents['$store|$day'];
+
+  List<DateEvent> _decodeDateEvents(String? text) {
+    if (text == null) return [];
+    try {
+      final raw = jsonDecode(text);
+      if (raw is! List) return [];
+      return [for (final item in raw) ?DateEvent.tryFromJson(item)];
+    } on Object {
+      return [];
+    }
+  }
+
+  String _encodeDateEvents(Iterable<DateEvent> events) => jsonEncode([
+    for (final event in (events.toList()..sort((a, b) => a.key.compareTo(b.key))))
+      event.toJson(),
+  ]);
+
+  Future<void> _saveDateEvents() async {
+    final json = _encodeDateEvents(dateEvents.values);
+    await database.applyChanges(ChangeSet(state: {'date_events': json}));
+    appState = {...appState, 'date_events': json};
+  }
+
+  Future<void> setDateEvent({
+    required String store,
+    required String day,
+    required String? name,
+  }) => _write(() async {
+    if (!storeNames.containsKey(store) || !isValidRecordDay(day)) {
+      throw ArgumentError('店舗または日付が不正です。');
+    }
+    final cleaned = name?.trim();
+    if (cleaned != null && (cleaned.isEmpty || cleaned.length > 60)) {
+      throw ArgumentError('イベント名は1〜60文字で入力してください。');
+    }
+    final key = '$store|$day';
+    if (cleaned == null) {
+      dateEvents.remove(key);
+    } else {
+      dateEvents[key] = DateEvent(store: store, day: day, name: cleaned);
+    }
+    await _saveDateEvents();
+    message = cleaned == null ? '$day のイベントを解除しました。' : '$day に「$cleaned」を登録しました。';
+    notifyListeners();
+  });
 
   /// 前回バックアップを書き出した時刻（まだなら null）。
   DateTime? get lastBackupExport =>
@@ -359,6 +411,15 @@ class AppController extends ChangeNotifier {
     await _loadUiState();
     GraphPreviews.instance.loader = database.loadPreview;
     appState = await database.loadState();
+    if (appState.containsKey('date_events')) {
+      dateEvents = {
+        for (final event in _decodeDateEvents(appState['date_events']))
+          event.key: event,
+      };
+    } else {
+      dateEvents = {for (final event in initialDateEvents) event.key: event};
+      await _saveDateEvents();
+    }
     // 保存期間（$retentionDays日）より古い台を、バックアップ済みのものだけ片付ける。
     final cleaned = await database.cleanupOldRecords(lastFullBackupExport);
     if (cleaned.deleted > 0) {
@@ -769,7 +830,7 @@ class AppController extends ChangeNotifier {
 
   /// バックアップを書き出す。DBから1台ずつ（画像込みで）書くので、記録が
   /// 増えてもメモリに全件を載せない。書き出した時刻を残す。
-  Future<({File file, int records, int candidates})> exportBackup({
+  Future<({File file, int records, int candidates, int events})> exportBackup({
     String? store,
     String? day,
   }) => _write(() async {
@@ -780,11 +841,18 @@ class AppController extends ChangeNotifier {
             (day == null || c.day == day))
           c,
     ];
+    final events = [
+      for (final event in dateEvents.values)
+        if ((store == null || event.store == store) &&
+            (day == null || event.day == day))
+          event,
+    ];
     final count = await database.exportBackup(
       file,
       store: store,
       day: day,
       candidates: candidates,
+      events: events,
     );
     final now = DateTime.now().toUtc().toIso8601String();
     // 全期間を書き出したときだけ、古い記録を片付けてよい印にする。
@@ -795,7 +863,7 @@ class AppController extends ChangeNotifier {
     await database.applyChanges(ChangeSet(state: state));
     appState = {...appState, ...state};
     notifyListeners();
-    return (file: file, records: count, candidates: candidates.length);
+    return (file: file, records: count, candidates: candidates.length, events: events.length);
   });
 
   /// Reads a backup file little by little and applies its safe records (new
@@ -807,6 +875,7 @@ class AppController extends ChangeNotifier {
     final result = BackupImportResult();
     final undo = <(SlotRecord, SlotRecord?)>[];
     final imported = <(String key, String day)>[];
+    var eventChanges = 0;
     await for (final chunk in backupService.readBackupFile(file)) {
       if (chunk.records.isNotEmpty) {
         final plan = planner.plan(chunk.records);
@@ -824,7 +893,18 @@ class AppController extends ChangeNotifier {
       if (chunk.candidates.isNotEmpty) {
         result.candidates += await _importCandidates(chunk.candidates);
       }
+      for (final event in chunk.events) {
+        final existing = dateEvents[event.key];
+        if (existing == null) {
+          dateEvents[event.key] = event;
+          eventChanges++;
+          result.dateEventsAdded++;
+        } else if (existing.name != event.name) {
+          result.dateEventConflicts++;
+        }
+      }
     }
+    if (eventChanges > 0) await _saveDateEvents();
     // 保存期間より古い台は一時的に取り込んだものとし、次の起動時に片付ける。
     final latest = await database.latestDay();
     if (latest != null) {
@@ -1188,7 +1268,7 @@ Future<void> _shareBackup(
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${exported.records}台・翌日候補の記録${exported.candidates}件を書き出しました'
+            '${exported.records}台・イベント${exported.events}件・翌日候補の記録${exported.candidates}件を書き出しました'
             '${failures > 0 ? '（翌日候補を記録できなかった保存が$failures回あります）' : ''}。',
           ),
         ),
@@ -1309,7 +1389,8 @@ Future<void> _importBackup(
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '新規${result.added}件、グラフ追加${result.graphOnly}件、設定情報追加${result.settingOnly}件を取り込みました'
+            '新規${result.added}件、グラフ追加${result.graphOnly}件、設定情報追加${result.settingOnly}件、イベント${result.dateEventsAdded}件を取り込みました'
+            '${result.dateEventConflicts > 0 ? 'イベント名の不一致${result.dateEventConflicts}件は既存値を維持。' : ''}'
             '（要確認${result.conflicts.length}件、対象外${result.skipped}件）。'
             '${result.temporary > 0 ? '$retentionDays日より前の${result.temporary}台は一時的な取り込みで、次にアプリを開いたときに片付けます。' : ''}',
           ),
@@ -1596,6 +1677,67 @@ class _ResultsPageState extends State<ResultsPage> {
         ),
       );
 
+  Future<void> _editDateEvent() async {
+    final selectedStore = store;
+    final selectedDay = day;
+    if (selectedStore == null || selectedDay == null) return;
+    final current = widget.controller.dateEventFor(selectedStore, selectedDay);
+    const custom = '自由記載';
+    var selected = current == null
+        ? ''
+        : dateEventOptions.contains(current.name)
+        ? current.name
+        : custom;
+    final text = TextEditingController(text: selected == custom ? current?.name : '');
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('${dayWithWeekday(selectedDay)} のイベント'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: selected,
+                decoration: const InputDecoration(labelText: 'イベント名'),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text('イベントなし')),
+                  ...dateEventOptions.map((name) => DropdownMenuItem(value: name, child: Text(name))),
+                  const DropdownMenuItem(value: custom, child: Text(custom)),
+                ],
+                onChanged: (value) => setDialogState(() => selected = value ?? ''),
+              ),
+              if (selected == custom) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: text,
+                  autofocus: current == null || !dateEventOptions.contains(current.name),
+                  maxLength: 60,
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: const InputDecoration(labelText: 'イベント名を入力'),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('キャンセル')),
+            FilledButton(
+              onPressed: selected == custom && text.text.trim().isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, selected == '' ? '' : selected == custom ? text.text.trim() : selected),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    text.dispose();
+    if (result == null || !mounted) return;
+    final name = result.isEmpty ? null : result;
+    if (name != null && name.length > 60) return;
+    await widget.controller.setDateEvent(store: selectedStore, day: selectedDay, name: name);
+  }
+
   void _jumpTo(GlobalKey key) {
     final target = key.currentContext;
     if (target == null) return;
@@ -1769,12 +1911,28 @@ class _ResultsPageState extends State<ResultsPage> {
                                 .map(
                                   (v) => DropdownMenuItem(
                                     value: v,
-                                    child: Text(dayWithWeekday(v)),
+                                    child: Builder(builder: (context) {
+                                      final event = widget.controller.dateEventFor(store, v);
+                                      return Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(dayWithWeekday(v)),
+                                          if (event != null)
+                                            Text(event.name, style: const TextStyle(fontSize: 11, color: AppColors.appleBlue)),
+                                        ],
+                                      );
+                                    }),
                                   ),
                                 )
                                 .toList(),
                             onChanged: (v) => setState(() => day = v),
                           ),
+                        ),
+                        IconButton(
+                          tooltip: 'イベントを編集',
+                          onPressed: _editDateEvent,
+                          icon: const Icon(Icons.event_note_outlined),
                         ),
                       ],
                     ),
@@ -2538,6 +2696,7 @@ class _HistoryPageState extends State<HistoryPage> {
   /// 1日ぶん：日付の見出しと、機種ごとの1行。
   Widget _day(String day, List<HistoryGroup> groups, List<SlotRecord> all) {
     final racks = groups.fold<int>(0, (sum, g) => sum + g.rows.length);
+    final event = widget.controller.dateEventFor(store, day);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Column(
@@ -2554,6 +2713,16 @@ class _HistoryPageState extends State<HistoryPage> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
+                if (event != null) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      event.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: AppColors.appleBlue, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
                 const Spacer(),
                 Text(
                   '${groups.length}機種・$racks台',

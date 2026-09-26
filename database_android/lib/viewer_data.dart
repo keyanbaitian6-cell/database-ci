@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'date_events.dart';
 import 'models.dart';
 
 /// 閲覧ページで読んだバックアップ（画像を除いた軽い形）。
@@ -10,6 +11,7 @@ import 'models.dart';
 class ViewerData {
   const ViewerData({
     required this.records,
+    this.dateEvents = const {},
     this.file,
     this.exportedAt,
     this.source,
@@ -18,6 +20,7 @@ class ViewerData {
   });
 
   final List<SlotRecord> records;
+  final Map<String, DateEvent> dateEvents;
   final String? file;
   final DateTime? exportedAt;
   final String? source;
@@ -33,6 +36,14 @@ class ViewerData {
     }
     final header = decoded['header'] is Map ? decoded['header'] as Map : {};
     final merged = <String, SlotRecord>{};
+    final dateEvents = <String, DateEvent>{};
+    final rawEvents = decoded['date_events'];
+    if (rawEvents is List) {
+      for (final item in rawEvents) {
+        final event = DateEvent.tryFromJson(item);
+        if (event != null) dateEvents[event.key] = event;
+      }
+    }
     var skipped = 0;
     for (final item in decoded['records'] as List) {
       final record = _record(item);
@@ -56,6 +67,7 @@ class ViewerData {
       });
     return ViewerData(
       records: records,
+      dateEvents: dateEvents,
       file: decoded['file'] as String?,
       exportedAt: DateTime.tryParse(header['exported_at'] as String? ?? '')
           ?.toLocal(),
@@ -65,6 +77,9 @@ class ViewerData {
       skipped: skipped,
     );
   }
+
+  DateEvent? dateEventFor(String store, String day) =>
+      dateEvents['$store|$day'];
 
   static SlotRecord? _record(Object? item) {
     if (item is! Map) return null;

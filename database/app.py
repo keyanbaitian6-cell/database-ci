@@ -8,7 +8,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 
-from core import (CONFIRMED_SETTING_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
+from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
                   summary_report, undo_last_save)
 
@@ -201,11 +201,18 @@ def main():
     day = tk.StringVar(value=settings.get('last_day', ''))
     day_combo = ttk.Combobox(identity, textvariable=day, state='readonly', width=16)
     day_combo.grid(row=1, column=1, sticky='w', padx=(0, 16))
-    ttk.Label(identity, text='機種名').grid(row=0, column=2, sticky='w')
+    ttk.Label(identity, text='イベント').grid(row=0, column=2, sticky='w')
+    event_name = tk.StringVar(value='イベントなし')
+    current_event_name = tk.StringVar(value='')
+    event_combo = ttk.Combobox(identity, textvariable=event_name,
+                               values=['イベントなし', *DATE_EVENT_OPTIONS, '自由記載…'],
+                               state='readonly', width=20)
+    event_combo.grid(row=1, column=2, sticky='w', padx=(0, 16))
+    ttk.Label(identity, text='機種名').grid(row=0, column=3, sticky='w')
     machine = tk.StringVar(value=settings.get('last_machine', MACHINE_DEFAULT))
     machine_combo = ttk.Combobox(identity, textvariable=machine, state='readonly', width=34)
-    machine_combo.grid(row=1, column=2, sticky='ew')
-    identity.columnconfigure(2, weight=1)
+    machine_combo.grid(row=1, column=3, sticky='ew')
+    identity.columnconfigure(3, weight=1)
 
 
     def current_location():
@@ -221,6 +228,47 @@ def main():
         day_combo['values'] = days
         if day.get() not in days:
             day.set(days[0] if days else '')
+        refresh_event()
+
+    def refresh_event(*_args):
+        location, selected_day = current_location(), day.get()
+        db = Store(ROOT / 'data' / 'database.sqlite3')
+        try:
+            events = db.date_events(location=location, day=selected_day)
+        finally:
+            db.close()
+        current = events[0]['name'] if events else 'イベントなし'
+        choices = ['イベントなし', *DATE_EVENT_OPTIONS, '自由記載…']
+        if current not in choices:
+            choices.append(current)
+        event_combo['values'] = choices
+        event_name.set(current)
+        current_event_name.set('' if current == 'イベントなし' else current)
+
+    def on_event_change(_event=None):
+        location, selected_day = current_location(), day.get()
+        if not location or not selected_day:
+            return
+        selected = event_name.get()
+        if selected == '自由記載…':
+            selected = simpledialog.askstring('イベント名', 'イベント名を入力してください（60文字以内）',
+                                              initialvalue=current_event_name.get(), parent=root)
+            if selected is None:
+                refresh_event()
+                return
+            selected = selected.strip()
+            if not selected or len(selected) > 60:
+                messagebox.showwarning('イベント名', 'イベント名は1〜60文字で入力してください。', parent=root)
+                refresh_event()
+                return
+        db = Store(ROOT / 'data' / 'database.sqlite3')
+        try:
+            db.set_date_event(location, selected_day, None if selected == 'イベントなし' else selected)
+            auto_backup(db, DATA_DIR)
+            history_report(db, ROOT / 'reports')
+        finally:
+            db.close()
+        refresh_event()
 
     def refresh_machines(*_args):
         location = current_location()
@@ -244,11 +292,13 @@ def main():
         remember_selection()
 
     def on_day_change(_event=None):
+        refresh_event()
         refresh_machines()
         remember_selection()
 
     store_combo.bind('<<ComboboxSelected>>', on_store_change)
     day_combo.bind('<<ComboboxSelected>>', on_day_change)
+    event_combo.bind('<<ComboboxSelected>>', on_event_change)
     machine_combo.bind('<<ComboboxSelected>>', remember_selection)
     refresh_days()
     refresh_machines()
@@ -424,9 +474,10 @@ def main():
             db.close()
         refresh_days()
         refresh_machines()
-        applied = len(plan['new']) + len(plan['graph_only']) + len(plan['link_only'])
+        applied = len(plan['new']) + len(plan['graph_only']) + len(plan['link_only']) + plan.get('events_added', 0)
         summary = (f'新規{len(plan["new"])}件、グラフ追加{len(plan["graph_only"])}件、リンク補完{len(plan["link_only"])}件を取り込みました。'
                    f'既に同じ内容{len(plan["unchanged"])}件、要確認{len(plan["conflicts"])}件、'
+                   f'イベント追加{plan.get("events_added", 0)}件、イベント名不一致{plan.get("event_conflicts", 0)}件（既存名を維持）、'
                    f'対象外{len(plan["skipped"])}件。')
         logbox.insert('end', f'バックアップを読み込みました：{summary}\n')
         logbox.see('end')

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import 'candidate_log.dart';
+import 'date_events.dart';
 import 'models.dart';
 
 const backupFormat = 'database-backup';
@@ -73,9 +74,14 @@ String backupFileName(DateTime now, {String source = 'android'}) {
 
 /// バックアップの一部。大きなファイルも少しずつ読む。
 class BackupChunk {
-  const BackupChunk({this.records = const [], this.candidates = const []});
+  const BackupChunk({
+    this.records = const [],
+    this.candidates = const [],
+    this.events = const [],
+  });
   final List<dynamic> records;
   final List<CandidateSnapshot> candidates;
+  final List<DateEvent> events;
 }
 
 /// 1行に1台の形ではない（以前のAndroid版の書き出しなど）ファイルは丸ごと
@@ -98,12 +104,15 @@ class BackupService {
     List<SlotRecord> records, {
     String source = 'android',
     List<CandidateSnapshot> candidates = const [],
+    List<DateEvent> events = const [],
   }) => {
     'format': backupFormat,
     'version': backupVersion,
     'exported_at': DateTime.now().toIso8601String(),
     'source': source,
     'records': records.map((r) => r.toJson()).toList(),
+    if (events.isNotEmpty)
+      'date_events': [for (final e in events) e.toJson()],
     // 翌日候補（仮）の記録。PC版は読まずに無視する（Android版だけが持つ）。
     if (candidates.isNotEmpty)
       'candidate_snapshots': [for (final c in candidates) c.toJson()],
@@ -120,10 +129,19 @@ class BackupService {
   List<CandidateSnapshot> candidatesFromJson(String jsonText) =>
       _candidatesOf(jsonDecode(jsonText));
 
+  List<DateEvent> eventsFromJson(String jsonText) =>
+      _eventsOf(jsonDecode(jsonText));
+
   static List<CandidateSnapshot> _candidatesOf(Object? decoded) {
     final raw = decoded is Map ? decoded['candidate_snapshots'] : null;
     if (raw is! List) return const [];
     return [for (final item in raw) ?CandidateSnapshot.tryFromJson(item)];
+  }
+
+  static List<DateEvent> _eventsOf(Object? decoded) {
+    final raw = decoded is Map ? decoded['date_events'] : null;
+    if (raw is! List) return const [];
+    return [for (final item in raw) ?DateEvent.tryFromJson(item)];
   }
 
   BackupImportPlan planFromJson(String jsonText, List<SlotRecord> existing) {
@@ -143,6 +161,7 @@ class BackupService {
   }) async* {
     final records = <dynamic>[];
     final candidates = <CandidateSnapshot>[];
+    var events = <DateEvent>[];
     var section = 'header';
     var lineLayout = false;
     final recordsStart = RegExp(r'"records"\s*:\s*\[$');
@@ -167,6 +186,7 @@ class BackupService {
             'これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。',
           );
         }
+        events = _eventsOf(header);
         lineLayout = true;
         section = 'records';
         continue;
@@ -196,7 +216,7 @@ class BackupService {
       }
     }
     if (lineLayout) {
-      yield BackupChunk(records: records, candidates: candidates);
+      yield BackupChunk(records: records, candidates: candidates, events: events);
       return;
     }
     if (await file.length() > wholeFileLimit) {
@@ -215,6 +235,8 @@ class BackupService {
       yield BackupChunk(records: all.sublist(i, end));
     }
     yield BackupChunk(candidates: _candidatesOf(decoded));
+    final parsedEvents = _eventsOf(decoded);
+    if (parsedEvents.isNotEmpty) yield BackupChunk(events: parsedEvents);
   }
 }
 
@@ -375,6 +397,8 @@ class BackupImportResult {
   int unchanged = 0;
   int skipped = 0;
   int candidates = 0;
+  int dateEventsAdded = 0;
+  int dateEventConflicts = 0;
 
   /// 保存期間より古く、一時的に取り込んだ台の数（次の起動時に片付ける）。
   int temporary = 0;

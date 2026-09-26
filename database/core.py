@@ -41,6 +41,14 @@ STORE_NAMES = {
     'saiwaichou': 'スーパーメルヘンワールド幸町',
 }
 CONFIRMED_SETTING_OPTIONS = ('4以上', '5以上', '6')
+DATE_EVENT_OPTIONS = ('超探す楽しみ', '半列', '4台構成', 'バラエティ', '華の日')
+INITIAL_DATE_EVENTS = [
+    {'store': 'nagamachiminami', 'day': f'2026-09-{day:02}', 'name': '4台構成'}
+    for day in range(14, 21)
+] + [
+    {'store': 'nagamachiminami', 'day': f'2026-09-{day:02}', 'name': '超探す楽しみ'}
+    for day in range(21, 28)
+]
 
 
 def implausible_numbers(row):
@@ -142,6 +150,17 @@ def _timestamp(value):
     return parsed if parsed.tzinfo else parsed.astimezone()
 
 
+def _valid_date_event(event):
+    if not isinstance(event, dict) or event.get('store') not in STORE_NAMES:
+        return False
+    try:
+        date.fromisoformat(event.get('day', ''))
+    except (TypeError, ValueError):
+        return False
+    name = event.get('name')
+    return isinstance(name, str) and 0 < len(name.strip()) <= 60
+
+
 class Store:
     def __init__(self, path):
         self.path = Path(path)
@@ -154,6 +173,8 @@ class Store:
                         'machine TEXT NOT NULL, taken_at TEXT NOT NULL, payload TEXT NOT NULL, '
                         'PRIMARY KEY(store, day, machine, taken_at))')
         self.db.execute('CREATE TABLE IF NOT EXISTS app_state (state_key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+        if self.state('date_events') is None:
+            self.set_date_events(INITIAL_DATE_EVENTS)
         self._merge_machine_spellings()
         self.db.commit()
 
@@ -324,6 +345,37 @@ class Store:
     def state(self, key):
         found = self.db.execute('SELECT value FROM app_state WHERE state_key=?', (key,)).fetchone()
         return found[0] if found else None
+
+    def date_events(self, location=None, day=None):
+        try:
+            events = json.loads(self.state('date_events') or '[]')
+        except (TypeError, ValueError):
+            events = []
+        return [event for event in events if _valid_date_event(event)
+                and (location is None or event['store'] == location)
+                and (day is None or event['day'] == day)]
+
+    def set_date_events(self, events):
+        valid = {}
+        for event in events:
+            if _valid_date_event(event):
+                valid[(event['store'], event['day'])] = {
+                    'store': event['store'], 'day': event['day'], 'name': event['name'].strip()}
+        payload = json.dumps(list(valid.values()), ensure_ascii=False)
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)', ('date_events', payload))
+
+    def set_date_event(self, location, day, name):
+        events = {(event['store'], event['day']): event for event in self.date_events()}
+        key = (location, day)
+        if name is None or not name.strip():
+            events.pop(key, None)
+        else:
+            event = {'store': location, 'day': day, 'name': name.strip()}
+            if not _valid_date_event(event):
+                raise ValueError('イベント名、店舗、日付を確認してください。')
+            events[key] = event
+        self.set_date_events(events.values())
 
     def _log_observation(self, row, keep_days=OBSERVATION_KEEP_DAYS):
         """Append one "what was written when" line, and drop worn-out ones.
@@ -582,6 +634,20 @@ def read_backup_file(path, allow_viewer=False):
     return found, extra if isinstance(extra, list) else []
 
 
+def read_backup_events(path):
+    """Read independent store/day event labels from a portable backup header."""
+    path = Path(path)
+    with path.open(encoding='utf-8') as source:
+        first = source.readline().strip()
+    match = _RECORDS_START.search(first)
+    if first.startswith('{') and match:
+        header = json.loads(first[:match.start()].rstrip().rstrip(',') + '}')
+    else:
+        header = json.loads(path.read_text(encoding='utf-8'))
+    raw_events = header.get('date_events', []) if isinstance(header, dict) else []
+    return [event for event in raw_events if _valid_date_event(event)] if isinstance(raw_events, list) else []
+
+
 def export_viewer(store, path, days=VIEWER_DAYS):
     """Write the light file the iPhone viewer reads: the latest ``days`` days
     (counted from the newest saved day), without graph images or curves.
@@ -591,10 +657,14 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0]
+    cutoff = ((date.fromisoformat(latest) - timedelta(days=days - 1)).isoformat()
+              if latest else None)
+    date_events = [event for event in store.date_events()
+                   if cutoff and event['day'] >= cutoff and event['day'] <= latest]
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc-viewer', days=days), ensure_ascii=False)[:-1]
-    latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0]
+                             source='pc-viewer', days=days, date_events=date_events), ensure_ascii=False)[:-1]
     count = 0
     with path.open('w', encoding='utf-8') as out:
         out.write(f'{header}, "records": [')
@@ -623,9 +693,10 @@ def export_backup(store, path, location=None, day=None):
     ``day`` narrows the export to one date (across every machine/store), for
     when a full-database export would be too many machines to review at once.
     """
+    events = store.date_events(location=location, day=day)
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc'), ensure_ascii=False)[:-1]
+                             source='pc', date_events=events), ensure_ascii=False)[:-1]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     query, values = 'SELECT payload FROM days WHERE 1=1', []
@@ -1152,6 +1223,19 @@ def import_backup(store, path):
     except (OSError, ValueError) as exc:
         raise ValueError(f'バックアップファイルを読み込めません。{exc}') from exc
     plan = plan_backup_import(store, records)
+    plan['events_added'] = 0
+    plan['event_conflicts'] = 0
+    local_events = {(event['store'], event['day']): event for event in store.date_events()}
+    for event in read_backup_events(path):
+        key = (event['store'], event['day'])
+        existing = local_events.get(key)
+        if existing is None:
+            local_events[key] = event
+            plan['events_added'] += 1
+        elif existing['name'] != event['name']:
+            plan['event_conflicts'] += 1
+    if plan['events_added']:
+        store.set_date_events(local_events.values())
     to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only']
     if to_save:
         store.save(to_save, log_candidates=False)
@@ -1363,6 +1447,8 @@ def report(store, day, machine, folder, location='nagamachiminami'):
     if location not in STORE_NAMES:
         raise ValueError('対象外の店舗です。')
     results = scored_rows(store, day, machine, location)
+    event_rows = store.date_events(location, day)
+    event_label = f' ｜ {html.escape(event_rows[0]["name"])}' if event_rows else ''
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
@@ -1513,7 +1599,7 @@ a.evidence:hover{{text-decoration:underline}}
   cursor:pointer;color:var(--ash)}}
 @media(max-width:760px){{main{{padding:24px 16px}}.kpis{{grid-template-columns:1fr 1fr}}}}
 </style></head><body><main>
-<header><h1>database 結果</h1><div class="sub">{html.escape(STORE_NAMES[location])} ｜ {html.escape(machine)} ｜ {day} ｜ 1000円46枚 {source_html}<br>
+<header><h1>database 結果</h1><div class="sub">{html.escape(STORE_NAMES[location])} ｜ {html.escape(machine)} ｜ {day}{event_label} ｜ 1000円46枚 {source_html}<br>
 独自の結果評価です。出率・差枚・設定確率を表す点数ではありません。<br>
 比較：同店・同機種の過去30日、回転数が概ね半分〜2倍（最低500G）の台。当日・未来は比較に使いません。比較件数・日数・回転数が少ないほど中間へ補正します。<br>
 当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、暫定表示と欠測幅を示します。<br>
@@ -1562,6 +1648,9 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
     machines = sorted({machine for _day, _location, machine in keys})
     groups = []
     for index, (day, location, machine) in enumerate(keys):
+        day_events = store.date_events(location, day)
+        event_html = (f'<span class="event">{html.escape(day_events[0]["name"])}</span>'
+                      if day_events else '')
         rows = scored_rows(store, day, machine, location)
         totals = [(r['rack'], r['score']['total']) for r in rows if r['score']['total'] is not None]
         average = round(sum(total for _rack, total in totals) / len(totals), 1) if totals else None
@@ -1606,7 +1695,7 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
         groups.append(
             f'<article class="record-group" data-date="{day}" data-store="{location}" data-machine="{html.escape(machine, quote=True)}" '
             f'data-count="{len(rows)}" data-scored="{len(totals)}">'
-            f'<details{open_attribute}><summary><span class="date">{year}年{month}月{day_number}日</span>'
+            f'<details{open_attribute}><summary><span class="date">{year}年{month}月{day_number}日{event_html}</span>'
             f'<span class="store">{html.escape(STORE_NAMES[location])}</span>'
             f'<span class="machine">{html.escape(machine)}</span>'
             f'<span class="summary">{" ｜ ".join(summary_bits)}</span></summary>'
@@ -1632,7 +1721,7 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
 header{{display:flex;justify-content:space-between;gap:20px;align-items:end;flex-wrap:wrap;margin-bottom:18px}}h1{{margin:0;font-size:28px}}.sub{{color:var(--muted);margin-top:5px}}
 .filters{{display:flex;gap:10px;flex-wrap:wrap}}label{{display:grid;gap:4px;font-size:12px;color:var(--muted)}}select,input{{min-width:190px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}}
 .kpis{{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin:18px 0}}.kpi{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:15px 18px}}.kpi b{{display:block;font-size:25px}}.kpi span{{color:var(--muted);font-size:12px}}
-.record-group{{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:12px 0;overflow:hidden}}summary{{cursor:pointer;display:grid;grid-template-columns:24px 135px 230px minmax(220px,1fr) auto;gap:14px;align-items:center;padding:17px 20px;list-style:none}}summary::-webkit-details-marker{{display:none}}summary:before{{content:"＋";font-weight:bold;color:var(--green)}}details[open] summary:before{{content:"－"}}.date{{font-weight:700}}.store{{color:var(--green);font-weight:700}}.machine{{font-weight:650}}.summary{{color:var(--muted);font-size:13px;text-align:right}}
+.record-group{{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:12px 0;overflow:hidden}}summary{{cursor:pointer;display:grid;grid-template-columns:24px 135px 230px minmax(220px,1fr) auto;gap:14px;align-items:center;padding:17px 20px;list-style:none}}summary::-webkit-details-marker{{display:none}}summary:before{{content:"＋";font-weight:bold;color:var(--green)}}details[open] summary:before{{content:"－"}}.date{{font-weight:700}}.event{{display:inline-block;margin-left:5px;padding:2px 7px;border-radius:99px;background:#eaf2fb;color:#075db5;font-size:11px;font-weight:600}}.store{{color:var(--green);font-weight:700}}.machine{{font-weight:650}}.summary{{color:var(--muted);font-size:13px;text-align:right}}
 .status-row{{display:flex;gap:18px;padding:0 20px 12px;color:var(--muted);font-size:13px}}.table-wrap{{overflow:auto;border-top:1px solid var(--line)}}table{{width:100%;border-collapse:collapse}}th,td{{padding:11px 15px;border-bottom:1px solid #edf0f4;text-align:right;white-space:nowrap}}th{{background:var(--navy);color:white;font-size:12px}}td:last-child,th:last-child{{text-align:left}}.badge{{display:inline-block;border-radius:99px;padding:3px 9px;font-size:12px;font-weight:700}}.badge.reference{{background:#d4efe5;color:#086451}}.badge.provisional{{background:#fff0be;color:#775000}}.badge.pending{{background:#e9edf2;color:#596675}}a{{color:#075db5}}.empty{{background:white;padding:30px;border-radius:10px;color:var(--muted)}}footer{{color:var(--muted);font-size:12px;margin-top:22px}}
 .rack-btn{{border:none;background:none;color:#075db5;font:inherit;font-weight:700;cursor:pointer;padding:0;text-decoration:underline}}
 .modal{{position:fixed;inset:0;background:rgba(20,28,40,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}}
@@ -1681,6 +1770,11 @@ def summary_report(store, folder, day, top=5):
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     sections = []
+    day_event_labels = [f'{STORE_NAMES[location]}：{events[0]["name"]}'
+                        for location in STORE_NAMES
+                        if (events := store.date_events(location, day))]
+    event_subtitle = ('<p class="sub">' + ' ／ '.join(map(html.escape, day_event_labels)) + '</p>'
+                      if day_event_labels else '')
     for location, label in STORE_NAMES.items():
         entries = []
         for machine in store.machines_for(location, day):
@@ -1818,7 +1912,7 @@ tr.pick{{cursor:pointer}} tr.pick:hover{{background:#f4f8fb}}
 .modal-card{{background:#fff;border-radius:8px;padding:24px;max-width:520px;width:100%;max-height:88vh;overflow:auto;position:relative;border:1px solid var(--hairline)}}
 .modal-card h3{{margin:0 0 6px;font-size:18px;font-weight:600}}
 .modal-close{{position:absolute;top:14px;right:16px;border:none;background:none;font-size:20px;cursor:pointer;color:var(--ash)}}
-</style></head><body><main><h1>{html.escape(day)} のまとめ</h1>
+</style></head><body><main><h1>{html.escape(day)} のまとめ</h1>{event_subtitle}
 <p class="sub">実績点の上位{top}台（機種横断の記録表示で、狙い台順位ではありません）。台をクリックするとグラフと当たり回数を表示します。独自の結果評価であり、出率・設定を表すものではありません。</p>
 {''.join(sections)}</main>
 <div id="detail-modal" class="modal" hidden><div class="modal-card"><button type="button" class="modal-close" onclick="closeDetail()" aria-label="閉じる">×</button><h3 id="detail-title"></h3><div id="detail-body"></div></div></div>

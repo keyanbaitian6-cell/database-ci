@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 
 import 'backup_service.dart';
 import 'candidate_log.dart';
+import 'date_events.dart';
 import 'models.dart';
 
 /// DBの版。4でグラフの画像・曲線を別の列（graph_blob）へ分け、ゴミ箱を足した。
@@ -708,6 +709,7 @@ class DatabaseService {
     String? store,
     String? day,
     List<CandidateSnapshot> candidates = const [],
+    List<DateEvent> events = const [],
     String source = 'android',
   }) async {
     final db = await database;
@@ -724,6 +726,8 @@ class DatabaseService {
         'version': backupVersion,
         'exported_at': DateTime.now().toIso8601String(),
         'source': source,
+        if (events.isNotEmpty)
+          'date_events': [for (final event in events) event.toJson()],
       });
       sink.write('${header.substring(0, header.length - 1)}, "records": [');
       var last = 0;
