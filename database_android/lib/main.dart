@@ -94,6 +94,29 @@ void _setUpLauncherShortcuts(AppController controller) {
   ]);
 }
 
+/// 全期間のバックアップを促す注意。前回から3日以上たったか、まだ一度も
+/// 書き出していなければ出す（記録が無ければ出さない）。
+String? backupReminderText(
+  DateTime? lastFull,
+  bool hasRecords, [
+  DateTime? now,
+]) {
+  if (!hasRecords) return null;
+  now ??= DateTime.now();
+  if (lastFull == null) {
+    return 'まだ全期間のバックアップを書き出していません。上のバーのバックアップから「すべての店舗・すべての日付」で書き出してください。'
+        '$retentionDays日より前の記録は、書き出した後でないと端末から片付けません。';
+  }
+  final days = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).difference(DateTime(lastFull.year, lastFull.month, lastFull.day)).inDays;
+  if (days < 3) return null;
+  return '前回の全期間バックアップから$days日たっています（${lastFull.month}/${lastFull.day}）。'
+      '「すべての店舗・すべての日付」で書き出してください。';
+}
+
 /// 表を取り込み直したとき、保存済みの台と数値が変わったか。変わった台の
 /// グラフは、その数値と合わないので外す。
 bool tableNumbersChanged(SlotRecord previous, EditableRow row) =>
@@ -123,6 +146,23 @@ class AppController extends ChangeNotifier {
   /// 前回バックアップを書き出した時刻（まだなら null）。
   DateTime? get lastBackupExport =>
       DateTime.tryParse(appState['last_backup_export'] ?? '')?.toLocal();
+
+  /// 前回「すべての店舗・すべての日付」のバックアップを書き出した時刻。
+  /// 古い記録を端末から片付けてよいかは、これで決める。
+  DateTime? get lastFullBackupExport =>
+      DateTime.tryParse(appState['last_full_backup_export'] ?? '')?.toLocal();
+
+  /// 起動時に古い記録を片付けたときの知らせ（閉じるまで出す）。
+  String? retentionNotice;
+
+  void dismissRetentionNotice() {
+    retentionNotice = null;
+    notifyListeners();
+  }
+
+  /// 全期間のバックアップを促す注意（出さないときは null）。
+  String? backupReminder([DateTime? now]) =>
+      backupReminderText(lastFullBackupExport, records.isNotEmpty, now);
 
   /// 変わった翌日候補を求める関数（テストで失敗を差し込むため差し替えられる）。
   List<CandidateSnapshot> Function({
@@ -319,8 +359,16 @@ class AppController extends ChangeNotifier {
   Future<void> initialize() async {
     await _loadUiState();
     GraphPreviews.instance.loader = database.loadPreview;
-    await _loadNormalizedRecords();
     appState = await database.loadState();
+    // 保存期間（$retentionDays日）より古い台を、バックアップ済みのものだけ片付ける。
+    final cleaned = await database.cleanupOldRecords(lastFullBackupExport);
+    if (cleaned.deleted > 0) {
+      final cutoff = cleaned.cutoff!;
+      retentionNotice =
+          '${cutoff.substring(5).replaceAll('-', '/')}より前の${cleaned.deleted}台を端末から片付けました'
+          '（バックアップには残っています。必要なときはバックアップを読み込んでください）。';
+    }
+    await _loadNormalizedRecords();
     await database.purgeTrash(
       DateTime.now().subtract(const Duration(days: trashDays)),
     );
@@ -740,8 +788,13 @@ class AppController extends ChangeNotifier {
       candidates: candidates,
     );
     final now = DateTime.now().toUtc().toIso8601String();
-    await database.applyChanges(ChangeSet(state: {'last_backup_export': now}));
-    appState = {...appState, 'last_backup_export': now};
+    // 全期間を書き出したときだけ、古い記録を片付けてよい印にする。
+    final state = {
+      'last_backup_export': now,
+      if (store == null && day == null) 'last_full_backup_export': now,
+    };
+    await database.applyChanges(ChangeSet(state: state));
+    appState = {...appState, ...state};
     notifyListeners();
     return (file: file, records: count, candidates: candidates.length);
   });
@@ -754,6 +807,7 @@ class AppController extends ChangeNotifier {
     final planner = BackupPlanner(records);
     final result = BackupImportResult();
     final undo = <(SlotRecord, SlotRecord?)>[];
+    final imported = <(String key, String day)>[];
     await for (final chunk in backupService.readBackupFile(file)) {
       if (chunk.records.isNotEmpty) {
         final plan = planner.plan(chunk.records);
@@ -765,11 +819,23 @@ class AppController extends ChangeNotifier {
           ]);
           await _commit(upserts: toSave);
           undo.addAll([for (final r in toSave) (r.lightened(), before[r.key])]);
+          imported.addAll([for (final r in toSave) (r.key, r.day)]);
         }
       }
       if (chunk.candidates.isNotEmpty) {
         result.candidates += await _importCandidates(chunk.candidates);
       }
+    }
+    // 保存期間より古い台は一時的に取り込んだものとし、次の起動時に片付ける。
+    final latest = await database.latestDay();
+    if (latest != null) {
+      final cutoff = retentionCutoff(latest);
+      final old = [
+        for (final (key, day) in imported)
+          if (day.compareTo(cutoff) < 0) key,
+      ];
+      if (old.isNotEmpty) await database.markTemporary(old);
+      result.temporary = old.length;
     }
     if (undo.isNotEmpty) {
       _undoLabel = 'バックアップの取り込み';
@@ -1002,7 +1068,7 @@ class AppShell extends StatelessWidget {
               PopupMenuItem(
                 value: 'export',
                 child: Text(
-                  'バックアップを共有（書き出し）\n${_lastExportText(controller.lastBackupExport)}',
+                  'バックアップを共有（書き出し）\n全期間：${_lastExportText(controller.lastFullBackupExport)}',
                 ),
               ),
               const PopupMenuItem(value: 'import', child: Text('バックアップを読み込む')),
@@ -1014,7 +1080,14 @@ class AppShell extends StatelessWidget {
           ),
         ],
       ),
-      body: SafeArea(child: pages[controller.tab]),
+      body: SafeArea(
+        child: Column(
+          children: [
+            if (controller.tab == 0) _RetentionNotices(controller: controller),
+            Expanded(child: pages[controller.tab]),
+          ],
+        ),
+      ),
       // 下のタブの上にも、上のバーと同じ細い線を引く（影は使わない）。
       bottomNavigationBar: DecoratedBox(
         decoration: const BoxDecoration(
@@ -1238,7 +1311,8 @@ Future<void> _importBackup(
         SnackBar(
           content: Text(
             '新規${result.added}件、グラフ追加${result.graphOnly}件、設定情報追加${result.settingOnly}件を取り込みました'
-            '（要確認${result.conflicts.length}件、対象外${result.skipped}件）。',
+            '（要確認${result.conflicts.length}件、対象外${result.skipped}件）。'
+            '${result.temporary > 0 ? '$retentionDays日より前の${result.temporary}台は一時的な取り込みで、次にアプリを開いたときに片付けます。' : ''}',
           ),
         ),
       );
@@ -3696,6 +3770,47 @@ class MetricCard extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// 結果画面の上に出す、バックアップの注意と古い記録を片付けた知らせ。
+class _RetentionNotices extends StatelessWidget {
+  const _RetentionNotices({required this.controller});
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final reminder = controller.backupReminder();
+    final cleaned = controller.retentionNotice;
+    if (reminder == null && cleaned == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (reminder != null) ...[
+            Notice(text: reminder),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => _shareBackup(context, controller),
+                child: const Text('バックアップを書き出す'),
+              ),
+            ),
+          ],
+          if (cleaned != null) ...[
+            Notice(text: cleaned),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: controller.dismissRetentionNotice,
+                child: const Text('閉じる'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class Notice extends StatelessWidget {

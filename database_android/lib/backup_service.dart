@@ -370,6 +370,9 @@ class BackupImportResult {
   int unchanged = 0;
   int skipped = 0;
   int candidates = 0;
+
+  /// 保存期間より古く、一時的に取り込んだ台の数（次の起動時に片付ける）。
+  int temporary = 0;
   final conflicts = <BackupConflict>[];
 
   void add(BackupImportPlan plan) {

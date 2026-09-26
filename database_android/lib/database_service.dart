@@ -11,7 +11,20 @@ import 'candidate_log.dart';
 import 'models.dart';
 
 /// DBの版。4でグラフの画像・曲線を別の列（graph_blob）へ分け、ゴミ箱を足した。
-const databaseVersion = 4;
+/// 5で、バックアップから一時的に取り込んだ古い記録の印（temporary_records）を足した。
+const databaseVersion = 5;
+
+/// 端末に残す日数（最新の取り込み日から数えて）。採点は前の30日分と比べる
+/// ので、直近30日分はPC版と同じ点数になる。これより古い記録は、全期間の
+/// バックアップを書き出した後で端末から片付ける（PC版とバックアップには残る）。
+const retentionDays = 60;
+
+/// [latestDay] から数えて、端末に残す最初の日（これより前は片付けの対象）。
+String retentionCutoff(String latestDay) =>
+    DateTime.parse(latestDay)
+        .subtract(const Duration(days: retentionDays - 1))
+        .toIso8601String()
+        .substring(0, 10);
 
 /// ゴミ箱に残す日数。これより古いものは起動時に消す。
 const trashDays = 7;
@@ -185,6 +198,7 @@ class DatabaseService {
     ''');
     await _createCandidateSnapshots(db);
     await _createTrash(db);
+    await _createTemporaryRecords(db);
   }
 
   static Future<void> _upgrade(Database db, int oldVersion, int _) async {
@@ -207,6 +221,78 @@ class DatabaseService {
       await _createTrash(db);
       await _moveGraphsOut(db);
     }
+    if (oldVersion < 5) await _createTemporaryRecords(db);
+  }
+
+  /// バックアップから一時的に取り込んだ、保存期間より古い台。次の起動時に消す。
+  static Future<void> _createTemporaryRecords(Database db) => db.execute(
+    'CREATE TABLE IF NOT EXISTS temporary_records (record_key TEXT PRIMARY KEY)',
+  );
+
+  /// 一時的に取り込んだ台として印を付ける（次の起動時に片付ける）。
+  Future<void> markTemporary(Iterable<String> keys) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final key in keys) {
+      batch.insert('temporary_records', {
+        'record_key': key,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// 最新の取り込み日（記録が無ければ null）。
+  Future<String?> latestDay() async {
+    final db = await database;
+    return (await db.rawQuery('SELECT MAX(day) AS d FROM records')).first['d']
+        as String?;
+  }
+
+  /// 保存期間より古い台を片付ける。消すのは、[lastFullBackup]（全期間の
+  /// バックアップを書き出した時刻）より前に保存したもの（＝バックアップに
+  /// 入っているもの）と、一時的に取り込んだもの。それ以外は残す。
+  /// 画像・曲線ごと消し、ゴミ箱には入れない（バックアップにあるため）。
+  Future<({int deleted, int kept, String? cutoff})> cleanupOldRecords(
+    DateTime? lastFullBackup,
+  ) async {
+    final db = await database;
+    final latest = await latestDay();
+    final temporary = {
+      for (final row in await db.query('temporary_records'))
+        row['record_key'] as String,
+    };
+    if (latest == null) {
+      if (temporary.isNotEmpty) await db.delete('temporary_records');
+      return (deleted: 0, kept: 0, cutoff: null);
+    }
+    final cutoff = retentionCutoff(latest);
+    final rows = await db.rawQuery(
+      'SELECT record_key, updated_at FROM records WHERE day < ?',
+      [cutoff],
+    );
+    final doomed = <String>[];
+    for (final row in rows) {
+      final key = row['record_key'] as String;
+      final saved = DateTime.tryParse(row['updated_at'] as String? ?? '');
+      final backedUp =
+          lastFullBackup != null &&
+          saved != null &&
+          saved.isBefore(lastFullBackup);
+      if (temporary.contains(key) || backedUp) doomed.add(key);
+    }
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final key in doomed) {
+        batch.delete('records', where: 'record_key = ?', whereArgs: [key]);
+      }
+      batch.delete('temporary_records');
+      await batch.commit(noResult: true);
+    });
+    return (
+      deleted: doomed.length,
+      kept: rows.length - doomed.length,
+      cutoff: cutoff,
+    );
   }
 
   /// 翌日候補（仮）の記録（candidate_log.dart）。同じ機種・日付・時刻は1件だけ。

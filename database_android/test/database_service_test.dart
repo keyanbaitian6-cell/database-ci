@@ -256,4 +256,74 @@ void main() {
     expect(await db.loadTrash(), isEmpty);
     await db.close();
   });
+
+  SlotRecord onDay(String day, int rack) =>
+      rec(rack)
+          .copyWith(day: day, firstCapturedAt: '${day}T23:00:00.000+09:00');
+
+  test('60日より古い台は、全期間バックアップの後に保存済みだったものだけ片付ける', () async {
+    final db = realDatabase(await newDatabasePath());
+    await db.applyChanges(
+      ChangeSet(
+        upserts: [
+          onDay('2026-11-30', 1), // 最新の日
+          onDay('2026-10-02', 2), // 残す最初の日（60日目）
+          onDay('2026-10-01', 3), // 61日前：片付けの対象
+        ],
+      ),
+    );
+    // まだ書き出していなければ、何も消さない。
+    var result = await db.cleanupOldRecords(null);
+    expect((result.deleted, result.kept, result.cutoff), (0, 1, '2026-10-02'));
+    // 書き出しの後に保存し直した台は、まだバックアップに入っていないので残す。
+    result = await db.cleanupOldRecords(
+      DateTime.now().subtract(const Duration(days: 1)),
+    );
+    expect(result.deleted, 0);
+    // 書き出しより前に保存した台だけ消える。
+    result = await db.cleanupOldRecords(
+      DateTime.now().add(const Duration(minutes: 1)),
+    );
+    expect(result.deleted, 1);
+    expect([for (final r in await db.loadAll()) r.rack]..sort(), [1, 2]);
+    await db.close();
+  });
+
+  test('保存期間より古い台をバックアップから読み込むと、次の起動時に片付ける', () async {
+    final from = realDatabase(await newDatabasePath());
+    await from.applyChanges(
+      ChangeSet(upserts: [onDay('2026-08-01', 7), onDay('2026-11-29', 8)]),
+    );
+    final file = await tempFile('b.json');
+    await from.exportBackup(file);
+
+    final path = await newDatabasePath();
+    var db = realDatabase(path);
+    await db.applyChanges(ChangeSet(upserts: [onDay('2026-11-30', 1)]));
+    var app = AppController(database: db);
+    await app.initialize();
+    final result = await app.importBackup(file);
+    expect(result.temporary, 1);
+    expect(app.records.map((r) => r.rack), containsAll([1, 7, 8]));
+    await db.close();
+
+    db = realDatabase(path); // アプリを開き直す
+    app = AppController(database: db);
+    await app.initialize();
+    expect([for (final r in app.records) r.rack]..sort(), [1, 8]);
+    expect(app.retentionNotice, contains('1台を端末から片付けました'));
+    await from.close();
+    await db.close();
+  });
+
+  test('全期間バックアップを3日書き出していないと注意を出す', () {
+    final now = DateTime(2026, 9, 30, 12);
+    expect(backupReminderText(null, false, now), isNull); // 記録が無い
+    expect(backupReminderText(null, true, now), contains('まだ全期間'));
+    expect(backupReminderText(DateTime(2026, 9, 28, 23), true, now), isNull);
+    expect(
+      backupReminderText(DateTime(2026, 9, 27, 1), true, now),
+      contains('3日'),
+    );
+  });
 }
