@@ -12,7 +12,7 @@ from pathlib import Path
 
 from setting_estimate import candidate_label, estimate_setting
 
-VERSION = '2026-09-25-v10'
+VERSION = '2026-09-27-v11'
 MIN_REFERENCE_ROWS = 20  # Initial operational default, not statistical confidence.
 OBSERVATION_KEEP_DAYS = 30  # How long the write log keeps its lines (it is never read by the app).
 HISTORY_REPORT_DAYS = 14    # How many of the most recent dates the history page draws.
@@ -36,6 +36,15 @@ STORE_NAMES = {
     'saiwaichou': 'スーパーメルヘンワールド幸町',
 }
 CONFIRMED_SETTING_OPTIONS = ('4以上', '5以上', '6')
+
+
+def implausible_numbers(row):
+    """The site's placeholder for racks under maintenance (games 88888888,
+    BB/RB 888, max hold 88888888) or numbers a day cannot produce. Such rows are
+    never scored, compared, used for candidates or setting estimates (same rule
+    as Android's hasImplausibleNumbers)."""
+    return ((row.get('games') or 0) > 20000 or (row.get('bb') or 0) > 500
+            or (row.get('rb') or 0) > 500 or (row.get('max_hold') or 0) > 100000)
 
 
 def spin_score(g):
@@ -991,7 +1000,7 @@ def next_day_index(store, row, max_days=10, shrink_days=5):
     all_rows = [r for r in store._machine_rows(row['machine'], row['store'])
                 if first <= r['day'] <= row['day'] and r.get('games', 0) >= 500
                 and r.get('bb') is not None and r.get('rb') is not None
-                and r['bb'] >= 0 and r['rb'] >= 0]
+                and r['bb'] >= 0 and r['rb'] >= 0 and not implausible_numbers(r)]
     days = sorted({r['day'] for r in all_rows if int(r['rack']) == int(row['rack'])}, reverse=True)[:max_days]
     gaps = []
     for day in days:
@@ -1123,7 +1132,8 @@ def comparison_pool(row, reference):
     return [r for r in reference
             if r.get('store') == row.get('store') and r.get('machine') == row.get('machine')
             and first <= r['day'] < row['day']
-            and max(500, target / 2) <= r.get('games', 0) <= target * 2]
+            and max(500, target / 2) <= r.get('games', 0) <= target * 2
+            and not implausible_numbers(r)]
 
 
 def adjusted_rank(value, rows, field, maximum, games):
@@ -1167,6 +1177,9 @@ def score(row, reference, provisional_reference=None):
              coverage=0, missing_low=None, missing_high=None, status='pending', reasons=[])
     if s['games'] is None:
         s['reasons'].append('未稼働・回転数なし')
+        return s
+    if implausible_numbers(row):
+        s['reasons'].append('サイトの数値が異常なため採点なし（88888888などの表示）')
         return s
     if row['games'] <= MIN_SCORED_GAMES:
         s['reasons'].append(f'{MIN_SCORED_GAMES}G以下のため採点なし')

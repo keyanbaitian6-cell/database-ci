@@ -103,7 +103,8 @@ String capturedNote(SlotRecord record) {
             r.day.compareTo(record.day) <= 0 &&
             r.games >= 500 &&
             r.bb >= 0 &&
-            r.rb >= 0,
+            r.rb >= 0 &&
+            !hasImplausibleNumbers(r),
       )
       .toList();
   final days =

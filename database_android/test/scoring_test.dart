@@ -41,6 +41,20 @@ void main() {
     }
     expect(spinScore(0), isNull);
   });
+  test('サイトの点検中の印（88888888・888）の台は採点せず、比較にも使わない', () {
+    final placeholder = sample(games: 88888888, bb: 888, rb: 888, maxHold: 88888888);
+    final score = scoreRecord(placeholder, refs());
+    expect(score.total, isNull);
+    expect(score.reasons.single, contains('サイトの数値が異常'));
+    // 他の台の比較相手にも入らない。
+    final pool = comparisonPool(sample(), [
+      ...refs(),
+      placeholder.copyWith(day: '2026-09-19', rack: 99),
+    ]);
+    expect(pool.any((r) => r.rack == 99), isFalse);
+    expect(hasImplausibleNumbers(placeholder), isTrue);
+    expect(hasImplausibleNumbers(sample(games: 12000, bb: 80, rb: 40, maxHold: 19008)), isFalse);
+  });
   test('当日500G以下の台は採点しない', () {
     for (final g in [1, 499, 500]) {
       final score = scoreRecord(sample(games: g), refs());

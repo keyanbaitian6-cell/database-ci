@@ -56,6 +56,9 @@ def estimate_setting(row):
     games, bb, rb = (row.get(k) for k in ('games', 'bb', 'rb'))
     if any(type(value) is not int for value in (games, bb, rb)) or games <= 0 or min(bb, rb) < 0 or bb + rb > games:
         return None
+    # サイトの点検中などの印（88888888・888）は推測しない（core.implausible_numbers と同じ基準）。
+    if games > 20000 or bb > 500 or rb > 500 or (row.get('max_hold') or 0) > 100000:
+        return None
     label, source, specs = SPECS[key]
     likelihoods = []
     for setting, bb_den, rb_den in specs:

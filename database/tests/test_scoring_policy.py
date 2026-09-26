@@ -74,6 +74,19 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(score(sample(games=0), references())['total'])
         self.assertIsNone(score(sample(bb=-1), references())['total'])
 
+    def test_site_placeholder_numbers_are_not_scored_or_compared(self):
+        from core import comparison_pool, implausible_numbers
+        from setting_estimate import estimate_setting
+        placeholder = sample(games=88888888, bb=888, rb=888, max_hold=88888888)
+        s = score(placeholder, references())
+        self.assertIsNone(s['total'])
+        self.assertIn('サイトの数値が異常', s['reasons'][0])
+        pool = comparison_pool(sample(), references() + [dict(placeholder, day='2026-09-19', rack=99)])
+        self.assertFalse(any(r['rack'] == 99 for r in pool))
+        self.assertTrue(implausible_numbers(placeholder))
+        self.assertFalse(implausible_numbers(sample(games=12000, bb=80, rb=40, max_hold=19008)))
+        self.assertIsNone(estimate_setting(dict(placeholder, machine='マイジャグラーⅤ')))
+
     def test_500_games_or_less_is_not_scored(self):
         for games in (1, 499, 500):
             s = score(sample(games=games), references())

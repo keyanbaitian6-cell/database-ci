@@ -200,7 +200,12 @@ class RackAverages {
   final double? score;
 }
 
-RackAverages rackAverages(List<(SlotRecord, ScoreResult)> entries) {
+RackAverages rackAverages(List<(SlotRecord, ScoreResult)> all) {
+  // サイトの数値が異常な台（88888888など）は平均に入れない。
+  final entries = [
+    for (final e in all)
+      if (!hasImplausibleNumbers(e.$1)) e,
+  ];
   final n = entries.isEmpty ? 1 : entries.length;
   var games = 0, bb = 0, rb = 0;
   for (final (r, _) in entries) {

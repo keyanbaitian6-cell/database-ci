@@ -3,7 +3,7 @@ import 'dart:math';
 import 'models.dart';
 
 // Policy, not a fitted setting/win probability model. See SCORING_POLICY.md.
-const scoringVersion = '2026-09-25-v10';
+const scoringVersion = '2026-09-27-v11';
 const minimumReferenceRows = 20;
 const shrinkGames = 1500.0;
 const shrinkDays = 3.0;
@@ -66,7 +66,8 @@ List<SlotRecord> comparisonPool(SlotRecord row, List<SlotRecord> all) {
             r.day.compareTo(first) >= 0 &&
             r.day.compareTo(row.day) < 0 &&
             r.games >= lowest &&
-            r.games <= highest,
+            r.games <= highest &&
+            !hasImplausibleNumbers(r),
       )
       .toList();
 }
@@ -110,6 +111,14 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
       provisional: true,
       referenceCount: 0,
       reasons: [row.games <= 0 ? '未稼働・回転数なし' : '負の数値を確認してください'],
+    );
+  }
+  if (hasImplausibleNumbers(row)) {
+    return ScoreResult(
+      games: 0,
+      provisional: true,
+      referenceCount: 0,
+      reasons: ['サイトの数値が異常なため採点なし（88888888などの表示）'],
     );
   }
   if (row.games <= minScoredGames) {

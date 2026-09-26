@@ -196,6 +196,15 @@ class _ViewerHomeState extends State<ViewerHome> {
             'database-backup-….json を選びます。読み込んだ内容はこの端末の中だけで'
             '使い、どこにも送りません。次からは選び直さなくても開けます。',
       ),
+      const SizedBox(height: 12),
+      const Notice(
+        text:
+            'Googleドライブが出ないとき：Googleドライブのアプリを入れてログインし、'
+            '「ファイル」アプリの「ブラウズ」→右上の「…」→「編集」でGoogleドライブを'
+            'オンにします。それでも開けないときは、Googleドライブのアプリでファイルの'
+            '「…」→「アプリで開く」→「"ファイル"に保存」でiCloud Driveに保存し、'
+            'そこから選んでください。',
+      ),
       const SizedBox(height: 16),
       Center(
         child: FilledButton.icon(

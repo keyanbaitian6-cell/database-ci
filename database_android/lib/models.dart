@@ -18,6 +18,15 @@ const confirmedSettingOptions = <String>['4以上', '5以上', '6'];
 String normalizeMachineName(String value) =>
     value.replaceAll('+', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 
+/// サイトが点検中などの台に出す印（G数88888888・BB/RB 888・最大持玉88888888）や、
+/// 1日ではあり得ない数値の台。採点・比較・翌日候補・設定推測・平均のどれにも
+/// 使わない（PC版 core.py の implausible_numbers と同じ基準）。
+bool hasImplausibleNumbers(SlotRecord record) =>
+    record.games > 20000 ||
+    record.bb > 500 ||
+    record.rb > 500 ||
+    (record.maxHold ?? 0) > 100000;
+
 /// [time] as ISO 8601 with its UTC offset, e.g. `2026-09-26T23:05:12.345+09:00`.
 ///
 /// `DateTime.toIso8601String()` leaves the offset out for local times, so a

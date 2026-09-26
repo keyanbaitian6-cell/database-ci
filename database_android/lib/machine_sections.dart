@@ -336,22 +336,36 @@ class MachineDataTable extends StatelessWidget {
         ),
         for (var i = 0; i < entries.length; i++)
           row(i, [
-            for (final (index, child) in [
-              _text('${entries[i].$1.games}'),
-              _text('${entries[i].$1.bb}'),
-              _text('${entries[i].$1.rb}'),
-              _text(
-                hitRate(
-                  entries[i].$1.games,
-                  entries[i].$1.bb + entries[i].$1.rb,
-                ),
-              ),
-              _text(hitRate(entries[i].$1.games, entries[i].$1.bb)),
-              _text(hitRate(entries[i].$1.games, entries[i].$1.rb)),
-              _text('${entries[i].$1.maxHold ?? '—'}'),
-              _setting(entries[i].$1),
-              _score(entries[i].$2),
-            ].indexed)
+            for (final (index, child)
+                in (hasImplausibleNumbers(entries[i].$1)
+                        // サイトの数値が異常な台（88888888など）は、数字を出さない。
+                        ? [
+                            _text('異常'),
+                            for (var k = 0; k < 6; k++) _text('—'),
+                            _setting(entries[i].$1),
+                            _score(entries[i].$2),
+                          ]
+                        : [
+                            _text('${entries[i].$1.games}'),
+                            _text('${entries[i].$1.bb}'),
+                            _text('${entries[i].$1.rb}'),
+                            _text(
+                              hitRate(
+                                entries[i].$1.games,
+                                entries[i].$1.bb + entries[i].$1.rb,
+                              ),
+                            ),
+                            _text(
+                              hitRate(entries[i].$1.games, entries[i].$1.bb),
+                            ),
+                            _text(
+                              hitRate(entries[i].$1.games, entries[i].$1.rb),
+                            ),
+                            _text('${entries[i].$1.maxHold ?? '—'}'),
+                            _setting(entries[i].$1),
+                            _score(entries[i].$2),
+                          ])
+                    .indexed)
               _cell(child, width: _columns[index].$2, color: stripe(i)),
           ]),
         Row(
@@ -575,10 +589,17 @@ class _GraphCard extends StatelessWidget {
             ),
             Row(
               children: [
-                stat('G数', '${record.games}', 5),
-                stat('BB', '${record.bb}', 3),
-                stat('RB', '${record.rb}', 3),
-                stat('合成', hitRate(record.games, record.bb + record.rb), 6),
+                if (hasImplausibleNumbers(record)) ...[
+                  stat('G数', '異常', 5),
+                  stat('BB', '—', 3),
+                  stat('RB', '—', 3),
+                  stat('合成', '—', 6),
+                ] else ...[
+                  stat('G数', '${record.games}', 5),
+                  stat('BB', '${record.bb}', 3),
+                  stat('RB', '${record.rb}', 3),
+                  stat('合成', hitRate(record.games, record.bb + record.rb), 6),
+                ],
               ],
             ),
             if (setting != null)

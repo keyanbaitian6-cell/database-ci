@@ -151,6 +151,7 @@ class SettingEstimate {
 }
 
 SettingEstimate? estimateSetting(SlotRecord row) {
+  if (hasImplausibleNumbers(row)) return null;
   final key = settingModelForMachine(row.machine);
   final spec = key == null ? null : _specs[key];
   if (spec == null ||
