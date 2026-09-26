@@ -54,6 +54,43 @@ def is_allowed_url(url):
     return location in STORE_NAMES
 
 
+def page_mismatch(current_url, payload):
+    """Why the extracted data disagrees with the page actually shown, or None.
+
+    The injected script's store/date/rack come from the page itself, so they
+    are checked against the window's real URL here. When the URL (or its
+    date/rack) is unknown there is nothing to check, and capture is allowed.
+    """
+    from urllib.parse import parse_qs, urlparse
+    if not current_url or not isinstance(payload, dict):
+        return None
+    parsed = urlparse(current_url)
+    parts = [p for p in parsed.path.split('/') if p]
+    url_store = parts[0] if parts else None
+    if url_store not in STORE_NAMES:
+        return '対象店舗のページではありません。'
+    if payload.get('store') and payload['store'] != url_store:
+        return 'ページの店舗と読み取った店舗が違います。保存しませんでした。'
+    query, fragment = parse_qs(parsed.query), parse_qs(parsed.fragment)
+    url_day = (query.get('target_date') or fragment.get('database_day') or [None])[0]
+    url_day = url_day.replace('/', '-') if url_day else None
+    try:
+        day = resolve_day(payload)
+    except ValueError:
+        day = None
+    try:
+        valid = bool(url_day) and date.fromisoformat(url_day).isoformat() == url_day
+    except ValueError:
+        valid = False
+    if valid and day and day != url_day:
+        return f'ページの日付（{url_day}）と読み取った日付（{day}）が違います。保存しませんでした。'
+    url_rack = (query.get('rack_no') or [None])[0]
+    rack = payload.get('rack')
+    if url_rack and url_rack.isdigit() and rack is not None and str(rack) != url_rack:
+        return f'ページの台番号（{url_rack}）と読み取った台番号（{rack}）が違います。保存しませんでした。'
+    return None
+
+
 def resolve_day(payload):
     """A URL's target_date always wins over any on-page displayed date."""
     target = payload.get('target_date')
@@ -944,12 +981,28 @@ class _Bridge:
         self.db_path = str(db_path)
         self.reports_folder = str(reports_folder)
         self.script_path = str(script_path)
+        self.window = None  # set once the window exists (for the real URL)
+
+    def _checked(self, raw):
+        """Replace the data with an error when it disagrees with the real page."""
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            return raw
+        if not isinstance(payload, dict) or payload.get('error') or self.window is None:
+            return raw
+        try:
+            current = self.window.get_current_url()
+        except Exception:  # noqa: BLE001 - no URL means nothing to check
+            return raw
+        reason = page_mismatch(current, payload)
+        return json.dumps({'error': reason}, ensure_ascii=False) if reason else raw
 
     def submit_table(self, raw):
-        self._spawn('table', raw)
+        self._spawn('table', self._checked(raw))
 
     def submit_graph(self, raw):
-        self._spawn('graph', raw)
+        self._spawn('graph', self._checked(raw))
 
     def next_ungraphed_rack(self, raw):
         """Look up which already-imported rack (for this store/day/machine)
@@ -1399,6 +1452,7 @@ def run_session(db_path, reports_folder):
     bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()))
     window = webview.create_window('database ブラウザ取り込み', DEFAULT_START,
                                     width=1280, height=900, js_api=bridge)
+    bridge.window = window
 
     def install_overlay():
         try:

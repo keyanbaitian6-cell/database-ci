@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'data_checks.dart';
 import 'list_views.dart';
+import 'graph_preview.dart';
 import 'models.dart';
 import 'setting_estimate.dart';
 import 'theme.dart';
@@ -833,19 +834,8 @@ class SlumpTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final graph = record.graph!;
-    // 保存された画像は作った端末・時期で背景の暗さが違う（透明・黒・濃紺）。
-    // 5日分の明るさを揃えるため、どのタイルも同じ背景色の上に描く。
-    if (graph.previewPng != null) {
-      return ColoredBox(
-        color: slumpBackground,
-        child: Image.memory(
-          graph.previewPng!,
-          fit: BoxFit.fill,
-          filterQuality: FilterQuality.medium,
-        ),
-      );
-    }
-    // 保存時の画像がない古い記録は、採点に使った4点から復元した概略で描く。
+    // 保存時の画像がない古い記録（と、画像を読み込むまでの間）は、採点に
+    // 使った4点から復元した概略で描く。
     final width = (graph.previewWidth ?? 400).toDouble();
     final height = math.max(
       (graph.previewHeight ?? 400).toDouble(),
@@ -857,7 +847,7 @@ class SlumpTile extends StatelessWidget {
           ].reduce((a, b) => a > b ? a : b) +
           30,
     );
-    return CustomPaint(
+    final sketch = CustomPaint(
       painter: ReconstructedGraphPainter(
         points: [
           Offset(width * .06, graph.baselineY),
@@ -870,6 +860,16 @@ class SlumpTile extends StatelessWidget {
         background: slumpBackground,
       ),
     );
+    // 保存された画像は作った端末・時期で背景の暗さが違う（透明・黒・濃紺）。
+    // 5日分の明るさを揃えるため、どのタイルも同じ背景色の上に描く。
+    // 画像は一覧に載せていないので、表示するときにDBから読む。
+    return graph.hasPreview
+        ? StoredGraphImage(
+            record: record,
+            fallback: sketch,
+            background: slumpBackground,
+          )
+        : sketch;
   }
 }
 

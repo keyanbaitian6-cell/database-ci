@@ -64,7 +64,39 @@ class GraphMeasurement {
     this.previewWidth,
     this.previewHeight,
     this.curve,
+    this.storedPreview = false,
+    this.storedCurve = false,
   });
+
+  /// 画像・曲線はDBの別の列にだけ置き、画面用の一覧には読み込まない
+  /// （記録が増えるとメモリに載り切らなくなるため）。これらは「別の列に
+  /// ある」印で、[previewPng]・[curve] が null でも消えたわけではない。
+  /// 必要な画面だけ `DatabaseService.loadPreview` で読む。
+  final bool storedPreview;
+  final bool storedCurve;
+
+  /// 画像か曲線を別の列に残したまま、読み込んでいない。
+  bool get detached =>
+      (storedPreview && previewPng == null) || (storedCurve && curve == null);
+
+  /// 保存時の画像がある（読み込み済みか、別の列にある）。
+  bool get hasPreview => previewPng != null || storedPreview;
+
+  /// 画面用の一覧に置く軽い形。画像と曲線を外し、別の列にある印だけ残す。
+  GraphMeasurement lightened() => GraphMeasurement(
+    baselineY: baselineY,
+    peakY: peakY,
+    troughY: troughY,
+    endY: endY,
+    baselineX: baselineX,
+    peakX: peakX,
+    troughX: troughX,
+    endX: endX,
+    previewWidth: previewWidth,
+    previewHeight: previewHeight,
+    storedPreview: hasPreview,
+    storedCurve: curve != null || storedCurve,
+  );
 
   /// The exact SVG curve as [x, y] pairs (kept so new indicators can be
   /// computed later without re-capturing; only four points are scored today).
@@ -98,6 +130,8 @@ class GraphMeasurement {
         curve: (json['curve'] as List?)
             ?.map((p) => (p as List).map((v) => (v as num).toDouble()).toList())
             .toList(),
+        storedPreview: json['preview_stored'] == true,
+        storedCurve: json['curve_stored'] == true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -113,6 +147,8 @@ class GraphMeasurement {
     if (previewWidth != null) 'preview_width': previewWidth,
     if (previewHeight != null) 'preview_height': previewHeight,
     if (curve != null) 'curve': curve,
+    if (storedPreview && previewPng == null) 'preview_stored': true,
+    if (storedCurve && curve == null) 'curve_stored': true,
     'method': 'android-four-point',
   };
 
@@ -286,6 +322,38 @@ class SlotRecord {
   };
 
   String encode() => jsonEncode(toJson());
+
+  /// 画面用の一覧に置く軽い形（グラフの画像と曲線を外す）。
+  SlotRecord lightened() => graph == null || graph!.detached
+      ? this
+      : copyWith(graph: graph!.lightened());
+}
+
+/// 同じ台（同じ店舗・日付・機種・台番号）の2件を1件にまとめる。
+///
+/// 回転数の多い方を新しい数値とし（同じなら [b]）、片方にしかない
+/// グラフ・リンク・設定情報は残す。初回取り込み時刻は早い方。機種名の
+/// 表記ゆれを揃えるとき、画面用の一覧とDBの両方で同じ規則を使う。
+SlotRecord mergeSameRack(SlotRecord a, SlotRecord b) {
+  final newest = b.games >= a.games ? b : a;
+  final older = identical(newest, b) ? a : b;
+  return SlotRecord(
+    store: newest.store,
+    day: newest.day,
+    machine: normalizeMachineName(newest.machine),
+    rack: newest.rack,
+    games: newest.games,
+    bb: newest.bb,
+    rb: newest.rb,
+    maxHold: newest.maxHold,
+    previousStart: newest.previousStart ?? older.previousStart,
+    graph: b.graph ?? a.graph,
+    detailUrl: newest.detailUrl ?? older.detailUrl,
+    capturedAt: newest.capturedAt ?? older.capturedAt,
+    firstCapturedAt: earliestTimestamp(a.firstCapturedAt, b.firstCapturedAt),
+    confirmedSetting: newest.confirmedSetting ?? older.confirmedSetting,
+    extra: {...older.extra, ...newest.extra},
+  );
 }
 
 class ScoreResult {

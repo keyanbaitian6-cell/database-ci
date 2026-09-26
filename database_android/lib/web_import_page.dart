@@ -10,7 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'import_service.dart';
-import 'models.dart' show isValidRecordDay;
+import 'models.dart' show isValidRecordDay, storeNames;
 import 'theme.dart';
 import 'web_extraction_channel.dart';
 
@@ -36,6 +36,43 @@ class WebTableExtraction {
 ///
 /// 店舗・日付・機種名がそろっているときだけ。欠けたまま保存すると、今日の
 /// 日付や空の機種名で保存されてしまう（PC版は同じ場合に保存せずエラーにする）。
+/// 読み取った店舗・日付・台番号が、実際に表示しているページのURLと食い違う
+/// ときの理由（食い違いがなければ null）。ページから返ってきた値をそのまま
+/// 信じず、Dart 側で確かめる。URL自体や、URLの日付・台番号が無いときは
+/// 確かめられないので止めない。
+String? pageMismatch(
+  String? currentUrl, {
+  String? store,
+  String? day,
+  int? rack,
+}) {
+  // URLを取れないときは確かめようがないので止めない（取り込みを使えなく
+  // しない）。対象外のページへは、そもそも移動できない。
+  final uri = currentUrl == null ? null : Uri.tryParse(currentUrl);
+  if (uri == null) return null;
+  final urlStore = uri.pathSegments.isEmpty ? null : uri.pathSegments.first;
+  if (!storeNames.containsKey(urlStore)) return '対象店舗のページではありません。';
+  if (store != null && store != urlStore) {
+    return 'ページの店舗と読み取った店舗が違います。保存しませんでした。';
+  }
+  Map<String, String> fragment;
+  try {
+    fragment = Uri.splitQueryString(uri.fragment);
+  } on FormatException {
+    fragment = const {};
+  }
+  final rawDay = uri.queryParameters['target_date'] ?? fragment['database_day'];
+  final urlDay = rawDay?.replaceAll('/', '-');
+  if (day != null && isValidRecordDay(urlDay) && day != urlDay) {
+    return 'ページの日付（$urlDay）と読み取った日付（$day）が違います。保存しませんでした。';
+  }
+  final urlRack = int.tryParse(uri.queryParameters['rack_no'] ?? '');
+  if (rack != null && urlRack != null && rack != urlRack) {
+    return 'ページの台番号（$urlRack）と読み取った台番号（$rack）が違います。保存しませんでした。';
+  }
+  return null;
+}
+
 bool canSaveWithoutReview(WebTableExtraction extraction) =>
     extraction.store != null &&
     isValidRecordDay(extraction.day) &&
@@ -185,9 +222,14 @@ class WebImportPage extends StatefulWidget {
     required this.onProgress,
     required this.onMachineStatus,
     required this.skipTableReview,
+    this.graphsAtRisk,
   });
 
   final Future<void> Function(WebTableExtraction extraction) onSave;
+
+  /// 表をそのまま保存すると、グラフが外れる台の数。1台でもあれば、確認なし
+  /// の設定でも確認画面を出す（偽の表や読み違いで、グラフを黙って失わない）。
+  final int Function(WebTableExtraction extraction)? graphsAtRisk;
   final Future<bool> Function(BuildContext context, CaptureAnalysis captured)
   onGraph;
   final NextGraphTarget Function({
@@ -245,7 +287,7 @@ class _WebImportPageState extends State<WebImportPage> {
 
   Future<Object?> _runExtraction(String script) => _extractions.run(
     (id) => _web.runJavaScript(
-      '($_extractionBridgeScript)(${jsonEncode(script)}, $id)',
+      '($_extractionBridgeScript)(${jsonEncode(script)}, ${jsonEncode(id)})',
     ),
   );
 
@@ -394,6 +436,13 @@ class _WebImportPageState extends State<WebImportPage> {
       final value = await _runExtraction(_extractTableScript);
       if (!_samePage(page)) return;
       final decoded = _decodeJavaScriptResult(value);
+      final mismatch = pageMismatch(
+        await _web.currentUrl(),
+        store: decoded['store'] as String?,
+        day: decoded['day'] as String?,
+      );
+      if (mismatch != null) throw FormatException(mismatch);
+      if (!_samePage(page)) return;
       final rows = ((decoded['rows'] as List<dynamic>?) ?? const [])
           .map((item) => Map<String, dynamic>.from(item as Map))
           .map(
@@ -436,13 +485,16 @@ class _WebImportPageState extends State<WebImportPage> {
       }
       // そろっていない表は、設定が入っていても確認画面へ回す。
       final identified = canSaveWithoutReview(extraction);
+      final atRisk = widget.graphsAtRisk?.call(extraction) ?? 0;
       final bool? saved;
-      if (widget.skipTableReview() && identified) {
+      if (widget.skipTableReview() && identified && atRisk == 0) {
         await widget.onSave(extraction);
         saved = true;
       } else {
         if (widget.skipTableReview() && !identified) {
           _showNotice('店舗・日付・機種名を読み取れなかったので、確認画面を開きます。');
+        } else if (widget.skipTableReview() && atRisk > 0) {
+          _showNotice('保存すると$atRisk台のグラフが外れるため、確認画面を開きます。');
         }
         saved = await Navigator.of(context).push<bool>(
           MaterialPageRoute(
@@ -484,6 +536,14 @@ class _WebImportPageState extends State<WebImportPage> {
       final value = await _runExtraction(_extractGraphScript);
       if (!_samePage(page)) return;
       final decoded = _decodeJavaScriptResult(value);
+      final mismatch = pageMismatch(
+        await _web.currentUrl(),
+        store: decoded['store'] as String?,
+        day: decoded['day'] as String?,
+        rack: decoded['rack'] as int?,
+      );
+      if (mismatch != null) throw FormatException(mismatch);
+      if (!_samePage(page)) return;
       final isSvg = decoded['format'] == 'svg';
       if (!isValidRecordDay(decoded['day'] as String?)) {
         throw const FormatException('評価日を特定できません。日付を選んでから取り込んでください。');

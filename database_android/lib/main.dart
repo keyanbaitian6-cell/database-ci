@@ -17,6 +17,7 @@ import 'csv_export_service.dart';
 import 'data_checks.dart';
 import 'database_service.dart';
 import 'graph_gate.dart';
+import 'graph_preview.dart';
 import 'import_service.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
@@ -93,6 +94,16 @@ void _setUpLauncherShortcuts(AppController controller) {
   ]);
 }
 
+/// 表を取り込み直したとき、保存済みの台と数値が変わったか。変わった台の
+/// グラフは、その数値と合わないので外す。
+bool tableNumbersChanged(SlotRecord previous, EditableRow row) =>
+    previous.games != row.games ||
+    previous.bb != row.bb ||
+    previous.rb != row.rb ||
+    (row.maxHold != null &&
+        previous.maxHold != null &&
+        previous.maxHold != row.maxHold);
+
 class AppController extends ChangeNotifier {
   AppController({DatabaseService? database})
     : database = database ?? DatabaseService();
@@ -105,6 +116,26 @@ class AppController extends ChangeNotifier {
   /// 翌日候補（仮）の記録（candidate_log.dart）。バックアップにも入る。
   List<CandidateSnapshot> candidateSnapshots = [];
   Map<String, CandidateSnapshot> _latestCandidates = {};
+
+  /// DBに残す小さな状態（前回の書き出し時刻・候補の記録に失敗した回数）。
+  Map<String, String> appState = {};
+
+  /// 前回バックアップを書き出した時刻（まだなら null）。
+  DateTime? get lastBackupExport =>
+      DateTime.tryParse(appState['last_backup_export'] ?? '')?.toLocal();
+
+  /// 変わった翌日候補を求める関数（テストで失敗を差し込むため差し替えられる）。
+  List<CandidateSnapshot> Function({
+    required Iterable<SlotRecord> saved,
+    required List<SlotRecord> all,
+    required Map<String, CandidateSnapshot> latest,
+    required DateTime now,
+  })
+  computeCandidates = changedCandidateSnapshots;
+
+  /// 翌日候補を記録できなかった保存の累計回数。
+  int get candidateLogFailures =>
+      int.tryParse(appState['candidate_log_failures'] ?? '') ?? 0;
   String? message;
   int tab = 0;
 
@@ -146,13 +177,19 @@ class AppController extends ChangeNotifier {
     if (entries == null) return '取り消せる保存がありません。';
     final label = _undoLabel ?? '直前の保存';
     // まとめて削除の取り消しは百台を超えることがあるので、1台ずつではなくまとめて戻す。
-    await database.restoreRecords(entries);
+    final note = await _commit(
+      upserts: [for (final (_, previous) in entries) ?previous],
+      deleteKeys: [
+        for (final (saved, previous) in entries)
+          if (previous == null) saved.key,
+      ],
+      changed: [for (final (saved, _) in entries) saved],
+    );
     _undoEntries = null;
     _undoLabel = null;
-    message = '取り消しました：$label';
-    await _reloadNow();
-    await _logCandidates([for (final (saved, _) in entries) saved]);
-    return '取り消しました：$label';
+    message = '取り消しました：$label$note';
+    notifyListeners();
+    return message!;
   });
 
   /// 今日の日付。機種一覧ページ（日付なし）の判定に使う。テストで差し替える。
@@ -281,7 +318,12 @@ class AppController extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _loadUiState();
+    GraphPreviews.instance.loader = database.loadPreview;
     await _loadNormalizedRecords();
+    appState = await database.loadState();
+    await database.purgeTrash(
+      DateTime.now().subtract(const Duration(days: trashDays)),
+    );
     try {
       candidateSnapshots = await database.loadCandidateSnapshots();
       _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
@@ -290,25 +332,67 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// 取り込みで変わった翌日候補を、時刻付きで残す（candidate_log.dart）。
-  /// 記録に失敗しても、取り込んだ台の保存は取り消さない。
-  Future<void> _logCandidates(List<SlotRecord> saved) async {
-    try {
-      final changed = changedCandidateSnapshots(
-        saved: saved,
-        all: records,
-        latest: _latestCandidates,
-        now: DateTime.now(),
-      );
-      if (changed.isEmpty) return;
-      await database.saveCandidateSnapshots(changed);
-      candidateSnapshots = [...candidateSnapshots, ...changed];
-      for (final c in changed) {
+  /// 1回の書き込み。台の保存・削除・ゴミ箱と、それで変わった翌日候補の
+  /// 記録を、同じトランザクションで書く（片方だけ残ることはない）。
+  /// 書けたら画面用の一覧を更新する。候補の計算に失敗したときは台だけを
+  /// 保存し、失敗した回数をDBに残して、表示用の注記を返す。
+  Future<String> _commit({
+    List<SlotRecord> upserts = const [],
+    List<String> deleteKeys = const [],
+    List<String> trashKeys = const [],
+    String trashLabel = '',
+    TrashKind trashKind = TrashKind.delete,
+    List<int> removeTrashIds = const [],
+    Iterable<SlotRecord> changed = const [],
+  }) async {
+    final removed = deleteKeys.toSet();
+    final next = _withSaved(
+      [
+        for (final r in records)
+          if (!removed.contains(r.key)) r,
+      ],
+      [for (final r in upserts) r.lightened()],
+    );
+    var snapshots = const <CandidateSnapshot>[];
+    final state = <String, String>{};
+    if (changed.isNotEmpty) {
+      try {
+        snapshots = computeCandidates(
+          saved: changed,
+          all: next,
+          latest: _latestCandidates,
+          now: DateTime.now(),
+        );
+      } catch (error) {
+        state['candidate_log_failures'] = '${candidateLogFailures + 1}';
+        state['candidate_log_last_error'] = '$error';
+      }
+    }
+    await database.applyChanges(
+      ChangeSet(
+        upserts: upserts,
+        deleteKeys: deleteKeys,
+        trashKeys: trashKeys,
+        trashLabel: trashLabel,
+        trashKind: trashKind,
+        removeTrashIds: removeTrashIds,
+        snapshots: snapshots,
+        state: state,
+      ),
+    );
+    records = next;
+    appState = {...appState, ...state};
+    if (snapshots.isNotEmpty) {
+      candidateSnapshots = [...candidateSnapshots, ...snapshots];
+      for (final c in snapshots) {
         _latestCandidates[c.groupKey] = c;
       }
-    } catch (error) {
-      debugPrint('翌日候補を記録できませんでした: $error');
     }
+    GraphPreviews.instance.forget([
+      ...deleteKeys,
+      for (final r in upserts) r.key,
+    ]);
+    return state.isEmpty ? '' : '（翌日候補を記録できませんでした。累計$candidateLogFailures回）';
   }
 
   /// バックアップにあった候補の記録のうち、手元にないものを足す。
@@ -321,23 +405,22 @@ class AppController extends ChangeNotifier {
         if (have.add('${c.groupKey}|${c.takenAt}')) c,
     ];
     if (fresh.isEmpty) return 0;
-    await database.saveCandidateSnapshots(fresh);
+    await database.applyChanges(ChangeSet(snapshots: fresh));
     candidateSnapshots = [...candidateSnapshots, ...fresh];
     _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
     return fresh.length;
   }
 
-  /// DBを読み、機種名の表記ゆれをそろえて一覧にする。そろえた結果が
-  /// DBと違えば（取り込みで `+` 区切りが入った等）、DBも書き直す。
+  /// DBを読み、機種名の表記ゆれをそろえて一覧にする。DBに `+` 区切りの
+  /// 台が残っていれば（取り込み等で入った）、DBの側で画像込みにまとめて
+  /// から読み直す。画面用の一覧（画像なし）をDBへ書き戻すことはしない。
   Future<void> _loadNormalizedRecords() async {
-    final loaded = await database.loadAll();
+    var loaded = await database.loadAll();
+    if (loaded.any((r) => r.machine != normalizeMachineName(r.machine))) {
+      await database.normalizeMachineNames();
+      loaded = await database.loadAll();
+    }
     records = _normalizeRecords(loaded);
-    final requiresMigration =
-        loaded.length != records.length ||
-        loaded.any(
-          (record) => record.machine != normalizeMachineName(record.machine),
-        );
-    if (requiresMigration) await database.replaceAll(records);
   }
 
   List<SlotRecord> _normalizeRecords(List<SlotRecord> source) {
@@ -347,47 +430,17 @@ class AppController extends ChangeNotifier {
         machine: normalizeMachineName(original.machine),
       );
       final current = merged[record.key];
-      if (current == null) {
-        merged[record.key] = record;
-        continue;
-      }
-      final newestNumbers = record.games >= current.games ? record : current;
-      final graph = record.graph ?? current.graph;
-      merged[record.key] = SlotRecord(
-        store: newestNumbers.store,
-        day: newestNumbers.day,
-        machine: newestNumbers.machine,
-        rack: newestNumbers.rack,
-        games: newestNumbers.games,
-        bb: newestNumbers.bb,
-        rb: newestNumbers.rb,
-        maxHold: newestNumbers.maxHold,
-        previousStart: newestNumbers.previousStart ?? current.previousStart,
-        graph: graph,
-        detailUrl:
-            newestNumbers.detailUrl ?? current.detailUrl ?? record.detailUrl,
-        capturedAt: newestNumbers.capturedAt ?? current.capturedAt,
-        firstCapturedAt: earliestTimestamp(
-          record.firstCapturedAt,
-          current.firstCapturedAt,
-        ),
-        confirmedSetting:
-            newestNumbers.confirmedSetting ??
-            current.confirmedSetting ??
-            record.confirmedSetting,
-        extra: {...current.extra, ...newestNumbers.extra},
-      );
+      merged[record.key] = current == null
+          ? record
+          : mergeSameRack(current, record);
     }
     return merged.values.toList();
   }
 
-  /// Puts just-saved records into the in-memory list (replace in place, or
-  /// append) instead of re-reading and re-decoding the whole database, whose
-  /// rows carry graph images. After each save this used to be the slowest step
-  /// before the browser could move on to the next rack.
-  void _mergeRecords(List<SlotRecord> saved) {
-    final index = {for (var i = 0; i < records.length; i++) records[i].key: i};
-    final next = List<SlotRecord>.of(records);
+  /// [base] に保存した台を入れた（置き換えた）新しい一覧。DBを読み直さない。
+  List<SlotRecord> _withSaved(List<SlotRecord> base, List<SlotRecord> saved) {
+    final index = {for (var i = 0; i < base.length; i++) base[i].key: i};
+    final next = List<SlotRecord>.of(base);
     for (final record in saved) {
       final i = index[record.key];
       if (i == null) {
@@ -397,8 +450,7 @@ class AppController extends ChangeNotifier {
         next[i] = record;
       }
     }
-    records = next;
-    notifyListeners();
+    return next;
   }
 
   /// 画面から読み直す（引っ張って更新）。保存と同じ順番待ちに入れるので、
@@ -410,6 +462,24 @@ class AppController extends ChangeNotifier {
   Future<void> _reloadNow() async {
     await _loadNormalizedRecords();
     notifyListeners();
+  }
+
+  /// 表をそのまま保存すると、グラフが外れる（数値が変わる）台の数。
+  /// ブラウザの「確認なしで保存」は、これが0のときだけ使う。
+  int graphsDroppedBy(WebTableExtraction extraction) {
+    final store = extraction.store;
+    final day = extraction.day;
+    final machine = extraction.machine;
+    if (store == null || day == null || machine == null) return 0;
+    final name = normalizeMachineName(machine);
+    final saved = {
+      for (final r in records)
+        if (r.store == store && r.day == day && r.machine == name) r.rack: r,
+    };
+    return extraction.rows.where((row) {
+      final previous = saved[row.rack];
+      return previous?.graph != null && tableNumbersChanged(previous!, row);
+    }).length;
   }
 
   Future<void> saveTable(
@@ -427,14 +497,7 @@ class AppController extends ChangeNotifier {
     final saved = rows.map((row) {
       final key = '$store|$day|$machine|${row.rack}';
       final previous = old[key];
-      final changed =
-          previous != null &&
-          (previous.games != row.games ||
-              previous.bb != row.bb ||
-              previous.rb != row.rb ||
-              (row.maxHold != null &&
-                  previous.maxHold != null &&
-                  previous.maxHold != row.maxHold));
+      final changed = previous != null && tableNumbersChanged(previous, row);
       return SlotRecord(
         store: store,
         day: day,
@@ -456,12 +519,22 @@ class AppController extends ChangeNotifier {
         extra: previous?.extra ?? const {},
       );
     }).toList();
-    await database.saveAll(saved);
+    // 数値が変わってグラフが外れる台は、前の内容（グラフ込み）をゴミ箱に残す。
+    final dropped = [
+      for (final r in saved)
+        if (old[r.key]?.graph != null && r.graph == null) r.key,
+    ];
+    final note = await _commit(
+      upserts: saved,
+      trashKeys: dropped,
+      trashLabel: '$day $machineの表の取り込み直しで外れたグラフ（${dropped.length}台）',
+      trashKind: TrashKind.overwrite,
+      changed: saved,
+    );
     _rememberUndo('$machineの一覧${saved.length}台', saved, old);
-    message = '${saved.length}台を保存しました。';
+    message = '${saved.length}台を保存しました。$note';
     tab = 0;
-    _mergeRecords(saved);
-    await _logCandidates(saved);
+    notifyListeners();
   });
 
   CaptureAnalysis resolveWebGraph(CaptureAnalysis captured) {
@@ -550,12 +623,18 @@ class AppController extends ChangeNotifier {
         curve: curve,
       ),
     );
-    await database.saveAll([record]);
+    final note = await _commit(
+      upserts: [record],
+      // グラフを取り込み直すときは、前のグラフをゴミ箱に残す。
+      trashKeys: [if (existing?.graph != null) key],
+      trashLabel: '$day $rack番台のグラフの取り込み直し',
+      trashKind: TrashKind.overwrite,
+      changed: [record],
+    );
     _rememberUndo('$rack番台のグラフ', [record], before);
-    message = '$rack番台を採点しました。';
+    message = '$rack番台を採点しました。$note';
     tab = returnToBrowser ? 1 : 0;
-    _mergeRecords([record]);
-    await _logCandidates([record]);
+    notifyListeners();
   });
 
   /// 取り込みミスなどを、機種ごと・日付ごとにまとめて削除する。消した台数を返す。
@@ -573,23 +652,35 @@ class AppController extends ChangeNotifier {
     );
     if (targets.isEmpty) return 0;
     final where = [day, storeNames[store] ?? '両店舗', ?machine].join(' ');
+    final keys = [for (final r in targets) r.key];
+    // 取り消しの控えは画像込みでDBから読む（画面用の一覧には画像がない）。
+    final before = await database.loadByKeys(keys);
+    final note = await _commit(
+      deleteKeys: keys,
+      trashKeys: keys,
+      trashLabel: '$whereの削除（${targets.length}台）',
+      changed: targets,
+    );
     // 取り消すと、消した台を消す前の内容で保存し直す。
-    await database.deleteRecords(targets);
     _undoLabel = '$whereの削除（${targets.length}台）';
-    _undoEntries = [for (final r in targets) (r, r)];
-    message = '$whereの記録を削除しました（${targets.length}台）。';
-    await _reloadNow();
-    await _logCandidates(targets);
+    _undoEntries = [for (final r in before.values) (r, r)];
+    message =
+        '$whereの記録を削除しました（${targets.length}台）。ゴミ箱から$trashDays日間は戻せます。$note';
+    notifyListeners();
     return targets.length;
   });
 
   Future<void> deleteRecord(SlotRecord record) => _write(() async {
     final before = await database.loadByKeys([record.key]);
-    await database.deleteRecord(record);
+    final note = await _commit(
+      deleteKeys: [record.key],
+      trashKeys: [record.key],
+      trashLabel: '${record.day} ${record.rack}番台の削除',
+      changed: [record],
+    );
     _rememberUndo('${record.rack}番台の削除', [record], before);
-    message = '${record.rack}番台の記録を削除しました。';
-    await _reloadNow();
-    await _logCandidates([record]);
+    message = '${record.rack}番台の記録を削除しました。ゴミ箱から$trashDays日間は戻せます。$note';
+    notifyListeners();
   });
 
   /// Save a user-confirmed setting annotation. It deliberately does not feed
@@ -611,12 +702,12 @@ class AppController extends ChangeNotifier {
           confirmedSetting: value,
           clearConfirmedSetting: value == null,
         );
-        await database.saveAll([updated]);
+        await _commit(upserts: [updated]);
         _rememberUndo('${record.rack}番台の設定情報', [updated], before);
         message = value == null
             ? '${record.rack}番台の設定情報を解除しました。'
             : '${record.rack}番台に「$value」を記録しました。';
-        _mergeRecords([updated]);
+        notifyListeners();
       });
 
   Future<File> exportCsv({String? store, String? day}) => csvExporter.create(
@@ -629,44 +720,105 @@ class AppController extends ChangeNotifier {
         .toList(),
   );
 
-  Future<File> exportBackup({String? store, String? day}) {
-    final filtered = records
-        .where(
-          (r) =>
-              (store == null || r.store == store) &&
-              (day == null || r.day == day),
-        )
-        .toList();
-    return backupService.export(
-      filtered,
-      candidates: [
-        for (final c in candidateSnapshots)
-          if ((store == null || c.store == store) &&
-              (day == null || c.day == day))
-            c,
-      ],
+  /// バックアップを書き出す。DBから1台ずつ（画像込みで）書くので、記録が
+  /// 増えてもメモリに全件を載せない。書き出した時刻を残す。
+  Future<({File file, int records, int candidates})> exportBackup({
+    String? store,
+    String? day,
+  }) => _write(() async {
+    final file = await backupService.newBackupFile();
+    final candidates = [
+      for (final c in candidateSnapshots)
+        if ((store == null || c.store == store) &&
+            (day == null || c.day == day))
+          c,
+    ];
+    final count = await database.exportBackup(
+      file,
+      store: store,
+      day: day,
+      candidates: candidates,
     );
-  }
+    final now = DateTime.now().toUtc().toIso8601String();
+    await database.applyChanges(ChangeSet(state: {'last_backup_export': now}));
+    appState = {...appState, 'last_backup_export': now};
+    notifyListeners();
+    return (file: file, records: count, candidates: candidates.length);
+  });
 
-  /// Reads a backup file's JSON and applies its safe records (new and
-  /// graph-only additions). Records whose numbers or manual setting note conflict with a saved
-  /// entry are returned in the plan, unapplied, for the caller to show the
-  /// user -- see [applyBackupOverrides].
-  Future<BackupImportPlan> importBackup(String jsonText) => _write(() async {
-    final plan = backupService.planFromJson(jsonText, records);
-    if (plan.toSave.isNotEmpty) {
-      final before = await database.loadByKeys([
-        for (final r in plan.toSave) r.key,
-      ]);
-      await database.saveAll(plan.toSave);
-      _rememberUndo('バックアップの取り込み', plan.toSave, before);
-      message =
-          'バックアップから${plan.added.length}件追加、'
-          '${plan.graphOnly.length}件にグラフ、${plan.settingOnly.length}件に設定情報を追加しました。';
-      await _reloadNow();
+  /// Reads a backup file little by little and applies its safe records (new
+  /// and graph-only additions). Records whose numbers or manual setting note
+  /// conflict with a saved entry are returned, unapplied, for the caller to
+  /// show the user -- see [applyBackupOverrides].
+  Future<BackupImportResult> importBackup(File file) => _write(() async {
+    final planner = BackupPlanner(records);
+    final result = BackupImportResult();
+    final undo = <(SlotRecord, SlotRecord?)>[];
+    await for (final chunk in backupService.readBackupFile(file)) {
+      if (chunk.records.isNotEmpty) {
+        final plan = planner.plan(chunk.records);
+        result.add(plan);
+        final toSave = plan.toSave;
+        if (toSave.isNotEmpty) {
+          final before = await database.loadByKeys([
+            for (final r in toSave) r.key,
+          ]);
+          await _commit(upserts: toSave);
+          undo.addAll([for (final r in toSave) (r.lightened(), before[r.key])]);
+        }
+      }
+      if (chunk.candidates.isNotEmpty) {
+        result.candidates += await _importCandidates(chunk.candidates);
+      }
     }
-    await _importCandidates(backupService.candidatesFromJson(jsonText));
-    return plan;
+    if (undo.isNotEmpty) {
+      _undoLabel = 'バックアップの取り込み';
+      _undoEntries = undo;
+      message =
+          'バックアップから${result.added}件追加、'
+          '${result.graphOnly}件にグラフ、${result.settingOnly}件に設定情報を追加しました。';
+    }
+    notifyListeners();
+    return result;
+  });
+
+  /// ゴミ箱（新しい順）。
+  Future<List<TrashBatch>> trashBatches() => database.loadTrash();
+
+  /// ゴミ箱の1回分を戻す。削除したものは、今の記録が無い台だけ戻す。
+  /// 上書きで外れたものは今の記録を置き換えるので、今の内容をゴミ箱に残す。
+  Future<String> restoreTrash(TrashBatch batch) => _write(() async {
+    final entries = await database.loadTrashBatch(batch.batchId);
+    final existing = await database.loadByKeys([
+      for (final e in entries) e.record.key,
+    ]);
+    final overwrite = batch.kind == TrashKind.overwrite;
+    final restore = [
+      for (final e in entries)
+        if (overwrite || !existing.containsKey(e.record.key)) e,
+    ];
+    final skipped = entries.length - restore.length;
+    if (restore.isEmpty) {
+      return '戻せる台はありませんでした（$skipped台は今の記録があります）。';
+    }
+    final upserts = [for (final e in restore) e.record];
+    final note = await _commit(
+      upserts: upserts,
+      trashKeys: [
+        for (final r in upserts)
+          if (existing.containsKey(r.key)) r.key,
+      ],
+      trashLabel: '「${batch.label}」を戻す前の内容',
+      trashKind: TrashKind.overwrite,
+      removeTrashIds: [for (final e in restore) e.id],
+      changed: upserts,
+    );
+    _rememberUndo('ゴミ箱から戻す', upserts, existing);
+    message =
+        '${upserts.length}台を戻しました'
+        '${skipped > 0 ? '（$skipped台は今の記録があるので戻していません）' : ''}。$note';
+    notifyListeners();
+    return message!;
   });
 
   /// For each machine name on the site's machine-list page: graphed/listed
@@ -771,10 +923,16 @@ class AppController extends ChangeNotifier {
             ),
           ),
       ];
-      await database.saveAll(chosen);
+      final note = await _commit(
+        upserts: chosen,
+        trashKeys: [for (final r in chosen) r.key],
+        trashLabel: 'バックアップの内容で上書きする前（${chosen.length}台）',
+        trashKind: TrashKind.overwrite,
+        changed: chosen,
+      );
       _rememberUndo('バックアップの競合反映', chosen, byKey);
-      message = '${chosen.length}件を取り込んだ内容で上書きしました。';
-      await _reloadNow();
+      message = '${chosen.length}件を取り込んだ内容で上書きしました。$note';
+      notifyListeners();
     },
   );
 
@@ -831,12 +989,27 @@ class AppShell extends StatelessWidget {
           PopupMenuButton<String>(
             tooltip: 'バックアップ（PC版と共有）',
             icon: const Icon(Icons.cloud_sync_outlined),
-            onSelected: (value) => value == 'export'
-                ? _shareBackup(context, controller)
-                : _importBackup(context, controller),
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'export', child: Text('バックアップを共有（書き出し）')),
-              PopupMenuItem(value: 'import', child: Text('バックアップを読み込む')),
+            onSelected: (value) => switch (value) {
+              'export' => _shareBackup(context, controller),
+              'import' => _importBackup(context, controller),
+              _ => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TrashPage(controller: controller),
+                ),
+              ),
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'export',
+                child: Text(
+                  'バックアップを共有（書き出し）\n${_lastExportText(controller.lastBackupExport)}',
+                ),
+              ),
+              const PopupMenuItem(value: 'import', child: Text('バックアップを読み込む')),
+              const PopupMenuItem(
+                value: 'trash',
+                child: Text('ゴミ箱（$trashDays日間）'),
+              ),
             ],
           ),
         ],
@@ -897,6 +1070,20 @@ Future<void> _shareCsv(BuildContext context, AppController controller) async {
   }
 }
 
+/// 「前回 9/26 23:40（1日前）」。まだ一度も書き出していなければ、その旨。
+String _lastExportText(DateTime? last, [DateTime? now]) {
+  if (last == null) return 'まだ書き出していません';
+  now ??= DateTime.now();
+  String two(int v) => v.toString().padLeft(2, '0');
+  final days = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).difference(DateTime(last.year, last.month, last.day)).inDays;
+  final ago = days <= 0 ? '今日' : '$days日前';
+  return '前回 ${last.month}/${last.day} ${two(last.hour)}:${two(last.minute)}（$ago）';
+}
+
 Future<void> _shareBackup(
   BuildContext context,
   AppController controller,
@@ -907,10 +1094,11 @@ Future<void> _shareBackup(
   );
   if (options == null || !context.mounted) return;
   try {
-    final file = await controller.exportBackup(
+    final exported = await controller.exportBackup(
       store: options.store,
       day: options.day,
     );
+    final file = exported.file;
     // Some share targets (e.g. "Save to Drive") name the saved file after
     // this title/subject rather than the actual file, so keep both equal to
     // the real filename -- plain ASCII, no half-width/full-width mixing.
@@ -923,6 +1111,17 @@ Future<void> _shareBackup(
         files: [XFile(file.path, mimeType: 'application/json')],
       ),
     );
+    if (context.mounted) {
+      final failures = controller.candidateLogFailures;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${exported.records}台・翌日候補の記録${exported.candidates}件を書き出しました'
+            '${failures > 0 ? '（翌日候補を記録できなかった保存が$failures回あります）' : ''}。',
+          ),
+        ),
+      );
+    }
   } catch (error) {
     if (context.mounted) {
       ScaffoldMessenger.of(context)
@@ -1022,13 +1221,13 @@ Future<void> _importBackup(
   final path = picked?.path;
   if (path == null) return;
   try {
-    final text = await File(path).readAsString();
-    final plan = await controller.importBackup(text);
-    if (context.mounted && plan.conflicts.isNotEmpty) {
+    // 大きなファイルも1行ずつ読む（全体を1つの文字列にしない）。
+    final result = await controller.importBackup(File(path));
+    if (context.mounted && result.conflicts.isNotEmpty) {
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => BackupConflictsPage(
-            conflicts: plan.conflicts,
+            conflicts: result.conflicts,
             onApply: controller.applyBackupOverrides,
           ),
         ),
@@ -1038,8 +1237,8 @@ Future<void> _importBackup(
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '新規${plan.added.length}件、グラフ追加${plan.graphOnly.length}件、設定情報追加${plan.settingOnly.length}件を取り込みました'
-            '（要確認${plan.conflicts.length}件、対象外${plan.skipped}件）。',
+            '新規${result.added}件、グラフ追加${result.graphOnly}件、設定情報追加${result.settingOnly}件を取り込みました'
+            '（要確認${result.conflicts.length}件、対象外${result.skipped}件）。',
           ),
         ),
       );
@@ -1049,6 +1248,106 @@ Future<void> _importBackup(
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('バックアップを読み込めませんでした：$error')));
     }
+  }
+}
+
+/// ゴミ箱。消した記録と、上書きで外れた前の内容を$trashDays日間残す。
+class TrashPage extends StatefulWidget {
+  const TrashPage({super.key, required this.controller});
+  final AppController controller;
+  @override
+  State<TrashPage> createState() => _TrashPageState();
+}
+
+class _TrashPageState extends State<TrashPage> {
+  late Future<List<TrashBatch>> _batches = widget.controller.trashBatches();
+  var _busy = false;
+
+  Future<void> _restore(TrashBatch batch) async {
+    final overwrite = batch.kind == TrashKind.overwrite;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('ゴミ箱から戻す'),
+        content: Text(
+          overwrite
+              ? '「${batch.label}」の${batch.count}台を、この前の内容に戻します。'
+                    '今の内容はゴミ箱に残ります。'
+              : '「${batch.label}」の${batch.count}台を戻します。'
+                    '今の記録がある台は戻しません。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('やめる'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('戻す'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final text = await widget.controller.restoreTrash(batch);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+      setState(() => _batches = widget.controller.trashBatches());
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('戻せませんでした：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return Scaffold(
+      appBar: AppBar(title: const Text('ゴミ箱（$trashDays日間）')),
+      body: FutureBuilder<List<TrashBatch>>(
+        future: _batches,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text('読み込めませんでした：${snapshot.error}'));
+          }
+          final batches = snapshot.data;
+          if (batches == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (batches.isEmpty) {
+            return const Center(child: Text('ゴミ箱は空です。'));
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: batches.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (context, i) {
+              final b = batches[i];
+              final at = b.deletedAt.toLocal();
+              return Card(
+                child: ListTile(
+                  title: Text(b.label),
+                  subtitle: Text(
+                    '${b.kind == TrashKind.overwrite ? '上書き前の内容' : '削除'}・'
+                    '${b.count}台・${at.month}/${at.day} ${two(at.hour)}:${two(at.minute)}',
+                  ),
+                  trailing: TextButton(
+                    onPressed: _busy ? null : () => _restore(b),
+                    child: const Text('戻す'),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
   }
 }
 
@@ -1769,6 +2068,7 @@ class ImportPage extends StatelessWidget {
             extraction.machine ?? '',
             extraction.rows,
           ),
+          graphsAtRisk: controller.graphsDroppedBy,
           onNext: controller.nextUngraphed,
           onUndo: controller.undoLastSave,
           onProgress: controller.progressText,
@@ -2981,7 +3281,7 @@ class _SavedGraphBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasImage = graph.previewPng != null;
+    final hasImage = graph.hasPreview;
     final values = [graph.baselineY, graph.peakY, graph.troughY, graph.endY];
     final width = (graph.previewWidth ?? 400).toDouble();
     final maxY = values.reduce((a, b) => a > b ? a : b);
@@ -3028,10 +3328,16 @@ class _SavedGraphBody extends StatelessWidget {
                     fit: StackFit.expand,
                     children: [
                       if (hasImage)
-                        Image.memory(
-                          graph.previewPng!,
-                          fit: BoxFit.fill,
-                          filterQuality: FilterQuality.medium,
+                        // 画像は一覧に載せていないので、表示するときに読む。
+                        StoredGraphImage(
+                          record: record,
+                          fallback: CustomPaint(
+                            painter: ReconstructedGraphPainter(
+                              points: points,
+                              sourceWidth: width,
+                              sourceHeight: height,
+                            ),
+                          ),
                         )
                       else
                         CustomPaint(

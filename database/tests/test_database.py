@@ -1321,4 +1321,107 @@ class MachineSpellingTests(unittest.TestCase):
             db.close()
 
 
+class RobustnessTests(unittest.TestCase):
+    """2026-09-27 QA: candidate log, line-by-line backups, deleted racks, real URL."""
+
+    @staticmethod
+    def history_rows():
+        # 6 racks x 4 days; higher rack numbers hit more often.
+        return [dict(row(day, rack), bb=5 + rack * 2, rb=5, games=3000)
+                for day in ('2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23')
+                for rack in range(1, 7)]
+
+    def test_saves_record_changed_candidates_once_in_the_same_transaction(self):
+        from core import candidate_snapshot, provisional_next_day_candidates
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save(self.history_rows())
+            logged = [json.loads(p) for p in db.candidate_snapshots(day='2026-09-23')]
+            self.assertEqual(len(logged), 1)
+            shown = provisional_next_day_candidates(db, '2026-09-23', 'テスト', 'nagamachiminami')
+            self.assertEqual([c['rack'] for c in logged[0]['candidates']],
+                             [int(c['row']['rack']) for c in shown['candidates']])
+            self.assertRegex(logged[0]['taken_at'], r'[+-]\d\d:\d\d$')
+            db.save([dict(row('2026-09-23', 1), bb=7, rb=5, games=3000)])  # same content
+            self.assertEqual(len(db.candidate_snapshots(day='2026-09-23')), 1)
+            db.delete_group('2026-09-23', 'nagamachiminami', 'テスト')
+            last = json.loads(db.candidate_snapshots(day='2026-09-23')[-1])
+            self.assertEqual((last['total'], last['candidates']), (0, []))
+            self.assertEqual(candidate_snapshot(db, 'nagamachiminami', '2026-09-23', 'テスト')['total'], 0)
+            db.close()
+
+    def test_a_failed_candidate_computation_is_counted_and_never_blocks_the_save(self):
+        import core
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            original = core.candidate_snapshot
+            core.candidate_snapshot = lambda *a, **k: (_ for _ in ()).throw(RuntimeError('bug'))
+            try:
+                db.save([row(rack=1)])
+            finally:
+                core.candidate_snapshot = original
+            self.assertEqual(len(db.rows()), 1)
+            self.assertEqual(db.state('candidate_log_failures'), '1')
+            db.close()
+
+    def test_backup_is_one_record_per_line_and_round_trips_with_candidates(self):
+        from core import read_backup_file
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'a.db')
+            db.save(self.history_rows())
+            path = Path(folder) / 'b.json'
+            self.assertEqual(export_backup(db, path), 24)
+            whole = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(len(whole['records']), 24)
+            self.assertTrue(whole['candidate_snapshots'])
+            lines = path.read_text(encoding='utf-8').splitlines()
+            self.assertTrue(lines[0].endswith('"records": ['))
+            records, snapshots = read_backup_file(path)
+            self.assertEqual((len(records), len(snapshots)), (24, len(whole['candidate_snapshots'])))
+            other = Store(Path(folder) / 'c.db')
+            import_backup(other, path)
+            self.assertEqual(len(other.rows()), 24)
+            self.assertEqual(len(other.candidate_snapshots()), len(snapshots))
+            db.close()
+            other.close()
+
+    def test_older_single_line_backups_are_still_read(self):
+        from core import read_backup_file
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            path = Path(folder) / 'old.json'
+            path.write_text(json.dumps(dict(format='database-backup', version=1,
+                                            records=[row(rack=1), row(rack=2)])), encoding='utf-8')
+            records, snapshots = read_backup_file(path)
+            self.assertEqual([r['rack'] for r in records], [1, 2])
+            self.assertEqual(snapshots, [])
+
+    def test_deleted_racks_are_kept_for_a_week_as_an_importable_backup(self):
+        from datetime import datetime, timedelta
+        from core import delete_records, deleted_dir, keep_deleted
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            data_dir = Path(folder)
+            db = Store(data_dir / 'test.db')
+            db.save([row(rack=1), row(rack=2)])
+            delete_records(db, data_dir, '2026-09-13', 'nagamachiminami')
+            db.save([row('2026-09-14', 3)])  # the single undo slot moves on
+            files = list(deleted_dir(data_dir).glob('database-deleted-*.json'))
+            self.assertEqual(len(files), 1)
+            import_backup(db, files[0])
+            self.assertEqual(sorted(r['rack'] for r in db.rows()), [1, 2, 3])
+            keep_deleted(data_dir, 'x', [row(rack=9)], now=datetime.now() + timedelta(days=8))
+            self.assertEqual(len(list(deleted_dir(data_dir).glob('*.json'))), 1)
+            db.close()
+
+    def test_browser_data_is_checked_against_the_real_page_url(self):
+        from browser_import import page_mismatch
+        list_url = 'https://meruhenworld.pt.teramoba2.com/saiwaichou/rack_info_kt/?kind_code=21&target_date=2026-09-25'
+        graph_url = 'https://meruhenworld.pt.teramoba2.com/nagamachiminami/standgraph/?rack_no=507&target_date=2026-09-25'
+        self.assertIsNone(page_mismatch(list_url, dict(store='saiwaichou', target_date='2026-09-25')))
+        self.assertIsNotNone(page_mismatch(list_url, dict(store='nagamachiminami', target_date='2026-09-25')))
+        self.assertIsNotNone(page_mismatch(list_url, dict(store='saiwaichou', day='2026-09-24')))
+        self.assertIsNone(page_mismatch(graph_url, dict(store='nagamachiminami', day='2026-09-25', rack=507)))
+        self.assertIsNotNone(page_mismatch(graph_url, dict(store='nagamachiminami', day='2026-09-25', rack=508)))
+        self.assertIsNone(page_mismatch(None, dict(store='saiwaichou')))  # nothing to check
+
+
 if __name__ == '__main__': unittest.main()

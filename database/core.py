@@ -135,6 +135,11 @@ class Store:
         self.db = sqlite3.connect(self.path)
         self.db.execute('CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, captured_at TEXT NOT NULL, payload TEXT NOT NULL)')
         self._ensure_store_schema()
+        # 翌日候補（仮）の記録。Android版と同じ形（candidate_log.dart）。
+        self.db.execute('CREATE TABLE IF NOT EXISTS candidate_snapshots (store TEXT NOT NULL, day TEXT NOT NULL, '
+                        'machine TEXT NOT NULL, taken_at TEXT NOT NULL, payload TEXT NOT NULL, '
+                        'PRIMARY KEY(store, day, machine, taken_at))')
+        self.db.execute('CREATE TABLE IF NOT EXISTS app_state (state_key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         self._merge_machine_spellings()
         self.db.commit()
 
@@ -145,8 +150,12 @@ class Store:
         normalized. A copy of the database is kept first, as the store
         migration above does.
         """
-        rows = self.db.execute('SELECT store,day,machine,rack,payload FROM days').fetchall()
-        odd = [r for r in rows if r[2] != normalize_machine_name(r[2])]
+        # Keys only: reading every payload (graph images included) on each open
+        # made opening the database grow with the data for no reason.
+        keys = self.db.execute('SELECT store,day,machine,rack FROM days').fetchall()
+        odd = [(*k, self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
+                                    k).fetchone()[0])
+               for k in keys if k[2] != normalize_machine_name(k[2])]
         if not odd:
             return
         backup_path = self.path.with_name(self.path.stem + '.pre-machine-name-fix' + self.path.suffix)
@@ -201,8 +210,12 @@ class Store:
             self.db.execute('DROP TABLE days')
             self.db.execute('ALTER TABLE days_with_store RENAME TO days')
 
-    def save(self, rows):
+    def save(self, rows, log_candidates=True):
+        """Save rows; with ``log_candidates`` the changed next-day candidates are
+        recorded in the same transaction (a backup import passes False: the
+        candidates of old days recomputed now are not what was shown then)."""
         self._machine_cache = {}
+        groups = set()
         with self.db:
             for row in rows:
                 row = dict(row, machine=normalize_machine_name(row.get('machine')))
@@ -229,6 +242,74 @@ class Store:
                     merged['first_captured_at'] = datetime.now().astimezone().isoformat()
                 self._log_observation(row)
                 self.db.execute('INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) DO UPDATE SET payload=excluded.payload', (*key, json.dumps(merged, ensure_ascii=False)))
+                groups.add((key[0], key[2], key[1]))
+            if log_candidates:
+                self._log_candidates(groups)
+        self._machine_cache = {}
+
+    def _log_candidates(self, groups):
+        """Record the next-day candidates changed by a write (inside its transaction).
+
+        Only the written day and later days (30 days) of the same store and
+        machine can change. A row is added only when the content differs from
+        the last one. A failure to compute never undoes the save: it is counted
+        in ``app_state`` so it is visible, as on Android.
+        """
+        try:
+            targets = set()
+            for location, machine, day in groups:
+                last = (date.fromisoformat(day) + timedelta(days=30)).isoformat()
+                targets.add((location, machine, day))
+                for (later,) in self.db.execute(
+                        'SELECT DISTINCT day FROM days WHERE store=? AND machine=? AND day>? AND day<=?',
+                        (location, machine, day, last)):
+                    targets.add((location, machine, later))
+            self._machine_cache = {}
+            now = datetime.now().astimezone()
+            for location, machine, day in sorted(targets):
+                snapshot = candidate_snapshot(self, location, day, machine, now)
+                latest = self.db.execute(
+                    'SELECT payload FROM candidate_snapshots WHERE store=? AND day=? AND machine=? '
+                    'ORDER BY taken_at DESC LIMIT 1', (location, day, machine)).fetchone()
+                if latest and candidate_signature(json.loads(latest[0])) == candidate_signature(snapshot):
+                    continue
+                self.db.execute('INSERT OR IGNORE INTO candidate_snapshots VALUES(?,?,?,?,?)',
+                                (location, day, machine, snapshot['taken_at'],
+                                 json.dumps(snapshot, ensure_ascii=False)))
+        except Exception as exc:  # noqa: BLE001 - counted, never blocks the save
+            failures = self.db.execute("SELECT value FROM app_state WHERE state_key='candidate_log_failures'").fetchone()
+            count = int(failures[0]) + 1 if failures else 1
+            self.db.execute("INSERT OR REPLACE INTO app_state VALUES('candidate_log_failures', ?)", (str(count),))
+            self.db.execute("INSERT OR REPLACE INTO app_state VALUES('candidate_log_last_error', ?)", (repr(exc),))
+
+    def candidate_snapshots(self, day=None, location=None):
+        query, values = 'SELECT payload FROM candidate_snapshots WHERE 1=1', []
+        if location:
+            query += ' AND store=?'
+            values.append(location)
+        if day:
+            query += ' AND day=?'
+            values.append(day)
+        return [x[0] for x in self.db.execute(query + ' ORDER BY taken_at', values)]
+
+    def add_candidate_snapshots(self, snapshots):
+        """Merge candidate records from a backup (same group and time = same row)."""
+        added = 0
+        with self.db:
+            for s in snapshots:
+                if not (isinstance(s, dict) and s.get('store') in STORE_NAMES and s.get('day')
+                        and s.get('machine') and s.get('taken_at')):
+                    continue
+                machine = normalize_machine_name(s['machine'])
+                cursor = self.db.execute('INSERT OR IGNORE INTO candidate_snapshots VALUES(?,?,?,?,?)',
+                                         (s['store'], s['day'], machine, s['taken_at'],
+                                          json.dumps(dict(s, machine=machine), ensure_ascii=False)))
+                added += cursor.rowcount
+        return added
+
+    def state(self, key):
+        found = self.db.execute('SELECT value FROM app_state WHERE state_key=?', (key,)).fetchone()
+        return found[0] if found else None
 
     def _log_observation(self, row, keep_days=OBSERVATION_KEEP_DAYS):
         """Append one "what was written when" line, and drop worn-out ones.
@@ -269,6 +350,8 @@ class Store:
                         'INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) '
                         'DO UPDATE SET payload=excluded.payload',
                         (*key, json.dumps(payload, ensure_ascii=False)))
+            self._log_candidates({(k[0], k[2], k[1]) for k, _ in entries})
+        self._machine_cache = {}
 
     def delete(self, store, day, machine, rack):
         self._machine_cache = {}
@@ -281,6 +364,8 @@ class Store:
                 'DELETE FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
                 (store, day, machine, int(rack)),
             )
+            self._log_candidates({(store, machine, day)})
+        self._machine_cache = {}
         return cursor.rowcount == 1
 
     def delete_group(self, day, store=None, machine=None):
@@ -303,7 +388,11 @@ class Store:
             query += ' AND machine=?'
             values.append(machine)
         with self.db:
+            groups = set(self.db.execute(query.replace('DELETE FROM', 'SELECT DISTINCT store, machine, day FROM'),
+                                         values).fetchall())
             cursor = self.db.execute(query, values)
+            self._log_candidates(groups)
+        self._machine_cache = {}
         return cursor.rowcount
 
     def set_confirmed_setting(self, store, day, machine, rack, value):
@@ -419,6 +508,64 @@ BACKUP_VERSION = 1
 BACKUP_NUMERIC_FIELDS = ('games', 'bb', 'rb', 'max_hold')
 
 
+def candidate_snapshot(store, location, day, machine, now=None):
+    """The next-day candidates of one store/day/machine now, in Android's format."""
+    result = provisional_next_day_candidates(store, day, machine, location)
+    return dict(store=location, day=day, machine=machine,
+                taken_at=(now or datetime.now().astimezone()).isoformat(),
+                total=result['total'], eligible=result['eligible'],
+                candidates=[dict(rack=int(c['row']['rack']), index=c['index'], days=c['days'])
+                            for c in result['candidates']])
+
+
+def candidate_signature(snapshot):
+    """Content without the time: an unchanged list is not recorded again."""
+    return (snapshot.get('total'), snapshot.get('eligible'),
+            tuple((c.get('rack'), float(c.get('index')), c.get('days'))
+                  for c in snapshot.get('candidates', [])))
+
+
+_RECORDS_START = re.compile(r'"records"\s*:\s*\[$')
+
+
+def read_backup_file(path):
+    """(records, candidate_snapshots) of a backup, read line by line when possible.
+
+    The one-record-per-line layout (this PC app and the current Android app)
+    is parsed line by line, so the file is never held as one big string;
+    anything else (older Android exports) is read whole.
+    """
+    path = Path(path)
+    records, snapshots, section = [], [], 'header'
+    with path.open(encoding='utf-8') as source:
+        first = source.readline().strip()
+        match = _RECORDS_START.search(first)
+        if first.startswith('{') and match:
+            header = json.loads(first[:match.start()].rstrip().rstrip(',') + '}')
+            if not isinstance(header, dict) or header.get('format') != BACKUP_FORMAT:
+                raise ValueError('バックアップファイルの形式が不正です。')
+            section = 'records'
+            for line in source:
+                text = line.strip()
+                if not text:
+                    continue
+                if text.startswith(']'):
+                    section = ('candidates' if section == 'records' and '"candidate_snapshots"' in text
+                               and text.endswith('[') else 'done')
+                    continue
+                if section == 'done':
+                    continue
+                item = json.loads(text[:-1] if text.endswith(',') else text)
+                (records if section == 'records' else snapshots).append(item)
+            return records, snapshots
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    found = payload.get('records') if isinstance(payload, dict) else None
+    if not isinstance(found, list):
+        raise ValueError('バックアップファイルの形式が不正です。')
+    extra = payload.get('candidate_snapshots')
+    return found, extra if isinstance(extra, list) else []
+
+
 def export_backup(store, path, location=None, day=None):
     """Write saved records as a portable JSON file (share via Drive, USB, etc.).
 
@@ -428,18 +575,33 @@ def export_backup(store, path, location=None, day=None):
     ``day`` narrows the export to one date (across every machine/store), for
     when a full-database export would be too many machines to review at once.
     """
-    records = store.raw_payloads(day=day, store=location)
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
                              source='pc'), ensure_ascii=False)[:-1]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # The records are the stored payloads verbatim -- same JSON either way, but
-    # this runs on every single save, so it avoids decoding and re-encoding
-    # megabytes of graph images.
-    body = ',\n'.join(records)
-    path.write_text(f'{header}, "records": [\n{body}\n]}}', encoding='utf-8')
-    return len(records)
+    query, values = 'SELECT payload FROM days WHERE 1=1', []
+    if location:
+        query += ' AND store=?'
+        values.append(location)
+    if day:
+        query += ' AND day=?'
+        values.append(day)
+    count = 0
+    # One record per line, written as read: the whole database is never held
+    # as one string (this runs after every save), and the file can be read
+    # back line by line (``iter_backup_file``). Payloads are copied verbatim.
+    with path.open('w', encoding='utf-8') as out:
+        out.write(f'{header}, "records": [')
+        for (payload,) in store.db.execute(query + ' ORDER BY day,store,rack', values):
+            out.write(('\n' if count == 0 else ',\n') + payload)
+            count += 1
+        out.write('\n]')
+        snapshots = store.candidate_snapshots(day=day, location=location)
+        if snapshots:
+            out.write(', "candidate_snapshots": [\n' + ',\n'.join(snapshots) + '\n]')
+        out.write('}')
+    return count
 
 
 def _valid_backup_record(record):
@@ -660,10 +822,46 @@ def delete_records(store, data_dir, day, location=None, machine=None):
     previous = store.payload_map([
         (r['store'], r['day'], r['machine'], int(r['rack'])) for r in rows
     ])
+    # 消す前の台を、読み込めるバックアップの形で7日間残す（取り消しは1回分だけで、
+    # 日付入りの控えも消した後の状態で上書きされるため）。
+    keep_deleted(data_dir, where, previous)
     count = store.delete_group(day, location, machine)
     remember_for_undo(store, data_dir, f'{where}の削除（{len(rows)}台）', rows, previous=previous)
     auto_backup(store, data_dir)
     return count
+
+
+DELETED_KEEP_DAYS = 7
+
+
+def deleted_dir(data_dir):
+    folder = snapshot_dir(data_dir) / 'deleted'
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def keep_deleted(data_dir, label, payloads, now=None):
+    """Write the racks about to be deleted as a backup file; drop week-old ones.
+
+    「バックアップを読み込む」でこのファイルを選べば、消した台を戻せる。
+    """
+    now = now or datetime.now()
+    folder = deleted_dir(data_dir)
+    rows = [p for p in payloads if p]
+    header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
+                             exported_at=now.astimezone().isoformat(), source='pc-deleted',
+                             label=label), ensure_ascii=False)[:-1]
+    body = ',\n'.join(json.dumps(p, ensure_ascii=False) for p in rows)
+    target = folder / f'database-deleted-{now:%Y%m%d-%H%M%S}.json'
+    target.write_text(f'{header}, "records": [\n{body}\n]}}', encoding='utf-8')
+    for old in folder.glob('database-deleted-*.json'):
+        try:
+            stamp = datetime.strptime(old.stem[len('database-deleted-'):], '%Y%m%d-%H%M%S')
+        except ValueError:
+            continue
+        if (now - stamp).days >= DELETED_KEEP_DAYS:
+            old.unlink(missing_ok=True)
+    return target
 
 
 def undo_last_save(store, data_dir):
@@ -890,18 +1088,16 @@ def import_backup(store, path):
     the caller to show the user and, if they choose, apply individually via
     ``store.save([incoming])``.
     """
-    path = Path(path)
     try:
-        payload = json.loads(path.read_text(encoding='utf-8'))
+        records, snapshots = read_backup_file(path)
     except (OSError, ValueError) as exc:
-        raise ValueError('バックアップファイルを読み込めません。') from exc
-    records = payload.get('records') if isinstance(payload, dict) else None
-    if not isinstance(records, list):
-        raise ValueError('バックアップファイルの形式が不正です。')
+        raise ValueError(f'バックアップファイルを読み込めません。{exc}') from exc
     plan = plan_backup_import(store, records)
     to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only']
     if to_save:
-        store.save(to_save)
+        store.save(to_save, log_candidates=False)
+    if snapshots:
+        store.add_candidate_snapshots(snapshots)
     return plan
 
 

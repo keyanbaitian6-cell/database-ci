@@ -7,23 +7,23 @@ Future<void> tick() => Future<void>.delayed(Duration.zero);
 void main() {
   test('同時に届く2要求を順番に処理し、応答を取り違えない', () async {
     final channel = WebExtractionChannel();
-    final sent = <int>[];
+    final sent = <String>[];
     final first = channel.run((id) async => sent.add(id));
     final second = channel.run((id) async => sent.add(id));
     await tick();
-    expect(sent, [1]);
-    channel.receive(jsonEncode({'id': 1, 'value': 'first'}));
+    expect(sent, hasLength(1));
+    channel.receive(jsonEncode({'id': sent[0], 'value': 'first'}));
     expect(await first, 'first');
     await tick();
-    expect(sent, [1, 2]);
-    channel.receive(jsonEncode({'id': 1, 'value': 'stale'}));
-    channel.receive(jsonEncode({'id': 2, 'value': 'second'}));
+    expect(sent, hasLength(2));
+    channel.receive(jsonEncode({'id': sent[0], 'value': 'stale'}));
+    channel.receive(jsonEncode({'id': sent[1], 'value': 'second'}));
     expect(await second, 'second');
     channel.dispose();
   });
   test('遷移時に進行中と待機中の旧ページ要求を取り消す', () async {
     final channel = WebExtractionChannel();
-    final sent = <int>[];
+    final sent = <String>[];
     final a = channel.run((id) async => sent.add(id));
     final b = channel.run((id) async => sent.add(id));
     final checks = Future.wait([
@@ -33,7 +33,7 @@ void main() {
     await tick();
     channel.navigationStarted();
     await checks;
-    expect(sent, [1]);
+    expect(sent, hasLength(1));
     final c = channel.run((id) async {
       channel.receive(jsonEncode({'id': id, 'value': 'new'}));
     });
@@ -66,5 +66,22 @@ void main() {
       channel.run((_) async => fail('closed')),
       throwsFormatException,
     );
+  });
+  test('推測できる番号（1, 2, 3…）や別の番号の返事では、読み取りを終えない', () async {
+    final channel = WebExtractionChannel(
+      timeout: const Duration(milliseconds: 50),
+    );
+    final reply = channel.run((id) async {
+      expect(id, hasLength(32));
+      for (var guess = 0; guess < 5; guess++) {
+        channel.receive(jsonEncode({'id': guess, 'value': 'forged'}));
+        channel.receive(jsonEncode({'id': '$guess', 'value': 'forged'}));
+      }
+    });
+    await expectLater(reply, throwsFormatException);
+    channel.dispose();
+  });
+  test('番号は毎回ちがう', () {
+    expect(newExtractionId(), isNot(newExtractionId()));
   });
 }

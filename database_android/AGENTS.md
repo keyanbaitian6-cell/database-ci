@@ -7,6 +7,7 @@
 - 作業を始める前に必ず `git fetch origin` と `git pull origin main` をして、最新の `main` から始める。別のフォルダやクローン（例：`Documents/Codex/2026-09-24/a/work/database-claude-review`）の古い状態から作業しない。
 - APKは、最新の `main` を取り込んだ状態からだけビルドする。ビルドの前に `git status` と `git log origin/main..HEAD` / `git log HEAD..origin/main` で差分がないか確かめる。
 - **APKをビルドするたびに `database_android/pubspec.yaml` の `version:` の `+` の後ろ（versionCode）を上げる**。形式は `年月日+2桁`（例 `2026092601`、同じ日の2回目は `2026092602`）。下げない。古いAPKを上書きで入れられないようにするため（入れようとするとAndroidが拒否する）。万一古い版がDBを開いても、DB版が新しければ起動画面で止まる。
+- **`adb uninstall`・`pm clear`・アプリのデータ消去は、利用者がバックアップを書き出して中身を確かめるまで絶対にしない**。アンインストールすると端末内の記録・ゴミ箱・翌日候補の記録がすべて消える。`INSTALL_FAILED_VERSION_DOWNGRADE` が出たら、アンインストールではなく versionCode を上げてビルドし直す。
 - 作業が終わったらコミットして `main` へpushし、次のAIが同じ状態から始められるようにする。採点は `2026-09-25-v10`（当日500G以下は採点しない）が現行。
 
 詳細はリポジトリ直下の `AI_COLLABORATION.md` を参照。

@@ -1,5 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
+
+/// 1回の読み取りの合言葉。ページ側（広告の枠など別のフレームも含む）から
+/// 当てられないよう、連番ではなく推測できない乱数にする。
+String newExtractionId([Random? random]) {
+  final r = random ?? Random.secure();
+  return List.generate(
+    16,
+    (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
+}
 
 /// One outstanding request at a time. Navigation invalidates both active and
 /// queued reads so a reply from an old document cannot be used for a new page.
@@ -8,11 +19,11 @@ class WebExtractionChannel {
   final Duration timeout;
   Future<void> _tail = Future<void>.value();
   Completer<Object?>? _pending;
-  int _id = 0;
+  String? _id;
   int _page = 0;
   bool _closed = false;
 
-  Future<Object?> run(Future<void> Function(int id) send) {
+  Future<Object?> run(Future<void> Function(String id) send) {
     final page = _page;
     final result = _tail.then<Object?>((_) async {
       if (_closed || page != _page) {
@@ -20,7 +31,8 @@ class WebExtractionChannel {
       }
       final pending = Completer<Object?>();
       _pending = pending;
-      final id = ++_id;
+      final id = newExtractionId();
+      _id = id;
       final reply = pending.future.timeout(
         timeout,
         onTimeout: () {
@@ -39,7 +51,10 @@ class WebExtractionChannel {
         if (identical(_pending, pending)) _pending = null;
       }
     });
-    _tail = result.then<void>((_) {}, onError: (Object error, StackTrace stack) {});
+    _tail = result.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {},
+    );
     return result;
   }
 
@@ -48,6 +63,7 @@ class WebExtractionChannel {
       final reply = jsonDecode(message);
       final pending = _pending;
       if (reply is! Map ||
+          _id == null ||
           reply['id'] != _id ||
           pending == null ||
           pending.isCompleted) {
