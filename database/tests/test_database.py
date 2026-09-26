@@ -1423,5 +1423,24 @@ class RobustnessTests(unittest.TestCase):
         self.assertIsNotNone(page_mismatch(graph_url, dict(store='nagamachiminami', day='2026-09-25', rack=508)))
         self.assertIsNone(page_mismatch(None, dict(store='saiwaichou')))  # nothing to check
 
+    def test_automatic_backup_runs_once_after_the_browser_closes(self):
+        from browser_import import backup_after_session
+        waited = []
+
+        class Child:
+            def wait(self):
+                waited.append(True)
+
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            data_dir = Path(folder)
+            db = Store(data_dir / 'database.sqlite3')
+            db.save([row(rack=1)])
+            db.close()
+            backup_after_session([Child(), Child()], data_dir / 'database.sqlite3')
+            self.assertEqual(waited, [True, True])  # open review windows finish first
+            snapshots = list(snapshot_dir(data_dir).glob('database-backup-*.json'))
+            self.assertEqual(len(snapshots), 1)
+            self.assertEqual(len(json.loads(snapshots[0].read_text(encoding='utf-8'))['records']), 1)
+
 
 if __name__ == '__main__': unittest.main()

@@ -982,6 +982,7 @@ class _Bridge:
         self.reports_folder = str(reports_folder)
         self.script_path = str(script_path)
         self.window = None  # set once the window exists (for the real URL)
+        self.children = []  # review windows still open when the browser closes
 
     def _checked(self, raw):
         """Replace the data with an error when it disagrees with the real page."""
@@ -1259,7 +1260,8 @@ class _Bridge:
         if not getattr(sys, 'frozen', False):
             command.append(self.script_path)
         command.extend([f'--confirm-{kind}', str(payload_path), self.db_path, self.reports_folder])
-        subprocess.Popen(command)
+        self.children = [c for c in self.children if c.poll() is None]
+        self.children.append(subprocess.Popen(command))
 
 
 def _load_payload(payload_path):
@@ -1355,7 +1357,9 @@ def _confirm_table(payload_path, db_path, reports_folder):
         store.save(saved_rows)
         remember_for_undo(store, data_dir, f'{machine}の一覧{len(saved_rows)}台', saved_rows,
                           previous=previous)
-        auto_backup(store, data_dir)
+        # 自動バックアップは保存のたびではなく、内部ブラウザを閉じたときに1回だけ
+        # 取る（run_session）。全データの書き出しは記録が増えるほど重くなり、
+        # 1台ごとに待たされるようになるため。
         # No confirmation click here on purpose: nothing about "it saved" needs
         # a decision, and this happens once per machine (not once per rack),
         # so the browser's own status line is enough feedback. It also moves
@@ -1414,7 +1418,7 @@ def _confirm_graph(payload_path, db_path, reports_folder):
         store.save([row])
         remember_for_undo(store, data_dir, f"{context['rack']}番台のグラフ", [row],
                           previous=previous)
-        auto_backup(store, data_dir)
+        # 自動バックアップは内部ブラウザを閉じたときに1回だけ（run_session）。
         # No OK-click confirmation here on purpose -- with dozens of racks to
         # get through, a popup per rack was pure friction for a fact that
         # carries no decision. The next rack's own page loading is the
@@ -1524,6 +1528,26 @@ def run_session(db_path, reports_folder):
 
     window.events.loaded += install_overlay
     webview.start(func=watch_advance_signal, gui='edgechromium')
+    backup_after_session(bridge.children, db_path)
+
+
+def backup_after_session(children, db_path):
+    """Take the automatic backup once, after the browser window has closed.
+
+    A review window that is still open finishes (and saves) first, so the
+    backup includes it. A failed backup never raises: it is retried on the
+    next close, and the saved records are already safe in SQLite.
+    """
+    for child in children:
+        try:
+            child.wait()
+        except Exception:  # noqa: BLE001 - a vanished child has nothing to wait for
+            pass
+    store = Store(db_path)
+    try:
+        return auto_backup(store, Path(db_path).parent)
+    finally:
+        store.close()
 
 
 if __name__ == '__main__':
