@@ -16,7 +16,7 @@
 - PC版は自動バックアップのたびに、同期フォルダ（「database共有」）へ閲覧用の軽いファイル `database-viewer.json` を書く（`core.export_viewer`：直近60日・画像と曲線なし・閲覧に使う項目だけ。実データ5,784台で2.6MB、60日分で約25MBの見込み）。
 - `database-viewer.json` はバックアップではない（画像が無い）。PC版の「同期フォルダの最新を読み込む」の候補から外し、PC版・Android版とも取り込もうとすると止める（見出しの `source: pc-viewer`）。
 - Google Apps Script（`database_android/tool/viewer_drive_script.gs`）が、利用者のDriveの `database-viewer.json` の中身を返すだけのウェブアプリになる（実行ユーザー：自分、アクセス：全員）。URLを知っている人は中身を読める（利用者が選んだ方式）。閲覧ページは、そのURL（`https://script.google.com/macros/s/…/exec` の形だけ許可）を端末に覚え、開くと前回の内容を出してからDriveの最新を読む。
-- 設定手順は `database_android/README_ANDROID.md` の「iPhoneで見る」。スクリプトの実際の通信（CORS）は利用者の設定後に確認する（未確認）。
+- 設定手順は `database_android/README_ANDROID.md` の「iPhoneで見る」。利用者が `imakurudev@gmail.com`（PCのGoogleドライブと同じアカウント）でスクリプトを作ってデプロイし、iPhoneの閲覧ページに設定して動作を確認した（2026-09-27）。スクリプトの応答は `Access-Control-Allow-Origin: *` 付きのJSONで、公開ページから5,792台（19日分）を約3.7秒で読めた。スクリプトのURLは記録に残さない（URLを知る人は中身を読めるため）。
 
 ## 2026-09-27：実機での確認結果（利用者の報告）
 
