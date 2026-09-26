@@ -8,6 +8,7 @@
 - APKは、最新の `main` を取り込んだ状態からだけビルドする。ビルドの前に `git status` と `git log origin/main..HEAD` / `git log HEAD..origin/main` で差分がないか確かめる。
 - **APKをビルドするたびに `database_android/pubspec.yaml` の `version:` の `+` の後ろ（versionCode）を上げる**。形式は `年月日+2桁`（例 `2026092601`、同じ日の2回目は `2026092602`）。下げない。古いAPKを上書きで入れられないようにするため（入れようとするとAndroidが拒否する）。万一古い版がDBを開いても、DB版が新しければ起動画面で止まる。
 - **`adb uninstall`・`pm clear`・アプリのデータ消去は、利用者がバックアップを書き出して中身を確かめるまで絶対にしない**。アンインストールすると端末内の記録・ゴミ箱・翌日候補の記録がすべて消える。`INSTALL_FAILED_VERSION_DOWNGRADE` が出たら、アンインストールではなく versionCode を上げてビルドし直す。
+- **閲覧ページ（database-viewer）を公開・更新するときは、必ず `tool/stage_viewer.py` を通す**。`build/web` には実際の記録（`assets/database_seed.json`）が同梱されるため、そのまま公開しない。
 - 作業が終わったらコミットして `main` へpushし、次のAIが同じ状態から始められるようにする。採点は `2026-09-25-v10`（当日500G以下は採点しない）が現行。
 
 ## 2026-09-27：iPhoneで見るための閲覧ページ（Web）
@@ -16,6 +17,8 @@
 - 採点・翌日候補・表・グラフの部品はAndroid版と同じコードを使う。共有するため、表示部品を `main.dart` から `shared_widgets.dart` へそのまま移した（動作は変えていない）。
 - 読み込みは、ページの「バックアップを読み込む」から「ファイル」アプリ経由でDriveのJSONを選ぶ（利用者の選択）。ページ内のJavaScript（`web/index.html` の `databaseViewer`）が1行ずつ読み、グラフの画像と曲線を捨てて端末の IndexedDB に覚える。記録はどこにも送らない。グラフは4点からの概略図（利用者の選択）。9/26のバックアップ22.6MBが2.7MBになった。
 - 公開は「見る専用ページのコンパイル済みファイルだけを入れた別の公開リポジトリ」＋GitHub Pages（利用者の選択。今のリポジトリは非公開で、無料のPagesは公開リポジトリのみ）。記録・ソースは公開しない。`noindex` 付き。
+- 公開先：https://keyanbaitian6-cell.github.io/database-viewer/ （公開リポジトリ `keyanbaitian6-cell/database-viewer`、利用者の許可を得て作成）。
+- **公開の手順（必ずこの順）**：`database_android` で `flutter build web -t lib/viewer_main.dart --release --base-href /database-viewer/` → `python tool/stage_viewer.py <database-viewer の clone>` → その clone でコミットしてpush。Flutterは `assets/database_seed.json`（実際の記録110件）もWeb用に同梱するため、`stage_viewer.py` がそれを外し、記録にしか無い文字列が残っていないか確かめる（残っていれば止まる）。`build/web` を直接公開しない。
 - 初回表示は、日本語フォントをGoogleのフォント配信から読むまで数秒、文字が□になることがある。
 - Android 129件成功。手元のブラウザで、読み込み・候補・台の詳細・機種の表とグラフ・保存と読み戻しを確認。iPhone実機とファイル選択は未確認。
 
