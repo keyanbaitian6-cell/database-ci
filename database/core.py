@@ -31,6 +31,11 @@ MIN_SCORED_GAMES = 500
 # 出玉のコンプリート上限。利用者の記録（最大持玉19,008枚で打ち止め）から採用した値で、
 # 規則の条文を確認したものではない。機種ごとの上限の違いも見ていない。
 COMPLETE_HOLD = 19000
+# iPhoneの閲覧ページが読む軽いファイル（画像なし・直近の日数だけ）。同期フォルダに置く。
+VIEWER_FILE_NAME = 'database-viewer.json'
+VIEWER_DAYS = 60
+VIEWER_KEYS = ('store', 'kind_code', 'day', 'machine', 'rack', 'games', 'bb', 'rb', 'max_hold',
+               'graph_measurement', 'captured_at', 'confirmed_setting')
 STORE_NAMES = {
     'nagamachiminami': 'メルヘンワールド長町南店',
     'saiwaichou': 'スーパーメルヘンワールド幸町',
@@ -537,7 +542,7 @@ def candidate_signature(snapshot):
 _RECORDS_START = re.compile(r'"records"\s*:\s*\[$')
 
 
-def read_backup_file(path):
+def read_backup_file(path, allow_viewer=False):
     """(records, candidate_snapshots) of a backup, read line by line when possible.
 
     The one-record-per-line layout (this PC app and the current Android app)
@@ -553,6 +558,8 @@ def read_backup_file(path):
             header = json.loads(first[:match.start()].rstrip().rstrip(',') + '}')
             if not isinstance(header, dict) or header.get('format') != BACKUP_FORMAT:
                 raise ValueError('バックアップファイルの形式が不正です。')
+            if header.get('source') == 'pc-viewer' and not allow_viewer:
+                raise ValueError('これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。')
             section = 'records'
             for line in source:
                 text = line.strip()
@@ -573,6 +580,38 @@ def read_backup_file(path):
         raise ValueError('バックアップファイルの形式が不正です。')
     extra = payload.get('candidate_snapshots')
     return found, extra if isinstance(extra, list) else []
+
+
+def export_viewer(store, path, days=VIEWER_DAYS):
+    """Write the light file the iPhone viewer reads: the latest ``days`` days
+    (counted from the newest saved day), without graph images or curves.
+
+    Same one-record-per-line layout as a backup, so the viewer and
+    ``read_backup_file`` read it the same way. Returns the number of racks.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
+                             exported_at=datetime.now().astimezone().isoformat(),
+                             source='pc-viewer', days=days), ensure_ascii=False)[:-1]
+    latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0]
+    count = 0
+    with path.open('w', encoding='utf-8') as out:
+        out.write(f'{header}, "records": [')
+        if latest:
+            cutoff = (date.fromisoformat(latest) - timedelta(days=days - 1)).isoformat()
+            for (payload,) in store.db.execute(
+                    'SELECT payload FROM days WHERE day >= ? ORDER BY day,store,rack', (cutoff,)):
+                # 閲覧ページが使う項目だけ（台ページのURL・取り込み元などは省く）。
+                row = {k: v for k, v in json.loads(payload).items() if k in VIEWER_KEYS}
+                graph = row.get('graph_measurement')
+                if isinstance(graph, dict):
+                    graph.pop('preview_image', None)
+                    graph.pop('curve', None)
+                out.write(('\n' if count == 0 else ',\n') + json.dumps(row, ensure_ascii=False))
+                count += 1
+        out.write('\n]}')
+    return count
 
 
 def export_backup(store, path, location=None, day=None):
@@ -790,9 +829,17 @@ def auto_backup(store, data_dir):
             shutil.copyfile(snapshot, path)
         else:
             export_backup(store, path)
-        return path
     except OSError:
         return None
+    try:
+        # 閲覧ページ用の軽いファイル。ローカルで書いてから同期フォルダへ複製する
+        # （書きかけのファイルがDriveへ上がらないように）。
+        local = Path(data_dir) / VIEWER_FILE_NAME
+        export_viewer(store, local)
+        shutil.copyfile(local, Path(folder) / VIEWER_FILE_NAME)
+    except (OSError, ValueError):
+        pass
+    return path
 
 
 UNDO_NAME = 'last_save.json'
@@ -1078,8 +1125,11 @@ def duplicate_warning(store, day, location, machine, rack=None):
 
 
 def latest_backup_file(folder):
-    """Newest backup JSON in ``folder`` (ignoring this app's own auto copy)."""
-    candidates = [p for p in Path(folder).glob('*.json') if p.name != AUTO_BACKUP_NAME]
+    """Newest backup JSON in ``folder`` (ignoring this app's own auto copy and
+    the light viewer file, which has no graph images and must never be
+    imported as if it were a backup)."""
+    candidates = [p for p in Path(folder).glob('*.json')
+                  if p.name not in (AUTO_BACKUP_NAME, VIEWER_FILE_NAME)]
     for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             payload = json.loads(path.read_text(encoding='utf-8'))

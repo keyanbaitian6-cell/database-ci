@@ -53,6 +53,10 @@ class ViewerHome extends StatefulWidget {
 class _ViewerHomeState extends State<ViewerHome> {
   ViewerData? _data;
   var _loading = true;
+
+  /// Driveの自動読み込みに使う、Googleのスクリプトのアドレス（未設定なら null）。
+  String? _remote;
+  var _syncing = false;
   String? _error;
   String? _store;
   String? _day;
@@ -77,6 +81,7 @@ class _ViewerHomeState extends State<ViewerHome> {
   }
 
   Future<void> _start() async {
+    _remote = loadRemoteUrl();
     try {
       // 手元での確認用：同じサイト内のファイルを ?load= で読む。
       final url = Uri.base.queryParameters['load'];
@@ -88,6 +93,91 @@ class _ViewerHomeState extends State<ViewerHome> {
       _error = '前に読み込んだ内容を開けませんでした。もう一度読み込んでください。\n$error';
     }
     if (mounted) setState(() => _loading = false);
+    // 前の内容をすぐ出してから、Driveの最新を読みに行く。
+    if (_remote != null && Uri.base.queryParameters['load'] == null) {
+      await _refreshFromDrive();
+    }
+  }
+
+  /// Googleのスクリプト経由で、Driveの最新（database-viewer.json）を読む。
+  /// 読めなければ、前に読み込んだ内容のまま理由を出す。
+  Future<void> _refreshFromDrive() async {
+    final url = _remote;
+    if (url == null || _syncing) return;
+    setState(() {
+      _syncing = true;
+      _error = null;
+    });
+    try {
+      final text = await backupFromRemote(url);
+      if (text != null) {
+        final data = ViewerData.parse(text);
+        await saveViewerData(text);
+        _show(data);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Googleドライブの最新（${data.records.length}台）を読み込みました。'),
+            ),
+          );
+        }
+      }
+    } catch (error) {
+      _error = 'Googleドライブから読めませんでした（前に読み込んだ内容を表示しています）。\n$error';
+    }
+    if (mounted) setState(() => _syncing = false);
+  }
+
+  Future<void> _editRemote() async {
+    final field = TextEditingController(text: _remote ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Googleドライブの自動読み込み'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Googleのスクリプト（Apps Script）の「ウェブアプリのURL」（…/exec）を貼ると、'
+              '開くたびにGoogleドライブの最新を読みます。URLはこの端末にだけ覚えます。'
+              '人には教えないでください。',
+              style: TextStyle(fontSize: 13, color: AppColors.ash),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: field,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'ウェブアプリのURL',
+                hintText: 'https://script.google.com/macros/s/…/exec',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          if (_remote != null)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(''),
+              child: const Text('自動読み込みをやめる'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('閉じる'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(field.text.trim()),
+            child: const Text('保存して読み込む'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (result == null || !mounted) return;
+    final url = result.isEmpty ? null : result;
+    saveRemoteUrl(url);
+    setState(() => _remote = url);
+    if (url != null) await _refreshFromDrive();
   }
 
   void _show(ViewerData data) {
@@ -169,8 +259,13 @@ class _ViewerHomeState extends State<ViewerHome> {
     final from = switch (data.source) {
       'android' => 'Android版',
       'pc' || 'pc-deleted' => 'PC版',
+      'pc-viewer' => 'PC版（閲覧用・直近60日）',
       _ => '',
     };
+    if (data.file == 'Googleドライブ（自動）') {
+      return 'Googleドライブから自動で読み込み：$from$when${data.records.length}台'
+          '（グラフは画像を使わず概略図で表示）';
+    }
     return '読み込んだバックアップ：$from$when${data.records.length}台'
         '（グラフは画像を使わず概略図で表示）';
   }
@@ -182,6 +277,19 @@ class _ViewerHomeState extends State<ViewerHome> {
       appBar: AppBar(
         title: const Text('database 閲覧'),
         actions: [
+          if (_remote != null)
+            IconButton(
+              tooltip: 'Googleドライブの最新を読み込む',
+              onPressed: _syncing ? null : _refreshFromDrive,
+              icon: const Icon(Icons.refresh),
+            ),
+          IconButton(
+            tooltip: 'Googleドライブの自動読み込み',
+            onPressed: _editRemote,
+            icon: Icon(
+              _remote == null ? Icons.link : Icons.cloud_done_outlined,
+            ),
+          ),
           IconButton(
             tooltip: 'バックアップを読み込む',
             onPressed: _pick,
@@ -210,6 +318,14 @@ class _ViewerHomeState extends State<ViewerHome> {
             '「バックアップを読み込む」を押し、「ファイル」からGoogleドライブの'
             'database-backup-….json を選びます。読み込んだ内容はこの端末の中だけで'
             '使い、どこにも送りません。次からは選び直さなくても開けます。',
+      ),
+      const SizedBox(height: 12),
+      Center(
+        child: TextButton.icon(
+          onPressed: _editRemote,
+          icon: const Icon(Icons.link),
+          label: const Text('Googleドライブの自動読み込みを設定する'),
+        ),
       ),
       const SizedBox(height: 12),
       const Notice(
@@ -271,7 +387,7 @@ class _ViewerHomeState extends State<ViewerHome> {
                 '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、'
                 'Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。',
           ),
-        if (_loading) const LinearProgressIndicator(),
+        if (_loading || _syncing) const LinearProgressIndicator(),
         Row(
           children: [
             Expanded(

@@ -6,3 +6,9 @@ Future<String?> backupFromUrl(String url) async => null;
 Future<void> saveViewerData(String text) async {}
 
 Future<String?> loadViewerData() async => null;
+
+Future<String?> backupFromRemote(String url) async => null;
+
+String? loadRemoteUrl() => null;
+
+void saveRemoteUrl(String? url) {}

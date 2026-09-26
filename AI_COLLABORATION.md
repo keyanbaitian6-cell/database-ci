@@ -11,6 +11,13 @@
 - **閲覧ページ（database-viewer）を公開・更新するときは、必ず `tool/stage_viewer.py` を通す**。`build/web` には実際の記録（`assets/database_seed.json`）が同梱されるため、そのまま公開しない。
 - 作業が終わったらコミットして `main` へpushし、次のAIが同じ状態から始められるようにする。採点は `2026-09-27-v11`（当日500G以下と、サイトの数値が異常な台は採点しない）が現行。
 
+## 2026-09-27：閲覧ページがGoogleドライブの最新を自動で読む（利用者の選択：Googleのスクリプト）
+
+- PC版は自動バックアップのたびに、同期フォルダ（「database共有」）へ閲覧用の軽いファイル `database-viewer.json` を書く（`core.export_viewer`：直近60日・画像と曲線なし・閲覧に使う項目だけ。実データ5,784台で2.6MB、60日分で約25MBの見込み）。
+- `database-viewer.json` はバックアップではない（画像が無い）。PC版の「同期フォルダの最新を読み込む」の候補から外し、PC版・Android版とも取り込もうとすると止める（見出しの `source: pc-viewer`）。
+- Google Apps Script（`database_android/tool/viewer_drive_script.gs`）が、利用者のDriveの `database-viewer.json` の中身を返すだけのウェブアプリになる（実行ユーザー：自分、アクセス：全員）。URLを知っている人は中身を読める（利用者が選んだ方式）。閲覧ページは、そのURL（`https://script.google.com/macros/s/…/exec` の形だけ許可）を端末に覚え、開くと前回の内容を出してからDriveの最新を読む。
+- 設定手順は `database_android/README_ANDROID.md` の「iPhoneで見る」。スクリプトの実際の通信（CORS）は利用者の設定後に確認する（未確認）。
+
 ## 2026-09-27：実機での確認結果（利用者の報告）
 
 - **Android版0.5.0（versionCode 2026092703）**：利用者が実機で動作確認し、問題なし（v11採点・60日保存・ゴミ箱・閲覧ページと共通の画面部品を含む版）。インストール済みの版はadbで確認した。

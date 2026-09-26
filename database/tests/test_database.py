@@ -1423,6 +1423,30 @@ class RobustnessTests(unittest.TestCase):
         self.assertIsNotNone(page_mismatch(graph_url, dict(store='nagamachiminami', day='2026-09-25', rack=508)))
         self.assertIsNone(page_mismatch(None, dict(store='saiwaichou')))  # nothing to check
 
+    def test_viewer_file_is_light_recent_and_written_to_the_sync_folder(self):
+        from core import VIEWER_FILE_NAME, export_viewer, read_backup_file
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            data_dir, sync = Path(folder) / 'data', Path(folder) / 'sync'
+            data_dir.mkdir(); sync.mkdir()
+            save_settings(data_dir, sync_dir=str(sync))
+            db = Store(data_dir / 'database.sqlite3')
+            graph = dict(baseline_y=200, peak_y=100, trough_y=250, end_y=180,
+                         preview_image='AAAA', curve=[[1, 2]])
+            db.save([dict(row('2026-11-30', 1), graph_measurement=graph),
+                     dict(row('2026-10-02', 2)),   # 60日目：入る
+                     dict(row('2026-10-01', 3))])  # 61日前：入らない
+            auto_backup(db, data_dir)
+            records, _ = read_backup_file(sync / VIEWER_FILE_NAME, allow_viewer=True)
+            self.assertEqual(sorted(r['rack'] for r in records), [1, 2])
+            g = next(r for r in records if r['rack'] == 1)['graph_measurement']
+            self.assertNotIn('preview_image', g)
+            self.assertNotIn('curve', g)
+            self.assertEqual(g['end_y'], 180)
+            self.assertEqual(export_viewer(db, Path(folder) / 'v.json', days=1), 1)
+            with self.assertRaises(ValueError):  # 閲覧用ファイルはバックアップとして取り込まない
+                import_backup(db, sync / VIEWER_FILE_NAME)
+            db.close()
+
     def test_automatic_backup_runs_once_after_the_browser_closes(self):
         from browser_import import backup_after_session
         waited = []

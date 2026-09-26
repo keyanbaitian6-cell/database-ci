@@ -162,6 +162,11 @@ class BackupService {
         if (header is! Map || header['format'] != backupFormat) {
           throw const FormatException('バックアップファイルの形式が不正です。');
         }
+        if (header['source'] == 'pc-viewer') {
+          throw const FormatException(
+            'これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。',
+          );
+        }
         lineLayout = true;
         section = 'records';
         continue;
