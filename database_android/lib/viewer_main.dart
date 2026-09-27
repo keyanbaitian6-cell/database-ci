@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'answer_check.dart';
 import 'data_checks.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
@@ -447,6 +448,20 @@ class _ViewerHomeState extends State<ViewerHome> {
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AnswerCheckPage(
+                records: all,
+                store: store,
+                onOpen: _openRecord,
+              ),
+            ),
+          ),
+          icon: const Icon(Icons.fact_check_outlined),
+          label: const Text('答え合わせ（前の日の候補の結果）'),
         ),
         const SizedBox(height: 14),
         if (dayRows.isEmpty || day == null)
