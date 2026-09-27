@@ -64,6 +64,7 @@ const _specs = <String, _Spec>{
 String foldHalfWidthKana(String text) {
   var name = text;
   const voiced = <String, String>{
+    'ｳﾞ': 'ヴ',
     'ｶﾞ': 'ガ',
     'ｷﾞ': 'ギ',
     'ｸﾞ': 'グ',

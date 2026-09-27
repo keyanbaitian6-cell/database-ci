@@ -32,6 +32,7 @@ void main() {
     expect(machineMatches('ｱｲﾑｼﾞｬｸﾞﾗｰEX', 'ｼﾞｬｸﾞﾗｰ'), isTrue);
     expect(machineMatches('L+防振り+FN', 'l防振り'), isTrue);
     expect(machineMatches('Ｌ戦国乙女５', 'l戦国乙女5'), isTrue);
+    expect(machineMatches('L革命機ｳﾞｧﾙｳﾞﾚｲｳﾞ2jF', 'ヴァルヴレイヴ'), isTrue);
     expect(machineMatches('Lスマスロ北斗の拳', 'ジャグラー'), isFalse);
     expect(machineMatches('何でも', '  '), isTrue);
   });
@@ -182,6 +183,8 @@ void main() {
   test('表示用の機種名：半角カナを全角にそろえ、それ以外は変えない', () {
     expect(displayMachineName('ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3'), 'ゴーゴージャグラー3');
     expect(displayMachineName('ﾌｧﾝｷｰｼﾞｬｸﾞﾗｰ2KT'), 'ファンキージャグラー2KT');
+    expect(displayMachineName('L革命機ｳﾞｧﾙｳﾞﾚｲｳﾞ2jF'), 'L革命機ヴァルヴレイヴ2jF');
+    expect(displayMachineName('L革命機ヴァルヴレイヴ2jF'), 'L革命機ヴァルヴレイヴ2jF');
     expect(displayMachineName('SBﾆｭｰｷﾝｸﾞﾊﾅﾊﾅV PA-30'), 'SBニューキングハナハナV PA-30');
     expect(displayMachineName('L 防振り FN'), 'L 防振り FN');
     expect(displayMachineName('Sハナハナホウオウ～天翔～EX-30'), 'Sハナハナホウオウ～天翔～EX-30');
