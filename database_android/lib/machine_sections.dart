@@ -100,7 +100,7 @@ class _MachineSectionState extends State<MachineSection> {
                   Text(
                     '${widget.entries.length}台・平均 '
                     '${average?.toStringAsFixed(1) ?? '—'}点'
-                    '${widget.candidateRacks.isEmpty ? '' : '・★翌日候補${widget.candidateRacks.length}台'}',
+                    '${widget.candidateRacks.isEmpty ? '' : '・★翌日向け${widget.candidateRacks.length}台'}',
                     style: const TextStyle(fontSize: 12, color: AppColors.ash),
                   ),
                 ],
@@ -108,6 +108,14 @@ class _MachineSectionState extends State<MachineSection> {
             ),
           ],
         ),
+        if (widget.candidateRacks.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              '★はこの日までの記録から選んだ翌日向け候補です。前日から見たこの日の候補ではありません。',
+              style: TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+          ),
         const SizedBox(height: 10),
         Row(
           children: [
@@ -430,7 +438,7 @@ class MachineDataTable extends StatelessWidget {
               provisional == entries.length
                   ? '点数はすべて暫定（少数データ・欠測を含む）'
                   : '$provisional台の点数は暫定（少数データ・欠測を含む）',
-            if (candidateRacks.isNotEmpty) '★＝翌日候補（仮）',
+            if (candidateRacks.isNotEmpty) '★＝選択日までの記録から選んだ翌日向け候補（仮）',
           ].join('・'),
           style: const TextStyle(fontSize: 11, color: AppColors.ash),
         ),
@@ -686,8 +694,10 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             ),
             const SizedBox(height: 6),
             const Text(
-              '過去の当たりが、同じ機種の周りの台より軽かった台です（各機種の上位4分の1）。'
-              '明日どの台から見るかの参考用で、今日の点数には影響しません。',
+              '選択日までの記録から、同じ機種の周りの台より当たりが軽かった台を選びます'
+              '（各機種の上位4分の1）。★は下の表にも付けています。'
+              '選択日そのものの予測ではなく、選択日の翌日向けの目印です。'
+              'この日の点数には影響しません。',
               style: TextStyle(
                 color: AppColors.ash,
                 fontSize: 13,
@@ -722,7 +732,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               Text(
                 '判定できた機種：${widget.judged} / ${widget.machines}機種。'
                 '「平均より」は同じ日・同じ機種で回転数が近い台との当たり頻度の差の積み重ねで、'
-                '別の機種どうしの順位は目安です。★は下の表にも付けています。',
+                '別の機種どうしの順位は目安です。',
                 style: const TextStyle(
                   color: AppColors.ash,
                   fontSize: 12,
