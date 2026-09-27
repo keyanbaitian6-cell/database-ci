@@ -40,12 +40,17 @@ Future<void> main() async {
       StartupErrorApp(
         message: error is DatabaseTooNewException
             ? error.message
-            : '起動できませんでした。記録は変更していません。\n$error',
+            : startupFailureText(controller.startupChanges, error),
         onExport: controller.database.exportRaw,
       ),
     );
     return;
   }
+  controller.onNotice = (text) => messengerKey.currentState
+    ?..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(content: Text(text), duration: const Duration(seconds: 10)),
+    );
   runApp(DatabaseApp(controller: controller));
   _setUpLauncherShortcuts(controller);
 }
@@ -160,6 +165,7 @@ void _setUpLauncherShortcuts(AppController controller) {
 }
 
 final navigatorKey = GlobalKey<NavigatorState>();
+final messengerKey = GlobalKey<ScaffoldMessengerState>();
 
 class DatabaseApp extends StatelessWidget {
   const DatabaseApp({super.key, required this.controller});
@@ -170,6 +176,7 @@ class DatabaseApp extends StatelessWidget {
     previews: controller.previews,
     child: MaterialApp(
       navigatorKey: navigatorKey,
+      scaffoldMessengerKey: messengerKey,
       debugShowCheckedModeBanner: false,
       title: 'database',
       theme: buildAppTheme(),

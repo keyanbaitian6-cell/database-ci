@@ -821,10 +821,10 @@ class DatabaseService {
     ];
   }
 
-  /// [before] より前にゴミ箱へ入れたものを消す。
-  Future<void> purgeTrash(DateTime before) async {
+  /// [before] より前にゴミ箱へ入れたものを消し、消した数を返す。
+  Future<int> purgeTrash(DateTime before) async {
     final db = await database;
-    await db.delete(
+    return db.delete(
       'trash',
       where: 'deleted_at < ?',
       whereArgs: [before.toUtc().toIso8601String()],

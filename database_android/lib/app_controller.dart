@@ -112,6 +112,21 @@ class AppController extends ChangeNotifier {
        _queue = queue ?? WriteQueue(),
        backupService = backupService ?? BackupService() {
     previews = GraphPreviews(this.database.loadPreview);
+    _queue.onLateFinish = _lateFinished;
+  }
+
+  /// 画面をまたいで短く知らせる（取り込み画面を開いていても見えるように）。
+  /// main.dart が設定する。
+  void Function(String text)? onNotice;
+
+  /// 時間を超えた書き込みが、後から終わった。呼んだ画面はもう時間切れを
+  /// 出しているので、結果をあらためて知らせる。
+  void _lateFinished(Object? error) {
+    message = error == null
+        ? '時間がかかっていた処理が、いま終わりました。画面の記録は最新です。'
+        : '時間がかかっていた処理は、失敗して終わりました。記録を確かめてください。\n$error';
+    notifyListeners();
+    onNotice?.call(message!);
   }
 
   final DatabaseService database;
@@ -228,6 +243,24 @@ class AppController extends ChangeNotifier {
 
   /// 起動時に気づいた問題（読めない記録、翌日候補の記録を読めなかった等）。
   final startupWarnings = <String>[];
+
+  /// 起動中に済んだ変更（起動に失敗したときの説明に使う）。
+  final startupChanges = <String>[];
+
+  /// 起動中の、後回しにできる片付け。失敗しても起動は止めず、注意だけ出す
+  /// （片付けは1回でまとめて行うので、失敗すれば何も変わっていない）。
+  /// [action] は済んだ変更の説明を返す（何も変えなければ null）。
+  Future<void> _startupStep(
+    Future<String?> Function() action, {
+    required String failed,
+  }) async {
+    try {
+      final done = await action();
+      if (done != null) startupChanges.add(done);
+    } catch (error) {
+      startupWarnings.add('$failed\n$error');
+    }
+  }
 
   void dismissRetentionNotice() {
     retentionNotice = null;
@@ -402,12 +435,29 @@ class AppController extends ChangeNotifier {
       };
     } else {
       dateEvents = {for (final event in initialDateEvents) event.key: event};
-      await _saveDateEvents();
+      await _startupStep(
+        () async {
+          await _saveDateEvents();
+          return 'イベント名の初期値を保存しました。';
+        },
+        failed: 'イベント名の初期値を保存できませんでした。今回は初期値を表示だけして、次の起動でもう一度保存します。',
+      );
     }
     // 保存期間（$retentionDays日）より古い台を、バックアップ済みのものだけ片付ける。
-    _noteCleanup(
-      await database.cleanupOldRecords(lastFullBackupExport, today: today()),
+    await _startupStep(
+      () async {
+        final cleaned = await database.cleanupOldRecords(
+          lastFullBackupExport,
+          today: today(),
+        );
+        _noteCleanup(cleaned);
+        if (cleaned.deleted == 0 && cleaned.snapshots == 0) return null;
+        return '古い記録（${cleaned.deleted}台・翌日候補の記録${cleaned.snapshots}件）を'
+            '端末から片付けました（バックアップには残っています）。';
+      },
+      failed: '古い記録の片付けができませんでした。記録はそのままです（次の起動でもう一度行います）。',
     );
+    // ここから先の読み込みは起動に欠かせないので、失敗したら起動を止める。
     await _loadNormalizedRecords();
     final unreadable = database.unreadableKeys.length;
     if (unreadable > 0) {
@@ -416,8 +466,14 @@ class AppController extends ChangeNotifier {
         '端末には残してあり、書き出し時は元データを救出用として残します。画面と採点には使っていません。',
       );
     }
-    await database.purgeTrash(
-      DateTime.now().subtract(const Duration(days: trashDays)),
+    await _startupStep(
+      () async {
+        final purged = await database.purgeTrash(
+          DateTime.now().subtract(const Duration(days: trashDays)),
+        );
+        return purged == 0 ? null : '$trashDays日より前にゴミ箱へ入れた$purged件を消しました。';
+      },
+      failed: 'ゴミ箱の古い分を消せませんでした。ゴミ箱はそのままです（次の起動でもう一度行います）。',
     );
     try {
       candidateSnapshots = await database.loadCandidateSnapshots();
@@ -1184,4 +1240,18 @@ class AppController extends ChangeNotifier {
     },
     unlimited: true,
   );
+}
+
+/// 起動できなかったときの説明。起動の途中で済んだ変更（[done]）があれば、
+/// それも書く。起動中の変更は1つずつまとめて行う（途中で止まっても、その
+/// 変更は入らない）ので、書いたもの以外は変わっていない。
+String startupFailureText(List<String> done, Object error) {
+  if (done.isEmpty) return '起動できませんでした。記録は変更していません。\n$error';
+  return [
+    '起動できませんでした。起動の途中で、次のことだけは済んでいます'
+        '（どれも最後まで済んでいて、中途半端な状態ではありません）。',
+    for (final change in done) '・$change',
+    'ほかの記録は変更していません。',
+    '$error',
+  ].join('\n');
 }
