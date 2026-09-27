@@ -14,7 +14,7 @@ import 'viewer_data.dart';
 ///
 /// `flutter build web -t lib/viewer_main.dart` で作る。取り込み・保存はしない。
 /// DriveなどにあるバックアップJSONを端末の中だけで読み、Android版と同じ
-/// 採点・翌日候補・表とグラフ（画像は使わず4点からの概略図）で見せる。
+/// 採点・翌日候補・表とグラフ（画像は使わず、保存したグラフの線から描く）で見せる。
 void main() => runApp(const ViewerApp());
 
 class ViewerApp extends StatelessWidget {
@@ -280,10 +280,10 @@ class _ViewerHomeState extends State<ViewerHome> {
           ? '（うち${data.keptOlder}台は前に読み込んだ古い日の記録）'
           : '';
       return 'Googleドライブから自動で読み込み：$from$when${data.records.length}台$older'
-          '（グラフは画像を使わず概略図で表示）';
+          '（グラフは保存した線から描画。線の無い台は概略図）';
     }
     return '読み込んだバックアップ：$from$when${data.records.length}台'
-        '（グラフは画像を使わず概略図で表示）';
+        '（グラフは保存した線から描画。線の無い台は概略図）';
   }
 
   @override

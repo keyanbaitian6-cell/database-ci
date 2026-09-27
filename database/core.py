@@ -682,7 +682,9 @@ def read_backup_events(path):
 
 def export_viewer(store, path, days=VIEWER_DAYS):
     """Write the light file the iPhone viewer reads: the latest ``days`` days
-    (counted from the newest saved day), without graph images or curves.
+    (counted from the newest saved day), without graph images. The graph
+    curve (the site's SVG line, about a sixth of the image's size) is kept so
+    the viewer can draw the real graph (the user's choice, 2026-09-28).
 
     Same one-record-per-line layout as a backup, so the viewer and
     ``read_backup_file`` read it the same way. Returns the number of racks.
@@ -712,7 +714,6 @@ def export_viewer(store, path, days=VIEWER_DAYS):
                 graph = row.get('graph_measurement')
                 if isinstance(graph, dict):
                     graph.pop('preview_image', None)
-                    graph.pop('curve', None)
                 out.write(('\n' if count == 0 else ',\n') + json.dumps(row, ensure_ascii=False))
                 count += 1
         out.write('\n]}')

@@ -6,10 +6,10 @@
 
 ## iPhoneで見る（閲覧ページ）
 
-公開先：https://keyanbaitian6-cell.github.io/database-viewer/ （更新は `AI_COLLABORATION.md` の手順どおり、必ず `tool/stage_viewer.py` を通す）。ページはバックアップJSONを端末の中だけで読み（画像は使わず概略図）、Android版と同じ採点・翌日候補・表を出す。取り込み・保存はしない。
+公開先：https://keyanbaitian6-cell.github.io/database-viewer/ （更新は `AI_COLLABORATION.md` の手順どおり、必ず `tool/stage_viewer.py` を通す）。ページはバックアップJSONを端末の中だけで読み（画像は使わず、保存したグラフの線から描く。線の無い台は概略図）、Android版と同じ採点・翌日候補・表を出す。取り込み・保存はしない。
 
 Googleドライブの最新を自動で読む設定（初回だけ）：
-1. PC版で取り込むかブラウザを閉じると、「database共有」に `database-viewer.json`（閲覧用・直近60日・画像なし）ができる。
+1. PC版で取り込むかブラウザを閉じると、「database共有」に `database-viewer.json`（閲覧用・直近60日・画像なし、グラフの線は入れる）ができる。
 2. https://script.google.com で新しいプロジェクトを作り、`tool/viewer_drive_script.gs` の中身を貼って保存する。
 3. 「デプロイ」→「新しいデプロイ」→ 種類「ウェブアプリ」、次のユーザーとして実行「自分」、アクセスできるユーザー「全員」でデプロイし、Googleドライブを読む許可を与える（自分のスクリプトなので「詳細」→「移動」で許可してよい）。
 4. 表示された「ウェブアプリのURL」（…/exec）を、閲覧ページ右上のリンクのアイコン（Googleドライブの自動読み込み）に貼る。以後は開くたびに最新を読む。URLを知っている人は中身を読めるので、人には教えない。

@@ -532,12 +532,14 @@ class _SavedGraphBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasImage = graph.hasPreview;
+    // 画像が無くても、保存したグラフの線があれば（閲覧ページ）それを描く。
+    final curveSize = hasImage ? null : curveCanvasSize(graph);
     final values = [graph.baselineY, graph.peakY, graph.troughY, graph.endY];
-    final width = (graph.previewWidth ?? 400).toDouble();
     final maxY = values.reduce((a, b) => a > b ? a : b);
-    final height = math
-        .max((graph.previewHeight ?? 400).toDouble(), maxY + 30)
-        .toDouble();
+    final width = curveSize?.width ?? (graph.previewWidth ?? 400).toDouble();
+    final height =
+        curveSize?.height ??
+        math.max((graph.previewHeight ?? 400).toDouble(), maxY + 30).toDouble();
     final points =
         hasImage &&
             graph.baselineX != null &&
@@ -589,6 +591,15 @@ class _SavedGraphBody extends StatelessWidget {
                             ),
                           ),
                         )
+                      else if (curveSize != null)
+                        CustomPaint(
+                          painter: CurveGraphPainter(
+                            curve: graph.curve!,
+                            baselineY: graph.baselineY,
+                            sourceWidth: width,
+                            sourceHeight: height,
+                          ),
+                        )
                       else
                         CustomPaint(
                           painter: ReconstructedGraphPainter(
@@ -604,6 +615,8 @@ class _SavedGraphBody extends StatelessWidget {
                 Text(
                   hasImage
                       ? '保存時のグラフです。'
+                      : curveSize != null
+                      ? '保存時のグラフの線から描いたグラフです。'
                       : '保存時の画像がないため、採点に使った4点から復元した概略グラフです。',
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/scoring.dart';
 import 'package:database_android/viewer_data.dart';
@@ -127,6 +128,63 @@ void main() {
       final incoming = doc('2026-09-27T12:00:00+09:00', ['2026-09-27']);
       expect(ViewerData.merge(null, incoming).text, incoming);
       expect(ViewerData.merge('{broken', incoming).text, incoming);
+    });
+  });
+
+  group('閲覧ページはグラフの線（曲線）から描く', () {
+    test('読み込んだ曲線を残し、画像と同じ縦横比の大きさで描く', () {
+      final text = jsonEncode({
+        'header': {'format': 'database-backup', 'source': 'pc-viewer'},
+        'records': [
+          {
+            ...raw(1),
+            'graph_measurement': {
+              'baseline_y': 200.5,
+              'peak_y': 87.5,
+              'trough_y': 250.5,
+              'end_y': 189.5,
+              'preview_width': 420,
+              'preview_height': 246,
+              'curve': [
+                [0.5, 200.5],
+                [289.5, 200.5],
+                [682.5, 189.5],
+              ],
+            },
+          },
+        ],
+      });
+      final graph = ViewerData.parse(text).records.single.graph!;
+      expect(graph.curve, hasLength(3));
+      // PC版の取り込みの一部は、曲線の方が保存した幅より広い。幅を曲線に合わせ、
+      // 高さも同じ割合で広げる（246 × 682.5 / 420 ≒ 400）。
+      final size = curveCanvasSize(graph)!;
+      expect(size.width, 682.5);
+      expect(size.height, closeTo(399.75, 0.01));
+    });
+
+    test('ふつうは保存した幅・高さのまま。曲線が無ければ概略図（null）', () {
+      const inside = GraphMeasurement(
+        baselineY: 100,
+        peakY: 50,
+        troughY: 150,
+        endY: 80,
+        previewWidth: 392,
+        previewHeight: 400,
+        curve: [
+          [0, 100],
+          [390, 80],
+        ],
+      );
+      final size = curveCanvasSize(inside)!;
+      expect((size.width, size.height), (392.0, 400.0));
+      const none = GraphMeasurement(
+        baselineY: 100,
+        peakY: 50,
+        troughY: 150,
+        endY: 80,
+      );
+      expect(curveCanvasSize(none), isNull);
     });
   });
 }

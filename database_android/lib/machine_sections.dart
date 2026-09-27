@@ -878,18 +878,28 @@ class SlumpTile extends StatelessWidget {
           ].reduce((a, b) => a > b ? a : b) +
           30,
     );
+    // 保存したグラフの線があれば（閲覧ページなど）、それを描く。
+    final curveSize = curveCanvasSize(graph);
     final sketch = CustomPaint(
-      painter: ReconstructedGraphPainter(
-        points: [
-          Offset(width * .06, graph.baselineY),
-          Offset(width * .34, graph.peakY),
-          Offset(width * .66, graph.troughY),
-          Offset(width * .94, graph.endY),
-        ],
-        sourceWidth: width,
-        sourceHeight: height,
-        background: slumpBackground,
-      ),
+      painter: curveSize != null
+          ? CurveGraphPainter(
+              curve: graph.curve!,
+              baselineY: graph.baselineY,
+              sourceWidth: curveSize.width,
+              sourceHeight: curveSize.height,
+              background: slumpBackground,
+            )
+          : ReconstructedGraphPainter(
+              points: [
+                Offset(width * .06, graph.baselineY),
+                Offset(width * .34, graph.peakY),
+                Offset(width * .66, graph.troughY),
+                Offset(width * .94, graph.endY),
+              ],
+              sourceWidth: width,
+              sourceHeight: height,
+              background: slumpBackground,
+            ),
     );
     // 保存された画像は作った端末・時期で背景の暗さが違う（透明・黒・濃紺）。
     // 5日分の明るさを揃えるため、どのタイルも同じ背景色の上に描く。
@@ -905,6 +915,85 @@ class SlumpTile extends StatelessWidget {
 }
 
 const slumpBackground = Color(0xFF0C0C10);
+
+/// 保存したグラフの線（曲線）を描くときの座標の大きさ（幅・高さ）。描ける曲線が
+/// 無ければ null。
+///
+/// 曲線は画像と同じ座標系で、ふつうは保存した幅・高さ（preview_width/height）に
+/// 収まる。PC版の取り込みの一部は曲線の座標の方が広いので、そのときは幅を曲線に
+/// 合わせ、高さも同じ割合で広げる（縦横の比は画像と同じ）。
+({double width, double height})? curveCanvasSize(GraphMeasurement graph) {
+  final curve = graph.curve;
+  if (curve == null || curve.length < 2 || curve.any((p) => p.length < 2)) {
+    return null;
+  }
+  final maxX = curve.map((p) => p[0]).reduce(math.max);
+  final maxY = [...curve.map((p) => p[1]), graph.baselineY].reduce(math.max);
+  final previewWidth = graph.previewWidth?.toDouble();
+  final previewHeight = graph.previewHeight?.toDouble();
+  if (previewWidth == null || previewHeight == null || previewWidth <= 0) {
+    return (width: math.max(maxX, 1), height: maxY + 30);
+  }
+  final width = math.max(previewWidth, maxX);
+  final height = previewHeight * width / previewWidth;
+  return (width: width, height: math.max(height, maxY + 10));
+}
+
+/// 保存したグラフの線（サイトのSVGの線そのもの）を描く。画像を持たない
+/// 閲覧ページで、概略図の代わりに使う。
+class CurveGraphPainter extends CustomPainter {
+  const CurveGraphPainter({
+    required this.curve,
+    required this.baselineY,
+    required this.sourceWidth,
+    required this.sourceHeight,
+    this.background = AppColors.carbon,
+  });
+  final List<List<double>> curve;
+  final double baselineY;
+  final double sourceWidth, sourceHeight;
+  final Color background;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = background);
+    Offset scale(List<double> p) => Offset(
+      p[0] / sourceWidth * size.width,
+      p[1] / sourceHeight * size.height,
+    );
+    final baseline = baselineY / sourceHeight * size.height;
+    canvas.drawLine(
+      Offset(0, baseline),
+      Offset(size.width, baseline),
+      Paint()
+        ..color = Colors.redAccent
+        ..strokeWidth = 1.2,
+    );
+    final first = scale(curve.first);
+    final path = Path()..moveTo(first.dx, first.dy);
+    for (final point in curve.skip(1)) {
+      final scaled = scale(point);
+      path.lineTo(scaled.dx, scaled.dy);
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xffe8edf0)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..strokeJoin = StrokeJoin.round
+        ..isAntiAlias = true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CurveGraphPainter oldDelegate) =>
+      !identical(oldDelegate.curve, curve) ||
+      oldDelegate.baselineY != baselineY ||
+      oldDelegate.sourceWidth != sourceWidth ||
+      oldDelegate.sourceHeight != sourceHeight ||
+      oldDelegate.background != background;
+}
 
 class ReconstructedGraphPainter extends CustomPainter {
   const ReconstructedGraphPainter({

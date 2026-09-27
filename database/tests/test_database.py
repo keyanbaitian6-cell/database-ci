@@ -1450,7 +1450,7 @@ class RobustnessTests(unittest.TestCase):
             self.assertEqual(sorted(r['rack'] for r in records), [1, 2])
             g = next(r for r in records if r['rack'] == 1)['graph_measurement']
             self.assertNotIn('preview_image', g)
-            self.assertNotIn('curve', g)
+            self.assertEqual(g['curve'], [[1, 2]])  # 線は閲覧ページで描くので残す
             self.assertEqual(g['end_y'], 180)
             self.assertEqual(export_viewer(db, Path(folder) / 'v.json', days=1), 1)
             with self.assertRaises(ValueError):  # 閲覧用ファイルはバックアップとして取り込まない
