@@ -441,11 +441,9 @@ OVERLAY_JS = (
     # A small draggable card, not a full-width bar -- the site's own per-rack
     # pager ("<279番台 280番台 281番台>") sits near the top of the page, so a
     # bottom-of-screen bar meant a long mouse trip after every "next rack"
-    # click. Defaulting near the top-right and remembering a drag (via
-    # localStorage, so it survives the page reload that "next rack" causes on
-    # this site) keeps the capture buttons next to whatever the user is
-    # actually clicking.\n"
-    "  const POS_KEY = 'database-overlay-pos';\n"
+    # click. Remembering a drag (in a file on the Python side, so it survives
+    # both the page reload that "next rack" causes and closing the browser)
+    # keeps the capture buttons next to whatever the user is actually clicking.
     "  const card = document.createElement('div');\n"
     "  card.id = 'database-overlay';\n"
     "  card.style.cssText = 'position:fixed;z-index:2147483647;background:#203044;color:#fff;"
@@ -453,13 +451,20 @@ OVERLAY_JS = (
     "border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.4);width:176px';\n"
     # カードの大きさ。サイトの文字や表に合わせて見やすい大きさに変えられる。
     # 倍率は localStorage に残すので、ページを移動しても同じ大きさのまま。
-    "  const SIZE_KEY = 'database-overlay-size';\n"
+    # 位置と倍率は、ブラウザを閉じても残るようPython側のファイルに保存する
+    # （このブラウザはプライベートモードなので localStorage は閉じると消える）。
+    # 開くたびに install_overlay が window.__databaseLayout へ入れて渡す。
     "  const SIZE_MIN = 0.7, SIZE_MAX = 2, SIZE_STEP = 0.15;\n"
+    "  const layout = window.__databaseLayout || {};\n"
     "  let sizeScale = 1;\n"
-    "  try {\n"
-    "    const stored = parseFloat(localStorage.getItem(SIZE_KEY));\n"
-    "    if (stored >= SIZE_MIN && stored <= SIZE_MAX) sizeScale = stored;\n"
-    "  } catch (e) {}\n"
+    "  if (layout.scale >= SIZE_MIN && layout.scale <= SIZE_MAX) sizeScale = layout.scale;\n"
+    "  const saveLayout = () => {\n"
+    "    const rect = card.getBoundingClientRect();\n"
+    "    window.__databaseLayout = {left: rect.left, top: rect.top, scale: sizeScale};\n"
+    "    try {\n"
+    "      window.pywebview.api.save_overlay_layout(JSON.stringify(window.__databaseLayout));\n"
+    "    } catch (e) {}\n"
+    "  };\n"
     "  const grip = document.createElement('div');\n"
     "  grip.style.cssText = 'cursor:move;font-size:11px;opacity:.75;padding:2px 4px;"
     "user-select:none;display:flex;align-items:center;gap:4px';\n"
@@ -707,14 +712,12 @@ OVERLAY_JS = (
     "    const rect = card.getBoundingClientRect();\n"
     "    sizeScale = Math.min(SIZE_MAX, Math.max(SIZE_MIN, Math.round(value * 100) / 100));\n"
     "    card.style.zoom = sizeScale;\n"
-    "    try { localStorage.setItem(SIZE_KEY, String(sizeScale)); } catch (e) {}\n"
     "    place(rect.left, rect.top);\n"
+    "    saveLayout();\n"
     "  };\n"
     "  card.style.zoom = sizeScale;\n"
-    "  let saved = null;\n"
-    "  try { saved = JSON.parse(localStorage.getItem(POS_KEY)); } catch (e) { saved = null; }\n"
-    "  if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {\n"
-    "    place(saved.left, saved.top);\n"
+    "  if (typeof layout.left === 'number' && typeof layout.top === 'number') {\n"
+    "    place(layout.left, layout.top);\n"
     "  } else {\n"
     "    place(window.innerWidth - 196, 12);\n"
     "  }\n"
@@ -731,8 +734,7 @@ OVERLAY_JS = (
     "  window.addEventListener('mouseup', () => {\n"
     "    if (!dragging) return;\n"
     "    dragging = null;\n"
-    "    const rect = card.getBoundingClientRect();\n"
-    "    try { localStorage.setItem(POS_KEY, JSON.stringify({left: rect.left, top: rect.top})); } catch (e) {}\n"
+    "    saveLayout();\n"
     "  });\n"
     "  const extractTable = () => {\n" + TABLE_EXTRACT_BODY + "\n  };\n"
     "  const extractGraph = () => {\n" + GRAPH_EXTRACT_BODY + "\n  };\n"
@@ -963,6 +965,106 @@ def _bring_to_front(window):
         pass
 
 
+# 取り込みブラウザの窓とオーバーレイの配置。最初は利用者が整えた配置
+# （2026-09-28 に画面から読み取った値。1920×1080・表示倍率100%）で開き、
+# 動かしたり大きさを変えたりしたら、次に開くときもその配置にする。
+# 窓の値は pywebview の論理ピクセル（枠を含む外側）、オーバーレイの値は
+# ページ内の表示座標と倍率。
+DEFAULT_BROWSER_LAYOUT = {
+    'window': {'x': 1231, 'y': 481, 'width': 573, 'height': 495},
+    'overlay': {'left': 213, 'top': 84, 'scale': 1.6},
+}
+BROWSER_LAYOUT_FILE = 'browser_layout.json'
+_WINDOW_MIN_SIZE = (200, 100)   # pywebview の min_size と同じ
+_OVERLAY_SCALE_RANGE = (0.7, 2.0)  # オーバーレイの SIZE_MIN / SIZE_MAX と同じ
+
+
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value
+
+
+def clean_window_layout(value):
+    """A saved window rect, or None when it is missing or unusable.
+
+    A minimized window reports a position like (-32000, -32000); that and
+    anything smaller than the window's minimum size is thrown away.
+    """
+    if not isinstance(value, dict) or not all(_number(value.get(k)) for k in ('x', 'y', 'width', 'height')):
+        return None
+    x, y, width, height = (int(round(value[k])) for k in ('x', 'y', 'width', 'height'))
+    if x <= -10000 or y <= -10000 or width < _WINDOW_MIN_SIZE[0] or height < _WINDOW_MIN_SIZE[1]:
+        return None
+    return {'x': x, 'y': y, 'width': width, 'height': height}
+
+
+def clean_overlay_layout(value):
+    if not isinstance(value, dict) or not all(_number(value.get(k)) for k in ('left', 'top', 'scale')):
+        return None
+    low, high = _OVERLAY_SCALE_RANGE
+    if not low <= value['scale'] <= high:
+        return None
+    return {'left': max(0.0, float(value['left'])), 'top': max(0.0, float(value['top'])),
+            'scale': float(value['scale'])}
+
+
+def window_visible_on(window, screen):
+    """True if the window's title bar is on the screen enough to grab it.
+
+    ``screen`` is (x, y, width, height) of the whole desktop, or None when
+    it is unknown (then the saved position is trusted). Guards against a
+    position saved on a monitor that is no longer attached.
+    """
+    if screen is None:
+        return True
+    sx, sy, sw, sh = screen
+    overlap_w = min(window['x'] + window['width'], sx + sw) - max(window['x'], sx)
+    overlap_h = min(window['y'] + 40, sy + sh) - max(window['y'], sy)
+    return overlap_w >= 100 and overlap_h >= 30
+
+
+def _desktop_rect():
+    """The whole Windows desktop (all monitors), or None off Windows."""
+    try:
+        import ctypes
+        metrics = ctypes.windll.user32.GetSystemMetrics
+        rect = tuple(metrics(i) for i in (76, 77, 78, 79))  # SM_[XY]VIRTUALSCREEN, SM_C[XY]VIRTUALSCREEN
+    except Exception:  # noqa: BLE001 - not Windows, or the call is unavailable
+        return None
+    return rect if rect[2] > 0 and rect[3] > 0 else None
+
+
+def load_browser_layout(folder, screen=None):
+    """The layout to open with: what was saved last time, else the default.
+
+    Each half (window / overlay) falls back to the default on its own, and a
+    window that would open off every screen falls back to the plain 1280×900
+    centered window the browser used before (``x``/``y`` of None).
+    """
+    try:
+        saved = json.loads((Path(folder) / BROWSER_LAYOUT_FILE).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    window = clean_window_layout(saved.get('window')) or dict(DEFAULT_BROWSER_LAYOUT['window'])
+    if not window_visible_on(window, screen):
+        window = {'x': None, 'y': None, 'width': 1280, 'height': 900}
+    overlay = clean_overlay_layout(saved.get('overlay')) or dict(DEFAULT_BROWSER_LAYOUT['overlay'])
+    return {'window': window, 'overlay': overlay}
+
+
+def save_browser_layout(folder, layout):
+    """Write the layout atomically. A failure only loses the remembered layout."""
+    path = Path(folder) / BROWSER_LAYOUT_FILE
+    temporary = path.with_name(path.name + '.tmp')
+    try:
+        temporary.write_text(json.dumps(layout, ensure_ascii=False, indent=2), encoding='utf-8')
+        temporary.replace(path)
+        return True
+    except OSError:
+        return False
+
+
 class _Bridge:
     """Exposed to the page as ``window.pywebview.api``.
 
@@ -977,7 +1079,7 @@ class _Bridge:
     browser stays free to keep accepting the next click immediately.
     """
 
-    def __init__(self, db_path, reports_folder, script_path):
+    def __init__(self, db_path, reports_folder, script_path, layout=None):
         # pywebview recursively inspects public attributes to build its JS API.
         # A public Window reaches WinForms native properties and can deadlock
         # API injection. Keep all internal state out of that traversal.
@@ -986,6 +1088,26 @@ class _Bridge:
         self._script_path = str(script_path)
         self._window = None  # set once the window exists (for the real URL)
         self._children = []  # review windows still open when the browser closes
+        self._layout_folder = Path(db_path).parent
+        self._layout = layout or {'window': dict(DEFAULT_BROWSER_LAYOUT['window']),
+                                  'overlay': dict(DEFAULT_BROWSER_LAYOUT['overlay'])}
+
+    def save_overlay_layout(self, raw):
+        """Remember where the overlay card is and how big (called on drag / －＋)."""
+        try:
+            overlay = clean_overlay_layout(json.loads(raw) if isinstance(raw, str) else raw)
+        except ValueError:
+            overlay = None
+        if overlay is None:
+            return False
+        self._layout['overlay'] = overlay
+        return save_browser_layout(self._layout_folder, self._layout)
+
+    def _note_window(self, **values):
+        """Record the window's latest position or size (from pywebview events)."""
+        window = clean_window_layout({**self._layout['window'], **values})
+        if window is not None:
+            self._layout['window'] = window
 
     def _checked(self, raw):
         """Replace the data with an error when it disagrees with the real page."""
@@ -1456,10 +1578,16 @@ def run_session(db_path, reports_folder):
     import threading
     import webview
 
-    bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()))
+    layout = load_browser_layout(Path(db_path).parent, _desktop_rect())
+    bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()), layout=layout)
+    placement = layout['window']
     window = webview.create_window('database ブラウザ取り込み', DEFAULT_START,
-                                    width=1280, height=900, js_api=bridge)
+                                    width=placement['width'], height=placement['height'],
+                                    x=placement['x'], y=placement['y'], js_api=bridge)
     bridge._window = window
+    # 動かした・大きさを変えた窓の配置を覚えておき、閉じたときに保存する。
+    window.events.moved += lambda x, y: bridge._note_window(x=x, y=y)
+    window.events.resized += lambda width, height: bridge._note_window(width=width, height=height)
 
     def install_overlay():
         try:
@@ -1470,7 +1598,8 @@ def run_session(db_path, reports_folder):
             window.load_url(DEFAULT_START)
             return
         try:
-            window.evaluate_js(OVERLAY_JS)
+            window.evaluate_js('window.__databaseLayout = ' + json.dumps(bridge._layout['overlay'])
+                               + ';\n' + OVERLAY_JS)
         except Exception:
             pass
 
@@ -1531,6 +1660,8 @@ def run_session(db_path, reports_folder):
 
     window.events.loaded += install_overlay
     webview.start(func=watch_advance_signal, gui='edgechromium')
+    if bridge._layout['window'].get('x') is not None:
+        save_browser_layout(Path(db_path).parent, bridge._layout)
     backup_after_session(bridge._children, db_path)
 
 

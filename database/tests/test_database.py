@@ -1029,6 +1029,43 @@ class BackupSharingTests(unittest.TestCase):
         self.assertEqual(OVERLAY_JS.count('{'), OVERLAY_JS.count('}'))
         self.assertEqual(OVERLAY_JS.count('('), OVERLAY_JS.count(')'))
 
+    def test_browser_layout_starts_as_arranged_and_remembers_changes(self):
+        """取り込みブラウザは整えた配置で開き、動かした窓・オーバーレイは次回もその配置。"""
+        from browser_import import (BROWSER_LAYOUT_FILE, DEFAULT_BROWSER_LAYOUT, OVERLAY_JS,
+                                    load_browser_layout)
+        screen = (0, 0, 1920, 1080)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            # 保存が無ければ、整えた配置のまま
+            self.assertEqual(load_browser_layout(folder, screen), DEFAULT_BROWSER_LAYOUT)
+            bridge = _Bridge(folder / 'test.db', folder, 'x', layout=load_browser_layout(folder, screen))
+            # オーバーレイを動かす・大きくすると、その場でファイルに残る
+            self.assertTrue(bridge.save_overlay_layout(json.dumps({'left': 40, 'top': 30.5, 'scale': 1.9})))
+            # 窓を動かし、大きさを変える（最小化中の位置は覚えない）
+            bridge._note_window(x=100, y=50)
+            bridge._note_window(width=800, height=600)
+            bridge._note_window(x=-32000, y=-32000)
+            from browser_import import save_browser_layout
+            self.assertTrue(save_browser_layout(folder, bridge._layout))
+            self.assertEqual(load_browser_layout(folder, screen), {
+                'window': {'x': 100, 'y': 50, 'width': 800, 'height': 600},
+                'overlay': {'left': 40.0, 'top': 30.5, 'scale': 1.9},
+            })
+            # おかしな値は受け付けず、前の値のまま
+            self.assertFalse(bridge.save_overlay_layout(json.dumps({'left': 1, 'top': 1, 'scale': 9})))
+            self.assertFalse(bridge.save_overlay_layout('{broken'))
+            self.assertEqual(load_browser_layout(folder, screen)['overlay']['scale'], 1.9)
+            # 外したモニターの上に保存された窓は、画面の中央に元の大きさで開く
+            self.assertEqual(load_browser_layout(folder, (0, 0, 80, 60))['window'],
+                             {'x': None, 'y': None, 'width': 1280, 'height': 900})
+            # 壊れたファイルなら、整えた配置に戻る
+            (folder / BROWSER_LAYOUT_FILE).write_text('{broken', encoding='utf-8')
+            self.assertEqual(load_browser_layout(folder, screen), DEFAULT_BROWSER_LAYOUT)
+        # 位置と倍率は閉じると消える localStorage ではなく、渡された配置を使う
+        self.assertIn('window.__databaseLayout', OVERLAY_JS)
+        self.assertIn('save_overlay_layout', OVERLAY_JS)
+        self.assertNotIn('database-overlay-pos', OVERLAY_JS)
+
     def test_business_day_changes_at_2am(self):
         """深夜2時までは前日扱い（9/22の26時＝9/23 1:59 までは9/22）。"""
         from datetime import datetime
