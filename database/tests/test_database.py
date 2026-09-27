@@ -1476,5 +1476,54 @@ class RobustnessTests(unittest.TestCase):
             self.assertEqual(len(snapshots), 1)
             self.assertEqual(len(json.loads(snapshots[0].read_text(encoding='utf-8'))['records']), 1)
 
+    def test_backup_import_writes_events_racks_and_candidates_at_once(self):
+        # 2026-09-27 見直し：途中で失敗したら、イベント名も台も翌日候補の記録も残さない。
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            path = Path(folder) / 'b.json'
+            path.write_text(json.dumps({
+                'format': 'database-backup', 'version': 1, 'source': 'android',
+                'date_events': [{'store': 'nagamachiminami', 'day': '2026-01-01', 'name': '周年'}],
+                'records': [row(rack=1), row(rack=2)],
+                'candidate_snapshots': [{'store': 'nagamachiminami', 'day': '2026-09-13',
+                                         'machine': 'テスト', 'taken_at': '2026-09-13T23:00:00+09:00',
+                                         'total': 2, 'eligible': 0, 'candidates': []}],
+            }, ensure_ascii=False), encoding='utf-8')
+            db = Store(Path(folder) / 'test.db')
+            events_before = db.date_events()
+            db.db.execute("CREATE TRIGGER fail BEFORE INSERT ON days WHEN NEW.rack = 2 "
+                          "BEGIN SELECT RAISE(ABORT, 'disk failure'); END")
+            with self.assertRaises(sqlite3.DatabaseError):
+                import_backup(db, path)
+            self.assertEqual(db.rows(), [])
+            self.assertEqual(db.date_events(), events_before)
+            self.assertEqual(db.candidate_snapshots(), [])
+            db.db.execute('DROP TRIGGER fail')
+            import_backup(db, path)
+            self.assertEqual(len(db.rows()), 2)
+            self.assertIn('周年', [e['name'] for e in db.date_events()])
+            self.assertEqual(len(db.candidate_snapshots()), 1)
+            db.close()
+
+    def test_one_unreadable_row_does_not_stop_the_app_or_break_backups(self):
+        from core import VIEWER_FILE_NAME, export_viewer, read_backup_file
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save([row(rack=1)])
+            with db.db:
+                db.db.execute('INSERT INTO days VALUES(?,?,?,?,?)',
+                              ('nagamachiminami', '2026-09-13', 'テ+スト', 9, '{broken'))
+            db.close()
+            db = Store(Path(folder) / 'test.db')  # 開き直しても止まらない
+            self.assertEqual([r['rack'] for r in db.rows()], [1])
+            out = Path(folder) / 'out.json'
+            self.assertEqual(export_backup(db, out), 2)
+            records, _ = read_backup_file(out)  # ファイル全体は読める
+            self.assertEqual(sum('unreadable_record' in r for r in records), 1)
+            self.assertEqual(len(plan_backup_import(db, records)['skipped']), 1)
+            self.assertEqual(export_viewer(db, Path(folder) / VIEWER_FILE_NAME), 1)
+            db.save([row(rack=9) | {'machine': 'テ+スト'}])  # 読めない行の上にも保存できる
+            self.assertEqual(sorted(r['rack'] for r in db.rows()), [1, 9])
+            db.close()
+
 
 if __name__ == '__main__': unittest.main()

@@ -134,9 +134,11 @@ void main() {
       all: records,
       now: DateTime(2026, 9, 25, 23),
     );
+    // 翌日候補の記録は、画面用の一覧ではなくDBから書き出す。
+    await db.applyChanges(ChangeSet(snapshots: [snapshot]));
     final file = await tempFile('b.json');
-    final count = await db.exportBackup(file, candidates: [snapshot]);
-    expect(count, 3);
+    final count = await db.exportBackup(file);
+    expect((count.records, count.candidates, count.unreadable), (3, 1, 0));
     final whole = jsonDecode(await file.readAsString()) as Map;
     expect(whole['format'], backupFormat);
     expect(whole['records'], hasLength(3));
@@ -273,16 +275,19 @@ void main() {
       ),
     );
     // まだ書き出していなければ、何も消さない。
-    var result = await db.cleanupOldRecords(null);
+    const today = '2026-11-30';
+    var result = await db.cleanupOldRecords(null, today: today);
     expect((result.deleted, result.kept, result.cutoff), (0, 1, '2026-10-02'));
     // 書き出しの後に保存し直した台は、まだバックアップに入っていないので残す。
     result = await db.cleanupOldRecords(
       DateTime.now().subtract(const Duration(days: 1)),
+      today: today,
     );
     expect(result.deleted, 0);
     // 書き出しより前に保存した台だけ消える。
     result = await db.cleanupOldRecords(
       DateTime.now().add(const Duration(minutes: 1)),
+      today: today,
     );
     expect(result.deleted, 1);
     expect([for (final r in await db.loadAll()) r.rack]..sort(), [1, 2]);
@@ -300,7 +305,8 @@ void main() {
     final path = await newDatabasePath();
     var db = realDatabase(path);
     await db.applyChanges(ChangeSet(upserts: [onDay('2026-11-30', 1)]));
-    var app = AppController(database: db);
+    // 記録の日付（2026-11）に合わせて「今日」を決める（未来の日付は取り込まない）。
+    var app = AppController(database: db)..today = () => '2026-11-30';
     await app.initialize();
     final result = await app.importBackup(file);
     expect(result.temporary, 1);
@@ -308,7 +314,7 @@ void main() {
     await db.close();
 
     db = realDatabase(path); // アプリを開き直す
-    app = AppController(database: db);
+    app = AppController(database: db)..today = () => '2026-11-30';
     await app.initialize();
     expect([for (final r in app.records) r.rack]..sort(), [1, 8]);
     expect(app.retentionNotice, contains('1台を端末から片付けました'));

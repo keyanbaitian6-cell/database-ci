@@ -243,15 +243,27 @@ class BackupService {
 /// バックアップの取り込み計画を、少しずつ読んだ分ごとに作る。
 /// ファイルの中の同じ台の重複は、分をまたいでも見つける。
 class BackupPlanner {
-  BackupPlanner(List<SlotRecord> existing)
+  /// [latestDay] を渡すと、それより後の日付の台は取り込まない（対象外に数える）。
+  /// 未来の日付の台が入ると、保存期間の基準や結果の日付一覧が狂うため。
+  BackupPlanner(List<SlotRecord> existing, {this.latestDay})
     : _byKey = {for (final r in existing) r.key: r};
 
   final Map<String, SlotRecord> _byKey;
+  final String? latestDay;
 
   /// 台ごとに、読んだ記録の中身の目印（全文は持たない）。
-  final _seen = <String, int>{};
+  final _seen = <String, String>{};
 
-  static bool _validRaw(Map<String, dynamic> raw) {
+  bool _validRaw(Map<String, dynamic> raw) {
+    final day = raw['day'];
+    final limit = latestDay;
+    if (limit != null && day is String && day.compareTo(limit) > 0) {
+      return false;
+    }
+    return _validShape(raw);
+  }
+
+  static bool _validShape(Map<String, dynamic> raw) {
     final storeOk = storeNames.containsKey(raw['store']);
     final kindOk = raw['kind_code'] == null || raw['kind_code'] == 21;
     final machine = raw['machine'];
@@ -266,10 +278,18 @@ class BackupPlanner {
     return isValidRecordDay(day);
   }
 
-  /// 項目の順番に左右されない、中身の目印。
-  static int _fingerprint(Object? value) {
+  /// 項目の順番に左右されない、中身の目印。全文を持つとメモリを使うので、
+  /// 長さと、計算方法の違う2つの32ビットの値（FNV-1a と djb2）にする。
+  /// 別の中身が同じ目印になるのは、およそ2の64乗分の1。
+  static String _fingerprint(Object? value) {
     final text = _canonical(value);
-    return Object.hash(text.length, text.hashCode);
+    var fnv = 0x811c9dc5;
+    var djb = 5381;
+    for (final unit in text.codeUnits) {
+      fnv = ((fnv ^ unit) * 0x01000193) & 0xffffffff;
+      djb = ((djb * 33) ^ unit) & 0xffffffff;
+    }
+    return '${text.length}:$fnv:$djb';
   }
 
   static String _canonical(Object? value) {
@@ -302,7 +322,14 @@ class BackupPlanner {
         skipped++;
         continue;
       }
-      final parsed = SlotRecord.fromJson(raw);
+      // 項目の型が違う（数値の所が文字など）台は、取り込み全体を止めずに対象外にする。
+      final SlotRecord parsed;
+      try {
+        parsed = SlotRecord.fromJson(raw);
+      } on Object {
+        skipped++;
+        continue;
+      }
       // 機種名の表記ゆれ（`+` 区切り）をそろえてから比べる。そろえないと、
       // 手元の同じ台が別の機種として二重に追加される。
       final incoming = parsed.copyWith(

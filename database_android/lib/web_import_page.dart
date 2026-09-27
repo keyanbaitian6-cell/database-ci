@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import 'capture_flow.dart';
 import 'import_service.dart';
 import 'models.dart' show isValidRecordDay, storeNames;
 import 'theme.dart';
@@ -38,18 +39,20 @@ class WebTableExtraction {
 /// 日付や空の機種名で保存されてしまう（PC版は同じ場合に保存せずエラーにする）。
 /// 読み取った店舗・日付・台番号が、実際に表示しているページのURLと食い違う
 /// ときの理由（食い違いがなければ null）。ページから返ってきた値をそのまま
-/// 信じず、Dart 側で確かめる。URL自体や、URLの日付・台番号が無いときは
-/// 確かめられないので止めない。
+/// 信じず、Dart 側で確かめる。URLそのものが取れないときは保存しない。
+/// URLに日付・台番号が無いときは、その項目だけ確かめずに通す。
 String? pageMismatch(
   String? currentUrl, {
   String? store,
   String? day,
   int? rack,
 }) {
-  // URLを取れないときは確かめようがないので止めない（取り込みを使えなく
-  // しない）。対象外のページへは、そもそも移動できない。
+  // URLを取れないときは、ページから返ってきた値を確かめようがないので保存
+  // しない（取り込みは人が押したときだけなので、押し直せばよい）。
   final uri = currentUrl == null ? null : Uri.tryParse(currentUrl);
-  if (uri == null) return null;
+  if (uri == null) {
+    return '表示中のページの場所（URL）を確かめられませんでした。表示が終わってから、もう一度押してください。';
+  }
   final urlStore = uri.pathSegments.isEmpty ? null : uri.pathSegments.first;
   if (!storeNames.containsKey(urlStore)) return '対象店舗のページではありません。';
   if (store != null && store != urlStore) {
@@ -264,21 +267,22 @@ class _WebImportPageState extends State<WebImportPage> {
       'https://meruhenworld.pt.teramoba2.com/saiwaichou/rack_info';
 
   late final WebViewController _web;
-  var _loading = true;
-  var _reading = false;
+
+  /// 画面の状態（読み込み中・処理中・ページの世代・次のページでの予定）。
+  /// 変え方は capture_flow.dart にまとめてある。ある機種の最後のグラフを
+  /// 保存した後だけ、機種一覧から次の未取込機種（または台数変更の機種）を
+  /// 探す。表・グラフの保存操作は自動化しない。
+  late final _flow = CaptureFlow(
+    onChanged: () {
+      if (mounted) setState(() {});
+    },
+  );
   String? _error;
   String? _notice;
-  String? _afterLoadNotice;
-  // ページ読み込みの開始回数。行クリックで移動したかの確認に使う。
-  int _pageStarts = 0;
-  // ある機種の最後のグラフを保存した後だけ、機種一覧から次の未取込
-  // 機種（または台数変更の機種）を探す。表・グラフの保存操作は自動化しない。
-  var _advanceMachineAfterLoad = false;
   String _progress = '';
   Timer? _noticeTimer;
   Timer? _loadTimer;
   Timer? _clickTimer;
-  int _finishedPage = -1;
   final _extractions = WebExtractionChannel();
 
   void _receiveExtraction(JavaScriptMessage message) {
@@ -291,7 +295,7 @@ class _WebImportPageState extends State<WebImportPage> {
     ),
   );
 
-  bool _samePage(int page) => mounted && _pageStarts == page;
+  bool _samePage(int page) => mounted && _flow.isCurrent(page);
 
   void _showNotice(String message) {
     if (!mounted) return;
@@ -328,28 +332,17 @@ class _WebImportPageState extends State<WebImportPage> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (url) {
-            final start = ++_pageStarts;
             _extractions.navigationStarted();
             _loadTimer?.cancel();
             _clickTimer?.cancel();
             _noticeTimer?.cancel();
-            if (!url.contains('rack_info_kt') ||
-                !url.contains('database_next_machine=1')) {
-              _advanceMachineAfterLoad = false;
-            }
+            final start = _flow.pageStarted(url);
             // 読み込み完了の通知が来ない場合でも、ボタンが押せないまま
             // 止まらないようにする（20秒で読み込み中の表示を外す）。
             _loadTimer = Timer(const Duration(seconds: 20), () {
-              if (mounted && _pageStarts == start && _loading && !_reading) {
-                setState(() => _loading = false);
-              }
+              if (mounted) _flow.loadTimedOut(start);
             });
-            if (mounted) {
-              setState(() {
-                _loading = true;
-                _notice = null;
-              });
-            }
+            if (mounted) setState(() => _notice = null);
           },
           onPageFinished: (url) => unawaited(_afterPageFinished(url)),
           onNavigationRequest: (request) => _allowed(request.url)
@@ -362,28 +355,22 @@ class _WebImportPageState extends State<WebImportPage> {
 
   Future<void> _afterPageFinished(String url) async {
     if (!mounted) return;
-    final page = _pageStarts;
+    final page = _flow.page;
     try {
       if (await _web.currentUrl() != url ||
           !_samePage(page) ||
-          _finishedPage == page) {
+          !_flow.pageFinished(page)) {
         return;
       }
     } catch (_) {
       return;
     }
-    _finishedPage = page;
-    // A save can still be completing when the next document finishes loading.
-    while (_reading && _samePage(page)) {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
+    // 保存の途中で次のページの読み込みが終わることがある。保存が終わるのを待つ。
+    await _flow.whenIdle();
     if (!_samePage(page)) return;
     unawaited(_web.runJavaScript(_hideYouTubeScript).catchError((_) {}));
-    final pending = _afterLoadNotice;
-    if (pending != null) {
-      _afterLoadNotice = null;
-      _showNotice(pending);
-    }
+    final pending = _flow.takeAfterLoadNotice();
+    if (pending != null) _showNotice(pending);
     // _runExtraction has one reply channel.  Keep the auxiliary page reads
     // sequential and keep the capture button disabled until they finish;
     // otherwise a quick tap can replace the pending reply and time out.
@@ -391,12 +378,11 @@ class _WebImportPageState extends State<WebImportPage> {
     if (!_samePage(page)) return;
     await _refreshProgress();
     if (!_samePage(page)) return;
-    if (_advanceMachineAfterLoad) {
-      _advanceMachineAfterLoad = false;
+    if (_flow.takeAdvance()) {
       await _moveToNextMachine(automatic: true);
       return;
     }
-    if (_samePage(page)) setState(() => _loading = false);
+    _flow.ready(page);
   }
 
   bool _allowed(String rawUrl) {
@@ -408,30 +394,22 @@ class _WebImportPageState extends State<WebImportPage> {
   }
 
   Future<void> _openStore(String url) async {
-    _advanceMachineAfterLoad = false;
-    _afterLoadNotice = null;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    _flow.cancelExpectation();
+    _flow.startLoading();
+    setState(() => _error = null);
     try {
       await _web.loadRequest(Uri.parse(url));
     } catch (error) {
       if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = '店舗のページを開けませんでした。\n$error';
-        });
+        _flow.stopLoading();
+        setState(() => _error = '店舗のページを開けませんでした。\n$error');
       }
     }
   }
 
-  Future<void> _extract() async {
-    final page = _pageStarts;
-    setState(() {
-      _reading = true;
-      _error = null;
-    });
+  Future<void> _extract() => _flow.whileBusy(() async {
+    final page = _flow.page;
+    setState(() => _error = null);
     try {
       final value = await _runExtraction(_extractTableScript);
       if (!_samePage(page)) return;
@@ -521,17 +499,12 @@ class _WebImportPageState extends State<WebImportPage> {
       if (_samePage(page)) {
         setState(() => _error = '表を読み取れませんでした。機種別の一覧画面を表示してから試してください。\n$error');
       }
-    } finally {
-      if (mounted) setState(() => _reading = false);
     }
-  }
+  });
 
-  Future<void> _extractGraph() async {
-    final page = _pageStarts;
-    setState(() {
-      _reading = true;
-      _error = null;
-    });
+  Future<void> _extractGraph() => _flow.whileBusy(() async {
+    final page = _flow.page;
+    setState(() => _error = null);
     try {
       final value = await _runExtraction(_extractGraphScript);
       if (!_samePage(page)) return;
@@ -554,9 +527,17 @@ class _WebImportPageState extends State<WebImportPage> {
           : dataUrl == null || !dataUrl.startsWith('data:image/png;base64,')
           ? throw const FormatException('この画面に取り込めるグラフが見つかりません。')
           : await _writeGraphImage(dataUrl);
-      final graph = isSvg
-          ? _graphFromSvg(decoded)
-          : await ImportService().detectGraph(path);
+      final GraphDetection? graph;
+      try {
+        graph = isSvg
+            ? _graphFromSvg(decoded)
+            : await ImportService().detectGraph(path);
+      } finally {
+        // 判定に使った一時ファイルは、この後使わない（画像はメモリにある）。
+        if (path.isNotEmpty) {
+          unawaited(File(path).delete().then((_) {}, onError: (_) {}));
+        }
+      }
       if (graph == null) {
         throw const FormatException('ゼロ線とグラフ線を判定できませんでした。');
       }
@@ -603,10 +584,8 @@ class _WebImportPageState extends State<WebImportPage> {
           () => _error = 'グラフを取り込めませんでした。個別台のグラフ画面を表示してから試してください。\n$error',
         );
       }
-    } finally {
-      if (mounted) setState(() => _reading = false);
     }
-  }
+  });
 
   /// Only a link that stays on this site, in the same shop, and names the
   /// rack it was found on is kept; anything else is dropped.
@@ -633,10 +612,10 @@ class _WebImportPageState extends State<WebImportPage> {
     final warning = target.warning ?? '';
     if (url != null && _allowed(url)) {
       final String step;
-      if (target.reason == 'all_done') {
+      final allDone = target.reason == 'all_done';
+      if (allDone) {
         // 機種のグラフが全部済んだら、サイト自身の機種一覧ページへ案内する。
         // 読み込み後は、その一覧から次の未取込機種も探す。
-        _advanceMachineAfterLoad = true;
         step =
             'この機種はすべて取り込み済みです。機種一覧へ移動します。'
             '${target.dayComplete ? 'この日の取り込み済みの台はすべて完了しました。「結果」タブの「この日のまとめ」で確認できます。' : ''}';
@@ -645,18 +624,15 @@ class _WebImportPageState extends State<WebImportPage> {
             '${firstOfMachine ? '最初の未取り込み台へ移動します。' : ''}'
             '次：${target.rack}番台（残り${target.remaining}台）';
       }
-      _afterLoadNotice = '$saved$step $warning'.trim();
-      setState(() => _loading = true);
+      _flow.expectPage(notice: '$saved$step $warning'.trim(), advance: allDone);
+      _flow.startLoading();
       try {
         await _web.loadRequest(Uri.parse(url));
       } catch (error) {
         if (mounted) {
-          setState(() {
-            _loading = false;
-            _advanceMachineAfterLoad = false;
-            _afterLoadNotice = null;
-            _error = '次のページへ移動できませんでした。\n$error';
-          });
+          _flow.cancelExpectation();
+          _flow.stopLoading();
+          setState(() => _error = '次のページへ移動できませんでした。\n$error');
         }
       }
       return;
@@ -670,13 +646,14 @@ class _WebImportPageState extends State<WebImportPage> {
       _ => '店舗・日付を特定できませんでした。機種別一覧か個別台のページで押してください。',
     };
     _showNotice('$saved$message $warning'.trim());
-    _refreshProgress();
+    // 取り込みの処理が終わってから進み具合を読み直す（処理中は読まないため）。
+    unawaited(_flow.whenIdle().then((_) => _refreshProgress()));
   }
 
   /// 「今日 長町南 42/80台・幸町 18/60台」の進捗行を更新する。
   Future<void> _refreshProgress() async {
-    if (!mounted || _reading) return;
-    final page = _pageStarts;
+    if (!mounted || _flow.busy) return;
+    final page = _flow.page;
     try {
       final value = await _runExtraction(_pageIdentityScript);
       if (!_samePage(page)) return;
@@ -693,8 +670,8 @@ class _WebImportPageState extends State<WebImportPage> {
 
   /// サイトの機種一覧ページで、各機種の横に「済 8/8」「5/18」「未取込」の印を出す。
   Future<void> _markMachines() async {
-    if (!mounted || _reading) return;
-    final page = _pageStarts;
+    if (!mounted || _flow.busy) return;
+    final page = _flow.page;
     try {
       final url = await _web.currentUrl() ?? '';
       if (!_samePage(page)) return;
@@ -733,39 +710,36 @@ class _WebImportPageState extends State<WebImportPage> {
   /// 1000-yen / high-slot machine list opens the next machine that needs work.
   /// It never starts a capture merely because a page finished loading.
   Future<void> _captureCurrentPage() async {
-    if (!mounted || _reading || _loading) return;
-    final page = _pageStarts;
-    setState(() {
-      _reading = true;
-      _error = null;
-    });
-    try {
-      final value = await _runExtraction(_pageIdentityScript);
-      if (!_samePage(page)) return;
-      final decoded = _decodeJavaScriptResult(value);
-      final url = await _web.currentUrl() ?? '';
-      if (!_samePage(page)) return;
-      if (!isTargetKindUrl(url)) {
-        _showNotice('対象は1000円46枚スロットのみです。');
-        return;
-      }
-      final rack = (decoded['rack'] as num?)?.toInt();
-      final machine = (decoded['machine'] as String?)?.trim() ?? '';
+    if (!mounted || !_flow.canCapture) return;
+    await _flow.whileBusy(() async {
+      final page = _flow.page;
+      setState(() => _error = null);
+      try {
+        final value = await _runExtraction(_pageIdentityScript);
+        if (!_samePage(page)) return;
+        final decoded = _decodeJavaScriptResult(value);
+        final url = await _web.currentUrl() ?? '';
+        if (!_samePage(page)) return;
+        if (!isTargetKindUrl(url)) {
+          _showNotice('対象は1000円46枚スロットのみです。');
+          return;
+        }
+        final rack = (decoded['rack'] as num?)?.toInt();
+        final machine = (decoded['machine'] as String?)?.trim() ?? '';
 
-      if (rack != null) {
-        await _extractGraph();
-      } else if (machine.isNotEmpty) {
-        await _extract();
-      } else if (url.contains('rack_info_kt')) {
-        await _moveToNextMachine();
-      } else {
-        _showNotice('1000円46枚スロット／ハイスロの機種一覧、機種別の表、または個別台のグラフを表示してから押してください。');
+        if (rack != null) {
+          await _extractGraph();
+        } else if (machine.isNotEmpty) {
+          await _extract();
+        } else if (url.contains('rack_info_kt')) {
+          await _moveToNextMachine();
+        } else {
+          _showNotice('1000円46枚スロット／ハイスロの機種一覧、機種別の表、または個別台のグラフを表示してから押してください。');
+        }
+      } catch (error) {
+        if (mounted) setState(() => _error = 'この画面を取り込めませんでした。\n$error');
       }
-    } catch (error) {
-      if (mounted) setState(() => _error = 'この画面を取り込めませんでした。\n$error');
-    } finally {
-      if (mounted) setState(() => _reading = false);
-    }
+    });
   }
 
   /// On the site's machine-list page, first resume a machine whose graph is
@@ -775,197 +749,191 @@ class _WebImportPageState extends State<WebImportPage> {
   /// table/graph import button.
   Future<void> _moveToNextMachine({bool automatic = false}) async {
     if (!mounted) return;
-    final page = _pageStarts;
-    setState(() {
-      _reading = true;
-      _error = null;
-    });
+    final page = _flow.page;
     // ページを移動したか。移動しなかった場合は最後に読み込み中の表示を外す
     // （グラフ完了後の自動移動で「残りなし」などになったとき、くるくるが
     // 回り続けてボタンが押せなくなっていた）。
     var moved = false;
-    try {
-      final currentUrl = await _web.currentUrl() ?? '';
-      if (!_samePage(page)) return;
-      if (!currentUrl.contains('rack_info_kt')) {
-        _showNotice('1000円46枚スロット／ハイスロの機種一覧画面で押してください。');
-        return;
-      }
-      var value = await _runExtraction(_machineLinksScript);
-      if (!_samePage(page)) return;
-      var decoded = _decodeJavaScriptResult(value);
-      // 低貸し（kind_code=10・5）の機種一覧では、次の機種を選ばない。
-      if (!isTargetKindUrl(currentUrl)) {
-        _showNotice('1000円46枚スロット（ハイスロ）の機種一覧で押してください。低貸しの機種は取り込みの対象外です。');
-        return;
-      }
-      var store = decoded['store'] as String?;
-      var day = decoded['day'] as String?;
-      var machines = [
-        for (final raw in (decoded['machines'] as List<dynamic>?) ?? const [])
-          Map<String, dynamic>.from(raw as Map),
-      ];
-      // 現行サイトの機種一覧は画面表示後にXHRで行を追加する。ボタンを
-      // 表示直後に押しても、空の一覧を「壊れたページ」と判定しない。
-      for (var attempt = 0; machines.isEmpty && attempt < 30; attempt++) {
-        await Future<void>.delayed(const Duration(milliseconds: 350));
+    await _flow.whileBusy(() async {
+      setState(() => _error = null);
+      try {
+        final currentUrl = await _web.currentUrl() ?? '';
         if (!_samePage(page)) return;
-        value = await _runExtraction(_machineLinksScript);
+        if (!currentUrl.contains('rack_info_kt')) {
+          _showNotice('1000円46枚スロット／ハイスロの機種一覧画面で押してください。');
+          return;
+        }
+        var value = await _runExtraction(_machineLinksScript);
         if (!_samePage(page)) return;
-        decoded = _decodeJavaScriptResult(value);
-        store = decoded['store'] as String?;
-        day = decoded['day'] as String?;
-        machines = [
+        var decoded = _decodeJavaScriptResult(value);
+        // 低貸し（kind_code=10・5）の機種一覧では、次の機種を選ばない。
+        if (!isTargetKindUrl(currentUrl)) {
+          _showNotice('1000円46枚スロット（ハイスロ）の機種一覧で押してください。低貸しの機種は取り込みの対象外です。');
+          return;
+        }
+        var store = decoded['store'] as String?;
+        var day = decoded['day'] as String?;
+        var machines = [
           for (final raw in (decoded['machines'] as List<dynamic>?) ?? const [])
             Map<String, dynamic>.from(raw as Map),
         ];
-      }
-      // 公開されていない機種（長町南のジャグラーなど）は候補から外す。
-      // 一覧に出ているのが対象外だけなら、読み込み中ではなく「残りなし」と伝える。
-      machines = [
-        for (final item in machines)
-          if (!isListHeaderName('${item['name'] ?? ''}')) item,
-      ];
-      final visible = [
-        for (final item in machines)
-          if (!isExcludedMachine(store, '${item['name'] ?? ''}')) item,
-      ];
-      if (machines.isNotEmpty && visible.isEmpty) {
-        _showNotice(
-          '未取り込みの機種・グラフはありません。（${excludedMachineNotes[store] ?? 'データ非公開の機種'}はデータ非公開のため対象外）',
-        );
-        return;
-      }
-      machines = visible;
-      // 初めて開いた機種一覧にはサイト側の日付がありません。最初の機種別
-      // 一覧を開けば選択中の日付を読めるため、そこで表の取り込みを始める。
-      // グラフ完了後に戻る場合はURLフラグメントから日付を復元しているので、
-      // この分岐には入りません。
-      if (store == null || day == null) {
-        // 日付を確かめるために開く機種も、なるべく未取込の機種にする
-        // （日付が分からないので、この店で最後に取り込んだ日の状況で判断）。
-        // そうすれば開いた先でそのまま表を取り込める。
-        final guessed = widget.onMachineStatus(
-          store: store,
-          day: null,
-          machines: [for (final item in machines) '${item['name'] ?? ''}'],
-        );
-        bool openable(Map<String, dynamic>? item) {
-          final url = item?['url'] as String?;
-          return url != null && _allowed(url) && isTargetKindUrl(url);
+        // 現行サイトの機種一覧は画面表示後にXHRで行を追加する。ボタンを
+        // 表示直後に押しても、空の一覧を「壊れたページ」と判定しない。
+        for (var attempt = 0; machines.isEmpty && attempt < 30; attempt++) {
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+          if (!_samePage(page)) return;
+          value = await _runExtraction(_machineLinksScript);
+          if (!_samePage(page)) return;
+          decoded = _decodeJavaScriptResult(value);
+          store = decoded['store'] as String?;
+          day = decoded['day'] as String?;
+          machines = [
+            for (final raw
+                in (decoded['machines'] as List<dynamic>?) ?? const [])
+              Map<String, dynamic>.from(raw as Map),
+          ];
         }
-
-        Map<String, dynamic>? first;
-        for (var index = 0; index < machines.length; index++) {
-          final status = guessed[index];
-          if (openable(machines[index]) &&
-              (status == null || status['done'] != status['total'])) {
-            first = machines[index];
-            break;
-          }
-        }
-        first ??= machines.cast<Map<String, dynamic>?>().firstWhere(
-          openable,
-          orElse: () => null,
-        );
-        final targetUrl = first?['url'] as String?;
-        if (targetUrl == null) {
+        // 公開されていない機種（長町南のジャグラーなど）は候補から外す。
+        // 一覧に出ているのが対象外だけなら、読み込み中ではなく「残りなし」と伝える。
+        machines = [
+          for (final item in machines)
+            if (!isListHeaderName('${item['name'] ?? ''}')) item,
+        ];
+        final visible = [
+          for (final item in machines)
+            if (!isExcludedMachine(store, '${item['name'] ?? ''}')) item,
+        ];
+        if (machines.isNotEmpty && visible.isEmpty) {
           _showNotice(
-            '機種一覧が表示されるのを待ってから、もう一度押してください。'
-            '（しばらく待っても表示されない場合は、ページを再読み込みしてください）',
+            '未取り込みの機種・グラフはありません。（${excludedMachineNotes[store] ?? 'データ非公開の機種'}はデータ非公開のため対象外）',
           );
           return;
         }
-        final name = first?['name'] as String? ?? '先頭の機種';
-        moved = await _openMachineTable(
-          first!,
-          '$name の一覧で対象日を確認します。表示後に「この画面を取り込む」を押してください。',
-        );
-        return;
-      }
-      final statuses = widget.onMachineStatus(
-        store: store,
-        day: day,
-        machines: [for (final item in machines) '${item['name'] ?? ''}'],
-      );
+        machines = visible;
+        // 初めて開いた機種一覧にはサイト側の日付がありません。最初の機種別
+        // 一覧を開けば選択中の日付を読めるため、そこで表の取り込みを始める。
+        // グラフ完了後に戻る場合はURLフラグメントから日付を復元しているので、
+        // この分岐には入りません。
+        if (store == null || day == null) {
+          // 日付を確かめるために開く機種も、なるべく未取込の機種にする
+          // （日付が分からないので、この店で最後に取り込んだ日の状況で判断）。
+          // そうすれば開いた先でそのまま表を取り込める。
+          final guessed = widget.onMachineStatus(
+            store: store,
+            day: null,
+            machines: [for (final item in machines) '${item['name'] ?? ''}'],
+          );
+          bool openable(Map<String, dynamic>? item) {
+            final url = item?['url'] as String?;
+            return url != null && _allowed(url) && isTargetKindUrl(url);
+          }
 
-      // 先に、表を保存済みでグラフだけ残っている機種を再開する。
-      for (var index = 0; index < machines.length; index++) {
-        final status = statuses[index];
-        if (status == null || status['done'] == status['total']) continue;
-        final target = widget.onNext(
+          Map<String, dynamic>? first;
+          for (var index = 0; index < machines.length; index++) {
+            final status = guessed[index];
+            if (openable(machines[index]) &&
+                (status == null || status['done'] != status['total'])) {
+              first = machines[index];
+              break;
+            }
+          }
+          first ??= machines.cast<Map<String, dynamic>?>().firstWhere(
+            openable,
+            orElse: () => null,
+          );
+          final targetUrl = first?['url'] as String?;
+          if (targetUrl == null) {
+            _showNotice(
+              '機種一覧が表示されるのを待ってから、もう一度押してください。'
+              '（しばらく待っても表示されない場合は、ページを再読み込みしてください）',
+            );
+            return;
+          }
+          final name = first?['name'] as String? ?? '先頭の機種';
+          moved = await _openMachineTable(
+            first!,
+            '$name の一覧で対象日を確認します。表示後に「この画面を取り込む」を押してください。',
+          );
+          return;
+        }
+        final statuses = widget.onMachineStatus(
           store: store,
           day: day,
-          machine: machines[index]['name'] as String?,
-          rack: null,
+          machines: [for (final item in machines) '${item['name'] ?? ''}'],
         );
-        if (target.url != null && _allowed(target.url!)) {
-          _afterLoadNotice =
-              '未取得グラフが残る${machines[index]['name']}へ移動します。次：${target.rack}番台（残り${target.remaining}台）';
-          setState(() => _loading = true);
-          moved = true;
-          await _web.loadRequest(Uri.parse(target.url!));
-          return;
-        }
-        // Older screenshot/backup records can have the table but no saved
-        // per-rack detail links.  Re-read this displayed table before moving
-        // on, otherwise this machine would stay permanently incomplete.
-        final tableUrl = machines[index]['url'] as String?;
-        if (tableUrl != null &&
-            _allowed(tableUrl) &&
-            isTargetKindUrl(tableUrl)) {
-          final name = machines[index]['name'] as String? ?? 'この機種';
-          moved = await _openMachineTable(
-            machines[index],
-            '$name の一覧を更新して、未取得グラフを続けます。',
-          );
-          return;
-        }
-      }
 
-      // 新規の機種、または設置台数が変わった機種は、現在の表を保存し直す。
-      for (var index = 0; index < machines.length; index++) {
-        final status = statuses[index];
-        final listedCount = (machines[index]['count'] as num?)?.toInt();
-        final changed =
-            status != null &&
-            listedCountNeedsReimport(
-              listed: listedCount,
-              saved: status['total'] ?? 0,
-            );
-        if (status != null && !changed) continue;
-        final targetUrl = machines[index]['url'] as String?;
-        if (targetUrl != null &&
-            _allowed(targetUrl) &&
-            isTargetKindUrl(targetUrl)) {
-          final name = machines[index]['name'] as String? ?? 'この機種';
-          moved = await _openMachineTable(
-            machines[index],
-            changed
-                ? '$name は設置台数が変わっています。現在の表を取り込んでください。'
-                : '$name は未取込です。現在の表を取り込んでください。',
+        // 先に、表を保存済みでグラフだけ残っている機種を再開する。
+        for (var index = 0; index < machines.length; index++) {
+          final status = statuses[index];
+          if (status == null || status['done'] == status['total']) continue;
+          final target = widget.onNext(
+            store: store,
+            day: day,
+            machine: machines[index]['name'] as String?,
+            rack: null,
           );
-          return;
+          if (target.url != null && _allowed(target.url!)) {
+            _flow.expectPage(
+              notice:
+                  '未取得グラフが残る${machines[index]['name']}へ移動します。次：${target.rack}番台（残り${target.remaining}台）',
+            );
+            _flow.startLoading();
+            moved = true;
+            await _web.loadRequest(Uri.parse(target.url!));
+            return;
+          }
+          // Older screenshot/backup records can have the table but no saved
+          // per-rack detail links.  Re-read this displayed table before moving
+          // on, otherwise this machine would stay permanently incomplete.
+          final tableUrl = machines[index]['url'] as String?;
+          if (tableUrl != null &&
+              _allowed(tableUrl) &&
+              isTargetKindUrl(tableUrl)) {
+            final name = machines[index]['name'] as String? ?? 'この機種';
+            moved = await _openMachineTable(
+              machines[index],
+              '$name の一覧を更新して、未取得グラフを続けます。',
+            );
+            return;
+          }
+        }
+
+        // 新規の機種、または設置台数が変わった機種は、現在の表を保存し直す。
+        for (var index = 0; index < machines.length; index++) {
+          final status = statuses[index];
+          final listedCount = (machines[index]['count'] as num?)?.toInt();
+          final changed =
+              status != null &&
+              listedCountNeedsReimport(
+                listed: listedCount,
+                saved: status['total'] ?? 0,
+              );
+          if (status != null && !changed) continue;
+          final targetUrl = machines[index]['url'] as String?;
+          if (targetUrl != null &&
+              _allowed(targetUrl) &&
+              isTargetKindUrl(targetUrl)) {
+            final name = machines[index]['name'] as String? ?? 'この機種';
+            moved = await _openMachineTable(
+              machines[index],
+              changed
+                  ? '$name は設置台数が変わっています。現在の表を取り込んでください。'
+                  : '$name は未取込です。現在の表を取り込んでください。',
+            );
+            return;
+          }
+        }
+        _showNotice(
+          automatic ? 'この日の機種とグラフはすべて取り込み済みです。' : '未取り込みの機種・グラフはありません。',
+        );
+      } catch (error) {
+        if (_samePage(page)) {
+          _flow.stopLoading();
+          setState(() => _error = '次の機種を探せませんでした。\n$error');
         }
       }
-      _showNotice(
-        automatic ? 'この日の機種とグラフはすべて取り込み済みです。' : '未取り込みの機種・グラフはありません。',
-      );
-    } catch (error) {
-      if (_samePage(page)) {
-        setState(() {
-          _loading = false;
-          _error = '次の機種を探せませんでした。\n$error';
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _reading = false;
-          if (!moved && _samePage(page)) _loading = false;
-        });
-      }
-    }
+    });
+    if (!moved && _samePage(page)) _flow.stopLoading();
   }
 
   /// 機種一覧から機種別の表へ移動する。組み立てたURLを開くのではなく、サイト自身の
@@ -981,9 +949,9 @@ class _WebImportPageState extends State<WebImportPage> {
     final url = machine['url'] as String?;
     final before = await _web.currentUrl();
     if (!mounted) return false;
-    final starts = _pageStarts;
-    _afterLoadNotice = notice;
-    setState(() => _loading = true);
+    final starts = _flow.page;
+    _flow.expectPage(notice: notice);
+    _flow.startLoading();
     var clicked = false;
     if (name.isNotEmpty) {
       try {
@@ -1002,23 +970,22 @@ class _WebImportPageState extends State<WebImportPage> {
         await _web.loadRequest(Uri.parse(url));
         return true;
       }
-      _afterLoadNotice = null;
+      _flow.takeAfterLoadNotice();
       return false;
     }
     // 押しても移動しない場合に、読み込み中のまま操作できなくならないようにする。
     _clickTimer?.cancel();
     _clickTimer = Timer(const Duration(seconds: 3), () async {
-      if (!mounted || _pageStarts != starts) return;
+      if (!mounted || !_flow.isCurrent(starts)) return;
       String? now;
       try {
         now = await _web.currentUrl();
       } catch (_) {
         return;
       }
-      if (!mounted || _pageStarts != starts) return;
-      final pending = _afterLoadNotice;
-      _afterLoadNotice = null;
-      setState(() => _loading = false);
+      if (!mounted || !_flow.isCurrent(starts)) return;
+      final pending = _flow.takeAfterLoadNotice();
+      _flow.stopLoading();
       if (now != before) {
         // ページの読み込みを伴わずに表示が切り替わった場合。
         if (pending != null) _showNotice(pending);
@@ -1030,16 +997,15 @@ class _WebImportPageState extends State<WebImportPage> {
   }
 
   Future<void> _undoLast() async {
-    if (!mounted || _reading) return;
-    setState(() => _reading = true);
-    try {
-      final message = await widget.onUndo();
-      _showNotice(message);
-    } catch (error) {
-      if (mounted) setState(() => _error = '取り消しできませんでした。\n$error');
-    } finally {
-      if (mounted) setState(() => _reading = false);
-    }
+    if (!mounted || _flow.busy) return;
+    await _flow.whileBusy(() async {
+      try {
+        final message = await widget.onUndo();
+        _showNotice(message);
+      } catch (error) {
+        if (mounted) setState(() => _error = '取り消しできませんでした。\n$error');
+      }
+    });
     await _refreshProgress();
   }
 
@@ -1193,7 +1159,8 @@ class _WebImportPageState extends State<WebImportPage> {
           child: Stack(
             children: [
               WebViewWidget(controller: _web),
-              if (_loading) const Center(child: CircularProgressIndicator()),
+              if (_flow.loading)
+                const Center(child: CircularProgressIndicator()),
             ],
           ),
         ),
@@ -1206,21 +1173,21 @@ class _WebImportPageState extends State<WebImportPage> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: _loading || _reading ? null : _captureCurrentPage,
-                  icon: _reading
+                  onPressed: _flow.canCapture ? _captureCurrentPage : null,
+                  icon: _flow.busy
                       ? const SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.download_for_offline_outlined),
-                  label: Text(_reading ? '取り込み中…' : 'この画面を取り込む'),
+                  label: Text(_flow.busy ? '取り込み中…' : 'この画面を取り込む'),
                 ),
               ),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
-                  onPressed: _reading ? null : _undoLast,
+                  onPressed: _flow.busy ? null : _undoLast,
                   icon: const Icon(Icons.undo, size: 18),
                   label: const Text('直前の保存を取り消す'),
                 ),

@@ -20,15 +20,51 @@ const databaseVersion = 5;
 /// バックアップを書き出した後で端末から片付ける（PC版とバックアップには残る）。
 const retentionDays = 60;
 
-/// [latestDay] から数えて、端末に残す最初の日（これより前は片付けの対象）。
-String retentionCutoff(String latestDay) =>
-    DateTime.parse(latestDay)
-        .subtract(const Duration(days: retentionDays - 1))
+/// 保存期間を数える基準の日。最新の取り込み日と今日の早い方。
+///
+/// 最新の取り込み日だけで数えると、未来の日付（打ち間違いなど）の台が1件
+/// あるだけで基準が先へずれ、残すべき台までまとめて片付けてしまう。
+String retentionAnchor(String latestDay, String today) =>
+    latestDay.compareTo(today) <= 0 ? latestDay : today;
+
+/// [latestDay]（と今日 [today]）から数えて、端末に残す最初の日。これより
+/// 前は片付けの対象。
+String retentionCutoff(String latestDay, [String? today]) => _daysBefore(
+  today == null ? latestDay : retentionAnchor(latestDay, today),
+  retentionDays - 1,
+);
+
+String _daysBefore(String day, int days) =>
+    DateTime.parse(day)
+        .subtract(Duration(days: days))
         .toIso8601String()
         .substring(0, 10);
 
+/// 一度にこれより多くの台（かつ全体の半分より多く）を片付けることになったら、
+/// 片付けずに利用者に確かめる。ふだんは1日分（数百台）ずつしか消えないので、
+/// これを超えるのは何かがおかしいとき。
+const largeCleanupMinimum = 500;
+
+/// 翌日候補の記録を端末に残す日数（利用者の指定、2026-09-27）。検証はPC版と
+/// バックアップに残る記録で行う。これより古い記録は、全期間のバックアップに
+/// 入れた後で端末から片付ける。
+const candidateRetentionDays = 180;
+
 /// ゴミ箱に残す日数。これより古いものは起動時に消す。
 const trashDays = 7;
+
+/// 起動時の片付けの結果。
+typedef CleanupResult = ({
+  int deleted,
+  int kept,
+  String? cutoff,
+
+  /// 多すぎるので片付けずに止めた台の数（止めていなければ0）。
+  int paused,
+
+  /// 片付けた翌日候補の記録の数。
+  int snapshots,
+});
 
 /// 一度に読む行数。全件を一度に読むと、sqflite の Android 側が全行を
 /// Java のメモリに溜めてから渡すので、記録が増えると起動時に落ちる。
@@ -231,8 +267,13 @@ class DatabaseService {
   );
 
   /// 一時的に取り込んだ台として印を付ける（次の起動時に片付ける）。
-  Future<void> markTemporary(Iterable<String> keys) async {
-    final db = await database;
+  Future<void> markTemporary(Iterable<String> keys) async =>
+      _markTemporary(await database, keys);
+
+  static Future<void> _markTemporary(
+    DatabaseExecutor db,
+    Iterable<String> keys,
+  ) async {
     final batch = db.batch();
     for (final key in keys) {
       batch.insert('temporary_records', {
@@ -243,56 +284,103 @@ class DatabaseService {
   }
 
   /// 最新の取り込み日（記録が無ければ null）。
-  Future<String?> latestDay() async {
-    final db = await database;
-    return (await db.rawQuery('SELECT MAX(day) AS d FROM records')).first['d']
-        as String?;
-  }
+  Future<String?> latestDay() async => _latestDay(await database);
+
+  static Future<String?> _latestDay(DatabaseExecutor db) async =>
+      (await db.rawQuery('SELECT MAX(day) AS d FROM records')).first['d']
+          as String?;
 
   /// 保存期間より古い台を片付ける。消すのは、[lastFullBackup]（全期間の
-  /// バックアップを書き出した時刻）より前に保存したもの（＝バックアップに
-  /// 入っているもの）と、一時的に取り込んだもの。それ以外は残す。
-  /// 画像・曲線ごと消し、ゴミ箱には入れない（バックアップにあるため）。
-  Future<({int deleted, int kept, String? cutoff})> cleanupOldRecords(
-    DateTime? lastFullBackup,
-  ) async {
+  /// バックアップを保存できたと利用者が確かめた書き出しの時刻）より前に保存
+  /// したもの（＝バックアップに入っているもの）と、一時的に取り込んだもの。
+  /// それ以外は残す。画像・曲線ごと消し、ゴミ箱には入れない（バックアップに
+  /// あるため）。
+  ///
+  /// 基準の日は、最新の取り込み日と [today] の早い方（[retentionAnchor]）。
+  /// バックアップ済みの台が多すぎる（[largeCleanupMinimum] 台を超え、かつ全体
+  /// の半分より多い）ときは、[allowLarge] でなければ片付けずに数だけ返す。
+  /// 翌日候補の記録も、[candidateRetentionDays] 日より古く、バックアップに
+  /// 入れた後のものを片付ける。[temporary] が false なら、一時的に取り込んだ
+  /// 台とその印には触らない（起動時以外に呼ぶとき）。
+  Future<CleanupResult> cleanupOldRecords(
+    DateTime? lastFullBackup, {
+    required String today,
+    bool allowLarge = false,
+    bool temporary = true,
+  }) async {
     final db = await database;
     final latest = await latestDay();
-    final temporary = {
-      for (final row in await db.query('temporary_records'))
-        row['record_key'] as String,
+    final marked = {
+      if (temporary)
+        for (final row in await db.query('temporary_records'))
+          row['record_key'] as String,
     };
     if (latest == null) {
-      if (temporary.isNotEmpty) await db.delete('temporary_records');
-      return (deleted: 0, kept: 0, cutoff: null);
+      if (marked.isNotEmpty) await db.delete('temporary_records');
+      return (deleted: 0, kept: 0, cutoff: null, paused: 0, snapshots: 0);
     }
-    final cutoff = retentionCutoff(latest);
+    bool backedUp(Object? stamp) {
+      final saved = DateTime.tryParse(stamp as String? ?? '');
+      return lastFullBackup != null &&
+          saved != null &&
+          saved.isBefore(lastFullBackup);
+    }
+
+    final anchor = retentionAnchor(latest, today);
+    final cutoff = retentionCutoff(latest, today);
     final rows = await db.rawQuery(
       'SELECT record_key, updated_at FROM records WHERE day < ?',
       [cutoff],
     );
-    final doomed = <String>[];
+    final total =
+        (await db.rawQuery('SELECT COUNT(*) AS n FROM records')).first['n']
+            as int;
+    final temporaryKeys = <String>[];
+    final backedUpKeys = <String>[];
     for (final row in rows) {
       final key = row['record_key'] as String;
-      final saved = DateTime.tryParse(row['updated_at'] as String? ?? '');
-      final backedUp =
-          lastFullBackup != null &&
-          saved != null &&
-          saved.isBefore(lastFullBackup);
-      if (temporary.contains(key) || backedUp) doomed.add(key);
+      if (marked.contains(key)) {
+        temporaryKeys.add(key);
+      } else if (backedUp(row['updated_at'])) {
+        backedUpKeys.add(key);
+      }
     }
+    final limit = max(largeCleanupMinimum, (total - temporaryKeys.length) ~/ 2);
+    final paused = !allowLarge && backedUpKeys.length > limit;
+    final doomed = [...temporaryKeys, if (!paused) ...backedUpKeys];
+    final snapshotCutoff = _daysBefore(anchor, candidateRetentionDays);
+    final oldSnapshots = lastFullBackup == null
+        ? const <Map<String, Object?>>[]
+        : [
+            for (final row in await db.query(
+              'candidate_snapshots',
+              columns: ['store', 'day', 'machine', 'taken_at'],
+              where: 'day < ?',
+              whereArgs: [snapshotCutoff],
+            ))
+              if (backedUp(row['taken_at'])) row,
+          ];
     await db.transaction((txn) async {
       final batch = txn.batch();
       for (final key in doomed) {
         batch.delete('records', where: 'record_key = ?', whereArgs: [key]);
       }
-      batch.delete('temporary_records');
+      if (temporary) batch.delete('temporary_records');
+      for (final s in oldSnapshots) {
+        batch.delete(
+          'candidate_snapshots',
+          where: 'store = ? AND day = ? AND machine = ? AND taken_at = ?',
+          whereArgs: [s['store'], s['day'], s['machine'], s['taken_at']],
+        );
+      }
       await batch.commit(noResult: true);
     });
     return (
       deleted: doomed.length,
       kept: rows.length - doomed.length,
       cutoff: cutoff,
+      paused: paused ? backedUpKeys.length : 0,
+      snapshots: oldSnapshots.length,
     );
   }
 
@@ -426,28 +514,37 @@ class DatabaseService {
     }
   }
 
+  /// 最後の [loadAll] で読めなかった台（DBには残したまま、一覧には入れない）。
+  List<String> unreadableKeys = const [];
+
   /// 画面用の一覧。グラフの画像・曲線は読まない（別の列にある印だけ）。
+  ///
+  /// 読めない台（壊れた・形の違う記録）が1件あっても起動できるよう、その台
+  /// だけ飛ばして [unreadableKeys] に残す。DBからは消さない（書き出しには
+  /// そのまま入る）。
   Future<List<SlotRecord>> loadAll() async {
     final db = await database;
     final out = <SlotRecord>[];
+    final unreadable = <String>[];
     var last = 0;
     while (true) {
       final rows = await db.rawQuery(
-        'SELECT rowid AS id, payload FROM records WHERE rowid > ? ORDER BY rowid LIMIT ?',
+        'SELECT rowid AS id, record_key, payload FROM records '
+        'WHERE rowid > ? ORDER BY rowid LIMIT ?',
         [last, _chunkRows],
       );
       if (rows.isEmpty) break;
       for (final row in rows) {
         last = row['id'] as int;
-        out.add(
-          SlotRecord.fromJson(
-            Map<String, dynamic>.from(
-              jsonDecode(row['payload'] as String) as Map,
-            ),
-          ),
-        );
+        final record = _parseRecord(row['payload']);
+        if (record == null) {
+          unreadable.add(row['record_key'] as String);
+        } else {
+          out.add(record);
+        }
       }
     }
+    unreadableKeys = unreadable;
     out.sort((a, b) {
       final day = b.day.compareTo(a.day);
       if (day != 0) return day;
@@ -457,6 +554,24 @@ class DatabaseService {
       return machine != 0 ? machine : a.rack.compareTo(b.rack);
     });
     return out;
+  }
+
+  /// 本体のJSONを台にする（[full] なら別の列の画像・曲線も戻す）。壊れて
+  /// いる・形が違うときは null。
+  static SlotRecord? _parseRecord(
+    Object? payload, {
+    Object? blob,
+    bool full = false,
+  }) {
+    try {
+      return SlotRecord.fromJson(
+        full
+            ? joinStorageJson(payload as String, blob as String?)
+            : Map<String, dynamic>.from(jsonDecode(payload as String) as Map),
+      );
+    } on Object {
+      return null;
+    }
   }
 
   static Future<Map<String, SlotRecord>> _loadFull(
@@ -475,13 +590,12 @@ class DatabaseService {
         whereArgs: chunk,
       );
       for (final row in rows) {
-        final record = SlotRecord.fromJson(
-          joinStorageJson(
-            row['payload'] as String,
-            row['graph_blob'] as String?,
-          ),
-        );
-        found[record.key] = record;
+        // 読めない台は無いものとして扱う（一覧にも出ていない）。
+        // 画像・曲線の列だけが壊れていれば、それを除いて読む。
+        final record =
+            _parseRecord(row['payload'], blob: row['graph_blob'], full: true) ??
+            _parseRecord(row['payload'], full: true);
+        if (record != null) found[record.key] = record;
       }
     }
     return found;
@@ -517,55 +631,70 @@ class DatabaseService {
   /// まとめて書く（[ChangeSet]）。どれか1つでも失敗したら、何も書かない。
   Future<void> applyChanges(ChangeSet changes) async {
     final db = await database;
-    await db.transaction((txn) async {
-      final now = DateTime.now().toUtc().toIso8601String();
-      if (changes.trashKeys.isNotEmpty) {
-        final batchId =
-            '$now-${Random.secure().nextInt(1 << 32).toRadixString(16)}';
-        final current = await _loadFullRaw(txn, changes.trashKeys);
-        final trash = txn.batch();
-        for (final entry in current.entries) {
-          trash.insert('trash', {
-            'batch_id': batchId,
-            'kind': changes.trashKind.name,
-            'label': changes.trashLabel,
-            'deleted_at': now,
-            'record_key': entry.key,
-            'payload': entry.value,
-          });
-        }
-        await trash.commit(noResult: true);
-      }
-      final batch = txn.batch();
-      for (final key in changes.deleteKeys) {
-        batch.delete('records', where: 'record_key = ?', whereArgs: [key]);
-      }
-      for (final record in changes.upserts) {
-        _upsert(batch, record, now);
-      }
-      for (final id in changes.removeTrashIds) {
-        batch.delete('trash', where: 'id = ?', whereArgs: [id]);
-      }
-      for (final s in changes.snapshots) {
-        batch.insert('candidate_snapshots', {
-          'store': s.store,
-          'day': s.day,
-          'machine': s.machine,
-          'taken_at': s.takenAt,
-          'payload': jsonEncode(s.toJson()),
-        }, conflictAlgorithm: ConflictAlgorithm.ignore);
-      }
-      for (final entry in changes.state.entries) {
-        batch.insert('app_state', {
-          'state_key': entry.key,
-          'value': entry.value,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
-      }
-      await batch.commit(noResult: true);
-    });
+    await db.transaction((txn) => _applyIn(txn, changes));
   }
 
-  /// 画像込みのJSON文字列（ゴミ箱に入れる形）。
+  /// 何回かに分けた書き込みを、1つのトランザクションにまとめる（バックアップの
+  /// 取り込み用）。[action] の途中で失敗したら、それまでの分も含めて何も
+  /// 書かない。[action] の中では、渡された [DatabaseWriter] だけを使うこと
+  /// （このサービスの他のメソッドを呼ぶと、トランザクションの終わりを待って
+  /// 止まる）。
+  Future<T> writeTransaction<T>(
+    Future<T> Function(DatabaseWriter writer) action,
+  ) async {
+    final db = await database;
+    return db.transaction((txn) => action(DatabaseWriter._(txn)));
+  }
+
+  static Future<void> _applyIn(Transaction txn, ChangeSet changes) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    if (changes.trashKeys.isNotEmpty) {
+      final batchId =
+          '$now-${Random.secure().nextInt(1 << 32).toRadixString(16)}';
+      final current = await _loadFullRaw(txn, changes.trashKeys);
+      final trash = txn.batch();
+      for (final entry in current.entries) {
+        trash.insert('trash', {
+          'batch_id': batchId,
+          'kind': changes.trashKind.name,
+          'label': changes.trashLabel,
+          'deleted_at': now,
+          'record_key': entry.key,
+          'payload': entry.value,
+        });
+      }
+      await trash.commit(noResult: true);
+    }
+    final batch = txn.batch();
+    for (final key in changes.deleteKeys) {
+      batch.delete('records', where: 'record_key = ?', whereArgs: [key]);
+    }
+    for (final record in changes.upserts) {
+      _upsert(batch, record, now);
+    }
+    for (final id in changes.removeTrashIds) {
+      batch.delete('trash', where: 'id = ?', whereArgs: [id]);
+    }
+    for (final s in changes.snapshots) {
+      batch.insert('candidate_snapshots', {
+        'store': s.store,
+        'day': s.day,
+        'machine': s.machine,
+        'taken_at': s.takenAt,
+        'payload': jsonEncode(s.toJson()),
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+    for (final entry in changes.state.entries) {
+      batch.insert('app_state', {
+        'state_key': entry.key,
+        'value': entry.value,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// 画像込みのJSON文字列（ゴミ箱に入れる形）。読めない台は、本体の文字列を
+  /// そのまま入れる（壊れていても消えずに残る）。
   static Future<Map<String, String>> _loadFullRaw(
     DatabaseExecutor db,
     List<String> keys,
@@ -581,12 +710,18 @@ class DatabaseService {
         whereArgs: chunk,
       );
       for (final row in rows) {
-        found[row['record_key'] as String] = jsonEncode(
-          joinStorageJson(
-            row['payload'] as String,
-            row['graph_blob'] as String?,
-          ),
-        );
+        String text;
+        try {
+          text = jsonEncode(
+            joinStorageJson(
+              row['payload'] as String,
+              row['graph_blob'] as String?,
+            ),
+          );
+        } on Object {
+          text = row['payload'] as String;
+        }
+        found[row['record_key'] as String] = text;
       }
     }
     return found;
@@ -678,16 +813,11 @@ class DatabaseService {
       where: 'batch_id = ?',
       whereArgs: [batchId],
     );
+    // 読めない行は戻せないので飛ばす（ゴミ箱には残り、7日で消える）。
     return [
       for (final row in rows)
-        TrashEntry(
-          id: row['id'] as int,
-          record: SlotRecord.fromJson(
-            Map<String, dynamic>.from(
-              jsonDecode(row['payload'] as String) as Map,
-            ),
-          ),
-        ),
+        if (_parseRecord(row['payload']) case final record?)
+          TrashEntry(id: row['id'] as int, record: record),
     ];
   }
 
@@ -703,16 +833,38 @@ class DatabaseService {
 
   /// バックアップを1台ずつ書き出す（全件を1つの文字列にしない）。
   /// 1行に1台を書くので、読み込みも1行ずつできる（[readBackupFile]）。
-  /// 書き出した台数を返す。
-  Future<int> exportBackup(
+  ///
+  /// 翌日候補の記録も、画面用の一覧ではなくDBから直接書く（起動時に読み
+  /// 込めなかったときでも、書き出しから抜け落ちないように）。読めない台は
+  /// 消さずに、本体の文字列を `unreadable_record` として書く（PC版・この
+  /// アプリの取り込みでは対象外として飛ばされる）。[onProgress] には書いた
+  /// 台数を渡す。
+  Future<({int records, int candidates, int unreadable})> exportBackup(
     File file, {
     String? store,
     String? day,
-    List<CandidateSnapshot> candidates = const [],
     List<DateEvent> events = const [],
     String source = 'android',
+    void Function(int written)? onProgress,
+  }) async => _writeBackup(
+    await database,
+    file,
+    store: store,
+    day: day,
+    events: [for (final event in events) event.toJson()],
+    source: source,
+    onProgress: onProgress,
+  );
+
+  static Future<({int records, int candidates, int unreadable})> _writeBackup(
+    DatabaseExecutor db,
+    File file, {
+    String? store,
+    String? day,
+    List<Object?> events = const [],
+    required String source,
+    void Function(int written)? onProgress,
   }) async {
-    final db = await database;
     final where = [
       'rowid > ?',
       if (store != null) 'store = ?',
@@ -720,52 +872,122 @@ class DatabaseService {
     ].join(' AND ');
     final sink = file.openWrite();
     var count = 0;
+    var unreadable = 0;
+    var candidates = 0;
     try {
       final header = jsonEncode({
         'format': backupFormat,
         'version': backupVersion,
         'exported_at': DateTime.now().toIso8601String(),
         'source': source,
-        if (events.isNotEmpty)
-          'date_events': [for (final event in events) event.toJson()],
+        if (events.isNotEmpty) 'date_events': events,
       });
       sink.write('${header.substring(0, header.length - 1)}, "records": [');
       var last = 0;
       while (true) {
         final rows = await db.rawQuery(
-          'SELECT rowid AS id, payload, graph_blob FROM records WHERE $where '
-          'ORDER BY rowid LIMIT ?',
+          'SELECT rowid AS id, record_key, payload, graph_blob FROM records '
+          'WHERE $where ORDER BY rowid LIMIT ?',
           [last, ?store, ?day, _chunkRows],
         );
         if (rows.isEmpty) break;
         for (final row in rows) {
           last = row['id'] as int;
-          sink.write(count == 0 ? '\n' : ',\n');
-          sink.write(
-            jsonEncode(
+          String line;
+          try {
+            line = jsonEncode(
               joinStorageJson(
                 row['payload'] as String,
                 row['graph_blob'] as String?,
               ),
-            ),
-          );
+            );
+          } on Object {
+            unreadable++;
+            line = jsonEncode({
+              'unreadable_record': row['payload'],
+              'record_key': row['record_key'],
+            });
+          }
+          sink.write(count == 0 ? '\n' : ',\n');
+          sink.write(line);
           count++;
         }
+        onProgress?.call(count);
       }
       sink.write('\n]');
-      if (candidates.isNotEmpty) {
-        sink.write(', "candidate_snapshots": [');
-        for (var i = 0; i < candidates.length; i++) {
-          sink.write(i == 0 ? '\n' : ',\n');
-          sink.write(jsonEncode(candidates[i].toJson()));
+      final snapshots = await db.rawQuery(
+        'SELECT payload FROM candidate_snapshots WHERE 1 = 1'
+        '${store == null ? '' : ' AND store = ?'}'
+        '${day == null ? '' : ' AND day = ?'} ORDER BY taken_at',
+        [?store, ?day],
+      );
+      for (final row in snapshots) {
+        final Object? decoded;
+        try {
+          decoded = jsonDecode(row['payload'] as String);
+        } on Object {
+          continue;
         }
-        sink.write('\n]');
+        sink.write(candidates == 0 ? ', "candidate_snapshots": [\n' : ',\n');
+        sink.write(jsonEncode(decoded));
+        candidates++;
       }
+      if (candidates > 0) sink.write('\n]');
       sink.write('}\n');
       await sink.flush();
     } finally {
       await sink.close();
     }
-    return count;
+    return (records: count, candidates: candidates, unreadable: unreadable);
   }
+
+  /// 非常用の書き出し。アプリが起動できないとき（DBが新しい版で作られた、
+  /// 読み込み中に失敗した等）でも、DBを読むだけで開いて、記録・翌日候補の
+  /// 記録・イベント名を1つのバックアップにする。DBには何も書かない。
+  Future<({int records, int candidates, int unreadable})> exportRaw(
+    File file,
+  ) async {
+    final factory = factoryOverride ?? databaseFactory;
+    final path =
+        pathOverride ?? p.join(await getDatabasesPath(), 'database.sqlite3');
+    final db = await factory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+    try {
+      List<Object?> events = const [];
+      try {
+        final rows = await db.query(
+          'app_state',
+          columns: ['value'],
+          where: 'state_key = ?',
+          whereArgs: ['date_events'],
+        );
+        final raw = jsonDecode(rows.first['value'] as String);
+        if (raw is List) events = raw;
+      } on Object {
+        // イベント名が無い・読めないときは、記録だけでも書き出す。
+      }
+      return await _writeBackup(db, file, events: events, source: 'android');
+    } finally {
+      await db.close();
+    }
+  }
+}
+
+/// [DatabaseService.writeTransaction] の中で使う書き込み口。
+class DatabaseWriter {
+  DatabaseWriter._(this._txn);
+  final Transaction _txn;
+
+  Future<void> apply(ChangeSet changes) =>
+      DatabaseService._applyIn(_txn, changes);
+
+  Future<Map<String, SlotRecord>> loadByKeys(Iterable<String> keys) async =>
+      keys.isEmpty ? {} : DatabaseService._loadFull(_txn, keys);
+
+  Future<String?> latestDay() => DatabaseService._latestDay(_txn);
+
+  Future<void> markTemporary(Iterable<String> keys) =>
+      DatabaseService._markTemporary(_txn, keys);
 }

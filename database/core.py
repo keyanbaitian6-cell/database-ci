@@ -203,11 +203,17 @@ class Store:
         with self.db:
             for location, day, machine, rack, raw in odd:
                 name = normalize_machine_name(machine)
-                payload = dict(json.loads(raw), machine=name)
+                try:
+                    payload = dict(json.loads(raw), machine=name)
+                except ValueError:
+                    continue  # 読めない行はそのまま残す（開けなくならないように）
                 twin = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
                                        (location, day, name, rack)).fetchone()
                 if twin:
-                    payload = _merge_spellings(json.loads(twin[0]), payload)
+                    try:
+                        payload = _merge_spellings(json.loads(twin[0]), payload)
+                    except ValueError:
+                        pass  # 読めない片方は、読める方で置き換える
                 self.db.execute('DELETE FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
                                 (location, day, machine, rack))
                 self.db.execute('INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) '
@@ -249,37 +255,46 @@ class Store:
         """Save rows; with ``log_candidates`` the changed next-day candidates are
         recorded in the same transaction (a backup import passes False: the
         candidates of old days recomputed now are not what was shown then)."""
+        with self.db:
+            self._save_rows(rows, log_candidates)
+
+    def _save_rows(self, rows, log_candidates):
+        """``save`` の中身。トランザクションは呼ぶ側が持つ（バックアップの取り込みは、
+        イベント名・台・翌日候補の記録を1回で書くため）。"""
         self._machine_cache = {}
         groups = set()
-        with self.db:
-            for row in rows:
-                row = dict(row, machine=normalize_machine_name(row.get('machine')))
-                if row.get('kind_code') != 21 or row.get('store') not in STORE_NAMES:
-                    raise ValueError('対象は長町南店・幸町店の1000円46枚スロットのみです。')
-                date.fromisoformat(row['day'])
-                key = (row['store'], row['day'], row['machine'], int(row['rack']))
-                old = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?', key).fetchone()
+        for row in rows:
+            row = dict(row, machine=normalize_machine_name(row.get('machine')))
+            if row.get('kind_code') != 21 or row.get('store') not in STORE_NAMES:
+                raise ValueError('対象は長町南店・幸町店の1000円46枚スロットのみです。')
+            date.fromisoformat(row['day'])
+            key = (row['store'], row['day'], row['machine'], int(row['rack']))
+            old = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?', key).fetchone()
+            try:
                 merged = json.loads(old[0]) if old else {}
-                # Preserve a graph only while its corresponding source numbers match.
-                changed = any(k in merged and k in row and row[k] is not None and merged[k] != row[k]
-                              for k in ('games','bb','rb','max_hold'))
-                if changed and not row.get('graph'):
-                    merged.pop('graph', None)
-                    merged.pop('graph_measurement', None)
-                merged.update({k: v for k, v in row.items() if v is not None})
-                # First save time never moves on a re-capture (same as Android's
-                # first_captured_at). A row saved before this existed stays unknown.
-                firsts = [v for v in (json.loads(old[0]).get('first_captured_at') if old else None,
-                                      row.get('first_captured_at')) if v]
-                if firsts:
-                    merged['first_captured_at'] = min(firsts, key=_timestamp)
-                elif not old:
-                    merged['first_captured_at'] = datetime.now().astimezone().isoformat()
-                self._log_observation(row)
-                self.db.execute('INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) DO UPDATE SET payload=excluded.payload', (*key, json.dumps(merged, ensure_ascii=False)))
-                groups.add((key[0], key[2], key[1]))
-            if log_candidates:
-                self._log_candidates(groups)
+            except ValueError:
+                # 読めない行は無いものとして上書きする（rows() でも飛ばしている）。
+                old, merged = None, {}
+            # Preserve a graph only while its corresponding source numbers match.
+            changed = any(k in merged and k in row and row[k] is not None and merged[k] != row[k]
+                          for k in ('games','bb','rb','max_hold'))
+            if changed and not row.get('graph'):
+                merged.pop('graph', None)
+                merged.pop('graph_measurement', None)
+            merged.update({k: v for k, v in row.items() if v is not None})
+            # First save time never moves on a re-capture (same as Android's
+            # first_captured_at). A row saved before this existed stays unknown.
+            firsts = [v for v in (json.loads(old[0]).get('first_captured_at') if old else None,
+                                  row.get('first_captured_at')) if v]
+            if firsts:
+                merged['first_captured_at'] = min(firsts, key=_timestamp)
+            elif not old:
+                merged['first_captured_at'] = datetime.now().astimezone().isoformat()
+            self._log_observation(row)
+            self.db.execute('INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) DO UPDATE SET payload=excluded.payload', (*key, json.dumps(merged, ensure_ascii=False)))
+            groups.add((key[0], key[2], key[1]))
+        if log_candidates:
+            self._log_candidates(groups)
         self._machine_cache = {}
 
     def _log_candidates(self, groups):
@@ -329,17 +344,20 @@ class Store:
 
     def add_candidate_snapshots(self, snapshots):
         """Merge candidate records from a backup (same group and time = same row)."""
-        added = 0
         with self.db:
-            for s in snapshots:
-                if not (isinstance(s, dict) and s.get('store') in STORE_NAMES and s.get('day')
-                        and s.get('machine') and s.get('taken_at')):
-                    continue
-                machine = normalize_machine_name(s['machine'])
-                cursor = self.db.execute('INSERT OR IGNORE INTO candidate_snapshots VALUES(?,?,?,?,?)',
-                                         (s['store'], s['day'], machine, s['taken_at'],
-                                          json.dumps(dict(s, machine=machine), ensure_ascii=False)))
-                added += cursor.rowcount
+            return self._add_candidate_snapshots(snapshots)
+
+    def _add_candidate_snapshots(self, snapshots):
+        added = 0
+        for s in snapshots:
+            if not (isinstance(s, dict) and s.get('store') in STORE_NAMES and s.get('day')
+                    and s.get('machine') and s.get('taken_at')):
+                continue
+            machine = normalize_machine_name(s['machine'])
+            cursor = self.db.execute('INSERT OR IGNORE INTO candidate_snapshots VALUES(?,?,?,?,?)',
+                                     (s['store'], s['day'], machine, s['taken_at'],
+                                      json.dumps(dict(s, machine=machine), ensure_ascii=False)))
+            added += cursor.rowcount
         return added
 
     def state(self, key):
@@ -356,14 +374,20 @@ class Store:
                 and (day is None or event['day'] == day)]
 
     def set_date_events(self, events):
+        with self.db:
+            self._write_date_events(self._date_events_payload(events))
+
+    def _write_date_events(self, payload):
+        self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)', ('date_events', payload))
+
+    @staticmethod
+    def _date_events_payload(events):
         valid = {}
         for event in events:
             if _valid_date_event(event):
                 valid[(event['store'], event['day'])] = {
                     'store': event['store'], 'day': event['day'], 'name': event['name'].strip()}
-        payload = json.dumps(list(valid.values()), ensure_ascii=False)
-        with self.db:
-            self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)', ('date_events', payload))
+        return json.dumps(list(valid.values()), ensure_ascii=False)
 
     def set_date_event(self, location, day, name):
         events = {(event['store'], event['day']): event for event in self.date_events()}
@@ -501,7 +525,15 @@ class Store:
         if machine:
             query += ' AND machine=?'
             values.append(machine)
-        return [json.loads(x[0]) for x in self.db.execute(query + ' ORDER BY day,store,rack', values)]
+        # 読めない行（壊れたJSON）は飛ばす。1件のために画面も採点も止めない
+        # （行は消さずに残し、書き出しには unreadable_record として入る）。
+        result = []
+        for (payload,) in self.db.execute(query + ' ORDER BY day,store,rack', values):
+            try:
+                result.append(json.loads(payload))
+            except ValueError:
+                continue
+        return result
 
     def raw_payloads(self, day=None, store=None):
         """The stored JSON text of each row, in the same order as ``rows()``.
@@ -673,7 +705,10 @@ def export_viewer(store, path, days=VIEWER_DAYS):
             for (payload,) in store.db.execute(
                     'SELECT payload FROM days WHERE day >= ? ORDER BY day,store,rack', (cutoff,)):
                 # 閲覧ページが使う項目だけ（台ページのURL・取り込み元などは省く）。
-                row = {k: v for k, v in json.loads(payload).items() if k in VIEWER_KEYS}
+                try:
+                    row = {k: v for k, v in json.loads(payload).items() if k in VIEWER_KEYS}
+                except (ValueError, AttributeError):
+                    continue  # 読めない行は閲覧用には出さない
                 graph = row.get('graph_measurement')
                 if isinstance(graph, dict):
                     graph.pop('preview_image', None)
@@ -710,10 +745,17 @@ def export_backup(store, path, location=None, day=None):
     # One record per line, written as read: the whole database is never held
     # as one string (this runs after every save), and the file can be read
     # back line by line (``iter_backup_file``). Payloads are copied verbatim.
+    # 読めない行（壊れたJSON）をそのまま書くとファイル全体が読めなくなるので、
+    # その行だけ unreadable_record に包む（Android版と同じ。取り込みでは対象外）。
     with path.open('w', encoding='utf-8') as out:
         out.write(f'{header}, "records": [')
         for (payload,) in store.db.execute(query + ' ORDER BY day,store,rack', values):
-            out.write(('\n' if count == 0 else ',\n') + payload)
+            try:
+                json.loads(payload)
+                line = payload
+            except ValueError:
+                line = json.dumps({'unreadable_record': payload}, ensure_ascii=False)
+            out.write(('\n' if count == 0 else ',\n') + line)
             count += 1
         out.write('\n]')
         snapshots = store.candidate_snapshots(day=day, location=location)
@@ -1234,13 +1276,15 @@ def import_backup(store, path):
             plan['events_added'] += 1
         elif existing['name'] != event['name']:
             plan['event_conflicts'] += 1
-    if plan['events_added']:
-        store.set_date_events(local_events.values())
     to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only']
-    if to_save:
-        store.save(to_save, log_candidates=False)
-    if snapshots:
-        store.add_candidate_snapshots(snapshots)
+    # イベント名・台・翌日候補の記録を1回で書く（途中で失敗したら何も残さない）。
+    with store.db:
+        if plan['events_added']:
+            store._write_date_events(store._date_events_payload(local_events.values()))
+        if to_save:
+            store._save_rows(to_save, log_candidates=False)
+        if snapshots:
+            store._add_candidate_snapshots(snapshots)
     return plan
 
 

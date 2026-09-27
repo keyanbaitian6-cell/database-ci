@@ -62,8 +62,10 @@ class _ViewerHomeState extends State<ViewerHome> {
   String? _day;
   final _query = TextEditingController();
 
-  // 表示中の日の採点（店舗・日付が変わったときだけ計算し直す）。
+  // 表示中の日の採点（読み込んだ内容・店舗・日付が変わったときだけ計算し直す）。
+  // 読み込んだ内容は、読み込むたびに1つ進む番号で見分ける。
   Object? _scoredFor;
+  var _dataVersion = 0;
   List<(SlotRecord, ScoreResult)> _digest = const [];
   ({List<ProvisionalCandidate> candidates, int machines, int judged})?
   _candidates;
@@ -111,13 +113,23 @@ class _ViewerHomeState extends State<ViewerHome> {
     try {
       final text = await backupFromRemote(url);
       if (text != null) {
-        final data = ViewerData.parse(text);
-        await saveViewerData(text);
+        // 前に読み込んだ内容と合わせる（新しい方を使い、Driveに無い古い日は残す）。
+        String? stored;
+        try {
+          stored = await loadViewerData();
+        } on Object {
+          stored = null;
+        }
+        final merged = ViewerData.merge(stored, text);
+        final data = ViewerData.parse(merged.text);
+        if (merged.text != stored) await saveViewerData(merged.text);
         _show(data);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Googleドライブの最新（${data.records.length}台）を読み込みました。'),
+              content: Text(
+                merged.note ?? 'Googleドライブの最新（${data.records.length}台）を読み込みました。',
+              ),
             ),
           );
         }
@@ -182,6 +194,7 @@ class _ViewerHomeState extends State<ViewerHome> {
 
   void _show(ViewerData data) {
     _data = data;
+    _dataVersion++;
     _scoredFor = null;
     final first = data.records.firstOrNull;
     if (!data.records.any((r) => r.store == _store)) _store = first?.store;
@@ -263,7 +276,10 @@ class _ViewerHomeState extends State<ViewerHome> {
       _ => '',
     };
     if (data.file == 'Googleドライブ（自動）') {
-      return 'Googleドライブから自動で読み込み：$from$when${data.records.length}台'
+      final older = data.keptOlder > 0
+          ? '（うち${data.keptOlder}台は前に読み込んだ古い日の記録）'
+          : '';
+      return 'Googleドライブから自動で読み込み：$from$when${data.records.length}台$older'
           '（グラフは画像を使わず概略図で表示）';
     }
     return '読み込んだバックアップ：$from$when${data.records.length}台'
@@ -362,7 +378,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       for (final r in storeRows)
         if (r.day == day) r,
     ];
-    final key = (identityHashCode(all), store, day);
+    final key = (_dataVersion, store, day);
     if (_scoredFor != key) {
       _digest = [for (final r in dayRows) (r, scoreRecord(r, all))];
       _candidates = dayCandidates(dayRows, all);

@@ -1,24 +1,19 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
     show RenderAbstractViewport, ScrollCacheExtent;
-import 'package:path_provider/path_provider.dart';
 import 'package:quick_actions/quick_actions.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'app_controller.dart';
 import 'backup_service.dart';
-import 'candidate_log.dart';
-import 'csv_export_service.dart';
 import 'data_checks.dart';
 import 'date_events.dart';
 import 'database_service.dart';
-import 'graph_gate.dart';
 import 'graph_preview.dart';
-import 'import_service.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
@@ -31,6 +26,7 @@ import 'web_import_page.dart';
 // 翌日候補の「平均より +13」表示は machine_sections.dart へ移した。既存の
 // 呼び出し元（テストを含む）がこのファイルから使えるよう公開し続ける。
 export 'machine_sections.dart' show signedIndex;
+export 'app_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,6 +41,7 @@ Future<void> main() async {
         message: error is DatabaseTooNewException
             ? error.message
             : '起動できませんでした。記録は変更していません。\n$error',
+        onExport: controller.database.exportRaw,
       ),
     );
     return;
@@ -53,10 +50,55 @@ Future<void> main() async {
   _setUpLauncherShortcuts(controller);
 }
 
-/// 起動できないときに理由だけを出す画面。データには触れない。
-class StartupErrorApp extends StatelessWidget {
-  const StartupErrorApp({super.key, required this.message});
+/// 起動できないときに理由を出す画面。記録は書き換えない。
+///
+/// 非常用に、DBを読むだけで開いて記録をバックアップとして書き出し、共有
+/// できる（アプリが開けないままでも、記録をPC版へ移せるように）。
+class StartupErrorApp extends StatefulWidget {
+  const StartupErrorApp({super.key, required this.message, this.onExport});
   final String message;
+  final Future<({int records, int candidates, int unreadable})> Function(
+    File file,
+  )?
+  onExport;
+
+  @override
+  State<StartupErrorApp> createState() => _StartupErrorAppState();
+}
+
+class _StartupErrorAppState extends State<StartupErrorApp> {
+  var _busy = false;
+  String? _result;
+
+  Future<void> _export() async {
+    final export = widget.onExport;
+    if (export == null) return;
+    setState(() {
+      _busy = true;
+      _result = null;
+    });
+    try {
+      final file = await BackupService().newBackupFile();
+      final written = await export(file);
+      final name = file.uri.pathSegments.last;
+      await SharePlus.instance.share(
+        ShareParams(
+          title: name,
+          subject: name,
+          text: 'アプリが起動できないときに書き出したdatabaseのバックアップです。',
+          files: [XFile(file.path, mimeType: 'application/json')],
+        ),
+      );
+      _result =
+          '${written.records}台・翌日候補の記録${written.candidates}件を書き出しました'
+          '${written.unreadable > 0 ? '（うち読めない記録${written.unreadable}件はそのままの形で入れています）' : ''}。'
+          'PC版で取り込めます。';
+    } catch (error) {
+      _result = '書き出せませんでした：$error';
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -65,7 +107,31 @@ class StartupErrorApp extends StatelessWidget {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Center(child: Text(message, textAlign: TextAlign.center)),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(widget.message, textAlign: TextAlign.center),
+                if (widget.onExport != null) ...[
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _export,
+                    icon: const Icon(Icons.ios_share),
+                    label: Text(_busy ? '書き出し中…' : '記録を書き出す（非常用）'),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '端末の記録を読むだけで、書き換えません。',
+                    style: TextStyle(fontSize: 12, color: AppColors.ash),
+                  ),
+                ],
+                if (_result != null) ...[
+                  const SizedBox(height: 16),
+                  Text(_result!, textAlign: TextAlign.center),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     ),
@@ -94,999 +160,6 @@ void _setUpLauncherShortcuts(AppController controller) {
   ]);
 }
 
-/// 全期間のバックアップを促す注意。前回から3日以上たったか、まだ一度も
-/// 書き出していなければ出す（記録が無ければ出さない）。
-String? backupReminderText(
-  DateTime? lastFull,
-  bool hasRecords, [
-  DateTime? now,
-]) {
-  if (!hasRecords) return null;
-  now ??= DateTime.now();
-  if (lastFull == null) {
-    return 'まだ全期間のバックアップを書き出していません。上のバーのバックアップから「すべての店舗・すべての日付」で書き出してください。'
-        '$retentionDays日より前の記録は、書き出した後でないと端末から片付けません。';
-  }
-  final days = DateTime(
-    now.year,
-    now.month,
-    now.day,
-  ).difference(DateTime(lastFull.year, lastFull.month, lastFull.day)).inDays;
-  if (days < 3) return null;
-  return '前回の全期間バックアップから$days日たっています（${lastFull.month}/${lastFull.day}）。'
-      '「すべての店舗・すべての日付」で書き出してください。';
-}
-
-/// 表を取り込み直したとき、保存済みの台と数値が変わったか。変わった台の
-/// グラフは、その数値と合わないので外す。
-bool tableNumbersChanged(SlotRecord previous, EditableRow row) =>
-    previous.games != row.games ||
-    previous.bb != row.bb ||
-    previous.rb != row.rb ||
-    (row.maxHold != null &&
-        previous.maxHold != null &&
-        previous.maxHold != row.maxHold);
-
-class AppController extends ChangeNotifier {
-  AppController({DatabaseService? database})
-    : database = database ?? DatabaseService();
-
-  final DatabaseService database;
-  final csvExporter = CsvExportService();
-  final backupService = BackupService();
-  List<SlotRecord> records = [];
-
-  /// 翌日候補（仮）の記録（candidate_log.dart）。バックアップにも入る。
-  List<CandidateSnapshot> candidateSnapshots = [];
-  Map<String, CandidateSnapshot> _latestCandidates = {};
-
-  /// DBに残す小さな状態（前回の書き出し時刻・候補の記録に失敗した回数）。
-  Map<String, String> appState = {};
-
-  /// 店舗・日付ごとのイベント名。台の採点や候補計算には使わない。
-  Map<String, DateEvent> dateEvents = {};
-
-  DateEvent? dateEventFor(String? store, String? day) =>
-      store == null || day == null ? null : dateEvents['$store|$day'];
-
-  List<DateEvent> _decodeDateEvents(String? text) {
-    if (text == null) return [];
-    try {
-      final raw = jsonDecode(text);
-      if (raw is! List) return [];
-      return [for (final item in raw) ?DateEvent.tryFromJson(item)];
-    } on Object {
-      return [];
-    }
-  }
-
-  String _encodeDateEvents(Iterable<DateEvent> events) => jsonEncode([
-    for (final event in (events.toList()..sort((a, b) => a.key.compareTo(b.key))))
-      event.toJson(),
-  ]);
-
-  Future<void> _saveDateEvents() async {
-    final json = _encodeDateEvents(dateEvents.values);
-    await database.applyChanges(ChangeSet(state: {'date_events': json}));
-    appState = {...appState, 'date_events': json};
-  }
-
-  Future<void> setDateEvent({
-    required String store,
-    required String day,
-    required String? name,
-  }) => _write(() async {
-    if (!storeNames.containsKey(store) || !isValidRecordDay(day)) {
-      throw ArgumentError('店舗または日付が不正です。');
-    }
-    final cleaned = name?.trim();
-    if (cleaned != null && (cleaned.isEmpty || cleaned.length > 60)) {
-      throw ArgumentError('イベント名は1〜60文字で入力してください。');
-    }
-    final key = '$store|$day';
-    if (cleaned == null) {
-      dateEvents.remove(key);
-    } else {
-      dateEvents[key] = DateEvent(store: store, day: day, name: cleaned);
-    }
-    await _saveDateEvents();
-    message = cleaned == null ? '$day のイベントを解除しました。' : '$day に「$cleaned」を登録しました。';
-    notifyListeners();
-  });
-
-  /// 前回バックアップを書き出した時刻（まだなら null）。
-  DateTime? get lastBackupExport =>
-      DateTime.tryParse(appState['last_backup_export'] ?? '')?.toLocal();
-
-  /// 前回「すべての店舗・すべての日付」のバックアップを書き出した時刻。
-  /// 古い記録を端末から片付けてよいかは、これで決める。
-  DateTime? get lastFullBackupExport =>
-      DateTime.tryParse(appState['last_full_backup_export'] ?? '')?.toLocal();
-
-  /// 起動時に古い記録を片付けたときの知らせ（閉じるまで出す）。
-  String? retentionNotice;
-
-  void dismissRetentionNotice() {
-    retentionNotice = null;
-    notifyListeners();
-  }
-
-  /// 全期間のバックアップを促す注意（出さないときは null）。
-  String? backupReminder([DateTime? now]) =>
-      backupReminderText(lastFullBackupExport, records.isNotEmpty, now);
-
-  /// 変わった翌日候補を求める関数（テストで失敗を差し込むため差し替えられる）。
-  List<CandidateSnapshot> Function({
-    required Iterable<SlotRecord> saved,
-    required List<SlotRecord> all,
-    required Map<String, CandidateSnapshot> latest,
-    required DateTime now,
-  })
-  computeCandidates = changedCandidateSnapshots;
-
-  /// 翌日候補を記録できなかった保存の累計回数。
-  int get candidateLogFailures =>
-      int.tryParse(appState['candidate_log_failures'] ?? '') ?? 0;
-  String? message;
-  int tab = 0;
-
-  // The results screen's last store/date/machine, kept in a tiny JSON file so
-  // reopening the app lands where the user left off instead of re-picking
-  // three dropdowns every time. Best effort: a read/write failure is ignored.
-  String? lastStore;
-  String? lastDay;
-  String? lastMachine;
-
-  // 直前の保存（表または1台のグラフ）を保存前の状態へ戻すための控え。
-  // 1回分だけ。保存前に無かった台は削除、あった台は元の内容へ戻す。
-  String? _undoLabel;
-  List<(SlotRecord saved, SlotRecord? previous)>? _undoEntries;
-  Future<void> _writeTail = Future<void>.value();
-
-  Future<T> _write<T>(Future<T> Function() action) {
-    final result = _writeTail.then((_) => action());
-    _writeTail = result.then<void>(
-      (_) {},
-      onError: (Object error, StackTrace stack) {},
-    );
-    return result;
-  }
-
-  /// [before] は保存する直前にDBから読んだ内容（無かった台は含まない）。
-  /// 画面用の一覧は古いことがあるので、取り消しの控えには使わない。
-  void _rememberUndo(
-    String label,
-    List<SlotRecord> rows,
-    Map<String, SlotRecord> before,
-  ) {
-    _undoLabel = label;
-    _undoEntries = [for (final r in rows) (r, before[r.key])];
-  }
-
-  Future<String> undoLastSave() => _write(() async {
-    final entries = _undoEntries;
-    if (entries == null) return '取り消せる保存がありません。';
-    final label = _undoLabel ?? '直前の保存';
-    // まとめて削除の取り消しは百台を超えることがあるので、1台ずつではなくまとめて戻す。
-    final note = await _commit(
-      upserts: [for (final (_, previous) in entries) ?previous],
-      deleteKeys: [
-        for (final (saved, previous) in entries)
-          if (previous == null) saved.key,
-      ],
-      changed: [for (final (saved, _) in entries) saved],
-    );
-    _undoEntries = null;
-    _undoLabel = null;
-    message = '取り消しました：$label$note';
-    notifyListeners();
-    return message!;
-  });
-
-  /// 今日の日付。機種一覧ページ（日付なし）の判定に使う。テストで差し替える。
-  String Function() today = todayIso;
-
-  /// "2026-09-18　長町南 42/80台・幸町 18/60台" (グラフ取り込み済み／一覧の台数)。
-  /// 日付が分からないページ（機種一覧）では今日で表示する。
-  String progressText({required String? store, required String? day}) {
-    if (day == null && store == null) return '';
-    final target = day ?? today();
-    const shortNames = {'nagamachiminami': '長町南', 'saiwaichou': '幸町'};
-    final parts = <String>[];
-    for (final entry in shortNames.entries) {
-      final rows = records
-          .where((r) => r.store == entry.key && r.day == target)
-          .toList();
-      if (rows.isEmpty) continue;
-      final done = rows.where((r) => r.graph != null).length;
-      parts.add('${entry.value} $done/${rows.length}台');
-    }
-    if (parts.isEmpty) return day == null ? '$target　まだ取り込みがありません' : '';
-    return '$target　${parts.join('・')}';
-  }
-
-  // 「グラフの確認画面を省く」設定。既定はオフ。条件（graph_gate.dart）を
-  // 満たした台だけ、確認なしで保存する。
-  bool autoConfirmGraph = false;
-
-  // 「表の確認画面を省く」設定。既定は省く（表はサイトのHTMLをそのまま読むので、
-  // 読み違いが起きない。PC版も元から確認画面なしで保存する）。
-  bool skipTableReview = true;
-
-  Future<File> _uiStateFile() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}${Platform.pathSeparator}ui_state.json');
-  }
-
-  Future<void> _loadUiState() async {
-    try {
-      final file = await _uiStateFile();
-      if (!await file.exists()) return;
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is Map) {
-        lastStore = decoded['store'] as String?;
-        lastDay = decoded['day'] as String?;
-        lastMachine = decoded['machine'] as String?;
-        autoConfirmGraph = decoded['auto_confirm_graph'] == true;
-        skipTableReview = decoded['skip_table_review'] != false;
-      }
-    } catch (_) {}
-  }
-
-  Future<void> rememberSelection(
-    String? store,
-    String? day,
-    String? machine,
-  ) async {
-    if (store == lastStore && day == lastDay && machine == lastMachine) return;
-    lastStore = store;
-    lastDay = day;
-    lastMachine = machine;
-    await _writeUiState();
-  }
-
-  Future<void> setAutoConfirmGraph(bool value) async {
-    autoConfirmGraph = value;
-    notifyListeners();
-    await _writeUiState();
-  }
-
-  Future<void> setSkipTableReview(bool value) async {
-    skipTableReview = value;
-    notifyListeners();
-    await _writeUiState();
-  }
-
-  Future<void> _writeUiState() async {
-    try {
-      final file = await _uiStateFile();
-      await file.writeAsString(
-        jsonEncode({
-          'store': lastStore,
-          'day': lastDay,
-          'machine': lastMachine,
-          'auto_confirm_graph': autoConfirmGraph,
-          'skip_table_review': skipTableReview,
-        }),
-      );
-    } catch (_) {}
-  }
-
-  /// Reasons [analysis] still needs a manual review; empty = safe to save as is.
-  List<String> graphReviewReasons(CaptureAnalysis analysis) {
-    final graph = analysis.graph;
-    final existing = records
-        .where(
-          (r) =>
-              r.store == analysis.store &&
-              r.day == analysis.day &&
-              r.rack == analysis.rack &&
-              (analysis.machine == null ||
-                  r.machine == normalizeMachineName(analysis.machine!)),
-        )
-        .firstOrNull;
-    final reasons = graphAutoSaveBlockers(
-      curve: graph?.curve,
-      baselineY: graph?.baselineY,
-      width: graph?.width.toDouble(),
-      games: analysis.games,
-      bb: analysis.bb,
-      rb: analysis.rb,
-      maxHold: analysis.maxHold,
-      existing: existing,
-    );
-    if (graph == null || graph.points.length != 4) {
-      reasons.add('4点を自動検出できていません');
-    }
-    if (analysis.store == null ||
-        analysis.day == null ||
-        analysis.rack == null ||
-        (analysis.machine ?? '').trim().isEmpty) {
-      reasons.add('店舗・日付・台番号・機種名のいずれかを特定できません');
-    }
-    return reasons;
-  }
-
-  Future<void> initialize() async {
-    await _loadUiState();
-    GraphPreviews.instance.loader = database.loadPreview;
-    appState = await database.loadState();
-    if (appState.containsKey('date_events')) {
-      dateEvents = {
-        for (final event in _decodeDateEvents(appState['date_events']))
-          event.key: event,
-      };
-    } else {
-      dateEvents = {for (final event in initialDateEvents) event.key: event};
-      await _saveDateEvents();
-    }
-    // 保存期間（$retentionDays日）より古い台を、バックアップ済みのものだけ片付ける。
-    final cleaned = await database.cleanupOldRecords(lastFullBackupExport);
-    if (cleaned.deleted > 0) {
-      final cutoff = cleaned.cutoff!;
-      retentionNotice =
-          '${cutoff.substring(5).replaceAll('-', '/')}より前の${cleaned.deleted}台を端末から片付けました'
-          '（バックアップには残っています。必要なときはバックアップを読み込んでください）。';
-    }
-    await _loadNormalizedRecords();
-    await database.purgeTrash(
-      DateTime.now().subtract(const Duration(days: trashDays)),
-    );
-    try {
-      candidateSnapshots = await database.loadCandidateSnapshots();
-      _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
-    } catch (error) {
-      debugPrint('翌日候補の記録を読み込めませんでした: $error');
-    }
-  }
-
-  /// 1回の書き込み。台の保存・削除・ゴミ箱と、それで変わった翌日候補の
-  /// 記録を、同じトランザクションで書く（片方だけ残ることはない）。
-  /// 書けたら画面用の一覧を更新する。候補の計算に失敗したときは台だけを
-  /// 保存し、失敗した回数をDBに残して、表示用の注記を返す。
-  Future<String> _commit({
-    List<SlotRecord> upserts = const [],
-    List<String> deleteKeys = const [],
-    List<String> trashKeys = const [],
-    String trashLabel = '',
-    TrashKind trashKind = TrashKind.delete,
-    List<int> removeTrashIds = const [],
-    Iterable<SlotRecord> changed = const [],
-  }) async {
-    final removed = deleteKeys.toSet();
-    final next = _withSaved(
-      [
-        for (final r in records)
-          if (!removed.contains(r.key)) r,
-      ],
-      [for (final r in upserts) r.lightened()],
-    );
-    var snapshots = const <CandidateSnapshot>[];
-    final state = <String, String>{};
-    if (changed.isNotEmpty) {
-      try {
-        snapshots = computeCandidates(
-          saved: changed,
-          all: next,
-          latest: _latestCandidates,
-          now: DateTime.now(),
-        );
-      } catch (error) {
-        state['candidate_log_failures'] = '${candidateLogFailures + 1}';
-        state['candidate_log_last_error'] = '$error';
-      }
-    }
-    await database.applyChanges(
-      ChangeSet(
-        upserts: upserts,
-        deleteKeys: deleteKeys,
-        trashKeys: trashKeys,
-        trashLabel: trashLabel,
-        trashKind: trashKind,
-        removeTrashIds: removeTrashIds,
-        snapshots: snapshots,
-        state: state,
-      ),
-    );
-    records = next;
-    appState = {...appState, ...state};
-    if (snapshots.isNotEmpty) {
-      candidateSnapshots = [...candidateSnapshots, ...snapshots];
-      for (final c in snapshots) {
-        _latestCandidates[c.groupKey] = c;
-      }
-    }
-    GraphPreviews.instance.forget([
-      ...deleteKeys,
-      for (final r in upserts) r.key,
-    ]);
-    return state.isEmpty ? '' : '（翌日候補を記録できませんでした。累計$candidateLogFailures回）';
-  }
-
-  /// バックアップにあった候補の記録のうち、手元にないものを足す。
-  Future<int> _importCandidates(List<CandidateSnapshot> incoming) async {
-    final have = {
-      for (final c in candidateSnapshots) '${c.groupKey}|${c.takenAt}',
-    };
-    final fresh = [
-      for (final c in incoming)
-        if (have.add('${c.groupKey}|${c.takenAt}')) c,
-    ];
-    if (fresh.isEmpty) return 0;
-    await database.applyChanges(ChangeSet(snapshots: fresh));
-    candidateSnapshots = [...candidateSnapshots, ...fresh];
-    _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
-    return fresh.length;
-  }
-
-  /// DBを読み、機種名の表記ゆれをそろえて一覧にする。DBに `+` 区切りの
-  /// 台が残っていれば（取り込み等で入った）、DBの側で画像込みにまとめて
-  /// から読み直す。画面用の一覧（画像なし）をDBへ書き戻すことはしない。
-  Future<void> _loadNormalizedRecords() async {
-    var loaded = await database.loadAll();
-    if (loaded.any((r) => r.machine != normalizeMachineName(r.machine))) {
-      await database.normalizeMachineNames();
-      loaded = await database.loadAll();
-    }
-    records = _normalizeRecords(loaded);
-  }
-
-  List<SlotRecord> _normalizeRecords(List<SlotRecord> source) {
-    final merged = <String, SlotRecord>{};
-    for (final original in source) {
-      final record = original.copyWith(
-        machine: normalizeMachineName(original.machine),
-      );
-      final current = merged[record.key];
-      merged[record.key] = current == null
-          ? record
-          : mergeSameRack(current, record);
-    }
-    return merged.values.toList();
-  }
-
-  /// [base] に保存した台を入れた（置き換えた）新しい一覧。DBを読み直さない。
-  List<SlotRecord> _withSaved(List<SlotRecord> base, List<SlotRecord> saved) {
-    final index = {for (var i = 0; i < base.length; i++) base[i].key: i};
-    final next = List<SlotRecord>.of(base);
-    for (final record in saved) {
-      final i = index[record.key];
-      if (i == null) {
-        index[record.key] = next.length;
-        next.add(record);
-      } else {
-        next[i] = record;
-      }
-    }
-    return next;
-  }
-
-  /// 画面から読み直す（引っ張って更新）。保存と同じ順番待ちに入れるので、
-  /// 保存の途中で読んだ古い一覧が、保存後の一覧を上書きすることはない。
-  Future<void> reload() => _write(_reloadNow);
-
-  /// 書き込みの順番待ちの中から呼ぶ読み直し（[_write] の中で [reload] を
-  /// 呼ぶと、自分の終わりを待って止まってしまう）。
-  Future<void> _reloadNow() async {
-    await _loadNormalizedRecords();
-    notifyListeners();
-  }
-
-  /// 表をそのまま保存すると、グラフが外れる（数値が変わる）台の数。
-  /// ブラウザの「確認なしで保存」は、これが0のときだけ使う。
-  int graphsDroppedBy(WebTableExtraction extraction) {
-    final store = extraction.store;
-    final day = extraction.day;
-    final machine = extraction.machine;
-    if (store == null || day == null || machine == null) return 0;
-    final name = normalizeMachineName(machine);
-    final saved = {
-      for (final r in records)
-        if (r.store == store && r.day == day && r.machine == name) r.rack: r,
-    };
-    return extraction.rows.where((row) {
-      final previous = saved[row.rack];
-      return previous?.graph != null && tableNumbersChanged(previous!, row);
-    }).length;
-  }
-
-  Future<void> saveTable(
-    String store,
-    String day,
-    String machine,
-    List<EditableRow> rows,
-  ) => _write(() async {
-    machine = normalizeMachineName(machine);
-    // 残すべきグラフ・設定情報などは、画面用の一覧ではなくDBから読む。
-    final old = await database.loadByKeys([
-      for (final row in rows) '$store|$day|$machine|${row.rack}',
-    ]);
-    final now = DateTime.now();
-    final saved = rows.map((row) {
-      final key = '$store|$day|$machine|${row.rack}';
-      final previous = old[key];
-      final changed = previous != null && tableNumbersChanged(previous, row);
-      return SlotRecord(
-        store: store,
-        day: day,
-        machine: machine,
-        rack: row.rack,
-        games: row.games,
-        bb: row.bb,
-        rb: row.rb,
-        maxHold: row.maxHold ?? previous?.maxHold,
-        previousStart: row.previousStart ?? previous?.previousStart,
-        graph: changed ? null : previous?.graph,
-        detailUrl: row.detailUrl ?? old[key]?.detailUrl,
-        capturedAt: now.toIso8601String(),
-        // 初めて保存した時刻だけを残す。以前から保存済みで時刻がない台は不明のまま。
-        firstCapturedAt:
-            previous?.firstCapturedAt ??
-            (previous == null ? timestampWithOffset(now) : null),
-        confirmedSetting: old[key]?.confirmedSetting,
-        extra: previous?.extra ?? const {},
-      );
-    }).toList();
-    // 数値が変わってグラフが外れる台は、前の内容（グラフ込み）をゴミ箱に残す。
-    final dropped = [
-      for (final r in saved)
-        if (old[r.key]?.graph != null && r.graph == null) r.key,
-    ];
-    final note = await _commit(
-      upserts: saved,
-      trashKeys: dropped,
-      trashLabel: '$day $machineの表の取り込み直しで外れたグラフ（${dropped.length}台）',
-      trashKind: TrashKind.overwrite,
-      changed: saved,
-    );
-    _rememberUndo('$machineの一覧${saved.length}台', saved, old);
-    message = '${saved.length}台を保存しました。$note';
-    tab = 0;
-    notifyListeners();
-  });
-
-  CaptureAnalysis resolveWebGraph(CaptureAnalysis captured) {
-    // 一覧の機種名が正本。個別グラフ画面には機種名が載らない場合があるため、
-    // 同じ店舗・日付・台番号で保存済みの一覧記録を最優先で引き継ぐ。
-    final matching = records.where(
-      (record) =>
-          record.rack == captured.rack &&
-          (captured.store == null || record.store == captured.store) &&
-          (captured.day == null || record.day == captured.day),
-    );
-    final saved = matching.firstOrNull;
-    final capturedMachine = captured.machine == null
-        ? null
-        : normalizeMachineName(captured.machine!);
-    return CaptureAnalysis(
-      path: captured.path,
-      kind: captured.kind,
-      fullText: captured.fullText,
-      store: captured.store,
-      day: captured.day,
-      machine:
-          saved?.machine ??
-          (capturedMachine == null || capturedMachine.isEmpty
-              ? null
-              : capturedMachine),
-      rack: captured.rack,
-      games: captured.games ?? saved?.games,
-      bb: captured.bb ?? saved?.bb,
-      rb: captured.rb ?? saved?.rb,
-      maxHold: captured.maxHold ?? saved?.maxHold,
-      graph: captured.graph,
-    );
-  }
-
-  Future<void> saveGraph({
-    required String store,
-    required String day,
-    required String machine,
-    required int rack,
-    required int games,
-    required int bb,
-    required int rb,
-    required int? maxHold,
-    required List<Offset> points,
-    required Uint8List previewPng,
-    required int previewWidth,
-    required int previewHeight,
-    List<List<double>>? curve,
-    bool returnToBrowser = false,
-  }) => _write(() async {
-    machine = normalizeMachineName(machine);
-    final key = '$store|$day|$machine|$rack';
-    final before = await database.loadByKeys([key]);
-    final existing = before[key];
-    final now = DateTime.now();
-    final record = SlotRecord(
-      store: store,
-      day: day,
-      machine: machine,
-      rack: rack,
-      games: games,
-      bb: bb,
-      rb: rb,
-      maxHold: maxHold,
-      previousStart: existing?.previousStart,
-      detailUrl: existing?.detailUrl,
-      capturedAt: now.toIso8601String(),
-      firstCapturedAt:
-          existing?.firstCapturedAt ??
-          (existing == null ? timestampWithOffset(now) : null),
-      confirmedSetting: existing?.confirmedSetting,
-      extra: existing?.extra ?? const {},
-      graph: GraphMeasurement(
-        baselineY: points[0].dy,
-        peakY: points[1].dy,
-        troughY: points[2].dy,
-        endY: points[3].dy,
-        baselineX: points[0].dx,
-        peakX: points[1].dx,
-        troughX: points[2].dx,
-        endX: points[3].dx,
-        previewPng: previewPng,
-        previewWidth: previewWidth,
-        previewHeight: previewHeight,
-        curve: curve,
-      ),
-    );
-    final note = await _commit(
-      upserts: [record],
-      // グラフを取り込み直すときは、前のグラフをゴミ箱に残す。
-      trashKeys: [if (existing?.graph != null) key],
-      trashLabel: '$day $rack番台のグラフの取り込み直し',
-      trashKind: TrashKind.overwrite,
-      changed: [record],
-    );
-    _rememberUndo('$rack番台のグラフ', [record], before);
-    message = '$rack番台を採点しました。$note';
-    tab = returnToBrowser ? 1 : 0;
-    notifyListeners();
-  });
-
-  /// 取り込みミスなどを、機種ごと・日付ごとにまとめて削除する。消した台数を返す。
-  /// 消す前の内容を「直前の保存を取り消す」の控えに残すので、1回分は元に戻せる。
-  Future<int> deleteGroup({
-    required String day,
-    String? store,
-    String? machine,
-  }) => _write(() async {
-    final targets = recordsInGroup(
-      records,
-      day: day,
-      store: store,
-      machine: machine,
-    );
-    if (targets.isEmpty) return 0;
-    final where = [day, storeNames[store] ?? '両店舗', ?machine].join(' ');
-    final keys = [for (final r in targets) r.key];
-    // 取り消しの控えは画像込みでDBから読む（画面用の一覧には画像がない）。
-    final before = await database.loadByKeys(keys);
-    final note = await _commit(
-      deleteKeys: keys,
-      trashKeys: keys,
-      trashLabel: '$whereの削除（${targets.length}台）',
-      changed: targets,
-    );
-    // 取り消すと、消した台を消す前の内容で保存し直す。
-    _undoLabel = '$whereの削除（${targets.length}台）';
-    _undoEntries = [for (final r in before.values) (r, r)];
-    message =
-        '$whereの記録を削除しました（${targets.length}台）。ゴミ箱から$trashDays日間は戻せます。$note';
-    notifyListeners();
-    return targets.length;
-  });
-
-  Future<void> deleteRecord(SlotRecord record) => _write(() async {
-    final before = await database.loadByKeys([record.key]);
-    final note = await _commit(
-      deleteKeys: [record.key],
-      trashKeys: [record.key],
-      trashLabel: '${record.day} ${record.rack}番台の削除',
-      changed: [record],
-    );
-    _rememberUndo('${record.rack}番台の削除', [record], before);
-    message = '${record.rack}番台の記録を削除しました。ゴミ箱から$trashDays日間は戻せます。$note';
-    notifyListeners();
-  });
-
-  /// Save a user-confirmed setting annotation. It deliberately does not feed
-  /// into scoreRecord: a confirmed setting is evidence to retain, not a value
-  /// that should make the day's descriptive score look better.
-  Future<void> setConfirmedSetting(SlotRecord record, String? value) =>
-      _write(() async {
-        if (value != null && !confirmedSettingOptions.contains(value)) {
-          throw ArgumentError.value(value, 'value', '設定情報が不正です。');
-        }
-        // 画面が持っている台は古いことがある（グラフ保存の前など）。DBの
-        // 今の内容に設定情報だけを足し、グラフなどを巻き戻さない。
-        final before = await database.loadByKeys([record.key]);
-        final current = before[record.key];
-        if (current == null) {
-          throw StateError('${record.rack}番台の記録が見つかりません。画面を更新してください。');
-        }
-        final updated = current.copyWith(
-          confirmedSetting: value,
-          clearConfirmedSetting: value == null,
-        );
-        await _commit(upserts: [updated]);
-        _rememberUndo('${record.rack}番台の設定情報', [updated], before);
-        message = value == null
-            ? '${record.rack}番台の設定情報を解除しました。'
-            : '${record.rack}番台に「$value」を記録しました。';
-        notifyListeners();
-      });
-
-  Future<File> exportCsv({String? store, String? day}) => csvExporter.create(
-    records
-        .where(
-          (r) =>
-              (store == null || r.store == store) &&
-              (day == null || r.day == day),
-        )
-        .toList(),
-  );
-
-  /// バックアップを書き出す。DBから1台ずつ（画像込みで）書くので、記録が
-  /// 増えてもメモリに全件を載せない。書き出した時刻を残す。
-  Future<({File file, int records, int candidates, int events})> exportBackup({
-    String? store,
-    String? day,
-  }) => _write(() async {
-    final file = await backupService.newBackupFile();
-    final candidates = [
-      for (final c in candidateSnapshots)
-        if ((store == null || c.store == store) &&
-            (day == null || c.day == day))
-          c,
-    ];
-    final events = [
-      for (final event in dateEvents.values)
-        if ((store == null || event.store == store) &&
-            (day == null || event.day == day))
-          event,
-    ];
-    final count = await database.exportBackup(
-      file,
-      store: store,
-      day: day,
-      candidates: candidates,
-      events: events,
-    );
-    final now = DateTime.now().toUtc().toIso8601String();
-    // 全期間を書き出したときだけ、古い記録を片付けてよい印にする。
-    final state = {
-      'last_backup_export': now,
-      if (store == null && day == null) 'last_full_backup_export': now,
-    };
-    await database.applyChanges(ChangeSet(state: state));
-    appState = {...appState, ...state};
-    notifyListeners();
-    return (file: file, records: count, candidates: candidates.length, events: events.length);
-  });
-
-  /// Reads a backup file little by little and applies its safe records (new
-  /// and graph-only additions). Records whose numbers or manual setting note
-  /// conflict with a saved entry are returned, unapplied, for the caller to
-  /// show the user -- see [applyBackupOverrides].
-  Future<BackupImportResult> importBackup(File file) => _write(() async {
-    final planner = BackupPlanner(records);
-    final result = BackupImportResult();
-    final undo = <(SlotRecord, SlotRecord?)>[];
-    final imported = <(String key, String day)>[];
-    var eventChanges = 0;
-    await for (final chunk in backupService.readBackupFile(file)) {
-      if (chunk.records.isNotEmpty) {
-        final plan = planner.plan(chunk.records);
-        result.add(plan);
-        final toSave = plan.toSave;
-        if (toSave.isNotEmpty) {
-          final before = await database.loadByKeys([
-            for (final r in toSave) r.key,
-          ]);
-          await _commit(upserts: toSave);
-          undo.addAll([for (final r in toSave) (r.lightened(), before[r.key])]);
-          imported.addAll([for (final r in toSave) (r.key, r.day)]);
-        }
-      }
-      if (chunk.candidates.isNotEmpty) {
-        result.candidates += await _importCandidates(chunk.candidates);
-      }
-      for (final event in chunk.events) {
-        final existing = dateEvents[event.key];
-        if (existing == null) {
-          dateEvents[event.key] = event;
-          eventChanges++;
-          result.dateEventsAdded++;
-        } else if (existing.name != event.name) {
-          result.dateEventConflicts++;
-        }
-      }
-    }
-    if (eventChanges > 0) await _saveDateEvents();
-    // 保存期間より古い台は一時的に取り込んだものとし、次の起動時に片付ける。
-    final latest = await database.latestDay();
-    if (latest != null) {
-      final cutoff = retentionCutoff(latest);
-      final old = [
-        for (final (key, day) in imported)
-          if (day.compareTo(cutoff) < 0) key,
-      ];
-      if (old.isNotEmpty) await database.markTemporary(old);
-      result.temporary = old.length;
-    }
-    if (undo.isNotEmpty) {
-      _undoLabel = 'バックアップの取り込み';
-      _undoEntries = undo;
-      message =
-          'バックアップから${result.added}件追加、'
-          '${result.graphOnly}件にグラフ、${result.settingOnly}件に設定情報を追加しました。';
-    }
-    notifyListeners();
-    return result;
-  });
-
-  /// ゴミ箱（新しい順）。
-  Future<List<TrashBatch>> trashBatches() => database.loadTrash();
-
-  /// ゴミ箱の1回分を戻す。削除したものは、今の記録が無い台だけ戻す。
-  /// 上書きで外れたものは今の記録を置き換えるので、今の内容をゴミ箱に残す。
-  Future<String> restoreTrash(TrashBatch batch) => _write(() async {
-    final entries = await database.loadTrashBatch(batch.batchId);
-    final existing = await database.loadByKeys([
-      for (final e in entries) e.record.key,
-    ]);
-    final overwrite = batch.kind == TrashKind.overwrite;
-    final restore = [
-      for (final e in entries)
-        if (overwrite || !existing.containsKey(e.record.key)) e,
-    ];
-    final skipped = entries.length - restore.length;
-    if (restore.isEmpty) {
-      return '戻せる台はありませんでした（$skipped台は今の記録があります）。';
-    }
-    final upserts = [for (final e in restore) e.record];
-    final note = await _commit(
-      upserts: upserts,
-      trashKeys: [
-        for (final r in upserts)
-          if (existing.containsKey(r.key)) r.key,
-      ],
-      trashLabel: '「${batch.label}」を戻す前の内容',
-      trashKind: TrashKind.overwrite,
-      removeTrashIds: [for (final e in restore) e.id],
-      changed: upserts,
-    );
-    _rememberUndo('ゴミ箱から戻す', upserts, existing);
-    message =
-        '${upserts.length}台を戻しました'
-        '${skipped > 0 ? '（$skipped台は今の記録があるので戻していません）' : ''}。$note';
-    notifyListeners();
-    return message!;
-  });
-
-  /// For each machine name on the site's machine-list page: graphed/listed
-  /// counts for that store and day, or null when nothing was imported yet.
-  List<Map<String, int>?> machineStatuses({
-    required String? store,
-    required String? day,
-    required List<String> machines,
-  }) {
-    if (store == null) return [for (final _ in machines) null];
-    // 日付が分からないとき（機種一覧ページ）は今日で判定する。
-    final target = day ?? today();
-    String key(String name) =>
-        normalizeMachineName(name).replaceAll(RegExp(r'\s+'), '');
-    final counts = <String, List<int>>{};
-    for (final r in records.where((r) => r.store == store && r.day == target)) {
-      final c = counts.putIfAbsent(key(r.machine), () => [0, 0]);
-      c[1]++;
-      if (r.graph != null) c[0]++;
-    }
-    return [
-      for (final name in machines)
-        counts[key(name)] == null
-            ? null
-            : {'done': counts[key(name)]![0], 'total': counts[key(name)]![1]},
-    ];
-  }
-
-  /// The saved rack (for [store]/[day]/[machine]) that still has no graph,
-  /// after [rack] if given, wrapping around. Mirrors the PC app's
-  /// `_find_next_ungraphed`; the URL is always the one the site gave us.
-  NextGraphTarget nextUngraphed({
-    required String? store,
-    required String? day,
-    required String? machine,
-    required int? rack,
-  }) {
-    if (store == null || day == null) {
-      return const NextGraphTarget(reason: 'unknown_page');
-    }
-    final allStoresDayRows = records.where((r) => r.day == day);
-    final dayComplete =
-        allStoresDayRows.isNotEmpty &&
-        allStoresDayRows.every((r) => r.graph != null);
-    var name = machine == null || machine.trim().isEmpty
-        ? null
-        : normalizeMachineName(machine);
-    if (name == null && rack != null) {
-      name = records
-          .where((r) => r.store == store && r.day == day && r.rack == rack)
-          .firstOrNull
-          ?.machine;
-    }
-    if (name == null) return const NextGraphTarget(reason: 'unknown_machine');
-    final rows = records
-        .where((r) => r.store == store && r.day == day && r.machine == name)
-        .toList();
-    if (rows.isEmpty) return const NextGraphTarget(reason: 'no_rows');
-    final warning = duplicateWarning(rows, rack: rack);
-    final pending = rows.where((r) => r.graph == null).toList()
-      ..sort((a, b) => a.rack.compareTo(b.rack));
-    if (pending.isEmpty) {
-      return NextGraphTarget(
-        url:
-            'https://meruhenworld.pt.teramoba2.com/$store/rack_info_kt/?kind_code=21'
-            '#database_next_machine=1&database_day=${Uri.encodeComponent(day)}',
-        reason: 'all_done',
-        warning: warning,
-        dayComplete: dayComplete,
-      );
-    }
-    final later = pending.where((r) => rack == null || r.rack > rack).toList();
-    final target = later.isNotEmpty ? later.first : pending.first;
-    if (target.detailUrl == null) {
-      return NextGraphTarget(
-        rack: target.rack,
-        remaining: pending.length,
-        reason: 'no_link',
-        warning: warning,
-      );
-    }
-    return NextGraphTarget(
-      url: target.detailUrl,
-      rack: target.rack,
-      remaining: pending.length,
-      warning: warning,
-    );
-  }
-
-  Future<void> applyBackupOverrides(List<SlotRecord> chosen) => _write(
-    () async {
-      if (chosen.isEmpty) return;
-      final byKey = await database.loadByKeys([for (final r in chosen) r.key]);
-      // 上書きしても、手元が持っている個別台リンクは失わない。
-      chosen = [
-        for (final r in chosen)
-          r.copyWith(
-            detailUrl: r.detailUrl ?? byKey[r.key]?.detailUrl,
-            firstCapturedAt: earliestTimestamp(
-              r.firstCapturedAt,
-              byKey[r.key]?.firstCapturedAt,
-            ),
-          ),
-      ];
-      final note = await _commit(
-        upserts: chosen,
-        trashKeys: [for (final r in chosen) r.key],
-        trashLabel: 'バックアップの内容で上書きする前（${chosen.length}台）',
-        trashKind: TrashKind.overwrite,
-        changed: chosen,
-      );
-      _rememberUndo('バックアップの競合反映', chosen, byKey);
-      message = '${chosen.length}件を取り込んだ内容で上書きしました。$note';
-      notifyListeners();
-    },
-  );
-
-  void setTab(int value) {
-    tab = value;
-    notifyListeners();
-  }
-}
-
 final navigatorKey = GlobalKey<NavigatorState>();
 
 class DatabaseApp extends StatelessWidget {
@@ -1094,14 +167,17 @@ class DatabaseApp extends StatelessWidget {
   final AppController controller;
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    navigatorKey: navigatorKey,
-    debugShowCheckedModeBanner: false,
-    title: 'database',
-    theme: buildAppTheme(),
-    home: AnimatedBuilder(
-      animation: controller,
-      builder: (context, _) => AppShell(controller: controller),
+  Widget build(BuildContext context) => GraphPreviewScope(
+    previews: controller.previews,
+    child: MaterialApp(
+      navigatorKey: navigatorKey,
+      debugShowCheckedModeBanner: false,
+      title: 'database',
+      theme: buildAppTheme(),
+      home: AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) => AppShell(controller: controller),
+      ),
     ),
   );
 }
@@ -1246,16 +322,21 @@ Future<void> _shareBackup(
   );
   if (options == null || !context.mounted) return;
   try {
-    final exported = await controller.exportBackup(
-      store: options.store,
-      day: options.day,
+    final exported = await _withProgress(
+      context,
+      'バックアップを書き出しています',
+      (progress) => controller.exportBackup(
+        store: options.store,
+        day: options.day,
+        onProgress: (written) => progress('$written台'),
+      ),
     );
     final file = exported.file;
     // Some share targets (e.g. "Save to Drive") name the saved file after
     // this title/subject rather than the actual file, so keep both equal to
     // the real filename -- plain ASCII, no half-width/full-width mixing.
     final fileName = file.uri.pathSegments.last;
-    await SharePlus.instance.share(
+    final shared = await SharePlus.instance.share(
       ShareParams(
         title: fileName,
         subject: fileName,
@@ -1263,22 +344,111 @@ Future<void> _shareBackup(
         files: [XFile(file.path, mimeType: 'application/json')],
       ),
     );
-    if (context.mounted) {
-      final failures = controller.candidateLogFailures;
+    if (!context.mounted) return;
+    final summary =
+        '${exported.records}台・イベント${exported.events}件・翌日候補の記録${exported.candidates}件'
+        '${exported.unreadable > 0 ? '（読めない記録${exported.unreadable}件はそのままの形で入れました）' : ''}';
+    if (shared.status == ShareResultStatus.dismissed) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '${exported.records}台・イベント${exported.events}件・翌日候補の記録${exported.candidates}件を書き出しました'
-            '${failures > 0 ? '（翌日候補を記録できなかった保存が$failures回あります）' : ''}。',
-          ),
+          content: Text('共有を取りやめました（$summary）。バックアップ済みにはしていません。'),
         ),
       );
+      return;
     }
+    // 共有先を選んでも、Googleドライブなどへ保存できたかはアプリから分から
+    // ない。全期間のバックアップは、保存できたと確かめてから印を付ける
+    // （この印の後で、端末から古い記録を片付ける）。
+    final saved = exported.full
+        ? await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('バックアップを保存できましたか？'),
+              content: Text(
+                '$summaryを書き出しました。\n\n'
+                'Googleドライブなどへの保存が終わったら「保存できた」を押してください。'
+                '押すと、$retentionDays日より前の記録を次の起動から端末で片付けてよい印になります。'
+                '保存を取りやめた・失敗したときは「まだ」を押してください。',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('まだ'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('保存できた'),
+                ),
+              ],
+            ),
+          )
+        : true;
+    if (saved == true) await controller.confirmBackupSaved(exported);
+    if (!context.mounted) return;
+    final failures = controller.candidateLogFailures;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          saved == true
+              ? '$summaryを書き出しました'
+                    '${failures > 0 ? '（翌日候補を記録できなかった保存が$failures回あります）' : ''}。'
+              : '$summaryを書き出しました。保存できていないので、バックアップ済みにはしていません。',
+        ),
+      ),
+    );
   } catch (error) {
     if (context.mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('バックアップを共有できませんでした：$error')));
     }
+  }
+}
+
+/// 時間のかかる処理の間、閉じられない進み具合の表示を出す。[task] には、
+/// 表示を書き換える関数を渡す。
+Future<T> _withProgress<T>(
+  BuildContext context,
+  String title,
+  Future<T> Function(void Function(String text) progress) task,
+) async {
+  final text = ValueNotifier<String>('');
+  final navigator = Navigator.of(context);
+  var open = true;
+  unawaited(
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: Text(title),
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: ValueListenableBuilder<String>(
+                  valueListenable: text,
+                  builder: (_, value, _) =>
+                      Text(value.isEmpty ? 'お待ちください…' : value),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).whenComplete(() => open = false),
+  );
+  try {
+    return await task((value) => text.value = value);
+  } finally {
+    if (open) navigator.pop();
+    text.dispose();
   }
 }
 
@@ -1372,9 +542,15 @@ Future<void> _importBackup(
   );
   final path = picked?.path;
   if (path == null) return;
+  if (!context.mounted) return;
   try {
-    // 大きなファイルも1行ずつ読む（全体を1つの文字列にしない）。
-    final result = await controller.importBackup(File(path));
+    // 大きなファイルも1行ずつ読む（全体を1つの文字列にしない）。中身を
+    // 確かめてから1回で保存するので、途中で失敗しても何も保存されない。
+    final result = await _withProgress(
+      context,
+      'バックアップを読み込んでいます',
+      (progress) => controller.importBackup(File(path), onProgress: progress),
+    );
     if (context.mounted && result.conflicts.isNotEmpty) {
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -1399,8 +575,9 @@ Future<void> _importBackup(
     }
   } catch (error) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('バックアップを読み込めませんでした：$error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('バックアップを読み込めませんでした（何も保存していません）：$error')),
+      );
     }
   }
 }
@@ -1529,8 +706,17 @@ class _BackupConflictsPageState extends State<BackupConflictsPage> {
         if (_selected[i]) widget.conflicts[i].incoming,
     ];
     setState(() => _saving = true);
-    await widget.onApply(chosen);
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await widget.onApply(chosen);
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      // 失敗したら何も上書きされていない（1回の書き込み）。選び直して再試行できる。
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('上書きできませんでした（何も変えていません）：$error')),
+      );
+    }
   }
 
   @override
@@ -1623,12 +809,9 @@ class _ResultsPageState extends State<ResultsPage> {
   late String? store = widget.controller.lastStore;
   late String? day = widget.controller.lastDay;
 
-  // 得点計算・翌日候補は、その日の全台を1回だけ。データが入れ替わったとき・
-  // 店舗や日付を変えたときだけ計算し直す。
-  Object? _scoredFor;
+  // 得点計算・翌日候補は AppController.dayView が、記録が変わるまで使い回す
+  // （タブを切り替えて戻っても計算し直さない）。
   var _scoredByKey = <String, (SlotRecord, ScoreResult)>{};
-  ({List<ProvisionalCandidate> candidates, int machines, int judged})?
-  _candidates;
 
   /// 機種名の絞り込み（ひらがな・半角カナでも一致する）。
   final _query = TextEditingController();
@@ -1802,9 +985,12 @@ class _ResultsPageState extends State<ResultsPage> {
     return _scroll.offset;
   }
 
+  void _rememberSelection() =>
+      unawaited(widget.controller.rememberSelection(store, day, _machine));
+
   Future<void> _openMachine(String machine) async {
     _machine = machine;
-    widget.controller.rememberSelection(store, day, machine);
+    _rememberSelection();
     final key = _sectionKeys.putIfAbsent(machine, GlobalKey.new);
     final target = _shown.indexWhere((s) => s.machine == machine);
     if (target < 0 || !_scroll.hasClients) return;
@@ -1838,16 +1024,15 @@ class _ResultsPageState extends State<ResultsPage> {
     if (!days.contains(day)) day = days.firstOrNull;
     final dayRows = storeRows.where((r) => r.day == day).toList();
     if (!dayRows.any((r) => r.machine == _machine)) _machine = null;
-    widget.controller.rememberSelection(store, day, _machine);
-    final scoredKey = (identityHashCode(all), store, day);
-    if (_scoredFor != scoredKey) {
-      _scoredByKey = {for (final r in dayRows) r.key: (r, scoreRecord(r, all))};
-      // 翌日候補（仮）は当日の点数計算とは完全に別です。選択日までに
-      // 保存した同一台・同一機種の当たり頻度傾向だけを使います。
-      _candidates = dayCandidates(dayRows, all);
-      _scoredFor = scoredKey;
-    }
-    final candidates = _candidates!;
+    // 選んだ店舗・日付・機種は、選んだとき（onChanged）に覚える。ここ（画面の
+    // 組み立て）ではファイルに書かない。
+    final view = day == null
+        ? null
+        : widget.controller.dayView(store!, day!);
+    _scoredByKey = view?.scored ?? const {};
+    final candidates =
+        view?.candidates ??
+        (candidates: const <ProvisionalCandidate>[], machines: 0, judged: 0);
     final digest = [for (final r in dayRows) _scoredByKey[r.key]!];
     final summaries = summarizeMachines(digest);
     final shown = summaries
@@ -1885,7 +1070,10 @@ class _ResultsPageState extends State<ResultsPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (widget.controller.message != null)
-                      Notice(text: widget.controller.message!),
+                      Notice(
+                        text: widget.controller.message!,
+                        onClose: widget.controller.dismissMessage,
+                      ),
                     Row(
                       children: [
                         // 店舗は短い名前にして、日付が「2026-09」で切れないよう幅を回す。
@@ -1893,10 +1081,13 @@ class _ResultsPageState extends State<ResultsPage> {
                           flex: 2,
                           child: storeDropdown(
                             store!,
-                            (v) => setState(() {
-                              store = v;
-                              day = null;
-                            }),
+                            (v) {
+                              setState(() {
+                                store = v;
+                                day = null;
+                              });
+                              _rememberSelection();
+                            },
                             short: true,
                           ),
                         ),
@@ -1926,7 +1117,10 @@ class _ResultsPageState extends State<ResultsPage> {
                                   ),
                                 )
                                 .toList(),
-                            onChanged: (v) => setState(() => day = v),
+                            onChanged: (v) {
+                              setState(() => day = v);
+                              _rememberSelection();
+                            },
                           ),
                         ),
                         IconButton(
@@ -2167,9 +1361,14 @@ class ImportPage extends StatelessWidget {
       MaterialPageRoute(
         builder: (_) => WebImportPage(
           onSave: (extraction) => controller.saveTable(
-            extraction.store ?? 'nagamachiminami',
-            extraction.day ?? todayIso(),
-            extraction.machine ?? '',
+            // 店舗・日付・機種名がそろった表だけがここへ来る（確認画面か、
+            // canSaveWithoutReview）。欠けていたら既定値で埋めずに止める。
+            extraction.store ??
+                (throw const FormatException('店舗を読み取れていません。保存しませんでした。')),
+            extraction.day ??
+                (throw const FormatException('日付を読み取れていません。保存しませんでした。')),
+            extraction.machine ??
+                (throw const FormatException('機種名を読み取れていません。保存しませんでした。')),
             extraction.rows,
           ),
           graphsAtRisk: controller.graphsDroppedBy,
@@ -2211,7 +1410,6 @@ class ImportPage extends StatelessWidget {
               previewWidth: graph.width,
               previewHeight: graph.height,
               curve: graph.curveAsPairs,
-              returnToBrowser: true,
             );
             // 「◯番台を保存しました」は取り込み画面の上部に出す（下に出すと
             // 取り込みボタンに重なって操作の邪魔になるため）。
@@ -2273,293 +1471,13 @@ class ImportPage extends StatelessWidget {
         ),
         if (controller.message != null) ...[
           const SizedBox(height: 12),
-          Notice(text: controller.message!),
+          Notice(
+            text: controller.message!,
+            onClose: controller.dismissMessage,
+          ),
         ],
       ],
     );
-  }
-}
-
-class TableReview extends StatefulWidget {
-  const TableReview({
-    super.key,
-    required this.controller,
-    required this.analysis,
-  });
-  final AppController controller;
-  final CaptureAnalysis analysis;
-  @override
-  State<TableReview> createState() => _TableReviewState();
-}
-
-class _TableReviewState extends State<TableReview> {
-  late String store;
-  late final TextEditingController day;
-  late final TextEditingController machine;
-  late List<RowControllers> rows;
-
-  @override
-  void initState() {
-    super.initState();
-    store = widget.analysis.store ?? 'nagamachiminami';
-    day = TextEditingController(text: widget.analysis.day ?? todayIso());
-    machine = TextEditingController(text: widget.analysis.machine ?? '');
-    rows = widget.analysis.rows.map(RowControllers.fromEditable).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '一覧OCR結果　${rows.length}台',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 6),
-          const Text('誤読があれば直してから保存してください。'),
-          const SizedBox(height: 14),
-          IdentityFields(
-            store: store,
-            onStore: (v) => setState(() => store = v),
-            day: day,
-            machine: machine,
-          ),
-          const SizedBox(height: 12),
-          if (rows.isEmpty)
-            const Text('行を認識できませんでした。「1台追加」から入力できます。')
-          else
-            ...rows.asMap().entries.map(
-              (entry) => EditableRowCard(
-                index: entry.key,
-                row: entry.value,
-                onDelete: () => setState(() => rows.removeAt(entry.key)),
-              ),
-            ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: () => setState(() => rows.add(RowControllers.empty())),
-              icon: const Icon(Icons.add),
-              label: const Text('1台追加'),
-            ),
-          ),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(onPressed: save, child: const Text('この内容で保存')),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Future<void> save() async {
-    try {
-      final parsed = rows.map((r) => r.value()).toList();
-      if (machine.text.trim().isEmpty || parsed.isEmpty)
-        throw const FormatException('機種名と1台以上のデータが必要です。');
-      DateTime.parse(day.text.trim());
-      await widget.controller.saveTable(
-        store,
-        day.text.trim(),
-        machine.text.trim(),
-        parsed,
-      );
-    } catch (error) {
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('入力を確認してください：$error')));
-    }
-  }
-}
-
-class GraphReview extends StatefulWidget {
-  const GraphReview({
-    super.key,
-    required this.controller,
-    required this.analysis,
-    this.returnToBrowser = false,
-  });
-  final AppController controller;
-  final CaptureAnalysis analysis;
-  final bool returnToBrowser;
-  @override
-  State<GraphReview> createState() => _GraphReviewState();
-}
-
-class _GraphReviewState extends State<GraphReview> {
-  late String store;
-  late final TextEditingController day, machine, rack, games, bb, rb, maxHold;
-  late List<Offset> points;
-  late final List<Offset> automaticPoints;
-  int selected = 3;
-  var _saving = false;
-  static const pointLabels = ['ゼロ線', '最高点', '最低点', '終点'];
-  static const pointColors = [
-    Colors.red,
-    Colors.amber,
-    Colors.cyan,
-    Colors.green,
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    final a = widget.analysis;
-    store = a.store ?? 'nagamachiminami';
-    day = TextEditingController(text: a.day ?? todayIso());
-    machine = TextEditingController(text: a.machine ?? '');
-    rack = TextEditingController(text: a.rack?.toString() ?? '');
-    games = TextEditingController(text: a.games?.toString() ?? '');
-    bb = TextEditingController(text: a.bb?.toString() ?? '');
-    rb = TextEditingController(text: a.rb?.toString() ?? '');
-    maxHold = TextEditingController(text: a.maxHold?.toString() ?? '');
-    automaticPoints = List.of(a.graph!.points);
-    points = List.of(automaticPoints);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final graph = widget.analysis.graph!;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'グラフ確認',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 4),
-            const Text('色を選び、位置が違う場合はグラフをタップして直します。'),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              children: List.generate(
-                4,
-                (i) => ChoiceChip(
-                  label: Text('${i + 1} ${pointLabels[i]}'),
-                  selected: selected == i,
-                  avatar: CircleAvatar(
-                    backgroundColor: pointColors[i],
-                    radius: 6,
-                  ),
-                  onSelected: (_) => setState(() => selected = i),
-                ),
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: () =>
-                    setState(() => points = List.of(automaticPoints)),
-                icon: const Icon(Icons.restart_alt),
-                label: const Text('自動点に戻す'),
-              ),
-            ),
-            const SizedBox(height: 8),
-            AspectRatio(
-              aspectRatio: graph.width / graph.height,
-              child: LayoutBuilder(
-                builder: (context, box) => GestureDetector(
-                  onTapDown: (event) {
-                    final x =
-                        event.localPosition.dx / box.maxWidth * graph.width;
-                    final y =
-                        event.localPosition.dy / box.maxHeight * graph.height;
-                    setState(
-                      () => points = List.of(points)..[selected] = Offset(x, y),
-                    );
-                  },
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.memory(
-                        graph.previewPng,
-                        fit: BoxFit.fill,
-                        filterQuality: FilterQuality.medium,
-                      ),
-                      CustomPaint(
-                        painter: PointPainter(
-                          points,
-                          graph.width.toDouble(),
-                          graph.height.toDouble(),
-                          pointColors,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            IdentityFields(
-              store: store,
-              onStore: (v) => setState(() => store = v),
-              day: day,
-              machine: machine,
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                numberField('台番号', rack, 105),
-                numberField('総回転数', games, 120),
-                numberField('BIG', bb, 90),
-                numberField('REG', rb, 90),
-                numberField('最大持玉', maxHold, 120),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: save,
-                icon: const Icon(Icons.check),
-                label: const Text('採点を確定して保存'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> save() async {
-    if (_saving) return;
-    try {
-      DateTime.parse(day.text.trim());
-      if (machine.text.trim().isEmpty) throw const FormatException('機種名が必要です。');
-      int read(TextEditingController c) => int.parse(c.text.trim());
-      setState(() => _saving = true);
-      await widget.controller.saveGraph(
-        store: store,
-        day: day.text.trim(),
-        machine: machine.text.trim(),
-        rack: read(rack),
-        games: read(games),
-        bb: read(bb),
-        rb: read(rb),
-        maxHold: read(maxHold),
-        points: points,
-        previewPng: widget.analysis.graph!.previewPng,
-        previewWidth: widget.analysis.graph!.width,
-        previewHeight: widget.analysis.graph!.height,
-        curve: widget.analysis.graph!.curveAsPairs,
-        returnToBrowser: widget.returnToBrowser,
-      );
-      if (widget.returnToBrowser && mounted) Navigator.of(context).pop(true);
-    } catch (error) {
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('入力を確認してください：$error')));
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
   }
 }
 
@@ -2610,9 +1528,9 @@ class _HistoryPageState extends State<HistoryPage> {
         (r) => (store.isEmpty || r.store == store) && matches(r.machine),
       ),
     );
-    if (_scoredFor != identityHashCode(all)) {
+    if (_scoredFor != widget.controller.revision) {
       _scoredByKey = {};
-      _scoredFor = identityHashCode(all);
+      _scoredFor = widget.controller.revision;
     }
     // 日付ごとのカードは数が増え続けるので、画面に出ている分だけ組み立てる。
     // （以前は全部まとめて作っていたため、記録が増えるほど開くのが遅くなった）
@@ -2829,20 +1747,19 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
     listenable: widget.controller,
     builder: (context, _) {
       final all = widget.controller.records;
-      if (_scoredFor != identityHashCode(all)) {
+      if (_scoredFor != widget.controller.revision) {
+        // 同じ店舗・機種の記録だけを見る（全記録を台ごとに見直さない）。
+        final history = machineHistory(all, widget.store, widget.machine);
         final rows = [
-          for (final r in all)
-            if (r.day == widget.day &&
-                r.store == widget.store &&
-                r.machine == widget.machine)
-              r,
+          for (final r in history)
+            if (r.day == widget.day) r,
         ]..sort((a, b) => a.rack.compareTo(b.rack));
         _scored = [for (final r in rows) (r, scoreRecord(r, all))];
         _candidateRacks = {
-          for (final c in provisionalNextDayCandidates(rows, all).candidates)
+          for (final c in provisionalNextDayCandidates(rows, history).candidates)
             c.record.rack,
         };
-        _scoredFor = identityHashCode(all);
+        _scoredFor = widget.controller.revision;
       }
       return Scaffold(
         appBar: AppBar(title: Text(dayWithWeekday(widget.day))),
@@ -3007,219 +1924,103 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
   }
 }
 
-class PointPainter extends CustomPainter {
-  const PointPainter(
-    this.points,
-    this.sourceWidth,
-    this.sourceHeight,
-    this.colors,
-  );
-  final List<Offset> points;
-  final double sourceWidth, sourceHeight;
-  final List<Color> colors;
-  @override
-  void paint(Canvas canvas, Size size) {
-    for (var i = 0; i < points.length; i++) {
-      final p = Offset(
-        points[i].dx / sourceWidth * size.width,
-        points[i].dy / sourceHeight * size.height,
-      );
-      canvas.drawCircle(p, 8, Paint()..color = Colors.white);
-      canvas.drawCircle(p, 6, Paint()..color = colors[i]);
-      final text = TextPainter(
-        text: TextSpan(
-          text: '${i + 1}',
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      text.paint(canvas, p + const Offset(9, -18));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant PointPainter oldDelegate) =>
-      oldDelegate.points != points;
-}
-
-class RowControllers {
-  RowControllers(
-    this.rack,
-    this.games,
-    this.bb,
-    this.rb,
-    this.maxHold,
-    this.previous,
-  );
-  factory RowControllers.fromEditable(EditableRow row) => RowControllers(
-    TextEditingController(text: '${row.rack}'),
-    TextEditingController(text: '${row.games}'),
-    TextEditingController(text: '${row.bb}'),
-    TextEditingController(text: '${row.rb}'),
-    TextEditingController(text: row.maxHold?.toString() ?? ''),
-    TextEditingController(text: row.previousStart?.toString() ?? '0'),
-  );
-  factory RowControllers.empty() => RowControllers(
-    TextEditingController(),
-    TextEditingController(),
-    TextEditingController(),
-    TextEditingController(),
-    TextEditingController(),
-    TextEditingController(text: '0'),
-  );
-  final TextEditingController rack, games, bb, rb, maxHold, previous;
-  EditableRow value() => EditableRow(
-    rack: int.parse(rack.text),
-    games: int.parse(games.text),
-    bb: int.parse(bb.text),
-    rb: int.parse(rb.text),
-    maxHold: int.parse(maxHold.text),
-    previousStart: int.parse(previous.text),
-  );
-}
-
-class EditableRowCard extends StatelessWidget {
-  const EditableRowCard({
-    super.key,
-    required this.index,
-    required this.row,
-    required this.onDelete,
-  });
-  final int index;
-  final RowControllers row;
-  final VoidCallback onDelete;
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: DecoratedBox(
-      decoration: BoxDecoration(
-        color: AppColors.ice,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.hairline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Text(
-                  '${index + 1}台目',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const Spacer(),
-                IconButton(
-                  onPressed: onDelete,
-                  icon: const Icon(Icons.delete_outline),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-            Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: [
-                numberField('台番号', row.rack, 95),
-                numberField('G', row.games, 105),
-                numberField('BIG', row.bb, 85),
-                numberField('REG', row.rb, 85),
-                numberField('最大持玉', row.maxHold, 110),
-                numberField('前日最終', row.previous, 105),
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-class IdentityFields extends StatelessWidget {
-  const IdentityFields({
-    super.key,
-    required this.store,
-    required this.onStore,
-    required this.day,
-    required this.machine,
-  });
-  final String store;
-  final ValueChanged<String> onStore;
-  final TextEditingController day, machine;
-  @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: 8,
-    runSpacing: 8,
-    children: [
-      SizedBox(width: 280, child: storeDropdown(store, onStore)),
-      SizedBox(
-        width: 150,
-        child: TextField(
-          controller: day,
-          decoration: const InputDecoration(labelText: '日付'),
-        ),
-      ),
-      SizedBox(
-        width: 330,
-        child: TextField(
-          controller: machine,
-          decoration: const InputDecoration(labelText: '機種名'),
-        ),
-      ),
-    ],
-  );
-}
-
-Widget numberField(
-  String label,
-  TextEditingController controller,
-  double width,
-) => SizedBox(
-  width: width,
-  child: TextField(
-    controller: controller,
-    keyboardType: TextInputType.number,
-    decoration: InputDecoration(labelText: label, isDense: true),
-  ),
-);
-
 /// 結果画面の上に出す、バックアップの注意と古い記録を片付けた知らせ。
 class _RetentionNotices extends StatelessWidget {
   const _RetentionNotices({required this.controller});
   final AppController controller;
 
+  Widget _notice(String text, List<Widget> actions) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Notice(text: text),
+      Align(
+        alignment: Alignment.centerRight,
+        child: Wrap(spacing: 4, children: actions),
+      ),
+    ],
+  );
+
+  Future<void> _confirmCleanup(BuildContext context) async {
+    final count = controller.pausedCleanup;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('古い記録を片付けますか？'),
+        content: Text(
+          '$retentionDays日より前の$count台を端末から片付けます（ゴミ箱には入りません）。'
+          '全期間のバックアップに入っている台だけですが、いつもより多いので止めていました。'
+          '日付の打ち間違いの台がないか確かめてから進めてください。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('やめる'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('片付ける'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    try {
+      await controller.confirmLargeCleanup();
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('片付けられませんでした：$error')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final reminder = controller.backupReminder();
     final cleaned = controller.retentionNotice;
-    if (reminder == null && cleaned == null) return const SizedBox.shrink();
+    final paused = controller.pausedCleanup;
+    final warnings = controller.startupWarnings;
+    if (reminder == null && cleaned == null && paused == 0 && warnings.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (reminder != null) ...[
-            Notice(text: reminder),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
+          if (warnings.isNotEmpty)
+            _notice(warnings.join('\n'), [
+              TextButton(
+                onPressed: controller.dismissStartupWarnings,
+                child: const Text('閉じる'),
+              ),
+            ]),
+          if (paused > 0)
+            _notice(
+              '$retentionDays日より前の記録が$paused台あり、いつもより多いので片付けを止めています'
+              '（日付の打ち間違いなどがないか確かめてください）。',
+              [
+                TextButton(
+                  onPressed: () => _confirmCleanup(context),
+                  child: const Text('確かめて片付ける'),
+                ),
+              ],
+            ),
+          if (reminder != null)
+            _notice(reminder, [
+              TextButton(
                 onPressed: () => _shareBackup(context, controller),
                 child: const Text('バックアップを書き出す'),
               ),
-            ),
-          ],
-          if (cleaned != null) ...[
-            Notice(text: cleaned),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
+            ]),
+          if (cleaned != null)
+            _notice(cleaned, [
+              TextButton(
                 onPressed: controller.dismissRetentionNotice,
                 child: const Text('閉じる'),
               ),
-            ),
-          ],
+            ]),
         ],
       ),
     );

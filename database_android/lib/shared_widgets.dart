@@ -771,8 +771,11 @@ class MetricCard extends StatelessWidget {
 }
 
 class Notice extends StatelessWidget {
-  const Notice({super.key, required this.text});
+  const Notice({super.key, required this.text, this.onClose});
   final String text;
+
+  /// 渡すと右端に閉じるボタンを出す。
+  final VoidCallback? onClose;
   @override
   Widget build(BuildContext context) => Container(
     margin: const EdgeInsets.only(bottom: 12),
@@ -789,6 +792,13 @@ class Notice extends StatelessWidget {
         Expanded(
           child: Text(text, style: const TextStyle(color: AppColors.carbon)),
         ),
+        if (onClose != null)
+          IconButton(
+            tooltip: '閉じる',
+            visualDensity: VisualDensity.compact,
+            onPressed: onClose,
+            icon: const Icon(Icons.close, size: 18, color: AppColors.ash),
+          ),
       ],
     ),
   );

@@ -71,4 +71,62 @@ void main() {
     expect(historyDays(all, 'saiwaichou', '2026-09-26'), 2);
     expect(historyDays(all, 'saiwaichou', '2026-09-24'), 0);
   });
+
+  group('Driveの自動読み込みと、前に読み込んだ内容を合わせる', () {
+    String doc(String exportedAt, List<String> days, {String source = 'pc'}) =>
+        jsonEncode({
+          'header': {
+            'format': 'database-backup',
+            'exported_at': exportedAt,
+            'source': source,
+          },
+          'records': [
+            for (var i = 0; i < days.length; i++)
+              {...raw(i + 1), 'day': days[i]},
+          ],
+          'date_events': [
+            {'store': 'saiwaichou', 'day': days.first, 'name': '$source'},
+          ],
+          'file': source,
+        });
+
+    test('前に読み込んだ全期間より新しいDriveの内容なら、Driveに無い古い日を残して足す', () {
+      final stored = doc('2026-09-20T10:00:00', [
+        '2026-06-01',
+        '2026-07-01',
+        '2026-08-01',
+      ]);
+      final incoming = doc('2026-09-27T12:00:00+09:00', [
+        '2026-07-30',
+        '2026-09-27',
+      ], source: 'pc-viewer');
+      final merged = ViewerData.merge(stored, incoming);
+      final data = ViewerData.parse(merged.text);
+      expect(data.records.map((r) => r.day).toSet(), {
+        '2026-06-01',
+        '2026-07-01',
+        '2026-07-30',
+        '2026-09-27',
+      });
+      expect(data.keptOlder, 2);
+      expect(data.source, 'pc-viewer');
+      expect(merged.note, contains('2台'));
+      // 古い日のイベント名も残る。
+      expect(data.dateEventFor('saiwaichou', '2026-06-01')?.name, 'pc');
+    });
+
+    test('前に読み込んだ方が新しく書き出されたものなら、置き換えない', () {
+      final stored = doc('2026-09-28T01:00:00', ['2026-09-27']);
+      final incoming = doc('2026-09-27T12:00:00+09:00', ['2026-09-26']);
+      final merged = ViewerData.merge(stored, incoming);
+      expect(merged.text, stored);
+      expect(merged.note, contains('置き換えていません'));
+    });
+
+    test('前に読み込んだ内容が無い・壊れているときは、Driveの内容をそのまま使う', () {
+      final incoming = doc('2026-09-27T12:00:00+09:00', ['2026-09-27']);
+      expect(ViewerData.merge(null, incoming).text, incoming);
+      expect(ViewerData.merge('{broken', incoming).text, incoming);
+    });
+  });
 }

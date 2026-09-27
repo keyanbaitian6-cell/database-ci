@@ -1,0 +1,1184 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' show Offset;
+
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'backup_service.dart';
+import 'candidate_log.dart';
+import 'csv_export_service.dart';
+import 'data_checks.dart';
+import 'database_service.dart';
+import 'date_events.dart';
+import 'graph_preview.dart';
+import 'import_service.dart';
+import 'list_views.dart';
+import 'models.dart';
+import 'scoring.dart';
+import 'ui_prefs.dart';
+import 'web_import_page.dart';
+import 'write_queue.dart';
+
+/// 全期間のバックアップを促す注意。前回から3日以上たったか、まだ一度も
+/// 保存していなければ出す（記録が無ければ出さない）。
+String? backupReminderText(
+  DateTime? lastFull,
+  bool hasRecords, [
+  DateTime? now,
+]) {
+  if (!hasRecords) return null;
+  now ??= DateTime.now();
+  if (lastFull == null) {
+    return 'まだ全期間のバックアップを保存していません。上のバーのバックアップから「すべての店舗・すべての日付」で書き出し、'
+        'Googleドライブなどに保存できたら「保存できた」を押してください。'
+        '$retentionDays日より前の記録は、保存できた後でないと端末から片付けません。';
+  }
+  final days = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).difference(DateTime(lastFull.year, lastFull.month, lastFull.day)).inDays;
+  if (days < 3) return null;
+  return '前回の全期間バックアップから$days日たっています（${lastFull.month}/${lastFull.day}）。'
+      '「すべての店舗・すべての日付」で書き出して保存してください。';
+}
+
+/// 表を取り込み直したとき、保存済みの台と数値が変わったか。変わった台の
+/// グラフは、その数値と合わないので外す。
+bool tableNumbersChanged(SlotRecord previous, EditableRow row) =>
+    previous.games != row.games ||
+    previous.bb != row.bb ||
+    previous.rb != row.rb ||
+    (row.maxHold != null &&
+        previous.maxHold != null &&
+        previous.maxHold != row.maxHold);
+
+/// 結果画面の1日ぶんの計算（採点と翌日候補）。
+typedef DayView = ({
+  Map<String, (SlotRecord, ScoreResult)> scored,
+  ({List<ProvisionalCandidate> candidates, int machines, int judged})
+  candidates,
+});
+
+/// 書き出したバックアップ。保存できたと利用者が確かめたら
+/// [AppController.confirmBackupSaved] に渡す。
+typedef BackupExport = ({
+  File file,
+  int records,
+  int candidates,
+  int events,
+  int unreadable,
+
+  /// 書き出しを始めた時刻。これより前に保存した台がファイルに入っている。
+  DateTime exportedAt,
+
+  /// すべての店舗・すべての日付か。
+  bool full,
+});
+
+/// 直前の保存を取り消すための控え（1回分だけ）。保存前に無かった台は
+/// 削除、あった台は元の内容へ戻す。
+class UndoLog {
+  String? label;
+  List<(SlotRecord saved, SlotRecord? previous)>? entries;
+
+  void remember(String label, List<(SlotRecord, SlotRecord?)> entries) {
+    this.label = label;
+    this.entries = entries;
+  }
+
+  void clear() {
+    label = null;
+    entries = null;
+  }
+}
+
+/// アプリの記録と、その保存・削除・取り込み・書き出し。
+///
+/// 画面の小さな設定は [UiPrefs]、書き込みの順番待ちは [WriteQueue]、グラフ
+/// 画像の読み込みは [GraphPreviews]、取り消しの控えは [UndoLog] に分けてある。
+/// ここに残るのは記録とその書き込みで、書き込みは必ず [_write]（順番待ち）
+/// の中で行う（[_commit] などは外から呼ばれると失敗する）。
+class AppController extends ChangeNotifier {
+  AppController({
+    DatabaseService? database,
+    UiPrefs? prefs,
+    WriteQueue? queue,
+    BackupService? backupService,
+  }) : database = database ?? DatabaseService(),
+       prefs = prefs ?? UiPrefs(),
+       _queue = queue ?? WriteQueue(),
+       backupService = backupService ?? BackupService() {
+    previews = GraphPreviews(this.database.loadPreview);
+  }
+
+  final DatabaseService database;
+  final UiPrefs prefs;
+  final WriteQueue _queue;
+  late final GraphPreviews previews;
+  final csvExporter = CsvExportService();
+  final BackupService backupService;
+  final _undo = UndoLog();
+
+  /// 画面用の記録（グラフの画像・曲線は持たない軽い形）。変更できない一覧で、
+  /// 書き込みのたびに新しい一覧に入れ替える（そのたびに [revision] が進む）。
+  List<SlotRecord> get records => _records;
+  List<SlotRecord> _records = const [];
+  set records(List<SlotRecord> value) {
+    _records = List.unmodifiable(value);
+    _revision++;
+    _dayViews.clear();
+  }
+
+  /// 記録の版。記録が変わるたびに1つ進む。画面の計算結果を使い回すかどうかは、
+  /// これで決める。
+  int get revision => _revision;
+  int _revision = 0;
+
+  /// 翌日候補（仮）の記録（candidate_log.dart）。バックアップにも入る。
+  List<CandidateSnapshot> candidateSnapshots = [];
+  Map<String, CandidateSnapshot> _latestCandidates = {};
+
+  /// DBに残す小さな状態（前回の書き出し時刻・候補の記録に失敗した回数）。
+  Map<String, String> appState = {};
+
+  /// 店舗・日付ごとのイベント名。台の採点や候補計算には使わない。
+  Map<String, DateEvent> dateEvents = {};
+
+  DateEvent? dateEventFor(String? store, String? day) =>
+      store == null || day == null ? null : dateEvents['$store|$day'];
+
+  List<DateEvent> _decodeDateEvents(String? text) {
+    if (text == null) return [];
+    try {
+      final raw = jsonDecode(text);
+      if (raw is! List) return [];
+      return [for (final item in raw) ?DateEvent.tryFromJson(item)];
+    } on Object {
+      return [];
+    }
+  }
+
+  static String _encodeDateEvents(Iterable<DateEvent> events) => jsonEncode([
+    for (final event
+        in (events.toList()..sort((a, b) => a.key.compareTo(b.key))))
+      event.toJson(),
+  ]);
+
+  Future<void> _saveDateEvents() async {
+    _queue.checkInside('イベント名の保存');
+    final json = _encodeDateEvents(dateEvents.values);
+    await database.applyChanges(ChangeSet(state: {'date_events': json}));
+    appState = {...appState, 'date_events': json};
+  }
+
+  Future<void> setDateEvent({
+    required String store,
+    required String day,
+    required String? name,
+  }) => _write(() async {
+    if (!storeNames.containsKey(store) || !isValidRecordDay(day)) {
+      throw ArgumentError('店舗または日付が不正です。');
+    }
+    final cleaned = name?.trim();
+    if (cleaned != null && (cleaned.isEmpty || cleaned.length > 60)) {
+      throw ArgumentError('イベント名は1〜60文字で入力してください。');
+    }
+    final key = '$store|$day';
+    final previous = dateEvents[key];
+    if (cleaned == null) {
+      dateEvents.remove(key);
+    } else {
+      dateEvents[key] = DateEvent(store: store, day: day, name: cleaned);
+    }
+    try {
+      await _saveDateEvents();
+    } on Object {
+      // 保存できなければ画面の側も元に戻す。
+      if (previous == null) {
+        dateEvents.remove(key);
+      } else {
+        dateEvents[key] = previous;
+      }
+      rethrow;
+    }
+    message = cleaned == null
+        ? '$day のイベントを解除しました。'
+        : '$day に「$cleaned」を登録しました。';
+    notifyListeners();
+  });
+
+  /// 前回バックアップを保存した時刻（まだなら null）。
+  DateTime? get lastBackupExport =>
+      DateTime.tryParse(appState['last_backup_export'] ?? '')?.toLocal();
+
+  /// 前回「すべての店舗・すべての日付」のバックアップを保存できたと確かめた
+  /// ときの、その書き出しの時刻。古い記録を端末から片付けてよいかは、これで
+  /// 決める。
+  DateTime? get lastFullBackupExport =>
+      DateTime.tryParse(appState['last_full_backup_export'] ?? '')?.toLocal();
+
+  /// 起動時に古い記録を片付けたときの知らせ（閉じるまで出す）。
+  String? retentionNotice;
+
+  /// 片付ける台が多すぎるので止めた台数（0なら止めていない）。
+  int pausedCleanup = 0;
+
+  /// 起動時に気づいた問題（読めない記録、翌日候補の記録を読めなかった等）。
+  final startupWarnings = <String>[];
+
+  void dismissRetentionNotice() {
+    retentionNotice = null;
+    notifyListeners();
+  }
+
+  void dismissStartupWarnings() {
+    startupWarnings.clear();
+    notifyListeners();
+  }
+
+  /// 全期間のバックアップを促す注意（出さないときは null）。
+  String? backupReminder([DateTime? now]) =>
+      backupReminderText(lastFullBackupExport, records.isNotEmpty, now);
+
+  /// 変わった翌日候補を求める関数（テストで失敗を差し込むため差し替えられる）。
+  List<CandidateSnapshot> Function({
+    required Iterable<SlotRecord> saved,
+    required List<SlotRecord> all,
+    required Map<String, CandidateSnapshot> latest,
+    required DateTime now,
+  })
+  computeCandidates = changedCandidateSnapshots;
+
+  /// 翌日候補を記録できなかった保存の累計回数。
+  int get candidateLogFailures =>
+      int.tryParse(appState['candidate_log_failures'] ?? '') ?? 0;
+
+  /// 直前の操作の結果（取り込み画面・結果画面の上に出す）。閉じるか、タブを
+  /// 切り替えると消える。
+  String? message;
+
+  void dismissMessage() {
+    message = null;
+    notifyListeners();
+  }
+
+  int tab = 0;
+
+  void setTab(int value) {
+    if (value != tab) message = null;
+    tab = value;
+    notifyListeners();
+  }
+
+  // 結果画面で最後に見た店舗・日付・機種（[UiPrefs]）。
+  String? get lastStore => prefs.store;
+  String? get lastDay => prefs.day;
+  String? get lastMachine => prefs.machine;
+
+  Future<void> rememberSelection(String? store, String? day, String? machine) =>
+      prefs.remember(store, day, machine);
+
+  /// 「表の確認画面を省く」設定（[UiPrefs.skipTableReview]）。
+  bool get skipTableReview => prefs.skipTableReview;
+
+  Future<void> setSkipTableReview(bool value) async {
+    final saving = prefs.setSkipTableReview(value);
+    notifyListeners();
+    await saving;
+  }
+
+  /// 今日の日付（営業日、深夜2時で切り替わる）。テストで差し替える。
+  String Function() today = todayIso;
+
+  /// 保存してよい最後の日（明日）。それより先は打ち間違いか端末の日付の狂い。
+  String _latestAllowedDay() =>
+      DateTime.parse(today())
+          .add(const Duration(days: 1))
+          .toIso8601String()
+          .substring(0, 10);
+
+  void _checkDay(String day) {
+    if (!isValidRecordDay(day)) {
+      throw ArgumentError('日付（$day）が正しくありません。');
+    }
+    if (day.compareTo(_latestAllowedDay()) > 0) {
+      throw ArgumentError('$day はまだ来ていない日付なので保存しません。日付と、端末の日付設定を確認してください。');
+    }
+  }
+
+  Future<T> _write<T>(Future<T> Function() action, {bool unlimited = false}) =>
+      _queue.run(action, unlimited: unlimited);
+
+  /// [before] は保存する直前にDBから読んだ内容（無かった台は含まない）。
+  /// 画面用の一覧は古いことがあるので、取り消しの控えには使わない。
+  void _rememberUndo(
+    String label,
+    List<SlotRecord> rows,
+    Map<String, SlotRecord> before,
+  ) => _undo.remember(label, [for (final r in rows) (r, before[r.key])]);
+
+  /// 直前の保存を取り消す。まとめて削除の取り消しは千台を超えることがある
+  /// ので、時間の上限は設けない。
+  Future<String> undoLastSave() => _write(() async {
+    final entries = _undo.entries;
+    if (entries == null) return '取り消せる保存がありません。';
+    final label = _undo.label ?? '直前の保存';
+    // まとめて削除の取り消しは百台を超えることがあるので、1台ずつではなくまとめて戻す。
+    final note = await _commit(
+      upserts: [for (final (_, previous) in entries) ?previous],
+      deleteKeys: [
+        for (final (saved, previous) in entries)
+          if (previous == null) saved.key,
+      ],
+      changed: [for (final (saved, _) in entries) saved],
+    );
+    _undo.clear();
+    message = '取り消しました：$label$note';
+    notifyListeners();
+    return message!;
+  }, unlimited: true);
+
+  /// "2026-09-18　長町南 42/80台・幸町 18/60台" (グラフ取り込み済み／一覧の台数)。
+  /// 日付が分からないページ（機種一覧）では今日で表示する。
+  String progressText({required String? store, required String? day}) {
+    if (day == null && store == null) return '';
+    final target = day ?? today();
+    const shortNames = {'nagamachiminami': '長町南', 'saiwaichou': '幸町'};
+    final parts = <String>[];
+    for (final entry in shortNames.entries) {
+      final rows = records
+          .where((r) => r.store == entry.key && r.day == target)
+          .toList();
+      if (rows.isEmpty) continue;
+      final done = rows.where((r) => r.graph != null).length;
+      parts.add('${entry.value} $done/${rows.length}台');
+    }
+    if (parts.isEmpty) return day == null ? '$target　まだ取り込みがありません' : '';
+    return '$target　${parts.join('・')}';
+  }
+
+  /// 結果画面の [store]・[day] の採点と翌日候補。記録が変わるまでは、同じ
+  /// 計算を使い回す（タブを切り替えて戻っても計算し直さない）。
+  DayView dayView(String store, String day) {
+    final key = '$store|$day';
+    final cached = _dayViews.remove(key);
+    if (cached != null) {
+      _dayViews[key] = cached;
+      return cached;
+    }
+    final all = records;
+    final rows = [
+      for (final r in all)
+        if (r.store == store && r.day == day) r,
+    ];
+    final view = (
+      scored: {for (final r in rows) r.key: (r, scoreRecord(r, all))},
+      // 翌日候補（仮）は当日の点数計算とは完全に別。選択日までに保存した
+      // 同一台・同一機種の当たり頻度傾向だけを使う。
+      candidates: dayCandidates(rows, all),
+    );
+    _dayViews[key] = view;
+    while (_dayViews.length > 6) {
+      _dayViews.remove(_dayViews.keys.first);
+    }
+    return view;
+  }
+
+  final _dayViews = <String, DayView>{};
+
+  /// 起動時の読み込み。書き込み（初回のイベント名・古い記録の片付け）も
+  /// あるので、順番待ちの中で行う。
+  Future<void> initialize() => _write(() async {
+    startupWarnings.clear();
+    await prefs.load();
+    appState = await database.loadState();
+    if (appState.containsKey('date_events')) {
+      dateEvents = {
+        for (final event in _decodeDateEvents(appState['date_events']))
+          event.key: event,
+      };
+    } else {
+      dateEvents = {for (final event in initialDateEvents) event.key: event};
+      await _saveDateEvents();
+    }
+    // 保存期間（$retentionDays日）より古い台を、バックアップ済みのものだけ片付ける。
+    _noteCleanup(
+      await database.cleanupOldRecords(lastFullBackupExport, today: today()),
+    );
+    await _loadNormalizedRecords();
+    final unreadable = database.unreadableKeys.length;
+    if (unreadable > 0) {
+      startupWarnings.add(
+        '読めない記録が$unreadable件あります（壊れているか、形が違います）。'
+        '端末には残してあり、バックアップにもそのまま入りますが、画面と採点には使っていません。',
+      );
+    }
+    await database.purgeTrash(
+      DateTime.now().subtract(const Duration(days: trashDays)),
+    );
+    try {
+      candidateSnapshots = await database.loadCandidateSnapshots();
+      _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
+    } catch (error) {
+      candidateSnapshots = [];
+      _latestCandidates = {};
+      startupWarnings.add(
+        '翌日候補の記録を読み込めませんでした。記録そのものは端末に残っていて、'
+        'バックアップにも入ります。\n$error',
+      );
+    }
+    unawaited(_cleanTemporaryFiles());
+  }, unlimited: true);
+
+  void _noteCleanup(CleanupResult cleaned) {
+    retentionNotice = null;
+    pausedCleanup = cleaned.paused;
+    final parts = <String>[];
+    if (cleaned.deleted > 0) {
+      parts.add(
+        '${cleaned.cutoff!.substring(5).replaceAll('-', '/')}より前の${cleaned.deleted}台',
+      );
+    }
+    if (cleaned.snapshots > 0) {
+      parts.add('$candidateRetentionDays日より前の翌日候補の記録${cleaned.snapshots}件');
+    }
+    if (parts.isNotEmpty) {
+      retentionNotice =
+          '${parts.join('と')}を端末から片付けました'
+          '（バックアップには残っています。必要なときはバックアップを読み込んでください）。';
+    }
+  }
+
+  /// 多すぎるので止めた片付けを、利用者が確かめたうえで行う。バックアップ
+  /// から一時的に取り込んだ台は、ここでは片付けない（次の起動時のまま）。
+  Future<void> confirmLargeCleanup() => _write(() async {
+    _noteCleanup(
+      await database.cleanupOldRecords(
+        lastFullBackupExport,
+        today: today(),
+        allowLarge: true,
+        temporary: false,
+      ),
+    );
+    await _loadNormalizedRecords();
+    notifyListeners();
+  }, unlimited: true);
+
+  /// 共有のために作った一時ファイル（バックアップ・CSV・グラフ画像）のうち、
+  /// 3日より前のものを消す。共有先のアプリが後から読むことがあるので、すぐには
+  /// 消さない。失敗しても動作には関係ない。
+  Future<void> _cleanTemporaryFiles() async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final limit = DateTime.now().subtract(const Duration(days: 3));
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        final ours =
+            name.startsWith('database-backup-') ||
+            name.startsWith('database-web-graph-') ||
+            (name.startsWith('database-') && name.endsWith('.csv'));
+        if (ours && (await entity.lastModified()).isBefore(limit)) {
+          await entity.delete();
+        }
+      }
+    } on Object {
+      // 一時ファイルは端末の空きが減ればOSも消す。
+    }
+  }
+
+  /// 1回の書き込み。台の保存・削除・ゴミ箱と、それで変わった翌日候補の
+  /// 記録を、同じトランザクションで書く（片方だけ残ることはない）。
+  /// 書けたら画面用の一覧を更新する。候補の計算に失敗したときは台だけを
+  /// 保存し、失敗した回数をDBに残して、表示用の注記を返す。
+  Future<String> _commit({
+    List<SlotRecord> upserts = const [],
+    List<String> deleteKeys = const [],
+    List<String> trashKeys = const [],
+    String trashLabel = '',
+    TrashKind trashKind = TrashKind.delete,
+    List<int> removeTrashIds = const [],
+    Iterable<SlotRecord> changed = const [],
+  }) async {
+    _queue.checkInside('保存');
+    final removed = deleteKeys.toSet();
+    final next = _withSaved(
+      [
+        for (final r in records)
+          if (!removed.contains(r.key)) r,
+      ],
+      [for (final r in upserts) r.lightened()],
+    );
+    var snapshots = const <CandidateSnapshot>[];
+    final state = <String, String>{};
+    if (changed.isNotEmpty) {
+      try {
+        snapshots = computeCandidates(
+          saved: changed,
+          all: next,
+          latest: _latestCandidates,
+          now: DateTime.now(),
+        );
+      } catch (error) {
+        state['candidate_log_failures'] = '${candidateLogFailures + 1}';
+        state['candidate_log_last_error'] = '$error';
+      }
+    }
+    await database.applyChanges(
+      ChangeSet(
+        upserts: upserts,
+        deleteKeys: deleteKeys,
+        trashKeys: trashKeys,
+        trashLabel: trashLabel,
+        trashKind: trashKind,
+        removeTrashIds: removeTrashIds,
+        snapshots: snapshots,
+        state: state,
+      ),
+    );
+    records = next;
+    appState = {...appState, ...state};
+    if (snapshots.isNotEmpty) {
+      candidateSnapshots = [...candidateSnapshots, ...snapshots];
+      for (final c in snapshots) {
+        _latestCandidates[c.groupKey] = c;
+      }
+    }
+    previews.forget([...deleteKeys, for (final r in upserts) r.key]);
+    return state.isEmpty ? '' : '（翌日候補を記録できませんでした。累計$candidateLogFailures回）';
+  }
+
+  /// DBを読み、機種名の表記ゆれをそろえて一覧にする。DBに `+` 区切りの
+  /// 台が残っていれば（取り込み等で入った）、DBの側で画像込みにまとめて
+  /// から読み直す。画面用の一覧（画像なし）をDBへ書き戻すことはしない。
+  Future<void> _loadNormalizedRecords() async {
+    var loaded = await database.loadAll();
+    if (loaded.any((r) => r.machine != normalizeMachineName(r.machine))) {
+      await database.normalizeMachineNames();
+      loaded = await database.loadAll();
+    }
+    records = _normalizeRecords(loaded);
+  }
+
+  List<SlotRecord> _normalizeRecords(List<SlotRecord> source) {
+    final merged = <String, SlotRecord>{};
+    for (final original in source) {
+      final record = original.copyWith(
+        machine: normalizeMachineName(original.machine),
+      );
+      final current = merged[record.key];
+      merged[record.key] = current == null
+          ? record
+          : mergeSameRack(current, record);
+    }
+    return merged.values.toList();
+  }
+
+  /// [base] に保存した台を入れた（置き換えた）新しい一覧。DBを読み直さない。
+  List<SlotRecord> _withSaved(List<SlotRecord> base, List<SlotRecord> saved) {
+    final index = {for (var i = 0; i < base.length; i++) base[i].key: i};
+    final next = List<SlotRecord>.of(base);
+    for (final record in saved) {
+      final i = index[record.key];
+      if (i == null) {
+        index[record.key] = next.length;
+        next.add(record);
+      } else {
+        next[i] = record;
+      }
+    }
+    return next;
+  }
+
+  /// 画面から読み直す（引っ張って更新）。保存と同じ順番待ちに入れるので、
+  /// 保存の途中で読んだ古い一覧が、保存後の一覧を上書きすることはない。
+  Future<void> reload() => _write(() async {
+    await _loadNormalizedRecords();
+    notifyListeners();
+  }, unlimited: true);
+
+  /// 表をそのまま保存すると、グラフが外れる（数値が変わる）台の数。
+  /// ブラウザの「確認なしで保存」は、これが0のときだけ使う。
+  int graphsDroppedBy(WebTableExtraction extraction) {
+    final store = extraction.store;
+    final day = extraction.day;
+    final machine = extraction.machine;
+    if (store == null || day == null || machine == null) return 0;
+    final name = normalizeMachineName(machine);
+    final saved = {
+      for (final r in records)
+        if (r.store == store && r.day == day && r.machine == name) r.rack: r,
+    };
+    return extraction.rows.where((row) {
+      final previous = saved[row.rack];
+      return previous?.graph != null && tableNumbersChanged(previous!, row);
+    }).length;
+  }
+
+  Future<void> saveTable(
+    String store,
+    String day,
+    String machine,
+    List<EditableRow> rows,
+  ) => _write(() async {
+    _checkDay(day);
+    machine = normalizeMachineName(machine);
+    if (!storeNames.containsKey(store) || machine.isEmpty || rows.isEmpty) {
+      throw ArgumentError('店舗・機種名・台データのいずれかがありません。保存しませんでした。');
+    }
+    // 残すべきグラフ・設定情報などは、画面用の一覧ではなくDBから読む。
+    final old = await database.loadByKeys([
+      for (final row in rows) '$store|$day|$machine|${row.rack}',
+    ]);
+    final now = DateTime.now();
+    final saved = rows.map((row) {
+      final key = '$store|$day|$machine|${row.rack}';
+      final previous = old[key];
+      final changed = previous != null && tableNumbersChanged(previous, row);
+      return SlotRecord(
+        store: store,
+        day: day,
+        machine: machine,
+        rack: row.rack,
+        games: row.games,
+        bb: row.bb,
+        rb: row.rb,
+        maxHold: row.maxHold ?? previous?.maxHold,
+        previousStart: row.previousStart ?? previous?.previousStart,
+        graph: changed ? null : previous?.graph,
+        detailUrl: row.detailUrl ?? old[key]?.detailUrl,
+        capturedAt: now.toIso8601String(),
+        // 初めて保存した時刻だけを残す。以前から保存済みで時刻がない台は不明のまま。
+        firstCapturedAt:
+            previous?.firstCapturedAt ??
+            (previous == null ? timestampWithOffset(now) : null),
+        confirmedSetting: old[key]?.confirmedSetting,
+        extra: previous?.extra ?? const {},
+      );
+    }).toList();
+    // 数値が変わってグラフが外れる台は、前の内容（グラフ込み）をゴミ箱に残す。
+    final dropped = [
+      for (final r in saved)
+        if (old[r.key]?.graph != null && r.graph == null) r.key,
+    ];
+    final note = await _commit(
+      upserts: saved,
+      trashKeys: dropped,
+      trashLabel: '$day $machineの表の取り込み直しで外れたグラフ（${dropped.length}台）',
+      trashKind: TrashKind.overwrite,
+      changed: saved,
+    );
+    _rememberUndo('$machineの一覧${saved.length}台', saved, old);
+    message = '${saved.length}台を保存しました。$note';
+    notifyListeners();
+  });
+
+  CaptureAnalysis resolveWebGraph(CaptureAnalysis captured) {
+    // 一覧の機種名が正本。個別グラフ画面には機種名が載らない場合があるため、
+    // 同じ店舗・日付・台番号で保存済みの一覧記録を最優先で引き継ぐ。
+    final matching = records.where(
+      (record) =>
+          record.rack == captured.rack &&
+          (captured.store == null || record.store == captured.store) &&
+          (captured.day == null || record.day == captured.day),
+    );
+    final saved = matching.firstOrNull;
+    final capturedMachine = captured.machine == null
+        ? null
+        : normalizeMachineName(captured.machine!);
+    return CaptureAnalysis(
+      path: captured.path,
+      kind: captured.kind,
+      fullText: captured.fullText,
+      store: captured.store,
+      day: captured.day,
+      machine:
+          saved?.machine ??
+          (capturedMachine == null || capturedMachine.isEmpty
+              ? null
+              : capturedMachine),
+      rack: captured.rack,
+      games: captured.games ?? saved?.games,
+      bb: captured.bb ?? saved?.bb,
+      rb: captured.rb ?? saved?.rb,
+      maxHold: captured.maxHold ?? saved?.maxHold,
+      graph: captured.graph,
+    );
+  }
+
+  Future<void> saveGraph({
+    required String store,
+    required String day,
+    required String machine,
+    required int rack,
+    required int games,
+    required int bb,
+    required int rb,
+    required int? maxHold,
+    required List<Offset> points,
+    required Uint8List previewPng,
+    required int previewWidth,
+    required int previewHeight,
+    List<List<double>>? curve,
+  }) => _write(() async {
+    _checkDay(day);
+    machine = normalizeMachineName(machine);
+    final key = '$store|$day|$machine|$rack';
+    final before = await database.loadByKeys([key]);
+    final existing = before[key];
+    final now = DateTime.now();
+    final record = SlotRecord(
+      store: store,
+      day: day,
+      machine: machine,
+      rack: rack,
+      games: games,
+      bb: bb,
+      rb: rb,
+      maxHold: maxHold,
+      previousStart: existing?.previousStart,
+      detailUrl: existing?.detailUrl,
+      capturedAt: now.toIso8601String(),
+      firstCapturedAt:
+          existing?.firstCapturedAt ??
+          (existing == null ? timestampWithOffset(now) : null),
+      confirmedSetting: existing?.confirmedSetting,
+      extra: existing?.extra ?? const {},
+      graph: GraphMeasurement(
+        baselineY: points[0].dy,
+        peakY: points[1].dy,
+        troughY: points[2].dy,
+        endY: points[3].dy,
+        baselineX: points[0].dx,
+        peakX: points[1].dx,
+        troughX: points[2].dx,
+        endX: points[3].dx,
+        previewPng: previewPng,
+        previewWidth: previewWidth,
+        previewHeight: previewHeight,
+        curve: curve,
+      ),
+    );
+    final note = await _commit(
+      upserts: [record],
+      // グラフを取り込み直すときは、前のグラフをゴミ箱に残す。
+      trashKeys: [if (existing?.graph != null) key],
+      trashLabel: '$day $rack番台のグラフの取り込み直し',
+      trashKind: TrashKind.overwrite,
+      changed: [record],
+    );
+    _rememberUndo('$rack番台のグラフ', [record], before);
+    message = '$rack番台を採点しました。$note';
+    notifyListeners();
+  });
+
+  /// 取り込みミスなどを、機種ごと・日付ごとにまとめて削除する。消した台数を返す。
+  /// 消す前の内容を「直前の保存を取り消す」の控えに残すので、1回分は元に戻せる。
+  Future<int> deleteGroup({
+    required String day,
+    String? store,
+    String? machine,
+  }) => _write(() async {
+    final targets = recordsInGroup(
+      records,
+      day: day,
+      store: store,
+      machine: machine,
+    );
+    if (targets.isEmpty) return 0;
+    final where = [day, storeNames[store] ?? '両店舗', ?machine].join(' ');
+    final keys = [for (final r in targets) r.key];
+    // 取り消しの控えは画像込みでDBから読む（画面用の一覧には画像がない）。
+    final before = await database.loadByKeys(keys);
+    final note = await _commit(
+      deleteKeys: keys,
+      trashKeys: keys,
+      trashLabel: '$whereの削除（${targets.length}台）',
+      changed: targets,
+    );
+    // 取り消すと、消した台を消す前の内容で保存し直す。
+    _undo.remember('$whereの削除（${targets.length}台）', [
+      for (final r in before.values) (r, r),
+    ]);
+    message =
+        '$whereの記録を削除しました（${targets.length}台）。ゴミ箱から$trashDays日間は戻せます。$note';
+    notifyListeners();
+    return targets.length;
+  }, unlimited: true);
+
+  Future<void> deleteRecord(SlotRecord record) => _write(() async {
+    final before = await database.loadByKeys([record.key]);
+    final note = await _commit(
+      deleteKeys: [record.key],
+      trashKeys: [record.key],
+      trashLabel: '${record.day} ${record.rack}番台の削除',
+      changed: [record],
+    );
+    _rememberUndo('${record.rack}番台の削除', [record], before);
+    message = '${record.rack}番台の記録を削除しました。ゴミ箱から$trashDays日間は戻せます。$note';
+    notifyListeners();
+  });
+
+  /// Save a user-confirmed setting annotation. It deliberately does not feed
+  /// into scoreRecord: a confirmed setting is evidence to retain, not a value
+  /// that should make the day's descriptive score look better.
+  Future<void> setConfirmedSetting(SlotRecord record, String? value) =>
+      _write(() async {
+        if (value != null && !confirmedSettingOptions.contains(value)) {
+          throw ArgumentError.value(value, 'value', '設定情報が不正です。');
+        }
+        // 画面が持っている台は古いことがある（グラフ保存の前など）。DBの
+        // 今の内容に設定情報だけを足し、グラフなどを巻き戻さない。
+        final before = await database.loadByKeys([record.key]);
+        final current = before[record.key];
+        if (current == null) {
+          throw StateError('${record.rack}番台の記録が見つかりません。画面を更新してください。');
+        }
+        final updated = current.copyWith(
+          confirmedSetting: value,
+          clearConfirmedSetting: value == null,
+        );
+        await _commit(upserts: [updated]);
+        _rememberUndo('${record.rack}番台の設定情報', [updated], before);
+        message = value == null
+            ? '${record.rack}番台の設定情報を解除しました。'
+            : '${record.rack}番台に「$value」を記録しました。';
+        notifyListeners();
+      });
+
+  Future<File> exportCsv({String? store, String? day}) => csvExporter.create(
+    records
+        .where(
+          (r) =>
+              (store == null || r.store == store) &&
+              (day == null || r.day == day),
+        )
+        .toList(),
+  );
+
+  /// バックアップのファイルを作る。DBから1台ずつ（画像込みで）書くので、
+  /// 記録が増えてもメモリに全件を載せない。
+  ///
+  /// ファイルを作っただけでは「バックアップ済み」にしない（共有を取り消したり、
+  /// Googleドライブへの保存に失敗したりしても、アプリからは分からないため）。
+  /// 保存できたと利用者が確かめたら [confirmBackupSaved] を呼ぶ。
+  Future<BackupExport> exportBackup({
+    String? store,
+    String? day,
+    void Function(int written)? onProgress,
+  }) => _write(() async {
+    final file = await backupService.newBackupFile();
+    final exportedAt = DateTime.now().toUtc();
+    final events = [
+      for (final event in dateEvents.values)
+        if ((store == null || event.store == store) &&
+            (day == null || event.day == day))
+          event,
+    ];
+    final result = await database.exportBackup(
+      file,
+      store: store,
+      day: day,
+      events: events,
+      onProgress: onProgress,
+    );
+    return (
+      file: file,
+      records: result.records,
+      candidates: result.candidates,
+      events: events.length,
+      unreadable: result.unreadable,
+      exportedAt: exportedAt,
+      full: store == null && day == null,
+    );
+  }, unlimited: true);
+
+  /// 書き出したバックアップを、Googleドライブなどへ保存できたと利用者が
+  /// 確かめたときに呼ぶ。全期間の書き出しなら、それより前に保存した古い
+  /// 記録を、次の起動から端末で片付けてよい印になる。
+  Future<void> confirmBackupSaved(BackupExport exported) => _write(() async {
+    final at = exported.exportedAt.toUtc().toIso8601String();
+    final previousFull = lastFullBackupExport;
+    final state = {
+      'last_backup_export': at,
+      // 前の印より古い書き出しで、印を戻さない。
+      if (exported.full &&
+          (previousFull == null || exported.exportedAt.isAfter(previousFull)))
+        'last_full_backup_export': at,
+    };
+    await database.applyChanges(ChangeSet(state: state));
+    appState = {...appState, ...state};
+    notifyListeners();
+  });
+
+  /// バックアップを取り込む。
+  ///
+  /// 2回読む。1回目は中身を確かめるだけで、何も書かない（形の違う行や、同じ
+  /// 台の違う記録の重複があれば、ここで止まる）。2回目に、新しい台とグラフ・
+  /// 設定情報の追加だけを1つのトランザクションで保存する。途中で失敗しても
+  /// 何も保存されない。保存済みと数値・設定情報が食い違う台は、保存せずに
+  /// 返す（[applyBackupOverrides] で利用者が選ぶ）。[onProgress] には進み
+  /// 具合の文を渡す。
+  Future<BackupImportResult> importBackup(
+    File file, {
+    void Function(String progress)? onProgress,
+  }) => _write(() async {
+    final latestAllowed = _latestAllowedDay();
+    final checker = BackupPlanner(records, latestDay: latestAllowed);
+    var checked = 0;
+    await for (final chunk in backupService.readBackupFile(file)) {
+      if (chunk.records.isEmpty) continue;
+      checker.plan(chunk.records);
+      checked += chunk.records.length;
+      onProgress?.call('中身を確かめています… $checked台');
+    }
+
+    final planner = BackupPlanner(records, latestDay: latestAllowed);
+    final result = BackupImportResult();
+    final undo = <(SlotRecord, SlotRecord?)>[];
+    final saved = <SlotRecord>[];
+    final imported = <(String key, String day)>[];
+    final have = {
+      for (final c in candidateSnapshots) '${c.groupKey}|${c.takenAt}',
+    };
+    final freshCandidates = <CandidateSnapshot>[];
+    final events = Map.of(dateEvents);
+    var eventsAdded = 0;
+    var temporary = const <String>[];
+    var written = 0;
+    await database.writeTransaction((writer) async {
+      await for (final chunk in backupService.readBackupFile(file)) {
+        if (chunk.records.isNotEmpty) {
+          final plan = planner.plan(chunk.records);
+          result.add(plan);
+          final toSave = plan.toSave;
+          if (toSave.isNotEmpty) {
+            final before = await writer.loadByKeys([
+              for (final r in toSave) r.key,
+            ]);
+            await writer.apply(ChangeSet(upserts: toSave));
+            for (final r in toSave) {
+              final light = r.lightened();
+              undo.add((light, before[r.key]));
+              saved.add(light);
+              imported.add((r.key, r.day));
+            }
+          }
+          written += chunk.records.length;
+          onProgress?.call('保存しています… $written / $checked台');
+        }
+        for (final c in chunk.candidates) {
+          if (have.add('${c.groupKey}|${c.takenAt}')) freshCandidates.add(c);
+        }
+        for (final event in chunk.events) {
+          final existing = events[event.key];
+          if (existing == null) {
+            events[event.key] = event;
+            eventsAdded++;
+          } else if (existing.name != event.name) {
+            result.dateEventConflicts++;
+          }
+        }
+      }
+      await writer.apply(
+        ChangeSet(
+          snapshots: freshCandidates,
+          state: {
+            if (eventsAdded > 0)
+              'date_events': _encodeDateEvents(events.values),
+          },
+        ),
+      );
+      // 保存期間より古い台は一時的に取り込んだものとし、次の起動時に片付ける。
+      final latest = await writer.latestDay();
+      if (latest != null) {
+        final cutoff = retentionCutoff(latest, today());
+        temporary = [
+          for (final (key, day) in imported)
+            if (day.compareTo(cutoff) < 0) key,
+        ];
+        if (temporary.isNotEmpty) await writer.markTemporary(temporary);
+      }
+    });
+    // ここまで来たら、すべて保存できている。画面用の一覧などを合わせる。
+    if (saved.isNotEmpty) records = _withSaved(records, saved);
+    previews.forget([for (final r in saved) r.key]);
+    if (freshCandidates.isNotEmpty) {
+      candidateSnapshots = [...candidateSnapshots, ...freshCandidates];
+      _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
+    }
+    if (eventsAdded > 0) {
+      dateEvents = events;
+      appState = {...appState, 'date_events': _encodeDateEvents(events.values)};
+    }
+    result.candidates = freshCandidates.length;
+    result.dateEventsAdded = eventsAdded;
+    result.temporary = temporary.length;
+    if (undo.isNotEmpty) {
+      _undo.remember('バックアップの取り込み', undo);
+      message =
+          'バックアップから${result.added}件追加、'
+          '${result.graphOnly}件にグラフ、${result.settingOnly}件に設定情報を追加しました。';
+    }
+    notifyListeners();
+    return result;
+  }, unlimited: true);
+
+  /// ゴミ箱（新しい順）。
+  Future<List<TrashBatch>> trashBatches() => database.loadTrash();
+
+  /// ゴミ箱の1回分を戻す。削除したものは、今の記録が無い台だけ戻す。
+  /// 上書きで外れたものは今の記録を置き換えるので、今の内容をゴミ箱に残す。
+  Future<String> restoreTrash(TrashBatch batch) => _write(() async {
+    final entries = await database.loadTrashBatch(batch.batchId);
+    final existing = await database.loadByKeys([
+      for (final e in entries) e.record.key,
+    ]);
+    final overwrite = batch.kind == TrashKind.overwrite;
+    final restore = [
+      for (final e in entries)
+        if (overwrite || !existing.containsKey(e.record.key)) e,
+    ];
+    final skipped = entries.length - restore.length;
+    if (restore.isEmpty) {
+      return '戻せる台はありませんでした（$skipped台は今の記録があります）。';
+    }
+    final upserts = [for (final e in restore) e.record];
+    final note = await _commit(
+      upserts: upserts,
+      trashKeys: [
+        for (final r in upserts)
+          if (existing.containsKey(r.key)) r.key,
+      ],
+      trashLabel: '「${batch.label}」を戻す前の内容',
+      trashKind: TrashKind.overwrite,
+      removeTrashIds: [for (final e in restore) e.id],
+      changed: upserts,
+    );
+    _rememberUndo('ゴミ箱から戻す', upserts, existing);
+    message =
+        '${upserts.length}台を戻しました'
+        '${skipped > 0 ? '（$skipped台は今の記録があるので戻していません）' : ''}。$note';
+    notifyListeners();
+    return message!;
+  }, unlimited: true);
+
+  /// For each machine name on the site's machine-list page: graphed/listed
+  /// counts for that store and day, or null when nothing was imported yet.
+  List<Map<String, int>?> machineStatuses({
+    required String? store,
+    required String? day,
+    required List<String> machines,
+  }) {
+    if (store == null) return [for (final _ in machines) null];
+    // 日付が分からないとき（機種一覧ページ）は今日で判定する。
+    final target = day ?? today();
+    String key(String name) =>
+        normalizeMachineName(name).replaceAll(RegExp(r'\s+'), '');
+    final counts = <String, List<int>>{};
+    for (final r in records.where((r) => r.store == store && r.day == target)) {
+      final c = counts.putIfAbsent(key(r.machine), () => [0, 0]);
+      c[1]++;
+      if (r.graph != null) c[0]++;
+    }
+    return [
+      for (final name in machines)
+        counts[key(name)] == null
+            ? null
+            : {'done': counts[key(name)]![0], 'total': counts[key(name)]![1]},
+    ];
+  }
+
+  /// The saved rack (for [store]/[day]/[machine]) that still has no graph,
+  /// after [rack] if given, wrapping around. Mirrors the PC app's
+  /// `_find_next_ungraphed`; the URL is always the one the site gave us.
+  NextGraphTarget nextUngraphed({
+    required String? store,
+    required String? day,
+    required String? machine,
+    required int? rack,
+  }) {
+    if (store == null || day == null) {
+      return const NextGraphTarget(reason: 'unknown_page');
+    }
+    final allStoresDayRows = records.where((r) => r.day == day);
+    final dayComplete =
+        allStoresDayRows.isNotEmpty &&
+        allStoresDayRows.every((r) => r.graph != null);
+    var name = machine == null || machine.trim().isEmpty
+        ? null
+        : normalizeMachineName(machine);
+    if (name == null && rack != null) {
+      name = records
+          .where((r) => r.store == store && r.day == day && r.rack == rack)
+          .firstOrNull
+          ?.machine;
+    }
+    if (name == null) return const NextGraphTarget(reason: 'unknown_machine');
+    final rows = records
+        .where((r) => r.store == store && r.day == day && r.machine == name)
+        .toList();
+    if (rows.isEmpty) return const NextGraphTarget(reason: 'no_rows');
+    final warning = duplicateWarning(rows, rack: rack);
+    final pending = rows.where((r) => r.graph == null).toList()
+      ..sort((a, b) => a.rack.compareTo(b.rack));
+    if (pending.isEmpty) {
+      return NextGraphTarget(
+        url:
+            'https://meruhenworld.pt.teramoba2.com/$store/rack_info_kt/?kind_code=21'
+            '#database_next_machine=1&database_day=${Uri.encodeComponent(day)}',
+        reason: 'all_done',
+        warning: warning,
+        dayComplete: dayComplete,
+      );
+    }
+    final later = pending.where((r) => rack == null || r.rack > rack).toList();
+    final target = later.isNotEmpty ? later.first : pending.first;
+    if (target.detailUrl == null) {
+      return NextGraphTarget(
+        rack: target.rack,
+        remaining: pending.length,
+        reason: 'no_link',
+        warning: warning,
+      );
+    }
+    return NextGraphTarget(
+      url: target.detailUrl,
+      rack: target.rack,
+      remaining: pending.length,
+      warning: warning,
+    );
+  }
+
+  Future<void> applyBackupOverrides(List<SlotRecord> chosen) => _write(
+    () async {
+      if (chosen.isEmpty) return;
+      final byKey = await database.loadByKeys([for (final r in chosen) r.key]);
+      // 上書きしても、手元が持っている個別台リンクは失わない。
+      chosen = [
+        for (final r in chosen)
+          r.copyWith(
+            detailUrl: r.detailUrl ?? byKey[r.key]?.detailUrl,
+            firstCapturedAt: earliestTimestamp(
+              r.firstCapturedAt,
+              byKey[r.key]?.firstCapturedAt,
+            ),
+          ),
+      ];
+      final note = await _commit(
+        upserts: chosen,
+        trashKeys: [for (final r in chosen) r.key],
+        trashLabel: 'バックアップの内容で上書きする前（${chosen.length}台）',
+        trashKind: TrashKind.overwrite,
+        changed: chosen,
+      );
+      _rememberUndo('バックアップの競合反映', chosen, byKey);
+      message = '${chosen.length}件を取り込んだ内容で上書きしました。$note';
+      notifyListeners();
+    },
+    unlimited: true,
+  );
+}

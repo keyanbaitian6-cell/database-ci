@@ -17,6 +17,7 @@ class ViewerData {
     this.source,
     this.loadedAt,
     this.skipped = 0,
+    this.keptOlder = 0,
   });
 
   final List<SlotRecord> records;
@@ -28,6 +29,9 @@ class ViewerData {
 
   /// 形が合わず読み飛ばした台の数。
   final int skipped;
+
+  /// Driveの内容に合わせて残した、前に読み込んだ古い日の台の数（[merge]）。
+  final int keptOlder;
 
   static ViewerData parse(String text) {
     final decoded = jsonDecode(text);
@@ -75,11 +79,95 @@ class ViewerData {
       loadedAt: DateTime.tryParse(decoded['loaded_at'] as String? ?? '')
           ?.toLocal(),
       skipped: skipped,
+      keptOlder: (decoded['kept_older'] as num?)?.toInt() ?? 0,
     );
   }
 
   DateEvent? dateEventFor(String store, String day) =>
       dateEvents['$store|$day'];
+
+  /// Driveから自動で読んだ内容 [incoming] と、端末に覚えていた内容 [stored] を
+  /// 合わせる（どちらも閲覧ページのJSON）。
+  ///
+  /// * 覚えていた方が新しく書き出されたもの（手で新しいバックアップを読み込んだ
+  ///   直後など）なら、置き換えずに覚えていた方を使う。
+  /// * そうでなければDriveの方を使い、Driveの内容より前の日の台（手で全期間の
+  ///   バックアップを読み込んでいた分）は残して足す。Driveの閲覧用ファイルは
+  ///   直近60日分だけなので、そのまま置き換えると古い日が消えてしまうため。
+  ///
+  /// 返す [text] を表示・保存に使う。[note] は利用者への知らせ（無ければ null）。
+  static ({String text, String? note}) merge(String? stored, String incoming) {
+    Map<String, dynamic>? decode(String? text) {
+      if (text == null) return null;
+      try {
+        final value = jsonDecode(text);
+        return value is Map && value['records'] is List
+            ? Map<String, dynamic>.from(value)
+            : null;
+      } on FormatException {
+        return null;
+      }
+    }
+
+    DateTime? exportedAt(Map<String, dynamic> doc) {
+      final header = doc['header'];
+      return header is Map
+          ? DateTime.tryParse(header['exported_at'] as String? ?? '')
+          : null;
+    }
+
+    String when(DateTime at) {
+      final local = at.toLocal();
+      String two(int v) => v.toString().padLeft(2, '0');
+      return '${local.month}/${local.day} ${two(local.hour)}:${two(local.minute)}';
+    }
+
+    final old = decode(stored);
+    final fresh = decode(incoming);
+    if (old == null || fresh == null) return (text: incoming, note: null);
+    final oldAt = exportedAt(old);
+    final freshAt = exportedAt(fresh);
+    if (oldAt != null && freshAt != null && oldAt.isAfter(freshAt)) {
+      return (
+        text: stored!,
+        note:
+            '前に読み込んだ内容（${when(oldAt)}書き出し）の方が、Googleドライブの内容'
+            '（${when(freshAt)}書き出し）より新しいので、置き換えていません。',
+      );
+    }
+    String? dayOf(Object? item) {
+      final day = item is Map ? item['day'] : null;
+      return day is String && isValidRecordDay(day) ? day : null;
+    }
+
+    final freshRecords = fresh['records'] as List;
+    final freshDays = [for (final item in freshRecords) ?dayOf(item)];
+    if (freshDays.isEmpty) return (text: incoming, note: null);
+    final first = freshDays.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+    final older = [
+      for (final item in old['records'] as List)
+        if (dayOf(item) case final day? when day.compareTo(first) < 0) item,
+    ];
+    if (older.isEmpty) return (text: incoming, note: null);
+    final events = <String, Object?>{};
+    for (final list in [old['date_events'], fresh['date_events']]) {
+      if (list is! List) continue;
+      for (final item in list) {
+        if (item is Map) events['${item['store']}|${item['day']}'] = item;
+      }
+    }
+    return (
+      text: jsonEncode({
+        ...fresh,
+        'records': [...freshRecords, ...older],
+        'date_events': events.values.toList(),
+        'kept_older': older.length,
+      }),
+      note:
+          'Googleドライブの最新に、前に読み込んだ${first.substring(5).replaceAll('-', '/')}より前の'
+          '${older.length}台を合わせて表示しています。',
+    );
+  }
 
   static SlotRecord? _record(Object? item) {
     if (item is! Map) return null;

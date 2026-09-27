@@ -1,5 +1,6 @@
 import 'data_checks.dart';
 import 'models.dart';
+import 'scoring.dart';
 
 /// 翌日候補（仮）の記録。
 ///
@@ -100,10 +101,7 @@ CandidateSnapshot candidateSnapshot({
   required List<SlotRecord> all,
   required DateTime now,
 }) {
-  final history = [
-    for (final r in all)
-      if (r.store == store && r.machine == machine) r,
-  ];
+  final history = machineHistory(all, store, machine);
   final rows = [
     for (final r in history)
       if (r.day == day) r,

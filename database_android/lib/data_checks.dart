@@ -94,36 +94,29 @@ String capturedNote(SlotRecord record) {
       .subtract(const Duration(days: 30))
       .toIso8601String()
       .substring(0, 10);
-  final rows = all
-      .where(
-        (r) =>
-            r.store == record.store &&
-            r.machine == record.machine &&
-            r.day.compareTo(first) >= 0 &&
-            r.day.compareTo(record.day) <= 0 &&
-            r.games >= 500 &&
-            r.bb >= 0 &&
-            r.rb >= 0 &&
-            !hasImplausibleNumbers(r),
-      )
-      .toList();
-  final days =
-      rows
-          .where((r) => r.rack == record.rack)
-          .map((r) => r.day)
-          .toSet()
-          .toList()
-        ..sort((a, b) => b.compareTo(a));
+  // 同じ店舗・機種の記録だけを見る（店舗・機種ごとの仕分けは一覧ごとに1回）。
+  // 日ごとにまとめておき、1日ぶんを探すたびに全部を見直さない。
+  final byDay = <String, List<SlotRecord>>{};
+  for (final r in machineHistory(all, record.store, record.machine)) {
+    if (r.day.compareTo(first) >= 0 &&
+        r.day.compareTo(record.day) <= 0 &&
+        r.games >= 500 &&
+        r.bb >= 0 &&
+        r.rb >= 0 &&
+        !hasImplausibleNumbers(r)) {
+      byDay.putIfAbsent(r.day, () => []).add(r);
+    }
+  }
+  final days = [
+    for (final entry in byDay.entries)
+      if (entry.value.any((r) => r.rack == record.rack)) entry.key,
+  ]..sort((a, b) => b.compareTo(a));
   final gaps = <double>[];
   for (final day in days.take(maxDays)) {
-    final mine = rows.firstWhere((r) => r.day == day && r.rack == record.rack);
-    final peers = rows
-        .where(
-          (r) =>
-              r.day == day &&
-              r.games >= mine.games / 2 &&
-              r.games <= mine.games * 2,
-        )
+    final dayRows = byDay[day]!;
+    final mine = dayRows.firstWhere((r) => r.rack == record.rack);
+    final peers = dayRows
+        .where((r) => r.games >= mine.games / 2 && r.games <= mine.games * 2)
         .toList();
     if (peers.length < 3) continue;
     final ranks = peers.map((r) => (r.bb + r.rb) / r.games).toList();

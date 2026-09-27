@@ -30,11 +30,19 @@ double percentile(double value, List<double> values) =>
 /// 店舗・機種ごとに仕分けた記録。比較相手は必ず同じ店舗・同じ機種なので、
 /// 1台ごとに全件を見に行かずに済む（記録が増えても遅くなりにくい）。
 ///
-/// 仕分けた結果は、渡された一覧そのものに紐づけて覚えておく。一覧は保存の
-/// たびに作り直されるので、新しい一覧なら仕分けも作り直される。件数が変わった
-/// ときも作り直す（一覧をその場で書き換えた場合への備え）。
+/// 仕分けた結果は、渡された一覧そのものに紐づけて覚えておく。アプリの一覧
+/// （`AppController.records`）は変更できない一覧で、保存のたびに新しく
+/// 作られるので、新しい一覧なら仕分けも作り直される。変更できる一覧（テスト
+/// など）をその場で書き換えた場合への備えとして、件数が変わったときも作り直す。
 final Expando<({int length, Map<String, List<SlotRecord>> byMachine})>
 _poolIndex = Expando('comparisonPoolIndex');
+
+/// [all] のうち、[store] の [machine] の記録（[all] の中の順）。
+List<SlotRecord> machineHistory(
+  List<SlotRecord> all,
+  String store,
+  String machine,
+) => _byMachine(all)['$store|$machine'] ?? const [];
 
 Map<String, List<SlotRecord>> _byMachine(List<SlotRecord> all) {
   final cached = _poolIndex[all];

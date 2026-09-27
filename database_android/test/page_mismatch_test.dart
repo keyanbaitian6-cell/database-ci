@@ -50,7 +50,7 @@ void main() {
     );
   });
 
-  test('対象店舗以外のURLなら止め、URLが取れないときは止めない', () {
+  test('対象店舗以外のURLなら止め、URLが取れないときも止める（確かめられない）', () {
     expect(
       pageMismatch('https://example.com/saiwaichou/x', store: 'saiwaichou'),
       isNull,
@@ -59,7 +59,7 @@ void main() {
       pageMismatch('https://example.com/other/x', store: 'saiwaichou'),
       isNotNull,
     );
-    expect(pageMismatch(null, store: 'saiwaichou'), isNull);
+    expect(pageMismatch(null, store: 'saiwaichou'), contains('URL'));
   });
 
   test('URLに日付が無いときは、日付では止めない（確かめられない）', () {
