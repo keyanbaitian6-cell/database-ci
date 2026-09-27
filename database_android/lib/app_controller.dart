@@ -413,7 +413,7 @@ class AppController extends ChangeNotifier {
     if (unreadable > 0) {
       startupWarnings.add(
         '読めない記録が$unreadable件あります（壊れているか、形が違います）。'
-        '端末には残してあり、バックアップにもそのまま入りますが、画面と採点には使っていません。',
+        '端末には残してあり、書き出し時は元データを救出用として残します。画面と採点には使っていません。',
       );
     }
     await database.purgeTrash(
@@ -427,7 +427,7 @@ class AppController extends ChangeNotifier {
       _latestCandidates = {};
       startupWarnings.add(
         '翌日候補の記録を読み込めませんでした。記録そのものは端末に残っていて、'
-        'バックアップにも入ります。\n$error',
+        '書き出し時はDBから読み、読めない内容は元データを救出用として残します。\n$error',
       );
     }
     unawaited(_cleanTemporaryFiles());
@@ -889,7 +889,7 @@ class AppController extends ChangeNotifier {
       file: file,
       records: result.records,
       candidates: result.candidates,
-      events: events.length,
+      events: result.events,
       unreadable: result.unreadable,
       exportedAt: exportedAt,
       full: store == null && day == null,
@@ -900,6 +900,9 @@ class AppController extends ChangeNotifier {
   /// 確かめたときに呼ぶ。全期間の書き出しなら、それより前に保存した古い
   /// 記録を、次の起動から端末で片付けてよい印になる。
   Future<void> confirmBackupSaved(BackupExport exported) => _write(() async {
+    if (exported.unreadable > 0) {
+      throw StateError('救出用ファイルは通常のバックアップ済みにはできません。端末の記録は残してください。');
+    }
     final at = exported.exportedAt.toUtc().toIso8601String();
     final previousFull = lastFullBackupExport;
     final state = {

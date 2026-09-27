@@ -836,10 +836,11 @@ class DatabaseService {
   ///
   /// 翌日候補の記録も、画面用の一覧ではなくDBから直接書く（起動時に読み
   /// 込めなかったときでも、書き出しから抜け落ちないように）。読めない台は
-  /// 消さずに、本体の文字列を `unreadable_record` として書く（PC版・この
-  /// アプリの取り込みでは対象外として飛ばされる）。[onProgress] には書いた
+  /// 消さずに、本体・画像の元の文字列を救出用として書く。読めないデータを
+  /// 含むファイルは通常の復元用とは区別する。[onProgress] には書いた
   /// 台数を渡す。
-  Future<({int records, int candidates, int unreadable})> exportBackup(
+  Future<({int records, int candidates, int events, int unreadable})>
+  exportBackup(
     File file, {
     String? store,
     String? day,
@@ -856,7 +857,8 @@ class DatabaseService {
     onProgress: onProgress,
   );
 
-  static Future<({int records, int candidates, int unreadable})> _writeBackup(
+  static Future<({int records, int candidates, int events, int unreadable})>
+  _writeBackup(
     DatabaseExecutor db,
     File file, {
     String? store,
@@ -874,13 +876,48 @@ class DatabaseService {
     var count = 0;
     var unreadable = 0;
     var candidates = 0;
+    var eventCount = 0;
     try {
+      // 画面で読み飛ばしたイベントも失わないよう、DBの原文から読む。
+      // DB自体の読み取りエラーは握りつぶさず、書き出し失敗として知らせる。
+      final eventRows = await db.query(
+        'app_state',
+        columns: ['value'],
+        where: 'state_key = ?',
+        whereArgs: ['date_events'],
+      );
+      Object? unreadableEvents;
+      var eventData = events;
+      if (eventRows.isNotEmpty) {
+        final original = eventRows.single['value'];
+        try {
+          final decoded = jsonDecode(original as String);
+          if (decoded is! List ||
+              decoded.any((item) => DateEvent.tryFromJson(item) == null)) {
+            throw const FormatException('イベント情報の形式が不正です。');
+          }
+          eventData = decoded
+              .where(
+                (item) =>
+                    (store == null || item['store'] == store) &&
+                    (day == null || item['day'] == day),
+              )
+              .toList();
+        } on Object {
+          unreadable++;
+          unreadableEvents = original;
+          eventData = const [];
+        }
+      }
+      eventCount = eventData.length;
       final header = jsonEncode({
         'format': backupFormat,
         'version': backupVersion,
         'exported_at': DateTime.now().toIso8601String(),
         'source': source,
-        if (events.isNotEmpty) 'date_events': events,
+        if (eventData.isNotEmpty) 'date_events': eventData,
+        if (unreadableEvents != null)
+          'unreadable_date_events': unreadableEvents,
       });
       sink.write('${header.substring(0, header.length - 1)}, "records": [');
       var last = 0;
@@ -895,6 +932,9 @@ class DatabaseService {
           last = row['id'] as int;
           String line;
           try {
+            if (_parseRecord(row['payload']) == null) {
+              throw const FormatException('記録の形式が不正です。');
+            }
             line = jsonEncode(
               joinStorageJson(
                 row['payload'] as String,
@@ -906,6 +946,7 @@ class DatabaseService {
             line = jsonEncode({
               'unreadable_record': row['payload'],
               'record_key': row['record_key'],
+              'graph_blob': row['graph_blob'],
             });
           }
           sink.write(count == 0 ? '\n' : ',\n');
@@ -921,30 +962,42 @@ class DatabaseService {
         '${day == null ? '' : ' AND day = ?'} ORDER BY taken_at',
         [?store, ?day],
       );
+      var snapshotRows = 0;
       for (final row in snapshots) {
-        final Object? decoded;
+        Object? decoded;
         try {
           decoded = jsonDecode(row['payload'] as String);
+          if (CandidateSnapshot.tryFromJson(decoded) == null) {
+            throw const FormatException('翌日候補の記録の形式が不正です。');
+          }
+          candidates++;
         } on Object {
-          continue;
+          unreadable++;
+          decoded = {'unreadable_candidate_snapshot': row['payload']};
         }
-        sink.write(candidates == 0 ? ', "candidate_snapshots": [\n' : ',\n');
+        sink.write(snapshotRows == 0 ? ', "candidate_snapshots": [\n' : ',\n');
         sink.write(jsonEncode(decoded));
-        candidates++;
+        snapshotRows++;
       }
-      if (candidates > 0) sink.write('\n]');
+      if (snapshotRows > 0) sink.write('\n]');
+      if (unreadable > 0) sink.write(', "recovery_required": $unreadable');
       sink.write('}\n');
       await sink.flush();
     } finally {
       await sink.close();
     }
-    return (records: count, candidates: candidates, unreadable: unreadable);
+    return (
+      records: count,
+      candidates: candidates,
+      events: eventCount,
+      unreadable: unreadable,
+    );
   }
 
   /// 非常用の書き出し。アプリが起動できないとき（DBが新しい版で作られた、
   /// 読み込み中に失敗した等）でも、DBを読むだけで開いて、記録・翌日候補の
   /// 記録・イベント名を1つのバックアップにする。DBには何も書かない。
-  Future<({int records, int candidates, int unreadable})> exportRaw(
+  Future<({int records, int candidates, int events, int unreadable})> exportRaw(
     File file,
   ) async {
     final factory = factoryOverride ?? databaseFactory;
@@ -955,20 +1008,7 @@ class DatabaseService {
       options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
     );
     try {
-      List<Object?> events = const [];
-      try {
-        final rows = await db.query(
-          'app_state',
-          columns: ['value'],
-          where: 'state_key = ?',
-          whereArgs: ['date_events'],
-        );
-        final raw = jsonDecode(rows.first['value'] as String);
-        if (raw is List) events = raw;
-      } on Object {
-        // イベント名が無い・読めないときは、記録だけでも書き出す。
-      }
-      return await _writeBackup(db, file, events: events, source: 'android');
+      return await _writeBackup(db, file, source: 'android');
     } finally {
       await db.close();
     }

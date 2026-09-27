@@ -57,9 +57,8 @@ Future<void> main() async {
 class StartupErrorApp extends StatefulWidget {
   const StartupErrorApp({super.key, required this.message, this.onExport});
   final String message;
-  final Future<({int records, int candidates, int unreadable})> Function(
-    File file,
-  )?
+  final Future<({int records, int candidates, int events, int unreadable})>
+  Function(File file)?
   onExport;
 
   @override
@@ -90,9 +89,9 @@ class _StartupErrorAppState extends State<StartupErrorApp> {
         ),
       );
       _result =
-          '${written.records}台・翌日候補の記録${written.candidates}件を書き出しました'
-          '${written.unreadable > 0 ? '（うち読めない記録${written.unreadable}件はそのままの形で入れています）' : ''}。'
-          'PC版で取り込めます。';
+          '${written.records}台・イベント${written.events}件・翌日候補の記録${written.candidates}件を書き出しました'
+          '。'
+          '${written.unreadable > 0 ? '読めないデータ${written.unreadable}件の元の内容を含む救出用ファイルです。通常の復元には使えません。ファイルと端末の記録を残して、修復を依頼してください。' : 'PC版で取り込めます。'}';
     } catch (error) {
       _result = '書き出せませんでした：$error';
     } finally {
@@ -347,11 +346,27 @@ Future<void> _shareBackup(
     if (!context.mounted) return;
     final summary =
         '${exported.records}台・イベント${exported.events}件・翌日候補の記録${exported.candidates}件'
-        '${exported.unreadable > 0 ? '（読めない記録${exported.unreadable}件はそのままの形で入れました）' : ''}';
+        '${exported.unreadable > 0 ? '（読めないデータ${exported.unreadable}件の元の内容を含む救出用ファイル）' : ''}';
     if (shared.status == ShareResultStatus.dismissed) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('共有を取りやめました（$summary）。バックアップ済みにはしていません。'),
+        SnackBar(content: Text('共有を取りやめました（$summary）。バックアップ済みにはしていません。')),
+      );
+      return;
+    }
+    if (exported.unreadable > 0) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('救出用ファイルを書き出しました'),
+          content: Text(
+            '$summary。\n\n通常の復元には使えません。元のファイルと端末の記録を残して、データの修復を依頼してください。バックアップ済みの印は付けていません。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('閉じる'),
+            ),
+          ],
         ),
       );
       return;
@@ -713,9 +728,9 @@ class _BackupConflictsPageState extends State<BackupConflictsPage> {
       // 失敗したら何も上書きされていない（1回の書き込み）。選び直して再試行できる。
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('上書きできませんでした（何も変えていません）：$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('上書きできませんでした（何も変えていません）：$error')));
     }
   }
 
@@ -871,7 +886,9 @@ class _ResultsPageState extends State<ResultsPage> {
         : dateEventOptions.contains(current.name)
         ? current.name
         : custom;
-    final text = TextEditingController(text: selected == custom ? current?.name : '');
+    final text = TextEditingController(
+      text: selected == custom ? current?.name : '',
+    );
     final result = await showDialog<String?>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -885,16 +902,21 @@ class _ResultsPageState extends State<ResultsPage> {
                 decoration: const InputDecoration(labelText: 'イベント名'),
                 items: [
                   const DropdownMenuItem(value: '', child: Text('イベントなし')),
-                  ...dateEventOptions.map((name) => DropdownMenuItem(value: name, child: Text(name))),
+                  ...dateEventOptions.map(
+                    (name) => DropdownMenuItem(value: name, child: Text(name)),
+                  ),
                   const DropdownMenuItem(value: custom, child: Text(custom)),
                 ],
-                onChanged: (value) => setDialogState(() => selected = value ?? ''),
+                onChanged: (value) =>
+                    setDialogState(() => selected = value ?? ''),
               ),
               if (selected == custom) ...[
                 const SizedBox(height: 12),
                 TextField(
                   controller: text,
-                  autofocus: current == null || !dateEventOptions.contains(current.name),
+                  autofocus:
+                      current == null ||
+                      !dateEventOptions.contains(current.name),
                   maxLength: 60,
                   onChanged: (_) => setDialogState(() {}),
                   decoration: const InputDecoration(labelText: 'イベント名を入力'),
@@ -903,11 +925,21 @@ class _ResultsPageState extends State<ResultsPage> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('キャンセル')),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('キャンセル'),
+            ),
             FilledButton(
               onPressed: selected == custom && text.text.trim().isEmpty
                   ? null
-                  : () => Navigator.pop(dialogContext, selected == '' ? '' : selected == custom ? text.text.trim() : selected),
+                  : () => Navigator.pop(
+                      dialogContext,
+                      selected == ''
+                          ? ''
+                          : selected == custom
+                          ? text.text.trim()
+                          : selected,
+                    ),
               child: const Text('保存'),
             ),
           ],
@@ -918,7 +950,11 @@ class _ResultsPageState extends State<ResultsPage> {
     if (result == null || !mounted) return;
     final name = result.isEmpty ? null : result;
     if (name != null && name.length > 60) return;
-    await widget.controller.setDateEvent(store: selectedStore, day: selectedDay, name: name);
+    await widget.controller.setDateEvent(
+      store: selectedStore,
+      day: selectedDay,
+      name: name,
+    );
   }
 
   void _jumpTo(GlobalKey key) {
@@ -1026,9 +1062,7 @@ class _ResultsPageState extends State<ResultsPage> {
     if (!dayRows.any((r) => r.machine == _machine)) _machine = null;
     // 選んだ店舗・日付・機種は、選んだとき（onChanged）に覚える。ここ（画面の
     // 組み立て）ではファイルに書かない。
-    final view = day == null
-        ? null
-        : widget.controller.dayView(store!, day!);
+    final view = day == null ? null : widget.controller.dayView(store!, day!);
     _scoredByKey = view?.scored ?? const {};
     final candidates =
         view?.candidates ??
@@ -1079,17 +1113,13 @@ class _ResultsPageState extends State<ResultsPage> {
                         // 店舗は短い名前にして、日付が「2026-09」で切れないよう幅を回す。
                         Expanded(
                           flex: 2,
-                          child: storeDropdown(
-                            store!,
-                            (v) {
-                              setState(() {
-                                store = v;
-                                day = null;
-                              });
-                              _rememberSelection();
-                            },
-                            short: true,
-                          ),
+                          child: storeDropdown(store!, (v) {
+                            setState(() {
+                              store = v;
+                              day = null;
+                            });
+                            _rememberSelection();
+                          }, short: true),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -1102,18 +1132,28 @@ class _ResultsPageState extends State<ResultsPage> {
                                 .map(
                                   (v) => DropdownMenuItem(
                                     value: v,
-                                    child: Builder(builder: (context) {
-                                      final event = widget.controller.dateEventFor(store, v);
-                                      return Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Text(dayWithWeekday(v)),
-                                          if (event != null)
-                                            Text(event.name, style: const TextStyle(fontSize: 11, color: AppColors.appleBlue)),
-                                        ],
-                                      );
-                                    }),
+                                    child: Builder(
+                                      builder: (context) {
+                                        final event = widget.controller
+                                            .dateEventFor(store, v);
+                                        return Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(dayWithWeekday(v)),
+                                            if (event != null)
+                                              Text(
+                                                event.name,
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                  color: AppColors.appleBlue,
+                                                ),
+                                              ),
+                                          ],
+                                        );
+                                      },
+                                    ),
                                   ),
                                 )
                                 .toList(),
@@ -1471,10 +1511,7 @@ class ImportPage extends StatelessWidget {
         ),
         if (controller.message != null) ...[
           const SizedBox(height: 12),
-          Notice(
-            text: controller.message!,
-            onClose: controller.dismissMessage,
-          ),
+          Notice(text: controller.message!, onClose: controller.dismissMessage),
         ],
       ],
     );
@@ -1637,7 +1674,11 @@ class _HistoryPageState extends State<HistoryPage> {
                     child: Text(
                       event.name,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: AppColors.appleBlue, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.appleBlue,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
@@ -1756,7 +1797,10 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
         ]..sort((a, b) => a.rack.compareTo(b.rack));
         _scored = [for (final r in rows) (r, scoreRecord(r, all))];
         _candidateRacks = {
-          for (final c in provisionalNextDayCandidates(rows, history).candidates)
+          for (final c in provisionalNextDayCandidates(
+            rows,
+            history,
+          ).candidates)
             c.record.rack,
         };
         _scoredFor = widget.controller.revision;
@@ -1968,9 +2012,8 @@ class _RetentionNotices extends StatelessWidget {
       await controller.confirmLargeCleanup();
     } catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('片付けられませんでした：$error')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('片付けられませんでした：$error')));
       }
     }
   }
@@ -1981,7 +2024,10 @@ class _RetentionNotices extends StatelessWidget {
     final cleaned = controller.retentionNotice;
     final paused = controller.pausedCleanup;
     final warnings = controller.startupWarnings;
-    if (reminder == null && cleaned == null && paused == 0 && warnings.isEmpty) {
+    if (reminder == null &&
+        cleaned == null &&
+        paused == 0 &&
+        warnings.isEmpty) {
       return const SizedBox.shrink();
     }
     return Padding(

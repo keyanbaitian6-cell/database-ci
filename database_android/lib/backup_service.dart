@@ -111,8 +111,7 @@ class BackupService {
     'exported_at': DateTime.now().toIso8601String(),
     'source': source,
     'records': records.map((r) => r.toJson()).toList(),
-    if (events.isNotEmpty)
-      'date_events': [for (final e in events) e.toJson()],
+    if (events.isNotEmpty) 'date_events': [for (final e in events) e.toJson()],
     // 翌日候補（仮）の記録。PC版は読まずに無視する（Android版だけが持つ）。
     if (candidates.isNotEmpty)
       'candidate_snapshots': [for (final c in candidates) c.toJson()],
@@ -146,10 +145,49 @@ class BackupService {
 
   BackupImportPlan planFromJson(String jsonText, List<SlotRecord> existing) {
     final decoded = jsonDecode(jsonText);
-    if (decoded is! Map || decoded['records'] is! List) {
+    _validateEnvelope(decoded);
+    return plan(decoded['records'] as List, existing);
+  }
+
+  static void _validateEnvelope(dynamic decoded, {bool valuesElided = false}) {
+    if (decoded is! Map ||
+        decoded['format'] != backupFormat ||
+        decoded['records'] is! List) {
       throw const FormatException('バックアップファイルの形式が不正です。');
     }
-    return plan(decoded['records'] as List, existing);
+    if (decoded['version'] is! int || decoded['version'] != backupVersion) {
+      throw const FormatException('対応していないバックアップのバージョンです。');
+    }
+    if (decoded['source'] == 'pc-viewer') {
+      throw const FormatException(
+        'これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。',
+      );
+    }
+    for (final key in ['candidate_snapshots', 'date_events']) {
+      if (decoded.containsKey(key) && decoded[key] is! List) {
+        throw FormatException('$key の形式が不正です。');
+      }
+    }
+    if ((decoded['recovery_required'] ?? 0) != 0 ||
+        decoded.containsKey('unreadable_date_events')) {
+      throw const FormatException(
+        '読めないデータを含む救出用ファイルです。通常の復元には使えません。'
+        '元のファイルと端末の記録を残して、データの修復を依頼してください。',
+      );
+    }
+    for (final item in (decoded['date_events'] as List? ?? const [])) {
+      if (DateEvent.tryFromJson(item) == null) {
+        throw const FormatException('イベント情報に読めない項目があります。');
+      }
+    }
+    if (!valuesElided) {
+      for (final item
+          in (decoded['candidate_snapshots'] as List? ?? const [])) {
+        if (CandidateSnapshot.tryFromJson(item) == null) {
+          throw const FormatException('翌日候補の記録に読めない項目があります。');
+        }
+      }
+    }
   }
 
   /// バックアップを少しずつ読む。1行に1台の形（この版のAndroidとPC版の
@@ -159,11 +197,17 @@ class BackupService {
     int chunkSize = 300,
     int wholeFileLimit = wholeBackupLimitBytes,
   }) async* {
+    if (chunkSize <= 0) throw ArgumentError.value(chunkSize, 'chunkSize');
     final records = <dynamic>[];
     final candidates = <CandidateSnapshot>[];
     var events = <DateEvent>[];
     var section = 'header';
     var lineLayout = false;
+    var streamedCandidates = false;
+    var recordCount = 0;
+    // 各行の値はjsonDecodeで検証し、文書の外枠は値をnullに置換して検証する。
+    // 画像の全文を保持せず、カンマ・閉じ括弧・末尾の余分な文字も検査できる。
+    final structure = StringBuffer();
     final recordsStart = RegExp(r'"records"\s*:\s*\[$');
     await for (final line
         in file
@@ -178,33 +222,33 @@ class BackupService {
         var head = text.substring(0, match.start).trimRight();
         if (head.endsWith(',')) head = head.substring(0, head.length - 1);
         final header = jsonDecode('$head}');
-        if (header is! Map || header['format'] != backupFormat) {
-          throw const FormatException('バックアップファイルの形式が不正です。');
-        }
-        if (header['source'] == 'pc-viewer') {
-          throw const FormatException(
-            'これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。',
-          );
-        }
-        events = _eventsOf(header);
+        _validateEnvelope({...header as Map, 'records': <dynamic>[]});
+        structure.writeln(text);
         lineLayout = true;
         section = 'records';
         continue;
       }
+      if (section == 'done') {
+        structure.writeln(text);
+        continue;
+      }
       if (text.startsWith(']')) {
+        structure.writeln(text);
         section =
             section == 'records' &&
                 text.contains('"candidate_snapshots"') &&
                 text.endsWith('[')
             ? 'candidates'
             : 'done';
+        if (section == 'candidates') streamedCandidates = true;
         continue;
       }
-      if (section == 'done') continue;
       final item = jsonDecode(
         text.endsWith(',') ? text.substring(0, text.length - 1) : text,
       );
+      structure.writeln(text.endsWith(',') ? 'null,' : 'null');
       if (section == 'records') {
+        recordCount++;
         records.add(item);
         if (records.length >= chunkSize) {
           yield BackupChunk(records: List.of(records));
@@ -212,11 +256,36 @@ class BackupService {
         }
       } else {
         final snapshot = CandidateSnapshot.tryFromJson(item);
-        if (snapshot != null) candidates.add(snapshot);
+        if (snapshot == null) {
+          throw const FormatException('翌日候補の記録に読めない項目があります。救出用ファイルは修復が必要です。');
+        }
+        candidates.add(snapshot);
       }
     }
     if (lineLayout) {
-      yield BackupChunk(records: records, candidates: candidates, events: events);
+      // EOFまで到達しただけでは成功にしない。閉じ括弧不足もここで失敗する。
+      final envelope = jsonDecode(structure.toString());
+      _validateEnvelope(envelope, valuesElided: streamedCandidates);
+      final outerRecords = envelope['records'] as List;
+      if (outerRecords.length != recordCount ||
+          outerRecords.any((r) => r != null)) {
+        throw const FormatException('records が重複しているか、形式が不正です。');
+      }
+      if (streamedCandidates) {
+        final outerCandidates = envelope['candidate_snapshots'] as List;
+        if (outerCandidates.length != candidates.length ||
+            outerCandidates.any((c) => c != null)) {
+          throw const FormatException('candidate_snapshots が重複しているか、形式が不正です。');
+        }
+      } else {
+        candidates.addAll(_candidatesOf(envelope));
+      }
+      events = _eventsOf(envelope);
+      yield BackupChunk(
+        records: records,
+        candidates: candidates,
+        events: events,
+      );
       return;
     }
     if (await file.length() > wholeFileLimit) {
@@ -226,9 +295,7 @@ class BackupService {
       );
     }
     final decoded = jsonDecode(await file.readAsString());
-    if (decoded is! Map || decoded['records'] is! List) {
-      throw const FormatException('バックアップファイルの形式が不正です。');
-    }
+    _validateEnvelope(decoded);
     final all = decoded['records'] as List;
     for (var i = 0; i < all.length; i += chunkSize) {
       final end = i + chunkSize > all.length ? all.length : i + chunkSize;

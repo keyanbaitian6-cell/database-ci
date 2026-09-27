@@ -313,14 +313,14 @@ void main() {
       expect(app.records.map((r) => r.rack), [1]);
       expect(app.startupWarnings.single, contains('読めない記録が2件'));
 
-      // JSONとして壊れた行は `unreadable_record` に包み、形だけ違う行はそのまま書く。
+      // JSONとして壊れた行も形の違う行も、元の内容を救出用として残す。
       final exported = await app.exportBackup();
-      expect((exported.records, exported.unreadable), (3, 1));
+      expect((exported.records, exported.unreadable), (3, 2));
       final whole = jsonDecode(await exported.file.readAsString()) as Map;
       final records = whole['records'] as List;
       expect(
         records.where((r) => (r as Map).containsKey('unreadable_record')),
-        hasLength(1),
+        hasLength(2),
       );
       // 取り込み側（Android版）では対象外として飛ばす。
       final plan = BackupService().plan(records, const []);
