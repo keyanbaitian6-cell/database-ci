@@ -173,8 +173,7 @@ def main():
     apply_style(root)
     frame = ttk.Frame(root, padding=(28, 20, 28, 14))
     frame.pack(fill='both', expand=True)
-    ttk.Label(frame, text='database', style='Title.TLabel').pack(anchor='w')
-    ttk.Label(frame, text='長町南店・幸町店｜1000円46枚スロット', style='Sub.TLabel').pack(anchor='w', pady=(2, 12))
+    ttk.Label(frame, text='database', style='Title.TLabel').pack(anchor='w', pady=(0, 12))
     # 記録欄は先に下端へ確保しておく（後から詰め込むと、タブに押されて見えなくなるため）
     log_frame = ttk.Frame(frame)
     log_frame.pack(side='bottom', fill='x', pady=(10, 0))
