@@ -1423,6 +1423,16 @@ class RobustnessTests(unittest.TestCase):
         self.assertIsNotNone(page_mismatch(graph_url, dict(store='nagamachiminami', day='2026-09-25', rack=508)))
         self.assertIsNone(page_mismatch(None, dict(store='saiwaichou')))  # nothing to check
 
+        class Window:
+            def get_current_url(self):
+                return graph_url
+
+        bridge = _Bridge('unused.db', 'unused-reports', 'browser_import.py')
+        bridge._window = Window()
+        valid = dict(store='nagamachiminami', day='2026-09-25', rack=507)
+        self.assertEqual(json.loads(bridge._checked(json.dumps(valid))), valid)
+        self.assertIn('error', json.loads(bridge._checked(json.dumps(dict(valid, rack=508)))))
+
     def test_viewer_file_is_light_recent_and_written_to_the_sync_folder(self):
         from core import VIEWER_FILE_NAME, export_viewer, read_backup_file
         with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:

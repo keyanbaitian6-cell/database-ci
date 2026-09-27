@@ -978,11 +978,14 @@ class _Bridge:
     """
 
     def __init__(self, db_path, reports_folder, script_path):
-        self.db_path = str(db_path)
-        self.reports_folder = str(reports_folder)
-        self.script_path = str(script_path)
-        self.window = None  # set once the window exists (for the real URL)
-        self.children = []  # review windows still open when the browser closes
+        # pywebview recursively inspects public attributes to build its JS API.
+        # A public Window reaches WinForms native properties and can deadlock
+        # API injection. Keep all internal state out of that traversal.
+        self._db_path = str(db_path)
+        self._reports_folder = str(reports_folder)
+        self._script_path = str(script_path)
+        self._window = None  # set once the window exists (for the real URL)
+        self._children = []  # review windows still open when the browser closes
 
     def _checked(self, raw):
         """Replace the data with an error when it disagrees with the real page."""
@@ -990,10 +993,10 @@ class _Bridge:
             payload = json.loads(raw) if isinstance(raw, str) else raw
         except ValueError:
             return raw
-        if not isinstance(payload, dict) or payload.get('error') or self.window is None:
+        if not isinstance(payload, dict) or payload.get('error') or self._window is None:
             return raw
         try:
-            current = self.window.get_current_url()
+            current = self._window.get_current_url()
         except Exception:  # noqa: BLE001 - no URL means nothing to check
             return raw
         reason = page_mismatch(current, payload)
@@ -1025,7 +1028,7 @@ class _Bridge:
         current_rack = payload.get('rack')
         if not (store_path and day):
             return json.dumps({'url': None, 'reason': 'unknown_page'})
-        db = Store(self.db_path)
+        db = Store(self._db_path)
         try:
             if not machine and current_rack is not None:
                 # An individual rack's own graph page often has no
@@ -1106,7 +1109,7 @@ class _Bridge:
         if not day:
             # 日付を確かめるために開く機種も、今日まだ済んでいない機種を優先する
             # （開いた先でそのまま表を取り込めるように）。
-            db = Store(self.db_path)
+            db = Store(self._db_path)
             try:
                 today_progress = machine_progress(db, store_path, today_iso())
             finally:
@@ -1152,7 +1155,7 @@ class _Bridge:
                 return all_done_message
             return json.dumps({'url': None, 'message': '機種一覧が表示されるのを待ってから、もう一度押してください。（しばらく待っても表示されない場合は、ページを再読み込みしてください）'}, ensure_ascii=False)
 
-        db = Store(self.db_path)
+        db = Store(self._db_path)
         try:
             progress = machine_progress(db, store_path, day)
             for machine in machines:
@@ -1199,7 +1202,7 @@ class _Bridge:
         except (TypeError, ValueError):
             return json.dumps({'text': ''})
         day, store_path = payload.get('day'), payload.get('store')
-        db = Store(self.db_path)
+        db = Store(self._db_path)
         try:
             guessed = not day and bool(store_path)
             if guessed:
@@ -1221,7 +1224,7 @@ class _Bridge:
         names = [str(n or '') for n in payload.get('machines') or []]
         if store_path not in STORE_NAMES:
             return json.dumps({'status': [None] * len(names)})
-        db = Store(self.db_path)
+        db = Store(self._db_path)
         try:
             day = day or today_iso()
             progress = machine_progress(db, store_path, day)
@@ -1237,9 +1240,9 @@ class _Bridge:
         return json.dumps({'day': day, 'status': status}, ensure_ascii=False)
 
     def undo_last_save(self):
-        db = Store(self.db_path)
+        db = Store(self._db_path)
         try:
-            label = undo_last_save(db, Path(self.db_path).parent)
+            label = undo_last_save(db, Path(self._db_path).parent)
         except ValueError as exc:
             return json.dumps({'message': str(exc)}, ensure_ascii=False)
         finally:
@@ -1258,10 +1261,10 @@ class _Bridge:
               flush=True)
         command = [sys.executable]
         if not getattr(sys, 'frozen', False):
-            command.append(self.script_path)
-        command.extend([f'--confirm-{kind}', str(payload_path), self.db_path, self.reports_folder])
-        self.children = [c for c in self.children if c.poll() is None]
-        self.children.append(subprocess.Popen(command))
+            command.append(self._script_path)
+        command.extend([f'--confirm-{kind}', str(payload_path), self._db_path, self._reports_folder])
+        self._children = [c for c in self._children if c.poll() is None]
+        self._children.append(subprocess.Popen(command))
 
 
 def _load_payload(payload_path):
@@ -1456,7 +1459,7 @@ def run_session(db_path, reports_folder):
     bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()))
     window = webview.create_window('database ブラウザ取り込み', DEFAULT_START,
                                     width=1280, height=900, js_api=bridge)
-    bridge.window = window
+    bridge._window = window
 
     def install_overlay():
         try:
@@ -1528,7 +1531,7 @@ def run_session(db_path, reports_folder):
 
     window.events.loaded += install_overlay
     webview.start(func=watch_advance_signal, gui='edgechromium')
-    backup_after_session(bridge.children, db_path)
+    backup_after_session(bridge._children, db_path)
 
 
 def backup_after_session(children, db_path):

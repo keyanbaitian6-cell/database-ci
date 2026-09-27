@@ -1,4 +1,9 @@
 @echo off
+setlocal
 cd /d "%~dp0"
-".runtime\Scripts\python.exe" app.py
+if exist ".runtime\Scripts\python.exe" (
+    ".runtime\Scripts\python.exe" app.py
+) else (
+    py -3 app.py
+)
 if errorlevel 1 pause
