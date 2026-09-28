@@ -275,16 +275,18 @@ class SavedGraphPage extends StatelessWidget {
     required this.record,
     this.score,
     this.allRecords,
+    this.dateNavigation,
   });
   final SlotRecord record;
   final ScoreResult? score;
   final List<SlotRecord>? allRecords;
+  final PreferredSizeWidget? dateNavigation;
 
   @override
   Widget build(BuildContext context) {
     final graph = record.graph;
     return Scaffold(
-      appBar: AppBar(title: Text('${record.rack}番台')),
+      appBar: AppBar(title: Text('${record.rack}番台'), bottom: dateNavigation),
       body: graph == null
           ? ListView(
               padding: EdgeInsets.fromLTRB(

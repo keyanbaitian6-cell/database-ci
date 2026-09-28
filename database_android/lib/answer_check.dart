@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'viewer_pages.dart';
+
 import 'data_checks.dart';
 import 'list_views.dart';
 import 'models.dart';
@@ -34,10 +36,11 @@ typedef AnswerCheckDay = ({
   List<AnswerCheckHit> hits,
 });
 
-String _dayBefore(String day) => DateTime.parse(day)
-    .subtract(const Duration(days: 1))
-    .toIso8601String()
-    .substring(0, 10);
+String _dayBefore(String day) =>
+    DateTime.parse(day)
+        .subtract(const Duration(days: 1))
+        .toIso8601String()
+        .substring(0, 10);
 
 /// [store] で、前の日（暦の前日）と両方に記録がある日。新しい順。
 List<String> answerCheckDays(List<SlotRecord> all, String store) {
@@ -56,11 +59,7 @@ List<String> answerCheckDays(List<SlotRecord> all, String store) {
 /// 翌日候補（[dayCandidates]）はその日までの記録しか使わないので、いま計算
 /// し直しても、前の日の結果画面に出ていた候補と同じになる（記録をあとから
 /// 直した場合を除く）。点数も結果画面と同じ [scoreRecord]。
-AnswerCheckDay? answerCheckFor(
-  List<SlotRecord> all,
-  String store,
-  String day,
-) {
+AnswerCheckDay? answerCheckFor(List<SlotRecord> all, String store, String day) {
   final before = _dayBefore(day);
   final previousRows = <SlotRecord>[];
   final results = <(String, int), SlotRecord>{};
@@ -120,6 +119,7 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
   var _days = <String>[];
   final _results = <AnswerCheckDay>[];
   var _run = 0;
+  String? _selectedDay;
 
   @override
   void initState() {
@@ -134,6 +134,7 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
     final all = widget.records;
     setState(() {
       _days = answerCheckDays(all, _store);
+      _selectedDay = null;
       _results.clear();
     });
     for (final day in _days) {
@@ -153,7 +154,17 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
     final scored = _results.fold(0, (n, d) => n + d.scored);
     final hits = _results.fold(0, (n, d) => n + d.hits.length);
     return Scaffold(
-      appBar: AppBar(title: const Text('答え合わせ')),
+      appBar: AppBar(
+        title: const Text('答え合わせ'),
+        bottom: _days.isEmpty
+            ? null
+            : ViewerDateBar(
+                days: _days,
+                day: _selectedDay,
+                allowAll: true,
+                onChanged: (day) => setState(() => _selectedDay = day),
+              ),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
@@ -170,7 +181,11 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
               '前の日の「翌日候補（仮）」に挙げた台のうち、その日に合計点'
               '${answerCheckThreshold ~/ 1}点以上だった台です。候補は前の日の結果画面と'
               '同じ計算（前の日までの記録だけを使う）、点数も結果画面と同じです。',
-              style: TextStyle(color: AppColors.ash, fontSize: 13, height: 1.45),
+              style: TextStyle(
+                color: AppColors.ash,
+                fontSize: 13,
+                height: 1.45,
+              ),
             ),
             const SizedBox(height: 12),
             if (loading) ...[
@@ -188,7 +203,15 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
             else ...[
               _totals(candidates, scored, hits, loading),
               const SizedBox(height: 14),
-              for (final day in _results) ...[
+              if (_selectedDay != null &&
+                  !_results.any((d) => d.day == _selectedDay))
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('選択した日を計算しています…'),
+                ),
+              for (final day in _results.where(
+                (d) => _selectedDay == null || d.day == _selectedDay,
+              )) ...[
                 _DayCard(result: day, onOpen: widget.onOpen),
                 const SizedBox(height: 12),
               ],
@@ -200,7 +223,9 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
   }
 
   Widget _totals(int candidates, int scored, int hits, bool loading) {
-    final rate = scored == 0 ? '—' : '${(hits * 100 / scored).toStringAsFixed(0)}%';
+    final rate = scored == 0
+        ? '—'
+        : '${(hits * 100 / scored).toStringAsFixed(0)}%';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -221,7 +246,11 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
             const Text(
               '取り込んでいない台・機種が入れ替わった台・採点しなかった台（500G以下など）は、'
               '点数が出た台に数えていません。',
-              style: TextStyle(color: AppColors.ash, fontSize: 12, height: 1.45),
+              style: TextStyle(
+                color: AppColors.ash,
+                fontSize: 12,
+                height: 1.45,
+              ),
             ),
           ],
         ),

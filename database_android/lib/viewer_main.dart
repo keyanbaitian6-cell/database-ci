@@ -10,6 +10,7 @@ import 'shared_widgets.dart';
 import 'theme.dart';
 import 'viewer_bridge.dart';
 import 'viewer_data.dart';
+import 'viewer_pages.dart';
 
 /// iPhoneなどで見るための閲覧専用ページ（Web）。
 ///
@@ -129,7 +130,8 @@ class _ViewerHomeState extends State<ViewerHome> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                merged.note ?? 'Googleドライブの最新（${data.records.length}台）を読み込みました。',
+                merged.note ??
+                    'Googleドライブの最新（${data.records.length}台）を読み込みました。',
               ),
             ),
           );
@@ -227,38 +229,26 @@ class _ViewerHomeState extends State<ViewerHome> {
   void _openRecord(SlotRecord record, ScoreResult? score) =>
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => SavedGraphPage(
+          builder: (_) => ViewerRecordPage(
+            data: _data!,
             record: record,
-            score: score,
-            allRecords: _data!.records,
+            onDayChanged: (day) => setState(() {
+              _store = record.store;
+              _day = day;
+            }),
           ),
         ),
       );
 
   void _openMachine(String machine) {
-    final entries = [
-      for (final e in _digest)
-        if (e.$1.machine == machine) e,
-    ]..sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
-    final racks = {
-      for (final c in _candidates?.candidates ?? const <ProvisionalCandidate>[])
-        if (c.record.machine == machine) c.record.rack,
-    };
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          appBar: AppBar(title: Text(displayMachineName(machine))),
-          body: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              MachineSection(
-                machine: machine,
-                entries: entries,
-                candidateRacks: racks,
-                onTap: _openRecord,
-              ),
-            ],
-          ),
+        builder: (_) => ViewerMachinePage(
+          data: _data!,
+          store: _store!,
+          machine: machine,
+          day: _day!,
+          onDayChanged: (day) => setState(() => _day = day),
         ),
       ),
     );
@@ -290,9 +280,21 @@ class _ViewerHomeState extends State<ViewerHome> {
   @override
   Widget build(BuildContext context) {
     final data = _data;
+    final days = data == null
+        ? <String>[]
+        : viewerDays(data.records, _store ?? '');
+    if (!days.contains(_day)) _day = days.firstOrNull;
     return Scaffold(
       appBar: AppBar(
         title: const Text('database 閲覧'),
+        bottom: days.isEmpty
+            ? null
+            : ViewerDateBar(
+                days: days,
+                day: _day,
+                event: data?.dateEventFor(_store!, _day!)?.name,
+                onChanged: (day) => setState(() => _day = day),
+              ),
         actions: [
           if (_remote != null)
             IconButton(
@@ -405,49 +407,13 @@ class _ViewerHomeState extends State<ViewerHome> {
                 'Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。',
           ),
         if (_loading || _syncing) const LinearProgressIndicator(),
-        Row(
-          children: [
-            Expanded(
-              flex: 2,
-              child: storeDropdown(
-                store,
-                (v) => setState(() {
-                  _store = v;
-                  _day = null;
-                }),
-                short: true,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 3,
-              child: DropdownButtonFormField<String>(
-                key: ValueKey('$store|$day'),
-                initialValue: day,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: '日付'),
-                items: [
-                  for (final v in days)
-                    DropdownMenuItem(
-                      value: v,
-                      child: Builder(builder: (context) {
-                        final event = data.dateEventFor(store, v);
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(dayWithWeekday(v)),
-                            if (event != null)
-                              Text(event.name, style: const TextStyle(fontSize: 11, color: AppColors.appleBlue)),
-                          ],
-                        );
-                      }),
-                    ),
-                ],
-                onChanged: (v) => setState(() => _day = v),
-              ),
-            ),
-          ],
+        storeDropdown(
+          store,
+          (v) => setState(() {
+            _store = v;
+            _day = null;
+          }),
+          short: true,
         ),
         const SizedBox(height: 10),
         OutlinedButton.icon(
