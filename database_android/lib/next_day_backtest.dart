@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'data_checks.dart';
+import 'exploratory_candidates.dart';
 import 'list_views.dart';
 import 'models.dart';
 import 'scoring.dart';
@@ -127,6 +128,9 @@ class BacktestMember {
   final double? nextScore;
   bool current = false;
   bool previousScore = false;
+
+  /// 探索中の選び方（[exploratoryCandidates]）で選ばれた方式。
+  final Set<ExploratoryMethod> exploratory = {};
 }
 
 /// 店舗・機種・予測日ごとの候補。
@@ -146,6 +150,9 @@ class BacktestTopSeven {
   BacktestTopSeven(this.store, this.day, this.current, this.previousScore);
   final String store, day;
   final List<BacktestMember> current, previousScore;
+
+  /// 探索中の選び方ごとの、最初に表示する7台。
+  final Map<ExploratoryMethod, List<BacktestMember>> exploratory = {};
 }
 
 class BacktestRun {
@@ -170,6 +177,7 @@ BacktestRun runBacktest(
   List<SlotRecord> full, {
   DateTime? Function(String day)? cutoffFor,
   Map<String, List<SlotRecord>> earlier = const {},
+  List<ExploratoryMethod> exploratory = const [],
 }) {
   final byKey = {for (final r in full) r.key: r};
   final nextScores = <String, double?>{};
@@ -282,11 +290,20 @@ BacktestRun runBacktest(
           if (sa == null && sb != null) return 1;
           return _byMachineThenRack(a, b);
         });
-      tops.add(
-        BacktestTopSeven(store, day, currentTop, [
-          for (final p in previousPool.take(7)) p.member,
-        ]),
-      );
+      final top = BacktestTopSeven(store, day, currentTop, [
+        for (final p in previousPool.take(7)) p.member,
+      ]);
+      for (final method in exploratory) {
+        final picks = exploratoryCandidates(dayRows, available, method);
+        final members = [
+          for (final c in picks) lookup['${c.record.machine}|${c.record.rack}']!,
+        ];
+        for (final m in members) {
+          m.exploratory.add(method);
+        }
+        top.exploratory[method] = members.take(7).toList();
+      }
+      tops.add(top);
     }
   }
   return BacktestRun(groups, tops, unlabeled);
@@ -386,19 +403,27 @@ Map<String, Object?> evaluateMethod(
 }
 
 /// 現行と前日の点数が高い台の、同じグループでの直接比較（前日点 − 現行）。
-Map<String, Object?> comparePreviousToCurrent(Iterable<BacktestGroup> groups) {
+Map<String, Object?> comparePreviousToCurrent(Iterable<BacktestGroup> groups) =>
+    compareMethods(groups, (m) => m.previousScore, (m) => m.current);
+
+/// 2つの選び方の、同じグループでの直接比較（[a] − [b]）。
+Map<String, Object?> compareMethods(
+  Iterable<BacktestGroup> groups,
+  bool Function(BacktestMember) a,
+  bool Function(BacktestMember) b,
+) {
   final byDay = <String, List<double>>{};
   for (final g in groups) {
-    final cur = [
+    final first = [
       for (final m in g.members)
-        if (m.current && m.nextScore != null) m.nextScore!,
+        if (a(m) && m.nextScore != null) m.nextScore!,
     ];
-    final prev = [
+    final second = [
       for (final m in g.members)
-        if (m.previousScore && m.nextScore != null) m.nextScore!,
+        if (b(m) && m.nextScore != null) m.nextScore!,
     ];
-    if (cur.isEmpty || prev.isEmpty) continue;
-    byDay.putIfAbsent(g.day, () => []).add(_mean(prev)! - _mean(cur)!);
+    if (first.isEmpty || second.isEmpty) continue;
+    byDay.putIfAbsent(g.day, () => []).add(_mean(first)! - _mean(second)!);
   }
   return _daySummary(byDay);
 }
@@ -408,12 +433,25 @@ Map<String, Object?> evaluateTopSeven(
   List<BacktestTopSeven> tops,
   List<BacktestGroup> groups, {
   required bool current,
-}) {
+}) => evaluateTopSevenBy(
+  tops,
+  groups,
+  (t) => current ? t.current : t.previousScore,
+  (m) => current ? m.current : m.previousScore,
+);
+
+/// 最初に表示する7台（[shown]）の成績。[isCandidate] はその方式の候補全体。
+Map<String, Object?> evaluateTopSevenBy(
+  List<BacktestTopSeven> tops,
+  List<BacktestGroup> groups,
+  List<BacktestMember> Function(BacktestTopSeven) shownOf,
+  bool Function(BacktestMember) isCandidate,
+) {
   final vsPool = <String, List<double>>{}, vsCandidates = <String, List<double>>{};
   final shown = <double>[];
   var selected = 0;
   for (final t in tops) {
-    final members = current ? t.current : t.previousScore;
+    final members = shownOf(t);
     selected += members.length;
     final scored = [
       for (final m in members)
@@ -427,7 +465,7 @@ Map<String, Object?> evaluateTopSeven(
     final candidates = [
       for (final g in storeGroups)
         for (final m in g.labeled)
-          if (current ? m.current : m.previousScore) m.nextScore!,
+          if (isCandidate(m)) m.nextScore!,
     ];
     if (scored.isEmpty || pool.isEmpty) continue;
     shown.addAll(scored);

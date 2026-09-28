@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:database_android/candidate_log.dart';
+import 'package:database_android/exploratory_candidates.dart';
 import 'package:database_android/list_views.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/next_day_backtest.dart';
@@ -19,6 +20,9 @@ import 'package:database_android/scoring.dart';
 /// `--dump-candidates` は、時刻を見ない全データでの候補をPC版と照合するための出力。
 /// 実データ・台ごとの結果はリポジトリに入れない（集計だけを出す）。
 const freshFrom = '2026-09-25';
+
+/// 探索（「8. 探索」）：選ぶ期間は予測日 [freshFrom] より前、確かめる期間はそれ以降。
+const exploratoryMethods = ExploratoryMethod.values;
 
 void main(List<String> args) {
   String? option(String name) {
@@ -91,6 +95,59 @@ void main(List<String> args) {
     };
   }
 
+  // 探索：案ごとの成績を、選ぶ期間・確かめる期間に分けて出し、事前に決めた
+  // 規則（選ぶ期間の差がいちばん大きい案。同点は番号の小さい案）で1つ選ぶ。
+  Map<String, Object?> explore(BacktestRun run) {
+    Map<String, Object?> period(bool Function(BacktestGroup) keep) {
+      final groups = run.groups.where(keep).toList();
+      final tops = run.topSeven
+          .where((t) => groups.any((g) => g.store == t.store && g.day == t.day))
+          .toList();
+      return {
+        'groups': groups.length,
+        'prediction_days': {for (final g in groups) g.day}.length,
+        'current': evaluateMethod(groups, (m) => m.current),
+        'top7_current': evaluateTopSeven(tops, groups, current: true),
+        for (final method in exploratoryMethods) ...{
+          method.name: evaluateMethod(
+            groups,
+            (m) => m.exploratory.contains(method),
+          ),
+          '${method.name}_minus_current': compareMethods(
+            groups,
+            (m) => m.exploratory.contains(method),
+            (m) => m.current,
+          ),
+          'top7_${method.name}': evaluateTopSevenBy(
+            tops,
+            groups,
+            (t) => t.exploratory[method]!,
+            (m) => m.exploratory.contains(method),
+          ),
+        },
+      };
+    }
+
+    final select = period((g) => g.day.compareTo(freshFrom) < 0);
+    ExploratoryMethod? chosen;
+    double? best;
+    for (final method in exploratoryMethods) {
+      final gap =
+          ((select[method.name] as Map)['gap_vs_pool'] as Map)['mean_of_days']
+              as double?;
+      if (gap != null && (best == null || gap > best)) {
+        best = gap;
+        chosen = method;
+      }
+    }
+    return {
+      'select_period': select,
+      'confirm_period': period((g) => g.day.compareTo(freshFrom) >= 0),
+      'all': period((_) => true),
+      'chosen_by_select_period': chosen?.name,
+    };
+  }
+
   final main = runBacktest(full, cutoffFor: (day) => predictionCutoff(day));
   final result = <String, Object?>{
     'scoring_version': scoringVersion,
@@ -102,6 +159,20 @@ void main(List<String> args) {
       runBacktest(full, cutoffFor: (day) => predictionCutoff(day, hour: 9)),
     ),
     'supplement_ignore_time': summarize(runBacktest(full)),
+    'exploratory_cutoff_0000': explore(
+      runBacktest(
+        full,
+        cutoffFor: (day) => predictionCutoff(day),
+        exploratory: exploratoryMethods,
+      ),
+    ),
+    'exploratory_supplement_cutoff_0900': explore(
+      runBacktest(
+        full,
+        cutoffFor: (day) => predictionCutoff(day, hour: 9),
+        exploratory: exploratoryMethods,
+      ),
+    ),
     if (earlier.isNotEmpty)
       'supplement_earlier_values_0000': summarize(
         runBacktest(

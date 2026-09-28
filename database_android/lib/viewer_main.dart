@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'answer_check.dart';
 import 'data_checks.dart';
+import 'exploratory_page.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
@@ -434,6 +435,24 @@ class _ViewerHomeState extends State<ViewerHome> {
           icon: const Icon(Icons.fact_check_outlined),
           label: const Text('答え合わせ（前の日の候補の結果）'),
         ),
+        if (day != null) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ExploratoryForecastPage(
+                  data: data,
+                  store: store,
+                  day: day,
+                  onOpen: (record) => _openRecord(record, null),
+                  onDayChanged: (day) => setState(() => _day = day),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.science_outlined),
+            label: const Text('新規予測（試験中の別の選び方）'),
+          ),
+        ],
         const SizedBox(height: 14),
         if (dayRows.isEmpty || day == null)
           const EmptyState(
