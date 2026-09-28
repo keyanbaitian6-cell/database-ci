@@ -40,6 +40,33 @@ Future<void> phone(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('日付一覧の各日にイベント名を添え、選んだ欄は日付だけ', (tester) async {
+    await phone(tester);
+    const events = {'2026-09-25': '超探す楽しみ'};
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          appBar: AppBar(
+            bottom: ViewerDateBar(
+              days: const ['2026-09-28', '2026-09-25'],
+              day: '2026-09-28',
+              eventFor: (day) => events[day],
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    // 選んだ日（9/28）にはイベントが無いので、閉じているときは出ない。
+    expect(find.text('超探す楽しみ'), findsNothing);
+    await tester.tap(find.text('2026-09-28（月）'));
+    await tester.pumpAndSettle();
+    // 一覧を開くと、イベントがある日（9/25）の下に出る。
+    expect(find.text('2026-09-25（金）'), findsOneWidget);
+    expect(find.text('超探す楽しみ'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('記録がある日にだけ移動し、両端の矢印は無効', (tester) async {
     await phone(tester);
     var day = '2026-09-28';

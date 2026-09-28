@@ -296,6 +296,7 @@ class _ViewerHomeState extends State<ViewerHome> {
                 days: days,
                 day: _day,
                 event: data?.dateEventFor(_store!, _day!)?.name,
+                eventFor: (day) => data?.dateEventFor(_store!, day)?.name,
                 onChanged: (day) => setState(() => _day = day),
               ),
         actions: [
@@ -426,6 +427,7 @@ class _ViewerHomeState extends State<ViewerHome> {
                 records: all,
                 store: store,
                 onOpen: _openRecord,
+                eventFor: (store, day) => data.dateEventFor(store, day)?.name,
               ),
             ),
           ),

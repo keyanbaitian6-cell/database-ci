@@ -104,11 +104,15 @@ class AnswerCheckPage extends StatefulWidget {
     required this.records,
     required this.store,
     required this.onOpen,
+    this.eventFor,
   });
 
   final List<SlotRecord> records;
   final String store;
   final void Function(SlotRecord record, ScoreResult score) onOpen;
+
+  /// [store] の [day] のイベント名（日付一覧に添える。無ければ null）。
+  final String? Function(String store, String day)? eventFor;
 
   @override
   State<AnswerCheckPage> createState() => _AnswerCheckPageState();
@@ -162,6 +166,12 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
                 days: _days,
                 day: _selectedDay,
                 allowAll: true,
+                event: _selectedDay == null
+                    ? null
+                    : widget.eventFor?.call(_store, _selectedDay!),
+                eventFor: widget.eventFor == null
+                    ? null
+                    : (day) => widget.eventFor!(_store, day),
                 onChanged: (day) => setState(() => _selectedDay = day),
               ),
       ),

@@ -22,12 +22,16 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
     required this.day,
     required this.onChanged,
     this.event,
+    this.eventFor,
     this.allowAll = false,
   });
   final List<String> days;
   final String? day;
   final ValueChanged<String?> onChanged;
   final String? event;
+
+  /// 日付一覧の各日に添えるイベント名（無ければ null）。
+  final String? Function(String day)? eventFor;
   final bool allowAll;
 
   @override
@@ -60,6 +64,11 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
                       labelText: '表示する日付',
                       isDense: true,
                     ),
+                    // 選んだ後の欄は日付だけ（イベント名は下の行に出す）。
+                    selectedItemBuilder: (context) => [
+                      if (allowAll) const Text('すべての日付'),
+                      for (final d in days) Text(dayWithWeekday(d)),
+                    ],
                     items: [
                       if (allowAll)
                         const DropdownMenuItem(
@@ -69,7 +78,7 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
                       for (final d in days)
                         DropdownMenuItem(
                           value: d,
-                          child: Text(dayWithWeekday(d)),
+                          child: _DayItem(day: d, event: eventFor?.call(d)),
                         ),
                     ],
                     onChanged: days.isEmpty
@@ -101,6 +110,29 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
       ),
     );
   }
+}
+
+/// 日付一覧の1行：日付と、その日のイベント名。
+class _DayItem extends StatelessWidget {
+  const _DayItem({required this.day, this.event});
+  final String day;
+  final String? event;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(dayWithWeekday(day)),
+      if (event != null)
+        Text(
+          event!,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 11, color: AppColors.appleBlue),
+        ),
+    ],
+  );
 }
 
 class ViewerMachinePage extends StatefulWidget {
@@ -160,6 +192,7 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
           days: viewerDays(data.records, widget.store),
           day: _day,
           event: data.dateEventFor(widget.store, _day)?.name,
+          eventFor: (day) => data.dateEventFor(widget.store, day)?.name,
           onChanged: _changeDay,
         ),
       ),
@@ -237,6 +270,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
       days: viewerDays(widget.data.records, original.store),
       day: _day,
       event: widget.data.dateEventFor(original.store, _day)?.name,
+      eventFor: (day) => widget.data.dateEventFor(original.store, day)?.name,
       onChanged: (day) {
         if (day == null || day == _day) return;
         setState(() => _day = day);
