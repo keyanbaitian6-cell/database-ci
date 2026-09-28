@@ -56,7 +56,7 @@ class BrokenCandidates extends DatabaseService {
       );
 
   @override
-  Future<List<CandidateSnapshot>> loadCandidateSnapshots() =>
+  Future<List<CandidateSnapshot>> loadLatestCandidateSnapshots() =>
       Future.error(StateError('broken table'));
 }
 
@@ -462,14 +462,16 @@ void main() {
       expect(app.revision, greaterThan(before));
       expect(() => app.records.add(rec(2)), throwsUnsupportedError);
       final view = app.dayView('nagamachiminami', '2026-09-25');
+      await view;
       expect(
         identical(app.dayView('nagamachiminami', '2026-09-25'), view),
         isTrue,
       );
       await app.saveTable('nagamachiminami', '2026-09-25', 'テスト', [row(2)]);
       final next = app.dayView('nagamachiminami', '2026-09-25');
+      await next;
       expect(identical(next, view), isFalse);
-      expect(next.scored, hasLength(2));
+      expect((await next).scored, hasLength(2));
       await db.close();
     });
   });

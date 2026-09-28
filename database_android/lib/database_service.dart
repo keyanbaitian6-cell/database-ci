@@ -775,6 +775,22 @@ class DatabaseService {
     ];
   }
 
+  /// 画面の比較に必要なのはグループごとの最新だけ。履歴全文はDBと出力に残す。
+  Future<List<CandidateSnapshot>> loadLatestCandidateSnapshots() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT s.payload FROM candidate_snapshots s
+      WHERE NOT EXISTS (SELECT 1 FROM candidate_snapshots newer
+        WHERE newer.store = s.store AND newer.day = s.day AND newer.machine = s.machine
+          AND (julianday(newer.taken_at) > julianday(s.taken_at)
+            OR (julianday(newer.taken_at) = julianday(s.taken_at) AND newer.rowid > s.rowid)))
+    ''');
+    return [
+      for (final row in rows)
+        ?CandidateSnapshot.tryFromJson(jsonDecode(row['payload'] as String)),
+    ];
+  }
+
   Future<Map<String, String>> loadState() async {
     final db = await database;
     final rows = await db.query('app_state');
@@ -956,28 +972,35 @@ class DatabaseService {
         onProgress?.call(count);
       }
       sink.write('\n]');
-      final snapshots = await db.rawQuery(
-        'SELECT payload FROM candidate_snapshots WHERE 1 = 1'
-        '${store == null ? '' : ' AND store = ?'}'
-        '${day == null ? '' : ' AND day = ?'} ORDER BY taken_at',
-        [?store, ?day],
-      );
+      var lastSnapshot = 0;
       var snapshotRows = 0;
-      for (final row in snapshots) {
-        Object? decoded;
-        try {
-          decoded = jsonDecode(row['payload'] as String);
-          if (CandidateSnapshot.tryFromJson(decoded) == null) {
-            throw const FormatException('翌日候補の記録の形式が不正です。');
+      while (true) {
+        final snapshots = await db.rawQuery(
+          'SELECT rowid AS id, payload FROM candidate_snapshots WHERE rowid > ?'
+          '${store == null ? '' : ' AND store = ?'}'
+          '${day == null ? '' : ' AND day = ?'} ORDER BY rowid LIMIT ?',
+          [lastSnapshot, ?store, ?day, _chunkRows],
+        );
+        if (snapshots.isEmpty) break;
+        for (final row in snapshots) {
+          lastSnapshot = row['id'] as int;
+          Object? decoded;
+          try {
+            decoded = jsonDecode(row['payload'] as String);
+            if (CandidateSnapshot.tryFromJson(decoded) == null) {
+              throw const FormatException('翌日候補の記録の形式が不正です。');
+            }
+            candidates++;
+          } on Object {
+            unreadable++;
+            decoded = {'unreadable_candidate_snapshot': row['payload']};
           }
-          candidates++;
-        } on Object {
-          unreadable++;
-          decoded = {'unreadable_candidate_snapshot': row['payload']};
+          sink.write(
+            snapshotRows == 0 ? ', "candidate_snapshots": [\n' : ',\n',
+          );
+          sink.write(jsonEncode(decoded));
+          snapshotRows++;
         }
-        sink.write(snapshotRows == 0 ? ', "candidate_snapshots": [\n' : ',\n');
-        sink.write(jsonEncode(decoded));
-        snapshotRows++;
       }
       if (snapshotRows > 0) sink.write('\n]');
       if (unreadable > 0) sink.write(', "recovery_required": $unreadable');
@@ -1022,6 +1045,16 @@ class DatabaseWriter {
 
   Future<void> apply(ChangeSet changes) =>
       DatabaseService._applyIn(_txn, changes);
+
+  Future<int> addSnapshots(List<CandidateSnapshot> snapshots) async {
+    if (snapshots.isEmpty) return 0;
+    final before =
+        (await _txn.rawQuery('SELECT total_changes() AS n')).single['n'] as int;
+    await apply(ChangeSet(snapshots: snapshots));
+    final after =
+        (await _txn.rawQuery('SELECT total_changes() AS n')).single['n'] as int;
+    return after - before;
+  }
 
   Future<Map<String, SlotRecord>> loadByKeys(Iterable<String> keys) async =>
       keys.isEmpty ? {} : DatabaseService._loadFull(_txn, keys);

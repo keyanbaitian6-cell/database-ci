@@ -50,15 +50,22 @@ void main() {
     expect(flow.loading, isFalse);
   });
 
-  test('読み込みの知らせが来ないときは、処理中でなければ読み込み中を外す', () async {
+  test('時間切れでは待機表示だけを外し、準備できるまで取り込みを禁止する', () async {
     final flow = CaptureFlow();
     final page = flow.pageStarted('https://x/a');
     await flow.whileBusy(() async {
       flow.loadTimedOut(page);
-      expect(flow.loading, isTrue); // 処理中は外さない
+      expect(flow.loading, isFalse);
     });
     flow.loadTimedOut(page);
     expect(flow.loading, isFalse);
+    expect(flow.canCapture, isFalse);
+    flow.ready(page);
+    expect(flow.canCapture, isTrue);
+    final next = flow.pageStarted('https://x/b');
+    flow.ready(next);
+    flow.loadTimedOut(page);
+    expect(flow.canCapture, isTrue);
   });
 
   test('次のページでの知らせは1回だけ。次の機種へ進む予定は機種一覧を開くときだけ残る', () {

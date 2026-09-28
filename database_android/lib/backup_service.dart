@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'candidate_log.dart';
 import 'date_events.dart';
 import 'models.dart';
+import 'import_spool.dart';
 
 const backupFormat = 'database-backup';
 const backupVersion = 1;
@@ -205,6 +206,7 @@ class BackupService {
     var lineLayout = false;
     var streamedCandidates = false;
     var recordCount = 0;
+    var candidateCount = 0;
     // 各行の値はjsonDecodeで検証し、文書の外枠は値をnullに置換して検証する。
     // 画像の全文を保持せず、カンマ・閉じ括弧・末尾の余分な文字も検査できる。
     final structure = StringBuffer();
@@ -260,6 +262,11 @@ class BackupService {
           throw const FormatException('翌日候補の記録に読めない項目があります。救出用ファイルは修復が必要です。');
         }
         candidates.add(snapshot);
+        candidateCount++;
+        if (candidates.length >= chunkSize) {
+          yield BackupChunk(candidates: List.of(candidates));
+          candidates.clear();
+        }
       }
     }
     if (lineLayout) {
@@ -273,7 +280,7 @@ class BackupService {
       }
       if (streamedCandidates) {
         final outerCandidates = envelope['candidate_snapshots'] as List;
-        if (outerCandidates.length != candidates.length ||
+        if (outerCandidates.length != candidateCount ||
             outerCandidates.any((c) => c != null)) {
           throw const FormatException('candidate_snapshots が重複しているか、形式が不正です。');
         }
@@ -281,9 +288,23 @@ class BackupService {
         candidates.addAll(_candidatesOf(envelope));
       }
       events = _eventsOf(envelope);
+      // PC版など候補の配列が末尾に別の書式で入る場合も、DBへは分割して渡す。
+      var candidateOffset = 0;
+      for (
+        ;
+        candidateOffset + chunkSize < candidates.length;
+        candidateOffset += chunkSize
+      ) {
+        yield BackupChunk(
+          candidates: candidates.sublist(
+            candidateOffset,
+            candidateOffset + chunkSize,
+          ),
+        );
+      }
       yield BackupChunk(
         records: records,
-        candidates: candidates,
+        candidates: candidates.sublist(candidateOffset),
         events: events,
       );
       return;
@@ -301,7 +322,18 @@ class BackupService {
       final end = i + chunkSize > all.length ? all.length : i + chunkSize;
       yield BackupChunk(records: all.sublist(i, end));
     }
-    yield BackupChunk(candidates: _candidatesOf(decoded));
+    final rawCandidates = decoded['candidate_snapshots'] as List? ?? const [];
+    for (var i = 0; i < rawCandidates.length; i += chunkSize) {
+      final end = i + chunkSize > rawCandidates.length
+          ? rawCandidates.length
+          : i + chunkSize;
+      yield BackupChunk(
+        candidates: [
+          for (final item in rawCandidates.sublist(i, end))
+            CandidateSnapshot.tryFromJson(item)!,
+        ],
+      );
+    }
     final parsedEvents = _eventsOf(decoded);
     if (parsedEvents.isNotEmpty) yield BackupChunk(events: parsedEvents);
   }
@@ -484,6 +516,14 @@ class BackupPlanner {
 /// 取り込みの結果（少しずつ読んだ分の合計）。台そのものは数だけ持つ
 /// （確認が要る競合だけは、確認画面に出すため中身を持つ）。
 class BackupImportResult {
+  ImportSpool? conflictSpool;
+  Future<List<SlotRecord>> readConflicts(List<SlotRecord> selected) async => [
+    for (final r in selected)
+      if (conflictSpool == null)
+        r
+      else
+        SlotRecord.fromJson(await conflictSpool!.read(r.key)),
+  ];
   int added = 0;
   int graphOnly = 0;
   int linkOnly = 0;
@@ -498,13 +538,23 @@ class BackupImportResult {
   int temporary = 0;
   final conflicts = <BackupConflict>[];
 
-  void add(BackupImportPlan plan) {
+  void add(BackupImportPlan plan, {bool lightConflicts = false}) {
     added += plan.added.length;
     graphOnly += plan.graphOnly.length;
     linkOnly += plan.linkOnly.length;
     settingOnly += plan.settingOnly.length;
     unchanged += plan.unchanged.length;
     skipped += plan.skipped;
-    conflicts.addAll(plan.conflicts);
+    conflicts.addAll(
+      lightConflicts
+          ? [
+              for (final c in plan.conflicts)
+                BackupConflict(
+                  local: c.local.lightened(),
+                  incoming: c.incoming.lightened(),
+                ),
+            ]
+          : plan.conflicts,
+    );
   }
 }

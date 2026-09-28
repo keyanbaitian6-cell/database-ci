@@ -18,7 +18,6 @@ import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
 import 'normal_type.dart';
-import 'scoring.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'web_import_page.dart';
@@ -578,7 +577,9 @@ Future<void> _importBackup(
         MaterialPageRoute(
           builder: (_) => BackupConflictsPage(
             conflicts: result.conflicts,
-            onApply: controller.applyBackupOverrides,
+            onApply: (selected) async => controller.applyBackupOverrides(
+              await result.readConflicts(selected),
+            ),
           ),
         ),
       );
@@ -720,17 +721,44 @@ class BackupConflictsPage extends StatefulWidget {
 
 class _BackupConflictsPageState extends State<BackupConflictsPage> {
   late final _selected = List<bool>.filled(widget.conflicts.length, false);
+  static const _pageSize = 50;
+  var _page = 0;
+  final _applied = <int>{};
   var _saving = false;
+
+  bool get _hasSelected => _selected.skip(_page).take(_pageSize).any((v) => v);
 
   Future<void> _apply() async {
     final chosen = [
-      for (var i = 0; i < widget.conflicts.length; i++)
+      for (
+        var i = _page;
+        i < widget.conflicts.length && i < _page + _pageSize;
+        i++
+      )
         if (_selected[i]) widget.conflicts[i].incoming,
     ];
     setState(() => _saving = true);
     try {
       await widget.onApply(chosen);
-      if (mounted) Navigator.of(context).pop();
+      if (!mounted) return;
+      for (
+        var i = _page;
+        i < widget.conflicts.length && i < _page + _pageSize;
+        i++
+      ) {
+        if (_selected[i]) {
+          _applied.add(i);
+          _selected[i] = false;
+        }
+      }
+      if (_page + _pageSize >= widget.conflicts.length) {
+        Navigator.of(context).pop();
+      } else {
+        setState(() {
+          _page += _pageSize;
+          _saving = false;
+        });
+      }
     } catch (error) {
       // 失敗したら何も上書きされていない（1回の書き込み）。選び直して再試行できる。
       if (!mounted) return;
@@ -753,18 +781,48 @@ class _BackupConflictsPageState extends State<BackupConflictsPage> {
         24 + MediaQuery.of(context).viewPadding.bottom,
       ),
       children: [
-        const Text('数値または設定情報が一致しない記録があります。取り込んだ内容を使う場合だけチェックしてください。'),
+        const Text(
+          '数値または設定情報が一致しない記録があります。取り込んだ内容を使う場合だけチェックしてください。50件ずつ確認・保存します。チェック中は保存するかチェックを外すと次へ進めます。',
+        ),
         const SizedBox(height: 12),
-        for (var i = 0; i < widget.conflicts.length; i++)
+        Text(
+          '${_page + 1}〜${(_page + _pageSize).clamp(0, widget.conflicts.length)} / ${widget.conflicts.length}件',
+        ),
+        Row(
+          children: [
+            TextButton(
+              onPressed: _saving || _hasSelected || _page == 0
+                  ? null
+                  : () => setState(() => _page -= _pageSize),
+              child: const Text('前の50件'),
+            ),
+            TextButton(
+              onPressed:
+                  _saving ||
+                      _hasSelected ||
+                      _page + _pageSize >= widget.conflicts.length
+                  ? null
+                  : () => setState(() => _page += _pageSize),
+              child: const Text('次の50件'),
+            ),
+          ],
+        ),
+        for (
+          var i = _page;
+          i < widget.conflicts.length && i < _page + _pageSize;
+          i++
+        )
           _ConflictCard(
             conflict: widget.conflicts[i],
             value: _selected[i],
-            onChanged: (v) => setState(() => _selected[i] = v ?? false),
+            onChanged: _saving || _applied.contains(i)
+                ? null
+                : (v) => setState(() => _selected[i] = v ?? false),
           ),
         const SizedBox(height: 12),
         FilledButton(
           onPressed: _saving ? null : _apply,
-          child: Text(_saving ? '保存中…' : 'チェックした内容で上書きして保存'),
+          child: Text(_saving ? '保存中…' : 'このページでチェックした内容を保存'),
         ),
       ],
     ),
@@ -779,7 +837,7 @@ class _ConflictCard extends StatelessWidget {
   });
   final BackupConflict conflict;
   final bool value;
-  final ValueChanged<bool?> onChanged;
+  final ValueChanged<bool?>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1069,7 +1127,26 @@ class _ResultsPageState extends State<ResultsPage> {
     if (!dayRows.any((r) => r.machine == _machine)) _machine = null;
     // 選んだ店舗・日付・機種は、選んだとき（onChanged）に覚える。ここ（画面の
     // 組み立て）ではファイルに書かない。
-    final view = day == null ? null : widget.controller.dayView(store!, day!);
+    return FutureBuilder<DayView>(
+      future: widget.controller.dayView(store!, day ?? ''),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text('採点を読み込めませんでした：${snapshot.error}'));
+        }
+        return _buildDay(context, dayRows, days, snapshot.data);
+      },
+    );
+  }
+
+  Widget _buildDay(
+    BuildContext context,
+    List<SlotRecord> dayRows,
+    List<String> days,
+    DayView? view,
+  ) {
     _scoredByKey = view?.scored ?? const {};
     final candidates =
         view?.candidates ??
@@ -1544,14 +1621,6 @@ class _HistoryPageState extends State<HistoryPage> {
   /// 機種が多くプルダウンでは探しにくいため、文字で絞る。
   final _query = TextEditingController();
 
-  // 得点は、データが変わったときだけ計算し直す（絞り込みを変えても同じ台の点は同じ）。
-  // 画面を組み立て直すたびに全記録を採点し直すと、記録が増えるほど待たされる。
-  Object? _scoredFor;
-  var _scoredByKey = <String, ScoreResult>{};
-
-  ScoreResult _score(SlotRecord row, List<SlotRecord> all) =>
-      _scoredByKey[row.key] ??= scoreRecord(row, all);
-
   @override
   void dispose() {
     _query.dispose();
@@ -1572,10 +1641,6 @@ class _HistoryPageState extends State<HistoryPage> {
         (r) => (store.isEmpty || r.store == store) && matches(r.machine),
       ),
     );
-    if (_scoredFor != widget.controller.revision) {
-      _scoredByKey = {};
-      _scoredFor = widget.controller.revision;
-    }
     // 日付ごとのカードは数が増え続けるので、画面に出ている分だけ組み立てる。
     // （以前は全部まとめて作っていたため、記録が増えるほど開くのが遅くなった）
     return ListView.builder(
@@ -1714,12 +1779,6 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Widget _groupRow(HistoryGroup group, List<SlotRecord> all) {
-    final totals = [for (final r in group.rows) _score(r, all).total]
-        .whereType<double>()
-        .toList();
-    final average = totals.isEmpty
-        ? null
-        : totals.reduce((a, b) => a + b) / totals.length;
     final settings = group.rows.where((r) => r.confirmedSetting != null).length;
     return InkWell(
       onTap: () => Navigator.of(context).push(
@@ -1759,7 +1818,27 @@ class _HistoryPageState extends State<HistoryPage> {
               ),
             ),
             const SizedBox(width: 8),
-            AverageBadge(average: average),
+            FutureBuilder<DayView>(
+              future: widget.controller.dayView(group.store, group.day),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) return const Text('採点エラー');
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Text(
+                    '採点中…',
+                    style: TextStyle(color: AppColors.ash),
+                  );
+                }
+                final totals = [
+                  for (final r in group.rows)
+                    snapshot.data?.scored[r.key]?.$2.total,
+                ].whereType<double>().toList();
+                return AverageBadge(
+                  average: totals.isEmpty
+                      ? null
+                      : totals.reduce((a, b) => a + b) / totals.length,
+                );
+              },
+            ),
             const Icon(Icons.chevron_right, color: AppColors.mist),
           ],
         ),
@@ -1786,77 +1865,75 @@ class HistoryGroupPage extends StatefulWidget {
 }
 
 class _HistoryGroupPageState extends State<HistoryGroupPage> {
-  Object? _scoredFor;
-  var _scored = <(SlotRecord, ScoreResult)>[];
-  var _candidateRacks = <int>{};
-
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: widget.controller,
     builder: (context, _) {
-      final all = widget.controller.records;
-      if (_scoredFor != widget.controller.revision) {
-        // 同じ店舗・機種の記録だけを見る（全記録を台ごとに見直さない）。
-        final history = machineHistory(all, widget.store, widget.machine);
-        final rows = [
-          for (final r in history)
-            if (r.day == widget.day) r,
-        ]..sort((a, b) => a.rack.compareTo(b.rack));
-        _scored = [for (final r in rows) (r, scoreRecord(r, all))];
-        _candidateRacks = {
-          for (final c in provisionalNextDayCandidates(
-            rows,
-            history,
-          ).candidates)
-            c.record.rack,
-        };
-        _scoredFor = widget.controller.revision;
-      }
       return Scaffold(
         appBar: AppBar(title: Text(dayWithWeekday(widget.day))),
-        body: ListView(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            12,
-            16,
-            16 + MediaQuery.of(context).viewPadding.bottom,
-          ),
-          children: [
-            Text(
-              storeNames[widget.store] ?? widget.store,
-              style: const TextStyle(fontSize: 13, color: AppColors.ash),
-            ),
-            const SizedBox(height: 8),
-            if (_scored.isEmpty)
-              const EmptyState(
-                icon: Icons.inbox_outlined,
-                title: '記録がありません',
-                body: 'この日のこの機種の記録はすべて削除されました。',
-              )
-            else
-              MachineSection(
-                machine: widget.machine,
-                entries: _scored,
-                candidateRacks: _candidateRacks,
-                onTap: (record, score) => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => SavedGraphPage(
-                      record: record,
-                      score: score,
-                      allRecords: widget.controller.records,
+        body: FutureBuilder<DayView>(
+          future: widget.controller.dayView(widget.store, widget.day),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return Center(child: Text('採点できませんでした：${snapshot.error}'));
+            }
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final scored =
+                snapshot.data!.scored.values
+                    .where((r) => r.$1.machine == widget.machine)
+                    .toList()
+                  ..sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
+            final candidateRacks = {
+              for (final c in snapshot.data!.candidates.candidates)
+                if (c.record.machine == widget.machine) c.record.rack,
+            };
+            return ListView(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                12,
+                16,
+                16 + MediaQuery.of(context).viewPadding.bottom,
+              ),
+              children: [
+                Text(
+                  storeNames[widget.store] ?? widget.store,
+                  style: const TextStyle(fontSize: 13, color: AppColors.ash),
+                ),
+                const SizedBox(height: 8),
+                if (scored.isEmpty)
+                  const EmptyState(
+                    icon: Icons.inbox_outlined,
+                    title: '記録がありません',
+                    body: 'この日のこの機種の記録はすべて削除されました。',
+                  )
+                else
+                  MachineSection(
+                    machine: widget.machine,
+                    entries: scored,
+                    candidateRacks: candidateRacks,
+                    onTap: (record, score) => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => SavedGraphPage(
+                          record: record,
+                          score: score,
+                          allRecords: widget.controller.records,
+                        ),
+                      ),
+                    ),
+                    onLongPress: _actions,
+                    footer: const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        'タップでグラフ、長押しで設定情報の記録・削除。',
+                        style: TextStyle(fontSize: 12, color: AppColors.ash),
+                      ),
                     ),
                   ),
-                ),
-                onLongPress: _actions,
-                footer: const Padding(
-                  padding: EdgeInsets.only(top: 6),
-                  child: Text(
-                    'タップでグラフ、長押しで設定情報の記録・削除。',
-                    style: TextStyle(fontSize: 12, color: AppColors.ash),
-                  ),
-                ),
-              ),
-          ],
+              ],
+            );
+          },
         ),
       );
     },

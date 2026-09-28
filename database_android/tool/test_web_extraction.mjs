@@ -73,3 +73,30 @@ assert.deepEqual(result.auto_points, [[340, 200], [200, 80], [100, 250], [300, 1
 reply = await execute('throw new Error("test failure")', fixture([]));
 assert.match(reply.error, /test failure/);
 console.log('PASS: table, async count, offline fallback, distinct zero rows, duplicate rack, graph points/date, error channel');
+
+// 実際に埋め込む読込判定を使う。表が見えていても通信中・ローダー表示中は未完了。
+for (const name of ['_pageReadinessScript', '_machineLinksScript']) {
+  const context = {
+    URL, URLSearchParams, location, window: {jQuery: {active: 1}},
+    localStorage: {setItem() {}},
+    document: {
+      readyState: 'complete', body: {innerText: 'テスト 2台'},
+      querySelectorAll(selector) {
+        if (selector === 'a[href*="machine_name"]') return [{href: location.href, closest: () => ({innerText: 'Test 2台'})}];
+        if (selector === 'tr') return [{textContent: '235 20 4 3000'}];
+        if (selector.includes('aria-busy') && context.loading) return [{getClientRects: () => [1]}];
+        return [];
+      },
+    },
+  };
+  const read = () => JSON.parse(vm.runInNewContext(script(name), context));
+  assert.equal(read().ready, false, `${name}: network busy`);
+  context.window.jQuery.active = 0;
+  context.loading = true;
+  assert.equal(read().ready, false, `${name}: loader visible`);
+  context.loading = false;
+  assert.equal(read().ready, true, `${name}: complete`);
+  context.document.readyState = 'interactive';
+  assert.equal(read().ready, false, `${name}: document incomplete`);
+}
+console.log('PASS: page and machine-list readiness guards');

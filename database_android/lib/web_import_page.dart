@@ -10,6 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'capture_flow.dart';
+import 'page_readiness.dart';
 import 'import_service.dart';
 import 'models.dart' show isValidRecordDay, storeNames;
 import 'theme.dart';
@@ -295,7 +296,23 @@ class _WebImportPageState extends State<WebImportPage> {
     ),
   );
 
-  bool _samePage(int page) => mounted && _flow.isCurrent(page);
+  int _failedPage = -1;
+  String? _navigationUrl;
+  bool _samePage(int page) =>
+      mounted && _flow.isCurrent(page) && _failedPage != page;
+
+  void _failDocument(String? url, String message) {
+    if (!mounted) return;
+    if (url != null &&
+        Uri.tryParse(url)?.removeFragment() !=
+            Uri.tryParse(_navigationUrl ?? '')?.removeFragment()) {
+      return;
+    }
+    _failedPage = _flow.page;
+    _loadTimer?.cancel();
+    _flow.fail(_flow.page);
+    setState(() => _error = message);
+  }
 
   void _showNotice(String message) {
     if (!mounted) return;
@@ -332,19 +349,46 @@ class _WebImportPageState extends State<WebImportPage> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (url) {
+            _navigationUrl = url;
+            _failedPage = -1;
             _extractions.navigationStarted();
             _loadTimer?.cancel();
             _clickTimer?.cancel();
             _noticeTimer?.cancel();
             final start = _flow.pageStarted(url);
-            // 読み込み完了の通知が来ない場合でも、ボタンが押せないまま
-            // 止まらないようにする（20秒で読み込み中の表示を外す）。
-            _loadTimer = Timer(const Duration(seconds: 20), () {
-              if (mounted) _flow.loadTimedOut(start);
+            _loadTimer = Timer(const Duration(seconds: 45), () {
+              if (_samePage(start)) {
+                _flow.loadTimedOut(start);
+                setState(
+                  () => _error = 'まだ読み込み完了を確認できません。通信状態を確認し、再読み込みしてください。',
+                );
+              }
             });
-            if (mounted) setState(() => _notice = null);
+            if (mounted) {
+              setState(() {
+                _notice = null;
+                _error = null;
+              });
+            }
           },
           onPageFinished: (url) => unawaited(_afterPageFinished(url)),
+          onWebResourceError: (error) {
+            if (error.isForMainFrame != true || !mounted) return;
+            _failDocument(
+              error.url,
+              'ページを読み込めませんでした。再読み込みしてください。\n${error.description}',
+            );
+          },
+          onHttpError: (error) {
+            final url = error.request?.uri.toString();
+            // 広告など別URLの失敗は止めず、表示対象のHTTPエラーだけ扱う。
+            if (url != null) {
+              _failDocument(
+                url,
+                'ページを読み込めませんでした（HTTP ${error.response?.statusCode}）。再読み込みしてください。',
+              );
+            }
+          },
           onNavigationRequest: (request) => _allowed(request.url)
               ? NavigationDecision.navigate
               : NavigationDecision.prevent,
@@ -363,26 +407,45 @@ class _WebImportPageState extends State<WebImportPage> {
         return;
       }
     } catch (_) {
+      if (_samePage(page)) _flow.fail(page);
       return;
     }
-    // 保存の途中で次のページの読み込みが終わることがある。保存が終わるのを待つ。
-    await _flow.whenIdle();
-    if (!_samePage(page)) return;
-    unawaited(_web.runJavaScript(_hideYouTubeScript).catchError((_) {}));
-    final pending = _flow.takeAfterLoadNotice();
-    if (pending != null) _showNotice(pending);
-    // _runExtraction has one reply channel.  Keep the auxiliary page reads
-    // sequential and keep the capture button disabled until they finish;
-    // otherwise a quick tap can replace the pending reply and time out.
-    await _markMachines();
-    if (!_samePage(page)) return;
-    await _refreshProgress();
-    if (!_samePage(page)) return;
-    if (_flow.takeAdvance()) {
-      await _moveToNextMachine(automatic: true);
-      return;
+    try {
+      // 保存の途中で次のページの読み込みが終わることがある。保存が終わるのを待つ。
+      await _flow.whenIdle();
+      if (!_samePage(page)) return;
+      await _waitForPage(page);
+      if (!_samePage(page)) return;
+      _loadTimer?.cancel();
+      unawaited(_web.runJavaScript(_hideYouTubeScript).catchError((_) {}));
+      final pending = _flow.takeAfterLoadNotice();
+      if (pending != null) _showNotice(pending);
+      // _runExtraction has one reply channel.  Keep the auxiliary page reads
+      // sequential and keep the capture button disabled until they finish;
+      // otherwise a quick tap can replace the pending reply and time out.
+      await _markMachines();
+      if (!_samePage(page)) return;
+      await _refreshProgress();
+      if (!_samePage(page)) return;
+      if (_flow.takeAdvance()) {
+        await _moveToNextMachine(automatic: true);
+        return;
+      }
+      _flow.ready(page);
+    } catch (error) {
+      if (_samePage(page)) {
+        _flow.fail(page);
+        setState(() => _error = '$error');
+      }
     }
-    _flow.ready(page);
+  }
+
+  Future<void> _waitForPage(int page) async {
+    await waitForStablePage(
+      read: () async =>
+          _decodeJavaScriptResult(await _runExtraction(_pageReadinessScript)),
+      isCurrent: () => _samePage(page),
+    );
   }
 
   bool _allowed(String rawUrl) {
@@ -715,6 +778,8 @@ class _WebImportPageState extends State<WebImportPage> {
       final page = _flow.page;
       setState(() => _error = null);
       try {
+        await _waitForPage(page);
+        if (!_samePage(page)) return;
         final value = await _runExtraction(_pageIdentityScript);
         if (!_samePage(page)) return;
         final decoded = _decodeJavaScriptResult(value);
@@ -763,36 +828,32 @@ class _WebImportPageState extends State<WebImportPage> {
           _showNotice('1000円46枚スロット／ハイスロの機種一覧画面で押してください。');
           return;
         }
-        var value = await _runExtraction(_machineLinksScript);
+        final stable = await waitForStablePage(
+          read: () async {
+            final data = _decodeJavaScriptResult(
+              await _runExtraction(_machineLinksScript),
+            );
+            return {
+              ...data,
+              'content': data['machines'],
+              'hasContent': (data['machines'] as List?)?.isNotEmpty == true,
+            };
+          },
+          isCurrent: () => _samePage(page),
+        );
         if (!_samePage(page)) return;
-        var decoded = _decodeJavaScriptResult(value);
+        final decoded = stable;
         // 低貸し（kind_code=10・5）の機種一覧では、次の機種を選ばない。
         if (!isTargetKindUrl(currentUrl)) {
           _showNotice('1000円46枚スロット（ハイスロ）の機種一覧で押してください。低貸しの機種は取り込みの対象外です。');
           return;
         }
-        var store = decoded['store'] as String?;
-        var day = decoded['day'] as String?;
+        final store = decoded['store'] as String?;
+        final day = decoded['day'] as String?;
         var machines = [
           for (final raw in (decoded['machines'] as List<dynamic>?) ?? const [])
             Map<String, dynamic>.from(raw as Map),
         ];
-        // 現行サイトの機種一覧は画面表示後にXHRで行を追加する。ボタンを
-        // 表示直後に押しても、空の一覧を「壊れたページ」と判定しない。
-        for (var attempt = 0; machines.isEmpty && attempt < 30; attempt++) {
-          await Future<void>.delayed(const Duration(milliseconds: 350));
-          if (!_samePage(page)) return;
-          value = await _runExtraction(_machineLinksScript);
-          if (!_samePage(page)) return;
-          decoded = _decodeJavaScriptResult(value);
-          store = decoded['store'] as String?;
-          day = decoded['day'] as String?;
-          machines = [
-            for (final raw
-                in (decoded['machines'] as List<dynamic>?) ?? const [])
-              Map<String, dynamic>.from(raw as Map),
-          ];
-        }
         // 公開されていない機種（長町南のジャグラーなど）は候補から外す。
         // 一覧に出ているのが対象外だけなら、読み込み中ではなく「残りなし」と伝える。
         machines = [
@@ -928,7 +989,7 @@ class _WebImportPageState extends State<WebImportPage> {
         );
       } catch (error) {
         if (_samePage(page)) {
-          _flow.stopLoading();
+          _flow.fail(page);
           setState(() => _error = '次の機種を探せませんでした。\n$error');
         }
       }
@@ -975,7 +1036,7 @@ class _WebImportPageState extends State<WebImportPage> {
     }
     // 押しても移動しない場合に、読み込み中のまま操作できなくならないようにする。
     _clickTimer?.cancel();
-    _clickTimer = Timer(const Duration(seconds: 3), () async {
+    _clickTimer = Timer(const Duration(seconds: 30), () async {
       if (!mounted || !_flow.isCurrent(starts)) return;
       String? now;
       try {
@@ -985,13 +1046,22 @@ class _WebImportPageState extends State<WebImportPage> {
       }
       if (!mounted || !_flow.isCurrent(starts)) return;
       final pending = _flow.takeAfterLoadNotice();
-      _flow.stopLoading();
       if (now != before) {
-        // ページの読み込みを伴わずに表示が切り替わった場合。
-        if (pending != null) _showNotice(pending);
+        try {
+          await _waitForPage(starts);
+          if (!_samePage(starts)) return;
+          _flow.ready(starts);
+          if (pending != null) _showNotice(pending);
+        } catch (error) {
+          if (_samePage(starts)) {
+            _flow.fail(starts);
+            setState(() => _error = '$error');
+          }
+        }
         return;
       }
-      _showNotice('$name の行を押しても移動しませんでした。一覧の機種名を直接押してください。');
+      _flow.fail(starts);
+      setState(() => _error = '$name への移動をまだ確認できません。通信状態を確認し、再読み込みしてください。');
     });
     return true;
   }
@@ -1906,7 +1976,23 @@ const _machineLinksScript = r'''
         url: `${location.origin}/${store}/standlist_slot/?kind_code=${encodeURIComponent(kind)}&machine_name=${encoded}`,
         count: count ? Number(count[1]) : null};
     }).filter(item => item.name);
-  return JSON.stringify({store, day, kind_code: url.searchParams.get('kind_code'), machines});
+  const busy = (window.jQuery && window.jQuery.active > 0) ||
+    Array.from(document.querySelectorAll('[aria-busy="true"], .loading, .spinner')).some(e => e.getClientRects().length);
+  return JSON.stringify({store, day, kind_code: url.searchParams.get('kind_code'), machines,
+    ready: document.readyState === 'complete' && !busy});
+})()
+''';
+
+const _pageReadinessScript = r'''
+(() => {
+  const busy = (window.jQuery && window.jQuery.active > 0) ||
+    Array.from(document.querySelectorAll('[aria-busy="true"], .loading, .spinner')).some(e => e.getClientRects().length);
+  const rows = Array.from(document.querySelectorAll('tr')).map(e => e.textContent);
+  const curves = Array.from(document.querySelectorAll('svg path, svg polyline'))
+    .map(e => e.getAttribute('d') || e.getAttribute('points'));
+  const content = [location.href, rows, curves];
+  return JSON.stringify({ready: document.readyState === 'complete' && !busy,
+    hasContent: !!document.body && (rows.length > 0 || curves.length > 0 || document.body.innerText.trim().length > 0), content});
 })()
 ''';
 

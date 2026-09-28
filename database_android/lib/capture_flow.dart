@@ -35,7 +35,8 @@ class CaptureFlow {
   int _busy = 0;
 
   /// 取り込みボタンを押せるか。
-  bool get canCapture => !_loading && !busy;
+  bool get canCapture => !_loading && !busy && !_blocked;
+  bool _blocked = false;
 
   String? _afterLoadNotice;
   bool _advanceAfterLoad = false;
@@ -49,6 +50,7 @@ class CaptureFlow {
   int pageStarted(String url) {
     _page++;
     _loading = true;
+    _blocked = false;
     if (!isNextMachineUrl(url)) _advanceAfterLoad = false;
     onChanged?.call();
     return _page;
@@ -64,7 +66,8 @@ class CaptureFlow {
 
   /// [page] の表示が整った（補助の読み取りも済んだ）。
   void ready(int page) {
-    if (!isCurrent(page) || !_loading) return;
+    if (!isCurrent(page)) return;
+    _blocked = false;
     _loading = false;
     onChanged?.call();
   }
@@ -85,11 +88,16 @@ class CaptureFlow {
     onChanged?.call();
   }
 
-  /// 読み込み完了の知らせが来ないまま時間がたった。処理中でなければ、押せない
-  /// まま止まらないよう読み込み中の表示を外す。
+  /// 時間切れは完了ではない。待機表示は外すが、確認できるまで取り込ませない。
   void loadTimedOut(int page) {
-    if (busy) return;
-    stopLoading(page);
+    fail(page);
+  }
+
+  void fail(int page) {
+    if (!isCurrent(page)) return;
+    _blocked = true;
+    _loading = false;
+    onChanged?.call();
   }
 
   /// [body] の間は処理中にする（入れ子にできる）。

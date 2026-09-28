@@ -14,12 +14,14 @@ import 'database_service.dart';
 import 'date_events.dart';
 import 'graph_preview.dart';
 import 'import_service.dart';
-import 'list_views.dart';
+import 'import_spool.dart';
+import 'record_analysis.dart';
 import 'models.dart';
-import 'scoring.dart';
 import 'ui_prefs.dart';
 import 'web_import_page.dart';
 import 'write_queue.dart';
+
+export 'record_analysis.dart' show DayView;
 
 /// 全期間のバックアップを促す注意。前回から3日以上たったか、まだ一度も
 /// 保存していなければ出す（記録が無ければ出さない）。
@@ -55,13 +57,6 @@ bool tableNumbersChanged(SlotRecord previous, EditableRow row) =>
         previous.maxHold != null &&
         previous.maxHold != row.maxHold);
 
-/// 結果画面の1日ぶんの計算（採点と翌日候補）。
-typedef DayView = ({
-  Map<String, (SlotRecord, ScoreResult)> scored,
-  ({List<ProvisionalCandidate> candidates, int machines, int judged})
-  candidates,
-});
-
 /// 書き出したバックアップ。保存できたと利用者が確かめたら
 /// [AppController.confirmBackupSaved] に渡す。
 typedef BackupExport = ({
@@ -83,13 +78,24 @@ typedef BackupExport = ({
 class UndoLog {
   String? label;
   List<(SlotRecord saved, SlotRecord? previous)>? entries;
+  ImportSpool? spool;
+
+  void rememberImport(ImportSpool value) {
+    clear();
+    label = 'バックアップの取り込み';
+    spool = value;
+  }
 
   void remember(String label, List<(SlotRecord, SlotRecord?)> entries) {
+    clear();
     this.label = label;
     this.entries = entries;
   }
 
   void clear() {
+    final old = spool;
+    spool = null;
+    if (old != null) unawaited(old.delete().catchError((_) {}));
     label = null;
     entries = null;
   }
@@ -136,6 +142,7 @@ class AppController extends ChangeNotifier {
   final csvExporter = CsvExportService();
   final BackupService backupService;
   final _undo = UndoLog();
+  ImportSpool? _conflictSpool;
 
   /// 画面用の記録（グラフの画像・曲線は持たない軽い形）。変更できない一覧で、
   /// 書き込みのたびに新しい一覧に入れ替える（そのたびに [revision] が進む）。
@@ -356,6 +363,38 @@ class AppController extends ChangeNotifier {
   /// 直前の保存を取り消す。まとめて削除の取り消しは千台を超えることがある
   /// ので、時間の上限は設けない。
   Future<String> undoLastSave() => _write(() async {
+    final spool = _undo.spool;
+    if (spool != null) {
+      final previous = <SlotRecord>[];
+      final changed = <SlotRecord>[];
+      final deleted = <String>[];
+      await for (final chunk in spool.chunks()) {
+        for (final row in chunk) {
+          final saved = SlotRecord.fromJson(
+            row['saved'] as Map<String, dynamic>,
+          );
+          changed.add(saved);
+          if (row['previous'] == null) {
+            deleted.add(saved.key);
+          } else {
+            previous.add(
+              SlotRecord.fromJson(row['previous'] as Map<String, dynamic>)
+                  .lightened(),
+            );
+          }
+        }
+      }
+      final note = await _commit(
+        upserts: previous,
+        deleteKeys: deleted,
+        changed: changed,
+        restoreSpool: spool,
+      );
+      _undo.clear();
+      message = '取り消しました：バックアップの取り込み$note';
+      notifyListeners();
+      return message!;
+    }
     final entries = _undo.entries;
     if (entries == null) return '取り消せる保存がありません。';
     final label = _undo.label ?? '直前の保存';
@@ -395,23 +434,21 @@ class AppController extends ChangeNotifier {
 
   /// 結果画面の [store]・[day] の採点と翌日候補。記録が変わるまでは、同じ
   /// 計算を使い回す（タブを切り替えて戻っても計算し直さない）。
-  DayView dayView(String store, String day) {
+  Future<DayView> dayView(String store, String day) {
     final key = '$store|$day';
     final cached = _dayViews.remove(key);
     if (cached != null) {
       _dayViews[key] = cached;
       return cached;
     }
-    final all = records;
-    final rows = [
-      for (final r in all)
-        if (r.store == store && r.day == day) r,
-    ];
-    final view = (
-      scored: {for (final r in rows) r.key: (r, scoreRecord(r, all))},
-      // 翌日候補（仮）は当日の点数計算とは完全に別。選択日までに保存した
-      // 同一台・同一機種の当たり頻度傾向だけを使う。
-      candidates: dayCandidates(rows, all),
+    final snapshot = records;
+    // 履歴を素早くスクロールしても同時に多数のIsolateを立ち上げない。
+    final view = _analysisTail.then(
+      (_) => compute(calculateDay, (snapshot, store, day)),
+    );
+    _analysisTail = view.then<void>(
+      (_) {},
+      onError: (Object e, StackTrace s) {},
     );
     _dayViews[key] = view;
     while (_dayViews.length > 6) {
@@ -420,11 +457,14 @@ class AppController extends ChangeNotifier {
     return view;
   }
 
-  final _dayViews = <String, DayView>{};
+  final _dayViews = <String, Future<DayView>>{};
+  Future<void> _analysisTail = Future<void>.value();
 
   /// 起動時の読み込み。書き込み（初回のイベント名・古い記録の片付け）も
   /// あるので、順番待ちの中で行う。
   Future<void> initialize() => _write(() async {
+    await ImportSpool.cleanOld((await database.database).path)
+        .catchError((_) {});
     startupWarnings.clear();
     await prefs.load();
     appState = await database.loadState();
@@ -435,28 +475,22 @@ class AppController extends ChangeNotifier {
       };
     } else {
       dateEvents = {for (final event in initialDateEvents) event.key: event};
-      await _startupStep(
-        () async {
-          await _saveDateEvents();
-          return 'イベント名の初期値を保存しました。';
-        },
-        failed: 'イベント名の初期値を保存できませんでした。今回は初期値を表示だけして、次の起動でもう一度保存します。',
-      );
+      await _startupStep(() async {
+        await _saveDateEvents();
+        return 'イベント名の初期値を保存しました。';
+      }, failed: 'イベント名の初期値を保存できませんでした。今回は初期値を表示だけして、次の起動でもう一度保存します。');
     }
     // 保存期間（$retentionDays日）より古い台を、バックアップ済みのものだけ片付ける。
-    await _startupStep(
-      () async {
-        final cleaned = await database.cleanupOldRecords(
-          lastFullBackupExport,
-          today: today(),
-        );
-        _noteCleanup(cleaned);
-        if (cleaned.deleted == 0 && cleaned.snapshots == 0) return null;
-        return '古い記録（${cleaned.deleted}台・翌日候補の記録${cleaned.snapshots}件）を'
-            '端末から片付けました（バックアップには残っています）。';
-      },
-      failed: '古い記録の片付けができませんでした。記録はそのままです（次の起動でもう一度行います）。',
-    );
+    await _startupStep(() async {
+      final cleaned = await database.cleanupOldRecords(
+        lastFullBackupExport,
+        today: today(),
+      );
+      _noteCleanup(cleaned);
+      if (cleaned.deleted == 0 && cleaned.snapshots == 0) return null;
+      return '古い記録（${cleaned.deleted}台・翌日候補の記録${cleaned.snapshots}件）を'
+          '端末から片付けました（バックアップには残っています）。';
+    }, failed: '古い記録の片付けができませんでした。記録はそのままです（次の起動でもう一度行います）。');
     // ここから先の読み込みは起動に欠かせないので、失敗したら起動を止める。
     await _loadNormalizedRecords();
     final unreadable = database.unreadableKeys.length;
@@ -466,17 +500,14 @@ class AppController extends ChangeNotifier {
         '端末には残してあり、書き出し時は元データを救出用として残します。画面と採点には使っていません。',
       );
     }
-    await _startupStep(
-      () async {
-        final purged = await database.purgeTrash(
-          DateTime.now().subtract(const Duration(days: trashDays)),
-        );
-        return purged == 0 ? null : '$trashDays日より前にゴミ箱へ入れた$purged件を消しました。';
-      },
-      failed: 'ゴミ箱の古い分を消せませんでした。ゴミ箱はそのままです（次の起動でもう一度行います）。',
-    );
+    await _startupStep(() async {
+      final purged = await database.purgeTrash(
+        DateTime.now().subtract(const Duration(days: trashDays)),
+      );
+      return purged == 0 ? null : '$trashDays日より前にゴミ箱へ入れた$purged件を消しました。';
+    }, failed: 'ゴミ箱の古い分を消せませんでした。ゴミ箱はそのままです（次の起動でもう一度行います）。');
     try {
-      candidateSnapshots = await database.loadCandidateSnapshots();
+      candidateSnapshots = await database.loadLatestCandidateSnapshots();
       _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
     } catch (error) {
       candidateSnapshots = [];
@@ -558,6 +589,7 @@ class AppController extends ChangeNotifier {
     TrashKind trashKind = TrashKind.delete,
     List<int> removeTrashIds = const [],
     Iterable<SlotRecord> changed = const [],
+    ImportSpool? restoreSpool,
   }) async {
     _queue.checkInside('保存');
     final removed = deleteKeys.toSet();
@@ -572,36 +604,61 @@ class AppController extends ChangeNotifier {
     final state = <String, String>{};
     if (changed.isNotEmpty) {
       try {
-        snapshots = computeCandidates(
-          saved: changed,
-          all: next,
-          latest: _latestCandidates,
-          now: DateTime.now(),
-        );
+        snapshots = await compute(calculateCandidateChanges, (
+          [for (final r in changed) r.lightened()],
+          next,
+          Map<String, CandidateSnapshot>.of(_latestCandidates),
+          DateTime.now(),
+          computeCandidates,
+        ));
       } catch (error) {
         state['candidate_log_failures'] = '${candidateLogFailures + 1}';
         state['candidate_log_last_error'] = '$error';
       }
     }
-    await database.applyChanges(
-      ChangeSet(
-        upserts: upserts,
-        deleteKeys: deleteKeys,
-        trashKeys: trashKeys,
-        trashLabel: trashLabel,
-        trashKind: trashKind,
-        removeTrashIds: removeTrashIds,
-        snapshots: snapshots,
-        state: state,
-      ),
+    final changes = ChangeSet(
+      upserts: upserts,
+      deleteKeys: deleteKeys,
+      trashKeys: trashKeys,
+      trashLabel: trashLabel,
+      trashKind: trashKind,
+      removeTrashIds: removeTrashIds,
+      snapshots: snapshots,
+      state: state,
     );
+    if (restoreSpool == null) {
+      await database.applyChanges(changes);
+    } else {
+      await database.writeTransaction((writer) async {
+        await for (final chunk in restoreSpool.chunks()) {
+          await writer.apply(
+            ChangeSet(
+              upserts: [
+                for (final row in chunk)
+                  if (row['previous'] != null)
+                    SlotRecord.fromJson(
+                      row['previous'] as Map<String, dynamic>,
+                    ),
+              ],
+              deleteKeys: [
+                for (final row in chunk)
+                  if (row['previous'] == null)
+                    SlotRecord.fromJson(row['saved'] as Map<String, dynamic>)
+                        .key,
+              ],
+            ),
+          );
+        }
+        await writer.apply(ChangeSet(snapshots: snapshots, state: state));
+      });
+    }
     records = next;
     appState = {...appState, ...state};
     if (snapshots.isNotEmpty) {
-      candidateSnapshots = [...candidateSnapshots, ...snapshots];
       for (final c in snapshots) {
         _latestCandidates[c.groupKey] = c;
       }
+      candidateSnapshots = _latestCandidates.values.toList();
     }
     previews.forget([...deleteKeys, for (final r in upserts) r.key]);
     return state.isEmpty ? '' : '（翌日候補を記録できませんでした。累計$candidateLogFailures回）';
@@ -997,90 +1054,128 @@ class AppController extends ChangeNotifier {
 
     final planner = BackupPlanner(records, latestDay: latestAllowed);
     final result = BackupImportResult();
-    final undo = <(SlotRecord, SlotRecord?)>[];
+    final undo = await ImportSpool.create((await database.database).path);
+    late final ImportSpool conflicts;
+    try {
+      conflicts = await ImportSpool.create((await database.database).path);
+    } catch (_) {
+      await undo.discard();
+      rethrow;
+    }
     final saved = <SlotRecord>[];
     final imported = <(String key, String day)>[];
-    final have = {
-      for (final c in candidateSnapshots) '${c.groupKey}|${c.takenAt}',
-    };
-    final freshCandidates = <CandidateSnapshot>[];
+    var freshCandidateCount = 0;
+    final latestCandidates = Map<String, CandidateSnapshot>.of(
+      _latestCandidates,
+    );
     final events = Map.of(dateEvents);
     var eventsAdded = 0;
     var temporary = const <String>[];
     var written = 0;
-    await database.writeTransaction((writer) async {
-      await for (final chunk in backupService.readBackupFile(file)) {
-        if (chunk.records.isNotEmpty) {
-          final plan = planner.plan(chunk.records);
-          result.add(plan);
-          final toSave = plan.toSave;
-          if (toSave.isNotEmpty) {
-            final before = await writer.loadByKeys([
-              for (final r in toSave) r.key,
-            ]);
-            await writer.apply(ChangeSet(upserts: toSave));
-            for (final r in toSave) {
-              final light = r.lightened();
-              undo.add((light, before[r.key]));
-              saved.add(light);
-              imported.add((r.key, r.day));
+    try {
+      await database.writeTransaction((writer) async {
+        await for (final chunk in backupService.readBackupFile(file)) {
+          if (chunk.records.isNotEmpty) {
+            final plan = planner.plan(chunk.records);
+            result.add(plan, lightConflicts: true);
+            for (final c in plan.conflicts) {
+              await conflicts.add(c.incoming.toJson(), key: c.incoming.key);
+            }
+            final toSave = plan.toSave;
+            if (toSave.isNotEmpty) {
+              final before = await writer.loadByKeys([
+                for (final r in toSave) r.key,
+              ]);
+              await writer.apply(ChangeSet(upserts: toSave));
+              for (final r in toSave) {
+                final light = r.lightened();
+                await undo.add({
+                  'saved': light.toJson(),
+                  'previous': before[r.key]?.toJson(),
+                });
+                saved.add(light);
+                imported.add((r.key, r.day));
+              }
+            }
+            written += chunk.records.length;
+            onProgress?.call('保存しています… $written / $checked台');
+          }
+          freshCandidateCount += await writer.addSnapshots(chunk.candidates);
+          for (final c in chunk.candidates) {
+            final previous = latestCandidates[c.groupKey];
+            if (previous == null ||
+                earliestTimestamp(previous.takenAt, c.takenAt) ==
+                    previous.takenAt) {
+              latestCandidates[c.groupKey] = c;
             }
           }
-          written += chunk.records.length;
-          onProgress?.call('保存しています… $written / $checked台');
-        }
-        for (final c in chunk.candidates) {
-          if (have.add('${c.groupKey}|${c.takenAt}')) freshCandidates.add(c);
-        }
-        for (final event in chunk.events) {
-          final existing = events[event.key];
-          if (existing == null) {
-            events[event.key] = event;
-            eventsAdded++;
-          } else if (existing.name != event.name) {
-            result.dateEventConflicts++;
+          for (final event in chunk.events) {
+            final existing = events[event.key];
+            if (existing == null) {
+              events[event.key] = event;
+              eventsAdded++;
+            } else if (existing.name != event.name) {
+              result.dateEventConflicts++;
+            }
           }
         }
-      }
-      await writer.apply(
-        ChangeSet(
-          snapshots: freshCandidates,
-          state: {
-            if (eventsAdded > 0)
-              'date_events': _encodeDateEvents(events.values),
-          },
-        ),
-      );
-      // 保存期間より古い台は一時的に取り込んだものとし、次の起動時に片付ける。
-      final latest = await writer.latestDay();
-      if (latest != null) {
-        final cutoff = retentionCutoff(latest, today());
-        temporary = [
-          for (final (key, day) in imported)
-            if (day.compareTo(cutoff) < 0) key,
-        ];
-        if (temporary.isNotEmpty) await writer.markTemporary(temporary);
-      }
-    });
+        await writer.apply(
+          ChangeSet(
+            state: {
+              if (eventsAdded > 0)
+                'date_events': _encodeDateEvents(events.values),
+            },
+          ),
+        );
+        // 保存期間より古い台は一時的に取り込んだものとし、次の起動時に片付ける。
+        final latest = await writer.latestDay();
+        if (latest != null) {
+          final cutoff = retentionCutoff(latest, today());
+          temporary = [
+            for (final (key, day) in imported)
+              if (day.compareTo(cutoff) < 0) key,
+          ];
+          if (temporary.isNotEmpty) await writer.markTemporary(temporary);
+        }
+        // 控えの書き込み失敗もDBのコミット前に検知する。
+        await undo.finish();
+        await conflicts.finish();
+      });
+    } catch (_) {
+      await undo.discard();
+      await conflicts.discard();
+      rethrow;
+    }
     // ここまで来たら、すべて保存できている。画面用の一覧などを合わせる。
     if (saved.isNotEmpty) records = _withSaved(records, saved);
     previews.forget([for (final r in saved) r.key]);
-    if (freshCandidates.isNotEmpty) {
-      candidateSnapshots = [...candidateSnapshots, ...freshCandidates];
-      _latestCandidates = latestCandidateSnapshots(candidateSnapshots);
+    if (freshCandidateCount > 0) {
+      _latestCandidates = latestCandidates;
+      candidateSnapshots = latestCandidates.values.toList();
     }
     if (eventsAdded > 0) {
       dateEvents = events;
       appState = {...appState, 'date_events': _encodeDateEvents(events.values)};
     }
-    result.candidates = freshCandidates.length;
+    result.candidates = freshCandidateCount;
     result.dateEventsAdded = eventsAdded;
     result.temporary = temporary.length;
-    if (undo.isNotEmpty) {
-      _undo.remember('バックアップの取り込み', undo);
+    if (undo.count > 0) {
+      _undo.rememberImport(undo);
       message =
           'バックアップから${result.added}件追加、'
           '${result.graphOnly}件にグラフ、${result.settingOnly}件に設定情報を追加しました。';
+    } else {
+      await undo.discard();
+    }
+    final oldConflicts = _conflictSpool;
+    if (oldConflicts != null) unawaited(oldConflicts.discard());
+    if (conflicts.count == 0) {
+      await conflicts.discard();
+      _conflictSpool = null;
+    } else {
+      _conflictSpool = conflicts;
+      result.conflictSpool = conflicts;
     }
     notifyListeners();
     return result;
