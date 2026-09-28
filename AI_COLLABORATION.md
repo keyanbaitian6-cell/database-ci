@@ -22,6 +22,8 @@
 - 検証ツール：`lib/next_day_backtest.dart`・`tool/backtest_next_day.dart`（アプリの関数をそのまま呼ぶ）、`database/export_earlier_values.py`、`database/check_candidate_parity.py`（PC版とAndroid版の候補は全データ1,026台で一致）。実データ・台ごとの結果はコミットしていない。
 - テスト：Android 229件成功（検証の計算7件・カード2件・候補の記録の版を追加）、PC 111件成功。以前Claudeが書いた `startup_and_queue_test.dart` の1件が、候補の計算の別Isolate化（`a955bf6`）後にタイミング次第で失敗していたので、決まった時間ではなく知らせが出るまで待つように直した（6回連続で成功）。
 - 今後：1点程度の差を見分けるには、締切前に全台を取り込んだ予測日が現行で約24日、前日点との比較で約51日必要な見込み（日ごとのばらつきからの推測）。
+- ビルド：`9d74df2` の上で `C:\Users\keyan\flutter\bin\flutter.bat build apk --release`。aaptで versionCode `2026092901`・versionName `0.5.5` を確認。配布用 `outputs/database-0.5.5-2026092901.apk`（91,227,578 bytes、SHA-256 `d849a2b4e802e70bc6915198cd085eb10c3fbb5a28897bd7a5787227160c55c8`）。端末へのインストールは依頼が無いので未実施。
+- 公開：閲覧ページを `tool/stage_viewer.py` を通して `keyanbaitian6-cell/database-viewer` の `294e2ba` に公開。GitHub Pagesの反映完了、公開中の `main.dart.js` のSHA-256が組み立てたものと一致（`72035649…`）、記録ファイルは404、ページは200を確認。手元で組み立てた閲覧ページ（スマホ幅・実データ）で、候補カードの選択日・対象日・検証結果の説明、答え合わせの説明、日付の切り替えを確認した。
 
 ## 2026-09-29：閲覧ページの日付一覧にイベント名
 
