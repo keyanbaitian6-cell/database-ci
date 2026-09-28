@@ -466,6 +466,7 @@ class AppController extends ChangeNotifier {
     await ImportSpool.cleanOld((await database.database).path)
         .catchError((_) {});
     startupWarnings.clear();
+    startupChanges.clear();
     await prefs.load();
     appState = await database.loadState();
     if (appState.containsKey('date_events')) {
@@ -492,7 +493,8 @@ class AppController extends ChangeNotifier {
           '端末から片付けました（バックアップには残っています）。';
     }, failed: '古い記録の片付けができませんでした。記録はそのままです（次の起動でもう一度行います）。');
     // ここから先の読み込みは起動に欠かせないので、失敗したら起動を止める。
-    await _loadNormalizedRecords();
+    // 機種名をそろえた後の読み直しで止まっても、そろえた変更は説明に残す。
+    await _loadNormalizedRecords(onChanged: startupChanges.add);
     final unreadable = database.unreadableKeys.length;
     if (unreadable > 0) {
       startupWarnings.add(
@@ -667,10 +669,24 @@ class AppController extends ChangeNotifier {
   /// DBを読み、機種名の表記ゆれをそろえて一覧にする。DBに `+` 区切りの
   /// 台が残っていれば（取り込み等で入った）、DBの側で画像込みにまとめて
   /// から読み直す。画面用の一覧（画像なし）をDBへ書き戻すことはしない。
-  Future<void> _loadNormalizedRecords() async {
+  ///
+  /// [onChanged] には、そろえた内容がDBに確定したとき（まとめた書き込みが
+  /// 済み、1台以上そろえたとき）だけ、その説明を渡す。そろえる処理が失敗して
+  /// 元に戻ったときや、そろえる台が無かったときは渡さない。その後の読み直しが
+  /// 失敗しても、済んだ変更は渡し終えている。起動時だけ [startupChanges] を
+  /// 渡す（引っ張って更新などの読み直しでは渡さないので、起動時の説明に混ざらない）。
+  Future<void> _loadNormalizedRecords({
+    void Function(String change)? onChanged,
+  }) async {
     var loaded = await database.loadAll();
     if (loaded.any((r) => r.machine != normalizeMachineName(r.machine))) {
-      await database.normalizeMachineNames();
+      final merged = await database.normalizeMachineNames();
+      if (merged > 0) {
+        onChanged?.call(
+          '機種名の表記ゆれがある$merged台を、そろえた名前の台へまとめました'
+          '（グラフの画像・設定の記録は残しています）。',
+        );
+      }
       loaded = await database.loadAll();
     }
     records = _normalizeRecords(loaded);
