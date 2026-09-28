@@ -157,7 +157,11 @@ void main() {
 
       db.holdWrites!.complete();
       db.holdWrites = null;
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // 候補の計算は別のIsolateで動くので、終わるまでの時間は一定でない。
+      // 決まった時間だけ待たず、知らせが出るまで待つ（最大5秒）。
+      for (var i = 0; i < 100 && notices.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       expect(app.records.map((r) => r.rack), [1]); // 保存は最後まで済んだ
       expect(app.message, contains('いま終わりました'));
       expect(notices.single, app.message);

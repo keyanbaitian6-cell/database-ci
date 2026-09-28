@@ -660,6 +660,13 @@ class _GraphCard extends StatelessWidget {
   }
 }
 
+/// 翌日候補（仮）の効果についての説明。検証の結果は
+/// `NEXT_DAY_CANDIDATES_VALIDATION_20260929.md`。
+const nextDayValidationNote =
+    '2026-09-29の検証（翌日0:00までに取り込んだ記録・7日分）では、候補の翌日の点数は、'
+    '判定できた台全体の平均と差が確認できていません（効果は検証中）。'
+    '翌日の設定・勝率・期待収支を示すものではありません。';
+
 /// 翌日候補（仮）：その日の全機種から、過去の当たりの軽さで選んだ台。
 /// 1台1行で、台番号・機種・「平均より」の大きさ（棒）・過去何日分かを並べる。
 class NextDayCandidatesCard extends StatefulWidget {
@@ -726,12 +733,12 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               ],
             ),
             const SizedBox(height: 6),
-            const Text(
-              '選択日までの記録から、同じ機種の周りの台より当たりが軽かった台を選びます'
-              '（各機種の上位4分の1）。★は下の表にも付けています。'
-              '選択日そのものの予測ではなく、選択日の翌日向けの目印です。'
+            Text(
+              '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
+              '${next.isEmpty ? '翌日' : next}向けに選んだ台です。同じ機種の周りの台より'
+              '当たりが軽かった台（各機種の上位4分の1）で、★は下の表にも付けています。'
               'この日の点数には影響しません。',
-              style: TextStyle(
+              style: const TextStyle(
                 color: AppColors.ash,
                 fontSize: 13,
                 height: 1.45,
@@ -765,7 +772,8 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               Text(
                 '判定できた機種：${widget.judged} / ${widget.machines}機種。'
                 '「平均より」は同じ日・同じ機種で回転数が近い台との当たり頻度の差の積み重ねで、'
-                '別の機種どうしの順位は目安です。',
+                '別の機種どうしの順位は目安です。データ量は計算に使えた日数の目安で、'
+                '当たりやすさを示すものではありません。',
                 style: const TextStyle(
                   color: AppColors.ash,
                   fontSize: 12,
@@ -775,7 +783,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             ],
             const SizedBox(height: 6),
             const Text(
-              '翌日の設定・勝率・期待収支を示すものではありません（効果は検証中）。',
+              nextDayValidationNote,
               style: TextStyle(
                 color: AppColors.ash,
                 fontSize: 12,

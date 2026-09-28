@@ -1379,6 +1379,11 @@ class RobustnessTests(unittest.TestCase):
             self.assertEqual([c['rack'] for c in logged[0]['candidates']],
                              [int(c['row']['rack']) for c in shown['candidates']])
             self.assertRegex(logged[0]['taken_at'], r'[+-]\d\d:\d\d$')
+            # 計算方式の版を残す（Android版と同じ値。式を変えたら新旧を混ぜない）
+            from core import NEXT_DAY_METHOD_VERSION, candidate_signature
+            self.assertEqual(logged[0]['method'], NEXT_DAY_METHOD_VERSION)
+            self.assertNotEqual(candidate_signature(dict(logged[0], method='old')),
+                                candidate_signature(logged[0]))
             db.save([dict(row('2026-09-23', 1), bb=7, rb=5, games=3000)])  # same content
             self.assertEqual(len(db.candidate_snapshots(day='2026-09-23')), 1)
             db.delete_group('2026-09-23', 'nagamachiminami', 'テスト')

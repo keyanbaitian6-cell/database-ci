@@ -189,8 +189,10 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
             ],
             const Text(
               '前の日の「翌日候補（仮）」に挙げた台のうち、その日に合計点'
-              '${answerCheckThreshold ~/ 1}点以上だった台です。候補は前の日の結果画面と'
-              '同じ計算（前の日までの記録だけを使う）、点数も結果画面と同じです。',
+              '${answerCheckThreshold ~/ 1}点以上だった台です。候補は、今の計算式で'
+              '前の日までの記録から計算し直したものです。前の日の分を翌日以降に取り込んだ'
+              '記録も使うので、当時画面に出ていた候補と違うことがあります。'
+              '点数は結果画面と同じです。',
               style: TextStyle(
                 color: AppColors.ash,
                 fontSize: 13,

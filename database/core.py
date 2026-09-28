@@ -611,14 +611,18 @@ def candidate_snapshot(store, location, day, machine, now=None):
     result = provisional_next_day_candidates(store, day, machine, location)
     return dict(store=location, day=day, machine=machine,
                 taken_at=(now or datetime.now().astimezone()).isoformat(),
+                method=NEXT_DAY_METHOD_VERSION,
                 total=result['total'], eligible=result['eligible'],
                 candidates=[dict(rack=int(c['row']['rack']), index=c['index'], days=c['days'])
                             for c in result['candidates']])
 
 
 def candidate_signature(snapshot):
-    """Content without the time: an unchanged list is not recorded again."""
-    return (snapshot.get('total'), snapshot.get('eligible'),
+    """Content without the time: an unchanged list is not recorded again.
+
+    The method version is part of it, so a formula change is recorded anew.
+    """
+    return (snapshot.get('method'), snapshot.get('total'), snapshot.get('eligible'),
             tuple((c.get('rack'), float(c.get('index')), c.get('days'))
                   for c in snapshot.get('candidates', [])))
 
@@ -1148,6 +1152,13 @@ def signed_index(index):
     """
     delta = index - 50
     return f'平均より {"+" if delta >= 0 else "-"}{abs(delta):.0f}'
+
+
+# 翌日候補（仮）の計算方式の版。保存する候補の記録に残し、式を変えたときに新旧の
+# 成績を混ぜないようにする。Android版 `nextDayMethodVersion` と同じ値。
+# 2026-09-27：サイトの異常値を除外。それ以外は2026-09-23以前から同じ
+# （2026-09-29の検証でも変更しなかった。NEXT_DAY_CANDIDATES_VALIDATION_20260929.md）。
+NEXT_DAY_METHOD_VERSION = '2026-09-27'
 
 
 def next_day_index(store, row, max_days=10, shrink_days=5):

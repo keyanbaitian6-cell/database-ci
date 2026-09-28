@@ -140,6 +140,14 @@ void main() {
     )!;
     expect(back.signature, snapshot.signature);
     expect(back.takenAt, snapshot.takenAt);
+    // 計算方式の版を残す。版の無い古い記録は null（版が違えば記録し直す）。
+    expect(snapshot.method, nextDayMethodVersion);
+    expect(back.method, nextDayMethodVersion);
+    final old = CandidateSnapshot.tryFromJson(
+      {...snapshot.toJson()}..remove('method'),
+    )!;
+    expect(old.method, isNull);
+    expect(old.signature, isNot(snapshot.signature));
     expect(
       CandidateSnapshot.tryFromJson({...snapshot.toJson(), 'store': 'other'}),
       isNull,

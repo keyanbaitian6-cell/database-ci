@@ -1,0 +1,562 @@
+import 'dart:math';
+
+import 'data_checks.dart';
+import 'list_views.dart';
+import 'models.dart';
+import 'scoring.dart';
+
+/// 翌日候補（仮）の検証（読み取り専用。画面からは使わない）。
+///
+/// 候補の計算はアプリ本体の [provisionalNextDayCandidates]・[dayCandidates]、
+/// 点数は [scoreRecord] をそのまま呼ぶので、検証の候補とアプリの候補は
+/// 必ず同じになる。手順と結果は `NEXT_DAY_CANDIDATES_VALIDATION_20260929.md`。
+
+const _jst = Duration(hours: 9);
+
+/// 時差の書かれた時刻の末尾（`+09:00`・`Z` など）。
+final _zone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$');
+
+/// 時刻をUTCで読む。時差の無い時刻（Android版の古い記録）は日本時間とみなす。
+DateTime? readJst(String? text) {
+  if (text == null || text.isEmpty) return null;
+  final parsed = DateTime.tryParse(text);
+  if (parsed == null) return null;
+  if (_zone.hasMatch(text)) return parsed.toUtc();
+  return DateTime.utc(
+    parsed.year,
+    parsed.month,
+    parsed.day,
+    parsed.hour,
+    parsed.minute,
+    parsed.second,
+    parsed.millisecond,
+    parsed.microsecond,
+  ).subtract(_jst);
+}
+
+String shiftDay(String day, int days) {
+  final d = DateTime.parse(day);
+  return DateTime.utc(
+    d.year,
+    d.month,
+    d.day + days,
+  ).toIso8601String().substring(0, 10);
+}
+
+/// 予測日 [day] の締切：翌日の [hour] 時（日本時間）をUTCで。
+DateTime predictionCutoff(String day, {int hour = 0}) {
+  final d = DateTime.parse(day);
+  return DateTime.utc(d.year, d.month, d.day + 1, hour).subtract(_jst);
+}
+
+/// アプリの一覧と同じく、機種名をそろえて同じ台を1件にまとめる
+/// （`AppController._normalizeRecords` と同じ規則）。
+List<SlotRecord> normalizeForBacktest(Iterable<SlotRecord> source) {
+  final merged = <String, SlotRecord>{};
+  for (final original in source) {
+    final record = original.copyWith(
+      machine: normalizeMachineName(original.machine),
+    );
+    final current = merged[record.key];
+    merged[record.key] = current == null
+        ? record
+        : mergeSameRack(current, record);
+  }
+  return merged.values.toList();
+}
+
+/// 予測日 [day] の締切 [cutoff] までに入手できた記録（日付が [day] 以前）。
+///
+/// 今の記録の `captured_at` が締切より前なら、その値は締切の時点で分かって
+/// いた値と同じ。締切より後なら、[earlier]（取り込み直しで上書きされる前の
+/// 値。PC版の書き込み記録など）のうち締切より前で最後のものを使い、それも
+/// 無ければ使わない。[cutoff] が null なら時刻を見ない（後知恵を含み得る）。
+List<SlotRecord> availableRecords(
+  List<SlotRecord> all,
+  String day, {
+  DateTime? cutoff,
+  Map<String, List<SlotRecord>> earlier = const {},
+}) {
+  final result = <SlotRecord>[];
+  for (final r in all) {
+    if (r.day.compareTo(day) > 0) continue;
+    if (cutoff == null) {
+      result.add(r);
+      continue;
+    }
+    final at = readJst(r.capturedAt);
+    if (at != null && at.isBefore(cutoff)) {
+      result.add(r);
+      continue;
+    }
+    SlotRecord? best;
+    DateTime? bestAt;
+    for (final e in earlier[r.key] ?? const <SlotRecord>[]) {
+      final t = readJst(e.capturedAt);
+      if (t == null || !t.isBefore(cutoff)) continue;
+      if (bestAt == null || t.isAfter(bestAt)) {
+        best = e;
+        bestAt = t;
+      }
+    }
+    if (best != null) result.add(best);
+  }
+  return result;
+}
+
+/// 候補にできる台（指数を計算できた台）1台ぶん。
+class BacktestMember {
+  BacktestMember({
+    required this.rack,
+    required this.index,
+    required this.days,
+    required this.confidence,
+    required this.todayScore,
+    required this.nextScore,
+  });
+  final int rack;
+  final double index;
+  final int days;
+  final String confidence;
+
+  /// 予測日の合計点（締切の時点の記録で計算）。無ければ null。
+  final double? todayScore;
+
+  /// 翌日の合計点（正解）。翌日に同じ店舗・機種・台番号の記録が無い、
+  /// または採点しない台は null（0点にはしない）。
+  final double? nextScore;
+  bool current = false;
+  bool previousScore = false;
+}
+
+/// 店舗・機種・予測日ごとの候補。
+class BacktestGroup {
+  BacktestGroup(this.store, this.machine, this.day, this.members, this.count);
+  final String store, machine, day;
+  final List<BacktestMember> members;
+
+  /// 選ぶ台数（アプリの候補数と同じ）。
+  final int count;
+  Iterable<BacktestMember> get labeled =>
+      members.where((m) => m.nextScore != null);
+}
+
+/// 店舗・予測日ごとの、最初に表示する7台。
+class BacktestTopSeven {
+  BacktestTopSeven(this.store, this.day, this.current, this.previousScore);
+  final String store, day;
+  final List<BacktestMember> current, previousScore;
+}
+
+class BacktestRun {
+  BacktestRun(this.groups, this.topSeven, this.unlabeledNextDay);
+  final List<BacktestGroup> groups;
+  final List<BacktestTopSeven> topSeven;
+
+  /// 候補にできた台のうち、翌日の正解が無かった数の内訳。
+  final Map<String, int> unlabeledNextDay;
+}
+
+int _byMachineThenRack(
+  ({String machine, BacktestMember member}) a,
+  ({String machine, BacktestMember member}) b,
+) {
+  final byMachine = a.machine.compareTo(b.machine);
+  return byMachine != 0 ? byMachine : a.member.rack.compareTo(b.member.rack);
+}
+
+/// 全予測日の候補を作る。[cutoffFor] が null なら時刻を見ない。
+BacktestRun runBacktest(
+  List<SlotRecord> full, {
+  DateTime? Function(String day)? cutoffFor,
+  Map<String, List<SlotRecord>> earlier = const {},
+}) {
+  final byKey = {for (final r in full) r.key: r};
+  final nextScores = <String, double?>{};
+  double? nextScore(String store, String day, String machine, int rack) {
+    final key = '$store|${shiftDay(day, 1)}|$machine|$rack';
+    return nextScores.putIfAbsent(key, () {
+      final row = byKey[key];
+      return row == null ? null : scoreRecord(row, full).total;
+    });
+  }
+
+  final unlabeled = <String, int>{'no_record': 0, 'not_scored': 0};
+  final allDays = {for (final r in full) r.day};
+  final groups = <BacktestGroup>[];
+  final tops = <BacktestTopSeven>[];
+  for (final day in allDays.toList()..sort()) {
+    if (!allDays.contains(shiftDay(day, 1))) continue;
+    final available = availableRecords(
+      full,
+      day,
+      cutoff: cutoffFor?.call(day),
+      earlier: earlier,
+    );
+    final byStore = <String, List<SlotRecord>>{};
+    for (final r in available) {
+      if (r.day == day) byStore.putIfAbsent(r.store, () => []).add(r);
+    }
+    for (final store in byStore.keys.toList()..sort()) {
+      final dayRows = byStore[store]!;
+      final byMachine = <String, List<SlotRecord>>{};
+      for (final r in dayRows) {
+        byMachine.putIfAbsent(r.machine, () => []).add(r);
+      }
+      final storeGroups = <BacktestGroup>[];
+      for (final machine in byMachine.keys.toList()..sort()) {
+        final rows = byMachine[machine]!;
+        final history = machineHistory(available, store, machine);
+        final app = provisionalNextDayCandidates(rows, history);
+        if (app.candidates.isEmpty) continue;
+        final members = <BacktestMember>[];
+        for (final row in rows) {
+          final tendency = nextDayIndex(row, history);
+          if (tendency.index == null) continue;
+          final next = nextScore(store, day, machine, row.rack);
+          if (next == null) {
+            final exists = byKey.containsKey(
+              '$store|${shiftDay(day, 1)}|$machine|${row.rack}',
+            );
+            unlabeled[exists ? 'not_scored' : 'no_record'] =
+                unlabeled[exists ? 'not_scored' : 'no_record']! + 1;
+          }
+          members.add(
+            BacktestMember(
+              rack: row.rack,
+              index: tendency.index!,
+              days: tendency.days,
+              confidence: tendency.confidence,
+              todayScore: scoreRecord(row, available).total,
+              nextScore: next,
+            ),
+          );
+        }
+        // アプリの候補と同じ台であることを必ず確かめる。
+        final chosen = {for (final c in app.candidates) c.record.rack};
+        if (members.length != app.eligible) {
+          throw StateError('$store $day $machine: 判定できた台数が違う');
+        }
+        for (final m in members) {
+          m.current = chosen.contains(m.rack);
+        }
+        final byPrevious = [...members]
+          ..sort((a, b) {
+            final sa = a.todayScore, sb = b.todayScore;
+            if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
+            if (sa != null && sb == null) return -1;
+            if (sa == null && sb != null) return 1;
+            return a.rack.compareTo(b.rack);
+          });
+        for (final m in byPrevious.take(chosen.length)) {
+          m.previousScore = true;
+        }
+        final group = BacktestGroup(
+          store,
+          machine,
+          day,
+          members,
+          chosen.length,
+        );
+        groups.add(group);
+        storeGroups.add(group);
+      }
+      if (storeGroups.isEmpty) continue;
+      // 最初に表示する7台：アプリの並び（dayCandidates）そのもの。
+      final shown = dayCandidates(dayRows, available).candidates.take(7);
+      final lookup = {
+        for (final g in storeGroups)
+          for (final m in g.members) '${g.machine}|${m.rack}': m,
+      };
+      final currentTop = [
+        for (final c in shown) lookup['${c.record.machine}|${c.record.rack}']!,
+      ];
+      final previousPool = [
+        for (final g in storeGroups)
+          for (final m in g.members)
+            if (m.previousScore) (machine: g.machine, member: m),
+      ]..sort((a, b) {
+          final sa = a.member.todayScore, sb = b.member.todayScore;
+          if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
+          if (sa != null && sb == null) return -1;
+          if (sa == null && sb != null) return 1;
+          return _byMachineThenRack(a, b);
+        });
+      tops.add(
+        BacktestTopSeven(store, day, currentTop, [
+          for (final p in previousPool.take(7)) p.member,
+        ]),
+      );
+    }
+  }
+  return BacktestRun(groups, tops, unlabeled);
+}
+
+double? _mean(Iterable<double> values) {
+  final list = values.toList();
+  return list.isEmpty ? null : list.reduce((a, b) => a + b) / list.length;
+}
+
+/// 日単位のブートストラップ95%区間（日を単位に復元抽出）。
+(double, double)? dayBootstrap(
+  List<double> dayValues, {
+  int rounds = 10000,
+  int seed = 20260929,
+}) {
+  if (dayValues.length < 2) return null;
+  final rng = Random(seed);
+  final means = <double>[];
+  for (var i = 0; i < rounds; i++) {
+    var sum = 0.0;
+    for (var j = 0; j < dayValues.length; j++) {
+      sum += dayValues[rng.nextInt(dayValues.length)];
+    }
+    means.add(sum / dayValues.length);
+  }
+  means.sort();
+  return (means[(rounds * 0.025).floor()], means[(rounds * 0.975).floor() - 1]);
+}
+
+double _round(double v, [int digits = 2]) =>
+    double.parse(v.toStringAsFixed(digits));
+
+/// 日ごとの平均から、日の平均・区間・正の日数をまとめる。
+Map<String, Object?> _daySummary(Map<String, List<double>> byDay) {
+  final dayValues = [
+    for (final day in byDay.keys.toList()..sort()) _mean(byDay[day]!)!,
+  ];
+  final ci = dayBootstrap(dayValues);
+  return {
+    'days': dayValues.length,
+    'mean_of_days': dayValues.isEmpty ? null : _round(_mean(dayValues)!),
+    'ci95': ci == null ? null : [_round(ci.$1), _round(ci.$2)],
+    'positive_days': dayValues.where((v) => v > 0).length,
+    'by_day': {
+      for (final day in byDay.keys.toList()..sort())
+        day: _round(_mean(byDay[day]!)!),
+    },
+  };
+}
+
+/// 選び方 [picked] の成績（候補にできる台の平均との差）。
+Map<String, Object?> evaluateMethod(
+  Iterable<BacktestGroup> groups,
+  bool Function(BacktestMember) picked,
+) {
+  final chosen = <double>[], pool = <double>[], pct = <double>[];
+  var selected = 0, evaluable = 0, groupsUsed = 0;
+  final gapByDay = <String, List<double>>{};
+  for (final g in groups) {
+    final labeled = g.labeled.toList();
+    final picks = g.members.where(picked).toList();
+    selected += picks.length;
+    final scored = [
+      for (final m in picks)
+        if (m.nextScore != null) m.nextScore!,
+    ];
+    evaluable += scored.length;
+    if (labeled.isEmpty || scored.isEmpty) continue;
+    groupsUsed++;
+    final poolScores = [for (final m in labeled) m.nextScore!];
+    chosen.addAll(scored);
+    pool.addAll(poolScores);
+    for (final s in scored) {
+      pct.add(percentile(s, poolScores));
+    }
+    gapByDay
+        .putIfAbsent(g.day, () => [])
+        .add(_mean(scored)! - _mean(poolScores)!);
+  }
+  return {
+    'groups': groupsUsed,
+    'selected': selected,
+    'evaluable': evaluable,
+    'evaluable_rate': selected == 0 ? null : _round(evaluable / selected, 3),
+    'chosen_mean': chosen.isEmpty ? null : _round(_mean(chosen)!),
+    'pool_mean': pool.isEmpty ? null : _round(_mean(pool)!),
+    'chosen_p60': chosen.isEmpty
+        ? null
+        : _round(chosen.where((v) => v >= 60).length / chosen.length, 3),
+    'pool_p60': pool.isEmpty
+        ? null
+        : _round(pool.where((v) => v >= 60).length / pool.length, 3),
+    'mean_percentile': pct.isEmpty ? null : _round(_mean(pct)!, 3),
+    'gap_vs_pool': _daySummary(gapByDay),
+  };
+}
+
+/// 現行と前日の点数が高い台の、同じグループでの直接比較（前日点 − 現行）。
+Map<String, Object?> comparePreviousToCurrent(Iterable<BacktestGroup> groups) {
+  final byDay = <String, List<double>>{};
+  for (final g in groups) {
+    final cur = [
+      for (final m in g.members)
+        if (m.current && m.nextScore != null) m.nextScore!,
+    ];
+    final prev = [
+      for (final m in g.members)
+        if (m.previousScore && m.nextScore != null) m.nextScore!,
+    ];
+    if (cur.isEmpty || prev.isEmpty) continue;
+    byDay.putIfAbsent(g.day, () => []).add(_mean(prev)! - _mean(cur)!);
+  }
+  return _daySummary(byDay);
+}
+
+/// 最初に表示する7台の成績（候補にできる台全体・候補全体との差）。
+Map<String, Object?> evaluateTopSeven(
+  List<BacktestTopSeven> tops,
+  List<BacktestGroup> groups, {
+  required bool current,
+}) {
+  final vsPool = <String, List<double>>{}, vsCandidates = <String, List<double>>{};
+  final shown = <double>[];
+  var selected = 0;
+  for (final t in tops) {
+    final members = current ? t.current : t.previousScore;
+    selected += members.length;
+    final scored = [
+      for (final m in members)
+        if (m.nextScore != null) m.nextScore!,
+    ];
+    final storeGroups = groups.where((g) => g.store == t.store && g.day == t.day);
+    final pool = [
+      for (final g in storeGroups)
+        for (final m in g.labeled) m.nextScore!,
+    ];
+    final candidates = [
+      for (final g in storeGroups)
+        for (final m in g.labeled)
+          if (current ? m.current : m.previousScore) m.nextScore!,
+    ];
+    if (scored.isEmpty || pool.isEmpty) continue;
+    shown.addAll(scored);
+    vsPool.putIfAbsent(t.day, () => []).add(_mean(scored)! - _mean(pool)!);
+    if (candidates.isNotEmpty) {
+      vsCandidates
+          .putIfAbsent(t.day, () => [])
+          .add(_mean(scored)! - _mean(candidates)!);
+    }
+  }
+  return {
+    'store_days': vsPool.values.fold<int>(0, (n, v) => n + v.length),
+    'selected': selected,
+    'evaluable': shown.length,
+    'shown_mean': shown.isEmpty ? null : _round(_mean(shown)!),
+    'shown_p60': shown.isEmpty
+        ? null
+        : _round(shown.where((v) => v >= 60).length / shown.length, 3),
+    'gap_vs_pool': _daySummary(vsPool),
+    'gap_vs_all_candidates': _daySummary(vsCandidates),
+  };
+}
+
+double? _spearman(List<(double, double)> pairs) {
+  if (pairs.length < 4) return null;
+  List<double> ranks(List<double> v) {
+    final order = List<int>.generate(v.length, (i) => i)
+      ..sort((a, b) => v[a].compareTo(v[b]));
+    final r = List<double>.filled(v.length, 0);
+    var i = 0;
+    while (i < order.length) {
+      var j = i;
+      while (j + 1 < order.length && v[order[j + 1]] == v[order[i]]) {
+        j++;
+      }
+      for (var k = i; k <= j; k++) {
+        r[order[k]] = (i + j) / 2;
+      }
+      i = j + 1;
+    }
+    return r;
+  }
+
+  final a = ranks([for (final p in pairs) p.$1]);
+  final b = ranks([for (final p in pairs) p.$2]);
+  final ma = _mean(a)!, mb = _mean(b)!;
+  var num = 0.0, da = 0.0, db = 0.0;
+  for (var i = 0; i < a.length; i++) {
+    num += (a[i] - ma) * (b[i] - mb);
+    da += (a[i] - ma) * (a[i] - ma);
+    db += (b[i] - mb) * (b[i] - mb);
+  }
+  return da == 0 || db == 0 ? null : num / sqrt(da * db);
+}
+
+/// 指数と翌日の点の順位相関：機種の中と、店舗・日の全台（機種をまたぐ）。
+Map<String, Object?> indexCorrelation(List<BacktestGroup> groups) {
+  final within = <String, List<double>>{};
+  final across = <String, List<double>>{};
+  final byStoreDay = <String, List<(double, double)>>{};
+  for (final g in groups) {
+    final pairs = [
+      for (final m in g.labeled) (m.index, m.nextScore!),
+    ];
+    final rho = _spearman(pairs);
+    if (rho != null) within.putIfAbsent(g.day, () => []).add(rho);
+    byStoreDay.putIfAbsent('${g.store}|${g.day}', () => []).addAll(pairs);
+  }
+  for (final entry in byStoreDay.entries) {
+    final rho = _spearman(entry.value);
+    if (rho != null) {
+      across.putIfAbsent(entry.key.split('|').last, () => []).add(rho);
+    }
+  }
+  return {'within_machine': _daySummary(within), 'across_machines': _daySummary(across)};
+}
+
+/// 保存済みの予想（締切より前で最後の記録）を、再計算した候補と比べる。
+Map<String, Object?> evaluateSavedSnapshots(
+  List<BacktestGroup> groups,
+  List<({String store, String day, String machine, String takenAt, List<int> racks})>
+  snapshots, {
+  int cutoffHour = 0,
+}) {
+  final latest = <String, ({String takenAt, List<int> racks})>{};
+  for (final s in snapshots) {
+    final at = readJst(s.takenAt);
+    if (at == null || !at.isBefore(predictionCutoff(s.day, hour: cutoffHour))) {
+      continue;
+    }
+    final key = '${s.store}|${s.day}|${s.machine}';
+    final current = latest[key];
+    if (current == null || readJst(current.takenAt)!.isBefore(at)) {
+      latest[key] = (takenAt: s.takenAt, racks: s.racks);
+    }
+  }
+  var matched = 0, same = 0, withCandidates = 0;
+  final gapByDay = <String, List<double>>{};
+  final chosen = <double>[];
+  for (final g in groups) {
+    final saved = latest['${g.store}|${g.day}|${g.machine}'];
+    if (saved == null) continue;
+    matched++;
+    final recomputed = {
+      for (final m in g.members)
+        if (m.current) m.rack,
+    };
+    if (recomputed.length == saved.racks.length &&
+        recomputed.containsAll(saved.racks)) {
+      same++;
+    }
+    if (saved.racks.isEmpty) continue;
+    withCandidates++;
+    final pool = [for (final m in g.labeled) m.nextScore!];
+    final picks = [
+      for (final m in g.labeled)
+        if (saved.racks.contains(m.rack)) m.nextScore!,
+    ];
+    if (pool.isEmpty || picks.isEmpty) continue;
+    chosen.addAll(picks);
+    gapByDay.putIfAbsent(g.day, () => []).add(_mean(picks)! - _mean(pool)!);
+  }
+  return {
+    'saved_groups_before_cutoff': latest.length,
+    'matched_to_evaluated_groups': matched,
+    'same_as_recomputed': same,
+    'with_candidates': withCandidates,
+    'chosen_evaluable': chosen.length,
+    'chosen_mean': chosen.isEmpty ? null : _round(_mean(chosen)!),
+    'gap_vs_pool': _daySummary(gapByDay),
+  };
+}

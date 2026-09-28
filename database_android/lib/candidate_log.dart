@@ -18,6 +18,7 @@ class CandidateSnapshot {
     required this.total,
     required this.eligible,
     required this.candidates,
+    this.method,
   });
 
   final String store;
@@ -34,17 +35,22 @@ class CandidateSnapshot {
   /// 候補に入った台。候補が出なかった（4台未満など）ときは空。
   final List<({int rack, double index, int days})> candidates;
 
+  /// 計算方式の版（[nextDayMethodVersion]）。この項目ができる前の記録は null
+  /// （版が分からないので、新しい版の成績とは無条件に合わせない）。
+  final String? method;
+
   String get groupKey => '$store|$day|$machine';
 
-  /// 時刻を除いた中身。同じ中身なら記録し直さない。
+  /// 時刻を除いた中身。同じ中身なら記録し直さない（版が変われば記録し直す）。
   String get signature =>
-      '$total|$eligible|${candidates.map((c) => '${c.rack}:${c.index}:${c.days}').join(',')}';
+      '${method ?? ''}|$total|$eligible|${candidates.map((c) => '${c.rack}:${c.index}:${c.days}').join(',')}';
 
   Map<String, dynamic> toJson() => {
     'store': store,
     'day': day,
     'machine': machine,
     'taken_at': takenAt,
+    if (method != null) 'method': method,
     'total': total,
     'eligible': eligible,
     'candidates': [
@@ -70,11 +76,13 @@ class CandidateSnapshot {
           DateTime.tryParse(takenAt) == null) {
         return null;
       }
+      final method = raw['method'];
       return CandidateSnapshot(
         store: store,
         day: day,
         machine: normalizeMachineName(machine),
         takenAt: takenAt,
+        method: method is String && method.isNotEmpty ? method : null,
         total: (raw['total'] as num).toInt(),
         eligible: (raw['eligible'] as num).toInt(),
         candidates: [
@@ -112,6 +120,7 @@ CandidateSnapshot candidateSnapshot({
     day: day,
     machine: machine,
     takenAt: timestampWithOffset(now),
+    method: nextDayMethodVersion,
     total: result.total,
     eligible: result.eligible,
     candidates: [

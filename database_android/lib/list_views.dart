@@ -163,6 +163,14 @@ String dayWithWeekday(String day) {
   return '$day（${names[DateTime.parse(day).weekday - 1]}）';
 }
 
+/// `2026-09-23` を `9/23（水）` の形で。読めない日付は空文字。
+String shortDayLabel(String day) {
+  if (!isValidRecordDay(day)) return '';
+  const names = ['月', '火', '水', '木', '金', '土', '日'];
+  final d = DateTime.parse(day);
+  return '${d.month}/${d.day}（${names[d.weekday - 1]}）';
+}
+
 /// `2026-09-23` の翌日を `9/24（木）` の形で。読めない日付は空文字。
 String nextDayLabel(String day) {
   if (!isValidRecordDay(day)) return '';

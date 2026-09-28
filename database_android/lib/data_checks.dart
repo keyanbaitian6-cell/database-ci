@@ -78,6 +78,13 @@ String capturedNote(SlotRecord record) {
   return stamp.hour < 20 ? '$text（早めの取得：回転数は途中経過）' : text;
 }
 
+/// 翌日候補（仮）の計算方式の版。保存する候補の記録（[CandidateSnapshot]）に
+/// 残し、式を変えたときに新旧の成績を混ぜないようにする。式を変えたら上げる。
+/// 2026-09-27：サイトの異常値（点検中の88888888など）を除外。それ以外は
+/// 2026-09-23以前から同じ（2026-09-29の検証でも変更しなかった）。PC版
+/// `core.NEXT_DAY_METHOD_VERSION` と同じ値。
+const nextDayMethodVersion = '2026-09-27';
+
 /// Historical hit-frequency tendency for the provisional candidate view.
 ///
 /// This is not a validated forecast, setting probability, or part of the
