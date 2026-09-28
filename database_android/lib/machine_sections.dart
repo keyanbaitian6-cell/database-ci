@@ -7,6 +7,7 @@ import 'list_views.dart';
 import 'graph_preview.dart';
 import 'models.dart';
 import 'setting_estimate.dart';
+import 'setting_estimate_presentation.dart';
 import 'theme.dart';
 
 // 結果タブ・過去の記録で使う、機種ごとの表示。
@@ -132,6 +133,15 @@ class _MachineSectionState extends State<MachineSection> {
             ),
           ],
         ),
+        if (SettingEstimatePresentation.twoChoicesOf(context) &&
+            settingModelForMachine(widget.machine) != null)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Text(
+              SettingEstimatePresentation.explanation,
+              style: TextStyle(fontSize: 11, color: AppColors.ash),
+            ),
+          ),
         if (_graph)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -257,12 +267,27 @@ class MachineDataTable extends StatelessWidget {
   );
 
   /// 推定設定の欄。手入力の設定情報があればそちらを優先して出す。
-  static Widget _setting(SlotRecord record) {
+  static Widget _setting(BuildContext context, SlotRecord record) {
     if (record.confirmedSetting case final setting?) {
       return _text('設定情報 $setting', bold: true, color: AppColors.linkBlue);
     }
     final estimate = estimateSetting(record);
     if (estimate == null) return _text('—', color: AppColors.mist);
+    if (SettingEstimatePresentation.twoChoicesOf(context)) {
+      return Tooltip(
+        message: '${estimate.pairDetailLabel}\n${estimate.pairWeightLabel}',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _text(estimate.pairLabel),
+            Text(
+              estimate.pairCaution,
+              style: const TextStyle(fontSize: 10, color: AppColors.ash),
+            ),
+          ],
+        ),
+      );
+    }
     if (estimate.range80.length == estimate.settingCount) {
       return _text('絞れず', color: AppColors.ash);
     }
@@ -336,7 +361,13 @@ class MachineDataTable extends StatelessWidget {
           children: [
             for (final (label, width) in _columns)
               _cell(
-                Text(label, style: head),
+                Text(
+                  label == '推定設定' &&
+                          SettingEstimatePresentation.twoChoicesOf(context)
+                      ? '推定2候補'
+                      : label,
+                  style: head,
+                ),
                 width: width,
                 color: _headColor,
               ),
@@ -350,7 +381,7 @@ class MachineDataTable extends StatelessWidget {
                         ? [
                             _text('異常'),
                             for (var k = 0; k < 6; k++) _text('—'),
-                            _setting(entries[i].$1),
+                            _setting(context, entries[i].$1),
                             _score(entries[i].$2),
                           ]
                         : [
@@ -370,7 +401,7 @@ class MachineDataTable extends StatelessWidget {
                               hitRate(entries[i].$1.games, entries[i].$1.rb),
                             ),
                             _text('${entries[i].$1.maxHold ?? '—'}'),
-                            _setting(entries[i].$1),
+                            _setting(context, entries[i].$1),
                             _score(entries[i].$2),
                           ])
                     .indexed)
@@ -526,6 +557,8 @@ class _GraphCard extends StatelessWidget {
         ? '設定情報 ${record.confirmedSetting}'
         : estimate == null
         ? null
+        : SettingEstimatePresentation.twoChoicesOf(context)
+        ? '候補 ${estimate.pairLabel}（${estimate.pairCaution}）'
         : estimate.range80.length == estimate.settingCount
         ? '推定 絞れず'
         : '推定 ${estimate.range80.join('・')}';

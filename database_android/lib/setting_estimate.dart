@@ -136,6 +136,8 @@ class SettingEstimate {
     this.support,
     this.range80,
     this.settingCount,
+    this.ranked,
+    this.games,
   );
   final String model;
   final String source;
@@ -144,11 +146,44 @@ class SettingEstimate {
   final List<String> range80;
   final int settingCount;
 
+  /// All settings, in unrounded descending model weight (ties: table order).
+  /// Keep the other settings: never renormalize only the displayed two to 100%.
+  final List<SettingFit> ranked;
+  final int games;
+
+  List<SettingFit> get topTwo => List.unmodifiable(ranked.take(2));
+  double get topTwoWeight => topTwo.fold(0.0, (sum, fit) => sum + fit.weight);
+  double get outsideWeight =>
+      ranked.skip(2).fold(0.0, (sum, fit) => sum + fit.weight);
+  String get pairLabel => topTwo.map((fit) => fit.setting).join('／');
+  String get pairCaution => games <= 500
+      ? '少数G・参考'
+      : outsideWeight >= topTwoWeight
+      ? '候補外も大きい'
+      : '参考';
+
+  String get pairDetailLabel => 'BB/RB推定2候補：設定 $pairLabel';
+  String get pairWeightLabel =>
+      '${topTwo.map((fit) => '設定${fit.setting} ${formatWeight(fit.weight)}').join('・')}'
+      '／候補外 ${formatWeight(outsideWeight)}（全設定を分母にした相対重み）';
+
+  static String formatWeight(double weight) =>
+      '${(100 * weight).toStringAsFixed(1)}%';
+
   String get shortLabel => range80.length == settingCount
       ? 'BB/RBでは絞り込めず'
       : 'BB/RB候補 ${range80.join('・')}';
   String get detailLabel =>
       'モデル内中央80%候補範囲 ${range80.join('・')}／最多適合 $setting（均等仮定のモデル内相対重み ${support.toStringAsFixed(1)}%）';
+}
+
+class SettingFit {
+  const SettingFit(this.setting, this.weight);
+  final String setting;
+
+  /// Conditional on the manufacturer probabilities and equal setting priors.
+  /// Not a measured hit rate or a real-world probability of the setting.
+  final double weight;
 }
 
 SettingEstimate? estimateSetting(SlotRecord row) {
@@ -205,5 +240,9 @@ SettingEstimate? estimateSetting(SlotRecord row) {
     (weights[best] * 1000).round() / 10,
     spec.settings.sublist(lower, upper + 1),
     spec.settings.length,
+    List.unmodifiable([
+      for (final i in ranked) SettingFit(spec.settings[i], weights[i]),
+    ]),
+    row.games,
   );
 }

@@ -9,6 +9,7 @@ import 'machine_sections.dart';
 import 'models.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
+import 'setting_estimate_presentation.dart';
 import 'theme.dart';
 
 // 結果・記録の表示に使う部品。Android版（main.dart）と、iPhoneで見る
@@ -489,9 +490,28 @@ class RackStats extends StatelessWidget {
         if (estimate != null) ...[
           const SizedBox(height: 8),
           Text(
-            estimate.detailLabel,
+            SettingEstimatePresentation.twoChoicesOf(context)
+                ? estimate.pairDetailLabel
+                : estimate.detailLabel,
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
+          if (SettingEstimatePresentation.twoChoicesOf(context)) ...[
+            Text(estimate.pairWeightLabel),
+            SelectableText(
+              '確率表（メーカー公表）：${estimate.source}',
+              style: const TextStyle(color: AppColors.ash, fontSize: 11),
+            ),
+            Text(
+              estimate.games <= 500
+                  ? '500G以下の少数観測です。2候補とも参考扱いです。'
+                  : estimate.outsideWeight >= estimate.topTwoWeight
+                  ? '候補外の合計重みが半分以上あり、2つには十分絞れていません。'
+                  : '表示は上位2つだけです。候補外の設定を否定するものではありません。',
+              style: const TextStyle(color: AppColors.ash, fontSize: 12),
+            ),
+            if (record.confirmedSetting != null)
+              Text('手入力の設定情報：${record.confirmedSetting}（このBB/RB推定とは別の情報）'),
+          ],
           const Text(
             'BB/RBのみ・各設定同じ事前重みで比較。実際の設定確率や翌日の予測ではありません。',
             style: TextStyle(color: AppColors.ash, fontSize: 12),

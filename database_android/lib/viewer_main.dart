@@ -6,6 +6,7 @@ import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
 import 'scoring.dart';
+import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'viewer_bridge.dart';
@@ -23,11 +24,13 @@ class ViewerApp extends StatelessWidget {
   const ViewerApp({super.key});
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'database 閲覧',
-    debugShowCheckedModeBanner: false,
-    theme: buildAppTheme(),
-    home: const ViewerHome(),
+  Widget build(BuildContext context) => SettingEstimatePresentation(
+    child: MaterialApp(
+      title: 'database 閲覧',
+      debugShowCheckedModeBanner: false,
+      theme: buildAppTheme(),
+      home: const ViewerHome(),
+    ),
   );
 }
 
