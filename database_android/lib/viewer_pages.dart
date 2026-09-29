@@ -165,6 +165,15 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
   List<(SlotRecord, ScoreResult)> _entries = [];
   Set<int> _candidateRacks = {};
 
+  /// 台の表・グラフのリスト（右下の「一番上へ」ボタンで戻す）。
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
   void _changeDay(String? day) {
     if (day == null || day == _day) return;
     setState(() => _day = day);
@@ -220,10 +229,16 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
           onChanged: _changeDay,
         ),
       ),
+      // 日付を変えるとリストは一番上から作り直すので、ボタンも隠した状態に戻す。
+      floatingActionButton: ScrollTopButton(
+        key: ValueKey(_day),
+        controller: _scroll,
+      ),
       body: SafeArea(
         child: ListView(
           key: ValueKey(_day),
-          padding: const EdgeInsets.all(16),
+          controller: _scroll,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
           children: [
             Text(
               storeNames[widget.store] ?? widget.store,
@@ -327,6 +342,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
       score: scoreRecord(record, widget.data.records),
       allRecords: widget.data.records,
       dateNavigation: bar,
+      scrollTopButton: true,
     );
   }
 }

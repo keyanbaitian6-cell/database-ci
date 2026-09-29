@@ -47,10 +47,19 @@ class _ExploratoryForecastPageState extends State<ExploratoryForecastPage> {
   int _machines = 0;
   Object? _calculatedFor;
 
+  /// 候補のリスト（右下の「一番上へ」ボタンで戻す）。
+  final _scroll = ScrollController();
+
   @override
   void initState() {
     super.initState();
     _calculate();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
   }
 
   /// 店舗・日付を変えたとき：計算中の表示にしてから計算し直す。
@@ -105,9 +114,11 @@ class _ExploratoryForecastPageState extends State<ExploratoryForecastPage> {
           onChanged: _changeDay,
         ),
       ),
+      floatingActionButton: ScrollTopButton(controller: _scroll),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+          controller: _scroll,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
           children: [
             if (stores.length > 1) ...[
               storeDropdown(_store, (v) {

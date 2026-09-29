@@ -125,10 +125,19 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
   var _run = 0;
   String? _selectedDay;
 
+  /// 日ごとのカードのリスト（右下の「一番上へ」ボタンで戻す）。
+  final _scroll = ScrollController();
+
   @override
   void initState() {
     super.initState();
     _calculate();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
   }
 
   /// 1日ずつ計算して、できた日から出す（Webでは計算が画面と同じ処理で
@@ -175,9 +184,11 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
                 onChanged: (day) => setState(() => _selectedDay = day),
               ),
       ),
+      floatingActionButton: ScrollTopButton(controller: _scroll),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+          controller: _scroll,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
           children: [
             if (stores.length > 1) ...[
               storeDropdown(_store, (v) {

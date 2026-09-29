@@ -274,32 +274,60 @@ class MachineSummaryList extends StatelessWidget {
   ].join('・');
 }
 
-class SavedGraphPage extends StatelessWidget {
+class SavedGraphPage extends StatefulWidget {
   const SavedGraphPage({
     super.key,
     required this.record,
     this.score,
     this.allRecords,
     this.dateNavigation,
+    this.scrollTopButton = false,
   });
   final SlotRecord record;
   final ScoreResult? score;
   final List<SlotRecord>? allRecords;
   final PreferredSizeWidget? dateNavigation;
 
+  /// 右下に「一番上へ」ボタン（[ScrollTopButton]）を出す（閲覧ページ用）。
+  final bool scrollTopButton;
+
+  @override
+  State<SavedGraphPage> createState() => _SavedGraphPageState();
+}
+
+class _SavedGraphPageState extends State<SavedGraphPage> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final record = widget.record;
+    final score = widget.score;
+    final allRecords = widget.allRecords;
     final graph = record.graph;
+    // ボタンを出すときだけリストに付ける（Android版はこれまでどおり）。
+    final controller = widget.scrollTopButton ? _scroll : null;
+    // ボタンを出すときは、最後の行がボタンに隠れないよう下を空ける。
+    final bottom =
+        (widget.scrollTopButton ? 88 : 16) +
+        MediaQuery.of(context).viewPadding.bottom;
     return Scaffold(
-      appBar: AppBar(title: Text('${record.rack}番台'), bottom: dateNavigation),
+      appBar: AppBar(
+        title: Text('${record.rack}番台'),
+        bottom: widget.dateNavigation,
+      ),
+      floatingActionButton: widget.scrollTopButton
+          ? ScrollTopButton(controller: _scroll)
+          : null,
       body: graph == null
           ? ListView(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                16,
-                16,
-                16 + MediaQuery.of(context).viewPadding.bottom,
-              ),
+              controller: controller,
+              padding: EdgeInsets.fromLTRB(16, 16, 16, bottom),
               children: [
                 RackStats(record: record, score: score),
                 const SizedBox(height: 12),
@@ -309,9 +337,9 @@ class SavedGraphPage extends StatelessWidget {
                   body: 'この台は一覧だけが保存されています。',
                 ),
                 if (allRecords != null)
-                  SlumpStrip(record: record, all: allRecords!),
+                  SlumpStrip(record: record, all: allRecords),
                 if (allRecords != null)
-                  RackTrend(record: record, all: allRecords!),
+                  RackTrend(record: record, all: allRecords),
               ],
             )
           : _SavedGraphBody(
@@ -319,6 +347,8 @@ class SavedGraphPage extends StatelessWidget {
               graph: graph,
               score: score,
               allRecords: allRecords,
+              controller: controller,
+              bottom: bottom,
             ),
     );
   }
@@ -551,13 +581,19 @@ class _SavedGraphBody extends StatelessWidget {
   const _SavedGraphBody({
     required this.record,
     required this.graph,
+    required this.bottom,
     this.score,
     this.allRecords,
+    this.controller,
   });
   final SlotRecord record;
   final GraphMeasurement graph;
   final ScoreResult? score;
   final List<SlotRecord>? allRecords;
+  final ScrollController? controller;
+
+  /// リストの下の余白。
+  final double bottom;
 
   @override
   Widget build(BuildContext context) {
@@ -589,12 +625,8 @@ class _SavedGraphBody extends StatelessWidget {
             Offset(width * .94, graph.endY),
           ];
     return ListView(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        16,
-        16,
-        16 + MediaQuery.of(context).viewPadding.bottom,
-      ),
+      controller: controller,
+      padding: EdgeInsets.fromLTRB(16, 16, 16, bottom),
       children: [
         RackStats(record: record, score: score),
         const SizedBox(height: 12),
@@ -874,4 +906,76 @@ class EmptyState extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// 下へ600pxより多くスクロールすると出る「一番上へ」ボタン。見た目と動きは
+/// Android版の結果タブの右下のボタンと同じ。閲覧ページの長い画面で、
+/// Scaffold の floatingActionButton に置く（右下。メッセージが出ている間は
+/// その上へよける）。[controller] は同じ画面のリストに付けたもの。
+class ScrollTopButton extends StatefulWidget {
+  const ScrollTopButton({super.key, required this.controller});
+  final ScrollController controller;
+
+  /// ボタンを出し始める位置（Android版と同じ）。
+  static const threshold = 600.0;
+
+  @override
+  State<ScrollTopButton> createState() => _ScrollTopButtonState();
+}
+
+class _ScrollTopButtonState extends State<ScrollTopButton> {
+  var _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_update);
+  }
+
+  @override
+  void didUpdateWidget(ScrollTopButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_update);
+      widget.controller.addListener(_update);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_update);
+    super.dispose();
+  }
+
+  void _update() {
+    // 日付を変えてリストを作り直す間は、新旧2つのリストがつながっている
+    // ことがある。後からつながった新しい方の位置で決める。
+    final positions = widget.controller.positions;
+    final position = positions.isEmpty ? null : positions.last;
+    final visible =
+        position != null &&
+        position.hasPixels &&
+        position.pixels > ScrollTopButton.threshold;
+    if (visible != _visible) setState(() => _visible = visible);
+  }
+
+  @override
+  Widget build(BuildContext context) => !_visible
+      ? const SizedBox.shrink()
+      : Material(
+          color: AppColors.carbon.withValues(alpha: .8),
+          shape: const CircleBorder(),
+          elevation: 2,
+          child: IconButton(
+            tooltip: '一番上へ',
+            color: Colors.white,
+            iconSize: 28,
+            onPressed: () => widget.controller.animateTo(
+              0,
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeOutCubic,
+            ),
+            icon: const Icon(Icons.keyboard_arrow_up),
+          ),
+        );
 }

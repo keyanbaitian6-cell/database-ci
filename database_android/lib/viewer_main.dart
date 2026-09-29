@@ -71,6 +71,9 @@ class _ViewerHomeState extends State<ViewerHome> {
   String? _day;
   final _query = TextEditingController();
 
+  /// 結果のリスト（右下の「一番上へ」ボタンで戻す）。
+  final _scroll = ScrollController();
+
   // 表示中の日の採点（読み込んだ内容・店舗・日付が変わったときだけ計算し直す）。
   // 読み込んだ内容は、読み込むたびに1つ進む番号で見分ける。
   Object? _scoredFor;
@@ -93,6 +96,7 @@ class _ViewerHomeState extends State<ViewerHome> {
   @override
   void dispose() {
     _query.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -331,6 +335,8 @@ class _ViewerHomeState extends State<ViewerHome> {
           ),
         ],
       ),
+      // Android版の結果タブと同じく、下へスクロールしたら右下に出す。
+      floatingActionButton: ScrollTopButton(controller: _scroll),
       body: SafeArea(
         child: _loading && data == null
             ? const Center(child: CircularProgressIndicator())
@@ -412,7 +418,9 @@ class _ViewerHomeState extends State<ViewerHome> {
         if (filterForList(s, grouped[s.machine]!, _query.text) != null) s,
     ];
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+      controller: _scroll,
+      // 下は、最後の行が「一番上へ」ボタンに隠れないだけ空ける。
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
       children: [
         if (_error != null) Notice(text: _error!),
         Notice(text: _sourceText(data)),
