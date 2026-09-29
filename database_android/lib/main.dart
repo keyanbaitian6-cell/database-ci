@@ -1155,6 +1155,7 @@ class _ResultsPageState extends State<ResultsPage> {
     // 1〜3台の機種は「バラエティ」1つにまとめる（一覧・機種ごとの表とも）。
     final summaries = summarizeMachines(digest);
     final grouped = groupForList(digest);
+    final machineCount = {for (final e in digest) e.$1.machine}.length;
     final byMachine = <String, List<(SlotRecord, ScoreResult)>>{};
     final shown = <MachineSummary>[];
     for (final s in summaries) {
@@ -1165,10 +1166,18 @@ class _ResultsPageState extends State<ResultsPage> {
     }
     _shown = shown;
     _byMachine = byMachine;
+    final visibleKeys = {
+      for (final rows in byMachine.values)
+        for (final e in rows) e.$1.key,
+    };
     final candidateRacks = <String, Set<int>>{};
     for (final c in candidates.candidates) {
+      if (!visibleKeys.contains(c.record.key)) continue;
       candidateRacks
-          .putIfAbsent(c.variety ? varietyGroupName : c.record.machine, () => {})
+          .putIfAbsent(
+            c.variety ? varietyGroupName : c.record.machine,
+            () => {},
+          )
           .add(c.record.rack);
     }
     return Stack(
@@ -1211,9 +1220,21 @@ class _ResultsPageState extends State<ResultsPage> {
                         Expanded(
                           flex: 3,
                           child: DropdownButtonFormField<String>(
+                            key: ValueKey((store, day, Object.hashAll(days))),
                             initialValue: day,
                             isExpanded: true,
                             decoration: const InputDecoration(labelText: '日付'),
+                            // 閉じた欄は1行。イベント名は下に出して、狭い画面でも
+                            // 日付や2行目が入力欄からはみ出さないようにする。
+                            selectedItemBuilder: (context) => [
+                              for (final d in days)
+                                Text(
+                                  dayWithWeekday(d),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                            ],
                             items: days
                                 .map(
                                   (v) => DropdownMenuItem(
@@ -1227,10 +1248,19 @@ class _ResultsPageState extends State<ResultsPage> {
                                               CrossAxisAlignment.start,
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Text(dayWithWeekday(v)),
+                                            Text(
+                                              dayWithWeekday(v),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                              ),
+                                            ),
                                             if (event != null)
                                               Text(
                                                 event.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                                 style: const TextStyle(
                                                   fontSize: 11,
                                                   color: AppColors.appleBlue,
@@ -1256,6 +1286,20 @@ class _ResultsPageState extends State<ResultsPage> {
                         ),
                       ],
                     ),
+                    if (widget.controller.dateEventFor(store, day)
+                        case final event?)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          event.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.appleBlue,
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 14),
                     if (dayRows.isEmpty)
                       const EmptyState(
@@ -1276,7 +1320,7 @@ class _ResultsPageState extends State<ResultsPage> {
                       DaySummaryCard(entries: digest, onPick: _openRecord),
                       const SizedBox(height: 18),
                       Text(
-                        '設置機種一覧　${{for (final e in digest) e.$1.machine}.length}機種'
+                        '設置機種一覧　$machineCount機種'
                         '・${digest.length}台',
                         key: _listKey,
                         style: const TextStyle(
@@ -1285,7 +1329,7 @@ class _ResultsPageState extends State<ResultsPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      if (summaries.length > 6) ...[
+                      if (machineCount > 6 || _query.text.isNotEmpty) ...[
                         MachineSearchField(
                           controller: _query,
                           onChanged: () => setState(() {}),
@@ -1668,7 +1712,9 @@ class _HistoryPageState extends State<HistoryPage> {
                           : matches(r.machine))
                         r,
                   ];
-                  return rows.isEmpty ? const <HistoryGroup>[] : [g.withRows(rows)];
+                  return rows.isEmpty
+                      ? const <HistoryGroup>[]
+                      : [g.withRows(rows)];
                 }(),
           ],
         ),
@@ -1940,12 +1986,10 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
                     )
                     .toList()
                   ..sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
+            final visibleKeys = {for (final e in scored) e.$1.key};
             final candidateRacks = {
               for (final c in snapshot.data!.candidates.candidates)
-                if (variety
-                    ? c.variety
-                    : !c.variety && c.record.machine == widget.machine)
-                  c.record.rack,
+                if (visibleKeys.contains(c.record.key)) c.record.rack,
             };
             return ListView(
               padding: EdgeInsets.fromLTRB(
