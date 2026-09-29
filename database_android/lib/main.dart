@@ -9,6 +9,7 @@ import 'package:quick_actions/quick_actions.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'app_controller.dart';
+import 'android_record_page.dart';
 import 'backup_service.dart';
 import 'data_checks.dart';
 import 'date_events.dart';
@@ -21,6 +22,7 @@ import 'normal_type.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'web_import_page.dart';
+import 'viewer_pages.dart' show ViewerDateBar, viewerDays;
 
 // 翌日候補の「平均より +13」表示は machine_sections.dart へ移した。既存の
 // 呼び出し元（テストを含む）がこのファイルから使えるよう公開し続ける。
@@ -932,11 +934,8 @@ class _ResultsPageState extends State<ResultsPage> {
   void _openRecord(SlotRecord record, ScoreResult? score) =>
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => SavedGraphPage(
-            record: record,
-            score: score,
-            allRecords: widget.controller.records,
-          ),
+          builder: (_) =>
+              AndroidRecordPage(controller: widget.controller, record: record),
         ),
       );
 
@@ -1127,17 +1126,34 @@ class _ResultsPageState extends State<ResultsPage> {
     if (!dayRows.any((r) => r.machine == _machine)) _machine = null;
     // 選んだ店舗・日付・機種は、選んだとき（onChanged）に覚える。ここ（画面の
     // 組み立て）ではファイルに書かない。
-    return FutureBuilder<DayView>(
-      future: widget.controller.dayView(store!, day ?? ''),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text('採点を読み込めませんでした：${snapshot.error}'));
-        }
-        return _buildDay(context, dayRows, days, snapshot.data);
-      },
+    return Column(
+      children: [
+        ViewerDateBar(
+          days: days,
+          day: day,
+          event: widget.controller.dateEventFor(store, day)?.name,
+          eventFor: (d) => widget.controller.dateEventFor(store, d)?.name,
+          onChanged: (d) {
+            if (d == null || d == day) return;
+            setState(() => day = d);
+            _rememberSelection();
+          },
+        ),
+        Expanded(
+          child: FutureBuilder<DayView>(
+            future: widget.controller.dayView(store!, day ?? ''),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('採点を読み込めませんでした：${snapshot.error}'));
+              }
+              return _buildDay(context, dayRows, days, snapshot.data);
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -1205,7 +1221,7 @@ class _ResultsPageState extends State<ResultsPage> {
                       ),
                     Row(
                       children: [
-                        // 店舗は短い名前にして、日付が「2026-09」で切れないよう幅を回す。
+                        // 日付切替はスクロールしない上部バーへ。
                         Expanded(
                           flex: 2,
                           child: storeDropdown(store!, (v) {
@@ -1216,69 +1232,6 @@ class _ResultsPageState extends State<ResultsPage> {
                             _rememberSelection();
                           }, short: true),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          flex: 3,
-                          child: DropdownButtonFormField<String>(
-                            key: ValueKey((store, day, Object.hashAll(days))),
-                            initialValue: day,
-                            isExpanded: true,
-                            decoration: const InputDecoration(labelText: '日付'),
-                            // 閉じた欄は1行。イベント名は下に出して、狭い画面でも
-                            // 日付や2行目が入力欄からはみ出さないようにする。
-                            selectedItemBuilder: (context) => [
-                              for (final d in days)
-                                Text(
-                                  dayWithWeekday(d),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                            ],
-                            items: days
-                                .map(
-                                  (v) => DropdownMenuItem(
-                                    value: v,
-                                    child: Builder(
-                                      builder: (context) {
-                                        final event = widget.controller
-                                            .dateEventFor(store, v);
-                                        return Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              dayWithWeekday(v),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                            if (event != null)
-                                              Text(
-                                                event.name,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                  fontSize: 11,
-                                                  color: AppColors.appleBlue,
-                                                ),
-                                              ),
-                                          ],
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (v) {
-                              setState(() => day = v);
-                              _rememberSelection();
-                            },
-                          ),
-                        ),
                         IconButton(
                           tooltip: 'イベントを編集',
                           onPressed: _editDateEvent,
@@ -1286,20 +1239,6 @@ class _ResultsPageState extends State<ResultsPage> {
                         ),
                       ],
                     ),
-                    if (widget.controller.dateEventFor(store, day)
-                        case final event?)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          event.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.appleBlue,
-                          ),
-                        ),
-                      ),
                     const SizedBox(height: 14),
                     if (dayRows.isEmpty)
                       const EmptyState(
@@ -1956,20 +1895,35 @@ class HistoryGroupPage extends StatefulWidget {
 }
 
 class _HistoryGroupPageState extends State<HistoryGroupPage> {
+  late String _day = widget.day;
+  bool _graph = false;
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: widget.controller,
     builder: (context, _) {
       return Scaffold(
-        appBar: AppBar(title: Text(dayWithWeekday(widget.day))),
+        appBar: AppBar(
+          title: Text(displayMachineName(widget.machine)),
+          bottom: ViewerDateBar(
+            days: viewerDays(widget.controller.records, widget.store),
+            day: _day,
+            event: widget.controller.dateEventFor(widget.store, _day)?.name,
+            eventFor: (day) =>
+                widget.controller.dateEventFor(widget.store, day)?.name,
+            onChanged: (day) {
+              if (day != null && day != _day) setState(() => _day = day);
+            },
+          ),
+        ),
         body: FutureBuilder<DayView>(
-          future: widget.controller.dayView(widget.store, widget.day),
+          future: widget.controller.dayView(widget.store, _day),
           builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return Center(child: Text('採点できませんでした：${snapshot.error}'));
-            }
             if (snapshot.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Center(child: Text('採点できませんでした：${snapshot.error}'));
             }
             final variety = widget.machine == varietyGroupName;
             // バラエティかどうかは、その日その店の全台で数える。
@@ -1992,6 +1946,7 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
                 if (visibleKeys.contains(c.record.key)) c.record.rack,
             };
             return ListView(
+              key: ValueKey(_day),
               padding: EdgeInsets.fromLTRB(
                 16,
                 12,
@@ -2010,19 +1965,20 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
                     title: '記録がありません',
                     body: variety
                         ? 'この日のバラエティ（1〜3台の機種）の記録はありません。'
-                        : 'この日のこの機種の記録はすべて削除されました。',
+                        : 'この日のこの機種の記録はありません。別の日付を選んでください。',
                   )
                 else
                   MachineSection(
                     machine: widget.machine,
                     entries: scored,
                     candidateRacks: candidateRacks,
+                    graph: _graph,
+                    onGraphChanged: (value) => setState(() => _graph = value),
                     onTap: (record, score) => Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => SavedGraphPage(
+                        builder: (_) => AndroidRecordPage(
+                          controller: widget.controller,
                           record: record,
-                          score: score,
-                          allRecords: widget.controller.records,
                         ),
                       ),
                     ),
