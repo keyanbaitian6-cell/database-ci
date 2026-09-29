@@ -8,6 +8,7 @@ import 'package:database_android/models.dart';
 import 'package:database_android/shared_widgets.dart';
 import 'package:database_android/theme.dart';
 import 'package:database_android/viewer_data.dart';
+import 'package:database_android/viewer_main.dart';
 import 'package:database_android/viewer_pages.dart';
 
 SlotRecord rec(
@@ -188,7 +189,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('バラエティ（2機種）'), findsOneWidget);
     expect(find.text('機種'), findsOneWidget);
-    final table = tester.widget<MachineDataTable>(find.byType(MachineDataTable));
+    final table = tester.widget<MachineDataTable>(
+      find.byType(MachineDataTable),
+    );
     // 4台の機種（テスト）の台は入らない。台番号順。
     expect([for (final e in table.entries) e.$1.rack], [5, 7, 8]);
     expect(table.showMachine, isTrue);
@@ -200,11 +203,71 @@ void main() {
     expect(
       [
         for (final e
-            in tester.widget<MachineDataTable>(find.byType(MachineDataTable)).entries)
+            in tester
+                .widget<MachineDataTable>(find.byType(MachineDataTable))
+                .entries)
           e.$1.rack,
       ],
       [7, 8],
     );
+    expect(
+      tester.widget<MachineSection>(find.byType(MachineSection)).candidateRacks,
+      {7, 8},
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('機種ページで3台の日へ切り替えても全店バラエティと同じ★になる', (tester) async {
+    await phone(tester);
+    final records = [
+      for (var rack = 1; rack <= 4; rack++)
+        rec('2026-09-28', machine: '対象機種', rack: rack),
+      for (var rack = 1; rack <= 3; rack++)
+        rec('2026-09-27', machine: '対象機種', rack: rack),
+      for (var rack = 10; rack < 15; rack++)
+        rec('2026-09-27', machine: '別機種$rack', rack: rack, games: 6000),
+    ];
+    await tester.pumpWidget(
+      app(
+        ViewerMachinePage(
+          data: ViewerData(records: records),
+          store: 'nagamachiminami',
+          machine: '対象機種',
+          day: '2026-09-28',
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pumpAndSettle();
+    // 同じ店舗の6000Gの5台が選ばれる。表示中の3台だけで選び直さない。
+    expect(
+      tester.widget<MachineSection>(find.byType(MachineSection)).candidateRacks,
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('バラエティ1行にまとめても機種名で検索でき、少数機種の日でも解除できる', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(393, 3000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final records = [
+      for (var rack = 1; rack <= 8; rack++)
+        rec('2026-09-28', machine: '機種$rack', rack: rack, games: 400),
+      rec('2026-09-27', machine: '別の機種', games: 400),
+    ];
+    await tester.pumpWidget(
+      app(ViewerHome(initialData: ViewerData(records: records))),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(MachineSearchField), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '機種8');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MachineSearchField), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pumpAndSettle();
+    expect(find.text('バラエティ（1機種）'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -180,25 +180,31 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
         for (final r in data.records)
           if (r.store == widget.store && r.day == _day) r,
       ];
-      final varietyNames = variety ? varietyMachines(dayRows) : const <String>{};
-      // 候補はまとまり（機種、またはバラエティ全体）で選ぶ。
+      final varietyNames = variety
+          ? varietyMachines(dayRows)
+          : const <String>{};
       final rows = [
         for (final r in dayRows)
-          if (variety ? varietyNames.contains(r.machine) : r.machine == widget.machine)
+          if (variety
+              ? varietyNames.contains(r.machine)
+              : r.machine == widget.machine)
             r,
       ]..sort((a, b) => a.rack.compareTo(b.rack));
-      _candidateRacks = {
-        for (final c in dayCandidates(rows, data.records).candidates)
-          c.record.rack,
-      };
       final grouped = [for (final r in rows) (r, scoreRecord(r, data.records))];
-      _entries = variety &&
-              !machineMatches(varietyGroupName, widget.query)
+      _entries = variety && !machineMatches(varietyGroupName, widget.query)
           ? [
               for (final e in grouped)
                 if (machineMatches(e.$1.machine, widget.query)) e,
             ]
           : grouped;
+      // 候補はホームと同じ店舗・日付の全台から選び、表示中の台にだけ★を付ける。
+      // 日付を変えて機種が4台以上から3台以下になっても、機種内だけで
+      // バラエティの候補を選び直さない。検索で隠れた候補を見出しの台数に含めない。
+      final visibleKeys = {for (final e in _entries) e.$1.key};
+      _candidateRacks = {
+        for (final c in dayCandidates(dayRows, data.records).candidates)
+          if (visibleKeys.contains(c.record.key)) c.record.rack,
+      };
       _calculatedDay = _day;
     }
     return Scaffold(

@@ -51,7 +51,10 @@ int historyDays(List<SlotRecord> all, String store, String day) {
 }
 
 class ViewerHome extends StatefulWidget {
-  const ViewerHome({super.key});
+  const ViewerHome({super.key, this.initialData});
+
+  /// 読み込み済みの内容で開く場合に指定する（通常はブラウザ内の保存内容を読む）。
+  final ViewerData? initialData;
   @override
   State<ViewerHome> createState() => _ViewerHomeState();
 }
@@ -79,7 +82,12 @@ class _ViewerHomeState extends State<ViewerHome> {
   @override
   void initState() {
     super.initState();
-    _start();
+    if (widget.initialData case final data?) {
+      _show(data);
+      _loading = false;
+    } else {
+      _start();
+    }
   }
 
   @override
@@ -397,6 +405,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     // 1〜3台の機種は「バラエティ」1つにまとめる。
     final summaries = summarizeMachines(_digest);
     final grouped = groupForList(_digest);
+    final machineCount = {for (final e in _digest) e.$1.machine}.length;
     final history = day == null ? 0 : historyDays(all, store, day);
     final shown = [
       for (final s in summaries)
@@ -479,12 +488,14 @@ class _ViewerHomeState extends State<ViewerHome> {
           DaySummaryCard(entries: _digest, onPick: _openRecord),
           const SizedBox(height: 18),
           Text(
-            '設置機種一覧　${{for (final e in _digest) e.$1.machine}.length}機種'
+            '設置機種一覧　$machineCount機種'
             '・${_digest.length}台',
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
-          if (summaries.length > 6) ...[
+          // バラエティを1行にまとめても検索を残す。日付・店舗を変えた後も
+          // 入力済みの検索語を解除できるようにする。
+          if (machineCount > 6 || _query.text.isNotEmpty) ...[
             MachineSearchField(
               controller: _query,
               onChanged: () => setState(() {}),
