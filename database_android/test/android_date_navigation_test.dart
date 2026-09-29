@@ -5,6 +5,7 @@ import 'package:database_android/date_events.dart';
 import 'package:database_android/main.dart';
 import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
+import 'package:database_android/record_analysis.dart';
 import 'package:database_android/shared_widgets.dart';
 import 'package:database_android/viewer_pages.dart';
 import 'package:flutter/material.dart';
@@ -55,6 +56,60 @@ Future<void> previous(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('各台：日付を素早く戻した後、遅い前日の計算で上書きされない', (tester) async {
+    final c = DelayedController()
+      ..records = [row('2026-09-28'), row('2026-09-25')];
+    await phone(tester, c);
+    await tester.pumpWidget(
+      app(AndroidRecordPage(controller: c, record: c.records.first)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('次の記録日'));
+    await tester.pumpAndSettle();
+    c.pending.complete(
+      calculateDay((c.records, 'nagamachiminami', '2026-09-25')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<SavedGraphPage>(find.byType(SavedGraphPage)).record.day,
+      '2026-09-28',
+    );
+    expect(
+      tester.widget<ViewerDateBar>(find.byType(ViewerDateBar)).day,
+      '2026-09-28',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('各台：イベントの更新を反映し、読み込み中に閉じても例外にならない', (tester) async {
+    final c = DelayedController()
+      ..records = [row('2026-09-28'), row('2026-09-25')];
+    await phone(tester, c);
+    await tester.pumpWidget(
+      app(AndroidRecordPage(controller: c, record: c.records.first)),
+    );
+    await tester.pumpAndSettle();
+    const event = DateEvent(
+      store: 'nagamachiminami',
+      day: '2026-09-28',
+      name: '華の日',
+    );
+    c.dateEvents[event.key] = event;
+    c.replaceRecords(c.records);
+    await tester.pumpAndSettle();
+    expect(find.text('華の日'), findsOneWidget);
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pump();
+    await tester.pumpWidget(app(const SizedBox()));
+    c.pending.complete(
+      calculateDay((c.records, 'nagamachiminami', '2026-09-25')),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('各台：日付とイベント切替、別機種への入替日は空表示、次の日に戻れる', (tester) async {
     final c = data();
     await phone(tester, c);
