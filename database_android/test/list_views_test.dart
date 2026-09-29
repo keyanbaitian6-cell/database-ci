@@ -118,10 +118,9 @@ void main() {
   test('過去の記録：日付の新しい順、同じ日は店舗・機種名順、台は番号順', () {
     final days = groupHistoryByDay([
       rec(2, day: '2026-09-21'),
-      rec(9, store: 'saiwaichou'),
-      rec(5, machine: 'B'),
-      rec(3),
-      rec(1),
+      for (final rack in [9, 8, 7, 6]) rec(rack, store: 'saiwaichou'),
+      for (final rack in [15, 14, 13, 12]) rec(rack, machine: 'B'),
+      for (final rack in [4, 3, 1, 2]) rec(rack),
     ]);
     expect([for (final d in days) d.$1], ['2026-09-22', '2026-09-21']);
     final latest = days.first.$2;
@@ -129,7 +128,38 @@ void main() {
       [for (final g in latest) '${g.store}/${g.machine}'],
       ['nagamachiminami/B', 'nagamachiminami/テスト', 'saiwaichou/テスト'],
     );
-    expect([for (final r in latest[1].rows) r.rack], [1, 3]);
+    expect([for (final r in latest[1].rows) r.rack], [1, 2, 3, 4]);
+    // 9/21は1台だけの機種なので、バラエティの1行になる。
+    expect(
+      [for (final g in days.last.$2) (g.machine, g.variety, g.machines)],
+      [('バラエティ', true, 1)],
+    );
+  });
+
+  test('過去の記録：1〜3台の機種は店ごとにバラエティ1行にまとめ、その店の最後に置く', () {
+    final days = groupHistoryByDay([
+      for (var rack = 1; rack <= 4; rack++) rec(rack, machine: 'Z'),
+      rec(30, machine: '北斗'),
+      rec(31, machine: '北斗'),
+      rec(20, machine: 'ハナハナ'),
+      rec(40, machine: '北斗', store: 'saiwaichou'),
+    ]);
+    final groups = days.single.$2;
+    expect(
+      [for (final g in groups) '${g.store}/${g.machine}/${g.machines}'],
+      [
+        'nagamachiminami/Z/1',
+        'nagamachiminami/バラエティ/2',
+        'saiwaichou/バラエティ/1',
+      ],
+    );
+    expect([for (final r in groups[1].rows) r.rack], [20, 30, 31]);
+    // 機種名で絞り込んだときは、その機種の台だけにできる。
+    final only = groups[1].withRows([
+      for (final r in groups[1].rows)
+        if (r.machine == '北斗') r,
+    ]);
+    expect((only.variety, only.machines, only.rows.length), (true, 1, 2));
   });
 
   test('日付に曜日を付ける。読めない日付はそのまま', () {

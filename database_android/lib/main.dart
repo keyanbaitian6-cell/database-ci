@@ -1643,11 +1643,36 @@ class _HistoryPageState extends State<HistoryPage> {
     bool matches(String machine) => matched[machine] ??=
         (type?.matches(machine) ?? true) &&
         machineMatches(machine, _query.text);
-    final days = groupHistoryByDay(
-      all.where(
-        (r) => (store.isEmpty || r.store == store) && matches(r.machine),
-      ),
-    );
+    // 1〜3台の機種（バラエティ）かどうかは、その日その店の全台で数えるので、
+    // 店舗だけで絞ってからまとめ、機種名・種別の絞り込みはまとめた後にかける。
+    // バラエティは「バラエティ」で検索すれば全台、機種名で当たればその機種の台だけ。
+    final varietyQuery =
+        _query.text.trim().isNotEmpty &&
+        machineMatches(varietyGroupName, _query.text);
+    final days = [
+      for (final (day, groups) in groupHistoryByDay(
+        all.where((r) => store.isEmpty || r.store == store),
+      ))
+        (
+          day,
+          [
+            for (final g in groups)
+              if (!g.variety)
+                if (matches(g.machine)) g else ...const <HistoryGroup>[]
+              else
+                ...() {
+                  final rows = [
+                    for (final r in g.rows)
+                      if (varietyQuery
+                          ? (type?.matches(r.machine) ?? true)
+                          : matches(r.machine))
+                        r,
+                  ];
+                  return rows.isEmpty ? const <HistoryGroup>[] : [g.withRows(rows)];
+                }(),
+          ],
+        ),
+    ].where((d) => d.$2.isNotEmpty).toList();
     // 日付ごとのカードは数が増え続けるので、画面に出ている分だけ組み立てる。
     // （以前は全部まとめて作っていたため、記録が増えるほど開くのが遅くなった）
     return ListView.builder(
@@ -1727,9 +1752,10 @@ class _HistoryPageState extends State<HistoryPage> {
     ),
   );
 
-  /// 1日ぶん：日付の見出しと、機種ごとの1行。
+  /// 1日ぶん：日付の見出しと、機種ごとの1行（1〜3台の機種はバラエティ1行）。
   Widget _day(String day, List<HistoryGroup> groups, List<SlotRecord> all) {
     final racks = groups.fold<int>(0, (sum, g) => sum + g.rows.length);
+    final machines = groups.fold<int>(0, (sum, g) => sum + g.machines);
     final event = widget.controller.dateEventFor(store, day);
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -1763,7 +1789,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 ],
                 const Spacer(),
                 Text(
-                  '${groups.length}機種・$racks台',
+                  '$machines機種・$racks台',
                   style: const TextStyle(fontSize: 12, color: AppColors.ash),
                 ),
               ],
@@ -1795,6 +1821,10 @@ class _HistoryPageState extends State<HistoryPage> {
             day: group.day,
             store: group.store,
             machine: group.machine,
+            // 機種名で絞り込んだバラエティは、その機種の台だけを開く。
+            only: group.variety
+                ? {for (final r in group.rows) r.machine}
+                : null,
           ),
         ),
       ),
@@ -1807,7 +1837,9 @@ class _HistoryPageState extends State<HistoryPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    displayMachineName(group.machine),
+                    group.variety
+                        ? '$varietyGroupName（${group.machines}機種）'
+                        : displayMachineName(group.machine),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w600),
@@ -1816,7 +1848,9 @@ class _HistoryPageState extends State<HistoryPage> {
                   Text(
                     [
                       storeShortName(group.store),
-                      '${group.rows.length}台',
+                      group.variety
+                          ? '1〜3台の機種の${group.rows.length}台'
+                          : '${group.rows.length}台',
                       if (settings > 0) '設定情報$settings台',
                     ].join('・'),
                     style: const TextStyle(fontSize: 12, color: AppColors.ash),
@@ -1856,6 +1890,8 @@ class _HistoryPageState extends State<HistoryPage> {
 
 /// 過去の記録で1行（ある日・ある店舗・ある機種）を開いた画面。
 /// 台は表で並べ、タップでグラフ、長押しで設定情報の記録・削除。
+/// [machine] が [varietyGroupName] なら、その日その店で1〜3台の機種の台
+/// （[only] があれば、その機種の台だけ）。
 class HistoryGroupPage extends StatefulWidget {
   const HistoryGroupPage({
     super.key,
@@ -1863,9 +1899,11 @@ class HistoryGroupPage extends StatefulWidget {
     required this.day,
     required this.store,
     required this.machine,
+    this.only,
   });
   final AppController controller;
   final String day, store, machine;
+  final Set<String>? only;
 
   @override
   State<HistoryGroupPage> createState() => _HistoryGroupPageState();
@@ -1887,14 +1925,27 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
             if (snapshot.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator());
             }
+            final variety = widget.machine == varietyGroupName;
+            // バラエティかどうかは、その日その店の全台で数える。
+            final varietyNames = variety
+                ? varietyMachines(snapshot.data!.scored.values.map((e) => e.$1))
+                : const <String>{};
             final scored =
                 snapshot.data!.scored.values
-                    .where((r) => r.$1.machine == widget.machine)
+                    .where(
+                      (r) => variety
+                          ? varietyNames.contains(r.$1.machine) &&
+                                (widget.only?.contains(r.$1.machine) ?? true)
+                          : r.$1.machine == widget.machine,
+                    )
                     .toList()
                   ..sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
             final candidateRacks = {
               for (final c in snapshot.data!.candidates.candidates)
-                if (c.record.machine == widget.machine) c.record.rack,
+                if (variety
+                    ? c.variety
+                    : !c.variety && c.record.machine == widget.machine)
+                  c.record.rack,
             };
             return ListView(
               padding: EdgeInsets.fromLTRB(
@@ -1910,10 +1961,12 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
                 ),
                 const SizedBox(height: 8),
                 if (scored.isEmpty)
-                  const EmptyState(
+                  EmptyState(
                     icon: Icons.inbox_outlined,
                     title: '記録がありません',
-                    body: 'この日のこの機種の記録はすべて削除されました。',
+                    body: variety
+                        ? 'この日のバラエティ（1〜3台の機種）の記録はありません。'
+                        : 'この日のこの機種の記録はすべて削除されました。',
                   )
                 else
                   MachineSection(

@@ -161,45 +161,75 @@ List<MachineSummary> summarizeMachines(
   return summaries;
 }
 
-/// 過去の記録の1行ぶん（ある日・ある店舗・ある機種の台）。
+/// 過去の記録の1行ぶん（ある日・ある店舗・ある機種の台）。[machine] が
+/// [varietyGroupName] なら、その日その店で1〜3台の機種をまとめたバラエティ。
 class HistoryGroup {
   const HistoryGroup(this.day, this.store, this.machine, this.rows);
   final String day, store, machine;
 
   /// 台番号順。
   final List<SlotRecord> rows;
+
+  bool get variety => machine == varietyGroupName;
+
+  /// 入っている機種の数（バラエティ以外は1）。
+  int get machines => {for (final r in rows) r.machine}.length;
+
+  /// 同じまとまりで、台だけを [rows] にしたもの（機種名で絞り込んだとき）。
+  HistoryGroup withRows(List<SlotRecord> rows) =>
+      HistoryGroup(day, store, machine, rows);
 }
 
 /// 過去の記録を日付ごとにまとめる。日付は新しい順、同じ日の中は店舗・機種名順。
+/// 1〜3台の機種は店ごとに「バラエティ」1行にまとめ、その店の最後に置く
+/// （結果タブ・閲覧ページの設置機種一覧と同じ。1〜3台かどうかは、渡した記録の
+/// その日その店の台数で数える）。
 List<(String, List<HistoryGroup>)> groupHistoryByDay(
   Iterable<SlotRecord> records,
 ) {
-  final groups = <String, Map<(String, String), List<SlotRecord>>>{};
+  final byDay = <String, Map<String, List<SlotRecord>>>{};
   for (final record in records) {
-    groups
+    byDay
         .putIfAbsent(record.day, () => {})
-        .putIfAbsent((record.store, record.machine), () => [])
+        .putIfAbsent(record.store, () => [])
         .add(record);
   }
-  final days = groups.keys.toList()..sort((a, b) => b.compareTo(a));
+  final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
   return [
     for (final day in days)
       (
         day,
         [
-          for (final entry
-              in groups[day]!.entries.toList()..sort((a, b) {
-                final byStore = a.key.$1.compareTo(b.key.$1);
-                return byStore != 0
-                    ? byStore
-                    : compareMachineNames(a.key.$2, b.key.$2);
-              }))
-            HistoryGroup(
-              day,
-              entry.key.$1,
-              entry.key.$2,
-              entry.value..sort((a, b) => a.rack.compareTo(b.rack)),
-            ),
+          for (final store in byDay[day]!.keys.toList()..sort())
+            ...() {
+              final rows = byDay[day]![store]!;
+              final variety = varietyMachines(rows);
+              final groups = <String, List<SlotRecord>>{};
+              for (final r in rows) {
+                groups
+                    .putIfAbsent(
+                      variety.contains(r.machine) ? varietyGroupName : r.machine,
+                      () => [],
+                    )
+                    .add(r);
+              }
+              final names = groups.keys.toList()
+                ..sort((a, b) {
+                  if ((a == varietyGroupName) != (b == varietyGroupName)) {
+                    return a == varietyGroupName ? 1 : -1;
+                  }
+                  return compareMachineNames(a, b);
+                });
+              return [
+                for (final name in names)
+                  HistoryGroup(
+                    day,
+                    store,
+                    name,
+                    groups[name]!..sort((a, b) => a.rack.compareTo(b.rack)),
+                  ),
+              ];
+            }(),
         ],
       ),
   ];
