@@ -63,6 +63,54 @@ void main() {
     }
     expect(scoreRecord(sample(games: 501), refs()).total, isNotNull);
   });
+  test('v12：大当たり0回でグラフの無い台は、終点・維持を0点（下がり続けるグラフと同じ点）', () {
+    SlotRecord zero({GraphMeasurement? graph}) => SlotRecord(
+      store: 'saiwaichou',
+      machine: 'M',
+      day: '2026-09-20',
+      rack: 1,
+      games: 600,
+      bb: 0,
+      rb: 0,
+      maxHold: 30,
+      graph: graph,
+    );
+    final skipped = scoreRecord(zero(), refs());
+    expect((skipped.positive, skipped.retention), (0, 0));
+    expect(skipped.reasons, contains('大当たり0回でグラフ省略：終点・維持は0点'));
+    expect(skipped.reasons, isNot(contains('グラフ未取得：中立10点で補完')));
+    expect(skipped.reasons, isNot(contains('グラフ終点がゼロ線以下')));
+    // グラフを取った場合（ゼロから下がり続ける）と同じ合計点。
+    final falling = scoreRecord(
+      zero(
+        graph: const GraphMeasurement(
+          baselineY: 200,
+          peakY: 200,
+          troughY: 260,
+          endY: 260,
+        ),
+      ),
+      refs(),
+    );
+    expect(skipped.total, falling.total);
+    // 当たりが1回でもあれば、これまで通りグラフ未取得は中立で補う。
+    final one = scoreRecord(
+      SlotRecord(
+        store: 'saiwaichou',
+        machine: 'M',
+        day: '2026-09-20',
+        rack: 1,
+        games: 600,
+        bb: 0,
+        rb: 1,
+        maxHold: 30,
+      ),
+      refs(),
+    );
+    expect((one.positive, one.retention), (null, null));
+    expect(one.reasons, contains('グラフ未取得：中立10点で補完'));
+    expect(scoringVersion, '2026-09-29-v12');
+  });
   test('手計算 .2の立方根の縮約係数・満点との比較で83.4点', () {
     // v9: 掛け算ではなく相乗平均。
     // weight = (3000/4500 * 30/50 * 3/6)^(1/3) = .2^(1/3) = .584804

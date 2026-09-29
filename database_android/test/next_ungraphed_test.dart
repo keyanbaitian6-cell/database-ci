@@ -18,14 +18,16 @@ SlotRecord rec(
   GraphMeasurement? graph,
   String? link,
   String day = '2026-09-18',
+  int bb = 10,
+  int rb = 5,
 }) => SlotRecord(
   store: 'saiwaichou',
   day: day,
   machine: 'Lモンキーターン5CE',
   rack: rack,
   games: 3000,
-  bb: 10,
-  rb: 5,
+  bb: bb,
+  rb: rb,
   graph: graph,
   detailUrl: link,
 );
@@ -81,6 +83,41 @@ void main() {
     c.records = [rec(705)]; // リンクが保存されていない台
     t = next(c);
     expect((t.reason, t.rack, t.url), ('no_link', 705, null));
+  });
+
+  test('大当たり0回の台はグラフを取らない：次の台・進み具合・印・日の完了で済み扱い', () {
+    final c = AppController();
+    c.records = [
+      rec(701, graph: _graph, link: url(701)),
+      rec(702, link: url(702), bb: 0, rb: 0), // 0回 → 飛ばす
+      rec(703, link: url(703), bb: 0, rb: 1), // RBだけでも当たりあり → 取る
+      rec(704, link: url(704), bb: 0, rb: 0),
+    ];
+    var t = next(c);
+    expect((t.rack, t.remaining), (703, 1));
+    t = next(c, rack: 703);
+    expect((t.rack, t.remaining), (703, 1));
+    expect(c.progressText(store: 'saiwaichou', day: '2026-09-18'), '2026-09-18　幸町 3/4台');
+    expect(
+      c.machineStatuses(
+        store: 'saiwaichou',
+        day: '2026-09-18',
+        machines: ['Lモンキーターン5CE'],
+      )[0],
+      {'done': 3, 'total': 4},
+    );
+    // 当たりのある台のグラフが済めば、0回の台が残っていても機種・日は完了。
+    c.records = [
+      rec(701, graph: _graph, link: url(701)),
+      rec(702, link: url(702), bb: 0, rb: 0),
+    ];
+    final done = next(c);
+    expect((done.reason, done.dayComplete), ('all_done', true));
+    expect(c.records[1].graphNotNeeded, isTrue);
+    expect(c.records[0].graphNotNeeded, isFalse);
+    // 表を取り込み直して当たりが付けば、また取る対象に戻る。
+    c.records = [rec(702, link: url(702), bb: 1, rb: 0)];
+    expect(next(c).rack, 702);
   });
 
   test('個別台リンクはJSONで往復し、バックアップ取り込みで補完される', () {

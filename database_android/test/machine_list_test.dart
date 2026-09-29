@@ -57,6 +57,20 @@ void main() {
       expect(isExcludedMachine('nagamachiminami', null), isFalse);
     });
 
+    test('沖ドキ・オキドキは両店とも対象外（全角・半角とも）。似た名前は巻き込まない', () {
+      for (final store in ['nagamachiminami', 'saiwaichou']) {
+        // 実サイトの表記（長町南は半角カナ）。
+        expect(isExcludedMachine(store, 'S/沖ﾄﾞｷ!GOLD/LS'), isTrue);
+        expect(isExcludedMachine(store, 'L/ｵｷﾄﾞｷﾃﾞｭｵ2/FR'), isTrue);
+        expect(isExcludedMachine(store, 'L／オキドキデュオ2／FR'), isTrue);
+        expect(isExcludedMachine(store, 'パチスロ沖ドキ！DUO'), isTrue);
+        // 「コードギアス」「ドキドキ」は別機種。
+        expect(isExcludedMachine(store, 'Sｺｰﾄﾞｷﾞｱｽ3C.C. FS'), isFalse);
+        expect(isExcludedMachine(store, 'L コードギアス復活のルルーシュ ZS'), isFalse);
+        expect(isExcludedMachine(store, 'ドキドキ'), isFalse);
+      }
+    });
+
     test('低貸し（kind_code=10・5）の機種へは移動しない', () {
       expect(
         isTargetKindUrl('$host/standlist_slot/?kind_code=21&machine_name=a'),

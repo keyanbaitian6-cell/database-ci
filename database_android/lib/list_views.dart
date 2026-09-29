@@ -63,7 +63,8 @@ class MachineSummary {
 
   final String machine;
 
-  /// 台数・合計点が出た台数・グラフ未取得の台数。
+  /// 台数・合計点が出た台数・グラフ未取得の台数（大当たり0回でグラフを
+  /// 取らない台は数えない）。
   final int racks, scored, noGraph;
 
   /// 合計点が出た台の平均と最高。出た台が無ければ null。
@@ -95,7 +96,7 @@ List<MachineSummary> summarizeMachines(
           machine: name,
           racks: rows.length,
           scored: scored.length,
-          noGraph: rows.where((e) => e.$1.graph == null).length,
+          noGraph: rows.where((e) => !e.$1.graphDone).length,
           average: scored.isEmpty
               ? null
               : scored.map((e) => e.$2.total!).reduce((a, b) => a + b) /

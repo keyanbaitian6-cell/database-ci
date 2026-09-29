@@ -87,6 +87,23 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(implausible_numbers(sample(games=12000, bb=80, rb=40, max_hold=19008)))
         self.assertIsNone(estimate_setting(dict(placeholder, machine='マイジャグラーⅤ')))
 
+    def test_v12_no_hits_without_graph_scores_zero_for_end_and_retention(self):
+        # 大当たり0回の台はグラフを取らない。終点・維持は0点で、下がり続けるグラフを
+        # 取った場合と同じ合計点。当たりが1回でもあれば、これまで通り中立で補う。
+        zero = sample(games=600, bb=0, rb=0, max_hold=30, graph_measurement=None)
+        skipped = score(zero, references())
+        self.assertEqual((skipped['positive'], skipped['retention']), (0, 0))
+        self.assertIn('大当たり0回でグラフ省略：終点・維持は0点', skipped['reasons'])
+        self.assertNotIn('グラフ未取得：中立10点で補完', skipped['reasons'])
+        self.assertNotIn('グラフ終点がゼロ線以下', skipped['reasons'])
+        falling = score(dict(zero, graph_measurement=dict(baseline_y=200, peak_y=200,
+                                                          trough_y=260, end_y=260)), references())
+        self.assertEqual(skipped['total'], falling['total'])
+        one = score(dict(zero, rb=1), references())
+        self.assertEqual((one['positive'], one['retention']), (None, None))
+        self.assertIn('グラフ未取得：中立10点で補完', one['reasons'])
+        self.assertEqual(skipped['version'], '2026-09-29-v12')
+
     def test_500_games_or_less_is_not_scored(self):
         for games in (1, 499, 500):
             s = score(sample(games=games), references())

@@ -32,10 +32,11 @@ class DaySummaryCard extends StatelessWidget {
     final scored = entries.where((e) => e.$2.total != null).toList()
       ..sort((a, b) => b.$2.total!.compareTo(a.$2.total!));
     final provisional = scored.where((e) => e.$2.provisional).length;
-    final noGraph = entries.where((e) => e.$1.graph == null).length;
+    final noGraph = entries.where((e) => !e.$1.graphDone).length;
+    final skipped = entries.where((e) => e.$1.graphNotNeeded).length;
     final odd = suspiciousDuplicates(entries.map((e) => e.$1));
     final missingByMachine = <String, List<int>>{};
-    for (final e in entries.where((e) => e.$1.graph == null)) {
+    for (final e in entries.where((e) => !e.$1.graphDone)) {
       missingByMachine.putIfAbsent(e.$1.machine, () => []).add(e.$1.rack);
     }
     for (final racks in missingByMachine.values) {
@@ -54,7 +55,8 @@ class DaySummaryCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               '${entries.length}台　合計点確定${scored.length}台（暫定$provisional台）'
-              '　保留${entries.length - scored.length}台　グラフ未取得$noGraph台',
+              '　保留${entries.length - scored.length}台　グラフ未取得$noGraph台'
+              '${skipped > 0 ? '（大当たり0回でグラフ省略$skipped台は除く）' : ''}',
               style: const TextStyle(color: AppColors.ash, fontSize: 13),
             ),
             const SizedBox(height: 8),

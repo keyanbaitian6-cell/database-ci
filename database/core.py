@@ -12,7 +12,7 @@ from pathlib import Path
 
 from setting_estimate import candidate_label, estimate_setting
 
-VERSION = '2026-09-27-v11'
+VERSION = '2026-09-29-v12'
 MIN_REFERENCE_ROWS = 20  # Initial operational default, not statistical confidence.
 OBSERVATION_KEEP_DAYS = 30  # How long the write log keeps its lines (it is never read by the app).
 HISTORY_REPORT_DAYS = 14    # How many of the most recent dates the history page draws.
@@ -1052,13 +1052,38 @@ def undo_last_save(store, data_dir):
     return info.get('label', '直前の保存')
 
 
+def has_graph(row):
+    return bool(row.get('graph') or row.get('graph_measurement'))
+
+
+def no_hits(row):
+    """表の大当たり（BB+RB）が0回か。BB・RBが分からない台は0回にしない。"""
+    try:
+        return int(row.get('bb')) + int(row.get('rb')) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def graph_not_needed(row):
+    """大当たり0回でグラフの無い台。グラフは取らない（利用者の指定、2026-09-29。
+    実データの0回550台で、終点がプラスだったのは24Gの1台だけ）。表を取り込み
+    直して当たりが付けば、また取る対象に戻る。Android版 `graphNotNeeded`。"""
+    return not has_graph(row) and no_hits(row)
+
+
+def graph_done(row):
+    """グラフが済んでいる（取り込み済み、または大当たり0回で不要）。"""
+    return has_graph(row) or no_hits(row)
+
+
 def progress_text(store, day):
-    """"2026-09-18　長町南 42/80台・幸町 18/60台" -- graphs saved / racks listed."""
+    """"2026-09-18　長町南 42/80台・幸町 18/60台" -- graphs done / racks listed
+    (大当たり0回でグラフを取らない台は済みとして数える)."""
     parts = []
     for location, short in SHORT_STORE_NAMES.items():
         rows = store.rows(day, None, location)
         if rows:
-            done = sum(1 for r in rows if r.get('graph') or r.get('graph_measurement'))
+            done = sum(1 for r in rows if graph_done(r))
             parts.append(f'{short} {done}/{len(rows)}台')
     return f'{day}　' + '・'.join(parts) if parts else ''
 
@@ -1216,13 +1241,13 @@ def machine_progress(store, location, day):
     for r in store.rows(day, None, location):
         key = re.sub(r'\s+', '', r['machine'])
         done, total = result.get(key, (0, 0))
-        result[key] = (done + (1 if (r.get('graph') or r.get('graph_measurement')) else 0), total + 1)
+        result[key] = (done + (1 if graph_done(r) else 0), total + 1)
     return result
 
 
 def day_fully_graphed(store, day):
     rows = store.rows(day)
-    return bool(rows) and all(r.get('graph') or r.get('graph_measurement') for r in rows)
+    return bool(rows) and all(graph_done(r) for r in rows)
 
 
 def suspicious_duplicates(store, day, location, machine=None):
@@ -1398,11 +1423,17 @@ def score(row, reference, provisional_reference=None):
     if s['max_hold'] is None:
         s['reasons'].append('最大持玉の比較データ不足：中立10点で補完')
     graph, measurement = row.get('graph'), row.get('graph_measurement')
+    skipped = graph_not_needed(row)
     try:
         # Confirmed manual corrections take precedence over old raw curves.
         metrics = (measurement_metrics(measurement) if measurement else
                    graph_metrics(graph['path'], graph['baseline']) if graph else None)
-        if metrics:
+        if skipped:
+            # v12：大当たり0回の台はグラフを取らない。取った場合とほぼ同じ結果
+            # （終点はゼロ以下、最高はゼロ付近）になるので、終点・維持とも0点。
+            s['positive'], s['retention'] = 0, 0
+            s['reasons'].append('大当たり0回でグラフ省略：終点・維持は0点')
+        elif metrics:
             s['positive'], s['retention'] = metrics['positive_score'], metrics['retention_score']
             if s['positive'] is None:
                 s['reasons'].append('グラフ終点がゼロ線付近：中立点で補完')
@@ -1424,7 +1455,7 @@ def score(row, reference, provisional_reference=None):
     s['status'] = 'provisional' if s['provisional'] else 'reference'
     if s['provisional']:
         s['reasons'].append('少数データ・欠測を含む暫定評価')
-    if s['positive'] == 0:
+    if s['positive'] == 0 and not skipped:
         s['reasons'].append('グラフ終点がゼロ線以下')
     s['reasons'].append(f"比較{s['reference_count']}件/{s['reference_days']}日・持玉比較{s['hold_reference_count']}件・観測{row['games']}G")
     if missing:
@@ -1813,8 +1844,7 @@ def missing_graphs(store, day, location):
     """
     found = []
     for machine in store.machines_for(location, day):
-        rows = [r for r in store.rows(day, machine, location)
-                if not (r.get('graph') or r.get('graph_measurement'))]
+        rows = [r for r in store.rows(day, machine, location) if not graph_done(r)]
         if rows:
             racks = sorted(int(r['rack']) for r in rows)
             found.append((machine, racks, sum(1 for r in rows if not r.get('detail_url'))))
@@ -1842,7 +1872,8 @@ def summary_report(store, folder, day, top=5):
         scored.sort(key=lambda item: item[1]['score']['total'], reverse=True)
         provisional = sum(1 for _m, r in scored if r['score']['provisional'])
         pending = len(entries) - len(scored)
-        no_graph = sum(1 for _m, r in entries if not (r.get('graph') or r.get('graph_measurement')))
+        no_graph = sum(1 for _m, r in entries if not graph_done(r))
+        skipped = sum(1 for _m, r in entries if graph_not_needed(r))
         def detail(machine, r):
             sc = r['score']
             hits = r['bb'] + r['rb']
@@ -1930,7 +1961,8 @@ def summary_report(store, folder, day, top=5):
         sections.append(
             f'<section><h2>{html.escape(label)}</h2>'
             f'<p class="sub">{len(entries)}台 ／ 実績点表示{len(scored)}台（うち暫定{provisional}台）'
-            f' ／ 保留{pending}台 ／ グラフ未取得{no_graph}台</p>'
+            f' ／ 保留{pending}台 ／ グラフ未取得{no_graph}台'
+            + (f'（大当たり0回でグラフ省略{skipped}台は除く）' if skipped else '') + '</p>'
             f'<div class="card"><table><tbody>{rows}</tbody></table></div>{missing_html}{odd_html}</section>')
     if not sections:
         raise ValueError(f'{day}の保存データがありません。')

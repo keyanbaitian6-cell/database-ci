@@ -82,21 +82,26 @@ bool canSaveWithoutReview(WebTableExtraction extraction) =>
     isValidRecordDay(extraction.day) &&
     (extraction.machine ?? '').trim().isNotEmpty;
 
-/// 店舗がデータを公開していない機種か。次の機種の候補にせず、印は「対象外」にする。
+/// 取り込みの対象外の機種か。次の機種の候補にせず、印は「対象外」にし、
+/// 表・グラフも保存しない。
 ///
 /// 長町南店はジャグラーシリーズ、幸町店はブラックボードを公開していない
 /// （幸町のジャグラー、長町南のスーパーブラックジャック等は対象のまま）。
-/// 長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」）ので、半角の表記も見る
-/// （PC版は NFKC で全角にそろえてから同じ判定をしている）。
+/// 沖ドキ（サイトの表記は「沖ドキ」「オキドキ」の両方）は、両店とも利用者の
+/// 指定で対象外（2026-09-29）。
+/// 長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」「沖ﾄﾞｷ」）ので、半角の表記も
+/// 見る（PC版は NFKC で全角にそろえてから同じ判定をしている）。
 const excludedMachineWords = <String, List<String>>{
-  'nagamachiminami': ['ジャグラー', 'ｼﾞｬｸﾞﾗｰ'],
-  'saiwaichou': ['ブラックボード', 'ﾌﾞﾗｯｸﾎﾞｰﾄﾞ'],
+  'nagamachiminami': ['ジャグラー', 'ｼﾞｬｸﾞﾗｰ', ..._okidokiWords],
+  'saiwaichou': ['ブラックボード', 'ﾌﾞﾗｯｸﾎﾞｰﾄﾞ', ..._okidokiWords],
 };
+
+const _okidokiWords = ['沖ドキ', '沖ﾄﾞｷ', 'オキドキ', 'ｵｷﾄﾞｷ'];
 
 /// 「対象外」の案内で使う呼び方。
 const excludedMachineNotes = <String, String>{
-  'nagamachiminami': '長町南店のジャグラー',
-  'saiwaichou': '幸町店のブラックボード',
+  'nagamachiminami': '長町南店のジャグラーと沖ドキ',
+  'saiwaichou': '幸町店のブラックボードと沖ドキ',
 };
 
 /// 埋め込みの YouTube 動画か。取り込みでは動画を再生しないため、内部ブラウザでは
@@ -510,6 +515,10 @@ class _WebImportPageState extends State<WebImportPage> {
         expectedCount: (decoded['expected_count'] as num?)?.toInt(),
         rows: rows,
       );
+      if (isExcludedMachine(extraction.store, extraction.machine)) {
+        _showNotice('${extraction.machine}は取り込みの対象外です。保存しませんでした。');
+        return;
+      }
       if (rows.isEmpty) {
         setState(
           () => _error = '表の行を読み取れませんでした。台番号・BB・RB・総回転数がある一覧を表示してから試してください。',
@@ -549,8 +558,12 @@ class _WebImportPageState extends State<WebImportPage> {
       }
       if (saved == true && _samePage(page)) {
         // 表を保存したら、そのまま最初のグラフ未取得の台へ移動する。
+        // 大当たり0回の台はグラフを取らない（次の台にもしない）。
+        final noHits = rows.where((r) => r.bb + r.rb == 0).length;
         await _moveToNext(
-          saved: '${rows.length}台を保存しました。',
+          saved:
+              '${rows.length}台を保存しました。'
+              '${noHits > 0 ? '大当たり0回の$noHits台はグラフを省略します。' : ''}',
           firstOfMachine: true,
           store: extraction.store,
           day: extraction.day,
@@ -580,6 +593,13 @@ class _WebImportPageState extends State<WebImportPage> {
       );
       if (mismatch != null) throw FormatException(mismatch);
       if (!_samePage(page)) return;
+      if (isExcludedMachine(
+        decoded['store'] as String?,
+        decoded['machine'] as String?,
+      )) {
+        _showNotice('${decoded['machine']}は取り込みの対象外です。保存しませんでした。');
+        return;
+      }
       final isSvg = decoded['format'] == 'svg';
       if (!isValidRecordDay(decoded['day'] as String?)) {
         throw const FormatException('評価日を特定できません。日付を選んでから取り込んでください。');
@@ -866,7 +886,7 @@ class _WebImportPageState extends State<WebImportPage> {
         ];
         if (machines.isNotEmpty && visible.isEmpty) {
           _showNotice(
-            '未取り込みの機種・グラフはありません。（${excludedMachineNotes[store] ?? 'データ非公開の機種'}はデータ非公開のため対象外）',
+            '未取り込みの機種・グラフはありません。（${excludedMachineNotes[store] ?? 'データ非公開の機種'}は対象外）',
           );
           return;
         }

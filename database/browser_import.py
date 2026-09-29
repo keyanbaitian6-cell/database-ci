@@ -25,7 +25,7 @@ from PIL import Image, ImageDraw
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
 from core import (STORE_NAMES, Store, normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
-                  machine_progress, progress_text, remember_for_undo, undo_last_save)
+                  graph_done, machine_progress, no_hits, progress_text, remember_for_undo, undo_last_save)
 
 BROWSER_URLS = {
     'nagamachiminami': f'https://{HOST}/nagamachiminami/rack_info',
@@ -848,7 +848,8 @@ def _find_next_ungraphed(store, day, machine, location, current_rack=None):
     """
     rows = store.rows(day, machine, location)
     pending = sorted(
-        (r for r in rows if not (r.get('graph') or r.get('graph_measurement'))),
+        # 大当たり0回の台はグラフを取らないので、次の台にしない。
+        (r for r in rows if not graph_done(r)),
         key=lambda r: int(r['rack']))
     if not pending:
         return None, 0, len(rows)
@@ -858,11 +859,15 @@ def _find_next_ungraphed(store, day, machine, location, current_rack=None):
     return target, len(pending), len(rows)
 
 
-# 店舗がデータを公開していない機種。次の機種の候補にせず、印は「対象外」にする。
+# 取り込みの対象外の機種。次の機種の候補にせず、印は「対象外」にし、表・グラフも保存しない。
 # 長町南店はジャグラーシリーズ、幸町店はブラックボードを公開していない。
 # （幸町のジャグラー、長町南のスーパーブラックジャック等は対象のまま）
-EXCLUDED_MACHINE_WORDS = {'nagamachiminami': ('ジャグラー',), 'saiwaichou': ('ブラックボード',)}
-EXCLUDED_MACHINE_NOTES = {'nagamachiminami': '長町南店のジャグラー', 'saiwaichou': '幸町店のブラックボード'}
+# 沖ドキ（サイトの表記は「沖ドキ」「オキドキ」の両方）は、両店とも利用者の指定で対象外（2026-09-29）。
+_OKIDOKI_WORDS = ('沖ドキ', 'オキドキ')
+EXCLUDED_MACHINE_WORDS = {'nagamachiminami': ('ジャグラー', *_OKIDOKI_WORDS),
+                          'saiwaichou': ('ブラックボード', *_OKIDOKI_WORDS)}
+EXCLUDED_MACHINE_NOTES = {'nagamachiminami': '長町南店のジャグラーと沖ドキ',
+                          'saiwaichou': '幸町店のブラックボードと沖ドキ'}
 
 
 def is_list_header(name):
@@ -890,8 +895,8 @@ def today_iso(now=None):
 
 
 def is_excluded_machine(location, name):
-    """公開されていない機種か。長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」）ため、
-    NFKCで全角へそろえてから判定する（「ｼﾞｬｸﾞﾗｰ」も「ジャグラー」として扱う）。"""
+    """取り込みの対象外の機種か。長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」「沖ﾄﾞｷ」）
+    ため、NFKCで全角へそろえてから判定する（「ｼﾞｬｸﾞﾗｰ」も「ジャグラー」として扱う）。"""
     words = EXCLUDED_MACHINE_WORDS.get(location, ())
     text = unicodedata.normalize('NFKC', str(name or ''))
     return any(word in text for word in words)
@@ -1222,7 +1227,7 @@ class _Bridge:
             is_excluded_machine(store_path, name) for name in listed_names if name)
         all_done_message = json.dumps({
             'url': None, 'reason': 'all_done',
-            'message': f'未取り込みの機種・グラフはありません。（{EXCLUDED_MACHINE_NOTES.get(store_path, "データ非公開の機種")}はデータ非公開のため対象外）'},
+            'message': f'未取り込みの機種・グラフはありません。（{EXCLUDED_MACHINE_NOTES.get(store_path, "データ非公開の機種")}は対象外）'},
             ensure_ascii=False)
 
         # The category-level list has no date when an import session first
@@ -1463,6 +1468,9 @@ def _confirm_table(payload_path, db_path, reports_folder):
     except (TableExtractionError, ValueError) as exc:
         messagebox.showerror('取り込みできません', str(exc), parent=root.get())
         return
+    if is_excluded_machine(payload.get('store'), machine):
+        _write_advance_signal(f'{machine}は取り込みの対象外です。保存しませんでした。')
+        return
     store = Store(db_path)
     try:
         location = payload['store']
@@ -1491,6 +1499,9 @@ def _confirm_table(payload_path, db_path, reports_folder):
         # straight on to the first rack that still lacks a graph.
         step = _next_step(store, day, machine, location, None)
         head = f'{len(saved_rows)}台を保存しました。'
+        no_hit = sum(1 for r in saved_rows if no_hits(r))
+        if no_hit:
+            head += f'大当たり0回の{no_hit}台はグラフを省略します。'
         if step['kind'] == 'next':
             head += f"最初の未取り込み台へ移動します。{step['text']}"
         else:
@@ -1523,6 +1534,9 @@ def _confirm_graph(payload_path, db_path, reports_folder):
             context = build_graph_context(payload, store)
         except (GraphExtractionError, ValueError) as exc:
             messagebox.showerror('取り込みできません', str(exc), parent=root.get())
+            return
+        if is_excluded_machine(context['store'], context['machine']):
+            _write_advance_signal(f"{context['machine']}は取り込みの対象外です。保存しませんでした。")
             return
         curve = render_curve_image(context['points'], context['baseline_y'],
                                     context['width'], context['height'])

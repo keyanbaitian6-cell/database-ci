@@ -617,12 +617,17 @@ class _GraphCard extends StatelessWidget {
             SizedBox(
               height: 92,
               child: record.graph == null
-                  ? const ColoredBox(
+                  ? ColoredBox(
                       color: slumpBackground,
                       child: Center(
                         child: Text(
-                          'グラフ未取得',
-                          style: TextStyle(color: AppColors.mist, fontSize: 12),
+                          record.graphNotNeeded
+                              ? '大当たり0回（グラフ省略）'
+                              : 'グラフ未取得',
+                          style: const TextStyle(
+                            color: AppColors.mist,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                     )

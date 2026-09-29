@@ -3,7 +3,7 @@ import 'dart:math';
 import 'models.dart';
 
 // Policy, not a fitted setting/win probability model. See SCORING_POLICY.md.
-const scoringVersion = '2026-09-27-v11';
+const scoringVersion = '2026-09-29-v12';
 const minimumReferenceRows = 20;
 const shrinkGames = 1500.0;
 const shrinkDays = 3.0;
@@ -170,7 +170,13 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
   if (hold == null) reasons.add('最大持玉の比較データ不足：中立10点で補完');
   double? positive, retention;
   final graph = row.graph;
-  if (graph == null) {
+  if (row.graphNotNeeded) {
+    // v12：大当たり0回の台はグラフを取らない。取った場合とほぼ同じ結果
+    // （終点はゼロ以下、最高はゼロ付近）になるので、終点・維持とも0点。
+    positive = 0;
+    retention = 0;
+    reasons.add('大当たり0回でグラフ省略：終点・維持は0点');
+  } else if (graph == null) {
     reasons.add('グラフ未取得：中立10点で補完');
   } else if (![
     graph.baselineY,
@@ -200,7 +206,7 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
       min(hitRefs.length, holdRefs.length) < minimumReferenceRows ||
       min(days, holdDays) < shrinkDays;
   if (provisional) reasons.add('少数データ・欠測を含む暫定評価');
-  if (positive == 0) reasons.add('グラフ終点がゼロ線以下');
+  if (positive == 0 && graph != null) reasons.add('グラフ終点がゼロ線以下');
   reasons.add(
     '比較${hitRefs.length}件/$days日・持玉比較${holdRefs.length}件・観測${row.games}G',
   );

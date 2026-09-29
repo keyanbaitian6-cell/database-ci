@@ -425,7 +425,7 @@ class AppController extends ChangeNotifier {
           .where((r) => r.store == entry.key && r.day == target)
           .toList();
       if (rows.isEmpty) continue;
-      final done = rows.where((r) => r.graph != null).length;
+      final done = rows.where((r) => r.graphDone).length;
       parts.add('${entry.value} $done/${rows.length}台');
     }
     if (parts.isEmpty) return day == null ? '$target　まだ取り込みがありません' : '';
@@ -1252,7 +1252,7 @@ class AppController extends ChangeNotifier {
     for (final r in records.where((r) => r.store == store && r.day == target)) {
       final c = counts.putIfAbsent(key(r.machine), () => [0, 0]);
       c[1]++;
-      if (r.graph != null) c[0]++;
+      if (r.graphDone) c[0]++;
     }
     return [
       for (final name in machines)
@@ -1277,7 +1277,7 @@ class AppController extends ChangeNotifier {
     final allStoresDayRows = records.where((r) => r.day == day);
     final dayComplete =
         allStoresDayRows.isNotEmpty &&
-        allStoresDayRows.every((r) => r.graph != null);
+        allStoresDayRows.every((r) => r.graphDone);
     var name = machine == null || machine.trim().isEmpty
         ? null
         : normalizeMachineName(machine);
@@ -1293,7 +1293,8 @@ class AppController extends ChangeNotifier {
         .toList();
     if (rows.isEmpty) return const NextGraphTarget(reason: 'no_rows');
     final warning = duplicateWarning(rows, rack: rack);
-    final pending = rows.where((r) => r.graph == null).toList()
+    // 大当たり0回の台はグラフを取らないので、次の台にしない。
+    final pending = rows.where((r) => !r.graphDone).toList()
       ..sort((a, b) => a.rack.compareTo(b.rack));
     if (pending.isEmpty) {
       return NextGraphTarget(

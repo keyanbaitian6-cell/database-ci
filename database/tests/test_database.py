@@ -539,6 +539,44 @@ class BrowserImportTests(unittest.TestCase):
         self.assertFalse(is_excluded_machine('saiwaichou', 'LスーパーブラックジャックSLDC'))
         self.assertFalse(is_excluded_machine('nagamachiminami', None))
 
+    def test_okidoki_is_excluded_at_both_stores(self):
+        """沖ドキ（サイトの表記は「沖ドキ」「オキドキ」）は両店とも対象外。全角・半角とも。"""
+        from browser_import import is_excluded_machine
+        for location in ('nagamachiminami', 'saiwaichou'):
+            self.assertTrue(is_excluded_machine(location, 'S/沖ﾄﾞｷ!GOLD/LS'))
+            self.assertTrue(is_excluded_machine(location, 'L/ｵｷﾄﾞｷﾃﾞｭｵ2/FR'))
+            self.assertTrue(is_excluded_machine(location, 'L／オキドキデュオ2／FR'))
+            self.assertTrue(is_excluded_machine(location, 'パチスロ沖ドキ！DUO'))
+            self.assertFalse(is_excluded_machine(location, 'Sｺｰﾄﾞｷﾞｱｽ3C.C. FS'))
+            self.assertFalse(is_excluded_machine(location, 'L コードギアス復活のルルーシュ ZS'))
+            self.assertFalse(is_excluded_machine(location, 'ドキドキ'))
+
+    def test_no_hit_racks_need_no_graph(self):
+        """大当たり0回の台はグラフを取らない：次の台・進み具合・印・日の完了・未取得一覧で済み扱い。"""
+        from browser_import import _find_next_ungraphed
+        from core import day_fully_graphed, machine_progress, missing_graphs, progress_text
+        graph = dict(baseline_x=1, baseline_y=200, peak_x=2, peak_y=100, trough_x=3, trough_y=250,
+                     end_x=4, end_y=150)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save([dict(row(rack=701), graph_measurement=graph),
+                     dict(row(rack=702), bb=0, rb=0),
+                     dict(row(rack=703), bb=0, rb=1),   # RBだけでも当たりあり → 取る
+                     dict(row(rack=704), bb=0, rb=0)])
+            target, remaining, total = _find_next_ungraphed(db, '2026-09-13', 'テスト', 'nagamachiminami')
+            self.assertEqual((int(target['rack']), remaining, total), (703, 1, 4))
+            self.assertEqual(progress_text(db, '2026-09-13'), '2026-09-13　長町南 3/4台')
+            self.assertEqual(machine_progress(db, 'nagamachiminami', '2026-09-13'), {'テスト': (3, 4)})
+            self.assertEqual(missing_graphs(db, '2026-09-13', 'nagamachiminami'), [('テスト', [703], 1)])
+            self.assertFalse(day_fully_graphed(db, '2026-09-13'))
+            db.save([dict(row(rack=703), bb=0, rb=1, graph_measurement=graph)])
+            self.assertEqual(_find_next_ungraphed(db, '2026-09-13', 'テスト', 'nagamachiminami')[0], None)
+            self.assertTrue(day_fully_graphed(db, '2026-09-13'))
+            # 表を取り込み直して当たりが付けば、また取る対象に戻る。
+            db.save([dict(row(rack=702), bb=1, rb=0)])
+            self.assertEqual(int(_find_next_ungraphed(db, '2026-09-13', 'テスト', 'nagamachiminami')[0]['rack']), 702)
+            db.close()
+
     def test_machine_list_skips_juggler_at_nagamachiminami(self):
         host = 'https://meruhenworld.pt.teramoba2.com/nagamachiminami'
         with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
@@ -1090,23 +1128,23 @@ class BackupSharingTests(unittest.TestCase):
             folder = Path(folder)
             db = Store(folder / 'test.db')
             # 前日（9/21）は「済」、今日（9/22）は別機種を途中まで
-            db.save([dict(row(day='2026-09-21', rack=1), machine='沖ドキ', graph_measurement=graph),
+            db.save([dict(row(day='2026-09-21', rack=1), machine='バジリスク', graph_measurement=graph),
                      dict(row(day='2026-09-22', rack=2), machine='ハナハナ', graph_measurement=graph)])
             db.close()
             bridge = _Bridge(folder / 'test.db', folder, 'x')
             ask = lambda method, **payload: json.loads(getattr(bridge, method)(json.dumps(payload)))
             with mock.patch.object(browser_import, 'today_iso', return_value='2026-09-22'):
                 status = ask('machine_status', store='nagamachiminami', day=None,
-                             machines=['沖ドキ', 'ハナハナ'])
+                             machines=['バジリスク', 'ハナハナ'])
                 self.assertEqual(status['day'], '2026-09-22')
                 self.assertEqual(status['status'], [None, dict(done=1, total=1)])   # 前日の「済」は出さない
                 self.assertIn('2026-09-22', ask('progress', store='nagamachiminami', day=None)['text'])
-                # 日付確認で開く機種：今日済んでいる「ハナハナ」より、未取込の「沖ドキ」を先に
+                # 日付確認で開く機種：今日済んでいる「ハナハナ」より、未取込の「バジリスク」を先に
                 machines = [dict(name='ハナハナ', url=f'{host}/standlist_slot/?kind_code=21&machine_name=h', count=1),
-                            dict(name='沖ドキ', url=f'{host}/standlist_slot/?kind_code=21&machine_name=o', count=1)]
+                            dict(name='バジリスク', url=f'{host}/standlist_slot/?kind_code=21&machine_name=o', count=1)]
                 need_day = ask('next_unimported_machine', store='nagamachiminami', day=None,
                                kind_code='21', machines=machines)
-                self.assertEqual((need_day['reason'], need_day['machine']), ('need_day', '沖ドキ'))
+                self.assertEqual((need_day['reason'], need_day['machine']), ('need_day', 'バジリスク'))
             with mock.patch.object(browser_import, 'today_iso', return_value='2026-09-23'):
                 # 今日の分がまだ無ければ、進み具合はそう表示する
                 self.assertEqual(ask('progress', store='nagamachiminami', day=None)['text'],
