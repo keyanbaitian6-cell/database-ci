@@ -101,7 +101,10 @@ class CandidateSnapshot {
 }
 
 /// [store]・[day]・[machine] の、[all] から見た今の翌日候補。
-/// 結果画面と同じ [provisionalNextDayCandidates] をそのまま使う。
+/// 結果画面と同じ [provisionalNextDayCandidates] をそのまま使う。[machine] が
+/// [varietyGroupName] なら、その日その店のバラエティ（1〜3台の機種）の候補
+/// （[varietyNextDayCandidates]）。台番号はその日その店で1台ずつなので、
+/// 候補は台番号だけで分かる。
 CandidateSnapshot candidateSnapshot({
   required String store,
   required String day,
@@ -109,12 +112,26 @@ CandidateSnapshot candidateSnapshot({
   required List<SlotRecord> all,
   required DateTime now,
 }) {
-  final history = machineHistory(all, store, machine);
-  final rows = [
-    for (final r in history)
-      if (r.day == day) r,
-  ];
-  final result = provisionalNextDayCandidates(rows, history);
+  final ({int total, int eligible, List<ProvisionalCandidate> candidates})
+  result;
+  if (machine == varietyGroupName) {
+    final dayRows = [
+      for (final r in all)
+        if (r.store == store && r.day == day) r,
+    ];
+    final variety = varietyMachines(dayRows);
+    result = varietyNextDayCandidates([
+      for (final r in dayRows)
+        if (variety.contains(r.machine)) r,
+    ], all);
+  } else {
+    final history = machineHistory(all, store, machine);
+    final rows = [
+      for (final r in history)
+        if (r.day == day) r,
+    ];
+    result = provisionalNextDayCandidates(rows, history);
+  }
   return CandidateSnapshot(
     store: store,
     day: day,
@@ -135,7 +152,10 @@ CandidateSnapshot candidateSnapshot({
 ///
 /// 候補はその日までの記録だけで決まるので、保存した日と、同じ店舗・機種で
 /// それより後の日（30日以内）だけを計算し直す。[latest] は機種・日付ごとの
-/// 最後の記録。
+/// 最後の記録。その日にバラエティ（1〜3台）の機種は、機種ではなくその日その
+/// 店のバラエティ（[varietyGroupName]）を計算し直す。台数が変わって機種が
+/// バラエティに入った・出た場合に備え、影響する日のバラエティは毎回計算し
+/// 直す（中身が変わらなければ記録しない）。
 List<CandidateSnapshot> changedCandidateSnapshots({
   required Iterable<SlotRecord> saved,
   required List<SlotRecord> all,
@@ -144,11 +164,11 @@ List<CandidateSnapshot> changedCandidateSnapshots({
 }) {
   // 1回の保存は同じ機種・日付の台がまとまって来るので、先に重複を除く。
   final savedGroups = {for (final s in saved) (s.store, s.machine, s.day)};
-  final targets = <String, (String, String, String)>{};
+  final affected = <(String, String, String)>{};
   for (final (store, machine, day) in savedGroups) {
     // 削除で台が1台も残らなくても「候補なし」として残せるよう、保存した
     // 機種・日付そのものは必ず計算し直す。
-    targets['$store|$day|$machine'] = (store, day, machine);
+    affected.add((store, day, machine));
     final last = DateTime.parse(day)
         .add(const Duration(days: 30))
         .toIso8601String()
@@ -158,12 +178,35 @@ List<CandidateSnapshot> changedCandidateSnapshots({
           r.machine == machine &&
           r.day.compareTo(day) >= 0 &&
           r.day.compareTo(last) <= 0) {
-        targets['${r.store}|${r.day}|${r.machine}'] = (
-          r.store,
-          r.day,
-          r.machine,
-        );
+        affected.add((r.store, r.day, r.machine));
       }
+    }
+  }
+  // 店舗・日付ごとの機種の台数（バラエティかどうかの判定）。
+  final counts = <String, int>{};
+  final storeDays = {for (final (store, day, _) in affected) '$store|$day'};
+  for (final r in all) {
+    if (storeDays.contains('${r.store}|${r.day}')) {
+      final key = '${r.store}|${r.day}|${r.machine}';
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+  }
+  bool hasVariety(String store, String day) => counts.entries.any(
+    (e) => e.key.startsWith('$store|$day|') && e.value <= varietyMaxRacks,
+  );
+  final targets = <String, (String, String, String)>{};
+  for (final (store, day, machine) in affected) {
+    final key = '$store|$day|$machine';
+    final racks = counts[key] ?? 0;
+    // 1〜3台の機種の候補はバラエティで出す。機種ごとの記録は、以前に候補が
+    // 出ていた（4台以上だった）ときだけ「候補なし」に更新する。
+    final wasListed = latest[key]?.candidates.isNotEmpty ?? false;
+    if (racks == 0 || racks > varietyMaxRacks || wasListed) {
+      targets[key] = (store, day, machine);
+    }
+    final varietyKey = '$store|$day|$varietyGroupName';
+    if (hasVariety(store, day) || latest.containsKey(varietyKey)) {
+      targets[varietyKey] = (store, day, varietyGroupName);
     }
   }
   final changed = <CandidateSnapshot>[];

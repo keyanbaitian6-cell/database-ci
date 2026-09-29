@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'data_checks.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
@@ -135,6 +136,8 @@ class _DayItem extends StatelessWidget {
   );
 }
 
+/// 1機種の台（[machine] が [varietyGroupName] なら、その日その店で1〜3台の
+/// 機種をまとめたバラエティ）を、日付を切り替えながら見る画面。
 class ViewerMachinePage extends StatefulWidget {
   const ViewerMachinePage({
     super.key,
@@ -142,10 +145,14 @@ class ViewerMachinePage extends StatefulWidget {
     required this.store,
     required this.machine,
     required this.day,
+    this.query = '',
     this.onDayChanged,
   });
   final ViewerData data;
   final String store, machine, day;
+
+  /// 一覧の機種名の絞り込み。バラエティのときだけ、一致する機種の台に絞る。
+  final String query;
   final ValueChanged<String>? onDayChanged;
   @override
   State<ViewerMachinePage> createState() => _ViewerMachinePageState();
@@ -167,27 +174,38 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
+    final variety = widget.machine == varietyGroupName;
     if (_calculatedDay != _day) {
-      final rows =
-          data.records
-              .where(
-                (r) =>
-                    r.store == widget.store &&
-                    r.machine == widget.machine &&
-                    r.day == _day,
-              )
-              .toList()
-            ..sort((a, b) => a.rack.compareTo(b.rack));
-      _entries = [for (final r in rows) (r, scoreRecord(r, data.records))];
+      final dayRows = [
+        for (final r in data.records)
+          if (r.store == widget.store && r.day == _day) r,
+      ];
+      final varietyNames = variety ? varietyMachines(dayRows) : const <String>{};
+      // 候補はまとまり（機種、またはバラエティ全体）で選ぶ。
+      final rows = [
+        for (final r in dayRows)
+          if (variety ? varietyNames.contains(r.machine) : r.machine == widget.machine)
+            r,
+      ]..sort((a, b) => a.rack.compareTo(b.rack));
       _candidateRacks = {
         for (final c in dayCandidates(rows, data.records).candidates)
           c.record.rack,
       };
+      final grouped = [for (final r in rows) (r, scoreRecord(r, data.records))];
+      _entries = variety &&
+              !machineMatches(varietyGroupName, widget.query)
+          ? [
+              for (final e in grouped)
+                if (machineMatches(e.$1.machine, widget.query)) e,
+            ]
+          : grouped;
       _calculatedDay = _day;
     }
     return Scaffold(
       appBar: AppBar(
-        title: Text(displayMachineName(widget.machine)),
+        title: Text(
+          variety ? varietyGroupName : displayMachineName(widget.machine),
+        ),
         bottom: ViewerDateBar(
           days: viewerDays(data.records, widget.store),
           day: _day,
@@ -207,10 +225,12 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
             ),
             const SizedBox(height: 12),
             if (_entries.isEmpty)
-              const EmptyState(
+              EmptyState(
                 icon: Icons.inbox_outlined,
                 title: 'この日の記録はありません',
-                body: 'この機種の記録がある別の日付を選んでください。',
+                body: variety
+                    ? 'この日は1〜3台の機種（バラエティ）の記録がありません。別の日付を選んでください。'
+                    : 'この機種の記録がある別の日付を選んでください。',
               )
             else
               MachineSection(

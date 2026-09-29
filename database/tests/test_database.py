@@ -1396,6 +1396,132 @@ class MachineSpellingTests(unittest.TestCase):
             db.close()
 
 
+class VarietyTests(unittest.TestCase):
+    """2026-09-29: 1〜3台の機種は店ごとの「バラエティ」にまとめ、プロの見方で5台選ぶ。
+
+    Android版 test/variety_candidates_test.dart と同じ記録・同じ結果。
+    """
+    PLUS = dict(baseline_y=200, peak_y=100, trough_y=250, end_y=150)
+    MINUS = dict(baseline_y=200, peak_y=180, trough_y=260, end_y=230)
+
+    def rec(self, machine, rack, day, hits, games=3000, graph='plus', store='saiwaichou'):
+        row = dict(store=store, kind_code=21, day=f'2026-09-{day:02}', machine=machine,
+                   rack=rack, games=games, bb=hits, rb=0)
+        if graph == 'plus':
+            row['graph_measurement'] = dict(self.PLUS)
+        elif graph == 'minus':
+            row['graph_measurement'] = dict(self.MINUS)
+        elif graph is not None:
+            row['graph_measurement'] = dict(graph)
+        return row
+
+    def with_past(self, today):
+        """9/21〜9/24 の普段（3000G・当たり10・12・14・16回）と、9/25 の today。"""
+        return [self.rec(today['machine'], today['rack'], 21 + i, hits, store=today['store'])
+                for i, hits in enumerate((10, 12, 14, 16))] + [today]
+
+    def variety_day(self, store):
+        return [*self.with_past(self.rec('A', 1, 25, 20, store=store)),                 # 回ってプラス・100
+                *self.with_past(self.rec('B', 2, 25, 8, store=store)),                  # 回ってプラス・0
+                *self.with_past(self.rec('C', 3, 25, 20, graph='minus', store=store)),  # 凹み・100
+                *self.with_past(self.rec('D', 4, 25, 13, graph='minus', store=store)),  # 凹み・50
+                *self.with_past(self.rec('E', 5, 25, 20, games=2000, store=store)),     # 3000G未満
+                *self.with_past(self.rec('F', 6, 25, 13, graph=None, store=store)),     # グラフ未取得
+                self.rec('G', 7, 25, 30, games=8000, store=store),                      # プラス・過去なし
+                *self.with_past(self.rec('H', 8, 25, 17, games=4000, store=store))]     # プラス・50
+
+    def test_state_of_a_variety_rack(self):
+        from core import variety_state
+        self.assertEqual(variety_state(self.rec('X', 1, 25, 10)), 'plus')
+        self.assertEqual(variety_state(self.rec('X', 1, 25, 10, graph='minus')), 'dented')
+        flat = dict(baseline_y=200, peak_y=150, trough_y=220, end_y=199)   # 1ピクセル以内はゼロ
+        self.assertEqual(variety_state(self.rec('X', 1, 25, 10, graph=flat)), 'dented')
+        self.assertEqual(variety_state(self.rec('X', 1, 25, 0, graph=None)), 'dented')   # 大当たり0回
+        self.assertEqual(variety_state(self.rec('X', 1, 25, 10, graph=None)), 'unknown')
+        self.assertEqual(variety_state(self.rec('X', 1, 25, 10, games=2999)), 'quiet')
+        self.assertEqual(variety_state(self.rec('X', 1, 25, 10, games=3000)), 'plus')
+
+    def test_hit_percent_is_against_the_rack_own_past(self):
+        from backtest_candidates import Rows
+        from core import variety_hit_percent
+        a = self.with_past(self.rec('A', 1, 25, 20))
+        d = self.with_past(self.rec('D', 4, 25, 13))
+        rows = Rows([*a, *d])
+        self.assertEqual(variety_hit_percent(rows, a[-1]), dict(percent=100.0, refs=4))
+        self.assertEqual(variety_hit_percent(rows, d[-1]), dict(percent=50.0, refs=4))
+        short = Rows([self.rec('S', 1, 24, 10), self.rec('S', 1, 25, 12)])
+        self.assertEqual(variety_hit_percent(short, short.rows('2026-09-25', 'S', 'saiwaichou')[0]),
+                         dict(percent=None, refs=1))
+
+    def picks(self, store):
+        from backtest_candidates import Rows
+        from core import variety_next_day_candidates
+        return variety_next_day_candidates(Rows(self.variety_day(store)), '2026-09-25', store)
+
+    def test_saiwaichou_prefers_busy_plus_racks(self):
+        result = self.picks('saiwaichou')
+        self.assertEqual((result['total'], result['eligible'], result['count']), (8, 6, 5))
+        self.assertEqual([c['row']['machine'] for c in result['candidates']], ['A', 'G', 'H', 'B', 'C'])
+        g = result['candidates'][1]
+        self.assertEqual((g['index'], g['days'], g['confidence'], g['variety']), (50.0, 0, '比較なし', True))
+
+    def test_nagamachiminami_prefers_busy_dented_racks(self):
+        result = self.picks('nagamachiminami')
+        self.assertEqual([c['row']['machine'] for c in result['candidates']], ['C', 'D', 'A', 'G', 'H'])
+
+    def store_rows(self):
+        return [*self.variety_day('saiwaichou'),
+                *[self.rec('R', 10 + k, day, 10 + 3 * k) for day in (23, 24, 25) for k in range(4)]]
+
+    def test_day_candidates_put_the_variety_after_the_regular_ones(self):
+        from backtest_candidates import Rows
+        from core import day_candidates
+        rows = Rows(self.store_rows())
+        self.assertEqual([(c['row']['machine'], c['variety']) for c in day_candidates(rows, '2026-09-25', 'saiwaichou')],
+                         [('R', False), ('A', True), ('G', True), ('H', True), ('B', True), ('C', True)])
+
+    def test_candidate_log_records_the_variety_group(self):
+        from core import NEXT_DAY_METHOD_VERSION, VARIETY_GROUP_NAME
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save(self.store_rows())
+            logged = [json.loads(p) for p in db.candidate_snapshots(day='2026-09-25', location='saiwaichou')]
+            self.assertEqual({s['machine'] for s in logged}, {'R', VARIETY_GROUP_NAME})
+            variety = next(s for s in logged if s['machine'] == VARIETY_GROUP_NAME)
+            self.assertEqual((variety['total'], variety['eligible'], variety['method']),
+                             (8, 6, NEXT_DAY_METHOD_VERSION))
+            self.assertEqual([c['rack'] for c in variety['candidates']], [1, 7, 8, 2, 3])
+            self.assertEqual(NEXT_DAY_METHOD_VERSION, '2026-09-29')
+            # 同じ中身なら記録し直さない。
+            db.save([self.rec('C', 3, 25, 20, graph='minus')])
+            self.assertEqual(len(db.candidate_snapshots(day='2026-09-25', location='saiwaichou')), 2)
+            # 1台だった機種が4台になると、バラエティから出る（両方を記録し直す）。
+            db.save([self.rec('A', 40 + k, 25, 10) for k in range(3)])
+            latest = {}
+            for payload in db.candidate_snapshots(day='2026-09-25', location='saiwaichou'):
+                snapshot = json.loads(payload)
+                latest[snapshot['machine']] = snapshot
+            self.assertEqual(set(latest), {'R', 'A', VARIETY_GROUP_NAME})
+            self.assertEqual((latest['A']['total'], latest[VARIETY_GROUP_NAME]['total']), (4, 7))
+            db.close()
+
+    def test_machine_report_of_a_variety_machine_shows_the_variety_picks(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save(self.store_rows())
+            output, _results = report(db, '2026-09-25', 'H', Path(folder) / 'reports', 'saiwaichou')
+            text = Path(output).read_text(encoding='utf-8')
+            self.assertIn('店の「バラエティ」にまとめて選びます', text)
+            self.assertIn('幸町の狙い方：前日3000G以上回った台から、「回ってプラス」の台を先に', text)
+            self.assertIn('<b>8番台</b><span>H（バラエティ）・この機種</span>', text)
+            self.assertIn('前日 8,000G・回ってプラス', text)
+            self.assertIn('当たり 普段より +50（比べた記録4件）', text)
+            self.assertIn('バラエティ8台のうち、よく回って終わり方が分かる6台から5台', text)
+            regular, _ = report(db, '2026-09-25', 'R', Path(folder) / 'reports', 'saiwaichou')
+            self.assertIn('平均より +9', Path(regular).read_text(encoding='utf-8'))
+            db.close()
+
+
 class RobustnessTests(unittest.TestCase):
     """2026-09-27 QA: candidate log, line-by-line backups, deleted racks, real URL."""
 

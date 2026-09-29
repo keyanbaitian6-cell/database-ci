@@ -306,22 +306,46 @@ class Store:
         in ``app_state`` so it is visible, as on Android.
         """
         try:
-            targets = set()
+            affected = set()
             for location, machine, day in groups:
                 last = (date.fromisoformat(day) + timedelta(days=30)).isoformat()
-                targets.add((location, machine, day))
+                affected.add((location, machine, day))
                 for (later,) in self.db.execute(
                         'SELECT DISTINCT day FROM days WHERE store=? AND machine=? AND day>? AND day<=?',
                         (location, machine, day, last)):
-                    targets.add((location, machine, later))
+                    affected.add((location, machine, later))
+
+            def latest_of(location, day, machine):
+                found = self.db.execute(
+                    'SELECT payload FROM candidate_snapshots WHERE store=? AND day=? AND machine=? '
+                    'ORDER BY taken_at DESC LIMIT 1', (location, day, machine)).fetchone()
+                return json.loads(found[0]) if found else None
+
+            # その日にバラエティ（1〜3台）の機種は、機種ではなくその日その店のバラエティを
+            # 計算し直す。台数が変わって機種がバラエティに入った・出た場合に備え、影響する
+            # 日のバラエティは毎回計算し直す（中身が変わらなければ記録しない）。
+            # Android版 `changedCandidateSnapshots` と同じ決め方。
+            counts = {}
+            for location, day in {(location, day) for location, _machine, day in affected}:
+                counts[(location, day)] = dict(self.db.execute(
+                    'SELECT machine, COUNT(*) FROM days WHERE store=? AND day=? GROUP BY machine',
+                    (location, day)).fetchall())
+            targets = set()
+            for location, machine, day in affected:
+                racks = counts[(location, day)].get(machine, 0)
+                previous = latest_of(location, day, machine)
+                was_listed = bool(previous and previous.get('candidates'))
+                if racks == 0 or racks > VARIETY_MAX_RACKS or was_listed:
+                    targets.add((location, machine, day))
+                has_variety = any(n <= VARIETY_MAX_RACKS for n in counts[(location, day)].values())
+                if has_variety or latest_of(location, day, VARIETY_GROUP_NAME) is not None:
+                    targets.add((location, VARIETY_GROUP_NAME, day))
             self._machine_cache = {}
             now = datetime.now().astimezone()
             for location, machine, day in sorted(targets):
                 snapshot = candidate_snapshot(self, location, day, machine, now)
-                latest = self.db.execute(
-                    'SELECT payload FROM candidate_snapshots WHERE store=? AND day=? AND machine=? '
-                    'ORDER BY taken_at DESC LIMIT 1', (location, day, machine)).fetchone()
-                if latest and candidate_signature(json.loads(latest[0])) == candidate_signature(snapshot):
+                latest = latest_of(location, day, machine)
+                if latest and candidate_signature(latest) == candidate_signature(snapshot):
                     continue
                 self.db.execute('INSERT OR IGNORE INTO candidate_snapshots VALUES(?,?,?,?,?)',
                                 (location, day, machine, snapshot['taken_at'],
@@ -607,8 +631,14 @@ BACKUP_NUMERIC_FIELDS = ('games', 'bb', 'rb', 'max_hold')
 
 
 def candidate_snapshot(store, location, day, machine, now=None):
-    """The next-day candidates of one store/day/machine now, in Android's format."""
-    result = provisional_next_day_candidates(store, day, machine, location)
+    """The next-day candidates of one store/day/machine now, in Android's format.
+
+    ``machine == VARIETY_GROUP_NAME`` is that store/day's variety group (every
+    machine with 1-3 racks); its candidates are identified by rack number,
+    which is unique within one store and day.
+    """
+    result = (variety_next_day_candidates(store, day, location) if machine == VARIETY_GROUP_NAME
+              else provisional_next_day_candidates(store, day, machine, location))
     return dict(store=location, day=day, machine=machine,
                 taken_at=(now or datetime.now().astimezone()).isoformat(),
                 method=NEXT_DAY_METHOD_VERSION,
@@ -1181,9 +1211,37 @@ def signed_index(index):
 
 # 翌日候補（仮）の計算方式の版。保存する候補の記録に残し、式を変えたときに新旧の
 # 成績を混ぜないようにする。Android版 `nextDayMethodVersion` と同じ値。
-# 2026-09-27：サイトの異常値を除外。それ以外は2026-09-23以前から同じ
-# （2026-09-29の検証でも変更しなかった。NEXT_DAY_CANDIDATES_VALIDATION_20260929.md）。
-NEXT_DAY_METHOD_VERSION = '2026-09-27'
+# 2026-09-27：サイトの異常値を除外。
+# 2026-09-29：1〜3台の機種を店ごとに「バラエティ」にまとめ、店ごとの狙い方で5台選ぶ
+# （variety_next_day_candidates）。4台以上の機種の選び方は変えていない
+# （NEXT_DAY_CANDIDATES_VALIDATION_20260929.md の「9. バラエティ」）。
+NEXT_DAY_METHOD_VERSION = '2026-09-29'
+
+# バラエティ：その日その店で1〜3台の機種（利用者の指定、2026-09-29）。今の選び方は
+# 同じ機種の台どうしで比べ、1機種で4台以上判定できる必要があるので、これらの機種は
+# 一度も候補に入らなかった。Android版 `varietyMaxRacks`・`varietyGroupName` と同じ。
+VARIETY_MAX_RACKS = 3
+VARIETY_GROUP_NAME = 'バラエティ'
+# バラエティで「よく回った」とみなす回転数（4時間ほど打たれた台の目安。プロの経験則で、
+# 数値の出典は無い）と、候補に出す台数（利用者の指定）。Android版と同じ。
+VARIETY_BUSY_GAMES = 3000
+VARIETY_PICKS = 5
+VARIETY_STATE_LABELS = {'dented': '回ったのに凹み', 'plus': '回ってプラス',
+                        'quiet': '3000G未満', 'unknown': 'グラフ未取得'}
+
+
+def variety_machines(rows):
+    """1店舗・1日の行 ``rows`` のうち、バラエティにまとめる機種の名前。"""
+    counts = {}
+    for r in rows:
+        counts[r['machine']] = counts.get(r['machine'], 0) + 1
+    return {machine for machine, count in counts.items() if count <= VARIETY_MAX_RACKS}
+
+
+def is_variety_row(store, row):
+    """その台の機種が、その日その店でバラエティ（1〜3台）か。"""
+    return sum(1 for r in store._machine_rows(row['machine'], row['store'])
+               if r['day'] == row['day']) <= VARIETY_MAX_RACKS
 
 
 def next_day_index(store, row, max_days=10, shrink_days=5):
@@ -1215,6 +1273,76 @@ def next_day_index(store, row, max_days=10, shrink_days=5):
                 confidence='少' if n < 7 else '中')
 
 
+def variety_state(row):
+    """バラエティの台のその日の終わり方（Android版 `varietyState`）。
+
+    'dented'（3000G以上回ったのにプラスで終わらなかった）・'plus'（回ってプラス）・
+    'quiet'（3000G未満）・'unknown'（グラフが無く終わり方が分からない）。プラスは
+    グラフの終点がゼロ線より上（採点の終点と同じく1ピクセル以内はゼロ扱い）。
+    大当たり0回でグラフを取らない台は凹み。
+    """
+    if (row.get('games') or 0) < VARIETY_BUSY_GAMES:
+        return 'quiet'
+    measurement = row.get('graph_measurement')
+    if not measurement:
+        return 'dented' if no_hits(row) else 'unknown'
+    try:
+        end = float(measurement['baseline_y']) - float(measurement['end_y'])
+    except (KeyError, TypeError, ValueError):
+        return 'unknown'
+    if not math.isfinite(end):
+        return 'unknown'
+    return 'plus' if end > 1 else 'dented'
+
+
+def variety_order(location):
+    """店ごとの狙い方（先に見る終わり方の順）。利用者の指定（2026-09-29）で、実データ
+    7日分の傾向に合わせている：長町南は前日「回ったのに凹んだ台」が翌日よい割合が高く、
+    幸町は「回ってプラスの台」が翌日も続きやすかった。Android版 `varietyOrder`。"""
+    return ('dented', 'plus') if location == 'nagamachiminami' else ('plus', 'dented')
+
+
+def variety_rule_text(location):
+    first, second = (VARIETY_STATE_LABELS[s] for s in variety_order(location))
+    return (f'前日{VARIETY_BUSY_GAMES}G以上回った台から、「{first}」の台を先に、次に「{second}」の台を、'
+            f'それぞれ当たりがその台の普段より軽い順に{VARIETY_PICKS}台')
+
+
+def variety_hit_percent(store, row):
+    """その日の当たり確率が、その台の普段（同じ機種の前の30日の記録。1台の機種なら
+    その台自身の過去）と比べて何番目か（0〜100、50が普段どおり）。比べる相手の条件は
+    採点の comparison_pool と同じで、別の機種とは比べない。3件未満なら percent=None。
+    Android版 `varietyHitPercent`。"""
+    history = store._machine_rows(row['machine'], row['store'])
+    rates = [(r['bb'] + r['rb']) / r['games'] for r in comparison_pool(row, history)
+             if r.get('bb') is not None and r.get('rb') is not None
+             and r['bb'] >= 0 and r['rb'] >= 0]
+    if len(rates) < 3 or not row.get('games'):
+        return dict(percent=None, refs=len(rates))
+    rank = percentile((row['bb'] + row['rb']) / row['games'], rates)
+    return dict(percent=round_score(100 * rank), refs=len(rates))
+
+
+def variety_judgement_text(store, row):
+    """台の詳細に出す、バラエティの台の翌日候補の見方（Android版 `varietyJudgementText`）。"""
+    state = variety_state(row)
+    hit = variety_hit_percent(store, row)
+    if state == 'quiet':
+        detail = f'{VARIETY_BUSY_GAMES}G未満で、判断の材料が少ないので候補にしません'
+    elif state == 'unknown':
+        detail = 'グラフが未取得で、終わり方が分からないので候補にしません'
+    elif hit['percent'] is None:
+        detail = f'{VARIETY_STATE_LABELS[state]}（当たりは普段と比べる記録が足りない）'
+    else:
+        delta = hit['percent'] - 50
+        detail = (f'{VARIETY_STATE_LABELS[state]}・当たり 普段より {"+" if delta >= 0 else "-"}'
+                  f'{abs(delta):.0f}（比べた記録{hit["refs"]}件）')
+    return (f'この台は1〜3台の機種なので「{VARIETY_GROUP_NAME}」にまとめています。'
+            f'{SHORT_STORE_NAMES.get(row["store"], row["store"])}の狙い方：{variety_rule_text(row["store"])}。'
+            f'この日のこの台：{row["games"]}G・{detail}。'
+            '当たりは同じ機種の前の30日（1台の機種ならこの台自身の過去）とだけ比べ、別の機種の台とは比べていません。')
+
+
 def provisional_next_day_candidates(store, day, machine, location='nagamachiminami'):
     """Return a clearly-labelled trial list for the day after ``day``.
 
@@ -1228,11 +1356,57 @@ def provisional_next_day_candidates(store, day, machine, location='nagamachimina
     for row in rows:
         tendency = next_day_index(store, row)
         if tendency['index'] is not None:
-            eligible.append(dict(row=row, **tendency))
+            eligible.append(dict(row=row, variety=False, **tendency))
     eligible.sort(key=lambda item: (-item['index'], int(item['row']['rack'])))
     count = math.ceil(len(eligible) * .25) if len(eligible) >= 4 else 0
     return dict(total=len(rows), eligible=len(eligible), count=count,
                 candidates=eligible[:count])
+
+
+def variety_next_day_candidates(store, day, location='nagamachiminami'):
+    """その日その店のバラエティ（1〜3台の機種の台）の翌日候補（Android版
+    `varietyNextDayCandidates`）。プロの見方で選ぶ（利用者の指定、2026-09-29）：前日
+    3000G以上回った台（打ち手が粘った台）だけを見て、店ごとの狙い方（variety_order）の
+    順に、同じ終わり方の中では当たりがその台の普段より軽い順（比べられない台は50）、
+    次に回転数の多い順で5台。``index`` は当たりの普段比、``days`` は比べた記録の件数。
+    """
+    rows = store.rows(day, None, location)
+    names = variety_machines(rows)
+    rows = [r for r in rows if r['machine'] in names]
+    order = variety_order(location)
+    ranked = []
+    for row in rows:
+        if implausible_numbers(row):
+            continue
+        state = variety_state(row)
+        if state not in order:
+            continue
+        hit = variety_hit_percent(store, row)
+        confidence = '比較なし' if hit['percent'] is None else '少' if hit['refs'] < 7 else '中'
+        ranked.append((order.index(state), dict(
+            row=row, index=50.0 if hit['percent'] is None else hit['percent'], days=hit['refs'],
+            confidence=confidence, variety=True, state=state)))
+    ranked.sort(key=lambda item: (item[0], -item[1]['index'], -item[1]['row']['games'],
+                                  int(item[1]['row']['rack']), item[1]['row']['machine']))
+    picks = [candidate for _group, candidate in ranked[:VARIETY_PICKS]]
+    return dict(total=len(rows), eligible=len(ranked), count=len(picks), candidates=picks)
+
+
+def day_candidates(store, day, location='nagamachiminami'):
+    """その日その店の全機種の翌日候補（Android版 `dayCandidates` と同じ並び）。
+
+    4台以上の機種は機種ごとの上位4分の1を「平均より」の大きい順・機種名・台番号の順に
+    並べ、その後ろにバラエティ（1〜3台の機種）の5台を狙い方の順に付ける。
+    """
+    rows = store.rows(day, None, location)
+    names = variety_machines(rows)
+    candidates = []
+    for machine in sorted({r['machine'] for r in rows} - names):
+        candidates.extend(provisional_next_day_candidates(store, day, machine, location)['candidates'])
+    candidates.sort(key=lambda item: (-item['index'], item['row']['machine'], int(item['row']['rack'])))
+    if names:
+        candidates.extend(variety_next_day_candidates(store, day, location)['candidates'])
+    return candidates
 
 
 def machine_progress(store, location, day):
@@ -1602,22 +1776,57 @@ def report(store, day, machine, folder, location='nagamachiminami'):
     best = max(totals) if totals else None
     source = results[0].get('source_url') if results else None
     source_html = f'｜ <a href="{html.escape(source, quote=True)}">画面の出典</a>' if source else ''
-    candidate_info = provisional_next_day_candidates(store, day, machine, location)
-    candidate_lead = ('<p class="candidate-lead">この機種で、過去に当たりが周りの台より軽かった台です。'
-                      '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
+    # 1〜3台の機種は、機種ごとではなく店の「バラエティ」にまとめて判定する。
+    variety = 0 < len(results) <= VARIETY_MAX_RACKS
+    if variety:
+        candidate_info = variety_next_day_candidates(store, day, location)
+        candidate_lead = ('<p class="candidate-lead">この機種は1〜3台の機種なので、店の「バラエティ」に'
+                          f'まとめて選びます。{html.escape(SHORT_STORE_NAMES.get(location, location))}の狙い方：'
+                          f'{html.escape(variety_rule_text(location))}。'
+                          '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
+    else:
+        candidate_info = provisional_next_day_candidates(store, day, machine, location)
+        candidate_lead = ('<p class="candidate-lead">この機種で、過去に当たりが周りの台より軽かった台です。'
+                          '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
     if candidate_info['count']:
         # 素の「63/100」では50が中立であることも上下どちらが良いのかも読めないので、
-        # 差分（平均より+13）で出す。
-        candidate_rows = ''.join(
-            f'<li><b>{int(item["row"]["rack"])}番台</b>'
-            f'<span class="candidate-delta">当たりの軽さ {signed_index(item["index"])}</span>'
-            f'<span class="candidate-days">過去{item["days"]}日分</span></li>'
-            for item in candidate_info['candidates'])
+        # 差分（平均より+13。バラエティは普段より+13）で出す。
+        def variety_hit(item):
+            if item['confidence'] == '比較なし':
+                return '当たりは普段と比べる記録が足りない'
+            delta = item['index'] - 50
+            return f'当たり 普段より {"+" if delta >= 0 else "-"}{abs(delta):.0f}（比べた記録{item["days"]}件）'
+        if variety:
+            # 「501番台　機種名（バラエティ）」の形で、前日の回転数と終わり方を添える。
+            candidate_rows = ''.join(
+                f'<li><b>{int(item["row"]["rack"])}番台</b>'
+                f'<span>{html.escape(item["row"]["machine"])}（{VARIETY_GROUP_NAME}）'
+                f'{"・この機種" if item["row"]["machine"] == machine else ""}</span>'
+                f'<span class="candidate-delta">前日 {item["row"]["games"]:,}G・{VARIETY_STATE_LABELS[item["state"]]}</span>'
+                f'<span class="candidate-days">{html.escape(variety_hit(item))}</span></li>'
+                for item in candidate_info['candidates'])
+            candidate_note = (f'バラエティ{candidate_info["total"]}台のうち、よく回って終わり方が分かる'
+                              f'{candidate_info["eligible"]}台から{candidate_info["count"]}台。'
+                              '機種ごとに当たりの重さが違うので、別の機種の台どうしは比べていません。'
+                              '店ごとの狙い方は7日分の傾向に合わせたもので、外れる可能性も高いです。')
+        else:
+            candidate_rows = ''.join(
+                f'<li><b>{int(item["row"]["rack"])}番台</b>'
+                f'<span class="candidate-delta">当たりの軽さ {signed_index(item["index"])}</span>'
+                f'<span class="candidate-days">過去{item["days"]}日分</span></li>'
+                for item in candidate_info['candidates'])
+            candidate_note = (f'傾向を出せた{candidate_info["total"]}台中{candidate_info["eligible"]}台から、'
+                              f'上位{candidate_info["count"]}台。「平均より」は、同じ日・同じ機種で回転数が近い台と'
+                              '比べた当たり頻度の差です。')
         candidate_html = (f'<section class="candidate"><h2>翌日候補（仮）<span class="candidate-tag">試験中</span></h2>'
                           f'{candidate_lead}<ul class="candidate-list">{candidate_rows}</ul>'
-                          f'<p class="candidate-note">傾向を出せた{candidate_info["total"]}台中{candidate_info["eligible"]}台から、'
-                          f'上位{candidate_info["count"]}台。「平均より」は、同じ日・同じ機種で回転数が近い台と比べた当たり頻度の差です。<br>'
+                          f'<p class="candidate-note">{candidate_note}<br>'
                           '翌日の設定・勝率・期待収支を示すものではありません（効果は検証中）。</p></section>')
+    elif variety:
+        candidate_html = (f'<section class="candidate"><h2>翌日候補（仮）<span class="candidate-tag">試験中</span></h2>'
+                          f'{candidate_lead}'
+                          f'<p class="candidate-note">この日のバラエティ{candidate_info["total"]}台に、'
+                          f'{VARIETY_BUSY_GAMES}G以上回って終わり方が分かる台がありません。</p></section>')
     else:
         candidate_html = (f'<section class="candidate"><h2>翌日候補（仮）<span class="candidate-tag">試験中</span></h2>'
                           f'{candidate_lead}'
@@ -1888,7 +2097,12 @@ def summary_report(store, folder, day, top=5):
                                   ('終点/10', 'positive'), ('維持/10', 'retention')))
             trend = rack_trend(store, r)
             forecast = next_day_index(store, r)
-            if forecast['index'] is None:
+            if is_variety_row(store, r):
+                # 1〜3台の機種（バラエティ）は、回転数と終わり方で見る（過去傾向の指数は無い）。
+                forecast_html = (f'<div class="dsub" style="margin-top:12px">'
+                                 f'{html.escape(variety_judgement_text(store, r))}<br>'
+                                 '翌日の設定・勝率・期待収支を示すものではありません（効果は検証中）。</div>')
+            elif forecast['index'] is None:
                 forecast_html = (f'<div class="dsub" style="margin-top:12px">この台の当たりの軽さ（過去傾向）：'
                                  f'まだ判定できません（同じ機種で{forecast["days"]}日分／3日分から判定）</div>')
             else:

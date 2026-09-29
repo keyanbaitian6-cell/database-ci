@@ -14,7 +14,8 @@ import 'theme.dart';
 // アナスロの機種別データ（データ表示／グラフ表示のタブ、台番号の表、平均の行）
 // の見せ方に、このアプリの点数・推定設定・翌日候補（仮）を加えている。
 
-/// 機種の見出しと「データ表示／グラフ表示」のタブ、その中身。
+/// 機種の見出しと「データ表示／グラフ表示」のタブ、その中身。[machine] が
+/// [varietyGroupName] なら、1〜3台の機種をまとめたバラエティ（台ごとに機種名を出す）。
 class MachineSection extends StatefulWidget {
   const MachineSection({
     super.key,
@@ -78,6 +79,8 @@ class _MachineSectionState extends State<MachineSection> {
   @override
   Widget build(BuildContext context) {
     final average = rackAverages(widget.entries).score;
+    final variety = widget.machine == varietyGroupName;
+    final machines = {for (final e in widget.entries) e.$1.machine};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -90,7 +93,9 @@ class _MachineSectionState extends State<MachineSection> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    displayMachineName(widget.machine),
+                    variety
+                        ? '$varietyGroupName（${machines.length}機種）'
+                        : displayMachineName(widget.machine),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -109,6 +114,15 @@ class _MachineSectionState extends State<MachineSection> {
             ),
           ],
         ),
+        if (variety)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              '1〜3台の機種をまとめています。点数・推定設定は台ごとに、その台の機種の'
+              '過去と比べたもので、別の機種の台どうしは比べていません。',
+              style: TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+          ),
         if (widget.candidateRacks.isNotEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 6),
@@ -134,7 +148,7 @@ class _MachineSectionState extends State<MachineSection> {
           ],
         ),
         if (SettingEstimatePresentation.twoChoicesOf(context) &&
-            settingModelForMachine(widget.machine) != null)
+            machines.any((m) => settingModelForMachine(m) != null))
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 6),
             child: Text(
@@ -150,6 +164,7 @@ class _MachineSectionState extends State<MachineSection> {
               candidateRacks: widget.candidateRacks,
               onTap: widget.onTap,
               onLongPress: widget.onLongPress,
+              showMachine: variety,
             ),
           )
         else
@@ -158,6 +173,7 @@ class _MachineSectionState extends State<MachineSection> {
             candidateRacks: widget.candidateRacks,
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
+            showMachine: variety,
           ),
         ?widget.footer,
       ],
@@ -210,11 +226,19 @@ class MachineDataTable extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.candidateRacks = const {},
+    this.showMachine = false,
   });
   final List<(SlotRecord, ScoreResult)> entries;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
   final Set<int> candidateRacks;
+
+  /// 台番号の右に機種名の列を出す（バラエティ：別の機種の台が並ぶ）。
+  /// 平均の行は、機種によって意味が変わる数字（BB・RB・確率・最大持玉）を
+  /// 出さず、G数と点数だけにする。
+  final bool showMachine;
+
+  static const _machineWidth = 124.0;
 
   static const _rowHeight = 36.0;
   static const _rackWidth = 66.0;
@@ -294,6 +318,24 @@ class MachineDataTable extends StatelessWidget {
     return _text(estimate.range80.join('・'));
   }
 
+  /// 機種名のマス。長い名前は縮めずに「…」で切る（ほかのマスのように文字を
+  /// 小さくすると読めなくなるため）。
+  static Widget _machineCell(String machine, Color? color) => Ink(
+    width: _machineWidth,
+    height: _rowHeight,
+    padding: const EdgeInsets.symmetric(horizontal: 6),
+    decoration: BoxDecoration(color: color, border: _cellBorder),
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        displayMachineName(machine),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12, color: AppColors.carbon),
+      ),
+    ),
+  );
+
   static Widget _score(ScoreResult score) => ScorePill(
     compact: true,
     text: score.total?.toStringAsFixed(1) ?? '保留',
@@ -359,6 +401,12 @@ class MachineDataTable extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (showMachine)
+              _cell(
+                const Text('機種', style: head),
+                width: _machineWidth,
+                color: _headColor,
+              ),
             for (final (label, width) in _columns)
               _cell(
                 Text(
@@ -375,6 +423,7 @@ class MachineDataTable extends StatelessWidget {
         ),
         for (var i = 0; i < entries.length; i++)
           row(i, [
+            if (showMachine) _machineCell(entries[i].$1.machine, stripe(i)),
             for (final (index, child)
                 in (hasImplausibleNumbers(entries[i].$1)
                         // サイトの数値が異常な台（88888888など）は、数字を出さない。
@@ -410,14 +459,20 @@ class MachineDataTable extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (showMachine)
+              _cell(_text(''), width: _machineWidth, color: averageColor),
             for (final (index, child) in [
               _text('${avg.games}'),
-              _text('${avg.bb}'),
-              _text('${avg.rb}'),
-              _text(avg.combined),
-              _text(avg.bbRate),
-              _text(avg.rbRate),
-              _text('${avg.maxHold ?? '—'}'),
+              if (showMachine) ...[
+                for (var k = 0; k < 6; k++) _text('—', color: AppColors.mist),
+              ] else ...[
+                _text('${avg.bb}'),
+                _text('${avg.rb}'),
+                _text(avg.combined),
+                _text(avg.bbRate),
+                _text(avg.rbRate),
+                _text('${avg.maxHold ?? '—'}'),
+              ],
               _text(''),
               _text(avg.score?.toStringAsFixed(1) ?? '—', bold: true),
             ].indexed)
@@ -486,11 +541,15 @@ class GraphGrid extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.candidateRacks = const {},
+    this.showMachine = false,
   });
   final List<(SlotRecord, ScoreResult)> entries;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
   final Set<int> candidateRacks;
+
+  /// 台番号の横に機種名を出す（バラエティ）。
+  final bool showMachine;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -510,6 +569,7 @@ class GraphGrid extends StatelessWidget {
                   child: _GraphCard(
                     record: record,
                     score: score,
+                    showMachine: showMachine,
                     candidate: candidateRacks.contains(record.rack),
                     onTap: () => onTap(record, score),
                     onLongPress: onLongPress == null
@@ -537,10 +597,12 @@ class _GraphCard extends StatelessWidget {
     required this.candidate,
     required this.onTap,
     this.onLongPress,
+    this.showMachine = false,
   });
   final SlotRecord record;
   final ScoreResult score;
   final bool candidate;
+  final bool showMachine;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
 
@@ -603,7 +665,22 @@ class _GraphCard extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const Spacer(),
+                  if (showMachine) ...[
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        displayMachineName(record.machine),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ] else
+                    const Spacer(),
                   FittedBox(
                     child: ScorePill(
                       compact: true,
@@ -674,6 +751,9 @@ const nextDayValidationNote =
 
 /// 翌日候補（仮）：その日の全機種から、過去の当たりの軽さで選んだ台。
 /// 1台1行で、台番号・機種・「平均より」の大きさ（棒）・過去何日分かを並べる。
+/// バラエティ（1〜3台の機種）から選んだ台は、選び方の目盛りが違うので、
+/// その後ろに「501番台　機種名（バラエティ）」の形で、前日の回転数と終わり方を
+/// 添えて並べる（最初から全台を出す）。
 class NextDayCandidatesCard extends StatefulWidget {
   const NextDayCandidatesCard({
     super.key,
@@ -700,10 +780,17 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
 
   @override
   Widget build(BuildContext context) {
-    final shown = _all
-        ? widget.candidates
-        : widget.candidates.take(_first).toList();
+    final regular = [
+      for (final c in widget.candidates)
+        if (!c.variety) c,
+    ];
+    final variety = [
+      for (final c in widget.candidates)
+        if (c.variety) c,
+    ];
+    final shown = _all ? regular : regular.take(_first).toList();
     final next = nextDayLabel(widget.day);
+    const note = TextStyle(color: AppColors.ash, fontSize: 12, height: 1.45);
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -741,8 +828,9 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             Text(
               '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
               '${next.isEmpty ? '翌日' : next}向けに選んだ台です。同じ機種の周りの台より'
-              '当たりが軽かった台（各機種の上位4分の1）で、★は下の表にも付けています。'
-              'この日の点数には影響しません。',
+              '当たりが軽かった台（各機種の上位4分の1）と、1〜3台の機種をまとめた'
+              '「バラエティ」から前日の回転数と終わり方で選んだ台です。★は下の表にも'
+              '付けています。この日の点数には影響しません。',
               style: const TextStyle(
                 color: AppColors.ash,
                 fontSize: 13,
@@ -750,10 +838,10 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               ),
             ),
             const SizedBox(height: 10),
-            if (widget.candidates.isEmpty)
+            if (regular.isEmpty)
               const Text(
-                'まだ判定できる機種がありません。同じ台・同じ機種のデータが3日分たまり、'
-                '1機種で4台以上判定できると表示します。',
+                'まだ判定できる機種（4台以上）がありません。同じ台・同じ機種のデータが'
+                '3日分たまり、1機種で4台以上判定できると表示します。',
                 style: TextStyle(
                   color: AppColors.ash,
                   fontSize: 13,
@@ -762,7 +850,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               )
             else ...[
               for (final (i, c) in shown.indexed) _row(i + 1, c),
-              if (widget.candidates.length > _first)
+              if (regular.length > _first)
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
@@ -770,21 +858,34 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                     child: Text(
                       _all
                           ? '上位$_first台だけ表示'
-                          : 'すべて表示（${widget.candidates.length}台）',
+                          : 'すべて表示（${regular.length}台）',
                     ),
                   ),
                 ),
               Text(
-                '判定できた機種：${widget.judged} / ${widget.machines}機種。'
+                '判定できた機種：${widget.judged} / ${widget.machines}機種'
+                '（バラエティはまとめて1つ）。'
                 '「平均より」は同じ日・同じ機種で回転数が近い台との当たり頻度の差の積み重ねで、'
                 '別の機種どうしの順位は目安です。データ量は計算に使えた日数の目安で、'
                 '当たりやすさを示すものではありません。',
-                style: const TextStyle(
-                  color: AppColors.ash,
-                  fontSize: 12,
-                  height: 1.45,
-                ),
+                style: note,
               ),
+            ],
+            if (variety.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Text(
+                '$varietyGroupName（1〜3台の機種）から${variety.length}台',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${storeShortName(variety.first.record.store)}の狙い方：'
+                '${varietyRuleText(variety.first.record.store)}。'
+                '機種ごとに当たりの重さが違うので、別の機種の台どうしは比べていません。'
+                '店ごとの狙い方は7日分の傾向に合わせたもので、外れる可能性も高いです。',
+                style: note,
+              ),
+              for (final (i, c) in variety.indexed) _varietyRow(i + 1, c),
             ],
             const SizedBox(height: 6),
             const Text(
@@ -800,6 +901,102 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
       ),
     );
   }
+
+  /// バラエティの1台：「501番台　機種名（バラエティ）」、前日の回転数・当たりの
+  /// 普段比、右に前日の終わり方（凹み・プラス）。
+  Widget _varietyRow(int rank, ProvisionalCandidate c) {
+    final state = varietyState(c.record);
+    final delta = c.index - 50;
+    final hit = c.confidence == '比較なし'
+        ? '当たりは普段と比べる記録が足りない'
+        : '当たり 普段より ${delta >= 0 ? '+' : '-'}${delta.abs().toStringAsFixed(0)}'
+              '（比べた記録${c.days}件）';
+    return InkWell(
+      onTap: () => widget.onPick(c.record),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 26,
+              child: Text(
+                '$rank',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.ash,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        '${c.record.rack}番台',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          displayMachineName(c.record.machine),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.carbon,
+                          ),
+                        ),
+                      ),
+                      const Text(
+                        '（$varietyGroupName）',
+                        style: TextStyle(fontSize: 12, color: AppColors.ash),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '前日 ${_withComma(c.record.games)}G・${state.label}・$hit',
+                    style: const TextStyle(fontSize: 11, color: AppColors.ash),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text(
+                  '前日',
+                  style: TextStyle(fontSize: 10, color: AppColors.ash),
+                ),
+                Text(
+                  state == VarietyState.plus ? 'プラス' : '凹み',
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.linkBlue,
+                  ),
+                ),
+              ],
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.mist),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _withComma(int value) => value.toString().replaceAllMapped(
+    RegExp(r'(\d)(?=(\d{3})+$)'),
+    (m) => '${m[1]},',
+  );
 
   Widget _row(int rank, ProvisionalCandidate c) {
     final delta = c.index - 50;
@@ -900,6 +1097,24 @@ String signedIndex(double index) {
   final delta = index - 50;
   final sign = delta >= 0 ? '+' : '-';
   return '平均より $sign${delta.abs().toStringAsFixed(0)}';
+}
+
+/// バラエティ（1〜3台の機種）の台の、翌日候補の見方（台の詳細に出す）。
+String varietyJudgementText(SlotRecord record, List<SlotRecord> all) {
+  final state = varietyState(record);
+  final hit = varietyHitPercent(record, all);
+  final delta = (hit.percent ?? 50) - 50;
+  final detail = switch (state) {
+    VarietyState.quiet => '${varietyBusyGames}G未満で、判断の材料が少ないので候補にしません',
+    VarietyState.unknown => 'グラフが未取得で、終わり方が分からないので候補にしません',
+    _ => '${state.label}'
+        '${hit.percent == null ? '（当たりは普段と比べる記録が足りない）' : '・当たり 普段より ${delta >= 0 ? '+' : '-'}${delta.abs().toStringAsFixed(0)}（比べた記録${hit.refs}件）'}',
+  };
+  return 'この台は1〜3台の機種なので「$varietyGroupName」にまとめています。'
+      '${storeShortName(record.store)}の狙い方：${varietyRuleText(record.store)}。\n'
+      'この日のこの台：${record.games}G・$detail。'
+      '当たりは同じ機種の前の30日（1台の機種ならこの台自身の過去）とだけ比べ、'
+      '別の機種の台とは比べていません。';
 }
 
 /// 1台ぶんのグラフの小さな表示。保存時の画像があればそれを、無ければ採点に

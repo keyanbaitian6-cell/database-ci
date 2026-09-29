@@ -39,39 +39,73 @@ void main() {
 
   test('機種一覧：台数順に並べ、台数・平均・最高・グラフ未取得をまとめる', () {
     final list = summarizeMachines([
-      (rec(3, machine: 'B'), score(50)),
+      (rec(9, machine: 'B'), score(50)),
       (rec(1, machine: 'A'), score(80)),
       (rec(2, machine: 'A'), score(60)),
       (rec(4, machine: 'A'), score(null)),
+      (rec(5, machine: 'A'), score(70)),
     ]);
-    expect([for (final s in list) s.machine], ['A', 'B']);
+    expect([for (final s in list) s.machine], ['A', 'バラエティ']);
     final a = list.first;
-    expect(a.racks, 3);
-    expect(a.scored, 2);
+    expect((a.racks, a.machines, a.variety), (4, 1, false));
+    expect(a.scored, 3);
     expect(a.average, 70);
     expect(a.best, 80);
     expect(a.bestRack, 1);
-    expect(a.noGraph, 3);
+    expect(a.noGraph, 4);
   });
 
-  test('設置機種一覧：台数の多い順、同数なら機種名順', () {
+  test('設置機種一覧：台数の多い順、同数なら機種名順。1〜3台の機種はバラエティで最後', () {
     final list = summarizeMachines([
-      (rec(1, machine: 'C'), score(50)),
-      (rec(2, machine: 'C'), score(50)),
-      (rec(1, machine: 'A'), score(50)),
-      (rec(2, machine: 'A'), score(50)),
-      (rec(1, machine: 'B'), score(50)),
-      (rec(2, machine: 'B'), score(50)),
-      (rec(3, machine: 'B'), score(50)),
-      (rec(4, machine: 'B'), score(50)),
-      (rec(5, machine: 'B'), score(50)),
+      for (var rack = 1; rack <= 4; rack++) (rec(rack, machine: 'C'), score(50)),
+      for (var rack = 11; rack <= 14; rack++)
+        (rec(rack, machine: 'A'), score(50)),
+      for (var rack = 21; rack <= 25; rack++)
+        (rec(rack, machine: 'B'), score(50)),
+      (rec(31, machine: 'D'), score(90)),
+      (rec(32, machine: 'E'), score(40)),
+      (rec(33, machine: 'E'), score(null)),
     ]);
 
     expect([for (final s in list) '${s.machine}:${s.racks}'], [
       'B:5',
-      'A:2',
-      'C:2',
+      'A:4',
+      'C:4',
+      'バラエティ:3',
     ]);
+    final variety = list.last;
+    expect((variety.variety, variety.machines), (true, 2));
+    expect((variety.best, variety.bestRack, variety.average), (90, 31, 65));
+  });
+
+  test('バラエティ：台番号順にまとめ、検索は「バラエティ」でも機種名でも当たる', () {
+    final entries = [
+      for (var rack = 1; rack <= 4; rack++)
+        (rec(rack, machine: 'ハナハナ'), score(50)),
+      (rec(20, machine: 'キングハナハナ'), score(60)),
+      (rec(12, machine: '北斗'), score(70)),
+      (rec(13, machine: '北斗'), score(40)),
+    ];
+    final groups = groupForList(entries);
+    expect(groups.keys.toSet(), {'ハナハナ', 'バラエティ'});
+    expect(groups['バラエティ']!.map((e) => e.$1.rack), [12, 13, 20]);
+    final variety = summarizeMachines(entries).last;
+    expect(filterForList(variety, groups['バラエティ']!, ''), hasLength(3));
+    expect(filterForList(variety, groups['バラエティ']!, 'ばらえてぃ'), hasLength(3));
+    // 機種名で当たったときは、その機種の台だけ。
+    expect(
+      filterForList(variety, groups['バラエティ']!, '北斗')!.map((e) => e.$1.rack),
+      [12, 13],
+    );
+    expect(
+      filterForList(variety, groups['バラエティ']!, 'はなはな')!.map((e) => e.$1.rack),
+      [20],
+    );
+    expect(filterForList(variety, groups['バラエティ']!, 'ジャグラー'), isNull);
+    // 4台以上の機種は今まで通り、機種名だけで判定する。
+    final hana = summarizeMachines(entries).first;
+    expect(filterForList(hana, groups['ハナハナ']!, 'はなはな'), hasLength(4));
+    expect(filterForList(hana, groups['ハナハナ']!, '北斗'), isNull);
   });
 
   test('機種一覧：採点できた台が無ければ平均・最高は空', () {
@@ -192,9 +226,13 @@ void main() {
 
   test('機種の並び：半角カナの機種も全角にそろえた名前の順に並ぶ', () {
     final list = summarizeMachines([
-      (rec(1, machine: 'L戦国乙女5L8'), score(50)),
-      (rec(2, machine: 'ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3'), score(50)),
-      (rec(3, machine: 'キングハナハナ'), score(50)),
+      for (final (i, machine) in [
+        'L戦国乙女5L8',
+        'ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3',
+        'キングハナハナ',
+      ].indexed)
+        for (var rack = 1; rack <= 4; rack++)
+          (rec(i * 10 + rack, machine: machine), score(50)),
     ]);
     expect(list.map((s) => displayMachineName(s.machine)).toList(), [
       'L戦国乙女5L8',

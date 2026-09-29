@@ -49,7 +49,8 @@ bool machineMatches(String machine, String query) {
   return folded.isEmpty || foldForSearch(machine).contains(folded);
 }
 
-/// 結果タブの機種一覧の1行ぶん。
+/// 結果タブの機種一覧の1行ぶん。[variety] なら1〜3台の機種をまとめた
+/// バラエティ（[machine] は [varietyGroupName]、[machines] はまとめた機種数）。
 class MachineSummary {
   const MachineSummary({
     required this.machine,
@@ -59,9 +60,13 @@ class MachineSummary {
     required this.average,
     required this.best,
     required this.bestRack,
+    this.machines = 1,
+    this.variety = false,
   });
 
   final String machine;
+  final int machines;
+  final bool variety;
 
   /// 台数・合計点が出た台数・グラフ未取得の台数（大当たり0回でグラフを
   /// 取らない台は数えない）。
@@ -72,14 +77,52 @@ class MachineSummary {
   final int? bestRack;
 }
 
+/// 一覧に並べるまとまりごとの台（1店舗・1日の [entries]）。1〜3台の機種の台は
+/// [varietyGroupName] に、それ以外は機種名ごとにまとめる。台番号順。
+Map<String, List<(SlotRecord, ScoreResult)>> groupForList(
+  Iterable<(SlotRecord, ScoreResult)> entries,
+) {
+  final list = entries.toList();
+  final variety = varietyMachines(list.map((e) => e.$1));
+  final groups = <String, List<(SlotRecord, ScoreResult)>>{};
+  for (final entry in list) {
+    final machine = entry.$1.machine;
+    groups
+        .putIfAbsent(
+          variety.contains(machine) ? varietyGroupName : machine,
+          () => [],
+        )
+        .add(entry);
+  }
+  for (final rows in groups.values) {
+    rows.sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
+  }
+  return groups;
+}
+
+/// 機種名の絞り込みで、まとまり [summary] の台 [rows] のうち何を出すか。
+/// 出さないなら null。バラエティは、検索語が「バラエティ」に一致すれば全台、
+/// 含む機種のどれかに一致すればその機種の台だけを出す。
+List<(SlotRecord, ScoreResult)>? filterForList(
+  MachineSummary summary,
+  List<(SlotRecord, ScoreResult)> rows,
+  String query,
+) {
+  if (machineMatches(summary.machine, query)) return rows;
+  if (!summary.variety) return null;
+  final matching = [
+    for (final e in rows)
+      if (machineMatches(e.$1.machine, query)) e,
+  ];
+  return matching.isEmpty ? null : matching;
+}
+
 /// その日の台を機種ごとにまとめる。台数の多い順、同数なら機種名順。
+/// 1〜3台の機種はバラエティ1行にまとめて、最後に置く。
 List<MachineSummary> summarizeMachines(
   Iterable<(SlotRecord, ScoreResult)> entries,
 ) {
-  final byMachine = <String, List<(SlotRecord, ScoreResult)>>{};
-  for (final entry in entries) {
-    byMachine.putIfAbsent(entry.$1.machine, () => []).add(entry);
-  }
+  final byMachine = groupForList(entries);
   final summaries = [
     for (final name in byMachine.keys)
       () {
@@ -94,6 +137,10 @@ List<MachineSummary> summarizeMachines(
         }
         return MachineSummary(
           machine: name,
+          machines: name == varietyGroupName
+              ? {for (final e in rows) e.$1.machine}.length
+              : 1,
+          variety: name == varietyGroupName,
           racks: rows.length,
           scored: scored.length,
           noGraph: rows.where((e) => !e.$1.graphDone).length,
@@ -107,6 +154,7 @@ List<MachineSummary> summarizeMachines(
       }(),
   ];
   summaries.sort((a, b) {
+    if (a.variety != b.variety) return a.variety ? 1 : -1;
     final byCount = b.racks.compareTo(a.racks);
     return byCount != 0 ? byCount : compareMachineNames(a.machine, b.machine);
   });
@@ -246,14 +294,25 @@ RackAverages rackAverages(List<(SlotRecord, ScoreResult)> all) {
   );
 }
 
-/// その日の全機種の翌日候補（仮）。機種ごとに [provisionalNextDayCandidates]
-/// で選んだ台（各機種の上位4分の1）を集め、「平均より」の大きい順に並べる。
+/// その日の全機種の翌日候補（仮）。4台以上の機種は機種ごとに
+/// [provisionalNextDayCandidates] で選んだ台（各機種の上位4分の1）を集めて
+/// 「平均より」の大きい順に並べ、その後ろに、1〜3台の機種をまとめた
+/// バラエティから [varietyNextDayCandidates] で選んだ台（店ごとの狙い方の順）を
+/// 付ける。バラエティは選び方の目盛りが違うので、指数で混ぜて並べない。
 /// 比べる相手は同じ機種の台なので、機種をまたいだ順位は目安にとどまる。
+/// [machines] は判定の単位の数（4台以上の機種の数＋バラエティがあれば1）、
+/// [judged] はそのうち候補を出せた数。
 ({List<ProvisionalCandidate> candidates, int machines, int judged})
 dayCandidates(List<SlotRecord> dayRows, List<SlotRecord> all) {
+  final variety = varietyMachines(dayRows);
   final byMachine = <String, List<SlotRecord>>{};
+  final varietyRows = <SlotRecord>[];
   for (final r in dayRows) {
-    byMachine.putIfAbsent(r.machine, () => []).add(r);
+    if (variety.contains(r.machine)) {
+      varietyRows.add(r);
+    } else {
+      byMachine.putIfAbsent(r.machine, () => []).add(r);
+    }
   }
   // 過去の傾向は同じ店舗・同じ機種の記録しか見ないので、先に絞ってから渡す
   // （台ごとに全記録を見直すと、記録が増えるほど結果タブが重くなる）。
@@ -278,5 +337,15 @@ dayCandidates(List<SlotRecord> dayRows, List<SlotRecord> all) {
     final byMachine = a.record.machine.compareTo(b.record.machine);
     return byMachine != 0 ? byMachine : a.record.rack.compareTo(b.record.rack);
   });
-  return (candidates: candidates, machines: byMachine.length, judged: judged);
+  if (varietyRows.isNotEmpty) {
+    // 当たりの普段比は各台の機種の記録しか見ない（機種ごとの仕分けは [all] に覚える）。
+    final result = varietyNextDayCandidates(varietyRows, all);
+    if (result.candidates.isNotEmpty) judged++;
+    candidates.addAll(result.candidates);
+  }
+  return (
+    candidates: candidates,
+    machines: byMachine.length + (varietyRows.isEmpty ? 0 : 1),
+    judged: judged,
+  );
 }

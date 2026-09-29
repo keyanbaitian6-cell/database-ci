@@ -167,13 +167,26 @@ void main() {
     await save();
     var snapshots = await db.loadCandidateSnapshots();
     expect(snapshots, hasLength(1));
-    expect(snapshots.single.groupKey, '${old.store}|${old.day}|${old.machine}');
+    // 1台だけの機種は、その日その店の「バラエティ」として記録する。3000G回って
+    // プラスで終わった台なので、幸町の狙い方で候補になる。
+    expect(snapshots.single.groupKey, '${old.store}|${old.day}|バラエティ');
     expect(snapshots.single.total, 1);
+    expect(snapshots.single.method, '2026-09-29');
+    expect([for (final c in snapshots.single.candidates) c.rack], [703]);
     await save();
+    snapshots = await db.loadCandidateSnapshots();
+    expect(snapshots, hasLength(1)); // 同じ中身なら増やさない
+    // 回転数の違う表を取り込み直すとグラフが外れ、終わり方が分からなくなるので
+    // 候補から外れる（その変化は記録する）。
     await save(games: 3500);
     snapshots = await db.loadCandidateSnapshots();
-    expect(snapshots, hasLength(1)); // 1台だけでは候補も指数も出ない
+    expect(
+      [for (final s in snapshots) s.candidates.length]..sort(),
+      [0, 1],
+    );
+    // 画面側はグループごとの最新だけを持つ。
     expect(app.candidateSnapshots, hasLength(1));
+    expect(app.candidateSnapshots.single.candidates, isEmpty);
   });
 
   test('保存に失敗したら、台も翌日候補の記録も書かない（片方だけ残らない）', () async {

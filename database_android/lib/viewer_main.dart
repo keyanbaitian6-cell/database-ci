@@ -252,6 +252,8 @@ class _ViewerHomeState extends State<ViewerHome> {
           store: _store!,
           machine: machine,
           day: _day!,
+          // バラエティを機種名で絞り込んで開いたときは、その機種の台だけを出す。
+          query: _query.text,
           onDayChanged: (day) => setState(() => _day = day),
         ),
       ),
@@ -392,11 +394,13 @@ class _ViewerHomeState extends State<ViewerHome> {
       _candidates = dayCandidates(dayRows, all);
       _scoredFor = key;
     }
+    // 1〜3台の機種は「バラエティ」1つにまとめる。
     final summaries = summarizeMachines(_digest);
+    final grouped = groupForList(_digest);
     final history = day == null ? 0 : historyDays(all, store, day);
     final shown = [
       for (final s in summaries)
-        if (machineMatches(s.machine, _query.text)) s,
+        if (filterForList(s, grouped[s.machine]!, _query.text) != null) s,
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
@@ -475,7 +479,8 @@ class _ViewerHomeState extends State<ViewerHome> {
           DaySummaryCard(entries: _digest, onPick: _openRecord),
           const SizedBox(height: 18),
           Text(
-            '設置機種一覧　${summaries.length}機種・${_digest.length}台',
+            '設置機種一覧　${{for (final e in _digest) e.$1.machine}.length}機種'
+            '・${_digest.length}台',
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),

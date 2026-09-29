@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:database_android/answer_check.dart';
+import 'package:database_android/data_checks.dart';
 import 'package:database_android/date_events.dart';
 import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
@@ -159,6 +160,51 @@ void main() {
     );
     expect(find.text('華の日'), findsOneWidget);
     expect(changed, ['2026-09-27', '2026-09-25']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('バラエティ：1〜3台の機種の台を機種名つきで並べ、機種名で絞り込める', (tester) async {
+    await phone(tester);
+    final records = [
+      rec('2026-09-28', machine: 'ハナハナ', rack: 5),
+      rec('2026-09-28', machine: '北斗', rack: 8),
+      rec('2026-09-28', machine: '北斗', rack: 7),
+      for (var rack = 20; rack < 24; rack++) rec('2026-09-28', rack: rack),
+    ];
+    final data = ViewerData(records: records);
+    Future<void> open(String query) => tester.pumpWidget(
+      app(
+        ViewerMachinePage(
+          key: ValueKey(query),
+          data: data,
+          store: 'nagamachiminami',
+          machine: varietyGroupName,
+          day: '2026-09-28',
+          query: query,
+        ),
+      ),
+    );
+    await open('');
+    await tester.pumpAndSettle();
+    expect(find.text('バラエティ（2機種）'), findsOneWidget);
+    expect(find.text('機種'), findsOneWidget);
+    final table = tester.widget<MachineDataTable>(find.byType(MachineDataTable));
+    // 4台の機種（テスト）の台は入らない。台番号順。
+    expect([for (final e in table.entries) e.$1.rack], [5, 7, 8]);
+    expect(table.showMachine, isTrue);
+    expect(find.text('ハナハナ'), findsOneWidget);
+    expect(find.text('北斗'), findsNWidgets(2));
+    // 一覧で機種名を入れて開いたときは、その機種の台だけ。
+    await open('北斗');
+    await tester.pumpAndSettle();
+    expect(
+      [
+        for (final e
+            in tester.widget<MachineDataTable>(find.byType(MachineDataTable)).entries)
+          e.$1.rack,
+      ],
+      [7, 8],
+    );
     expect(tester.takeException(), isNull);
   });
 

@@ -109,6 +109,7 @@ List<SlotRecord> availableRecords(
 class BacktestMember {
   BacktestMember({
     required this.rack,
+    required this.machine,
     required this.index,
     required this.days,
     required this.confidence,
@@ -116,6 +117,9 @@ class BacktestMember {
     required this.nextScore,
   });
   final int rack;
+
+  /// 台の機種名（バラエティのグループには別々の機種の台が入る）。
+  final String machine;
   final double index;
   final int days;
   final String confidence;
@@ -133,10 +137,19 @@ class BacktestMember {
   final Set<ExploratoryMethod> exploratory = {};
 }
 
-/// 店舗・機種・予測日ごとの候補。
+/// 店舗・機種・予測日ごとの候補。[variety] なら、その日その店で1〜3台の
+/// 機種をまとめたバラエティ（[machine] は [varietyGroupName]）。
 class BacktestGroup {
-  BacktestGroup(this.store, this.machine, this.day, this.members, this.count);
+  BacktestGroup(
+    this.store,
+    this.machine,
+    this.day,
+    this.members,
+    this.count, {
+    this.variety = false,
+  });
   final String store, machine, day;
+  final bool variety;
   final List<BacktestMember> members;
 
   /// 選ぶ台数（アプリの候補数と同じ）。
@@ -156,8 +169,18 @@ class BacktestTopSeven {
 }
 
 class BacktestRun {
-  BacktestRun(this.groups, this.topSeven, this.unlabeledNextDay);
+  BacktestRun(
+    this.groups,
+    this.topSeven,
+    this.unlabeledNextDay, {
+    this.varietyGroups = const [],
+  });
+
+  /// 4台以上の機種ごとのグループ（2026-09-29の検証の対象）。
   final List<BacktestGroup> groups;
+
+  /// バラエティのグループ（`runBacktest(variety: true)` のときだけ）。
+  final List<BacktestGroup> varietyGroups;
   final List<BacktestTopSeven> topSeven;
 
   /// 候補にできた台のうち、翌日の正解が無かった数の内訳。
@@ -173,11 +196,17 @@ int _byMachineThenRack(
 }
 
 /// 全予測日の候補を作る。[cutoffFor] が null なら時刻を見ない。
+///
+/// [variety] が false なら、2026-09-29の検証と同じく4台以上の機種だけを見る
+/// （最初に表示する7台も、バラエティの台を除いたアプリの並び）。true なら
+/// バラエティ（1〜3台の機種）のグループも作り（[BacktestRun.varietyGroups]）、
+/// 最初に表示する7台は今のアプリの並びそのものにする。
 BacktestRun runBacktest(
   List<SlotRecord> full, {
   DateTime? Function(String day)? cutoffFor,
   Map<String, List<SlotRecord>> earlier = const {},
   List<ExploratoryMethod> exploratory = const [],
+  bool variety = false,
 }) {
   final byKey = {for (final r in full) r.key: r};
   final nextScores = <String, double?>{};
@@ -192,6 +221,7 @@ BacktestRun runBacktest(
   final unlabeled = <String, int>{'no_record': 0, 'not_scored': 0};
   final allDays = {for (final r in full) r.day};
   final groups = <BacktestGroup>[];
+  final varietyGroups = <BacktestGroup>[];
   final tops = <BacktestTopSeven>[];
   for (final day in allDays.toList()..sort()) {
     if (!allDays.contains(shiftDay(day, 1))) continue;
@@ -207,24 +237,33 @@ BacktestRun runBacktest(
     }
     for (final store in byStore.keys.toList()..sort()) {
       final dayRows = byStore[store]!;
+      final varietyNames = varietyMachines(dayRows);
       final byMachine = <String, List<SlotRecord>>{};
       for (final r in dayRows) {
         byMachine.putIfAbsent(r.machine, () => []).add(r);
       }
-      final storeGroups = <BacktestGroup>[];
-      for (final machine in byMachine.keys.toList()..sort()) {
-        final rows = byMachine[machine]!;
-        final history = machineHistory(available, store, machine);
-        final app = provisionalNextDayCandidates(rows, history);
-        if (app.candidates.isEmpty) continue;
+
+      /// [rows] のグループ（候補が無ければ null）。候補はアプリの [app]、
+      /// 過去傾向は [tendencyOf]（アプリと同じ関数）。バラエティは、候補にしない
+      /// 台（あまり回らなかった台など）も比べる相手に入れる（選び方そのものの
+      /// 良し悪しを、バラエティの全台と比べて見るため）。
+      BacktestGroup? group(
+        String name,
+        List<SlotRecord> rows,
+        ({int total, int eligible, List<ProvisionalCandidate> candidates}) app,
+        ({int days, double? index, String confidence}) Function(SlotRecord)
+        tendencyOf, {
+        bool isVariety = false,
+      }) {
+        if (app.candidates.isEmpty) return null;
         final members = <BacktestMember>[];
         for (final row in rows) {
-          final tendency = nextDayIndex(row, history);
+          final tendency = tendencyOf(row);
           if (tendency.index == null) continue;
-          final next = nextScore(store, day, machine, row.rack);
+          final next = nextScore(store, day, row.machine, row.rack);
           if (next == null) {
             final exists = byKey.containsKey(
-              '$store|${shiftDay(day, 1)}|$machine|${row.rack}',
+              '$store|${shiftDay(day, 1)}|${row.machine}|${row.rack}',
             );
             unlabeled[exists ? 'not_scored' : 'no_record'] =
                 unlabeled[exists ? 'not_scored' : 'no_record']! + 1;
@@ -232,6 +271,7 @@ BacktestRun runBacktest(
           members.add(
             BacktestMember(
               rack: row.rack,
+              machine: row.machine,
               index: tendency.index!,
               days: tendency.days,
               confidence: tendency.confidence,
@@ -240,10 +280,14 @@ BacktestRun runBacktest(
             ),
           );
         }
-        // アプリの候補と同じ台であることを必ず確かめる。
+        // アプリの候補と同じ台であることを必ず確かめる（台番号はその日その店で
+        // 1台ずつ）。
         final chosen = {for (final c in app.candidates) c.record.rack};
-        if (members.length != app.eligible) {
-          throw StateError('$store $day $machine: 判定できた台数が違う');
+        if (!isVariety && members.length != app.eligible) {
+          throw StateError('$store $day $name: 判定できた台数が違う');
+        }
+        if (!chosen.every((rack) => members.any((m) => m.rack == rack))) {
+          throw StateError('$store $day $name: 候補が比べる相手に入っていない');
         }
         for (final m in members) {
           m.current = chosen.contains(m.rack);
@@ -259,22 +303,68 @@ BacktestRun runBacktest(
         for (final m in byPrevious.take(chosen.length)) {
           m.previousScore = true;
         }
-        final group = BacktestGroup(
+        return BacktestGroup(
           store,
-          machine,
+          name,
           day,
           members,
           chosen.length,
+          variety: isVariety,
         );
-        groups.add(group);
-        storeGroups.add(group);
+      }
+
+      final storeGroups = <BacktestGroup>[];
+      for (final machine in byMachine.keys.toList()..sort()) {
+        // 1〜3台の機種は、機種ごとには候補が出ない（判定できる台が4台未満）。
+        if (varietyNames.contains(machine)) continue;
+        final rows = byMachine[machine]!;
+        final history = machineHistory(available, store, machine);
+        final built = group(
+          machine,
+          rows,
+          provisionalNextDayCandidates(rows, history),
+          (row) => nextDayIndex(row, history),
+        );
+        if (built == null) continue;
+        groups.add(built);
+        storeGroups.add(built);
+      }
+      if (variety && varietyNames.isNotEmpty) {
+        final rows = [
+          for (final r in dayRows)
+            if (varietyNames.contains(r.machine)) r,
+        ];
+        final built = group(
+          varietyGroupName,
+          rows,
+          varietyNextDayCandidates(rows, available),
+          (row) {
+            final hit = varietyHitPercent(row, available);
+            return (
+              days: hit.refs,
+              index: hit.percent ?? 50.0,
+              confidence: hit.percent == null ? '比較なし' : (hit.refs < 7 ? '少' : '中'),
+            );
+          },
+          isVariety: true,
+        );
+        if (built != null) {
+          varietyGroups.add(built);
+          storeGroups.add(built);
+        }
       }
       if (storeGroups.isEmpty) continue;
-      // 最初に表示する7台：アプリの並び（dayCandidates）そのもの。
-      final shown = dayCandidates(dayRows, available).candidates.take(7);
+      // 最初に表示する台：アプリの並び（dayCandidates）の、4台以上の機種の
+      // 上位7台（＝2026-09-29の検証のときの並び）。[variety] が true なら、
+      // カードで最初から全部出すバラエティの候補も加える。
+      final app = dayCandidates(dayRows, available).candidates;
+      final shown = [
+        ...app.where((c) => !c.variety).take(7),
+        if (variety) ...app.where((c) => c.variety),
+      ];
       final lookup = {
         for (final g in storeGroups)
-          for (final m in g.members) '${g.machine}|${m.rack}': m,
+          for (final m in g.members) '${m.machine}|${m.rack}': m,
       };
       final currentTop = [
         for (final c in shown) lookup['${c.record.machine}|${c.record.rack}']!,
@@ -282,7 +372,7 @@ BacktestRun runBacktest(
       final previousPool = [
         for (final g in storeGroups)
           for (final m in g.members)
-            if (m.previousScore) (machine: g.machine, member: m),
+            if (m.previousScore) (machine: m.machine, member: m),
       ]..sort((a, b) {
           final sa = a.member.todayScore, sb = b.member.todayScore;
           if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
@@ -306,7 +396,7 @@ BacktestRun runBacktest(
       tops.add(top);
     }
   }
-  return BacktestRun(groups, tops, unlabeled);
+  return BacktestRun(groups, tops, unlabeled, varietyGroups: varietyGroups);
 }
 
 double? _mean(Iterable<double> values) {

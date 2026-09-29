@@ -148,6 +148,42 @@ void main(List<String> args) {
     };
   }
 
+  // バラエティ（1〜3台の機種、2026-09-29から候補に入れた）：4台以上の機種の
+  // 集計（上の main など）とは分けて出す。main は2026-09-29の検証のときと
+  // 同じ数字のまま。
+  Map<String, Object?> summarizeVariety(BacktestRun run) {
+    Map<String, Object?> part(bool Function(BacktestGroup) keep) {
+      final variety = run.varietyGroups.where(keep).toList();
+      final both = [...run.groups.where(keep), ...variety];
+      final tops = run.topSeven
+          .where((t) => both.any((g) => g.store == t.store && g.day == t.day))
+          .toList();
+      return {
+        'groups': variety.length,
+        'prediction_days': {for (final g in variety) g.day}.length,
+        'eligible_racks': variety.fold<int>(0, (n, g) => n + g.members.length),
+        'labeled_racks': variety.fold<int>(0, (n, g) => n + g.labeled.length),
+        'current': evaluateMethod(variety, (m) => m.current),
+        'previous_score': evaluateMethod(variety, (m) => m.previousScore),
+        'previous_minus_current': comparePreviousToCurrent(variety),
+        'index_correlation': indexCorrelation(variety),
+        'with_regular_current': evaluateMethod(both, (m) => m.current),
+        'top7_current_with_variety': evaluateTopSeven(
+          tops,
+          both,
+          current: true,
+        ),
+      };
+    }
+
+    return {
+      'all': part((_) => true),
+      for (final store in storeNames.keys)
+        store: part((g) => g.store == store),
+      'saved_snapshots': evaluateSavedSnapshots(run.varietyGroups, snapshots),
+    };
+  }
+
   final main = runBacktest(full, cutoffFor: (day) => predictionCutoff(day));
   final result = <String, Object?>{
     'scoring_version': scoringVersion,
@@ -171,6 +207,13 @@ void main(List<String> args) {
         full,
         cutoffFor: (day) => predictionCutoff(day, hour: 9),
         exploratory: exploratoryMethods,
+      ),
+    ),
+    'variety_cutoff_0000': summarizeVariety(
+      runBacktest(
+        full,
+        cutoffFor: (day) => predictionCutoff(day),
+        variety: true,
       ),
     ),
     if (earlier.isNotEmpty)

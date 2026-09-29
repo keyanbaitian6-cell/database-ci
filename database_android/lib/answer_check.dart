@@ -327,15 +327,20 @@ class _DayCard extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              displayMachineName(hit.result.machine),
+                              hit.candidate.variety
+                                  ? '${displayMachineName(hit.result.machine)}（$varietyGroupName）'
+                                  : displayMachineName(hit.result.machine),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 13),
                             ),
                             Text(
-                              '候補のとき：平均より'
-                              '${hit.candidate.index >= 50 ? '+' : '-'}'
-                              '${(hit.candidate.index - 50).abs().toStringAsFixed(0)}',
+                              hit.candidate.variety
+                                  ? '候補のとき：前日 ${hit.candidate.record.games}G・'
+                                        '${varietyState(hit.candidate.record).label}'
+                                  : '候補のとき：平均より'
+                                        '${hit.candidate.index >= 50 ? '+' : '-'}'
+                                        '${(hit.candidate.index - 50).abs().toStringAsFixed(0)}',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: AppColors.ash,

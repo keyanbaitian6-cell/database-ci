@@ -155,6 +155,7 @@ void main() {
     BacktestMember m(int rack, double? next, {bool current = false}) =>
         BacktestMember(
           rack: rack,
+          machine: 'A',
           index: 50,
           days: 3,
           confidence: '少',

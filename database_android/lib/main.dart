@@ -1152,22 +1152,24 @@ class _ResultsPageState extends State<ResultsPage> {
         view?.candidates ??
         (candidates: const <ProvisionalCandidate>[], machines: 0, judged: 0);
     final digest = [for (final r in dayRows) _scoredByKey[r.key]!];
+    // 1〜3台の機種は「バラエティ」1つにまとめる（一覧・機種ごとの表とも）。
     final summaries = summarizeMachines(digest);
-    final shown = summaries
-        .where((s) => machineMatches(s.machine, _query.text))
-        .toList();
+    final grouped = groupForList(digest);
     final byMachine = <String, List<(SlotRecord, ScoreResult)>>{};
-    for (final e in digest) {
-      byMachine.putIfAbsent(e.$1.machine, () => []).add(e);
-    }
-    for (final rows in byMachine.values) {
-      rows.sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
+    final shown = <MachineSummary>[];
+    for (final s in summaries) {
+      final rows = filterForList(s, grouped[s.machine]!, _query.text);
+      if (rows == null) continue;
+      shown.add(s);
+      byMachine[s.machine] = rows;
     }
     _shown = shown;
     _byMachine = byMachine;
     final candidateRacks = <String, Set<int>>{};
     for (final c in candidates.candidates) {
-      candidateRacks.putIfAbsent(c.record.machine, () => {}).add(c.record.rack);
+      candidateRacks
+          .putIfAbsent(c.variety ? varietyGroupName : c.record.machine, () => {})
+          .add(c.record.rack);
     }
     return Stack(
       children: [
@@ -1274,7 +1276,8 @@ class _ResultsPageState extends State<ResultsPage> {
                       DaySummaryCard(entries: digest, onPick: _openRecord),
                       const SizedBox(height: 18),
                       Text(
-                        '設置機種一覧　${summaries.length}機種・${digest.length}台',
+                        '設置機種一覧　${{for (final e in digest) e.$1.machine}.length}機種'
+                        '・${digest.length}台',
                         key: _listKey,
                         style: const TextStyle(
                           fontSize: 16,
@@ -1319,15 +1322,19 @@ class _ResultsPageState extends State<ResultsPage> {
                         child: const Text('設置機種一覧へ戻る'),
                       ),
                       const Spacer(),
-                      // 機種ごとに出るので、目立たない灰色にする。
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          foregroundColor: AppColors.ash,
+                      // 機種ごとに出るので、目立たない灰色にする。バラエティは
+                      // 別々の機種の集まりなので出さない（機種ごとの削除は
+                      // 「過去の記録」から）。
+                      if (!s.variety)
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.ash,
+                          ),
+                          onPressed: () =>
+                              _deleteGroup(store!, day!, s.machine),
+                          icon: const Icon(Icons.delete_sweep_outlined),
+                          label: const Text('まとめて削除…'),
                         ),
-                        onPressed: () => _deleteGroup(store!, day!, s.machine),
-                        icon: const Icon(Icons.delete_sweep_outlined),
-                        label: const Text('まとめて削除…'),
-                      ),
                     ],
                   ),
                 ),

@@ -2,8 +2,9 @@
 
 Reads a backup JSON and the candidates written by the Android validation tool
 (``dart run tool/backtest_next_day.dart --json <backup> --dump-candidates <x>``)
-and recomputes them with ``core.provisional_next_day_candidates`` on the same
-records (machine names normalized the same way). Read-only; prints counts only.
+and recomputes them with ``core.day_candidates`` (each machine with 4+ racks,
+plus the store's variety group of 1-3-rack machines) on the same records
+(machine names normalized the same way). Read-only; prints counts only.
 
 Run from database/:
     python check_candidate_parity.py --json <backup.json> --dart <candidates.json>
@@ -15,7 +16,7 @@ import json
 from pathlib import Path
 
 from backtest_candidates import Rows
-from core import normalize_machine_name, provisional_next_day_candidates
+from core import day_candidates, normalize_machine_name
 
 
 def main():
@@ -34,9 +35,9 @@ def main():
             merged[key] = row
     data = Rows(merged.values())
     pc = {}
-    for store, day, machine in sorted({(r['store'], r['day'], r['machine']) for r in merged.values()}):
-        for c in provisional_next_day_candidates(data, day, machine, store)['candidates']:
-            pc[(store, day, machine, int(c['row']['rack']))] = (c['index'], c['days'])
+    for store, day in sorted({(r['store'], r['day']) for r in merged.values()}):
+        for c in day_candidates(data, day, store):
+            pc[(store, day, c['row']['machine'], int(c['row']['rack']))] = (c['index'], c['days'])
     dart = {(c['store'], c['day'], c['machine'], int(c['rack'])): (c['index'], c['days'])
             for c in json.loads(args.dart.read_text(encoding='utf-8'))}
     same = sum(1 for k, v in pc.items() if dart.get(k) == v)

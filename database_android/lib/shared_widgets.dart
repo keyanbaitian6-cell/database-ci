@@ -236,7 +236,9 @@ class MachineSummaryList extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            displayMachineName(summaries[i].machine),
+                            summaries[i].variety
+                                ? '$varietyGroupName（${summaries[i].machines}機種）'
+                                : displayMachineName(summaries[i].machine),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w600),
@@ -266,7 +268,7 @@ class MachineSummaryList extends StatelessWidget {
   }
 
   static String _detail(MachineSummary s) => [
-    '${s.racks}台',
+    s.variety ? '1〜3台の機種の${s.racks}台' : '${s.racks}台',
     if (s.best != null) '最高${s.best!.toStringAsFixed(1)}',
     if (s.noGraph > 0) 'グラフ未取得${s.noGraph}台',
   ].join('・');
@@ -341,6 +343,8 @@ class RackTrend extends StatelessWidget {
         ),
       );
     }
+    // 1〜3台の機種（バラエティ）は、回転数と終わり方で見る（過去傾向の指数は無い）。
+    final variety = isVarietyRecord(record, all);
     final forecast = nextDayIndex(record, all);
     final totals = trend.map((e) => e.$2.total).whereType<double>().toList();
     final average = totals.isEmpty
@@ -398,7 +402,9 @@ class RackTrend extends StatelessWidget {
                 ),
               const SizedBox(height: 8),
               Text(
-                forecast.index == null
+                variety
+                    ? '${varietyJudgementText(record, all)}\n$nextDayValidationNote'
+                    : forecast.index == null
                     ? 'この台の当たりの軽さ（過去傾向）：まだ判定できません'
                           '（同じ機種で${forecast.days}日分／3日分から判定）'
                     : 'この台の当たりの軽さ（過去傾向）：'

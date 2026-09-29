@@ -80,10 +80,49 @@ String capturedNote(SlotRecord record) {
 
 /// 翌日候補（仮）の計算方式の版。保存する候補の記録（[CandidateSnapshot]）に
 /// 残し、式を変えたときに新旧の成績を混ぜないようにする。式を変えたら上げる。
-/// 2026-09-27：サイトの異常値（点検中の88888888など）を除外。それ以外は
-/// 2026-09-23以前から同じ（2026-09-29の検証でも変更しなかった）。PC版
-/// `core.NEXT_DAY_METHOD_VERSION` と同じ値。
-const nextDayMethodVersion = '2026-09-27';
+/// 2026-09-27：サイトの異常値（点検中の88888888など）を除外。
+/// 2026-09-29：1〜3台の機種を店ごとに「バラエティ」にまとめ、店ごとの狙い方で
+/// 5台選ぶ（[varietyNextDayCandidates]）。4台以上の機種の選び方は変えていない。
+/// PC版 `core.NEXT_DAY_METHOD_VERSION` と同じ値。
+const nextDayMethodVersion = '2026-09-29';
+
+/// バラエティ：その日その店で1〜3台の機種（利用者の指定、2026-09-29）。
+/// 今の選び方は同じ機種の台どうしで比べ、1機種で4台以上判定できる必要が
+/// あるので、これらの機種は一度も候補に入らなかった。
+const varietyMaxRacks = 3;
+
+/// バラエティで「よく回った」とみなす回転数。4時間ほど打たれた台の目安で、
+/// 回されるのは打ち手が良い台だと見たからだ、というプロの見方による（経験則
+/// で、根拠となる数値の出典は無い）。実データ（2026-09-22〜28）でも、前日
+/// この回転数以上の台は、翌日に3000G以上回ってプラスで終わる割合が約2倍
+/// （約20%、それ未満の台は約9〜10%）だった。
+const varietyBusyGames = 3000;
+
+/// バラエティから候補に出す台数（1店舗・1日。利用者の指定、2026-09-29）。
+const varietyPicks = 5;
+
+/// バラエティのまとまりの名前（画面の見出し・候補の記録の機種名）。
+const varietyGroupName = 'バラエティ';
+
+/// [dayRows]（1店舗・1日）のうち、バラエティにまとめる機種の名前。
+Set<String> varietyMachines(Iterable<SlotRecord> dayRows) {
+  final counts = <String, int>{};
+  for (final r in dayRows) {
+    counts[r.machine] = (counts[r.machine] ?? 0) + 1;
+  }
+  return {
+    for (final entry in counts.entries)
+      if (entry.value <= varietyMaxRacks) entry.key,
+  };
+}
+
+/// [record] の機種が、その日その店でバラエティ（1〜3台）か。[all] にその日の
+/// 同じ機種の台がそろっている前提（一覧は機種ごとに全台を保存する）。
+bool isVarietyRecord(SlotRecord record, List<SlotRecord> all) =>
+    machineHistory(all, record.store, record.machine)
+        .where((r) => r.day == record.day)
+        .length <=
+    varietyMaxRacks;
 
 /// Historical hit-frequency tendency for the provisional candidate view.
 ///
@@ -141,11 +180,86 @@ const nextDayMethodVersion = '2026-09-27';
   );
 }
 
+/// バラエティの台の、その日の終わり方。
+enum VarietyState {
+  /// [varietyBusyGames]以上回ったのに、プラスで終わらなかった（凹み）。
+  dented('回ったのに凹み'),
+
+  /// [varietyBusyGames]以上回って、プラスで終わった。
+  plus('回ってプラス'),
+
+  /// [varietyBusyGames]未満（判断の材料が少ない）。
+  quiet('3000G未満'),
+
+  /// グラフがまだ無く、終わり方が分からない。
+  unknown('グラフ未取得');
+
+  const VarietyState(this.label);
+  final String label;
+}
+
+/// [record] のその日の終わり方。プラスはグラフの終点がゼロ線より上（採点の
+/// 終点と同じく1ピクセル以内はゼロ扱い）。大当たり0回でグラフを取らない台は
+/// 凹み。
+VarietyState varietyState(SlotRecord record) {
+  if (record.games < varietyBusyGames) return VarietyState.quiet;
+  if (record.graphNotNeeded) return VarietyState.dented;
+  final graph = record.graph;
+  if (graph == null || !graph.baselineY.isFinite || !graph.endY.isFinite) {
+    return VarietyState.unknown;
+  }
+  return graph.baselineY - graph.endY > 1
+      ? VarietyState.plus
+      : VarietyState.dented;
+}
+
+/// 店ごとの狙い方（先に見る終わり方の順）。利用者の指定（2026-09-29）で、
+/// 実データ7日分の傾向に合わせている：長町南は前日「回ったのに凹んだ台」が
+/// 翌日よい割合が高く（回ってプラスの台は低い）、幸町は「回ってプラスの台」が
+/// 翌日も続きやすかった。7日分なので外れる可能性も高い。
+List<VarietyState> varietyOrder(String store) => store == 'nagamachiminami'
+    ? const [VarietyState.dented, VarietyState.plus]
+    : const [VarietyState.plus, VarietyState.dented];
+
+/// 店ごとの狙い方の説明（画面に出す）。
+String varietyRuleText(String store) {
+  final order = varietyOrder(store);
+  return '前日${varietyBusyGames}G以上回った台から、'
+      '「${order.first.label}」の台を先に、次に「${order.last.label}」の台を、'
+      'それぞれ当たりがその台の普段より軽い順に$varietyPicks台';
+}
+
+/// その日の当たり確率が、その台の普段（同じ機種の前の30日の記録。1台の機種
+/// ならその台自身の過去）と比べて何番目か（0〜100、50が普段どおり）。比べる
+/// 相手の条件は採点の [comparisonPool] と同じで、別の機種とは比べない。比べる
+/// 記録が3件未満なら null。
+({double? percent, int refs}) varietyHitPercent(
+  SlotRecord record,
+  List<SlotRecord> all,
+) {
+  final rates = [
+    for (final r in comparisonPool(record, all))
+      if (r.bb >= 0 && r.rb >= 0) (r.bb + r.rb) / r.games,
+  ];
+  if (rates.length < 3 || record.games <= 0) {
+    return (percent: null, refs: rates.length);
+  }
+  final rank = percentile((record.bb + record.rb) / record.games, rates);
+  return (
+    percent: double.parse((100 * rank).toStringAsFixed(1)),
+    refs: rates.length,
+  );
+}
+
+/// 翌日候補（仮）の1台。[variety] はバラエティ（1〜3台の機種）から選んだ台で、
+/// そのときの [index] は当たりの普段比（[varietyHitPercent]、比べられなければ
+/// 50）、[days] は比べた記録の件数。
 typedef ProvisionalCandidate = ({
   SlotRecord record,
   double index,
   int days,
   String confidence,
+  bool variety,
 });
 
 /// Candidate list for the day after the selected date, clearly marked as a
@@ -163,6 +277,7 @@ provisionalNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
         index: tendency.index!,
         days: tendency.days,
         confidence: tendency.confidence,
+        variety: false,
       ));
     }
   }
@@ -182,6 +297,55 @@ provisionalNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
     total: rows.length,
     eligible: eligible.length,
     candidates: eligible.take(count).toList(),
+  );
+}
+
+/// バラエティ（1店舗・1日の、1〜3台の機種の台 [rows]）の翌日候補。プロの見方で
+/// 選ぶ（利用者の指定、2026-09-29）：前日 [varietyBusyGames] 以上回った台
+/// （打ち手が粘った台）だけを見て、店ごとの狙い方（[varietyOrder]）の順に、
+/// 同じ終わり方の中では当たりがその台の普段より軽い順（[varietyHitPercent]。
+/// 比べられない台は50として並べる）、次に回転数の多い順で [varietyPicks] 台。
+/// [eligible] は判断できた（よく回って終わり方が分かる）台の数。
+({int total, int eligible, List<ProvisionalCandidate> candidates})
+varietyNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
+  if (rows.isEmpty) return (total: 0, eligible: 0, candidates: const []);
+  final order = varietyOrder(rows.first.store);
+  final ranked = <({int group, ProvisionalCandidate candidate})>[];
+  for (final record in rows) {
+    if (hasImplausibleNumbers(record)) continue;
+    final group = order.indexOf(varietyState(record));
+    if (group < 0) continue;
+    final hit = varietyHitPercent(record, all);
+    ranked.add((
+      group: group,
+      candidate: (
+        record: record,
+        index: hit.percent ?? 50.0,
+        days: hit.refs,
+        confidence: hit.percent == null
+            ? '比較なし'
+            : hit.refs < 7
+            ? '少'
+            : '中',
+        variety: true,
+      ),
+    ));
+  }
+  ranked.sort((a, b) {
+    if (a.group != b.group) return a.group.compareTo(b.group);
+    final ca = a.candidate, cb = b.candidate;
+    final byHit = cb.index.compareTo(ca.index);
+    if (byHit != 0) return byHit;
+    final byGames = cb.record.games.compareTo(ca.record.games);
+    if (byGames != 0) return byGames;
+    final byRack = ca.record.rack.compareTo(cb.record.rack);
+    // 同じ台番号は同じ日の同じ店に1台だけなので、ここに来るのは記録の誤りだけ。
+    return byRack != 0 ? byRack : ca.record.machine.compareTo(cb.record.machine);
+  });
+  return (
+    total: rows.length,
+    eligible: ranked.length,
+    candidates: [for (final r in ranked.take(varietyPicks)) r.candidate],
   );
 }
 

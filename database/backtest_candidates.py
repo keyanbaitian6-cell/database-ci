@@ -52,6 +52,10 @@ class Rows:
         return self.by_machine[(machine, store)]
 
     def rows(self, day=None, machine=None, store=None):
+        if machine is None:
+            # 1店舗・1日の全機種（バラエティの判定に使う）。
+            return [r for key, rows in self.by_day.items()
+                    if key[0] == day and key[2] == store for r in rows]
         return self.by_day[(day, machine, store)]
 
 
