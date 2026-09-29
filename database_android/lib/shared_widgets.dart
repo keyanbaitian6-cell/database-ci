@@ -930,6 +930,7 @@ class _ScrollTopButtonState extends State<ScrollTopButton> {
   void initState() {
     super.initState();
     widget.controller.addListener(_update);
+    _updateAfterLayout();
   }
 
   @override
@@ -939,6 +940,16 @@ class _ScrollTopButtonState extends State<ScrollTopButton> {
       oldWidget.controller.removeListener(_update);
       widget.controller.addListener(_update);
     }
+    _updateAfterLayout();
+  }
+
+  // 日付・絞り込みでリストが短くなると、レイアウト時の位置補正では
+  // controllerのスクロール通知が来ない場合がある。新しい寸法で判定する。
+  // 初回接続・controllerの差し替え時にも現在位置を取り込む。
+  void _updateAfterLayout() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _update();
+    });
   }
 
   @override

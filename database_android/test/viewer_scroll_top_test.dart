@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:database_android/answer_check.dart';
+import 'package:database_android/exploratory_page.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/shared_widgets.dart';
 import 'package:database_android/theme.dart';
@@ -59,6 +60,41 @@ Future<void> scrollDown(WidgetTester tester, double distance) async {
 }
 
 void main() {
+  testWidgets('新規予測：戻るボタンが動き、候補のない日へ変えても残らない', (tester) async {
+    await phone(tester, height: 400);
+    final records = [
+      for (var d = 20; d <= 28; d++)
+        for (var m = 1; m <= 10; m++)
+          for (var rack = 1; rack <= 8; rack++)
+            rec('2026-09-$d', machine: '機種$m', rack: m * 10 + rack),
+    ];
+    await tester.pumpWidget(
+      app(
+        ExploratoryForecastPage(
+          data: ViewerData(records: records),
+          store: 'nagamachiminami',
+          day: '2026-09-28',
+          onOpen: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await scrollDown(tester, 1500);
+    expect(offsetOf(tester), greaterThan(600));
+    expect(topButton, findsOneWidget);
+    await tester.tap(topButton);
+    await tester.pumpAndSettle();
+    expect(offsetOf(tester), 0);
+    expect(topButton, findsNothing);
+    await scrollDown(tester, 1500);
+    final bar = tester.widget<ViewerDateBar>(find.byType(ViewerDateBar));
+    bar.onChanged('2026-09-20');
+    await tester.pumpAndSettle();
+    expect(offsetOf(tester), lessThanOrEqualTo(600));
+    expect(topButton, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('ホーム：600px下へスクロールしたら右下に出て、押すと一番上へ戻り消える', (tester) async {
     await phone(tester);
     final records = [
