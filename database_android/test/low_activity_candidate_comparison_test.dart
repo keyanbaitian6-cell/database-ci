@@ -4,18 +4,22 @@ import 'package:database_android/next_day_backtest.dart';
 import 'package:database_android/scoring.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-SlotRecord row(String day, {int games = 6000, String machine = 'M'}) =>
-    SlotRecord(
-      store: 'nagamachiminami',
-      day: day,
-      machine: machine,
-      rack: 1,
-      games: games,
-      bb: games == 0 ? 0 : 25,
-      rb: games == 0 ? 0 : 15,
-      maxHold: 1000,
-      capturedAt: '${day}T23:00:00+09:00',
-    );
+SlotRecord row(
+  String day, {
+  int games = 6000,
+  int maxHold = 1000,
+  String machine = 'M',
+}) => SlotRecord(
+  store: 'nagamachiminami',
+  day: day,
+  machine: machine,
+  rack: 1,
+  games: games,
+  bb: games == 0 ? 0 : 25,
+  rb: games == 0 ? 0 : 15,
+  maxHold: maxHold,
+  capturedAt: '${day}T23:00:00+09:00',
+);
 BacktestMember member(
   int rack, {
   String machine = 'M',
@@ -75,6 +79,14 @@ void main() {
   });
   test('machine swaps and abnormal values are not zero games', () {
     final target = row('2026-09-24');
+    expect(
+      threeDayFeature(target, [
+        target,
+        row('2026-09-23', maxHold: -1),
+        row('2026-09-22'),
+      ]).games,
+      isNull,
+    );
     expect(
       threeDayFeature(target, [
         target,

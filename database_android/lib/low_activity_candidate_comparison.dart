@@ -25,6 +25,7 @@ ThreeDayFeature threeDayFeature(SlotRecord target, List<SlotRecord> available) {
         matches.single.games < 0 ||
         matches.single.bb < 0 ||
         matches.single.rb < 0 ||
+        (matches.single.maxHold ?? 0) < 0 ||
         hasImplausibleNumbers(matches.single)) {
       return (games: null, score: null, scoredDays: 0);
     }
