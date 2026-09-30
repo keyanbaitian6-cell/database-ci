@@ -925,12 +925,23 @@ class ScrollTopButton extends StatefulWidget {
 
 class _ScrollTopButtonState extends State<ScrollTopButton> {
   var _visible = false;
+  ScrollNotificationObserverState? _observer;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_update);
     _updateAfterLayout();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final observer = ScrollNotificationObserver.maybeOf(context);
+    if (observer == _observer) return;
+    _observer?.removeListener(_onScrollNotification);
+    _observer = observer;
+    _observer?.addListener(_onScrollNotification);
   }
 
   @override
@@ -954,8 +965,16 @@ class _ScrollTopButtonState extends State<ScrollTopButton> {
 
   @override
   void dispose() {
+    _observer?.removeListener(_onScrollNotification);
     widget.controller.removeListener(_update);
     super.dispose();
+  }
+
+  // Scaffoldのobserverは、通常のスクロールだけでなく、一覧の折りたたみや
+  // 画面サイズ変更によるScrollMetricsNotificationも届ける。子だけが更新され、
+  // このボタンのdidUpdateWidgetが呼ばれない場合も、補正後の位置に合わせる。
+  void _onScrollNotification(ScrollNotification notification) {
+    if (mounted && notification.depth == 0) _update();
   }
 
   void _update() {

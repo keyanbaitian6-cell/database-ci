@@ -242,19 +242,25 @@ class _ViewerHomeState extends State<ViewerHome> {
     if (mounted) setState(() => _loading = false);
   }
 
-  void _openRecord(SlotRecord record, ScoreResult? score) =>
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => ViewerRecordPage(
-            data: _data!,
-            record: record,
-            onDayChanged: (day) => setState(() {
-              _store = record.store;
-              _day = day;
-            }),
-          ),
-        ),
-      );
+  void _openRecord(
+    SlotRecord record,
+    ScoreResult? score, {
+    ValueChanged<String>? onDayChanged,
+  }) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => ViewerRecordPage(
+        data: _data!,
+        record: record,
+        onDayChanged: (day) {
+          setState(() {
+            _store = record.store;
+            _day = day;
+          });
+          onDayChanged?.call(day);
+        },
+      ),
+    ),
+  );
 
   void _openMachine(String machine) {
     Navigator.of(context).push(
@@ -466,7 +472,12 @@ class _ViewerHomeState extends State<ViewerHome> {
                   store: store,
                   day: day,
                   onOpen: (record) => _openRecord(record, null),
-                  onDayChanged: (day) => setState(() => _day = day),
+                  onOpenWithDayChange: (record, changed) =>
+                      _openRecord(record, null, onDayChanged: changed),
+                  onSelectionChanged: (store, day) => setState(() {
+                    _store = store;
+                    _day = day;
+                  }),
                 ),
               ),
             ),

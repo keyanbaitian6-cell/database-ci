@@ -59,6 +59,19 @@ void main() {
     expect(() => ViewerData.parse('{"x": 1}'), throwsFormatException);
   });
 
+  test('日付の型が壊れた1台は読み飛ばし、他の正常な台は表示する', () {
+    final data = ViewerData.parse(
+      jsonEncode({
+        'records': [
+          raw(1),
+          {...raw(2), 'day': 20260925},
+        ],
+      }),
+    );
+    expect(data.records.single.rack, 1);
+    expect(data.skipped, 1);
+  });
+
   test('比較に使える前の日の数を数える（少なければ注意を出す）', () {
     SlotRecord on(String day, String store) =>
         SlotRecord.fromJson({...raw(1), 'day': day, 'store': store});
@@ -86,7 +99,7 @@ void main() {
               {...raw(i + 1), 'day': days[i]},
           ],
           'date_events': [
-            {'store': 'saiwaichou', 'day': days.first, 'name': '$source'},
+            {'store': 'saiwaichou', 'day': days.first, 'name': source},
           ],
           'file': source,
         });
@@ -128,6 +141,29 @@ void main() {
       final incoming = doc('2026-09-27T12:00:00+09:00', ['2026-09-27']);
       expect(ViewerData.merge(null, incoming).text, incoming);
       expect(ViewerData.merge('{broken', incoming).text, incoming);
+    });
+
+    test('Driveの最新で解除したイベントは復活させず、残した古い日のイベントだけ引き継ぐ', () {
+      final stored = jsonEncode({
+        'header': {'exported_at': '2026-09-27T10:00:00+09:00'},
+        'records': [
+          {...raw(1), 'day': '2026-06-01'},
+          raw(2),
+        ],
+        'date_events': [
+          {'store': 'saiwaichou', 'day': '2026-06-01', 'name': '古い日のイベント'},
+          {'store': 'saiwaichou', 'day': '2026-09-25', 'name': '解除したイベント'},
+        ],
+      });
+      final incoming = jsonEncode({
+        'header': {'exported_at': '2026-09-28T10:00:00+09:00'},
+        'records': [raw(2)],
+        'date_events': [],
+      });
+      final data = ViewerData.parse(ViewerData.merge(stored, incoming).text);
+      expect(data.keptOlder, 1);
+      expect(data.dateEventFor('saiwaichou', '2026-06-01')?.name, '古い日のイベント');
+      expect(data.dateEventFor('saiwaichou', '2026-09-25'), isNull);
     });
   });
 

@@ -29,11 +29,20 @@ class ExploratoryForecastPage extends StatefulWidget {
     required this.day,
     required this.onOpen,
     this.onDayChanged,
+    this.onSelectionChanged,
+    this.onOpenWithDayChange,
   });
   final ViewerData data;
   final String store, day;
   final void Function(SlotRecord record) onOpen;
   final ValueChanged<String>? onDayChanged;
+
+  /// 親の画面にも、選んだ店舗と日付を一組で伝える。
+  final void Function(String store, String day)? onSelectionChanged;
+
+  /// 候補の詳細内で変えた日付を、この画面へ戻すための開き方。
+  final void Function(SlotRecord record, ValueChanged<String> onDayChanged)?
+  onOpenWithDayChange;
 
   @override
   State<ExploratoryForecastPage> createState() =>
@@ -94,6 +103,7 @@ class _ExploratoryForecastPageState extends State<ExploratoryForecastPage> {
     if (day == null || day == _day) return;
     _day = day;
     widget.onDayChanged?.call(day);
+    widget.onSelectionChanged?.call(_store, day);
     _restart();
   }
 
@@ -128,6 +138,7 @@ class _ExploratoryForecastPageState extends State<ExploratoryForecastPage> {
                 if (!storeDays.contains(_day) && storeDays.isNotEmpty) {
                   _day = storeDays.first;
                 }
+                widget.onSelectionChanged?.call(_store, _day);
                 _restart();
               }, short: true),
               const SizedBox(height: 12),
@@ -140,7 +151,14 @@ class _ExploratoryForecastPageState extends State<ExploratoryForecastPage> {
                 day: _day,
                 candidates: _candidates!,
                 machines: _machines,
-                onPick: widget.onOpen,
+                onPick: (record) {
+                  final openWithDayChange = widget.onOpenWithDayChange;
+                  if (openWithDayChange != null) {
+                    openWithDayChange(record, _changeDay);
+                  } else {
+                    widget.onOpen(record);
+                  }
+                },
               ),
           ],
         ),

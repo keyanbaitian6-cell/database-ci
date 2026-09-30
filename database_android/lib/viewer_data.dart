@@ -150,10 +150,21 @@ class ViewerData {
     ];
     if (older.isEmpty) return (text: incoming, note: null);
     final events = <String, Object?>{};
+    // 最新の対象期間ではイベントの解除も反映する。手元のイベントを
+    // 引き継ぐのは、今回残した古い記録の店舗・日付だけ。
+    final keptDays = {
+      for (final item in older)
+        if (item is Map) '${item['store']}|${item['day']}',
+    };
     for (final list in [old['date_events'], fresh['date_events']]) {
       if (list is! List) continue;
       for (final item in list) {
-        if (item is Map) events['${item['store']}|${item['day']}'] = item;
+        final event = DateEvent.tryFromJson(item);
+        if (event != null &&
+            (identical(list, fresh['date_events']) ||
+                keptDays.contains(event.key))) {
+          events[event.key] = item;
+        }
       }
     }
     return (
@@ -174,12 +185,14 @@ class ViewerData {
     final raw = Map<String, dynamic>.from(item);
     final kind = raw['kind_code'];
     final machine = raw['machine'];
+    final day = raw['day'];
     if (!storeNames.containsKey(raw['store']) ||
         (kind != null && kind != 21) ||
         raw['rack'] is! num ||
         machine is! String ||
         machine.trim().isEmpty ||
-        !isValidRecordDay(raw['day'] as String?)) {
+        day is! String ||
+        !isValidRecordDay(day)) {
       return null;
     }
     try {

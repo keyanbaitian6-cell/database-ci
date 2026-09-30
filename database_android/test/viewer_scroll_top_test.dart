@@ -60,6 +60,73 @@ Future<void> scrollDown(WidgetTester tester, double distance) async {
 }
 
 void main() {
+  testWidgets('新規予測：候補一覧だけを折りたたんでも戻るボタンが残らない', (tester) async {
+    await phone(tester);
+    final records = [
+      for (var d = 20; d <= 28; d++)
+        for (var m = 1; m <= 10; m++)
+          for (var rack = 1; rack <= 8; rack++)
+            rec('2026-09-$d', machine: '機種$m', rack: m * 10 + rack),
+    ];
+    await tester.pumpWidget(
+      app(
+        ExploratoryForecastPage(
+          data: ViewerData(records: records),
+          store: 'nagamachiminami',
+          day: '2026-09-28',
+          onOpen: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final expand = find.textContaining('すべて表示（');
+    await tester.ensureVisible(expand);
+    await tester.pumpAndSettle();
+    await tester.tap(expand);
+    await tester.pumpAndSettle();
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(offsetOf(tester), greaterThan(600));
+    expect(topButton, findsOneWidget);
+    await tester.tap(find.text('上位7台だけ表示'));
+    await tester.pumpAndSettle();
+    expect(offsetOf(tester), lessThanOrEqualTo(600));
+    expect(topButton, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('新規予測：画面が高くなり位置が補正されても戻るボタンが残らない', (tester) async {
+    await phone(tester, height: 400);
+    final records = [
+      for (var d = 20; d <= 28; d++)
+        for (var m = 1; m <= 10; m++)
+          for (var rack = 1; rack <= 8; rack++)
+            rec('2026-09-$d', machine: '機種$m', rack: m * 10 + rack),
+    ];
+    await tester.pumpWidget(
+      app(
+        ExploratoryForecastPage(
+          data: ViewerData(records: records),
+          store: 'nagamachiminami',
+          day: '2026-09-28',
+          onOpen: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await scrollDown(tester, 1500);
+    expect(offsetOf(tester), greaterThan(600));
+    expect(topButton, findsOneWidget);
+    await tester.binding.setSurfaceSize(const Size(393, 1200));
+    await tester.pumpAndSettle();
+    expect(offsetOf(tester), lessThanOrEqualTo(600));
+    expect(topButton, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('新規予測：戻るボタンが動き、候補のない日へ変えても残らない', (tester) async {
     await phone(tester, height: 400);
     final records = [
