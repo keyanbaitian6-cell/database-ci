@@ -4,12 +4,14 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image/image.dart' as imglib;
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'capture_flow.dart';
+import 'auto_capture_state.dart';
 import 'page_readiness.dart';
 import 'import_service.dart';
 import 'models.dart' show isValidRecordDay, storeNames;
@@ -290,6 +292,88 @@ class _WebImportPageState extends State<WebImportPage> {
   Timer? _loadTimer;
   Timer? _clickTimer;
   final _extractions = WebExtractionChannel();
+  static const _autoService = MethodChannel('database/auto_capture');
+  final _auto = AutoCaptureState();
+  Timer? _autoTimer;
+  bool _autoChanging = false;
+  bool _autoProbing = false;
+  bool _legacyAdvanceAllowed = true;
+  String _autoStatus = '停止中';
+
+  bool _autoCurrent(int? token, int page) =>
+      token == null || _auto.current(token, page);
+
+  void _autoMessage(String message) {
+    if (mounted && message != _autoStatus) {
+      setState(() => _autoStatus = message);
+    }
+  }
+
+  Future<void> _toggleAuto() async {
+    if (_autoChanging) return;
+    if (_auto.enabled) {
+      _auto.turnOff();
+      setState(() => _autoStatus = '停止中（開始済みの保存は完了まで待ちます）');
+      if (Platform.isAndroid) {
+        try {
+          await _autoService.invokeMethod<void>('stop');
+        } catch (_) {}
+      }
+      return;
+    }
+    setState(() => _autoChanging = true);
+    try {
+      if (Platform.isAndroid) await _autoService.invokeMethod<void>('start');
+      if (!mounted) {
+        if (Platform.isAndroid) await _autoService.invokeMethod<void>('stop');
+        return;
+      }
+      _auto.turnOn();
+      setState(() => _autoStatus = 'ON・次の取り込みを待っています');
+    } catch (error) {
+      _autoMessage('自動取り込みを開始できませんでした：$error');
+    } finally {
+      if (mounted) setState(() => _autoChanging = false);
+    }
+  }
+
+  Future<void> _autoTick() async {
+    if (!mounted || _autoProbing) return;
+    final page = _flow.page;
+    final token = _auto.due(busy: !_flow.canCapture || _error != null);
+    if (token == null) return;
+    _autoProbing = true;
+    try {
+      final current = await _web.currentUrl();
+      if (!_auto.current(token, page)) return;
+      if (current == null || !_allowed(current)) {
+        _autoMessage('ON・対象店舗のページ待ち');
+        return;
+      }
+      final probe = _decodeJavaScriptResult(
+        await _runExtraction(_autoProbeScript),
+      );
+      if (!_auto.current(token, page)) return;
+      if (probe['ready'] != true) {
+        _autoMessage('ON・待機：${probe['reason'] ?? 'ページの準備待ち'}');
+        return;
+      }
+      if (probe['url'] != current || await _web.currentUrl() != current) {
+        _autoMessage('ON・ページ切り替え待ち');
+        return;
+      }
+      if (!_auto.admit(token, page, '${probe['signature']}')) {
+        _autoMessage('ON・同じ画面の重複取り込みを待機中');
+        return;
+      }
+      _autoMessage('ON・取り込み中');
+      await _captureCurrentPage(autoToken: token);
+    } catch (error) {
+      if (_auto.current(token, page)) _autoMessage('ON・待機：$error');
+    } finally {
+      _autoProbing = false;
+    }
+  }
 
   void _receiveExtraction(JavaScriptMessage message) {
     _extractions.receive(message.message);
@@ -330,6 +414,11 @@ class _WebImportPageState extends State<WebImportPage> {
 
   @override
   void dispose() {
+    _auto.turnOff();
+    _autoTimer?.cancel();
+    if (Platform.isAndroid) {
+      unawaited(_autoService.invokeMethod<void>('stop').catchError((_) {}));
+    }
     _noticeTimer?.cancel();
     _loadTimer?.cancel();
     _clickTimer?.cancel();
@@ -340,6 +429,10 @@ class _WebImportPageState extends State<WebImportPage> {
   @override
   void initState() {
     super.initState();
+    _autoTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) => unawaited(_autoTick()),
+    );
     // デバッグ版だけ、USB接続したPCから内部ブラウザを調べられるようにする
     // （不具合調査用。リリース版では無効）。
     if (kDebugMode && Platform.isAndroid) {
@@ -361,6 +454,8 @@ class _WebImportPageState extends State<WebImportPage> {
             _clickTimer?.cancel();
             _noticeTimer?.cancel();
             final start = _flow.pageStarted(url);
+            _auto.nextPage(start);
+            if (_auto.enabled) _autoMessage('ON・読み込み待ち');
             _loadTimer = Timer(const Duration(seconds: 45), () {
               if (_samePage(start)) {
                 _flow.loadTimedOut(start);
@@ -432,8 +527,11 @@ class _WebImportPageState extends State<WebImportPage> {
       if (!_samePage(page)) return;
       await _refreshProgress();
       if (!_samePage(page)) return;
-      if (_flow.takeAdvance()) {
-        await _moveToNextMachine(automatic: true);
+      if (_flow.takeAdvance() && _legacyAdvanceAllowed && !_auto.enabled) {
+        await _moveToNextMachine(
+          automatic: true,
+          toggleRevision: _auto.revision,
+        );
         return;
       }
       _flow.ready(page);
@@ -475,12 +573,13 @@ class _WebImportPageState extends State<WebImportPage> {
     }
   }
 
-  Future<void> _extract() => _flow.whileBusy(() async {
+  Future<void> _extract({int? autoToken}) => _flow.whileBusy(() async {
     final page = _flow.page;
+    if (!_autoCurrent(autoToken, page)) return;
     setState(() => _error = null);
     try {
       final value = await _runExtraction(_extractTableScript);
-      if (!_samePage(page)) return;
+      if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
       final decoded = _decodeJavaScriptResult(value);
       final mismatch = pageMismatch(
         await _web.currentUrl(),
@@ -488,7 +587,7 @@ class _WebImportPageState extends State<WebImportPage> {
         day: decoded['day'] as String?,
       );
       if (mismatch != null) throw FormatException(mismatch);
-      if (!_samePage(page)) return;
+      if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
       final rows = ((decoded['rows'] as List<dynamic>?) ?? const [])
           .map((item) => Map<String, dynamic>.from(item as Map))
           .map(
@@ -506,7 +605,7 @@ class _WebImportPageState extends State<WebImportPage> {
             ),
           )
           .toList();
-      if (!mounted) return;
+      if (!mounted || !_autoCurrent(autoToken, page)) return;
       final extraction = WebTableExtraction(
         sourceUrl: (decoded['url'] as String?) ?? '',
         store: decoded['store'] as String?,
@@ -537,6 +636,7 @@ class _WebImportPageState extends State<WebImportPage> {
       final identified = canSaveWithoutReview(extraction);
       final atRisk = widget.graphsAtRisk?.call(extraction) ?? 0;
       final bool? saved;
+      if (!_autoCurrent(autoToken, page)) return;
       if (widget.skipTableReview() && identified && atRisk == 0) {
         await widget.onSave(extraction);
         saved = true;
@@ -556,7 +656,7 @@ class _WebImportPageState extends State<WebImportPage> {
           ),
         );
       }
-      if (saved == true && _samePage(page)) {
+      if (saved == true && _samePage(page) && _autoCurrent(autoToken, page)) {
         // 表を保存したら、そのまま最初のグラフ未取得の台へ移動する。
         // 大当たり0回の台はグラフを取らない（次の台にもしない）。
         final noHits = rows.where((r) => r.bb + r.rb == 0).length;
@@ -569,6 +669,7 @@ class _WebImportPageState extends State<WebImportPage> {
           day: extraction.day,
           machine: extraction.machine,
           rack: null,
+          autoToken: autoToken,
         );
       }
     } catch (error) {
@@ -578,12 +679,13 @@ class _WebImportPageState extends State<WebImportPage> {
     }
   });
 
-  Future<void> _extractGraph() => _flow.whileBusy(() async {
+  Future<void> _extractGraph({int? autoToken}) => _flow.whileBusy(() async {
     final page = _flow.page;
+    if (!_autoCurrent(autoToken, page)) return;
     setState(() => _error = null);
     try {
       final value = await _runExtraction(_extractGraphScript);
-      if (!_samePage(page)) return;
+      if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
       final decoded = _decodeJavaScriptResult(value);
       final mismatch = pageMismatch(
         await _web.currentUrl(),
@@ -592,7 +694,7 @@ class _WebImportPageState extends State<WebImportPage> {
         rack: decoded['rack'] as int?,
       );
       if (mismatch != null) throw FormatException(mismatch);
-      if (!_samePage(page)) return;
+      if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
       if (isExcludedMachine(
         decoded['store'] as String?,
         decoded['machine'] as String?,
@@ -638,9 +740,11 @@ class _WebImportPageState extends State<WebImportPage> {
         maxHold: decoded['max_hold'] as int?,
         graph: graph,
       );
-      if (!mounted || !_samePage(page)) return;
+      if (!mounted || !_samePage(page) || !_autoCurrent(autoToken, page)) {
+        return;
+      }
       final saved = await widget.onGraph(context, captured);
-      if (saved && _samePage(page)) {
+      if (saved && _samePage(page) && _autoCurrent(autoToken, page)) {
         // 保存が済んだら、次のグラフ未取得の台へ自動で移動する（取り込みボタンを
         // 押すのはこれまで通り人。移動先は一覧から保存済みのサイト自身のリンクだけ）。
         final points = graph.points;
@@ -659,6 +763,7 @@ class _WebImportPageState extends State<WebImportPage> {
           day: captured.day,
           machine: captured.machine,
           rack: captured.rack,
+          autoToken: autoToken,
         );
       }
     } catch (error) {
@@ -684,7 +789,9 @@ class _WebImportPageState extends State<WebImportPage> {
     String? day,
     String? machine,
     int? rack,
+    int? autoToken,
   }) async {
+    if (!_autoCurrent(autoToken, _flow.page)) return;
     final target = widget.onNext(
       store: store,
       day: day,
@@ -693,7 +800,7 @@ class _WebImportPageState extends State<WebImportPage> {
     );
     final url = target.url;
     final warning = target.warning ?? '';
-    if (url != null && _allowed(url)) {
+    if (url != null && _allowed(url) && _autoCurrent(autoToken, _flow.page)) {
       final String step;
       final allDone = target.reason == 'all_done';
       if (allDone) {
@@ -792,19 +899,22 @@ class _WebImportPageState extends State<WebImportPage> {
   /// a machine table saves the table, a rack page saves its graph, and the
   /// 1000-yen / high-slot machine list opens the next machine that needs work.
   /// It never starts a capture merely because a page finished loading.
-  Future<void> _captureCurrentPage() async {
-    if (!mounted || !_flow.canCapture) return;
+  Future<void> _captureCurrentPage({int? autoToken}) async {
+    if (!mounted || !_flow.canCapture || !_autoCurrent(autoToken, _flow.page)) {
+      return;
+    }
+    _legacyAdvanceAllowed = autoToken == null;
     await _flow.whileBusy(() async {
       final page = _flow.page;
       setState(() => _error = null);
       try {
         await _waitForPage(page);
-        if (!_samePage(page)) return;
+        if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
         final value = await _runExtraction(_pageIdentityScript);
-        if (!_samePage(page)) return;
+        if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
         final decoded = _decodeJavaScriptResult(value);
         final url = await _web.currentUrl() ?? '';
-        if (!_samePage(page)) return;
+        if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
         if (!isTargetKindUrl(url)) {
           _showNotice('対象は1000円46枚スロットのみです。');
           return;
@@ -813,11 +923,11 @@ class _WebImportPageState extends State<WebImportPage> {
         final machine = (decoded['machine'] as String?)?.trim() ?? '';
 
         if (rack != null) {
-          await _extractGraph();
+          await _extractGraph(autoToken: autoToken);
         } else if (machine.isNotEmpty) {
-          await _extract();
+          await _extract(autoToken: autoToken);
         } else if (url.contains('rack_info_kt')) {
-          await _moveToNextMachine();
+          await _moveToNextMachine(autoToken: autoToken);
         } else {
           _showNotice('1000円46枚スロット／ハイスロの機種一覧、機種別の表、または個別台のグラフを表示してから押してください。');
         }
@@ -832,9 +942,17 @@ class _WebImportPageState extends State<WebImportPage> {
   /// whose listed cabinet count changed) so its current table can be saved.
   /// This only navigates to the site's links; the user still presses each
   /// table/graph import button.
-  Future<void> _moveToNextMachine({bool automatic = false}) async {
+  Future<void> _moveToNextMachine({
+    bool automatic = false,
+    int? autoToken,
+    int? toggleRevision,
+  }) async {
     if (!mounted) return;
     final page = _flow.page;
+    bool active() =>
+        _samePage(page) &&
+        _autoCurrent(autoToken, page) &&
+        (toggleRevision == null || _auto.revision == toggleRevision);
     // ページを移動したか。移動しなかった場合は最後に読み込み中の表示を外す
     // （グラフ完了後の自動移動で「残りなし」などになったとき、くるくるが
     // 回り続けてボタンが押せなくなっていた）。
@@ -843,7 +961,7 @@ class _WebImportPageState extends State<WebImportPage> {
       setState(() => _error = null);
       try {
         final currentUrl = await _web.currentUrl() ?? '';
-        if (!_samePage(page)) return;
+        if (!active()) return;
         if (!currentUrl.contains('rack_info_kt')) {
           _showNotice('1000円46枚スロット／ハイスロの機種一覧画面で押してください。');
           return;
@@ -859,9 +977,9 @@ class _WebImportPageState extends State<WebImportPage> {
               'hasContent': (data['machines'] as List?)?.isNotEmpty == true,
             };
           },
-          isCurrent: () => _samePage(page),
+          isCurrent: active,
         );
-        if (!_samePage(page)) return;
+        if (!active()) return;
         final decoded = stable;
         // 低貸し（kind_code=10・5）の機種一覧では、次の機種を選ばない。
         if (!isTargetKindUrl(currentUrl)) {
@@ -934,6 +1052,8 @@ class _WebImportPageState extends State<WebImportPage> {
           moved = await _openMachineTable(
             first!,
             '$name の一覧で対象日を確認します。表示後に「この画面を取り込む」を押してください。',
+            autoToken: autoToken,
+            toggleRevision: toggleRevision,
           );
           return;
         }
@@ -953,7 +1073,7 @@ class _WebImportPageState extends State<WebImportPage> {
             machine: machines[index]['name'] as String?,
             rack: null,
           );
-          if (target.url != null && _allowed(target.url!)) {
+          if (target.url != null && _allowed(target.url!) && active()) {
             _flow.expectPage(
               notice:
                   '未取得グラフが残る${machines[index]['name']}へ移動します。次：${target.rack}番台（残り${target.remaining}台）',
@@ -974,6 +1094,8 @@ class _WebImportPageState extends State<WebImportPage> {
             moved = await _openMachineTable(
               machines[index],
               '$name の一覧を更新して、未取得グラフを続けます。',
+              autoToken: autoToken,
+              toggleRevision: toggleRevision,
             );
             return;
           }
@@ -1000,6 +1122,8 @@ class _WebImportPageState extends State<WebImportPage> {
               changed
                   ? '$name は設置台数が変わっています。現在の表を取り込んでください。'
                   : '$name は未取込です。現在の表を取り込んでください。',
+              autoToken: autoToken,
+              toggleRevision: toggleRevision,
             );
             return;
           }
@@ -1024,18 +1148,28 @@ class _WebImportPageState extends State<WebImportPage> {
   /// ボタンを押したときだけ。行が見つからない場合は従来どおりURLを開く。
   Future<bool> _openMachineTable(
     Map<String, dynamic> machine,
-    String notice,
-  ) async {
+    String notice, {
+    int? autoToken,
+    int? toggleRevision,
+  }) async {
     final name = '${machine['name'] ?? ''}';
     final url = machine['url'] as String?;
     final before = await _web.currentUrl();
-    if (!mounted) return false;
+    if (!mounted ||
+        !_autoCurrent(autoToken, _flow.page) ||
+        (toggleRevision != null && _auto.revision != toggleRevision)) {
+      return false;
+    }
     final starts = _flow.page;
     _flow.expectPage(notice: notice);
     _flow.startLoading();
     var clicked = false;
     if (name.isNotEmpty) {
       try {
+        if (!_autoCurrent(autoToken, starts) ||
+            (toggleRevision != null && _auto.revision != toggleRevision)) {
+          return false;
+        }
         clicked =
             await _runExtraction(
               '($_clickMachineRowScript)(${jsonEncode(name)})',
@@ -1046,6 +1180,10 @@ class _WebImportPageState extends State<WebImportPage> {
       }
     }
     if (!_samePage(starts)) return true;
+    if (!_autoCurrent(autoToken, starts) ||
+        (toggleRevision != null && _auto.revision != toggleRevision)) {
+      return false;
+    }
     if (!clicked) {
       if (url != null) {
         await _web.loadRequest(Uri.parse(url));
@@ -1257,32 +1395,94 @@ class _WebImportPageState extends State<WebImportPage> {
         SafeArea(
           top: false,
           minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _flow.canCapture ? _captureCurrentPage : null,
-                  icon: _flow.busy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.download_for_offline_outlined),
-                  label: Text(_flow.busy ? '取り込み中…' : 'この画面を取り込む'),
-                ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.42,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _auto.enabled
+                            ? AppColors.appleBlue
+                            : AppColors.ash,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                      onPressed: _autoChanging ? null : _toggleAuto,
+                      icon: Icon(
+                        _auto.enabled
+                            ? Icons.autorenew
+                            : Icons.pause_circle_outline,
+                      ),
+                      label: Text('自動取り込み：${_auto.enabled ? 'ON' : 'OFF'}'),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Text('間隔', style: TextStyle(fontSize: 13)),
+                      Expanded(
+                        child: Slider(
+                          min: 1,
+                          max: 45,
+                          divisions: 44,
+                          value: _auto.intervalTenths.toDouble(),
+                          label:
+                              '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
+                          onChanged: (value) => setState(
+                            () => _auto.setIntervalTenths(value.round()),
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _autoStatus,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.ash,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _flow.canCapture && !_auto.enabled
+                          ? () => unawaited(_captureCurrentPage())
+                          : null,
+                      icon: _flow.busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download_for_offline_outlined),
+                      label: Text(_flow.busy ? '取り込み中…' : 'この画面を取り込む'),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _flow.busy || _auto.enabled ? null : _undoLast,
+                      icon: const Icon(Icons.undo, size: 18),
+                      label: const Text('直前の保存を取り消す'),
+                    ),
+                  ),
+                ],
               ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _flow.busy ? null : _undoLast,
-                  icon: const Icon(Icons.undo, size: 18),
-                  label: const Text('直前の保存を取り消す'),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ],
@@ -2013,6 +2213,44 @@ const _pageReadinessScript = r'''
   const content = [location.href, rows, curves];
   return JSON.stringify({ready: document.readyState === 'complete' && !busy,
     hasContent: !!document.body && (rows.length > 0 || curves.length > 0 || document.body.innerText.trim().length > 0), content});
+})()
+''';
+
+/// 読み込み・人間確認中はONのまま待ち、サイトの操作は行わない。
+/// URLと表示内容を組にして、同じ画面を繰り返し保存しない。
+const _autoProbeScript = r'''
+(() => {
+  const url = location.href;
+  const visible = e => !!e && e.getClientRects().length > 0;
+  const body = document.body;
+  if (!body || document.readyState !== 'complete')
+    return JSON.stringify({ready:false, reason:'読み込み中', url});
+  const busy = (window.jQuery && window.jQuery.active > 0) ||
+    Array.from(document.querySelectorAll('[aria-busy="true"], .loading, .spinner')).some(visible);
+  if (busy) return JSON.stringify({ready:false, reason:'読み込み中', url});
+  const dialogs = Array.from(document.querySelectorAll('dialog[open], [role="dialog"], [aria-modal="true"]')).filter(visible);
+  const challenges = Array.from(document.querySelectorAll('iframe[src*="captcha"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]')).filter(visible);
+  const words = (body.innerText || '').replace(/\s+/g, ' ').trim();
+  if (dialogs.length || challenges.length ||
+      /人間であること|ロボットでは|セキュリティチェック|verify you are human|checking your browser|captcha|利用規約.*同意|利用条件.*同意/i.test(words))
+    return JSON.stringify({ready:false, reason:'確認画面を手動で操作してください', url});
+  const target = /[?&]rack_no=/.test(url) ? 'graph' :
+    /[?&]machine_name=/.test(url) ? 'table' :
+    /rack_info_kt/.test(url) ? 'machines' : null;
+  if (!target) return JSON.stringify({ready:false, reason:'対象画面待ち', url});
+  const rows = Array.from(document.querySelectorAll('tr')).map(e => e.innerText || e.textContent || '');
+  const curves = Array.from(document.querySelectorAll('svg path, svg polyline'))
+    .map(e => e.getAttribute('d') || e.getAttribute('points') || '');
+  const images = Array.from(document.querySelectorAll('canvas, img')).filter(visible)
+    .map(e => e.tagName === 'CANVAS' ? `${e.width}x${e.height}` : e.currentSrc || e.src || '');
+  if (target === 'machines' && !document.querySelector('tr.teram2-link-block, a[href*="machine_name"]'))
+    return JSON.stringify({ready:false, reason:'機種一覧の表示待ち', url});
+  if (target === 'table' && rows.length === 0)
+    return JSON.stringify({ready:false, reason:'表の表示待ち', url});
+  if (target === 'graph' && curves.length === 0 && images.length === 0)
+    return JSON.stringify({ready:false, reason:'グラフの表示待ち', url});
+  const signature = JSON.stringify([url, rows, curves, images, words]);
+  return JSON.stringify({ready:true, url, signature});
 })()
 ''';
 
