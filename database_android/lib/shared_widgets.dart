@@ -441,8 +441,9 @@ class RackTrend extends StatelessWidget {
                           '${signedIndex(forecast.index!)}'
                           '（過去${forecast.days}日分・データ量${forecast.confidence}）\n'
                           '同じ日・同じ機種で回転数が近い台と比べた当たり頻度の差です。'
-                          '「翌日候補（仮）」の根拠に使っています。今日の合計点とは別で、'
-                          'データ量は計算に使えた日数の目安です。\n$nextDayValidationNote',
+                          '「参考候補（翌日向け）」の根拠に使っています。今日の合計点とは別で、'
+                          'データ量は計算に使えた日数の目安です。\n'
+                          '$regularReferenceCandidateNote\n$nextDayValidationNote',
                 style: const TextStyle(
                   color: AppColors.ash,
                   fontSize: 12,

@@ -106,7 +106,7 @@ class _MachineSectionState extends State<MachineSection> {
                   Text(
                     '${widget.entries.length}台・平均 '
                     '${average?.toStringAsFixed(1) ?? '—'}点'
-                    '${widget.candidateRacks.isEmpty ? '' : '・★翌日向け${widget.candidateRacks.length}台'}',
+                    '${widget.candidateRacks.isEmpty ? '' : '・★参考候補${widget.candidateRacks.length}台'}',
                     style: const TextStyle(fontSize: 12, color: AppColors.ash),
                   ),
                 ],
@@ -124,11 +124,12 @@ class _MachineSectionState extends State<MachineSection> {
             ),
           ),
         if (widget.candidateRacks.isNotEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
             child: Text(
-              '★はこの日までの記録から選んだ翌日向け候補です。前日から見たこの日の候補ではありません。',
-              style: TextStyle(fontSize: 12, color: AppColors.ash),
+              '★＝$referenceCandidateLegend'
+              '${variety ? '' : '\n$regularReferenceCandidateNote'}',
+              style: const TextStyle(fontSize: 12, color: AppColors.ash),
             ),
           ),
         const SizedBox(height: 10),
@@ -524,7 +525,7 @@ class MachineDataTable extends StatelessWidget {
               provisional == entries.length
                   ? '点数はすべて暫定（少数データ・欠測を含む）'
                   : '$provisional台の点数は暫定（少数データ・欠測を含む）',
-            if (candidateRacks.isNotEmpty) '★＝選択日までの記録から選んだ翌日向け候補（仮）',
+            if (candidateRacks.isNotEmpty) '★＝$referenceCandidateLegend',
           ].join('・'),
           style: const TextStyle(fontSize: 11, color: AppColors.ash),
         ),
@@ -698,9 +699,7 @@ class _GraphCard extends StatelessWidget {
                       color: slumpBackground,
                       child: Center(
                         child: Text(
-                          record.graphNotNeeded
-                              ? '大当たり0回（グラフ省略）'
-                              : 'グラフ未取得',
+                          record.graphNotNeeded ? '大当たり0回（グラフ省略）' : 'グラフ未取得',
                           style: const TextStyle(
                             color: AppColors.mist,
                             fontSize: 12,
@@ -742,11 +741,20 @@ class _GraphCard extends StatelessWidget {
   }
 }
 
-/// 翌日候補（仮）の効果についての説明。検証の結果は
-/// `NEXT_DAY_CANDIDATES_VALIDATION_20260929.md`。
+/// 通常の★と、その参考候補のカードで共用する説明。
+const referenceCandidateLegend = '選択日までの履歴から選んだ翌日向けの参考候補。予測精度は検証中です。';
+
+/// 4台以上の通常機種の選び方。バラエティの説明には使わない。
+const regularReferenceCandidateNote =
+    '直近10記録日の当たり順位を使うため、同じ台が続くことがあります。'
+    '翌日の良さを保証する印ではありません。';
+
+/// 翌日向けの参考候補の効果についての説明。検証の結果は
+/// `NEXT_DAY_CANDIDATES_VALIDATION_20260929.md` と
+/// `NEXT_DAY_REFERENCE_REVIEW_20260930.md`。
 const nextDayValidationNote =
-    '2026-09-29の検証（翌日0:00までに取り込んだ記録・7日分）では、候補の翌日の点数は、'
-    '判定できた台全体の平均と差が確認できていません（効果は検証中）。'
+    'これまでの検証では、参考候補の翌日の点数が判定できた台全体の平均より良いとは'
+    '確認できていません（予測精度は検証中）。'
     '翌日の設定・勝率・期待収支を示すものではありません。';
 
 /// 翌日候補（仮）：その日の全機種から、過去の当たりの軽さで選んだ台。
@@ -801,7 +809,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               children: [
                 Expanded(
                   child: Text(
-                    next.isEmpty ? '翌日候補（仮）' : '$next の候補（仮）',
+                    next.isEmpty ? '参考候補（翌日向け）' : '$next の参考候補（翌日向け）',
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
@@ -818,7 +826,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                     borderRadius: BorderRadius.circular(980),
                   ),
                   child: const Text(
-                    '試験中',
+                    '検証中',
                     style: TextStyle(fontSize: 11, color: AppColors.ash),
                   ),
                 ),
@@ -827,9 +835,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             const SizedBox(height: 6),
             Text(
               '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
-              '${next.isEmpty ? '翌日' : next}向けに選んだ台です。同じ機種の周りの台より'
-              '当たりが軽かった台（各機種の上位4分の1）と、1〜3台の機種をまとめた'
-              '「バラエティ」から前日の回転数と終わり方で選んだ台です。★は下の表にも'
+              '${next.isEmpty ? '翌日' : next}向けに選んだ参考候補です。★は下の表にも'
               '付けています。この日の点数には影響しません。',
               style: const TextStyle(
                 color: AppColors.ash,
@@ -841,7 +847,8 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             if (regular.isEmpty)
               const Text(
                 'まだ判定できる機種（4台以上）がありません。同じ台・同じ機種のデータが'
-                '3日分たまり、1機種で4台以上判定できると表示します。',
+                '3日分たまり、1機種で4台以上判定できると表示します。'
+                '候補がないことは、不調を意味しません。',
                 style: TextStyle(
                   color: AppColors.ash,
                   fontSize: 13,
@@ -849,6 +856,12 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                 ),
               )
             else ...[
+              const Text(
+                '$regularReferenceCandidateNote'
+                'この日の回転数が少ない台も、過去の記録から選ばれる場合があります。',
+                style: note,
+              ),
+              const SizedBox(height: 8),
               for (final (i, c) in shown.indexed) _row(i + 1, c),
               if (regular.length > _first)
                 Align(
@@ -856,15 +869,14 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                   child: TextButton(
                     onPressed: () => setState(() => _all = !_all),
                     child: Text(
-                      _all
-                          ? '上位$_first台だけ表示'
-                          : 'すべて表示（${regular.length}台）',
+                      _all ? '上位$_first台だけ表示' : 'すべて表示（${regular.length}台）',
                     ),
                   ),
                 ),
               Text(
                 '判定できた機種：${widget.judged} / ${widget.machines}機種'
                 '（バラエティはまとめて1つ）。'
+                '通常機種は判定できた台の上位4分の1を選んでいます。'
                 '「平均より」は同じ日・同じ機種で回転数が近い台との当たり頻度の差の積み重ねで、'
                 '別の機種どうしの順位は目安です。データ量は計算に使えた日数の目安で、'
                 '当たりやすさを示すものではありません。',
@@ -874,8 +886,11 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             if (variety.isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
-                '$varietyGroupName（1〜3台の機種）から${variety.length}台',
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                '$varietyGroupName（1〜3台の機種）の参考候補${variety.length}台',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -1107,11 +1122,13 @@ String varietyJudgementText(SlotRecord record, List<SlotRecord> all) {
   final detail = switch (state) {
     VarietyState.quiet => '${varietyBusyGames}G未満で、判断の材料が少ないので候補にしません',
     VarietyState.unknown => 'グラフが未取得で、終わり方が分からないので候補にしません',
-    _ => '${state.label}'
-        '${hit.percent == null ? '（当たりは普段と比べる記録が足りない）' : '・当たり 普段より ${delta >= 0 ? '+' : '-'}${delta.abs().toStringAsFixed(0)}（比べた記録${hit.refs}件）'}',
+    _ =>
+      '${state.label}'
+          '${hit.percent == null ? '（当たりは普段と比べる記録が足りない）' : '・当たり 普段より ${delta >= 0 ? '+' : '-'}${delta.abs().toStringAsFixed(0)}（比べた記録${hit.refs}件）'}',
   };
   return 'この台は1〜3台の機種なので「$varietyGroupName」にまとめています。'
-      '${storeShortName(record.store)}の狙い方：${varietyRuleText(record.store)}。\n'
+      '翌日向けの参考候補は、${storeShortName(record.store)}で'
+      '${varietyRuleText(record.store)}。\n'
       'この日のこの台：${record.games}G・$detail。'
       '当たりは同じ機種の前の30日（1台の機種ならこの台自身の過去）とだけ比べ、'
       '別の機種の台とは比べていません。';

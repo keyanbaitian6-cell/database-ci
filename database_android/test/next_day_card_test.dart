@@ -49,36 +49,47 @@ void main() {
         ),
       ),
     );
-    expect(find.text('9/28（月） の候補（仮）'), findsOneWidget);
+    expect(find.text('9/28（月） の参考候補（翌日向け）'), findsOneWidget);
     expect(
-      find.textContaining('9/27（日）（選択日）までの記録から、9/28（月）向けに選んだ台です'),
+      find.textContaining('9/27（日）（選択日）までの記録から、9/28（月）向けに選んだ参考候補です'),
       findsOneWidget,
     );
     expect(find.text(nextDayValidationNote), findsOneWidget);
+    expect(find.textContaining(regularReferenceCandidateNote), findsOneWidget);
+    expect(
+      find.textContaining('この日の回転数が少ない台も、過去の記録から選ばれる場合があります'),
+      findsOneWidget,
+    );
     expect(find.textContaining('当たりやすさを示すものではありません'), findsOneWidget);
     expect(find.textContaining('過去7日分・データ量 中'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('翌日候補のカード：バラエティは「501番台　機種名（バラエティ）」で、前日の回転数と終わり方を出す', (tester) async {
+  testWidgets('翌日候補のカード：バラエティは「501番台　機種名（バラエティ）」で、前日の回転数と終わり方を出す', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(393, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    SlotRecord at(int rack, String machine, {int games = 4000, int endY = 150}) =>
-        SlotRecord(
-          store: 'saiwaichou',
-          day: '2026-09-27',
-          machine: machine,
-          rack: rack,
-          games: games,
-          bb: 20,
-          rb: 10,
-          graph: GraphMeasurement(
-            baselineY: 200,
-            peakY: 100,
-            troughY: 250,
-            endY: endY.toDouble(),
-          ),
-        );
+    SlotRecord at(
+      int rack,
+      String machine, {
+      int games = 4000,
+      int endY = 150,
+    }) => SlotRecord(
+      store: 'saiwaichou',
+      day: '2026-09-27',
+      machine: machine,
+      rack: rack,
+      games: games,
+      bb: 20,
+      rb: 10,
+      graph: GraphMeasurement(
+        baselineY: 200,
+        peakY: 100,
+        troughY: 250,
+        endY: endY.toDouble(),
+      ),
+    );
     ProvisionalCandidate regular(int rack, double index) => (
       record: at(rack, '4台以上の機種'),
       index: index,
@@ -120,7 +131,7 @@ void main() {
       ),
     );
     expect(find.text('すべて表示（9台）'), findsOneWidget);
-    expect(find.text('バラエティ（1〜3台の機種）から2台'), findsOneWidget);
+    expect(find.text('バラエティ（1〜3台の機種）の参考候補2台'), findsOneWidget);
     expect(find.text('801番台'), findsOneWidget);
     expect(find.text('1台の機種'), findsOneWidget);
     expect(find.text('（バラエティ）'), findsNWidgets(2));
@@ -128,10 +139,7 @@ void main() {
       find.text('前日 12,345G・回ってプラス・当たり 普段より +13（比べた記録4件）'),
       findsOneWidget,
     );
-    expect(
-      find.text('前日 4,000G・回ったのに凹み・当たりは普段と比べる記録が足りない'),
-      findsOneWidget,
-    );
+    expect(find.text('前日 4,000G・回ったのに凹み・当たりは普段と比べる記録が足りない'), findsOneWidget);
     expect(find.text('プラス'), findsOneWidget);
     expect(find.text('凹み'), findsOneWidget);
     expect(

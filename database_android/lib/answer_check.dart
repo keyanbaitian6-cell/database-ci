@@ -199,7 +199,7 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
               const SizedBox(height: 12),
             ],
             const Text(
-              '前の日の「翌日候補（仮）」に挙げた台のうち、その日に合計点'
+              '前の日の「参考候補（翌日向け）」に挙げた台のうち、その日に合計点'
               '${answerCheckThreshold ~/ 1}点以上だった台です。候補は、今の計算式で'
               '前の日までの記録から計算し直したものです。前の日の分を翌日以降に取り込んだ'
               '記録も使うので、当時画面に出ていた候補と違うことがあります。'
@@ -261,7 +261,7 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              '候補$candidates台のうち、翌日に点数が出た台$scored台。'
+              '参考候補$candidates台のうち、翌日に点数が出た台$scored台。'
               'そのうち${answerCheckThreshold ~/ 1}点以上は$hits台（$rate）。',
               style: const TextStyle(fontSize: 14, height: 1.45),
             ),
@@ -302,7 +302,7 @@ class _DayCard extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              '${dayWithWeekday(result.predictedOn)}の候補${result.candidates}台'
+              '${dayWithWeekday(result.predictedOn)}の参考候補${result.candidates}台'
               '・点数が出た${result.scored}台・'
               '${answerCheckThreshold ~/ 1}点以上${hits.length}台',
               style: const TextStyle(color: AppColors.ash, fontSize: 13),
@@ -313,7 +313,7 @@ class _DayCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Text(
                   result.candidates == 0
-                      ? '前の日は、候補を出せる機種がありませんでした。'
+                      ? '前の日は、参考候補を出せる機種がありませんでした。'
                       : '${answerCheckThreshold ~/ 1}点以上の台はありませんでした。',
                   style: const TextStyle(color: AppColors.ash),
                 ),
@@ -347,9 +347,9 @@ class _DayCard extends StatelessWidget {
                             ),
                             Text(
                               hit.candidate.variety
-                                  ? '候補のとき：前日 ${hit.candidate.record.games}G・'
+                                  ? '参考候補のとき：前日 ${hit.candidate.record.games}G・'
                                         '${varietyState(hit.candidate.record).label}'
-                                  : '候補のとき：平均より'
+                                  : '参考候補のとき：平均より'
                                         '${hit.candidate.index >= 50 ? '+' : '-'}'
                                         '${(hit.candidate.index - 50).abs().toStringAsFixed(0)}',
                               style: const TextStyle(

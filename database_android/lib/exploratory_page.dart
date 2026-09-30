@@ -236,7 +236,7 @@ class _ExploratoryCandidatesCardState extends State<ExploratoryCandidatesCard> {
             const SizedBox(height: 6),
             Text(
               '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
-              '${next.isEmpty ? '翌日' : next}向けに選んだ台です。今の「翌日候補（仮）」とは別の'
+              '${next.isEmpty ? '翌日' : next}向けに選んだ台です。通常の「参考候補（翌日向け）」とは別の'
               '選び方を試しています。同じ機種の中で、当たりの軽さ（過去の傾向）の順位と'
               '前日の点数の順位を半分ずつ合わせ、上位4分の1を選びます。',
               style: const TextStyle(
