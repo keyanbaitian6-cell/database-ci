@@ -15,7 +15,8 @@
 
 - 利用者指定：パンダ帽子の女の子とパンダの画像を参考にアプリアイコンを変更。対象はAndroid・ブラウザの両方。AndroidはソースだけでAPK不要。正本をfetch/pullして開始。Claudeの別途候補レビューは維持し、採点・選定・データ・画面デザインには触れない。
 - 組み込み画像生成で青い星空と中央の2つの顔を主役にした正方形を作成。原画を `database_android/design/app_icon/panda_master.png` に保存し、READMEに実際の生成指示を記録。`tool/generate_app_icons.dart` でAndroid5密度とWeb6サイズへ縮小。既存Android launcher参照を維持。iPhoneのホーム画面用180pxを追加し、Webのアイコン・manifest参照は版付きURLに変更。
-- 確認：原画と11アイコンの再生成一致確認成功。Android全密度・PWA manifest・iPhone/fav参照の3テスト成功、追加2 Dartファイルの解析は指摘なし。512pxと48pxの画像を目視確認。APKビルド・インストールは行わない。ブラウザ公開結果は完了後に追記する。既存ホーム画面アイコンの実機更新は未確認。
+- 確認：原画と11アイコンの再生成一致確認成功。Android全密度・PWA manifest・iPhone/fav参照の3テスト成功、追加2 Dartファイルの解析は指摘なし。512pxと48pxの画像を目視確認。APKビルド・インストールは行わない。既存ホーム画面アイコンの実機更新は未確認。
+- 公開：ソース `2709257` とorigin/main一致・clean状態からWeb release build成功。`tool/stage_viewer.py` で実seed除外、記録由来90文字列に該当なし。公開リポジトリ `9340ee6` の [Pages run 36711853616](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/36711853616) 成功。公開6アイコンのSHA-256、HTML・manifest（改行をそろえる）は手元と一致、seed404。本体main.dart.jsは前回電池対策公開と同じSHA-256 `b744c8c27e449ee19620153a230d873af945872ad5b32ce988557640f911177c`（本体の変更なし）。公開差分はアイコン6ファイルとHTML・manifestの8ファイルだけ。
 
 ## 2026-09-30：閲覧ページの電池対策（Driveの読み直し・起動時の組み立て）と、ChatGPTの参考候補の点検
 
