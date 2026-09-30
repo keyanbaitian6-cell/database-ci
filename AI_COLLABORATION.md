@@ -21,7 +21,8 @@
 - 未来検証の主方式「半減期3日の直近重視＋当日88以上を飛ばして補充」は `lib/focus_validation.dart` の分析専用選択として実装（本番UIから呼ばない）。固定期間9/30〜10/29、最終評価10/31以降・20評価日・店舗別方向・日/移動ブロック区間・評価可能率等の採用条件は従来文書のまま。今日、採用効果を判定したり自動採用したりしない。
 - 実データの読み取り専用一致確認：全期間バックアップSHA-256 `A64FBD8EFCAED572564D54DA5BD44FC4BFEA7E4CE838E9AEE8E5369EFF4EA9C2`。PC/Dart候補1,284件、指数/使用日数/注目判定の不一致0。通常1,198件、★注目110件、88以上14件は全て☆、バラエティ86件。これは実装確認であり予測精度の評価ではない。非公開照合出力は `a/outputs/focus-parity-20260930.json`、Gitには入れない。
 - 確認：Flutter全338件・PC全125件・Web JSON/Drive読み込み24件成功。新しい計算/表示/分析専用選択/照合ツールへの静的解析は指摘なし。lib全体には従来の2warning/3infoが残る（今回の対象外）。
-- APK版は0.5.9+2026093004。ビルド・公開の結果は完了後に追記。端末データの消去・インストールは依頼されていないため行わない。
+- ビルド：ソース `aab1823` とorigin/main一致・cleanからAndroid release APK成功（118.1秒、91,592,230 bytes）。aaptで `com.keyan.database_android` / 0.5.9 / 2026093004 を確認。Git外成果物 `a/outputs/database-0.5.9-2026093004.apk`、SHA-256 `14B3A419C1057F1FE339A28EC20985088D63C93584C4FD94AB4039533F3A5BAC`。端末データの消去・インストールは依頼されていないため行わない。
+- 公開：同じソースからWeb release build成功（38.1秒）、`tool/stage_viewer.py` で実seed除外・記録由来90文字列の該当なし。公開リポジトリ `e4a0954` の [Pages run 36723086012](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/36723086012) 成功。公開トップ200・実seed404、JavaScript SHA-256 `BC5EA07348524E2D661CD032ED0F76AD3CBFA9E8D3B3FB164A1B5EC7881B06CE` と手元一致。HTML（改行正規化）・iPhone用180pxアイコンも一致、公開version.jsonは0.5.9/2026093004。公開差分はmain.dart.jsとversion.jsonの2ファイルのみ。iPhone/Android実機での操作確認は未実施、widgetテストと配信検証まで。
 
 ## 2026-09-30：強く出た台（当日80点以上）を翌日も推すのは適切か（調査のみ）
 
