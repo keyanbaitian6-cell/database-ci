@@ -634,9 +634,177 @@ void main(List<String> args) {
     ];
   }
 
+  // ---- 数値条件の追加分析（NEXT_DAY_FOCUS_PLAN_20260930.md の3.） ----
+  bool inSubset(RackDay r, String s) {
+    if (!r.strong) return false;
+    final up = isUptrend(r.record);
+    final busy = isBusy(r.record, groupMedianGames(r));
+    return switch (s) {
+      'S1_uptrend' => up,
+      'S2_busy' => busy,
+      _ => up && busy,
+    };
+  }
+
+  RackDay? rackOf(BacktestGroup g, BacktestMember m) =>
+      rackLookup['${g.store}|${g.day}|${g.machine}|${m.rack}'];
+
+  Map<String, Object?> perGroup(List<(String, String, double)> values) => {
+    'groups': values.length,
+    'mean_of_groups': values.isEmpty
+        ? null
+        : _r(_mean(values.map((v) => v.$3))!),
+    'median_of_groups': values.isEmpty
+        ? null
+        : _r(_quantile([for (final v in values) v.$3]..sort(), .5)),
+    'positive_groups': values.where((v) => v.$3 > 0).length,
+    'negative_groups': values.where((v) => v.$3 < 0).length,
+  };
+
+  final conditions = <String, Object?>{};
+  for (final s in ['S1_uptrend', 'S2_busy', 'S3_both']) {
+    final subset = rackDays.where((r) => inSubset(r, s)).toList();
+    final evaluable = subset.where((r) => r.nextScore != null).toList();
+    final within = <(String, String, double)>[];
+    for (final entry in byGroup.entries) {
+      final ev = entry.value.where((r) => r.nextScore != null).toList();
+      final a = ev.where((r) => inSubset(r, s)).toList();
+      final b = ev.where((r) => !inSubset(r, s)).toList();
+      if (a.isEmpty || b.isEmpty) continue;
+      final first = entry.value.first.record;
+      within.add((
+        first.store,
+        first.day,
+        _mean(a.map((r) => r.nextScore!))! - _mean(b.map((r) => r.nextScore!))!,
+      ));
+    }
+    final starMinusOtherStar = <(String, String, double)>[];
+    final starMinusNonStar = <(String, String, double)>[];
+    final direct = <(String, String, double)>[];
+    final directAffected = <(String, String, double)>[];
+    final swappedS = <(String, String, double)>[];
+    var subsetStars = 0,
+        subsetStarsEval = 0,
+        affectedGroups = 0,
+        unrefilled = 0;
+    var emptiedGroups = 0;
+    for (final g in run.groups) {
+      bool member(BacktestMember m) {
+        final r = rackOf(g, m);
+        return r != null && inSubset(r, s);
+      }
+
+      final current = [
+        for (final m in g.members)
+          if (m.current) m,
+      ];
+      final sStars = current.where(member).toList();
+      final others = current
+          .where((m) => !member(m) && m.todayScore != null)
+          .toList();
+      subsetStars += sStars.length;
+      final sEval = [
+        for (final m in sStars)
+          if (m.nextScore != null) m.nextScore!,
+      ];
+      subsetStarsEval += sEval.length;
+      final oEval = [
+        for (final m in others)
+          if (m.nextScore != null) m.nextScore!,
+      ];
+      final nonStar = [
+        for (final m in g.members)
+          if (!m.current && m.nextScore != null) m.nextScore!,
+      ];
+      if (sEval.isNotEmpty && oEval.isNotEmpty) {
+        starMinusOtherStar.add((g.store, g.day, _mean(sEval)! - _mean(oEval)!));
+      }
+      if (sEval.isNotEmpty && nonStar.isNotEmpty) {
+        starMinusNonStar.add((g.store, g.day, _mean(sEval)! - _mean(nonStar)!));
+      }
+      final method = excludeWhere(g, member);
+      final out = current.where((m) => !method.contains(m)).toList();
+      final inn = method.where((m) => !current.contains(m)).toList();
+      final changed = out.isNotEmpty || inn.isNotEmpty;
+      if (changed) affectedGroups++;
+      unrefilled += current.length - method.length;
+      if (method.isEmpty) emptiedGroups++;
+      final curEval = [
+        for (final m in current)
+          if (m.nextScore != null) m.nextScore!,
+      ];
+      final metEval = [
+        for (final m in method)
+          if (m.nextScore != null) m.nextScore!,
+      ];
+      if (curEval.isNotEmpty && metEval.isNotEmpty) {
+        final d = _mean(metEval)! - _mean(curEval)!;
+        direct.add((g.store, g.day, d));
+        if (changed) directAffected.add((g.store, g.day, d));
+      }
+      final outEval = [
+        for (final m in out)
+          if (m.nextScore != null) m.nextScore!,
+      ];
+      final inEval = [
+        for (final m in inn)
+          if (m.nextScore != null) m.nextScore!,
+      ];
+      if (outEval.isNotEmpty && inEval.isNotEmpty) {
+        swappedS.add((g.store, g.day, _mean(outEval)! - _mean(inEval)!));
+      }
+    }
+    conditions[s] = {
+      'racks': subset.length,
+      'share_of_80_plus': _r(subset.length / strong.length),
+      'by_store': {
+        for (final st in storeNames.keys)
+          st: subset.where((r) => r.record.store == st).length,
+      },
+      'Q1': {
+        'evaluable': evaluable.length,
+        'evaluable_rate': subset.isEmpty
+            ? null
+            : _r(evaluable.length / subset.length),
+        'next_score': _quantiles(evaluable.map((r) => r.nextScore!)),
+        'next_share_80_plus': _share(evaluable.map((r) => r.nextScore! >= 80)),
+        'next_share_under_40': _share(evaluable.map((r) => r.nextScore! < 40)),
+        'within_machine_subset_minus_others': _byStoreDays(within),
+        'within_machine_per_group': perGroup(within),
+      },
+      'Q3': {
+        'stars': subsetStars,
+        'evaluable': subsetStarsEval,
+        'subset_star_minus_other_star': _byStoreDays(starMinusOtherStar),
+        'subset_star_minus_other_star_per_group': perGroup(starMinusOtherStar),
+        'subset_star_minus_non_star': _byStoreDays(starMinusNonStar),
+      },
+      'Q4': {
+        'affected_groups': affectedGroups,
+        'unrefilled': unrefilled,
+        'groups_left_without_candidates': emptiedGroups,
+        'method_minus_current_all_groups': _byStoreDays(direct),
+        'method_minus_current_affected_groups': _byStoreDays(directAffected),
+        'swapped_removed_minus_added': _byStoreDays(swappedS),
+        'swapped_per_group': perGroup(swappedS),
+      },
+    };
+  }
+  // 88点（利用者が結果を見たあとに決めた基準）は件数だけ。
+  conditions['count_88_plus'] = {
+    'rack_days': rackDays.where((r) => (r.score.total ?? -1) >= 88).length,
+    'stars': [
+      for (final g in run.groups)
+        for (final m in g.members)
+          if (m.current && (m.todayScore ?? -1) >= 88) m,
+    ].length,
+  };
+
   final dir = Directory(outDir)..createSync(recursive: true);
   const encoder = JsonEncoder.withIndent('  ');
   File('${dir.path}/summary.json').writeAsStringSync(encoder.convert(summary));
   File('${dir.path}/cases.json').writeAsStringSync(encoder.convert(cases));
+  File('${dir.path}/conditions.json')
+      .writeAsStringSync(encoder.convert(conditions));
   stdout.writeln(encoder.convert(summary));
 }

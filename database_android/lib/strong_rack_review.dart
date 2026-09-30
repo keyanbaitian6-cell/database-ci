@@ -118,12 +118,34 @@ List<BacktestMember> currentOrder(BacktestGroup g) =>
 List<BacktestMember> excludeStrong(
   BacktestGroup g, {
   double threshold = strongScore,
-}) {
+}) => excludeWhere(
+  g,
+  (m) => (m.todayScore ?? double.negativeInfinity) >= threshold,
+);
+
+/// [skip] に当たる台を飛ばしながら、現行の順位で同じ機種の判定可能台から現行の
+/// 候補数を上限に選ぶ（埋まらなければ候補数が減る）。
+List<BacktestMember> excludeWhere(
+  BacktestGroup g,
+  bool Function(BacktestMember) skip,
+) {
   final picks = <BacktestMember>[];
   for (final m in currentOrder(g)) {
     if (picks.length >= g.count) break;
-    if ((m.todayScore ?? double.negativeInfinity) >= threshold) continue;
+    if (skip(m)) continue;
     picks.add(m);
   }
   return picks;
 }
+
+/// 右肩上がり（2026-09-30に利用者が確認した条件）：グラフがあり、終点がゼロ線
+/// より上で、終点÷最高点が0.9以上。
+bool isUptrend(SlotRecord row) =>
+    endState(row) == EndState.plus && (endToPeak(row) ?? 0) >= 0.9;
+
+/// 高稼働（同）：当日3,000G以上、かつ同じ店舗・機種・日の回転数の中央値の
+/// 1.5倍以上。
+bool isBusy(SlotRecord row, double machineMedianGames) =>
+    row.games >= 3000 &&
+    machineMedianGames > 0 &&
+    row.games / machineMedianGames >= 1.5;
