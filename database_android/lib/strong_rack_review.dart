@@ -105,11 +105,15 @@ List<RackDay> buildRackDays(List<SlotRecord> full) {
   return result;
 }
 
-/// アプリの並び（丸めた指数の大きい順、同じなら台番号の小さい順）。
+/// アプリの2026-09-30版の並び。過去に固定した旧版の結果は再解釈しない。
 List<BacktestMember> currentOrder(BacktestGroup g) =>
     [...g.members]..sort((a, b) {
-      final byIndex = b.index.compareTo(a.index);
-      return byIndex != 0 ? byIndex : a.rack.compareTo(b.rack);
+      final byIndex = double.parse((b.rawIndex ?? b.index).toStringAsFixed(9)).compareTo(double.parse((a.rawIndex ?? a.index).toStringAsFixed(9)));
+      if (byIndex != 0) return byIndex;
+      final byDays = b.days.compareTo(a.days);
+      if (byDays != 0) return byDays;
+      final byLatest = b.latestUsed.compareTo(a.latestUsed);
+      return byLatest != 0 ? byLatest : a.rack.compareTo(b.rack);
     });
 
 /// 当日 [threshold] 点以上の台を飛ばしながら、現行の順位で同じ機種の判定可能台

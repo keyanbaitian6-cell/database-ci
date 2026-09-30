@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:database_android/candidate_log.dart';
+import 'package:database_android/data_checks.dart';
 import 'package:database_android/exploratory_candidates.dart';
 import 'package:database_android/list_views.dart';
 import 'package:database_android/models.dart';
@@ -44,6 +45,7 @@ void main(List<String> args) {
   final snapshots = [
     for (final raw in (doc['candidate_snapshots'] as List? ?? const []))
       if (CandidateSnapshot.tryFromJson(raw) case final s?)
+        if (s.method == nextDayMethodVersion)
         (
           store: s.store,
           day: s.day,

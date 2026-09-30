@@ -122,7 +122,7 @@ void main() {
     expect(after.unrounded!, greaterThan(50));
   });
 
-  test('丸め後の同点は台番号の小さい順：丸め前は高い台が★から外れる', () {
+  test('表示が同点でも丸め前の高い台を上位に選ぶ（2026-09-30版）', () {
     // 9台・3日。7・8番台が上位、2番台と5番台は当たり確率がちょうど同じで、
     // 5番台の方が少し多く回った（寄与の重みが少し大きい）。
     final hits = {7: 60, 8: 55, 2: 40, 1: 30, 3: 28, 4: 26, 6: 24, 9: 22};
@@ -144,8 +144,8 @@ void main() {
     );
     expect(five.unrounded!, greaterThan(two.unrounded!));
     expect(five.rounded, two.rounded);
-    // 判定9台 → 上位3台。3位の同点は台番号の小さい2番台になる。
-    expect(stars(all, day(3)), {7, 8, 2});
+    // 表示の同点ではなく丸め前の値で判定する。
+    expect(stars(all, day(3)), {7, 8, 5});
   });
 
   test('全台に差が無くても上位4分の1は必ず選ばれ、毎日同じ小さい台番号になる', () {

@@ -115,12 +115,16 @@ class BacktestMember {
     required this.confidence,
     required this.todayScore,
     required this.nextScore,
+    this.rawIndex,
+    this.latestUsed = '',
   });
   final int rack;
 
   /// 台の機種名（バラエティのグループには別々の機種の台が入る）。
   final String machine;
   final double index;
+  final double? rawIndex;
+  final String latestUsed;
   final int days;
   final String confidence;
 
@@ -277,6 +281,8 @@ BacktestRun runBacktest(
               confidence: tendency.confidence,
               todayScore: scoreRecord(row, available).total,
               nextScore: next,
+              rawIndex: isVariety ? tendency.index : nextDayEvidence(row, available).rawIndex,
+              latestUsed: isVariety ? '' : nextDayEvidence(row, available).latestUsed,
             ),
           );
         }

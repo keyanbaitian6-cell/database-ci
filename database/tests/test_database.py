@@ -1491,7 +1491,7 @@ class VarietyTests(unittest.TestCase):
             self.assertEqual((variety['total'], variety['eligible'], variety['method']),
                              (8, 6, NEXT_DAY_METHOD_VERSION))
             self.assertEqual([c['rack'] for c in variety['candidates']], [1, 7, 8, 2, 3])
-            self.assertEqual(NEXT_DAY_METHOD_VERSION, '2026-09-29')
+            self.assertEqual(NEXT_DAY_METHOD_VERSION, '2026-09-30')
             # 同じ中身なら記録し直さない。
             db.save([self.rec('C', 3, 25, 20, graph='minus')])
             self.assertEqual(len(db.candidate_snapshots(day='2026-09-25', location='saiwaichou')), 2)

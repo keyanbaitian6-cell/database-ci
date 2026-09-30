@@ -1187,9 +1187,10 @@ class _ResultsPageState extends State<ResultsPage> {
         for (final e in rows) e.$1.key,
     };
     final candidateRacks = <String, Set<int>>{};
+    final longTrendRacks = <String, Set<int>>{};
     for (final c in candidates.candidates) {
       if (!visibleKeys.contains(c.record.key)) continue;
-      candidateRacks
+      (candidateIsFocus(c, widget.controller.records) ? candidateRacks : longTrendRacks)
           .putIfAbsent(
             c.variety ? varietyGroupName : c.record.machine,
             () => {},
@@ -1248,6 +1249,7 @@ class _ResultsPageState extends State<ResultsPage> {
                       )
                     else ...[
                       NextDayCandidatesCard(
+                        allRecords: widget.controller.records,
                         day: day!,
                         candidates: candidates.candidates,
                         machines: candidates.machines,
@@ -1291,6 +1293,7 @@ class _ResultsPageState extends State<ResultsPage> {
                   machine: s.machine,
                   entries: byMachine[s.machine]!,
                   candidateRacks: candidateRacks[s.machine] ?? const {},
+                  longTrendRacks: longTrendRacks[s.machine] ?? const {},
                   onTap: _openRecord,
                   graph: _graphMachines.contains(s.machine),
                   onGraphChanged: (value) => setState(
@@ -1943,7 +1946,11 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
             final visibleKeys = {for (final e in scored) e.$1.key};
             final candidateRacks = {
               for (final c in snapshot.data!.candidates.candidates)
-                if (visibleKeys.contains(c.record.key)) c.record.rack,
+                if (visibleKeys.contains(c.record.key) && candidateIsFocus(c, widget.controller.records)) c.record.rack,
+            };
+            final longTrendRacks = {
+              for (final c in snapshot.data!.candidates.candidates)
+                if (visibleKeys.contains(c.record.key) && !candidateIsFocus(c, widget.controller.records)) c.record.rack,
             };
             return ListView(
               key: ValueKey(_day),
@@ -1972,6 +1979,7 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
                     machine: widget.machine,
                     entries: scored,
                     candidateRacks: candidateRacks,
+                    longTrendRacks: longTrendRacks,
                     graph: _graph,
                     onGraphChanged: (value) => setState(() => _graph = value),
                     onTap: (record, score) => Navigator.of(context).push(

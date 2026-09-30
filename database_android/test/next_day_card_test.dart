@@ -49,9 +49,9 @@ void main() {
         ),
       ),
     );
-    expect(find.text('9/28（月） の参考候補（翌日向け）'), findsOneWidget);
+    expect(find.text('9/28（月） の参考候補・長期傾向'), findsOneWidget);
     expect(
-      find.textContaining('9/27（日）（選択日）までの記録から、9/28（月）向けに選んだ参考候補です'),
+      find.textContaining('9/27（日）（選択日）までの記録から、9/28（月）向けの★注目と、☆長期傾向を分けています'),
       findsOneWidget,
     );
     expect(find.text(nextDayValidationNote), findsOneWidget);

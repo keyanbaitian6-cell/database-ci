@@ -1215,7 +1215,7 @@ def signed_index(index):
 # 2026-09-29：1〜3台の機種を店ごとに「バラエティ」にまとめ、店ごとの狙い方で5台選ぶ
 # （variety_next_day_candidates）。4台以上の機種の選び方は変えていない
 # （NEXT_DAY_CANDIDATES_VALIDATION_20260929.md の「9. バラエティ」）。
-NEXT_DAY_METHOD_VERSION = '2026-09-29'
+NEXT_DAY_METHOD_VERSION = '2026-09-30'
 
 # バラエティ：その日その店で1〜3台の機種（利用者の指定、2026-09-29）。今の選び方は
 # 同じ機種の台どうしで比べ、1機種で4台以上判定できる必要があるので、これらの機種は
@@ -1245,6 +1245,11 @@ def is_variety_row(store, row):
 
 
 def next_day_index(store, row, max_days=10, shrink_days=5):
+    evidence = next_day_evidence(store, row, max_days, shrink_days)
+    return {k: evidence[k] for k in ('days', 'index', 'confidence')}
+
+
+def next_day_evidence(store, row, max_days=10, shrink_days=5):
     """Historical hit-frequency tendency for the provisional candidate view.
 
     This is not a validated forecast, setting probability, or part of the
@@ -1258,6 +1263,7 @@ def next_day_index(store, row, max_days=10, shrink_days=5):
                 and r['bb'] >= 0 and r['rb'] >= 0 and not implausible_numbers(r)]
     days = sorted({r['day'] for r in all_rows if int(r['rack']) == int(row['rack'])}, reverse=True)[:max_days]
     gaps = []
+    contributions = []
     for day in days:
         mine = next(r for r in all_rows if r['day'] == day and int(r['rack']) == int(row['rack']))
         peers = [r for r in all_rows if r['day'] == day and
@@ -1266,11 +1272,52 @@ def next_day_index(store, row, max_days=10, shrink_days=5):
             rates = [(r['bb'] + r['rb']) / r['games'] for r in peers]
             rank = percentile((mine['bb'] + mine['rb']) / mine['games'], rates)
             gaps.append((100 * rank - 50) * mine['games'] / (mine['games'] + SHRINK_GAMES))
+            contributions.append(dict(day=day, games=mine['games'], peers=len(peers), rank=rank, gap=gaps[-1]))
+        else:
+            contributions.append(dict(day=day, games=mine['games'], peers=len(peers), rank=None, gap=None))
     n = len(gaps)
-    if n < 3:
-        return dict(days=n, index=None, confidence='データ不足')
-    return dict(days=n, index=round_score(50 + sum(gaps) / (n + shrink_days)),
-                confidence='少' if n < 7 else '中')
+    used = [d for d in contributions if d['gap'] is not None]
+    variance = sum((d['peers'] ** 2 - 1) / (12 * d['peers'] ** 2) for d in used)
+    z = sum(d['rank'] - .5 for d in used) / math.sqrt(variance) if variance else 0
+    raw = 50 + sum(gaps) / (n + shrink_days) if n >= 3 else None
+    return dict(days=n, index=round_score(raw) if raw is not None else None,
+                confidence='データ不足' if n < 3 else '少' if n < 7 else '中',
+                raw_index=raw, latest_used=used[0]['day'] if used else '',
+                contributions=contributions, stability_z=z,
+                today_used=bool(used and used[0]['day'] == row['day']))
+
+
+def next_day_focus(evidence, today_score):
+    """Fixed descriptive screen; not a calibrated probability. User cutoff is inclusive."""
+    return (evidence['raw_index'] is not None and evidence['today_used']
+            and evidence['stability_z'] >= 1.96
+            and (today_score is None or today_score < 88))
+
+
+def next_day_sort_key(item):
+    return (-round(item['raw_index'], 9), -item['days'],
+            -date.fromisoformat(item['latest_used']).toordinal(), int(item['row']['rack']))
+
+
+def next_day_reason(item):
+    evidence = item
+    today = next((d for d in evidence['contributions'] if d['day'] == item['row']['day']), None)
+    if evidence['today_used']:
+        band = '上' if today['rank'] >= .75 else '下' if today['rank'] <= .25 else '中'
+        current = f"選択日 {today['games']:,}G・当たり順位 {band}・寄与{today['gap']:+.1f}"
+    else:
+        reason = ('500G未満' if item['row']['games'] < 500 else '数値異常' if implausible_numbers(item['row'])
+                  else '回転数が近い比較相手が3台未満' if today else '使用できる記録なし')
+        current = f'選択日の結果は指数に入っていません（{reason}）'
+    if item['today_score'] is not None and item['today_score'] >= 88:
+        why = f"当日{item['today_score']:.1f}点：88点以上のため★注目から除外"
+    elif not evidence['today_used']:
+        why = '当日情報が入っていないため★注目の条件未達'
+    elif evidence['stability_z'] < 1.96:
+        why = '傾向の安定性基準未達のため★注目の条件未達'
+    else:
+        why = '当日情報あり・傾向の安定性基準を満たす（予測精度は検証中）'
+    return f'{current}／{why}'
 
 
 def variety_state(row):
@@ -1354,10 +1401,12 @@ def provisional_next_day_candidates(store, day, machine, location='nagamachimina
     rows = store.rows(day, machine, location)
     eligible = []
     for row in rows:
-        tendency = next_day_index(store, row)
+        tendency = next_day_evidence(store, row)
         if tendency['index'] is not None:
-            eligible.append(dict(row=row, variety=False, **tendency))
-    eligible.sort(key=lambda item: (-item['index'], int(item['row']['rack'])))
+            today_score = score(row, store._machine_rows(row['machine'], row['store']))['total']
+            eligible.append(dict(row=row, variety=False, today_score=today_score,
+                                 focus=next_day_focus(tendency, today_score), **tendency))
+    eligible.sort(key=next_day_sort_key)
     count = math.ceil(len(eligible) * .25) if len(eligible) >= 4 else 0
     return dict(total=len(rows), eligible=len(eligible), count=count,
                 candidates=eligible[:count])
@@ -1708,6 +1757,11 @@ def report(store, day, machine, folder, location='nagamachiminami'):
     if location not in STORE_NAMES:
         raise ValueError('対象外の店舗です。')
     results = scored_rows(store, day, machine, location)
+    variety = 0 < len(results) <= VARIETY_MAX_RACKS
+    candidate_info = (variety_next_day_candidates(store, day, location) if variety else
+                      provisional_next_day_candidates(store, day, machine, location))
+    candidate_marks = {int(c['row']['rack']): '★' if variety or c['focus'] else '☆'
+                       for c in candidate_info['candidates']}
     event_rows = store.date_events(location, day)
     event_label = f' ｜ {html.escape(event_rows[0]["name"])}' if event_rows else ''
     folder = Path(folder)
@@ -1735,7 +1789,7 @@ def report(store, day, machine, folder, location='nagamachiminami'):
         setting_display = r.get('confirmed_setting') or '—'
         estimate = r['setting_estimate']
         estimate_display = candidate_label(estimate)
-        cells = [str(r['rack']), str(r['games']), str(r['bb']), str(r['rb']), max_hold_display,
+        cells = [str(r['rack']) + (f" {candidate_marks[int(r['rack'])]}" if int(r['rack']) in candidate_marks else ''), str(r['games']), str(r['bb']), str(r['rb']), max_hold_display,
                  setting_display, estimate_display]
         cells += [fmt(s[k]) for k in ('max_hold','hits','positive','retention')]
         total_text = fmt(total)
@@ -1777,15 +1831,12 @@ def report(store, day, machine, folder, location='nagamachiminami'):
     source = results[0].get('source_url') if results else None
     source_html = f'｜ <a href="{html.escape(source, quote=True)}">画面の出典</a>' if source else ''
     # 1〜3台の機種は、機種ごとではなく店の「バラエティ」にまとめて判定する。
-    variety = 0 < len(results) <= VARIETY_MAX_RACKS
     if variety:
-        candidate_info = variety_next_day_candidates(store, day, location)
         candidate_lead = ('<p class="candidate-lead">この機種は1〜3台の機種なので、店の「バラエティ」に'
                           f'まとめて選びます。{html.escape(SHORT_STORE_NAMES.get(location, location))}の狙い方：'
                           f'{html.escape(variety_rule_text(location))}。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
     else:
-        candidate_info = provisional_next_day_candidates(store, day, machine, location)
         candidate_lead = ('<p class="candidate-lead">この機種で、過去に当たりが周りの台より軽かった台です。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
     if candidate_info['count']:
@@ -1811,13 +1862,17 @@ def report(store, day, machine, folder, location='nagamachiminami'):
                               '店ごとの狙い方は7日分の傾向に合わせたもので、外れる可能性も高いです。')
         else:
             candidate_rows = ''.join(
-                f'<li><b>{int(item["row"]["rack"])}番台</b>'
+                f'<li><b>{"★ 注目" if item["focus"] else "☆ 長期傾向"} {int(item["row"]["rack"])}番台</b>'
                 f'<span class="candidate-delta">当たりの軽さ {signed_index(item["index"])}</span>'
-                f'<span class="candidate-days">過去{item["days"]}日分</span></li>'
+                f'<span class="candidate-days">過去{item["days"]}日分・{html.escape(next_day_reason(item))}</span></li>'
                 for item in candidate_info['candidates'])
             candidate_note = (f'傾向を出せた{candidate_info["total"]}台中{candidate_info["eligible"]}台から、'
                               f'上位{candidate_info["count"]}台。「平均より」は、同じ日・同じ機種で回転数が近い台と'
-                              '比べた当たり頻度の差です。')
+                              '比べた当たり頻度の差です。★注目は当日情報あり・安定性基準を満たす・'
+                              '当日88点未満（未採点は除外しない）の台のみです。'
+                              '88点以上は☆長期傾向には残ります。'
+                              + ('' if any(item['focus'] for item in candidate_info['candidates'])
+                                 else '翌日向けの注目なし（条件を満たす台なし）。'))
         candidate_html = (f'<section class="candidate"><h2>翌日候補（仮）<span class="candidate-tag">試験中</span></h2>'
                           f'{candidate_lead}<ul class="candidate-list">{candidate_rows}</ul>'
                           f'<p class="candidate-note">{candidate_note}<br>'
@@ -2072,6 +2127,7 @@ def summary_report(store, folder, day, top=5):
                       if day_event_labels else '')
     for location, label in STORE_NAMES.items():
         entries = []
+        candidates_by_rack = {int(c['row']['rack']): c for c in day_candidates(store, day, location)}
         for machine in store.machines_for(location, day):
             for r in scored_rows(store, day, machine, location):
                 entries.append((machine, r))
@@ -2112,6 +2168,13 @@ def summary_report(store, folder, day, top=5):
                                  '同じ日・同じ機種で回転数が近い台と比べた当たり頻度の差です。'
                                  '「翌日候補（仮）」の根拠に使っています。今日の合計点とは別で、'
                                  '翌日の設定・勝率・期待収支を示すものではありません（効果は検証中）。</div>')
+                evidence = next_day_evidence(store, r)
+                item = dict(row=r, today_score=total, **evidence)
+                picked = candidates_by_rack.get(int(r['rack']))
+                mark = ('★ 注目' if picked and picked.get('focus') else '☆ 長期傾向' if picked else '長期上位ではありません')
+                forecast_html += (f'<div class="dsub"><b>{mark}</b><br>{html.escape(next_day_reason(item))}<br>'
+                                  f'安定性 z={evidence["stability_z"]:.2f}（基準1.96。高設定の確率や検定の有意性ではありません）。'
+                                  '当日88点以上は★注目から除外し、☆長期傾向には残します。</div>')
             strip_html = slump_strip_html(store, r)
             if len(trend) > 1:
                 totals = [t['total'] for t in trend if t['total'] is not None]

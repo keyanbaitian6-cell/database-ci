@@ -214,11 +214,10 @@ List<StarGroup> buildStarGroups(
           }
           if (b.rounded != null) members.add(StarMember(row, b));
         }
-        final stars = starSelection(
-          members,
-          (m) => m.index,
-          (m) => m.record.rack,
-        );
+        int compareCurrent(StarMember a, StarMember b) => compareNextDayEvidence(
+          nextDayEvidence(a.record, history), nextDayEvidence(b.record, history));
+        members.sort(compareCurrent);
+        final stars = members.length < 4 ? <StarMember>[] : members.take((members.length * .25).ceil()).toList();
         if (check) {
           final app = provisionalNextDayCandidates(rows, history);
           final appRacks = {for (final c in app.candidates) c.record.rack};
@@ -230,12 +229,7 @@ List<StarGroup> buildStarGroups(
           }
         }
         if (stars.isEmpty) continue;
-        members.sort((a, b) {
-          final byIndex = b.index.compareTo(a.index);
-          return byIndex != 0
-              ? byIndex
-              : a.record.rack.compareTo(b.record.rack);
-        });
+        members.sort(compareCurrent);
         for (final (i, m) in members.indexed) {
           m.position = i + 1;
           m.star = i < stars.length;

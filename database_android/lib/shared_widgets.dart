@@ -376,6 +376,7 @@ class RackTrend extends StatelessWidget {
     // 1〜3台の機種（バラエティ）は、回転数と終わり方で見る（過去傾向の指数は無い）。
     final variety = isVarietyRecord(record, all);
     final forecast = nextDayIndex(record, all);
+    final evidence = nextDayEvidence(record, all);
     final totals = trend.map((e) => e.$2.total).whereType<double>().toList();
     final average = totals.isEmpty
         ? ''
@@ -441,7 +442,7 @@ class RackTrend extends StatelessWidget {
                           '${signedIndex(forecast.index!)}'
                           '（過去${forecast.days}日分・データ量${forecast.confidence}）\n'
                           '同じ日・同じ機種で回転数が近い台と比べた当たり頻度の差です。'
-                          '「参考候補（翌日向け）」の根拠に使っています。今日の合計点とは別で、'
+                          '★注目・☆長期傾向の根拠に使っています。今日の合計点とは別で、'
                           'データ量は計算に使えた日数の目安です。\n'
                           '$regularReferenceCandidateNote\n$nextDayValidationNote',
                 style: const TextStyle(
@@ -449,6 +450,15 @@ class RackTrend extends StatelessWidget {
                   fontSize: 12,
                   height: 1.45,
                 ),
+              ),
+              if (!variety) ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: const Text('★注目・☆長期傾向の理由', style: TextStyle(fontSize: 13)),
+                children: [Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(regularCandidateDetail(record, all, evidence),
+                    style: const TextStyle(color: AppColors.ash, fontSize: 12, height: 1.5)),
+                )],
               ),
             ],
           ),

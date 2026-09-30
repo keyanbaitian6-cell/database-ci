@@ -164,6 +164,7 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
   String? _calculatedDay;
   List<(SlotRecord, ScoreResult)> _entries = [];
   Set<int> _candidateRacks = {};
+  Set<int> _longTrendRacks = {};
 
   /// 台の表・グラフのリスト（右下の「一番上へ」ボタンで戻す）。
   final _scroll = ScrollController();
@@ -210,10 +211,11 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
       // 日付を変えて機種が4台以上から3台以下になっても、機種内だけで
       // バラエティの候補を選び直さない。検索で隠れた候補を見出しの台数に含めない。
       final visibleKeys = {for (final e in _entries) e.$1.key};
-      _candidateRacks = {
-        for (final c in dayCandidates(dayRows, data.records).candidates)
-          if (visibleKeys.contains(c.record.key)) c.record.rack,
-      };
+      final candidates = dayCandidates(dayRows, data.records).candidates;
+      _candidateRacks = {for (final c in candidates)
+        if (visibleKeys.contains(c.record.key) && candidateIsFocus(c, data.records)) c.record.rack};
+      _longTrendRacks = {for (final c in candidates)
+        if (visibleKeys.contains(c.record.key) && !candidateIsFocus(c, data.records)) c.record.rack};
       _calculatedDay = _day;
     }
     return Scaffold(
@@ -258,6 +260,7 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
                 machine: widget.machine,
                 entries: _entries,
                 candidateRacks: _candidateRacks,
+                longTrendRacks: _longTrendRacks,
                 graph: _graph,
                 onGraphChanged: (v) => setState(() => _graph = v),
                 onTap: (record, score) => Navigator.of(context).push(

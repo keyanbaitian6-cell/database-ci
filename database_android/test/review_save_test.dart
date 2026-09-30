@@ -171,7 +171,7 @@ void main() {
     // プラスで終わった台なので、幸町の狙い方で候補になる。
     expect(snapshots.single.groupKey, '${old.store}|${old.day}|バラエティ');
     expect(snapshots.single.total, 1);
-    expect(snapshots.single.method, '2026-09-29');
+    expect(snapshots.single.method, '2026-09-30');
     expect([for (final c in snapshots.single.candidates) c.rack], [703]);
     await save();
     snapshots = await db.loadCandidateSnapshots();

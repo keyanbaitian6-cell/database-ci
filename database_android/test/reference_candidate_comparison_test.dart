@@ -176,7 +176,7 @@ void main() {
       g.recentIndices[2]!.toStringAsFixed(1),
       g.recentIndices[1]!.toStringAsFixed(1),
     );
-    expect(g.selected[ReferenceMethod.current], {1});
+    expect(g.selected[ReferenceMethod.current], {2});
     expect(g.selected[ReferenceMethod.recent], {2});
   });
 

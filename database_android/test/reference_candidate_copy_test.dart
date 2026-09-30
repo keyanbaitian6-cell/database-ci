@@ -55,7 +55,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.textContaining('★参考候補1台'), findsOneWidget);
+    expect(find.textContaining('★注目1台'), findsOneWidget);
     expect(find.textContaining(referenceCandidateLegend), findsNWidgets(2));
     expect(find.textContaining(regularReferenceCandidateNote), findsOneWidget);
     expect(
@@ -70,7 +70,7 @@ void main() {
 
     await tester.tap(find.text('グラフ表示'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('★参考候補1台'), findsOneWidget);
+    expect(find.textContaining('★注目1台'), findsOneWidget);
     expect(find.textContaining(referenceCandidateLegend), findsOneWidget);
     expect(tester.widget<GraphGrid>(find.byType(GraphGrid)).candidateRacks, {
       101,
@@ -129,7 +129,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('9/28（月） の参考候補（翌日向け）'), findsOneWidget);
+    expect(find.text('9/28（月） の参考候補・長期傾向'), findsOneWidget);
     expect(find.text('バラエティ（1〜3台の機種）の参考候補1台'), findsOneWidget);
     expect(find.textContaining('長町南の狙い方：'), findsOneWidget);
     expect(find.textContaining('直近10記録日'), findsNothing);
@@ -151,7 +151,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('9/28（月） の参考候補（翌日向け）'), findsOneWidget);
+    expect(find.text('9/28（月） の参考候補・長期傾向'), findsOneWidget);
     expect(find.textContaining('3日分たまり、1機種で4台以上判定できる'), findsOneWidget);
     expect(find.textContaining('候補がないことは、不調を意味しません。'), findsOneWidget);
     expect(find.textContaining('直近10記録日'), findsNothing);
@@ -166,7 +166,7 @@ void main() {
     ];
     await tester.pumpWidget(app(RackTrend(record: regular.last, all: regular)));
     await tester.pumpAndSettle();
-    expect(find.textContaining('「参考候補（翌日向け）」の根拠'), findsOneWidget);
+    expect(find.textContaining('★注目・☆長期傾向の根拠'), findsOneWidget);
     expect(find.textContaining(regularReferenceCandidateNote), findsOneWidget);
     expect(tester.takeException(), isNull);
 

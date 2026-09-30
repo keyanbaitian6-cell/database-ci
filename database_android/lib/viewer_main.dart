@@ -535,6 +535,7 @@ class _ViewerHomeState extends State<ViewerHome> {
           )
         else ...[
           NextDayCandidatesCard(
+            allRecords: all,
             day: day,
             candidates: _candidates!.candidates,
             machines: _candidates!.machines,

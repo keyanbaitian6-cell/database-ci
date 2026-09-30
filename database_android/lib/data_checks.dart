@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'models.dart';
 import 'scoring.dart';
 
@@ -84,7 +86,7 @@ String capturedNote(SlotRecord record) {
 /// 2026-09-29：1〜3台の機種を店ごとに「バラエティ」にまとめ、店ごとの狙い方で
 /// 5台選ぶ（[varietyNextDayCandidates]）。4台以上の機種の選び方は変えていない。
 /// PC版 `core.NEXT_DAY_METHOD_VERSION` と同じ値。
-const nextDayMethodVersion = '2026-09-29';
+const nextDayMethodVersion = '2026-09-30';
 
 /// バラエティ：その日その店で1〜3台の機種（利用者の指定、2026-09-29）。
 /// 今の選び方は同じ機種の台どうしで比べ、1機種で4台以上判定できる必要が
@@ -119,9 +121,11 @@ Set<String> varietyMachines(Iterable<SlotRecord> dayRows) {
 /// [record] の機種が、その日その店でバラエティ（1〜3台）か。[all] にその日の
 /// 同じ機種の台がそろっている前提（一覧は機種ごとに全台を保存する）。
 bool isVarietyRecord(SlotRecord record, List<SlotRecord> all) =>
-    machineHistory(all, record.store, record.machine)
-        .where((r) => r.day == record.day)
-        .length <=
+    machineHistory(
+      all,
+      record.store,
+      record.machine,
+    ).where((r) => r.day == record.day).length <=
     varietyMaxRacks;
 
 /// Historical hit-frequency tendency for the provisional candidate view.
@@ -129,6 +133,101 @@ bool isVarietyRecord(SlotRecord record, List<SlotRecord> all) =>
 /// This is not a validated forecast, setting probability, or part of the
 /// daily score. It only reads records available on or before [record.day].
 ({int days, double? index, String confidence}) nextDayIndex(
+  SlotRecord record,
+  List<SlotRecord> all, {
+  int maxDays = 10,
+  int shrinkDays = 5,
+}) {
+  final evidence = nextDayEvidence(
+    record,
+    all,
+    maxDays: maxDays,
+    shrinkDays: shrinkDays,
+  );
+  return (
+    days: evidence.usedDays,
+    index: evidence.index,
+    confidence: evidence.usedDays < 3
+        ? 'データ不足'
+        : evidence.usedDays < 7
+        ? '少'
+        : '中',
+  );
+}
+
+/// One recording day's actual contribution; unusable peer groups still occupy
+/// a place in the 10-recording-day window, just as in the original formula.
+class NextDayContribution {
+  const NextDayContribution(
+    this.day,
+    this.games,
+    this.peers,
+    this.rank,
+    this.gap,
+  );
+  final String day;
+  final int games, peers;
+  final double? rank, gap;
+  String get band => rank == null
+      ? '比較不足'
+      : rank! >= .75
+      ? '上'
+      : rank! <= .25
+      ? '下'
+      : '中';
+}
+
+class NextDayEvidence {
+  const NextDayEvidence(this.record, this.contributions, this.rawIndex);
+  final SlotRecord record;
+  final List<NextDayContribution> contributions;
+  final double? rawIndex;
+  double? get index =>
+      rawIndex == null ? null : double.parse(rawIndex!.toStringAsFixed(1));
+  int get usedDays => contributions.where((d) => d.gap != null).length;
+  String get latestUsed =>
+      contributions.where((d) => d.gap != null).firstOrNull?.day ?? '';
+  NextDayContribution? get today =>
+      contributions.where((d) => d.day == record.day).firstOrNull;
+  bool get todayUsed => today?.gap != null;
+  // A fixed descriptive screen, not a calibrated probability or a hypothesis
+  // test: serial dependence, ties and selection invalidate a simple p-value.
+  double get stabilityZ {
+    var sum = 0.0, variance = 0.0;
+    for (final d in contributions.where((d) => d.rank != null)) {
+      sum += d.rank! - .5;
+      variance += (d.peers * d.peers - 1) / (12 * d.peers * d.peers);
+    }
+    return variance == 0 ? 0 : sum / math.sqrt(variance);
+  }
+
+  String get todayText {
+    final d = today;
+    if (todayUsed) {
+      return '選択日 ${record.games}G・当たり順位 ${d!.band}・寄与${signedContribution(d.gap!)}';
+    }
+    final reason = record.games < 500
+        ? '500G未満'
+        : hasImplausibleNumbers(record) || record.bb < 0 || record.rb < 0
+        ? '数値異常'
+        : d != null
+        ? '回転数が近い比較相手が3台未満'
+        : '使用できる記録なし';
+    return '選択日の結果は指数に入っていません（$reason）';
+  }
+
+  String get bandsText => ['上', '中', '下']
+      .map(
+        (b) =>
+            '$b${contributions.where((d) => d.gap != null && d.band == b).length}日',
+      )
+      .join('・');
+}
+
+String signedContribution(double value) =>
+    '${value >= 0 ? '+' : ''}${value.toStringAsFixed(1)}';
+
+NextDayEvidence nextDayEvidence(
   SlotRecord record,
   List<SlotRecord> all, {
   int maxDays = 10,
@@ -158,26 +257,168 @@ bool isVarietyRecord(SlotRecord record, List<SlotRecord> all) =>
       if (entry.value.any((r) => r.rack == record.rack)) entry.key,
   ]..sort((a, b) => b.compareTo(a));
   final gaps = <double>[];
+  final contributions = <NextDayContribution>[];
   for (final day in days.take(maxDays)) {
     final dayRows = byDay[day]!;
     final mine = dayRows.firstWhere((r) => r.rack == record.rack);
     final peers = dayRows
         .where((r) => r.games >= mine.games / 2 && r.games <= mine.games * 2)
         .toList();
-    if (peers.length < 3) continue;
+    if (peers.length < 3) {
+      contributions.add(
+        NextDayContribution(day, mine.games, peers.length, null, null),
+      );
+      continue;
+    }
     final ranks = peers.map((r) => (r.bb + r.rb) / r.games).toList();
     final rank = percentile((mine.bb + mine.rb) / mine.games, ranks);
-    gaps.add((100 * rank - 50) * mine.games / (mine.games + shrinkGames));
+    final gap = (100 * rank - 50) * mine.games / (mine.games + shrinkGames);
+    gaps.add(gap);
+    contributions.add(
+      NextDayContribution(day, mine.games, peers.length, rank, gap),
+    );
   }
   final n = gaps.length;
-  if (n < 3) return (days: n, index: null, confidence: 'データ不足');
-  return (
-    days: n,
-    index: double.parse(
-      (50 + gaps.reduce((a, b) => a + b) / (n + shrinkDays)).toStringAsFixed(1),
-    ),
-    confidence: n < 7 ? '少' : '中',
+  return NextDayEvidence(
+    record,
+    List.unmodifiable(contributions),
+    n < 3 ? null : 50 + gaps.reduce((a, b) => a + b) / (n + shrinkDays),
   );
+}
+
+/// Explicitly user's cutoff, inclusive. Missing scores are not converted to 0.
+bool qualifiesForNextDayFocus(NextDayEvidence e, double? todayScore) =>
+    e.rawIndex != null &&
+    e.todayUsed &&
+    e.stabilityZ >= 1.96 &&
+    (todayScore == null || todayScore < 88);
+
+bool candidateIsFocus(ProvisionalCandidate c, List<SlotRecord> all) =>
+    c.variety ||
+    qualifiesForNextDayFocus(
+      nextDayEvidence(c.record, all),
+      scoreRecord(c.record, all).total,
+    );
+
+String focusReason(NextDayEvidence e, double? todayScore) {
+  if (todayScore != null && todayScore >= 88) {
+    return '当日${todayScore.toStringAsFixed(1)}点：88点以上のため★注目から除外';
+  }
+  if (!e.todayUsed) return '当日情報が入っていないため★注目の条件未達';
+  if (e.stabilityZ < 1.96) return '傾向の安定性基準未達のため★注目の条件未達';
+  return '当日情報あり・安定性基準を満たす${todayScore == null ? '（当日点数なし）' : '・当日88点未満'}';
+}
+
+String regularCandidateDetail(
+  SlotRecord record,
+  List<SlotRecord> all,
+  NextDayEvidence e,
+) {
+  final history = machineHistory(all, record.store, record.machine);
+  final selected = provisionalNextDayCandidates(
+    history.where((r) => r.day == record.day).toList(),
+    history,
+  ).candidates.any((c) => c.record.rack == record.rack);
+  final score = scoreRecord(record, all).total;
+  final label = !selected
+      ? 'この台は長期傾向の上位に選ばれていません'
+      : qualifiesForNextDayFocus(e, score)
+      ? '★ 翌日向けに注目'
+      : '☆ 長期傾向の上位（★注目ではありません）';
+  final influential = e.contributions.where((d) => d.gap != null).toList()
+    ..sort((a, b) => b.gap!.compareTo(a.gap!));
+  final target = DateTime.parse(record.day);
+  final recent =
+      [
+            for (var i = 0; i < 3; i++)
+              target
+                  .subtract(Duration(days: i))
+                  .toIso8601String()
+                  .substring(0, 10),
+          ]
+          .map((day) {
+            final row = history
+                .where((r) => r.rack == record.rack && r.day == day)
+                .firstOrNull;
+            final total = row == null ? null : scoreRecord(row, all).total;
+            return '$day ${row == null
+                ? '未取得'
+                : total == null
+                ? '未採点'
+                : '${total.toStringAsFixed(1)}点'}';
+          })
+          .join('／');
+  return '$label\n${e.todayText}\n${e.bandsText}\n${focusReason(e, score)}\n'
+      '記録日ごとの当たり順位（新しい順）：${e.contributions.map((d) => '${d.day} ${d.band}${d.gap == null ? '' : '（寄与${signedContribution(d.gap!)}）'}').join('／')}\n'
+      '指数を押し上げる日：${influential.where((d) => d.gap! > 0).take(2).map((d) => '${d.day} ${signedContribution(d.gap!)}').join('／')}\n'
+      '${e.contributions.length >= 10 ? '次の使用記録で10日枠から抜ける日：${e.contributions.last.day}' : '10記録日の枠はまだ満たしていません'}\n'
+      '${nextDayBottomScenario(record, all)}\n'
+      '傾向の安定性 z=${e.stabilityZ.toStringAsFixed(2)}（基準1.96）。独立・同順位なしを仮定した目安で、'
+      '検定の有意性・高設定の確率・予測精度を示しません。\n'
+      '直近3暦日の点数（参考。選択条件には使わない）：$recent';
+}
+
+/// Identical nine-decimal comparison on PC and Dart; never rank the displayed
+/// one-decimal value. Days/latest date are evidence-based deterministic ties.
+int compareNextDayEvidence(NextDayEvidence a, NextDayEvidence b) {
+  final byIndex = double.parse(b.rawIndex!.toStringAsFixed(9))
+      .compareTo(double.parse(a.rawIndex!.toStringAsFixed(9)));
+  if (byIndex != 0) return byIndex;
+  final byDays = b.usedDays.compareTo(a.usedDays);
+  if (byDays != 0) return byDays;
+  final byLatest = b.latestUsed.compareTo(a.latestUsed);
+  return byLatest != 0 ? byLatest : a.record.rack.compareTo(b.record.rack);
+}
+
+/// A sensitivity scenario, NOT a prediction: same games/peer count as the
+/// latest usable day, strictly bottom rank, every OTHER rack held fixed.
+/// Also rolls the 10-day window and 30-calendar-day expiry forward by one day.
+String nextDayBottomScenario(SlotRecord record, List<SlotRecord> all) {
+  final history = machineHistory(all, record.store, record.machine);
+  final rows = history.where((r) => r.day == record.day).toList();
+  final eligible = [
+    for (final r in rows) nextDayEvidence(r, history),
+  ].where((e) => e.rawIndex != null).toList()..sort(compareNextDayEvidence);
+  final e = eligible.where((e) => e.record.rack == record.rack).firstOrNull;
+  if (e == null || eligible.length < 4) return '翌日最下位の目安：判定材料が足りません';
+  final latest = e.contributions.where((d) => d.gap != null).first;
+  final next = DateTime.parse(record.day).add(const Duration(days: 1));
+  final first = next
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
+  final kept = e.contributions
+      .take(9)
+      .where((d) => d.day.compareTo(first) >= 0)
+      .toList();
+  final gap =
+      (100 * (.5 / latest.peers) - 50) *
+      latest.games /
+      (latest.games + shrinkGames);
+  final n = kept.where((d) => d.gap != null).length + 1;
+  if (n < 3) return '翌日最下位なら判定日数不足（他台を固定した仮定）';
+  final raw = 50 + (kept.fold(0.0, (s, d) => s + (d.gap ?? 0)) + gap) / (n + 5);
+  final hypothetical = NextDayEvidence(record, [
+    NextDayContribution(
+      next.toIso8601String().substring(0, 10),
+      latest.games,
+      latest.peers,
+      .5 / latest.peers,
+      gap,
+    ),
+    ...kept,
+  ], raw);
+  final position = eligible
+      .where(
+        (other) =>
+            other.record.rack != record.rack &&
+            compareNextDayEvidence(other, hypothetical) < 0,
+      )
+      .length;
+  final remains = position < (eligible.length * .25).ceil();
+  return '翌日最下位の仮定：指数${e.index!.toStringAsFixed(1)}→${raw.toStringAsFixed(1)}・'
+      '${remains ? '長期傾向の上位に残る' : '長期傾向の上位から外れる'}目安'
+      '（直近使用日と同じ回転数・比較台数、他台は固定。★継続の予測ではありません）';
 }
 
 /// バラエティの台の、その日の終わり方。
@@ -269,8 +510,15 @@ typedef ProvisionalCandidate = ({
 ({int total, int eligible, List<ProvisionalCandidate> candidates})
 provisionalNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
   final eligible = <ProvisionalCandidate>[];
+  final evidence = <int, NextDayEvidence>{};
   for (final record in rows) {
-    final tendency = nextDayIndex(record, all);
+    evidence[record.rack] = nextDayEvidence(record, all);
+    final e = evidence[record.rack]!;
+    final tendency = (
+      days: e.usedDays,
+      index: e.index,
+      confidence: e.usedDays < 7 ? '少' : '中',
+    );
     if (tendency.index != null) {
       eligible.add((
         record: record,
@@ -282,8 +530,10 @@ provisionalNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
     }
   }
   eligible.sort((a, b) {
-    final byIndex = b.index.compareTo(a.index);
-    return byIndex != 0 ? byIndex : a.record.rack.compareTo(b.record.rack);
+    return compareNextDayEvidence(
+      evidence[a.record.rack]!,
+      evidence[b.record.rack]!,
+    );
   });
   if (eligible.length < 4) {
     return (

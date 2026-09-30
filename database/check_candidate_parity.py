@@ -44,11 +44,20 @@ def main():
     only_pc = sorted(set(pc) - set(dart))
     only_dart = sorted(set(dart) - set(pc))
     differ = sorted(k for k in set(pc) & set(dart) if pc[k] != dart[k])
+    flags = {(c['store'], c['day'], c['machine'], int(c['rack'])): c['focus']
+             for c in json.loads(args.dart.read_text(encoding='utf-8')) if 'focus' in c}
+    focus_differ = []
+    if flags:
+        for store, day in sorted({(r['store'], r['day']) for r in merged.values()}):
+            for c in day_candidates(data, day, store):
+                k = (store, day, c['row']['machine'], int(c['row']['rack']))
+                if flags.get(k) != (True if c['variety'] else c['focus']):
+                    focus_differ.append(k)
     print(f'PC {len(pc)} / Android {len(dart)} candidates; same {same}; '
-          f'PC only {len(only_pc)}; Android only {len(only_dart)}; index/days differ {len(differ)}')
+          f'PC only {len(only_pc)}; Android only {len(only_dart)}; index/days differ {len(differ)}; focus differ {len(focus_differ)}')
     for key in (only_pc + only_dart + differ)[:10]:
         print(' ', key[:2], key[3], pc.get(key), dart.get(key))
-    return 0 if same == len(pc) == len(dart) else 1
+    return 0 if same == len(pc) == len(dart) and not focus_differ else 1
 
 
 if __name__ == '__main__':

@@ -6,6 +6,7 @@ import 'data_checks.dart';
 import 'list_views.dart';
 import 'graph_preview.dart';
 import 'models.dart';
+import 'scoring.dart';
 import 'setting_estimate.dart';
 import 'setting_estimate_presentation.dart';
 import 'theme.dart';
@@ -24,6 +25,7 @@ class MachineSection extends StatefulWidget {
     required this.onTap,
     this.onLongPress,
     this.candidateRacks = const {},
+    this.longTrendRacks = const {},
     this.footer,
     this.graph,
     this.onGraphChanged,
@@ -38,6 +40,7 @@ class MachineSection extends StatefulWidget {
 
   /// 翌日候補（仮）に入った台番号。表とグラフに★を付ける。
   final Set<int> candidateRacks;
+  final Set<int> longTrendRacks;
 
   /// 見出しの下に置く補足（「設置機種一覧へ戻る」など）。
   final Widget? footer;
@@ -106,7 +109,8 @@ class _MachineSectionState extends State<MachineSection> {
                   Text(
                     '${widget.entries.length}台・平均 '
                     '${average?.toStringAsFixed(1) ?? '—'}点'
-                    '${widget.candidateRacks.isEmpty ? '' : '・★参考候補${widget.candidateRacks.length}台'}',
+                    '${widget.candidateRacks.isEmpty ? '' : '・★${variety ? '参考候補' : '注目'}${widget.candidateRacks.length}台'}'
+                    '${widget.longTrendRacks.isEmpty ? '' : '・☆長期傾向${widget.longTrendRacks.length}台'}',
                     style: const TextStyle(fontSize: 12, color: AppColors.ash),
                   ),
                 ],
@@ -123,13 +127,24 @@ class _MachineSectionState extends State<MachineSection> {
               style: TextStyle(fontSize: 12, color: AppColors.ash),
             ),
           ),
-        if (widget.candidateRacks.isNotEmpty)
+        if (widget.candidateRacks.isNotEmpty ||
+            widget.longTrendRacks.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               '★＝$referenceCandidateLegend'
               '${variety ? '' : '\n$regularReferenceCandidateNote'}',
               style: const TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+          ),
+        if (!variety &&
+            widget.longTrendRacks.isNotEmpty &&
+            widget.candidateRacks.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              '翌日向けの注目なし（当日情報・安定性・88点未満の条件を満たす台なし）',
+              style: TextStyle(fontSize: 12, color: AppColors.ash),
             ),
           ),
         const SizedBox(height: 10),
@@ -163,6 +178,7 @@ class _MachineSectionState extends State<MachineSection> {
             child: GraphGrid(
               entries: widget.entries,
               candidateRacks: widget.candidateRacks,
+              longTrendRacks: widget.longTrendRacks,
               onTap: widget.onTap,
               onLongPress: widget.onLongPress,
               showMachine: variety,
@@ -172,6 +188,7 @@ class _MachineSectionState extends State<MachineSection> {
           MachineDataTable(
             entries: widget.entries,
             candidateRacks: widget.candidateRacks,
+            longTrendRacks: widget.longTrendRacks,
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
             showMachine: variety,
@@ -227,12 +244,14 @@ class MachineDataTable extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.candidateRacks = const {},
+    this.longTrendRacks = const {},
     this.showMachine = false,
   });
   final List<(SlotRecord, ScoreResult)> entries;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
   final Set<int> candidateRacks;
+  final Set<int> longTrendRacks;
 
   /// 台番号の右に機種名の列を出す（バラエティ：別の機種の台が並ぶ）。
   /// 平均の行は、機種によって意味が変わる数字（BB・RB・確率・最大持玉）を
@@ -381,9 +400,10 @@ class MachineDataTable extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _text('${entries[i].$1.rack}', bold: true),
-                  if (candidateRacks.contains(entries[i].$1.rack))
-                    const Text(
-                      ' ★',
+                  if (candidateRacks.contains(entries[i].$1.rack) ||
+                      longTrendRacks.contains(entries[i].$1.rack))
+                    Text(
+                      candidateRacks.contains(entries[i].$1.rack) ? ' ★' : ' ☆',
                       style: TextStyle(color: AppColors.linkBlue, fontSize: 13),
                     ),
                 ],
@@ -525,7 +545,8 @@ class MachineDataTable extends StatelessWidget {
               provisional == entries.length
                   ? '点数はすべて暫定（少数データ・欠測を含む）'
                   : '$provisional台の点数は暫定（少数データ・欠測を含む）',
-            if (candidateRacks.isNotEmpty) '★＝$referenceCandidateLegend',
+            if (candidateRacks.isNotEmpty || longTrendRacks.isNotEmpty)
+              '★＝$referenceCandidateLegend',
           ].join('・'),
           style: const TextStyle(fontSize: 11, color: AppColors.ash),
         ),
@@ -542,12 +563,14 @@ class GraphGrid extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.candidateRacks = const {},
+    this.longTrendRacks = const {},
     this.showMachine = false,
   });
   final List<(SlotRecord, ScoreResult)> entries;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
   final Set<int> candidateRacks;
+  final Set<int> longTrendRacks;
 
   /// 台番号の横に機種名を出す（バラエティ）。
   final bool showMachine;
@@ -572,6 +595,7 @@ class GraphGrid extends StatelessWidget {
                     score: score,
                     showMachine: showMachine,
                     candidate: candidateRacks.contains(record.rack),
+                    longTrend: longTrendRacks.contains(record.rack),
                     onTap: () => onTap(record, score),
                     onLongPress: onLongPress == null
                         ? null
@@ -596,6 +620,7 @@ class _GraphCard extends StatelessWidget {
     required this.record,
     required this.score,
     required this.candidate,
+    this.longTrend = false,
     required this.onTap,
     this.onLongPress,
     this.showMachine = false,
@@ -603,6 +628,7 @@ class _GraphCard extends StatelessWidget {
   final SlotRecord record;
   final ScoreResult score;
   final bool candidate;
+  final bool longTrend;
   final bool showMachine;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -660,7 +686,11 @@ class _GraphCard extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    '${record.rack}${candidate ? ' ★' : ''}',
+                    '${record.rack}${candidate
+                        ? ' ★'
+                        : longTrend
+                        ? ' ☆'
+                        : ''}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
@@ -742,11 +772,12 @@ class _GraphCard extends StatelessWidget {
 }
 
 /// 通常の★と、その参考候補のカードで共用する説明。
-const referenceCandidateLegend = '選択日までの履歴から選んだ翌日向けの参考候補。予測精度は検証中です。';
+const referenceCandidateLegend = '翌日向けの参考候補（通常機種は注目のみ）。☆＝長期傾向の上位。予測精度は検証中です。';
 
 /// 4台以上の通常機種の選び方。バラエティの説明には使わない。
 const regularReferenceCandidateNote =
     '直近10記録日の当たり順位を使うため、同じ台が続くことがあります。'
+    '★注目は当日情報あり・安定性基準を満たす・当日88点未満（未採点は除外しない）の台だけです。'
     '翌日の良さを保証する印ではありません。';
 
 /// 翌日向けの参考候補の効果についての説明。検証の結果は
@@ -770,9 +801,11 @@ class NextDayCandidatesCard extends StatefulWidget {
     required this.machines,
     required this.judged,
     required this.onPick,
+    this.allRecords = const [],
   });
   final String day;
   final List<ProvisionalCandidate> candidates;
+  final List<SlotRecord> allRecords;
 
   /// その日の機種数と、候補を出せた機種数。
   final int machines, judged;
@@ -796,7 +829,14 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
       for (final c in widget.candidates)
         if (c.variety) c,
     ];
-    final shown = _all ? regular : regular.take(_first).toList();
+    final focus = [
+      for (final c in regular)
+        if (candidateIsFocus(c, widget.allRecords)) c,
+    ];
+    final longTrend = [
+      for (final c in regular)
+        if (!candidateIsFocus(c, widget.allRecords)) c,
+    ];
     final next = nextDayLabel(widget.day);
     const note = TextStyle(color: AppColors.ash, fontSize: 12, height: 1.45);
     return Card(
@@ -809,7 +849,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               children: [
                 Expanded(
                   child: Text(
-                    next.isEmpty ? '参考候補（翌日向け）' : '$next の参考候補（翌日向け）',
+                    next.isEmpty ? '参考候補・長期傾向' : '$next の参考候補・長期傾向',
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
@@ -835,8 +875,8 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             const SizedBox(height: 6),
             Text(
               '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
-              '${next.isEmpty ? '翌日' : next}向けに選んだ参考候補です。★は下の表にも'
-              '付けています。この日の点数には影響しません。',
+              '${next.isEmpty ? '翌日' : next}向けの★注目と、☆長期傾向を分けています。'
+              '印は下の表・グラフと共通です。この日の点数には影響しません。',
               style: const TextStyle(
                 color: AppColors.ash,
                 fontSize: 13,
@@ -862,8 +902,23 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                 style: note,
               ),
               const SizedBox(height: 8),
-              for (final (i, c) in shown.indexed) _row(i + 1, c),
-              if (regular.length > _first)
+              Text(
+                '★ 翌日向けに注目（${focus.length}台）',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              if (focus.isEmpty)
+                const Text('翌日向けの注目なし（当日情報・安定性・88点未満の条件を満たす台なし）', style: note),
+              for (final (i, c) in (_all ? focus : focus.take(_first)).indexed)
+                _row(i + 1, c),
+              const SizedBox(height: 12),
+              Text(
+                '☆ 長期傾向の上位（${longTrend.length}台）',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              for (final (i, c)
+                  in (_all ? longTrend : longTrend.take(_first)).indexed)
+                _row(i + 1, c),
+              if (longTrend.length > _first || focus.length > _first)
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
@@ -1015,6 +1070,8 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
 
   Widget _row(int rank, ProvisionalCandidate c) {
     final delta = c.index - 50;
+    final evidence = nextDayEvidence(c.record, widget.allRecords);
+    final score = scoreRecord(c.record, widget.allRecords).total;
     return InkWell(
       onTap: () => widget.onPick(c.record),
       child: Padding(
@@ -1040,7 +1097,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                   Row(
                     children: [
                       Text(
-                        '${c.record.rack}番台',
+                        '${candidateIsFocus(c, widget.allRecords) ? '★' : '☆'} ${c.record.rack}番台',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
@@ -1074,6 +1131,14 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                   const SizedBox(height: 3),
                   Text(
                     '過去${c.days}日分・データ量 ${c.confidence}',
+                    style: const TextStyle(fontSize: 11, color: AppColors.ash),
+                  ),
+                  Text(
+                    '${evidence.todayText}\n${evidence.bandsText}\n${focusReason(evidence, score)}',
+                    style: const TextStyle(fontSize: 11, color: AppColors.ash),
+                  ),
+                  Text(
+                    nextDayBottomScenario(c.record, widget.allRecords),
                     style: const TextStyle(fontSize: 11, color: AppColors.ash),
                   ),
                 ],
