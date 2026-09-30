@@ -7,7 +7,10 @@ Future<void> saveViewerData(String text) async {}
 
 Future<String?> loadViewerData() async => null;
 
-Future<String?> backupFromRemote(String url) async => null;
+Future<String?> backupFromRemote(
+  String url, {
+  String? unlessExportedAt,
+}) async => null;
 
 String? loadRemoteUrl() => null;
 

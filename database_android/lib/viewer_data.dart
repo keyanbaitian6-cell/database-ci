@@ -14,6 +14,7 @@ class ViewerData {
     this.dateEvents = const {},
     this.file,
     this.exportedAt,
+    this.exportedAtText,
     this.source,
     this.loadedAt,
     this.skipped = 0,
@@ -24,6 +25,10 @@ class ViewerData {
   final Map<String, DateEvent> dateEvents;
   final String? file;
   final DateTime? exportedAt;
+
+  /// 書き出した時刻の、ファイルに書かれていたままの文字。Driveの自動読み込みで
+  /// 「前回と同じファイルか」を見分けるのに使う（時刻に直すと表記が変わるため）。
+  final String? exportedAtText;
   final String? source;
   final DateTime? loadedAt;
 
@@ -75,6 +80,9 @@ class ViewerData {
       file: decoded['file'] as String?,
       exportedAt: DateTime.tryParse(header['exported_at'] as String? ?? '')
           ?.toLocal(),
+      exportedAtText: header['exported_at'] is String
+          ? header['exported_at'] as String
+          : null,
       source: header['source'] as String?,
       loadedAt: DateTime.tryParse(decoded['loaded_at'] as String? ?? '')
           ?.toLocal(),

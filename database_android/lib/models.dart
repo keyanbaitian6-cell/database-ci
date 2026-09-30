@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -136,9 +137,10 @@ class GraphMeasurement {
         previewPng: _decodePreview(json['preview_image']),
         previewWidth: (json['preview_width'] as num?)?.toInt(),
         previewHeight: (json['preview_height'] as num?)?.toInt(),
-        curve: (json['curve'] as List?)
-            ?.map((p) => (p as List).map((v) => (v as num).toDouble()).toList())
-            .toList(),
+        curve: switch (json['curve'] as List?) {
+          final List raw => SavedCurve(raw),
+          null => null,
+        },
         storedPreview: json['preview_stored'] == true,
         storedCurve: json['curve_stored'] == true,
       );
@@ -169,6 +171,45 @@ class GraphMeasurement {
       return null;
     }
   }
+}
+
+/// JSONから読んだグラフの線（[x, y] の組）。数値の一覧へ直すのは、線を描く
+/// など初めて中身を使うときに1回だけ（直し方は以前の読み込み時と同じなので、
+/// 描く線は変わらない）。閲覧ページは起動のたびに8,000台以上の線を読むが、
+/// 描くのは表示する台だけなので、全部を先に直すと時間と電池を使う。
+/// 形は読み込みの時点で確かめ、壊れた線は今までどおりそこで失敗させる。
+class SavedCurve extends ListBase<List<double>> {
+  SavedCurve(List raw) : _raw = raw {
+    for (final point in raw) {
+      for (final value in point as List) {
+        value as num;
+      }
+    }
+  }
+
+  List? _raw;
+  late final List<List<double>> _points = () {
+    final raw = _raw!;
+    _raw = null;
+    return raw
+        .map((p) => (p as List).map((v) => (v as num).toDouble()).toList())
+        .toList();
+  }();
+
+  /// 数値の一覧へ直し済みか（テスト用）。
+  bool get converted => _raw == null;
+
+  @override
+  int get length => _points.length;
+
+  @override
+  set length(int value) => _points.length = value;
+
+  @override
+  List<double> operator [](int index) => _points[index];
+
+  @override
+  void operator []=(int index, List<double> value) => _points[index] = value;
 }
 
 class SlotRecord {

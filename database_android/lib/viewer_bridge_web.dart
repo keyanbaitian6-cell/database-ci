@@ -7,7 +7,7 @@ external JSPromise<JSString?> _pick();
 external JSPromise<JSString?> _fromUrl(JSString url);
 
 @JS('databaseViewer.fromRemote')
-external JSPromise<JSString?> _fromRemote(JSString url);
+external JSPromise<JSString?> _fromRemote(JSString url, JSString? known);
 
 @JS('databaseViewer.getRemote')
 external JSString? _getRemote();
@@ -34,9 +34,14 @@ Future<void> saveViewerData(String text) async {
 
 Future<String?> loadViewerData() async => (await _load().toDart)?.toDart;
 
-/// Googleのスクリプト（…/exec）から、Driveの最新を読む。
-Future<String?> backupFromRemote(String url) async =>
-    (await _fromRemote(url.toJS).toDart)?.toDart;
+/// Googleのスクリプト（…/exec）から、Driveの最新を読む。ファイルの書き出し
+/// 時刻が [unlessExportedAt]（表示中の内容の時刻）と同じなら、先頭の1行だけで
+/// 読むのをやめて null を返す（中身が同じなので読み直さない）。
+Future<String?> backupFromRemote(
+  String url, {
+  String? unlessExportedAt,
+}) async =>
+    (await _fromRemote(url.toJS, unlessExportedAt?.toJS).toDart)?.toDart;
 
 /// 自動読み込みに使うスクリプトのURL（この端末に覚える）。
 String? loadRemoteUrl() => _getRemote()?.toDart;

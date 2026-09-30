@@ -66,6 +66,9 @@ class _ViewerHomeState extends State<ViewerHome> {
   /// Driveの自動読み込みに使う、Googleのスクリプトのアドレス（未設定なら null）。
   String? _remote;
   var _syncing = false;
+
+  /// Driveの最新かどうかを最後に確かめた時刻（中身が同じで読み直さなかったときも）。
+  DateTime? _checkedAt;
   String? _error;
   String? _store;
   String? _day;
@@ -120,8 +123,11 @@ class _ViewerHomeState extends State<ViewerHome> {
   }
 
   /// Googleのスクリプト経由で、Driveの最新（database-viewer.json）を読む。
-  /// 読めなければ、前に読み込んだ内容のまま理由を出す。
-  Future<void> _refreshFromDrive() async {
+  /// 表示中の内容と同じ書き出しなら、先頭の1行だけで読むのをやめ、組み立て直し・
+  /// 保存し直し・採点のやり直しもしない（開くたびに同じ中身を丸ごと読み直すと、
+  /// 通信と計算で電池を使うため）。読めなければ、前に読み込んだ内容のまま理由を
+  /// 出す。[manual] は利用者が押したとき（変わっていなくても知らせる）。
+  Future<void> _refreshFromDrive({bool manual = false}) async {
     final url = _remote;
     if (url == null || _syncing) return;
     setState(() {
@@ -129,8 +135,25 @@ class _ViewerHomeState extends State<ViewerHome> {
       _error = null;
     });
     try {
-      final text = await backupFromRemote(url);
-      if (text != null) {
+      final current = _data;
+      final text = await backupFromRemote(
+        url,
+        unlessExportedAt: current?.exportedAtText,
+      );
+      _checkedAt = DateTime.now();
+      if (text == null) {
+        final at = current?.exportedAt;
+        if (manual && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Googleドライブの内容は変わっていません'
+                '${at == null ? '' : '（${_when(at)}書き出し）'}。',
+              ),
+            ),
+          );
+        }
+      } else {
         // 前に読み込んだ内容と合わせる（新しい方を使い、Driveに無い古い日は残す）。
         String? stored;
         try {
@@ -208,7 +231,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     final url = result.isEmpty ? null : result;
     saveRemoteUrl(url);
     setState(() => _remote = url);
-    if (url != null) await _refreshFromDrive();
+    if (url != null) await _refreshFromDrive(manual: true);
   }
 
   void _show(ViewerData data) {
@@ -278,12 +301,15 @@ class _ViewerHomeState extends State<ViewerHome> {
     );
   }
 
+  static String _two(int v) => v.toString().padLeft(2, '0');
+
+  /// 「9/30 01:19」の形。
+  static String _when(DateTime at) =>
+      '${at.month}/${at.day} ${_two(at.hour)}:${_two(at.minute)}';
+
   String _sourceText(ViewerData data) {
-    String two(int v) => v.toString().padLeft(2, '0');
     final at = data.exportedAt;
-    final when = at == null
-        ? ''
-        : '${at.month}/${at.day} ${two(at.hour)}:${two(at.minute)}書き出し・';
+    final when = at == null ? '' : '${_when(at)}書き出し・';
     final from = switch (data.source) {
       'android' => 'Android版',
       'pc' || 'pc-deleted' => 'PC版',
@@ -294,8 +320,11 @@ class _ViewerHomeState extends State<ViewerHome> {
       final older = data.keptOlder > 0
           ? '（うち${data.keptOlder}台は前に読み込んだ古い日の記録）'
           : '';
+      final checked = _checkedAt == null
+          ? ''
+          : '・${_two(_checkedAt!.hour)}:${_two(_checkedAt!.minute)}に最新か確認';
       return 'Googleドライブから自動で読み込み：$from$when${data.records.length}台$older'
-          '（グラフは保存した線から描画。線の無い台は概略図）';
+          '$checked（グラフは保存した線から描画。線の無い台は概略図）';
     }
     return '読み込んだバックアップ：$from$when${data.records.length}台'
         '（グラフは保存した線から描画。線の無い台は概略図）';
@@ -324,7 +353,9 @@ class _ViewerHomeState extends State<ViewerHome> {
           if (_remote != null)
             IconButton(
               tooltip: 'Googleドライブの最新を読み込む',
-              onPressed: _syncing ? null : _refreshFromDrive,
+              onPressed: _syncing
+                  ? null
+                  : () => _refreshFromDrive(manual: true),
               icon: const Icon(Icons.refresh),
             ),
           IconButton(
@@ -438,7 +469,17 @@ class _ViewerHomeState extends State<ViewerHome> {
                 '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、'
                 'Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。',
           ),
-        if (_loading || _syncing) const LinearProgressIndicator(),
+        if (_loading) const LinearProgressIndicator(),
+        // Driveの確認中は動く表示にしない（動いている間は画面を描き直し続け、
+        // 電池を使うため）。30秒間なにも届かなければ打ち切る（web/index.html）。
+        if (_syncing)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Googleドライブの最新を確認しています…',
+              style: TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+          ),
         storeDropdown(
           store,
           (v) => setState(() {

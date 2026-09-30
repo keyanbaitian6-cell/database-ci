@@ -99,3 +99,111 @@ for (const [name, text] of [
 test('Drive errors are reported verbatim without importing records', async () => {
   await assert.rejects(parse(JSON.stringify({error: 'fixture Drive error'})), /fixture Drive error/);
 });
+
+// Googleドライブ（スクリプト）から読む場合。本文は少しずつ渡し、何回渡したか、
+// 途中で打ち切られたかを数える。
+const REMOTE = 'https://script.google.com/macros/s/fixture_ID-1/exec';
+const exportedAt = '2026-09-30T01:19:50.746423+09:00';
+const remoteHead = {...head, source: 'pc-viewer', exported_at: exportedAt};
+const remoteText = `${JSON.stringify(remoteHead).slice(0, -1)}, "records": [\n` +
+  Array(200).fill(row).join(',\n') + '\n]}';
+
+function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetchImpl} = {}) {
+  const bytes = new TextEncoder().encode(text);
+  const stats = {pulled: 0, cancelled: false, total: Math.ceil(bytes.length / chunkSize)};
+  let offset = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (offset >= bytes.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(bytes.subarray(offset, offset + chunkSize));
+      offset += chunkSize;
+      stats.pulled++;
+    },
+    cancel() {
+      stats.cancelled = true;
+    },
+  });
+  const response = {ok: true, status: 200, headers: {get: () => 'application/json'}, body};
+  const context = {
+    window: {}, TextDecoderStream, TransformStream, AbortController,
+    setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+    fetch: fetchImpl ?? (async () => response),
+  };
+  vm.runInNewContext(code, context);
+  return {viewer: context.window.databaseViewer, stats};
+}
+
+test('Drive: the same export time stops at the first line and returns null', async () => {
+  const {viewer, stats} = remote(remoteText);
+  assert.equal(await viewer.fromRemote(REMOTE, exportedAt), null);
+  // 残りは読まずに通信を止める。
+  assert.ok(stats.cancelled);
+  assert.ok(stats.pulled < stats.total / 10, `${stats.pulled} of ${stats.total} chunks read`);
+});
+
+test('Drive: a different or unknown export time reads the whole file', async () => {
+  for (const known of ['2026-09-29T23:00:00+09:00', null, undefined, '']) {
+    const {viewer, stats} = remote(remoteText);
+    const result = JSON.parse(await viewer.fromRemote(REMOTE, known));
+    assert.equal(result.header.exported_at, exportedAt);
+    assert.equal(result.records.length, 200);
+    assert.equal(result.file, 'Googleドライブ（自動）');
+    assert.equal(stats.pulled, stats.total);
+  }
+});
+
+test('Drive: an older one-line export with the same time is also skipped', async () => {
+  const doc = {...remoteHead, records: [record]};
+  const {viewer} = remote(JSON.stringify(doc));
+  assert.equal(await viewer.fromRemote(REMOTE, exportedAt), null);
+  const {viewer: again} = remote(JSON.stringify(doc));
+  assert.equal(JSON.parse(await again.fromRemote(REMOTE, 'other')).records.length, 1);
+});
+
+test('Drive: gives up after 30 seconds without any data', async () => {
+  const delays = [];
+  const timers = {
+    // 30秒を待たずに、すぐ時間切れにする。
+    setTimeout: (callback, ms) => {
+      delays.push(ms);
+      return setTimeout(callback, 0);
+    },
+    clearTimeout,
+  };
+  const fetchImpl = (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new Error('aborted')));
+  });
+  const {viewer} = remote('', {timers, fetchImpl});
+  await assert.rejects(viewer.fromRemote(REMOTE, exportedAt), /30秒間応答がなかった/);
+  assert.deepEqual(delays, [30000]);
+});
+
+test('Drive: the 30 seconds restart whenever data arrives', async () => {
+  const delays = [];
+  let cleared = 0;
+  const timers = {
+    // 時間切れにはしない。待ち時間を何回数え直したかだけを数える。
+    setTimeout: (_callback, ms) => {
+      delays.push(ms);
+      return delays.length;
+    },
+    clearTimeout: () => {
+      cleared++;
+    },
+  };
+  const {viewer, stats} = remote(remoteText, {timers});
+  const result = JSON.parse(await viewer.fromRemote(REMOTE, null));
+  assert.equal(result.records.length, 200);
+  // 最初、応答の後、そして届くたびに数え直す。最後に止める。
+  assert.ok(delays.length >= stats.total + 2, `${delays.length} restarts for ${stats.total} chunks`);
+  assert.ok(delays.every((ms) => ms === 30000));
+  assert.equal(cleared, delays.length + 1);
+});
+
+test('Drive: only the Google script address is read', async () => {
+  const {viewer} = remote(remoteText);
+  await assert.rejects(viewer.fromRemote('https://example.com/exec', null), /GoogleのスクリプトのURL/);
+});
