@@ -41,7 +41,11 @@ class PscubeAutoGuard {
   final _missing = <Duration>[];
 
   static const blockedMessage =
-      'サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。時間を空けてから、手動でONにしてください。';
+      'サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。'
+      '右上のクッキーのボタン（サイトの記録を消してやり直す）を押して人間確認をし直すか、時間を空けてから手動でONにしてください。';
+
+  /// サイトの記録を消してやり直したとき：それまでの「データが出ない」の数えをやめる。
+  void reset() => _missing.clear();
 
   ({String? capture, String message, bool stop}) decide(
     Object? probe,

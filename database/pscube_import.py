@@ -55,6 +55,41 @@ SCROLL_SCRIPT = r'''(async () => {
 })()'''
 
 
+# 「サイトの記録を消してやり直す」：表示中のP’s CUBEのページに残る保存データを消す（Cookieは
+# pywebview の clear_cookies で別に消す）。取り込んだ記録（pscube.sqlite3）には触れない。
+RESET_SITE_SCRIPT = r'''(async () => {
+  try { localStorage.clear(); } catch (_) {}
+  try { sessionStorage.clear(); } catch (_) {}
+  try { for (const db of (await indexedDB.databases?.()) || []) if (db.name) indexedDB.deleteDatabase(db.name); } catch (_) {}
+  try { for (const key of await caches.keys()) await caches.delete(key); } catch (_) {}
+  return true;
+})()'''
+BLOCKED_MESSAGE = ('サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。'
+                   '右下の「サイトの記録を消してやり直す」を押して人間確認をし直すか、時間を空けてから手動でONにしてください。')
+RESET_DONE_MESSAGE = ('サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。最初のページを開き直します。'
+                      '人間確認・同意が出たら手で操作してください。')
+
+
+def reset_site(window, pilot, saving):
+    """サイトの記録（Cookie・保存データ）を消して最初のページを開き直す。
+
+    同じスマホのChromeでは開けるのにアプリだけデータが出ない＝回線ではなく、この窓に残る
+    Cookie等で止められていると考えられたため（2026-10-02、利用者の報告）。自動取り込みはOFFにする。
+    """
+    if saving():
+        raise ValueError('保存中です。保存が終わってから押してください。')
+    pilot.configure(False, pilot.state()['seconds'])
+    pilot._eval(RESET_SITE_SCRIPT)
+    window.clear_cookies()
+    with pilot._lock:
+        pilot.missing.clear()
+        pilot.done.clear()
+        pilot.failures.clear()
+        pilot.auto.pause(RESET_DONE_MESSAGE)
+    window.load_url(ROOT_URL)
+    return RESET_DONE_MESSAGE
+
+
 def site_url(raw: str, suffix: str | None = None):
     if not isinstance(raw, str):
         raise ValueError('ページのURLがありません。')
@@ -632,7 +667,7 @@ class AutoPilot:
                 if len(self.missing) >= self.BLOCK_CHECKS and now - self.missing[0] >= self.BLOCK_SECONDS:
                     self.missing.clear()
                     self.auto.configure(False, self.auto.state()['seconds'])
-                    self.auto.pause('サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。時間を空けてから、手動でONにしてください。')
+                    self.auto.pause(BLOCKED_MESSAGE)
                     self.render()
                     return
             else:
@@ -715,7 +750,24 @@ def overlay_script(capture_script, index_url):
       status.id = 'database-pscube-auto-status';
       status.style.cssText = 'font-size:11px;color:#33445a;white-space:normal;word-break:break-word';
       status.textContent = '人間確認・同意の画面ではONのまま待ちます。確認は手動で操作してください。';
-      card.append(button, auto, label, status);
+      const reset = document.createElement('button');
+      reset.id = 'database-pscube-reset';
+      reset.type = 'button';
+      reset.textContent = 'サイトの記録を消してやり直す';
+      Object.assign(reset.style, {background:'white',color:'#33445a',padding:'6px',border:'1px solid #b8c5d8',borderRadius:'6px',fontSize:'12px',cursor:'pointer'});
+      reset.onclick = async () => {
+        if (window.__pscubeBusy) { status.textContent = '保存中です。保存が終わってから押してください。'; return; }
+        if (!confirm('この画面に残っているCookie・保存データを消して、P’s CUBEの最初のページを開き直します。\n取り込んだ記録は消えません。自動取り込みはOFFになります。\n人間確認・同意が出たら手で操作してください。')) return;
+        reset.disabled = true;
+        status.textContent = '消しています…';
+        try {
+          status.textContent = await window.pywebview.api.reset_site();
+        } catch (error) {
+          reset.disabled = false;
+          status.textContent = '消せませんでした：' + String(error?.message || error);
+        }
+      };
+      card.append(button, auto, label, status, reset);
       const identity = raw => {
         const u = new URL(raw);
         if (!u.pathname.endsWith('nc-v06-001.php')) u.hash = '';
@@ -828,6 +880,14 @@ def run_session(db_path, export_path):
 
         def set_auto_capture(self, enabled, seconds):
             return self.pilot.configure(enabled, seconds)
+
+        def reset_site(self):
+            if not self._capture_lock.acquire(blocking=False):
+                raise ValueError('保存中です。保存が終わってから押してください。')
+            try:
+                return reset_site(self._window, self.pilot, saving=lambda: False)
+            finally:
+                self._capture_lock.release()
 
         def _submit_page(self, raw):
             current = self._window.get_current_url()

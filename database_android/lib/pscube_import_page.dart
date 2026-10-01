@@ -384,6 +384,53 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
 
   /// PC版・ブラウザのバックアップを統合する。中身を確かめてから1回で保存するので、
   /// 形式が不正なときは何も保存しない。
+  /// サイトの記録（Cookie・保存データ）を消して最初のページを開き直す。取り込んだ記録は消さない。
+  /// 同じスマホのChromeでは開けるのにアプリだけデータが出なくなった（回線ではなくアプリに残る
+  /// Cookie等で止められていると考えられる、2026-10-02 利用者の報告）ときに使う。
+  Future<void> _resetSite() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('サイトの記録を消してやり直す'),
+        content: const Text(
+          'このアプリのブラウザに残っているCookie・保存データを消して、P’s CUBEの最初のページを開き直します。'
+          '取り込んだ記録は消えません。自動取り込みはOFFになります。\n\n'
+          '人間確認・同意が出たら手で操作してください。メルヘンの取り込み画面でも、次に開いたとき同意や確認が出ることがあります。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('やめる'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('消してやり直す'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted || _busy) return;
+    if (_auto.enabled) await _stopAuto('停止中（サイトの記録を消しました）');
+    try {
+      await WebViewCookieManager().clearCookies();
+      await _web.clearLocalStorage();
+      await _web.clearCache();
+    } catch (error) {
+      if (mounted) setState(() => _status = 'サイトの記録を消せませんでした：$error');
+      return;
+    }
+    _autoDone.clear();
+    _autoFailures.clear();
+    _guard.reset();
+    if (!mounted) return;
+    setState(
+      () => _status =
+          'サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。最初のページを開き直します。'
+          '人間確認・同意が出たら手で操作してください。',
+    );
+    await _web.loadRequest(Uri.parse(PscubeStore.root));
+  }
+
   Future<void> _restore() async {
     final store = _store;
     if (store == null || _busy) return;
@@ -427,6 +474,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     appBar: AppBar(
       title: const Text('P’s CUBE 取り込み'),
       actions: [
+        IconButton(
+          tooltip: 'サイトの記録を消してやり直す',
+          onPressed: _busy ? null : _resetSite,
+          icon: const Icon(Icons.cookie_outlined),
+        ),
         IconButton(
           tooltip: 'バックアップを読み込む',
           onPressed: _busy || _store == null ? null : _restore,

@@ -74,6 +74,7 @@ async function install(url, api) {
     window.pywebview = { api: {
       submit_page: async payload => { window.__calls.push(['submit', JSON.parse(payload)]); sessionStorage.setItem('submitted', payload); if (stub.fail) throw new Error(stub.fail); return stub.result; },
       capture_failed: async message => { window.__calls.push(['failed', message]); return true; },
+      reset_site: async () => { window.__calls.push(['reset']); return 'サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。'; },
       set_auto_capture: async (enabled, seconds) => { window.__calls.push(['auto', enabled, seconds]); return { enabled, seconds, message: enabled ? 'ON・次の取り込みを待っています' : '停止中', revision: 9 }; },
     } };
   }, api);
@@ -113,6 +114,32 @@ await page.evaluate(() => window.__pscubeRenderAuto({ enabled: true, seconds: 25
 await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 10, message: '古い', revision: 4 }));
 assert.equal(await page.locator('#database-pscube-auto-status').innerText(), 'ON・待機：人間確認');
 assert.equal(await page.locator('#database-pscube-interval').inputValue(), '25');
+// 「サイトの記録を消してやり直す」：確認でやめたら何もしない。OKならPython側へ頼み、結果を表示する。
+await install(mUrl, {});
+let dialogs = [];
+const dismiss = d => { dialogs.push(d.message()); d.dismiss(); };
+page.once('dialog', dismiss);
+await page.locator('#database-pscube-reset').click();
+await page.waitForFunction(() => true);
+assert.equal(dialogs.length, 1);
+assert.match(dialogs[0], /取り込んだ記録は消えません/);
+assert.deepEqual(await page.evaluate(() => window.__calls), [], 'やめたら消さない');
+page.once('dialog', d => { dialogs.push(d.message()); d.accept(); });
+await page.locator('#database-pscube-reset').click();
+await page.waitForFunction(() => window.__calls.some(c => c[0] === 'reset'));
+await page.waitForFunction(() => document.getElementById('database-pscube-auto-status').textContent.includes('消しました'));
+assert.equal(await page.locator('#database-pscube-reset').isDisabled(), true, '二度押ししない');
+// 保存中は確認も出さずに断る。
+await install(mUrl, {});
+await page.evaluate(() => { window.__pscubeBusy = true; });
+dialogs = [];
+page.once('dialog', dismiss);
+await page.locator('#database-pscube-reset').click();
+assert.match(await page.locator('#database-pscube-auto-status').innerText(), /保存中です/);
+page.removeAllListeners('dialog');
+assert.deepEqual(dialogs, []);
+assert.deepEqual(await page.evaluate(() => window.__calls), []);
+await page.evaluate(() => { window.__pscubeBusy = false; });
 // 小さい窓でもカードが画面に収まる。
 await page.setViewportSize({ width: 360, height: 300 });
 const box = await page.locator('#database-pscube-card').boundingBox();
@@ -121,4 +148,4 @@ assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= 360 && box.y + box.he
 assert.deepEqual(errors, []);
 assert.deepEqual(external, []);
 await browser.close();
-console.log('PASS: ページ判定（3種類・確認画面・日付なし・対象外）、カードのON/OFF表示、自動開始→保存→次ページ、二重開始なし、失敗の報告、最初のページ、古い状態の無視、360×300に収まる');
+console.log('PASS: ページ判定（3種類・確認画面・日付なし・対象外）、カードのON/OFF表示、自動開始→保存→次ページ、二重開始なし、失敗の報告、最初のページ、古い状態の無視、サイトの記録を消す（確認・保存中は断る）、360×300に収まる');

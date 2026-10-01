@@ -204,6 +204,7 @@ class AutoPilotTests(unittest.TestCase):
         self.pilot.tick()
         self.assertFalse(self.pilot.state()['enabled'])
         self.assertIn('止められた可能性', self.message())
+        self.assertIn('サイトの記録を消してやり直す', self.message(), '止まったときに次の手を案内する')
         self.assertFalse(self.window.rendered[-1]['enabled'])
 
     def test_challenge_pages_and_recovered_pages_do_not_count_toward_stopping(self):
@@ -307,6 +308,58 @@ class AutoPilotTests(unittest.TestCase):
                 self.pilot.configure(True, bad)
         self.assertEqual(self.pilot.configure(False, 5)['seconds'], 5)
         self.assertEqual(self.pilot.configure(False, 60)['seconds'], 60)
+
+
+class ResetSiteTests(unittest.TestCase):
+    """「サイトの記録を消してやり直す」：Cookie・保存データを消して最初のページへ。記録は消さない。"""
+
+    def setUp(self):
+        import pscube_import
+        self.pi = pscube_import
+        self.clock = Clock()
+        self.page = FakeWindow()
+        self.pilot = AutoPilot(self.page, PROBE, auto=AutoCapture(clock=self.clock, minimum=5, maximum=60, default=10))
+        self.actions = []
+        self.window = types.SimpleNamespace(clear_cookies=lambda: self.actions.append('cookies'),
+                                            load_url=lambda url: self.actions.append(('load', url)))
+        evaluate = self.page.__call__
+        self.page_scripts = []
+        self.pilot.evaluate = lambda script: (self.page_scripts.append(script), evaluate(script))[1]
+
+    def test_clears_cookies_and_page_storage_turns_auto_off_and_reopens_the_first_page(self):
+        self.pilot.configure(True, 20)
+        self.pilot.missing.extend([1, 2, 3])
+        self.pilot.done.add('A')
+        self.pilot.failures['B'] = 3
+        message = self.pi.reset_site(self.window, self.pilot, saving=lambda: False)
+        self.assertEqual(self.actions, ['cookies', ('load', self.pi.ROOT_URL)])
+        self.assertIn(self.pi.RESET_SITE_SCRIPT, self.page_scripts)
+        state = self.pilot.state()
+        self.assertFalse(state['enabled'], '消したあとは自動取り込みをOFFにする（人間確認を手でするため）')
+        self.assertEqual(state['seconds'], 20)
+        self.assertEqual((self.pilot.missing, self.pilot.done, self.pilot.failures), ([], set(), {}))
+        self.assertIn('取り込んだ記録はそのまま', message)
+        self.assertEqual(state['message'], message)
+
+    def test_refuses_while_saving_and_changes_nothing(self):
+        self.pilot.configure(True, 20)
+        with self.assertRaises(ValueError):
+            self.pi.reset_site(self.window, self.pilot, saving=lambda: True)
+        self.assertEqual(self.actions, [])
+        self.assertTrue(self.pilot.state()['enabled'])
+
+    def test_page_script_only_touches_browser_storage(self):
+        script = self.pi.RESET_SITE_SCRIPT
+        for word in ('localStorage.clear()', 'sessionStorage.clear()', 'indexedDB.deleteDatabase', 'caches.delete'):
+            self.assertIn(word, script)
+        self.assertNotIn('pywebview.api', script)
+
+    def test_card_has_the_reset_button_with_a_confirmation(self):
+        overlay = self.pi.overlay_script('CAPTURE', self.pi.ROOT_URL)
+        self.assertIn("reset.id = 'database-pscube-reset'", overlay)
+        self.assertIn('サイトの記録を消してやり直す', overlay)
+        self.assertIn('confirm(', overlay)
+        self.assertIn('window.pywebview.api.reset_site()', overlay)
 
 
 class Handlers:
