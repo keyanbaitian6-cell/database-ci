@@ -35,8 +35,10 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
   final String? Function(String day)? eventFor;
   final bool allowAll;
 
+  // 枠つきの入力欄は、見出し（「表示する日付」）を枠の上の線にまたがって描く。上に余白が
+  // 無いと、見出しの上半分が上の帯に隠れて切れる（2026-10-01、利用者の指摘）。
   @override
-  Size get preferredSize => const Size.fromHeight(80);
+  Size get preferredSize => const Size.fromHeight(92);
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +46,7 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
     return SizedBox(
       height: preferredSize.height,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
         child: Column(
           children: [
             Row(
