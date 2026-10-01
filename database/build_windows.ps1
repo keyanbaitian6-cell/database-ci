@@ -17,6 +17,7 @@ foreach ($entry in @(
         '--workpath', $taskBuildPath, '--specpath', $taskBuildPath)
     if ($entry.Name -eq 'database-pscube') {
         $taskBuildArgs += @('--add-data', "${taskCapturePath}:database_android/assets")
+        $taskBuildArgs += @('--add-data', "$(Join-Path (Split-Path $taskCapturePath -Parent) 'pscube_auto_probe.js'):database_android/assets")
     }
     $taskBuildArgs += (Join-Path $PSScriptRoot $entry.Source)
     # Windows PowerShell 5.1 は、ネイティブコマンドの標準エラー出力（PyInstallerの進行表示）を

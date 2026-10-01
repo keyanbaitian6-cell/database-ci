@@ -135,6 +135,40 @@ function parsePage(page) {
   return validateData(data);
 }
 
+/**
+ * 自動取り込み用：表示中のページを今取り込めるか（PC・Androidで共用。仕様：database/PSCUBE_AUTO_CAPTURE.md）。
+ * 対象の3種類のページで必要な表示がそろっていれば ready。それ以外（人間確認・同意・読み込み中・
+ * 対象外のページ）は理由つきで待つ。ページの操作はしない（読むだけ）。signature は同じページの
+ * 二重保存を防ぐための識別（台別ページは日付のhashを含む）。
+ */
+function autoPageState(rawUrl, dom) {
+  let url;
+  try { url = siteUrl(rawUrl); } catch {
+    return { ready: false, reason: '対象のページではありません（人間確認・同意の画面なら手動で操作してください）' };
+  }
+  const wait = reason => ({ ready: false, reason });
+  const has = selector => !!dom.querySelector(selector);
+  const path = url.pathname;
+  if (path.endsWith('nc-v03-001.php')) {
+    if (url.searchParams.get('cd_ps') !== '2') return wait('スロットの機種一覧ではありません');
+    if (!has('#ulKI a.btn-ki')) return wait('機種一覧の表示待ち（人間確認・同意の画面なら手動で操作してください）');
+    const identity = new URL(url); identity.hash = '';
+    return { ready: true, kind: '機種一覧', signature: identity.href };
+  }
+  if (path.endsWith('nc-v05-011.php')) {
+    if (!has('li[id^="li-"]') || dom.querySelectorAll('[data-ymd].selected').length !== 1) {
+      return wait('全台一覧の表示待ち（人間確認・同意の画面なら手動で操作してください）');
+    }
+    const identity = new URL(url); identity.hash = '';
+    return { ready: true, kind: '全台一覧', signature: identity.href };
+  }
+  if (!/^#\d{8}$/.test(url.hash)) return wait('台別ページの日付がまだ決まっていません');
+  if (dom.querySelectorAll('td.column').length !== 7) {
+    return wait('台別7日分の表示待ち（人間確認・同意の画面なら手動で操作してください）');
+  }
+  return { ready: true, kind: '台別7日分', signature: url.href };
+}
+
 function validateData(raw) {
   if (raw?.format !== FORMAT || raw.version !== 1 || !Array.isArray(raw.machines) || !Array.isArray(raw.records) || raw.records.length > 100000 || raw.machines.length > 10000) fail('P’s CUBEの保存ファイルではありません。');
   const basic = r => {

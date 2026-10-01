@@ -41,3 +41,4 @@ P’s CUBEの書き出しは専用の `pscube-viewer` 形式。
 Android実機ビルドは別途確認する。
 
 採点・翌日候補（閲覧ページの試験表示）は `PSCUBE_SCORING.md`、バックアップ・Drive同期は `PSCUBE_SYNC.md` を参照。
+自動取り込み（PC・Android、メルヘンと同じON/OFF・間隔・確認画面では待つ）は `PSCUBE_AUTO_CAPTURE.md` を参照。

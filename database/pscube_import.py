@@ -17,6 +17,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from auto_capture import AutoCapture
+
 # バックアップ・Drive同期（仕様：PSCUBE_SYNC.md）。メルヘンの database-backup-* とは名前を分ける。
 AUTO_BACKUP_NAME = 'pscube-backup-auto.json'
 VIEWER_DRIVE_NAME = 'pscube-viewer-drive.json'
@@ -31,6 +33,7 @@ ROOT_URL = f'https://{HOST}/dedamajyoho-P-townDMMpachi/{SHOP}/'
 FORMAT = 'pscube-viewer'
 PACKAGE_ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
 CAPTURE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_capture.js'
+PROBE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_auto_probe.js'
 
 SCROLL_SCRIPT = r'''(async () => {
   const findList = () => document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
@@ -445,28 +448,251 @@ class PscubeStore:
         return summary
 
 
+class AutoPilot:
+    """P’s CUBEの自動取り込みの判断（仕様：PSCUBE_AUTO_CAPTURE.md）。
+
+    メルヘンの `AutoCapture`（ON/OFF・間隔0.1〜4.5秒・起動時OFF）を時間の管理に使い、
+    窓への働きかけは渡された `evaluate`（pywebviewの evaluate_js）だけで行う。サイトの
+    ボタン・人間確認・同意には触れない：表示中のページを読む判定（pscube_auto_probe.js）が
+    ready のときだけ、手動の「未取得を取り込む」と同じ処理を始める。
+    """
+    MAX_FAILURES = 3
+
+    def __init__(self, evaluate, probe_script, saving=lambda: False, auto=None):
+        self.evaluate = evaluate
+        self.probe_script = probe_script
+        self.saving = saving
+        self.auto = auto or AutoCapture()
+        self.done = set()
+        self.failures = {}
+        self.pending = None
+        self._lock = threading.RLock()
+
+    def state(self):
+        return self.auto.state()
+
+    def render(self):
+        try:
+            self.evaluate('window.__pscubeRenderAuto && window.__pscubeRenderAuto(' +
+                          json.dumps(self.auto.state(), ensure_ascii=True) + ')')
+        except Exception:
+            pass
+
+    def configure(self, enabled, seconds):
+        with self._lock:
+            state = self.auto.configure(enabled, seconds)
+            if enabled:
+                self.failures.clear()
+                self.done.clear()
+        self.render()
+        return self.auto.state()
+
+    def loaded(self):
+        """新しいページ：間隔ぶん待ってから判定する。途中で消えた取り込み（ページ移動）は待たない。"""
+        with self._lock:
+            if self.pending is not None and not self.saving():
+                self.pending = None
+            self.auto.loaded()
+        self.render()
+
+    def tick(self):
+        with self._lock:
+            token = self.auto.due(busy=self.pending is not None or self.saving())
+            if token is None:
+                return
+            raw = self.evaluate(self.probe_script)
+            try:
+                probe = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except ValueError:
+                probe = {}
+            if not isinstance(probe, dict):
+                probe = {}
+            if probe.get('busy'):
+                self.auto.pause('ON・保存処理中・完了待ち', token)
+            elif not probe.get('ready'):
+                self.auto.pause('ON・待機：' + str(probe.get('reason') or 'ページの準備待ち'), token)
+            elif probe.get('signature') in self.done:
+                self.auto.pause('ON・次のページ待ち（同じページは重複保存しません）', token)
+            elif self.failures.get(probe.get('signature'), 0) >= self.MAX_FAILURES:
+                self.auto.pause('ON・同じページで3回失敗したため待機中（内容を確かめて手動で取り込むか、OFF→ONで再開）', token)
+            else:
+                signature = probe['signature']
+
+                def start():
+                    if self.evaluate('window.__pscubeStartCapture ? window.__pscubeStartCapture() : false') is True:
+                        self.pending = signature
+                        return True
+                    return False
+
+                if self.auto.run_current(token, start):
+                    self.auto.pause('ON・取り込み中（' + str(probe.get('kind') or 'ページ') + '）', token)
+        self.render()
+
+    def finished(self, result=None, error=None):
+        """保存の結果（手動の取り込みでも呼ばれる）。自動で始めた取り込みだけを数える。"""
+        with self._lock:
+            signature, self.pending = self.pending, None
+            enabled = self.auto.state()['enabled']
+            if error is not None:
+                if signature is not None:
+                    self.failures[signature] = self.failures.get(signature, 0) + 1
+                    if enabled:
+                        self.auto.pause(f'ON・保存できませんでした（{self.failures[signature]}回目）：{error}')
+            elif result is not None:
+                if signature is not None:
+                    self.done.add(signature)
+                    self.failures.pop(signature, None)
+                if enabled and not result.get('next_url'):
+                    self.auto.configure(False, self.auto.state()['seconds'])
+                    self.auto.pause('すべて取り込みました（自動取り込みを停止しました）')
+                elif enabled:
+                    self.auto.pause(f'ON・{result.get("kind", "")}を保存・残り{result.get("remaining", "?")}件・次のページへ')
+        self.render()
+
+
+def overlay_script(capture_script, index_url):
+    """取り込み画面の右下のカード（手動の取り込み・自動取り込みのON/OFF・間隔・状態）。"""
+    return r'''
+    (() => {
+      if (document.getElementById('database-pscube-card')) return;
+      const card = document.createElement('div');
+      card.id = 'database-pscube-card';
+      Object.assign(card.style, {position:'fixed',bottom:'14px',right:'14px',zIndex:'2147483647',width:'250px',
+        maxHeight:'calc(100vh - 28px)',overflowY:'auto',background:'white',border:'1px solid #c9d2df',borderRadius:'12px',
+        padding:'10px',boxShadow:'0 4px 18px rgba(0,0,0,.18)',fontFamily:'sans-serif',display:'grid',gap:'8px'});
+      const button = document.createElement('button');
+      button.id = 'database-pscube-capture';
+      const indexUrl = INDEX_URL;
+      const isRoot = location.pathname.endsWith('/c740601/');
+      button.textContent = isRoot ? 'スロット機種一覧へ' : '未取得を取り込む';
+      Object.assign(button.style, {background:'#304d6e',color:'white',padding:'12px',border:'0',borderRadius:'8px',fontSize:'15px',cursor:'pointer'});
+      const auto = document.createElement('button');
+      auto.id = 'database-pscube-auto';
+      auto.type = 'button';
+      Object.assign(auto.style, {color:'white',padding:'10px',border:'2px solid #b8c5d8',borderRadius:'6px',fontSize:'14px',fontWeight:'bold',cursor:'pointer',background:'#526078'});
+      auto.textContent = '自動取り込み：OFF（押すと開始）';
+      const label = document.createElement('label');
+      label.style.cssText = 'font-size:12px;display:block;color:#33445a';
+      const seconds = document.createElement('input');
+      seconds.id = 'database-pscube-interval';
+      seconds.type = 'range'; seconds.min = '0.1'; seconds.max = '4.5'; seconds.step = '0.1'; seconds.value = '3.5';
+      seconds.style.width = '100%';
+      const value = document.createElement('span');
+      value.textContent = '間隔：3.5秒';
+      label.append(value, seconds);
+      const status = document.createElement('div');
+      status.id = 'database-pscube-auto-status';
+      status.style.cssText = 'font-size:11px;color:#33445a;white-space:normal;word-break:break-word';
+      status.textContent = '人間確認・同意の画面ではONのまま待ちます。確認は手動で操作してください。';
+      card.append(button, auto, label, status);
+      const identity = raw => {
+        const u = new URL(raw);
+        if (!u.pathname.endsWith('nc-v06-001.php')) u.hash = '';
+        return u.href;
+      };
+      let capturedUrl = null, autoEnabled = false, autoChanging = false, revision = -1;
+      const idle = text => { button.textContent = text; button.disabled = autoEnabled; window.__pscubeBusy = false; };
+      window.__pscubeBusy = false;
+      window.pscubeCaptureFailed = error => { idle(String(error)); };
+      window.pscubeCaptureComplete = result => {
+        if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
+        idle(`${result.kind}を保存 · 残り${result.remaining} · ${result.backup || ''}`);
+        capturedUrl = null;
+        if (result.next_url) location.href = result.next_url;
+      };
+      const run = async () => {
+        window.__pscubeBusy = true;
+        button.disabled = true; button.textContent = '読み込み中…';
+        try {
+          await SCROLL_SCRIPT;
+          capturedUrl = location.href;
+          const payload = CAPTURE_SCRIPT;
+          const result = await window.pywebview.api.submit_page(payload);
+          window.pscubeCaptureComplete(result);
+        } catch (error) {
+          const message = String(error?.message || error);
+          idle(message);
+          try { await window.pywebview.api.capture_failed(message); } catch (_) {}
+        }
+      };
+      // 自動取り込み（Python側のタイマー）から呼ぶ。取り込み中・最初のページでは始めない。
+      window.__pscubeStartCapture = () => {
+        if (isRoot || window.__pscubeBusy) return false;
+        run();
+        return true;
+      };
+      button.onclick = () => {
+        if (isRoot) { location.href = indexUrl; return; }
+        if (!window.__pscubeBusy && !autoEnabled) run();
+      };
+      window.__pscubeRenderAuto = state => {
+        if (state.revision < revision) return;
+        revision = state.revision;
+        autoEnabled = !!state.enabled;
+        auto.textContent = autoEnabled ? '自動取り込み：ON（押すと停止）' : '自動取り込み：OFF（押すと開始）';
+        auto.style.background = autoEnabled ? '#087d59' : '#526078';
+        auto.setAttribute('aria-pressed', String(autoEnabled));
+        auto.disabled = autoChanging;
+        seconds.disabled = autoEnabled || autoChanging;
+        seconds.value = String(state.seconds);
+        value.textContent = '間隔：' + Number(state.seconds).toFixed(1) + '秒';
+        status.textContent = state.message;
+        if (!window.__pscubeBusy) button.disabled = autoEnabled && !isRoot;
+        button.style.opacity = button.disabled ? '.5' : '1';
+      };
+      seconds.oninput = () => { value.textContent = '間隔：' + Number(seconds.value).toFixed(1) + '秒'; };
+      auto.onclick = async () => {
+        if (autoChanging) return;
+        autoChanging = true; auto.disabled = true;
+        try {
+          const state = await window.pywebview.api.set_auto_capture(!autoEnabled, Number(seconds.value));
+          autoChanging = false;
+          window.__pscubeRenderAuto(state);
+        } catch (error) {
+          autoChanging = false; auto.disabled = false;
+          status.textContent = '自動取り込みを切り替えられませんでした：' + String(error?.message || error);
+        }
+      };
+      document.body.append(card);
+    })();
+    '''.replace('SCROLL_SCRIPT', SCROLL_SCRIPT).replace('CAPTURE_SCRIPT', capture_script).replace('INDEX_URL', json.dumps(index_url))
+
+
 def run_session(db_path, export_path):
     import webview
 
     script = CAPTURE.read_text(encoding='utf-8')
+    probe = PROBE.read_text(encoding='utf-8')
 
     class Bridge:
         def __init__(self):
             self._window = None
             self._capture_lock = threading.Lock()
+            self.pilot = None
 
         def submit_page(self, raw):
             with self._capture_lock:
                 try:
                     result = self._submit_page(raw)
-                    # The site's scrolling changes location.hash. WebView2 may
-                    # recreate pywebview's promise callbacks on that navigation,
-                    # so deliver completion to our own stable DOM handler too.
-                    self._window.evaluate_js('window.pscubeCaptureComplete?.(' + json.dumps(result, ensure_ascii=True) + ')')
-                    return result
                 except Exception as error:
                     self._window.evaluate_js('window.pscubeCaptureFailed?.(' + json.dumps(str(error), ensure_ascii=True) + ')')
+                    self.pilot.finished(error=str(error))
                     raise
+                # The site's scrolling changes location.hash. WebView2 may
+                # recreate pywebview's promise callbacks on that navigation,
+                # so deliver completion to our own stable DOM handler too.
+                self.pilot.finished(result=result)
+                self._window.evaluate_js('window.pscubeCaptureComplete?.(' + json.dumps(result, ensure_ascii=True) + ')')
+                return result
+
+        def capture_failed(self, message):
+            # 読み取りの途中（保存の前）で失敗したとき。保存中の失敗は submit_page が数える。
+            if not self._capture_lock.locked():
+                self.pilot.finished(error=str(message)[:300])
+            return True
+
+        def set_auto_capture(self, enabled, seconds):
+            return self.pilot.configure(enabled, seconds)
 
         def _submit_page(self, raw):
             current = self._window.get_current_url()
@@ -482,46 +708,9 @@ def run_session(db_path, export_path):
     bridge = Bridge()
     window = webview.create_window('P’s CUBE 取り込み', ROOT_URL, width=1050, height=780, js_api=bridge)
     bridge._window = window
-    overlay = r'''
-    (() => {
-      if (document.getElementById('database-pscube-capture')) return;
-      const button = document.createElement('button');
-      button.id = 'database-pscube-capture';
-      const indexUrl = INDEX_URL;
-      const isRoot = location.pathname.endsWith('/c740601/');
-      button.textContent = isRoot ? 'スロット機種一覧へ' : '未取得を取り込む';
-      Object.assign(button.style, {position:'fixed',bottom:'18px',right:'18px',zIndex:'2147483647',
-        background:'#304d6e',color:'white',padding:'14px 18px',border:'0',borderRadius:'10px',fontSize:'16px'});
-      const identity = raw => {
-        const u = new URL(raw);
-        if (!u.pathname.endsWith('nc-v06-001.php')) u.hash = '';
-        return u.href;
-      };
-      let capturedUrl = null;
-      window.pscubeCaptureFailed = error => {
-        button.textContent = String(error); button.disabled = false;
-      };
-      window.pscubeCaptureComplete = result => {
-        if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
-        button.textContent = `${result.kind}を保存 · 残り${result.remaining} · ${result.backup || ''}`;
-        button.disabled = false;
-        capturedUrl = null;
-        if (result.next_url) location.href = result.next_url;
-      };
-      button.onclick = async () => {
-        if (isRoot) { location.href = indexUrl; return; }
-        button.disabled = true; button.textContent = '読み込み中…';
-        try {
-          await SCROLL_SCRIPT;
-          capturedUrl = location.href;
-          const payload = CAPTURE_SCRIPT;
-          const result = await window.pywebview.api.submit_page(payload);
-          window.pscubeCaptureComplete(result);
-        } catch (error) { button.textContent = String(error.message || error); button.disabled = false; }
-      };
-      document.body.append(button);
-    })();
-    '''.replace('SCROLL_SCRIPT', SCROLL_SCRIPT).replace('CAPTURE_SCRIPT', script).replace('INDEX_URL', json.dumps(ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'))
+    bridge.pilot = AutoPilot(window.evaluate_js, probe, saving=bridge._capture_lock.locked)
+    overlay = overlay_script(script, ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2')
+    stop = threading.Event()
 
     def install_overlay():
         try:
@@ -529,8 +718,22 @@ def run_session(db_path, export_path):
             window.evaluate_js(overlay)
         except Exception:
             pass
+        bridge.pilot.loaded()
+
+    def auto_loop():
+        # 窓を最小化してもJavaScriptのタイマーのように遅れないよう、Python側で数える。
+        while not stop.wait(0.1):
+            try:
+                bridge.pilot.tick()
+            except Exception:
+                pass
+
+    def closed():
+        stop.set()
 
     window.events.loaded += install_overlay
+    window.events.closed += closed
+    threading.Thread(target=auto_loop, name='pscube-auto', daemon=True).start()
     webview.start(gui='edgechromium')
 
 

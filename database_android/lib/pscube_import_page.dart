@@ -8,7 +8,10 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'auto_capture_state.dart';
+import 'pscube_auto.dart';
 import 'pscube_store.dart';
+import 'theme.dart';
 
 class PscubeImportPage extends StatefulWidget {
   const PscubeImportPage({super.key});
@@ -29,6 +32,19 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   int _remaining = 0;
   DateTime? _lastBackup;
 
+  // 自動取り込み（仕様：database/PSCUBE_AUTO_CAPTURE.md）。メルヘンと同じ ON/OFF・間隔・
+  // 起動時OFF・常駐通知。サイトのボタン・人間確認・同意には触れず、表示中のページを読む判定
+  // （assets/pscube_auto_probe.js）が ready のときだけ「未取得を取り込む」と同じ処理を始める。
+  static const _autoService = MethodChannel('database/auto_capture');
+  final _auto = AutoCaptureState();
+  Timer? _autoTimer;
+  String? _probe;
+  bool _autoChanging = false;
+  bool _autoProbing = false;
+  String _autoStatus = '停止中';
+  final _autoDone = <String>{};
+  final _autoFailures = <String, int>{};
+
   @override
   void initState() {
     super.initState();
@@ -42,6 +58,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
             }
             _navigationUrl = url;
             _page++;
+            _auto.nextPage(_page);
+            if (_auto.enabled) _autoMessage('ON・読み込み待ち');
             if (mounted) setState(() => _loading = true);
           },
           onPageFinished: (_) {
@@ -55,6 +73,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         ),
       )
       ..loadRequest(Uri.parse(PscubeStore.root));
+    _autoTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) => unawaited(_autoTick()),
+    );
     unawaited(_initialize());
   }
 
@@ -71,8 +93,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     try {
       final store = await PscubeStore.open();
       String script;
+      String probe;
       try {
         script = await rootBundle.loadString('assets/pscube_capture.js');
+        probe = await rootBundle.loadString('assets/pscube_auto_probe.js');
       } catch (_) {
         await store.close();
         rethrow;
@@ -89,6 +113,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       setState(() {
         _store = store;
         _script = script;
+        _probe = probe;
         _lastBackup = backedUp;
       });
     } catch (error) {
@@ -98,6 +123,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
 
   @override
   void dispose() {
+    _auto.turnOff();
+    _autoTimer?.cancel();
+    if (Platform.isAndroid) {
+      unawaited(_autoService.invokeMethod<void>('stop').catchError((_) {}));
+    }
     final store = _store;
     if (store != null) unawaited(store.close());
     super.dispose();
@@ -131,7 +161,93 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     }
   }
 
-  Future<void> _capture() async {
+  /// Android WebView は文字列を1回か2回JSONにして返すことがある。
+  static String _decodeJs(Object value) {
+    dynamic raw = value;
+    for (var i = 0; i < 2 && raw is String; i++) {
+      final decoded = jsonDecode(raw);
+      if (decoded is String) {
+        raw = decoded;
+      } else {
+        raw = jsonEncode(decoded);
+        break;
+      }
+    }
+    return raw is String ? raw : jsonEncode(raw);
+  }
+
+  void _autoMessage(String message) {
+    if (mounted && message != _autoStatus) {
+      setState(() => _autoStatus = message);
+    }
+  }
+
+  Future<void> _toggleAuto() async {
+    if (_autoChanging) return;
+    if (_auto.enabled) {
+      await _stopAuto('停止中（開始済みの保存は完了まで待ちます）');
+      return;
+    }
+    setState(() => _autoChanging = true);
+    try {
+      if (Platform.isAndroid) await _autoService.invokeMethod<void>('start');
+      if (!mounted) {
+        if (Platform.isAndroid) await _autoService.invokeMethod<void>('stop');
+        return;
+      }
+      _autoDone.clear();
+      _autoFailures.clear();
+      _auto.turnOn();
+      setState(() => _autoStatus = 'ON・次の取り込みを待っています');
+    } catch (error) {
+      _autoMessage('自動取り込みを開始できませんでした：$error');
+    } finally {
+      if (mounted) setState(() => _autoChanging = false);
+    }
+  }
+
+  Future<void> _stopAuto(String message) async {
+    _auto.turnOff();
+    if (mounted) setState(() => _autoStatus = message);
+    if (Platform.isAndroid) {
+      try {
+        await _autoService.invokeMethod<void>('stop');
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _autoTick() async {
+    if (!mounted || _autoProbing) return;
+    final page = _page;
+    final token = _auto.due(
+      busy:
+          _busy ||
+          _loading ||
+          _store == null ||
+          _script == null ||
+          _probe == null,
+    );
+    if (token == null) return;
+    _autoProbing = true;
+    try {
+      final probe = jsonDecode(
+        _decodeJs(await _web.runJavaScriptReturningResult(_probe!)),
+      );
+      if (!_auto.current(token, page)) return;
+      final decision = pscubeAutoDecision(probe, _autoDone, _autoFailures);
+      _autoMessage(decision.message);
+      final signature = decision.capture;
+      if (signature != null) {
+        await _capture(autoSignature: signature, autoToken: token);
+      }
+    } catch (error) {
+      if (_auto.current(token, page)) _autoMessage('ON・待機：$error');
+    } finally {
+      _autoProbing = false;
+    }
+  }
+
+  Future<void> _capture({String? autoSignature, int? autoToken}) async {
     if (_busy || _loading || _store == null || _script == null) return;
     final store = _store!;
     final page = _page;
@@ -150,20 +266,12 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           !_samePage(before, capturedUrl)) {
         throw const FormatException('読み取り中にページが切り替わりました。');
       }
-      final value = await _web.runJavaScriptReturningResult(_script!);
-      // Android WebView may return the string once or twice JSON encoded.
-      dynamic raw = value;
-      for (var i = 0; i < 2 && raw is String; i++) {
-        final decoded = jsonDecode(raw);
-        if (decoded is String) {
-          raw = decoded;
-        } else {
-          raw = jsonEncode(decoded);
-          break;
-        }
-      }
-      if (raw is! String) raw = jsonEncode(raw);
+      final raw = _decodeJs(await _web.runJavaScriptReturningResult(_script!));
       if (!mounted) return;
+      // OFFを押した・ページが移った後に、古い自動の取り込みを保存しない。
+      if (autoToken != null && !_auto.current(autoToken, page)) {
+        throw const FormatException('自動取り込みを止めたため、保存しませんでした。');
+      }
       if (_page != page || await _web.currentUrl() != capturedUrl) {
         throw const FormatException('保存前にページが切り替わりました。');
       }
@@ -173,11 +281,25 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _remaining = result.remaining;
         _status = '${result.kind}を保存しました。残り ${result.remaining} 件。';
       });
+      if (autoSignature != null) {
+        _autoDone.add(autoSignature);
+        _autoFailures.remove(autoSignature);
+        if (_auto.enabled && result.nextUrl == null) {
+          await _stopAuto('すべて取り込みました（自動取り込みを停止しました）');
+        } else if (_auto.enabled) {
+          _autoMessage('ON・${result.kind}を保存・残り${result.remaining}件・次のページへ');
+        }
+      }
       if (result.nextUrl != null && _page == page) {
         await _web.loadRequest(Uri.parse(result.nextUrl!));
       }
     } catch (error) {
       if (mounted) setState(() => _status = '保存できませんでした：$error');
+      if (autoSignature != null && _auto.enabled) {
+        final count = (_autoFailures[autoSignature] ?? 0) + 1;
+        _autoFailures[autoSignature] = count;
+        _autoMessage('ON・保存できませんでした（$count回目）：$error');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -304,7 +426,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                   Expanded(
                     child: FilledButton(
                       onPressed:
-                          _busy || _loading || _store == null || _script == null
+                          _busy ||
+                              _loading ||
+                              _store == null ||
+                              _script == null ||
+                              _auto.enabled
                           ? null
                           : _capture,
                       child: Text(_busy || _loading ? '読み込み中…' : '未取得を取り込む'),
@@ -317,6 +443,56 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                   '次のページへ自動で移動します。残り $_remaining 件',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _auto.enabled
+                        ? AppColors.appleBlue
+                        : AppColors.ash,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: _autoChanging || _store == null
+                      ? null
+                      : _toggleAuto,
+                  icon: Icon(
+                    _auto.enabled
+                        ? Icons.autorenew
+                        : Icons.pause_circle_outline,
+                  ),
+                  label: Text('自動取り込み：${_auto.enabled ? 'ON' : 'OFF'}'),
+                ),
+              ),
+              Row(
+                children: [
+                  const Text('間隔', style: TextStyle(fontSize: 13)),
+                  Expanded(
+                    child: Slider(
+                      min: 1,
+                      max: 45,
+                      divisions: 44,
+                      value: _auto.intervalTenths.toDouble(),
+                      label:
+                          '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
+                      onChanged: _auto.enabled
+                          ? null
+                          : (value) => setState(
+                              () => _auto.setIntervalTenths(value.round()),
+                            ),
+                    ),
+                  ),
+                  Text(
+                    '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ],
+              ),
+              Text(
+                _autoStatus,
+                style: const TextStyle(fontSize: 12, color: AppColors.ash),
+              ),
             ],
           ),
         ),

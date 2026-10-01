@@ -72,6 +72,7 @@ flutter:
   assets:
     - assets/database_seed.json
     - assets/pscube_capture.js
+    - assets/pscube_auto_probe.js
 
   # To add assets to your application, add an assets section, like this:
   # assets:
