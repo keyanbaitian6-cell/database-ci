@@ -19,7 +19,13 @@ foreach ($entry in @(
         $taskBuildArgs += @('--add-data', "${taskCapturePath}:database_android/assets")
     }
     $taskBuildArgs += (Join-Path $PSScriptRoot $entry.Source)
+    # Windows PowerShell 5.1 は、ネイティブコマンドの標準エラー出力（PyInstallerの進行表示）を
+    # エラーとして扱い、ErrorActionPreference=Stop だと成功していても止まる。終了コードで判定する。
+    $taskPreviousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     & $Python @taskBuildArgs *> (Join-Path $taskBuildPath "$($entry.Name).log")
-    if ($LASTEXITCODE -ne 0) { throw "$($entry.Name) のビルド失敗。ログ: $taskBuildPath" }
+    $taskExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $taskPreviousPreference
+    if ($taskExitCode -ne 0) { throw "$($entry.Name) のビルド失敗。ログ: $taskBuildPath" }
     Write-Output "$($entry.Name): build succeeded"
 }
