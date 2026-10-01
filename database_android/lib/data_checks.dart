@@ -34,9 +34,9 @@ List<(String machine, List<int> racks)> suspiciousDuplicates(
 /// Warning text for the racks that look duplicated (only those including
 /// [rack] when given), or null when nothing looks off.
 String? duplicateWarning(Iterable<SlotRecord> machineRows, {int? rack}) {
-  final groups = suspiciousDuplicates(machineRows)
-      .where((g) => rack == null || g.$2.contains(rack))
-      .toList();
+  final groups = suspiciousDuplicates(
+    machineRows,
+  ).where((g) => rack == null || g.$2.contains(rack)).toList();
   if (groups.isEmpty) return null;
   final racks = groups.map((g) => '${g.$2.join('・')}番台').join('、');
   return '⚠ $racksの数値（回転・BIG・REG）が完全に同じです。台番号のずれがないか確認してください。';
@@ -204,7 +204,7 @@ class NextDayEvidence {
   String get todayText {
     final d = today;
     if (todayUsed) {
-      return '選択日 ${record.games}G・当たり順位 ${d!.band}・寄与${signedContribution(d.gap!)}';
+      return '選択日 ${record.games}G・${record.pscubeOutputProfile ? 'MY' : '当たり'}順位 ${d!.band}・寄与${signedContribution(d.gap!)}';
     }
     final reason = record.games < 500
         ? '500G未満'
@@ -235,10 +235,9 @@ NextDayEvidence nextDayEvidence(
 }) {
   // 日付は YYYY-MM-DD なので文字列のまま比べる（台ごと・記録ごとに日付へ
   // 変換し直すと、結果タブで全機種の候補を出すときに重い）。
-  final first = DateTime.parse(record.day)
-      .subtract(const Duration(days: 30))
-      .toIso8601String()
-      .substring(0, 10);
+  final first = DateTime.parse(
+    record.day,
+  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
   // 同じ店舗・機種の記録だけを見る（店舗・機種ごとの仕分けは一覧ごとに1回）。
   // 日ごとにまとめておき、1日ぶんを探すたびに全部を見直さない。
   final byDay = <String, List<SlotRecord>>{};
@@ -270,8 +269,11 @@ NextDayEvidence nextDayEvidence(
       );
       continue;
     }
-    final ranks = peers.map((r) => (r.bb + r.rb) / r.games).toList();
-    final rank = percentile((mine.bb + mine.rb) / mine.games, ranks);
+    double metric(SlotRecord r) => record.pscubeOutputProfile
+        ? (r.my ?? 0).toDouble()
+        : (r.bb + r.rb) / r.games;
+    final ranks = peers.map(metric).toList();
+    final rank = percentile(metric(mine), ranks);
     final gap = (100 * rank - 50) * mine.games / (mine.games + shrinkGames);
     gaps.add(gap);
     contributions.add(
@@ -361,8 +363,9 @@ String regularCandidateDetail(
 /// Identical nine-decimal comparison on PC and Dart; never rank the displayed
 /// one-decimal value. Days/latest date are evidence-based deterministic ties.
 int compareNextDayEvidence(NextDayEvidence a, NextDayEvidence b) {
-  final byIndex = double.parse(b.rawIndex!.toStringAsFixed(9))
-      .compareTo(double.parse(a.rawIndex!.toStringAsFixed(9)));
+  final byIndex = double.parse(
+    b.rawIndex!.toStringAsFixed(9),
+  ).compareTo(double.parse(a.rawIndex!.toStringAsFixed(9)));
   if (byIndex != 0) return byIndex;
   final byDays = b.usedDays.compareTo(a.usedDays);
   if (byDays != 0) return byDays;
@@ -478,14 +481,17 @@ String varietyRuleText(String store) {
   SlotRecord record,
   List<SlotRecord> all,
 ) {
+  double metric(SlotRecord r) => record.pscubeOutputProfile
+      ? (r.my ?? 0).toDouble()
+      : (r.bb + r.rb) / r.games;
   final rates = [
     for (final r in comparisonPool(record, all))
-      if (r.bb >= 0 && r.rb >= 0) (r.bb + r.rb) / r.games,
+      if (r.bb >= 0 && r.rb >= 0) metric(r),
   ];
   if (rates.length < 3 || record.games <= 0) {
     return (percent: null, refs: rates.length);
   }
-  final rank = percentile((record.bb + record.rb) / record.games, rates);
+  final rank = percentile(metric(record), rates);
   return (
     percent: double.parse((100 * rank).toStringAsFixed(1)),
     refs: rates.length,
@@ -590,7 +596,9 @@ varietyNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
     if (byGames != 0) return byGames;
     final byRack = ca.record.rack.compareTo(cb.record.rack);
     // 同じ台番号は同じ日の同じ店に1台だけなので、ここに来るのは記録の誤りだけ。
-    return byRack != 0 ? byRack : ca.record.machine.compareTo(cb.record.machine);
+    return byRack != 0
+        ? byRack
+        : ca.record.machine.compareTo(cb.record.machine);
   });
   return (
     total: rows.length,

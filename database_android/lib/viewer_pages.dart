@@ -214,10 +214,18 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
       // バラエティの候補を選び直さない。検索で隠れた候補を見出しの台数に含めない。
       final visibleKeys = {for (final e in _entries) e.$1.key};
       final candidates = dayCandidates(dayRows, data.records).candidates;
-      _candidateRacks = {for (final c in candidates)
-        if (visibleKeys.contains(c.record.key) && candidateIsFocus(c, data.records)) c.record.rack};
-      _longTrendRacks = {for (final c in candidates)
-        if (visibleKeys.contains(c.record.key) && !candidateIsFocus(c, data.records)) c.record.rack};
+      _candidateRacks = {
+        for (final c in candidates)
+          if (visibleKeys.contains(c.record.key) &&
+              candidateIsFocus(c, data.records))
+            c.record.rack,
+      };
+      _longTrendRacks = {
+        for (final c in candidates)
+          if (visibleKeys.contains(c.record.key) &&
+              !candidateIsFocus(c, data.records))
+            c.record.rack,
+      };
       _calculatedDay = _day;
     }
     return Scaffold(
@@ -245,7 +253,7 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
           children: [
             Text(
-              storeNames[widget.store] ?? widget.store,
+              storeDisplayName(widget.store),
               style: const TextStyle(color: AppColors.ash),
             ),
             const SizedBox(height: 12),

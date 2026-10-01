@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'date_events.dart';
 import 'models.dart';
+import 'pscube_viewer_data.dart';
 
 /// 閲覧ページで読んだバックアップ（画像を除いた軽い形）。
 ///
@@ -54,8 +55,12 @@ class ViewerData {
       }
     }
     var skipped = 0;
-    for (final item in decoded['records'] as List) {
-      final record = _record(item);
+    final pscube = decoded['format'] == 'pscube-viewer';
+    final incoming = pscube
+        ? pscubeViewerRecords(decoded)
+        : decoded['records'] as List;
+    for (final item in incoming) {
+      final record = item is SlotRecord ? item : _record(item);
       if (record == null) {
         skipped++;
         continue;
@@ -78,14 +83,16 @@ class ViewerData {
       records: records,
       dateEvents: dateEvents,
       file: decoded['file'] as String?,
-      exportedAt: DateTime.tryParse(header['exported_at'] as String? ?? '')
-          ?.toLocal(),
+      exportedAt: DateTime.tryParse(
+        header['exported_at'] as String? ?? '',
+      )?.toLocal(),
       exportedAtText: header['exported_at'] is String
           ? header['exported_at'] as String
           : null,
-      source: header['source'] as String?,
-      loadedAt: DateTime.tryParse(decoded['loaded_at'] as String? ?? '')
-          ?.toLocal(),
+      source: pscube ? 'pscube' : header['source'] as String?,
+      loadedAt: DateTime.tryParse(
+        decoded['loaded_at'] as String? ?? '',
+      )?.toLocal(),
       skipped: skipped,
       keptOlder: (decoded['kept_older'] as num?)?.toInt() ?? 0,
     );
@@ -133,6 +140,9 @@ class ViewerData {
     final old = decode(stored);
     final fresh = decode(incoming);
     if (old == null || fresh == null) return (text: incoming, note: null);
+    // P's CUBE's bridge merges records by shop/rate/machine/rack/day before
+    // returning them, preserving older days and detailed graphs.
+    if (fresh['format'] == 'pscube-viewer') return (text: incoming, note: null);
     final oldAt = exportedAt(old);
     final freshAt = exportedAt(fresh);
     if (oldAt != null && freshAt != null && oldAt.isAfter(freshAt)) {

@@ -77,8 +77,9 @@ class DaySummaryCard extends StatelessWidget {
               ),
             if (missingByMachine.isNotEmpty)
               Theme(
-                data: Theme.of(context)
-                    .copyWith(dividerColor: Colors.transparent),
+                data: Theme.of(
+                  context,
+                ).copyWith(dividerColor: Colors.transparent),
                 child: ExpansionTile(
                   tilePadding: EdgeInsets.zero,
                   childrenPadding: EdgeInsets.zero,
@@ -451,15 +452,27 @@ class RackTrend extends StatelessWidget {
                   height: 1.45,
                 ),
               ),
-              if (!variety) ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                title: const Text('★注目・☆長期傾向の理由', style: TextStyle(fontSize: 13)),
-                children: [Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(regularCandidateDetail(record, all, evidence),
-                    style: const TextStyle(color: AppColors.ash, fontSize: 12, height: 1.5)),
-                )],
-              ),
+              if (!variety)
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text(
+                    '★注目・☆長期傾向の理由',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        regularCandidateDetail(record, all, evidence),
+                        style: const TextStyle(
+                          color: AppColors.ash,
+                          fontSize: 12,
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
@@ -490,7 +503,7 @@ class RackStats extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '${record.day}　${storeNames[record.store]}',
+          '${record.day}　${storeDisplayName(record.store)}',
           style: const TextStyle(color: AppColors.ash),
         ),
         const SizedBox(height: 2),
@@ -530,7 +543,10 @@ class RackStats extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 6),
-        Text('BIG ${record.bb}　REG ${record.rb}　最大持玉 ${record.maxHold ?? '—'}'),
+        Text(
+          'BIG ${record.bb}　REG ${record.rb}　${record.outputLabel} ${record.outputValue ?? '—'}'
+          '${record.isPscube ? '　AT/ART ${record.atArt}' : ''}',
+        ),
         Text(
           '観測量（設定判別の信頼度ではありません）：${reliabilityLabel(record.games)}'
           '${capturedNote(record).isEmpty ? '' : '　｜　${capturedNote(record)}'}',
@@ -572,10 +588,19 @@ class RackStats extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              chip('持玉 /20', score!.maxHold),
-              chip('当り /60', score!.hits),
-              chip('終点 /10', score!.positive),
-              chip('維持 /10', score!.retention),
+              chip(
+                '${record.isPscube ? 'MY' : '持玉'} /${record.pscubeOutputProfile ? 50 : 20}',
+                score!.maxHold,
+              ),
+              if (!record.pscubeOutputProfile) chip('当り /60', score!.hits),
+              chip(
+                '終点 /${record.pscubeOutputProfile ? 25 : 10}',
+                score!.positive,
+              ),
+              chip(
+                '維持 /${record.pscubeOutputProfile ? 25 : 10}',
+                score!.retention,
+              ),
             ],
           ),
           Text(
@@ -793,11 +818,12 @@ Widget storeDropdown(
   String value,
   ValueChanged<String> onChanged, {
   bool short = false,
+  Map<String, String>? stores,
 }) => DropdownButtonFormField<String>(
   initialValue: value,
   isExpanded: true,
   decoration: const InputDecoration(labelText: '店舗'),
-  items: storeNames.entries
+  items: (stores ?? storeNames).entries
       .map(
         (e) => DropdownMenuItem(
           value: e.key,

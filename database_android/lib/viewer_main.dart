@@ -37,10 +37,9 @@ class ViewerApp extends StatelessWidget {
 
 /// [store] の [day] より前の30日間に、記録がある日の数（採点の比較に使える日数）。
 int historyDays(List<SlotRecord> all, String store, String day) {
-  final first = DateTime.parse(day)
-      .subtract(const Duration(days: 30))
-      .toIso8601String()
-      .substring(0, 10);
+  final first = DateTime.parse(
+    day,
+  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
   return {
     for (final r in all)
       if (r.store == store &&
@@ -265,6 +264,96 @@ class _ViewerHomeState extends State<ViewerHome> {
     if (mounted) setState(() => _loading = false);
   }
 
+  Future<void> _exportPscube() async {
+    try {
+      await exportPscubeBackup();
+    } catch (error) {
+      if (mounted) setState(() => _error = 'バックアップを書き出せませんでした。\n$error');
+    }
+  }
+
+  Future<void> _editPscubeType() async {
+    final records =
+        _data?.records.where((r) => r.store == _store).toList() ?? [];
+    final names = records.map((r) => r.machine).toSet().toList()
+      ..sort(compareMachineNames);
+    if (names.isEmpty) return;
+    var machine = names.first;
+    String typeOf(String name) =>
+        records.firstWhere((r) => r.machine == name).extra['machine_type']
+            as String? ??
+        '';
+    var type = typeOf(machine);
+    final result = await showDialog<(String, String)>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('機種タイプ'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: machine,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: '機種'),
+                items: [
+                  for (final name in names)
+                    DropdownMenuItem(
+                      value: name,
+                      child: Text(displayMachineName(name)),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value != null)
+                    update(() {
+                      machine = value;
+                      type = typeOf(machine);
+                    });
+                },
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                key: ValueKey(machine),
+                initialValue: type,
+                decoration: const InputDecoration(labelText: 'タイプ'),
+                items: const [
+                  DropdownMenuItem(value: '', child: Text('機種名から自動判定')),
+                  DropdownMenuItem(value: 'normal', child: Text('ノーマルタイプ')),
+                  DropdownMenuItem(value: 'other', child: Text('その他')),
+                ],
+                onChanged: (value) => update(() => type = value ?? ''),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('閉じる'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, (machine, type)),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted || _store == null) return;
+    try {
+      final text = await setPscubeMachineType(
+        _store!,
+        result.$1,
+        result.$2.isEmpty ? null : result.$2,
+      );
+      if (text != null && mounted) {
+        await saveViewerData(text);
+        setState(() => _show(ViewerData.parse(text)));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = '機種タイプを保存できませんでした。\n$error');
+    }
+  }
+
   void _openRecord(
     SlotRecord record,
     ScoreResult? score, {
@@ -314,6 +403,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       'android' => 'Android版',
       'pc' || 'pc-deleted' => 'PC版',
       'pc-viewer' => 'PC版（閲覧用・直近60日）',
+      'pscube' => 'P’s CUBE・',
       _ => '',
     };
     if (data.file == 'Googleドライブ（自動）') {
@@ -350,6 +440,18 @@ class _ViewerHomeState extends State<ViewerHome> {
                 onChanged: (day) => setState(() => _day = day),
               ),
         actions: [
+          if (data?.source == 'pscube') ...[
+            IconButton(
+              tooltip: '機種タイプ',
+              onPressed: _editPscubeType,
+              icon: const Icon(Icons.tune),
+            ),
+            IconButton(
+              tooltip: 'バックアップを書き出す',
+              onPressed: _exportPscube,
+              icon: const Icon(Icons.file_download_outlined),
+            ),
+          ],
           if (_remote != null)
             IconButton(
               tooltip: 'Googleドライブの最新を読み込む',
@@ -388,12 +490,12 @@ class _ViewerHomeState extends State<ViewerHome> {
     padding: const EdgeInsets.all(16),
     children: [
       if (_error != null) Notice(text: _error!),
-      const EmptyState(
+      EmptyState(
         icon: Icons.cloud_download_outlined,
         title: 'バックアップを読み込んでください',
         body:
             '「バックアップを読み込む」を押し、「ファイル」からGoogleドライブの'
-            'database-backup-….json を選びます。読み込んだ内容はこの端末の中だけで'
+            '${Uri.base.path.contains('/pscube/') ? 'P’s CUBEのJSONまたはWebArchive' : 'バックアップJSON'} を選びます。読み込んだ内容はこの端末の中だけで'
             '使い、どこにも送りません。次からは選び直さなくても開けます。',
       ),
       const SizedBox(height: 12),
@@ -466,8 +568,7 @@ class _ViewerHomeState extends State<ViewerHome> {
             text:
                 'このバックアップには、この日より前の記録が$history日分しかありません。'
                 '採点は前の30日分と比べるため、点数が中立（50〜60点前後）に寄っています。'
-                '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、'
-                'Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。',
+                '${data.source == 'pscube' ? '以前の日付も含むP’s CUBEのバックアップを追加で読み込んでください。' : '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。'}',
           ),
         if (_loading) const LinearProgressIndicator(),
         // Driveの確認中は動く表示にしない（動いている間は画面を描き直し続け、
@@ -487,6 +588,7 @@ class _ViewerHomeState extends State<ViewerHome> {
             _day = null;
           }),
           short: true,
+          stores: viewerStoreNames(all),
         ),
         const SizedBox(height: 10),
         OutlinedButton.icon(

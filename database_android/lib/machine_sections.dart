@@ -434,6 +434,9 @@ class MachineDataTable extends StatelessWidget {
                   label == '推定設定' &&
                           SettingEstimatePresentation.twoChoicesOf(context)
                       ? '推定2候補'
+                      : label == '最大持玉' &&
+                            entries.firstOrNull?.$1.isPscube == true
+                      ? 'MY'
                       : label,
                   style: head,
                 ),
@@ -470,7 +473,7 @@ class MachineDataTable extends StatelessWidget {
                             _text(
                               hitRate(entries[i].$1.games, entries[i].$1.rb),
                             ),
-                            _text('${entries[i].$1.maxHold ?? '—'}'),
+                            _text('${entries[i].$1.outputValue ?? '—'}'),
                             _setting(context, entries[i].$1),
                             _score(entries[i].$2),
                           ])

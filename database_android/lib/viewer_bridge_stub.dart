@@ -15,3 +15,11 @@ Future<String?> backupFromRemote(
 String? loadRemoteUrl() => null;
 
 void saveRemoteUrl(String? url) {}
+
+Future<void> exportPscubeBackup() async {}
+
+Future<String?> setPscubeMachineType(
+  String scope,
+  String machine,
+  String? type,
+) async => null;

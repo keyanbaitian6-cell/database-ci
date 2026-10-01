@@ -7,6 +7,27 @@ const storeNames = <String, String>{
   'saiwaichou': 'スーパーメルヘンワールド幸町',
 };
 
+/// Viewer scopes keep P's CUBE shops and rates apart from the original stores.
+bool isPscubeStore(String value) =>
+    RegExp(r'^pscube:c\d+:\d+(?:\.\d+)?$').hasMatch(value);
+
+String storeDisplayName(String store) {
+  if (isPscubeStore(store)) {
+    final parts = store.split(':');
+    return 'P’s CUBE（${parts[2]}スロ）';
+  }
+  return storeNames[store] ?? store;
+}
+
+Map<String, String> viewerStoreNames(Iterable<SlotRecord> records) {
+  final scopes = records.map((r) => r.store).toSet();
+  return {
+    if (scopes.any((s) => !isPscubeStore(s))) ...storeNames,
+    for (final scope in scopes)
+      if (isPscubeStore(scope)) scope: storeDisplayName(scope),
+  };
+}
+
 /// 手入力で保存できる、根拠を確認済みの設定情報です。
 /// 採点や設定推測の入力には使わず、記録の注記としてだけ扱います。
 const confirmedSettingOptions = <String>['4以上', '5以上', '6'];
@@ -42,7 +63,7 @@ bool hasImplausibleNumbers(SlotRecord record) =>
     record.games > 20000 ||
     record.bb > 500 ||
     record.rb > 500 ||
-    (record.maxHold ?? 0) > 100000;
+    (record.outputValue ?? 0) > 100000;
 
 /// [time] as ISO 8601 with its UTC offset, e.g. `2026-09-26T23:05:12.345+09:00`.
 ///
@@ -280,6 +301,18 @@ class SlotRecord {
   // saiwaichou's own list page never shows a 最大持玉 column at all; it is
   // filled in later from the individual rack's graph page instead.
   final int? maxHold;
+  bool get isPscube => extra['source'] == 'pscube' && isPscubeStore(store);
+  int? get my => isPscube ? (extra['my'] as num?)?.toInt() : null;
+  int get atArt => isPscube ? (extra['at_art'] as num?)?.toInt() ?? 0 : 0;
+  int? get outputValue => isPscube ? my : maxHold;
+  String get outputLabel => isPscube ? 'MY' : '最大持玉';
+  bool get pscubeNormal {
+    if (extra['machine_type'] == 'normal') return true;
+    if (extra['machine_type'] == 'other') return false;
+    return ['ジャグラー', 'ｼﾞｬｸﾞﾗｰ', 'ハナハナ', 'ﾊﾅﾊﾅ'].any(machine.contains);
+  }
+
+  bool get pscubeOutputProfile => isPscube && !pscubeNormal;
   final int? previousStart;
   final GraphMeasurement? graph;
 
@@ -306,10 +339,10 @@ class SlotRecord {
   /// 表の大当たり（BB+RB）が0回。グラフは取らない（利用者の指定、2026-09-29。
   /// 実データの0回550台で、終点がプラスだったのは24Gの1台だけ）。表を取り
   /// 込み直して当たりが付けば、また取る対象に戻る。PC版 `graph_not_needed`。
-  bool get graphNotNeeded => graph == null && bb + rb == 0;
+  bool get graphNotNeeded => graph == null && bb + rb + atArt == 0;
 
   /// グラフが済んでいる（取り込み済み、または大当たり0回で不要）。
-  bool get graphDone => graph != null || bb + rb == 0;
+  bool get graphDone => graph != null || bb + rb + atArt == 0;
 
   SlotRecord copyWith({
     String? store,

@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parents[1]
 BUILD = HERE / 'build' / 'web'
 SEED = HERE / 'assets' / 'database_seed.json'
 PSCUBE = HERE / 'web' / 'pscube'
-PSCUBE_FILES = {'index.html', 'style.css', 'app.mjs', 'data.mjs', 'archive.mjs', 'scoring.mjs', 'sync.mjs'}
+PSCUBE_FILES = {'index.html', 'data.mjs', 'archive.mjs', 'scoring.mjs', 'sync.mjs', 'viewer_bridge.mjs', 'viewer_bootstrap.mjs'}
 
 README = """# database 閲覧
 
@@ -46,15 +46,19 @@ def record_probes():
 
 
 def stage_pscube(target):
-    """Add the independent P's CUBE page without replacing the Flutter build."""
+    """Add P's CUBE's input bridge for the shared Flutter viewer."""
     target = Path(target)
     dest = target / 'pscube'
     existing = {p.name for p in PSCUBE.iterdir() if p.is_file()}
     if existing != PSCUBE_FILES:
         sys.exit(f'P’s CUBEの公開ファイルを確認してください: {sorted(existing)}')
-    if dest.exists() and any(p.name not in PSCUBE_FILES for p in dest.iterdir()):
+    if not (target / 'main.dart.js').exists() or b'pscube-viewer' not in (target / 'main.dart.js').read_bytes():
+        sys.exit('共通閲覧画面の新しいFlutterビルドが必要です。先に全体をstageしてください。')
+    if dest.exists() and any(p.name not in PSCUBE_FILES | {'app.mjs', 'style.css'} for p in dest.iterdir()):
         sys.exit('公開先のpscubeフォルダに未知のファイルがあります。')
     dest.mkdir(parents=True, exist_ok=True)
+    for obsolete in ('app.mjs', 'style.css'):
+        (dest / obsolete).unlink(missing_ok=True)
     probes = record_probes()
     for name in sorted(PSCUBE_FILES):
         data = (PSCUBE / name).read_bytes()

@@ -131,16 +131,21 @@ class _ExploratoryForecastPageState extends State<ExploratoryForecastPage> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
           children: [
             if (stores.length > 1) ...[
-              storeDropdown(_store, (v) {
-                if (v == _store) return;
-                _store = v;
-                final storeDays = viewerDays(records, v);
-                if (!storeDays.contains(_day) && storeDays.isNotEmpty) {
-                  _day = storeDays.first;
-                }
-                widget.onSelectionChanged?.call(_store, _day);
-                _restart();
-              }, short: true),
+              storeDropdown(
+                _store,
+                (v) {
+                  if (v == _store) return;
+                  _store = v;
+                  final storeDays = viewerDays(records, v);
+                  if (!storeDays.contains(_day) && storeDays.isNotEmpty) {
+                    _day = storeDays.first;
+                  }
+                  widget.onSelectionChanged?.call(_store, _day);
+                  _restart();
+                },
+                short: true,
+                stores: viewerStoreNames(records),
+              ),
               const SizedBox(height: 12),
             ],
             if (!ready) ...[
@@ -277,7 +282,13 @@ class _ExploratoryCandidatesCardState extends State<ExploratoryCandidatesCard> {
               ),
             ],
             const SizedBox(height: 6),
-            const Text(exploratoryValidationNote, style: note),
+            Text(
+              widget.candidates.any((c) => c.record.isPscube)
+                  ? 'P’s CUBEではMYとグラフを含む記録で計算します。'
+                        'このデータ元での予測成績は未検証です。翌日の設定・勝率・期待収支を示すものではありません。'
+                  : exploratoryValidationNote,
+              style: note,
+            ),
           ],
         ),
       ),

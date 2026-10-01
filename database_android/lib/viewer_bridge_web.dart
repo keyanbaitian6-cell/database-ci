@@ -21,6 +21,16 @@ external JSPromise<JSAny?> _save(JSString text);
 @JS('databaseViewer.load')
 external JSPromise<JSString?> _load();
 
+@JS('databaseViewer.exportBackup')
+external JSPromise<JSAny?> _exportBackup();
+
+@JS('databaseViewer.setPscubeType')
+external JSPromise<JSString?> _setPscubeType(
+  JSString scope,
+  JSString machine,
+  JSString? type,
+);
+
 /// ファイルを選んで読んだ結果（軽くしたJSON）。選ばなければ null。
 Future<String?> pickBackup() async => (await _pick().toDart)?.toDart;
 
@@ -47,3 +57,12 @@ Future<String?> backupFromRemote(
 String? loadRemoteUrl() => _getRemote()?.toDart;
 
 void saveRemoteUrl(String? url) => _setRemote(url?.toJS);
+
+Future<void> exportPscubeBackup() async => await _exportBackup().toDart;
+
+Future<String?> setPscubeMachineType(
+  String scope,
+  String machine,
+  String? type,
+) async =>
+    (await _setPscubeType(scope.toJS, machine.toJS, type?.toJS).toDart)?.toDart;

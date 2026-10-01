@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## ブラウザ版P’s CUBEの画面を既存databaseへ統一（Codex）
+
+- 利用者の修正依頼：既存databaseとほぼ同じデザイン・仕様で、読み込むデータだけがP’s CUBEへ変わる構成。独立HTMLの一覧画面を廃止し、`viewer_main.dart`・`viewer_pages.dart`・共通の表／グラフ／日付切替／翌日候補をそのまま共用。`/pscube/`も同じFlutterビルドを起動する。
+- 入力時にP’s CUBEのJSONを共通のSlotRecordへ変換。MYは`extra['my']`に保持し、メルヘンの最大持玉へ書き換えない。店舗・貸玉を区別し、ノーマル／それ以外の採点・機種タイプ変更を維持。Android／PCの収集処理は変更していない。
+- 旧版のIndexedDB `database-pscube-viewer`／`state`の`data`・`meta`を読み継ぐ。元の閲覧ページでもP’s CUBE JSON／WebArchiveを読み込める。メルヘンの保存データを消さず、最後に開いたデータ種別を保存。Googleドライブは従来の`?file=pscube`、P’s CUBEバックアップ書き出しも維持。
+- 確認：FlutterのP’s CUBE変換・共通画面と既存閲覧の回帰49件、JSのデータ／採点／同期31件、元のバックアップパーサ28件、静的解析成功。Chromiumで旧保存データの移行、機種表／グラフ切替、日付移動、メルヘン保存内容の保持、ファイル読み込み／書き出し／タイプ変更、失敗時の内容保持、ドライブ同期を確認。iPhone実機Safariは未確認。
+- 公開は必ず`stage_viewer.py`で記録を除いたビルドを使う。`--pscube-only`は共通Flutterビルドが既に更新済みの場合だけ使用可能。
+
 ## 2026-10-02 朝：P’s CUBEで止められた件、「サイトの記録を消してやり直す」、APK 0.5.17（Claude）
 
 - 利用者「Android版で7時間くらいあけてアクセスしたけど蹴られてる」「クロームならひらけた」「PC版もお願い」。回線ではなくアプリのCookie等と考え、Android（右上のクッキーのボタン）とPC（取り込みカード下）に「サイトの記録を消してやり直す」を追加（`ab393d4`）。確認→自動OFF→Cookie・localStorage・sessionStorage・IndexedDB・キャッシュを消す→最初のページへ。取り込んだ記録は消さない。保存中は断る。止められた気配での自動停止の案内文にこのボタンを追記。詳細は `database/PSCUBE_ACCESS_PLAN.md` の末尾。

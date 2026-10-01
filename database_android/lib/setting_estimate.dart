@@ -187,6 +187,7 @@ class SettingFit {
 }
 
 SettingEstimate? estimateSetting(SlotRecord row) {
+  if (row.pscubeOutputProfile) return null;
   if (hasImplausibleNumbers(row)) return null;
   final key = settingModelForMachine(row.machine);
   final spec = key == null ? null : _specs[key];

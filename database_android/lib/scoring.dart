@@ -59,10 +59,9 @@ List<SlotRecord> comparisonPool(SlotRecord row, List<SlotRecord> all) {
   // 日付は必ず 'YYYY-MM-DD' なので、文字列の大小がそのまま日付の前後になる。
   // 比較のたびに日付を解析すると、台数の二乗だけ解析が走って重くなる
   // （PC版 core.py の comparison_pool も同じ文字列比較）。
-  final first = DateTime.parse(row.day)
-      .subtract(const Duration(days: 30))
-      .toIso8601String()
-      .substring(0, 10);
+  final first = DateTime.parse(
+    row.day,
+  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
   final target = max(500, row.games);
   final lowest = max(500, target / 2);
   final highest = target * 2;
@@ -114,6 +113,7 @@ double? absoluteHoldScore(int? maxHold) =>
     maxHold == null ? null : maxHoldScore * min(1.0, maxHold / completeHold);
 
 ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
+  if (row.isPscube) return _scorePscube(row, all);
   if (row.games <= 0 || row.bb < 0 || row.rb < 0 || (row.maxHold ?? 0) < 0) {
     return ScoreResult(
       provisional: true,
@@ -226,6 +226,111 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
     referenceCount: hitRefs.length,
     referenceDays: days,
     holdReferenceCount: holdRefs.length,
+    coverage: 100 - missing,
+    missingLow: rounded(observed),
+    missingHigh: rounded(observed + missing),
+    reasons: reasons,
+  );
+}
+
+/// The already published P's CUBE policy, presented by the shared viewer.
+/// The normal profile uses BIG/REG; other machines use MY and the curve.
+ScoreResult _scorePscube(SlotRecord row, List<SlotRecord> all) {
+  if (row.games <= 0 ||
+      hasImplausibleNumbers(row) ||
+      row.games <= minScoredGames) {
+    return ScoreResult(
+      games: row.games <= 0 ? null : 0,
+      provisional: true,
+      referenceCount: 0,
+      reasons: [
+        row.games <= 0
+            ? '未稼働・回転数なし'
+            : hasImplausibleNumbers(row)
+            ? 'サイトの数値が異常なため採点なし（88888888などの表示）'
+            : '${minScoredGames}G以下のため採点なし',
+      ],
+    );
+  }
+  final outputOnly = row.pscubeOutputProfile;
+  final hitMax = outputOnly ? 0 : 60;
+  final holdMax = outputOnly ? 50 : 20;
+  final endMax = outputOnly ? 25 : 10;
+  final retentionMax = outputOnly ? 25 : 10;
+  final refs = comparisonPool(row, all);
+  final days = refs.map((r) => r.day).toSet().length;
+  double rateOf(SlotRecord r) => (r.bb + r.rb) / r.games;
+  final hit = hitMax == 0
+      ? null
+      : adjustedRank(rateOf(row), refs, rateOf, hitMax.toDouble(), row.games);
+  final ranked = adjustedRank(
+    row.my?.toDouble(),
+    refs,
+    (r) => r.my!.toDouble(),
+    holdMax.toDouble(),
+    row.games,
+  );
+  final absolute = row.extra['rate'] == '20'
+      ? holdMax * min(1.0, (row.my ?? 0) / completeHold)
+      : 0.0;
+  final hold = ranked == null ? null : max(ranked, absolute).toDouble();
+  final reasons = <String>[];
+  if (hitMax > 0 && hit == null)
+    reasons.add('当たり頻度の比較データ不足：中立${hitMax ~/ 2}点で補完');
+  if (hold == null) reasons.add('MYの比較データ不足：中立${holdMax ~/ 2}点で補完');
+  double? positive, retention;
+  final graph = row.graph;
+  if (row.graphNotNeeded) {
+    positive = 0;
+    retention = 0;
+    reasons.add('当たり0回でグラフ省略：終点・維持は0点');
+  } else if (graph == null) {
+    reasons.add('グラフ未取得：中立${(endMax + retentionMax) ~/ 2}点で補完');
+  } else {
+    final peak = max(0.0, graph.baselineY - graph.peakY);
+    final end = graph.baselineY - graph.endY;
+    if (end != 0 && end.abs() <= 1) {
+      reasons.add('グラフ終点がゼロ線付近：中立点で補完');
+    } else {
+      positive = end > 0 ? endMax.toDouble() : 0;
+      retention = peak == 0 ? 0 : retentionMax * (end / peak).clamp(0, 1);
+      if (positive == 0) reasons.add('グラフ終点がゼロ線以下');
+    }
+  }
+  final parts = [
+    if (hitMax > 0) (hit, hitMax),
+    (hold, holdMax),
+    (positive, endMax),
+    (retention, retentionMax),
+  ];
+  final missing = parts
+      .where((p) => p.$1 == null)
+      .fold<int>(0, (sum, p) => sum + p.$2);
+  final observed = parts.fold<double>(0, (sum, p) => sum + (p.$1 ?? 0));
+  double rounded(double v) => (v * 10).round() / 10;
+  final provisional =
+      missing > 0 ||
+      row.games < shrinkGames ||
+      refs.length < minimumReferenceRows ||
+      days < shrinkDays;
+  if (provisional) reasons.add('少数データ・欠測を含む暫定評価');
+  reasons.add('比較${refs.length}件/$days日・観測${row.games}G');
+  if (missing > 0)
+    reasons.add(
+      '評価可能配点${100 - missing}/100・欠測による幅'
+      '${rounded(observed).toStringAsFixed(1)}〜${rounded(observed + missing).toStringAsFixed(1)}（信頼区間ではありません）',
+    );
+  return ScoreResult(
+    games: 0,
+    maxHold: hold,
+    hits: hit,
+    positive: positive,
+    retention: retention,
+    total: rounded(observed + missing / 2),
+    provisional: provisional,
+    referenceCount: refs.length,
+    referenceDays: days,
+    holdReferenceCount: refs.length,
     coverage: 100 - missing,
     missingLow: rounded(observed),
     missingHigh: rounded(observed + missing),

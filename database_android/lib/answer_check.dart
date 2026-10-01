@@ -36,11 +36,9 @@ typedef AnswerCheckDay = ({
   List<AnswerCheckHit> hits,
 });
 
-String _dayBefore(String day) =>
-    DateTime.parse(day)
-        .subtract(const Duration(days: 1))
-        .toIso8601String()
-        .substring(0, 10);
+String _dayBefore(String day) => DateTime.parse(
+  day,
+).subtract(const Duration(days: 1)).toIso8601String().substring(0, 10);
 
 /// [store] で、前の日（暦の前日）と両方に記録がある日。新しい順。
 List<String> answerCheckDays(List<SlotRecord> all, String store) {
@@ -191,11 +189,16 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
           children: [
             if (stores.length > 1) ...[
-              storeDropdown(_store, (v) {
-                if (v == _store) return;
-                _store = v;
-                _calculate();
-              }, short: true),
+              storeDropdown(
+                _store,
+                (v) {
+                  if (v == _store) return;
+                  _store = v;
+                  _calculate();
+                },
+                short: true,
+                stores: viewerStoreNames(widget.records),
+              ),
               const SizedBox(height: 12),
             ],
             const Text(

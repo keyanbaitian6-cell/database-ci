@@ -205,6 +205,20 @@
       });
     }
 
+    const pscubeModule = () => import('./pscube/viewer_bridge.mjs');
+    const pscubeBridge = async () => (await pscubeModule()).createPscubeBridge();
+    async function pscubeActive() {
+      if (typeof indexedDB === 'undefined') return false;
+      const db = await open();
+      try {
+        return await new Promise((resolve, reject) => {
+          const request = db.transaction(STORE).objectStore(STORE).get('active_source');
+          request.onsuccess = () => resolve(request.result === 'pscube');
+          request.onerror = () => reject(request.error);
+        });
+      } finally { db.close(); }
+    }
+
     return {
       // ファイルを選んで読む。選ばなければ null。
       pick() {
@@ -217,7 +231,12 @@
           input.onchange = async () => {
             const file = input.files && input.files[0];
             if (!file) { resolve(null); return; }
-            try { resolve(finish(await parse(file.stream()), file.name)); }
+            try {
+              const head = await file.slice(0, 4096).text();
+              if (/\.webarchive$/i.test(file.name) || head.startsWith('bplist') || head.includes('WebMainResource') || /"format"\s*:\s*"pscube-viewer"/.test(head)) {
+                resolve(await (await pscubeModule()).readPscubeFiles([file]));
+              } else resolve(finish(await parse(file.stream()), file.name));
+            }
             catch (error) { reject(error); }
           };
           input.oncancel = () => resolve(null);
@@ -237,6 +256,7 @@
       // 1行だけで読むのをやめて null を返す。開くたびに同じ中身を丸ごと読み直すと、
       // 通信と計算で電池を使うため。
       async fromRemote(url, known) {
+        if (await pscubeActive()) return (await pscubeBridge()).fromRemote(url, known);
         if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url || '')) {
           throw new Error('GoogleのスクリプトのURL（https://script.google.com/macros/s/…/exec）を入れてください。');
         }
@@ -309,16 +329,20 @@
         } catch (_) {}
       },
       async save(text) {
+        const pscube = JSON.parse(text).format === 'pscube-viewer';
+        if (pscube) await (await pscubeBridge()).save(text);
         const db = await open();
         await new Promise((resolve, reject) => {
           const tx = db.transaction(STORE, 'readwrite');
-          tx.objectStore(STORE).put(text, 'data');
+          if (!pscube) tx.objectStore(STORE).put(text, 'data');
+          tx.objectStore(STORE).put(pscube ? 'pscube' : 'meruhen', 'active_source');
           tx.oncomplete = resolve;
           tx.onerror = () => reject(tx.error);
         });
         db.close();
       },
       async load() {
+        if (await pscubeActive()) return (await pscubeBridge()).load();
         const db = await open();
         const value = await new Promise((resolve, reject) => {
           const request = db.transaction(STORE).objectStore(STORE).get('data');
@@ -327,6 +351,10 @@
         });
         db.close();
         return value;
+      },
+      async exportBackup() { return (await pscubeBridge()).exportBackup(); },
+      async setPscubeType(scope, machine, type) {
+        return (await pscubeBridge()).setPscubeType(scope, machine, type);
       },
     };
   })();

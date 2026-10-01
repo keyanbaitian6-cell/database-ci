@@ -1,74 +1,137 @@
-// Run with Playwright installed: node tool/test_pscube_browser.mjs
-// Optional: PLAYWRIGHT_MODULE=/absolute/path/to/playwright-core/index.mjs
-//           CHROMIUM_PATH=/usr/bin/chromium
+// Build viewer_main.dart and stage_viewer.py before this browser test.
+// Tests yesterday's old IndexedDB data with the shared Flutter UI.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const web = fileURLToPath(new URL('../web/', import.meta.url));
-const server = http.createServer(async (req, res) => {
-  const pathname = new URL(req.url, 'http://localhost').pathname;
-  const local = path.resolve(web, '.' + (pathname.endsWith('/') ? pathname + 'index.html' : pathname));
-  if (!local.startsWith(web)) { res.writeHead(403).end(); return; }
+import {fileURLToPath} from 'node:url';
+const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const root = process.env.VIEWER_WEB_ROOT || fileURLToPath(new URL('../build/web/', import.meta.url));
+const prefix = '/database-viewer/';
+const server = http.createServer(async (req,res) => {
+  let url = new URL(req.url,'http://localhost').pathname;
+  if (url === '/setup') { res.setHeader('content-type','text/html');res.end('<!doctype html><body>setup</body>');return; }
+  if (!url.startsWith(prefix)) { res.writeHead(404).end();return; }
+  url = url.slice(prefix.length);
+  const local = path.resolve(root, (!url || url.endsWith('/')) ? url+'index.html' : url);
+  if (!local.startsWith(path.resolve(root)+path.sep)) { res.writeHead(403).end();return; }
   try {
-    const body = await fs.readFile(local);
-    res.setHeader('content-type', local.endsWith('.mjs') ? 'text/javascript' : local.endsWith('.css') ? 'text/css' : 'text/html');
+    const body=await fs.readFile(local),ext=path.extname(local);
+    res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.json':'application/json',
+      '.wasm':'application/wasm','.html':'text/html','.css':'text/css','.png':'image/png'})[ext] || 'application/octet-stream');
     res.end(body);
   } catch { res.writeHead(404).end(); }
 });
-await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const origin = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox'] });
-const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-const errors = [], external = [];
-page.on('pageerror', e => errors.push(e.message));
-page.on('request', request => { if (!request.url().startsWith(origin)) external.push(request.url()); });
-const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c1/cgi-bin/';
-const mUrl = `${base}nc-v05-011.php?cd_ps=2&bai=20`;
-function archive(url, html) {
-  const escape = s => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;');
-  return { name: 'synthetic.webarchive', mimeType: 'application/x-webarchive', buffer: Buffer.from(`<?xml version="1.0"?><plist version="1.0"><dict><key>WebMainResource</key><dict><key>WebResourceURL</key><string>${escape(url)}</string><key>WebResourceMIMEType</key><string>text/html</string><key>WebResourceData</key><data>${Buffer.from(html).toString('base64')}</data></dict></dict></plist>`) };
+await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+const origin='http://127.0.0.1:'+server.address().port;
+const base='https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
+const machines=[{store:'c740601',rate:'20',machine:'マイジャグラーV',machine_type:'normal',
+  expected_count:8,url:base+'nc-v05-011.php?cd_ps=2&bai=20'}];
+const records=[];
+for(let ago=0;ago<7;ago++){
+  const date=new Date('2026-10-01T00:00:00Z');date.setUTCDate(date.getUTCDate()-ago);
+  const day=date.toISOString().slice(0,10);
+  for(let rack=1;rack<=8;rack++)records.push({store:'c740601',rate:'20',machine:'マイジャグラーV',rack,day,
+    bb:rack*2,rb:rack,games:3000,my:rack*500,at_art:0,
+    detail_url:base+'nc-v06-001.php?cd_dai='+rack+'#'+day.replaceAll('-',''),
+    graph:{kind:'daily',zero_y:100,points:[[0,100],[10,20],[20,40]]}});
 }
-const index = archive(`${base}nc-v03-001.php?cd_ps=2`, `<ul id="ulKI"><li><a class="btn-ki" href="${mUrl}"><span class="nc-label">試験機種</span><span class="nc-lower">2台</span></a></li></ul><script>window.injected=true</script><img src="https://invalid.example/tracker"><iframe src="https://invalid.example/"></iframe>`);
-function card(rack) {
-  return `<li id="li-${rack}"><a href="${base}nc-v06-001.php?cd_dai=${rack}#20261001">${rack}</a><table>${Object.entries({ 'toku1-count': 3, 'toku5-count': 1, 'toku4-count': 0, sum_game: 600, sadama_s: 120 }).map(([key, value]) => `<tr data-key="${key}"><td>${key}</td><td>${value}</td></tr>`).join('')}</table><div id="ca-${rack}"><svg><path stroke="#f0e448" stroke-width="2" d="M0,10 L10,2 M0,0 L0,0"/><path stroke="#ffffff" stroke-width="0" d="M0,10 L10,10"/></svg></div></li>`;
+const data={format:'pscube-viewer',version:1,machines,records};
+const exported='2026-10-01T23:00:00+09:00';
+const meruhen={header:{format:'database-backup',version:1,source:'pc',exported_at:exported},
+  records:records.map(r=>({store:'nagamachiminami',machine:r.machine,day:r.day,rack:r.rack,games:r.games,
+    bb:r.bb,rb:r.rb,max_hold:r.my,graph_measurement:{baseline_y:100,peak_y:20,trough_y:100,end_y:40,
+      curve:[[0,100],[10,20],[20,40]]}}))};
+const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || undefined,args:['--no-sandbox'],...(process.env.BROWSER_PROXY ? {proxy:{server:process.env.BROWSER_PROXY,bypass:'127.0.0.1,localhost'}} : {})});
+const page=await browser.newPage({viewport:{width:393,height:852}});
+const errors=[];
+page.on('pageerror',e=>{errors.push(e.message);console.error('pageerror',e.message);});
+
+let driveRequests=[];
+// Optional local font for network-restricted test environments.
+if(process.env.VIEWER_TEST_FONT){
+  const font=await fs.readFile(process.env.VIEWER_TEST_FONT);
+  await page.route('https://fonts.gstatic.com/**',route=>route.fulfill({status:200,contentType:'font/otf',headers:{'access-control-allow-origin':'*'},body:font}));
 }
-const machine = (racks = [1, 3]) => archive(mUrl, `<title>P'sCUBE｜試験機種</title><h1>SLOT</h1><li data-ymd="20261001" class="selected">本日</li><ul>${racks.map(card).join('')}</ul>`);
-const rack = archive(`${base}nc-v06-001.php?cd_dai=1#20261001`, `<title>P'sCUBE｜試験機種</title><h1>SLOT</h1><h2>台番号 1</h2><a href="${mUrl}">機種データ</a><table><tr>${Array.from({ length: 7 }, (_, i) => `<td class="column"><div>${[i ? `${i}日前` : '本日', 3, 1, 0, '1/150', 600, 120, 20].map(v => `<div>${v}</div>`).join('')}</div></td>`).join('')}</tr></table>${Array.from({ length: 7 }, (_, i) => `<div id="svg${i}"><svg><path class="amcharts-graph-stroke" d="M0,10 L10,1 M0,0 L0,0"/><path class="amcharts-axis-zero-grid" d="M0,10 L10,10"/></svg></div>`).join('')}`);
-async function upload(file) {
-  await page.locator('#files').setInputFiles(file);
-  await page.waitForFunction(() => !document.getElementById('files').disabled);
+await page.route('https://script.google.com/**',route=>{
+  driveRequests.push(route.request().url());
+  return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({...data,exported_at:exported})});
+});
+
+async function accessibility(){
+  await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
+  const placeholder=page.locator('flt-semantics-placeholder');
+  if(await placeholder.count())await placeholder.evaluate(e=>e.click());
+  await page.getByText('database 閲覧',{exact:true}).waitFor({timeout:60000}).catch(async e=>{await page.screenshot({path:'/tmp/pscube-failure.png'});console.log(await page.locator('body').innerHTML());throw e;});
+}
+async function readStored(dbName,store,key){
+  return page.evaluate(async ({dbName,store,key})=>{
+    const db=await new Promise((resolve,reject)=>{const q=indexedDB.open(dbName,1);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    const value=await new Promise((resolve,reject)=>{const q=db.transaction(store).objectStore(store).get(key);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    db.close();return value;
+  },{dbName,store,key});
 }
 try {
-  await page.goto(`${origin}/pscube/`);
-  await upload(index); assert.equal(await page.locator('.machine').count(), 1);
-  assert.equal(await page.evaluate(() => window.injected), undefined); assert.deepEqual(external, []);
-  await upload(machine([1])); await page.locator('.machine').click();
-  assert.match(await page.locator('#progress').innerText(), /1\/2台の数値 （全台は未確認）/);
-  await upload(machine()); assert.match(await page.locator('#progress').innerText(), /2\/2台の数値 確認済/);
-  await upload(rack); assert.equal(await page.locator('.badge.done').count(), 1);
-  assert.match(await page.locator('#next').getAttribute('href'), /cd_dai=3#/);
-  assert.equal(await page.locator('#day option').count(), 7);
-  await page.locator('#machine-type').selectOption('normal');
-  await page.waitForFunction(() => !document.getElementById('machine-type').disabled);
-  await page.reload(); await page.locator('.machine').click();
-  assert.equal(await page.locator('#machine-type').inputValue(), 'normal');
-  assert.equal(await page.locator('.badge.done').count(), 1);
-  const downloadPromise = page.waitForEvent('download'); await page.locator('#export').click();
-  const download = await downloadPromise, exported = JSON.parse(await fs.readFile(await download.path(), 'utf8'));
-  assert.equal(exported.records.length, 8); assert.equal(exported.records[0].max_hold, undefined);
-  await upload({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{broken') });
-  assert.match(await page.locator('#status').innerText(), /前の内容が残っています/);
-  assert.equal(await page.locator('.badge.done').count(), 1);
-  await upload({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported)) });
-  assert.equal(await page.locator('.record').count(), 2);
-  for (const width of [320, 390, 768]) {
-    await page.setViewportSize({ width, height: 844 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  }
-  assert.deepEqual(errors, []); assert.deepEqual(external, []);
-  console.log('PASS: inert archive import, partial/full table, seven days, pending links, type, persistence, export/reimport, failed import preservation, 320/390/768px layout');
-} finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
+  await page.goto(origin+'/setup');
+  await page.evaluate(async ({data,meruhen,exported})=>{
+    for(const [name,store,entries] of [
+      ['database-pscube-viewer','state',[['data',data],['meta',{exported_at:exported}]]],
+      ['database-viewer','kv',[['data',JSON.stringify(meruhen)]]],
+    ]){
+      const db=await new Promise((resolve,reject)=>{const q=indexedDB.open(name,1);q.onupgradeneeded=()=>q.result.createObjectStore(store);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+      await new Promise((resolve,reject)=>{const tx=db.transaction(store,'readwrite');for(const [key,value]of entries)tx.objectStore(store).put(value,key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
+    }
+  },{data,meruhen,exported});
+  await page.goto(origin+prefix+'pscube/');
+  await accessibility();
+  assert.equal(JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).records.length,56);
+  assert.equal(await page.getByText('準備版',{exact:true}).count(),0);
+  await page.screenshot({path:process.env.PSCUBE_SCREENSHOT || '/tmp/pscube-shared-home.png'});
+  await page.mouse.move(200,700);
+  await page.mouse.wheel(0,1800);
+  await page.waitForTimeout(500);
+  await page.screenshot({path:'/tmp/pscube-scrolled.png'});
+
+  await page.getByRole('button',{name:/^マイジャグラーV/}).last().scrollIntoViewIfNeeded();
+  await page.getByRole('button',{name:/^マイジャグラーV/}).last().click();
+  await page.getByText('データ表示',{exact:true}).waitFor();
+  assert.ok((await page.locator('flt-semantics-host').innerHTML()).includes('MY'));
+  await page.getByText('グラフ表示',{exact:true}).click();
+  await page.screenshot({path:'/tmp/pscube-shared-graphs.png'});
+  await page.getByRole('button',{name:'前の記録日',exact:true}).click();
+  await page.getByRole('button',{name:/表示する日付.*2026-09-30/s}).waitFor();
+  assert.ok((await page.getByText('グラフ表示',{exact:true}).count())>0);
+  await page.goto(origin+prefix);
+  await accessibility();
+  assert.deepEqual(JSON.parse(await readStored('database-viewer','kv','data')),meruhen);
+  await page.screenshot({path:'/tmp/meruhen-shared-home.png'});
+  const chooserPromise=page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'バックアップを読み込む',exact:true}).click();
+  await(await chooserPromise).setFiles({name:'pscube-viewer.json',mimeType:'application/json',
+    buffer:Buffer.from(JSON.stringify(data))});
+  await page.getByRole('button',{name:'バックアップを書き出す',exact:true}).waitFor();
+  assert.deepEqual(JSON.parse(await readStored('database-viewer','kv','data')),meruhen);
+  assert.equal(await readStored('database-viewer','kv','active_source'),'pscube');
+  const downloadPromise=page.waitForEvent('download');
+  await page.getByRole('button',{name:'バックアップを書き出す',exact:true}).click();
+  const download=await downloadPromise;
+  const backup=JSON.parse(await fs.readFile(await download.path(),'utf8'));
+  assert.equal(backup.records.length,56);assert.equal(backup.records[0].max_hold,undefined);
+  assert.ok(backup.records[0].my>0);
+  await page.evaluate(()=>window.databaseViewer.setPscubeType('pscube:c740601:20','マイジャグラーV','other'));
+  assert.equal((await readStored('database-pscube-viewer','state','data')).machines[0].machine_type,'other');
+  const badChooser=page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'バックアップを読み込む',exact:true}).click();
+  await(await badChooser).setFiles({name:'bad.json',mimeType:'application/json',buffer:Buffer.from('{broken')});
+  await page.getByText(/バックアップを読み込めませんでした/).waitFor();
+  assert.equal((await readStored('database-pscube-viewer','state','data')).records.length,56);
+  await page.evaluate(()=>window.databaseViewer.setRemote('https://script.google.com/macros/s/test/exec'));
+  const driveResponse=page.waitForResponse(response=>response.url().includes('script.google.com'));
+  await page.reload();await accessibility();
+  await driveResponse;
+  await page.waitForFunction(()=>document.querySelector('flt-semantics')!=null);
+  await page.getByText(/Googleドライブ/).first().waitFor();
+  assert.ok(driveRequests.some(url=>url.includes('file=pscube')));
+  assert.deepEqual(errors,[]);
+  console.log('PASS: old IndexedDB migration, shared UI, data/graph tabs, day navigation, original Meruhen preservation, root P’s CUBE import, export, category, failed import and Drive source');
+} finally {await browser.close();await new Promise(resolve=>server.close(resolve));}

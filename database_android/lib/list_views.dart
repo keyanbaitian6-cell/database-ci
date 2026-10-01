@@ -8,7 +8,8 @@ const storeShortNames = <String, String>{
   'saiwaichou': '幸町',
 };
 
-String storeShortName(String store) => storeShortNames[store] ?? store;
+String storeShortName(String store) =>
+    storeShortNames[store] ?? storeDisplayName(store);
 
 /// 画面に出す機種名。長町南の一覧は半角カナ（例：`ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3`）で読みにくい
 /// ので、表示だけ全角カナにそろえる。保存している名前（照合・検索・削除の
@@ -208,7 +209,9 @@ List<(String, List<HistoryGroup>)> groupHistoryByDay(
               for (final r in rows) {
                 groups
                     .putIfAbsent(
-                      variety.contains(r.machine) ? varietyGroupName : r.machine,
+                      variety.contains(r.machine)
+                          ? varietyGroupName
+                          : r.machine,
                       () => [],
                     )
                     .add(r);
@@ -302,7 +305,7 @@ RackAverages rackAverages(List<(SlotRecord, ScoreResult)> all) {
   }
   final holds = [
     for (final (r, _) in entries)
-      if (r.maxHold != null) r.maxHold!,
+      if (r.outputValue != null) r.outputValue!,
   ];
   final scores = [
     for (final (_, s) in entries)
