@@ -207,3 +207,36 @@ test('Drive: only the Google script address is read', async () => {
   const {viewer} = remote(remoteText);
   await assert.rejects(viewer.fromRemote('https://example.com/exec', null), /GoogleのスクリプトのURL/);
 });
+
+test('Drive: intermittent 404 / 5xx / network failure is retried twice, other errors are not', async () => {
+  // やり直しの待ち（1.5秒・3秒）はすぐ進め、30秒の打ち切りはそのままにする。
+  const timers = {
+    setTimeout: (callback, ms) => setTimeout(callback, ms === 30000 ? ms : 0),
+    clearTimeout,
+  };
+  const ok = () => ({ok: true, status: 200, headers: {get: () => 'application/json'},
+    body: new Response(remoteText).body});
+  const bad = (status) => ({ok: false, status, headers: {get: () => 'text/html'}, body: null});
+  const sequence = (steps) => {
+    let i = 0;
+    const calls = [];
+    return {calls, fetchImpl: async (url) => {
+      calls.push(url);
+      const step = steps[Math.min(i++, steps.length - 1)];
+      if (step === 'net') throw new TypeError('Failed to fetch');
+      return step === 200 ? ok() : bad(step);
+    }};
+  };
+  for (const steps of [[404, 200], [503, 404, 200], ['net', 200]]) {
+    const s = sequence(steps);
+    const {viewer} = remote('', {timers, fetchImpl: s.fetchImpl});
+    assert.equal(JSON.parse(await viewer.fromRemote(REMOTE, null)).records.length, 200);
+    assert.equal(s.calls.length, steps.length);
+  }
+  const always = sequence([404]);
+  await assert.rejects(remote('', {timers, fetchImpl: always.fetchImpl}).viewer.fromRemote(REMOTE, null), /（404）/);
+  assert.equal(always.calls.length, 3);
+  const forbidden = sequence([403]);
+  await assert.rejects(remote('', {timers, fetchImpl: forbidden.fetchImpl}).viewer.fromRemote(REMOTE, null), /（403）/);
+  assert.equal(forbidden.calls.length, 1);
+});
