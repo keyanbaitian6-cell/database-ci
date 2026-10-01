@@ -734,7 +734,18 @@ def run_session(db_path, export_path):
     window.events.loaded += install_overlay
     window.events.closed += closed
     threading.Thread(target=auto_loop, name='pscube-auto', daemon=True).start()
-    webview.start(gui='edgechromium')
+    # pywebview の初期設定はシークレットモード（起動のたびにCookieを消し、別サイトの
+    # Cookieも拒否する）。そのため人間確認（hCaptcha）の確認済みが残らず、何度も確認が
+    # 出る。Safariと同じく、data の中の専用の場所にCookieを残す（2026-10-01、Androidで
+    # 同じ原因を直して人間確認が出なくなったことを受けて）。
+    webview.start(gui='edgechromium', private_mode=False, storage_path=str(webview_storage(db_path)))
+
+
+def webview_storage(db_path) -> Path:
+    """P’s CUBE取り込み画面のCookie・サイトのデータを残す場所（記録と同じ data の中、Gitには入らない）。"""
+    folder = Path(db_path).resolve().parent / 'pscube-webview'
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def runtime_root():

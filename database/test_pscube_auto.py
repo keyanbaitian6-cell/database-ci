@@ -1,5 +1,10 @@
 import json
+import sys
+import tempfile
+import types
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from auto_capture import AutoCapture
 from pscube_import import AutoPilot
@@ -187,6 +192,32 @@ class AutoPilotTests(unittest.TestCase):
                 self.pilot.configure(True, bad)
         self.assertEqual(self.pilot.configure(False, 0.1)['seconds'], 0.1)
         self.assertEqual(self.pilot.configure(False, 4.5)['seconds'], 4.5)
+
+
+class Handlers:
+    def __init__(self):
+        self.items = []
+
+    def __iadd__(self, handler):
+        self.items.append(handler)
+        return self
+
+
+class SessionStartTests(unittest.TestCase):
+    def test_window_keeps_cookies_in_the_data_folder_instead_of_private_mode(self):
+        import pscube_import
+        started = {}
+        window = types.SimpleNamespace(events=types.SimpleNamespace(loaded=Handlers(), closed=Handlers()),
+                                       evaluate_js=lambda script: None, get_current_url=lambda: pscube_import.ROOT_URL)
+        fake = types.SimpleNamespace(create_window=lambda *a, **k: window,
+                                     start=lambda **kwargs: (started.update(kwargs), [h() for h in window.events.closed.items]))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(sys.modules, {'webview': fake}):
+            db = Path(tmp) / 'data' / 'pscube.sqlite3'
+            pscube_import.run_session(db, Path(tmp) / 'data' / 'pscube-viewer.json')
+            self.assertEqual(started['gui'], 'edgechromium')
+            self.assertIs(started['private_mode'], False, 'シークレットモードではCookieが残らない')
+            self.assertEqual(Path(started['storage_path']), (Path(tmp) / 'data' / 'pscube-webview').resolve())
+            self.assertTrue(Path(started['storage_path']).is_dir())
 
 
 if __name__ == '__main__':
