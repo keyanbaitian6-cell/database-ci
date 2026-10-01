@@ -75,6 +75,8 @@
 
 ## 正本とデザインのルール（2026-09-25、利用者の指示）
 
+- **Windowsの配布用ZIP（`a/work/outputs/database-windows-*.zip`）は、利用者に頼まれたときだけ作る**（2026-10-01 利用者の指示「お願いした時だけでいい。全部消して」。それまでの5つは削除済み）。APKの複製は引き続き作る。
+
 - **正本は GitHub `imakurudev-eng/database` の `main` だけ**。2026-09-25に新デザイン（旧ブランチ `codex/adopt-claude-ui`）と採点v10をマージした `5e6009c` 以降がそれ。
 - **Androidのデザインは新デザインの1つだけ**。9/23以前の旧デザインのコード・ブランチ・APKは使わない、復元しない、そこからビルドしない。デザインを2系統持たない。
 - 作業を始める前に必ず `git fetch origin` と `git pull origin main` をして、最新の `main` から始める。別のフォルダやクローン（例：`Documents/Codex/2026-09-24/a/work/database-claude-review`）の古い状態から作業しない。
