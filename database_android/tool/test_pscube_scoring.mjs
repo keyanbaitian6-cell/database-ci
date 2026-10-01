@@ -134,3 +134,17 @@ test('ties: more used days, then the newer latest day, then the smaller rack num
   // 小数9桁で丸めてから比べる：差が10億分の1未満なら同点として台番号で決める。
   assert.ok(compareEvidence(e(2, 1, 'a', 55.0000000004), e(1, 1, 'a', 55.0000000001)) > 0);
 });
+
+test('no hit at all (0 spins included) and no graph: end/retention 0 like Meruhen v12; listed graph still counts', async () => {
+  const { progress } = await import('../web/pscube/data.mjs');
+  const pool = [1000, 2000, 3000].map((my, i) => rec(10 + i, '2026-09-30', 3000, 5, 5, my));
+  const zero = rec(1, '2026-10-01', 900, 0, 0, 0);
+  const data = make([...pool, zero, rec(2, '2026-10-01', 900, 3, 0, 300)]);
+  const s = scoreRecord(data.records.find(r => r.rack === 1), data);
+  assert.equal(s.parts.end, 0); assert.equal(s.parts.retention, 0);
+  assert.ok(s.reasons.some(r => r.includes('当たり0回でグラフ省略')));
+  const withGraph = make([...pool, { ...zero, graph: graph(100, 60) }]);
+  assert.equal(scoreRecord(withGraph.records.find(r => r.rack === 1), withGraph).parts.end, 25, '一覧のグラフがあれば実測を使う');
+  const state = progress(data, data.machines[0], '2026-10-01');
+  assert.deepEqual(state.pending.map(r => r.rack), [2], '当たり0回の台は台別7日分を待たない');
+});

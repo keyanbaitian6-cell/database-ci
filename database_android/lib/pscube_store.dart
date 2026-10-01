@@ -49,6 +49,12 @@ class PscubeStore {
 
   Future<void> close() => _serial(db.close);
 
+  /// 当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。全台一覧の数値は保存するが、
+  /// 台別7日分（グラフ）は取りに行かない（メルヘンv12を AT/ART も含めて引き継ぐ。利用者の指定、
+  /// 2026-10-01）。PC版 `no_hits` と同じ。
+  static bool noHits(Map<String, dynamic> r) =>
+      (r['bb'] as int) + (r['rb'] as int) + (r['at_art'] as int) == 0;
+
   static String _key(Map<String, dynamic> row, {bool record = false}) =>
       jsonEncode([
         row['store'],
@@ -448,7 +454,9 @@ class PscubeStore {
       } else {
         pending.addAll(
           rows
-              .where((r) => !captured.contains(_key(r, record: true)))
+              .where(
+                (r) => !captured.contains(_key(r, record: true)) && !noHits(r),
+              )
               .map((r) => r['detail_url'] as String),
         );
       }

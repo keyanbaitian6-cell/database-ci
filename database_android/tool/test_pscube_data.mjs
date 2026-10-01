@@ -40,10 +40,12 @@ test('unchanged numbers retain detailed graph; changed numbers require recapture
   const merged = mergeData(data(), changed);
   assert.equal(progress(merged, machine, record.day).pending.length, 1);
 });
-test('partial lists never appear complete, and no-hit racks remain pending', () => {
-  const d = validateData(data({ bb: 0, rb: 0, graph: null }));
+test('partial lists never appear complete; racks without any hit need no seven-day page (2026-10-01 user rule)', () => {
+  const d = validateData(data({ bb: 0, rb: 0, at_art: 0, graph: null }));
   assert.equal(progress(d, machine, record.day).complete, false);
-  assert.equal(progress(d, machine, record.day).pending.length, 1);
+  assert.equal(progress(d, machine, record.day).pending.length, 0, '当たりが1回もない台は台別7日分を待たない');
+  const at = validateData(data({ bb: 0, rb: 0, at_art: 2, graph: null }));
+  assert.equal(progress(at, machine, record.day).pending.length, 1, 'AT/ARTがあれば取る対象');
 });
 test('reimport is idempotent; category and other days are preserved', () => {
   const first = validateData(data({}, { machine_type: 'normal' }));

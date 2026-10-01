@@ -235,9 +235,12 @@ function mergeData(stored, incoming) {
   return validateData({ ...emptyData(), machines: [...machines.values()], records: [...records.values()] });
 }
 
+/** 当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。台別7日分は取りに行かない（PC・Androidと同じ）。 */
+const noHits = r => r.bb + r.rb + r.at_art === 0;
+
 function progress(data, machine, day) {
   const records = data.records.filter(r => machineKey(r) === machineKey(machine) && r.day === day).sort((a, b) => a.rack - b.rack);
-  const pending = records.filter(r => r.graph?.kind !== 'daily');
+  const pending = records.filter(r => r.graph?.kind !== 'daily' && !noHits(r));
   return { records, pending, complete: machine.expected_count !== null && records.length === machine.expected_count };
 }
 

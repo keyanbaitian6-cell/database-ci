@@ -73,6 +73,13 @@ def _key(*parts) -> str:
     return json.dumps(parts, ensure_ascii=False, separators=(',', ':'))
 
 
+def no_hits(r: dict) -> bool:
+    """当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。全台一覧の数値は保存するが、
+    台別7日分（グラフ）は取りに行かない（メルヘンv12の「大当たり0回はグラフを取らない」を、AT/ARTも
+    含めて引き継ぐ。利用者の指定、2026-10-01）。一覧を取り直して当たりが付けば、また取る対象に戻る。"""
+    return r['bb'] + r['rb'] + r['at_art'] == 0
+
+
 def _machine_key(m: dict) -> str:
     return _key(m['store'], m['rate'], m['machine'])
 
@@ -362,7 +369,7 @@ class PscubeStore:
             if len(rows) != machine.get('expected_count'):
                 pending.append(machine['url'])
             else:
-                pending += [r['detail_url'] for r in rows if _record_key(r) not in captured]
+                pending += [r['detail_url'] for r in rows if _record_key(r) not in captured and not no_hits(r)]
         return (pending[0] if pending else None), len(pending)
 
     def export_payload(self, kind='backup', today: date | None = None) -> dict:

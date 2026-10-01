@@ -243,6 +243,34 @@ void main() {
     expect((await store.nextTarget(day)).url, record()['detail_url']);
   });
 
+  test('当たりが1回もない台（0回転を含む）は数値を保存し、台別7日分は取りに行かない', () async {
+    final m = {...machine, 'expected_count': 2};
+    await store.importPage(page(PscubeStore.index, [m]), PscubeStore.index);
+    final zero = record()
+      ..['rack'] = 1527
+      ..['detail_url'] =
+          '${PscubeStore.root}cgi-bin/nc-v06-001.php?cd_dai=1527#20261001'
+      ..['bb'] = 0
+      ..['rb'] = 0
+      ..['at_art'] = 0
+      ..['games'] = 0
+      ..['my'] = 0;
+    final result = await store.importPage(
+      page(
+        machine['url'],
+        [
+          {...machine, 'expected_count': null},
+        ],
+        [record(), zero],
+      ),
+      machine['url'],
+    );
+    expect(result.nextUrl, record()['detail_url']);
+    expect(result.remaining, 1);
+    expect((await exported())['records'], hasLength(2));
+    expect(PscubeStore.noHits({'bb': 0, 'rb': 0, 'at_art': 1}), isFalse);
+  });
+
   group('バックアップ・同期（database/PSCUBE_SYNC.md）', () {
     Future<PscubeStore> other() => PscubeStore.open(
       path: '${dir.path}/other.sqlite3',

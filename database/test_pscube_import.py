@@ -60,6 +60,22 @@ class PscubeImportTests(unittest.TestCase):
         self.assertEqual(len(data['records']), 14)
         self.assertEqual(data['records'][0]['my'], 1921)
 
+    def test_racks_without_any_hit_are_saved_but_their_seven_day_page_is_skipped(self):
+        # 当たりが1回もない台（0回転を含む）は、数値は保存し、台別7日分は取りに行かない。
+        self.machines[0]['expected_count'] = 3
+        self.store.import_page(self.page(self.index_url, self.machines[:1]), self.index_url)
+        hit = self.record(self.machines[0], 1526)
+        zero = dict(self.record(self.machines[0], 1527), bb=0, rb=0, at_art=0, games=0, my=0)
+        idle = dict(self.record(self.machines[0], 1528), bb=0, rb=0, at_art=0, games=812)
+        table = self.page(self.machines[0]['url'], [dict(self.machines[0], expected_count=None)], [hit, zero, idle])
+        result = self.store.import_page(table, self.machines[0]['url'])
+        self.assertEqual(result['next_url'], hit['detail_url'])
+        self.assertEqual(result['remaining'], 1)
+        self.assertEqual(len(self.store.export_payload()['records']), 3, '数値は3台とも保存する')
+        at_only = dict(idle, at_art=1)
+        self.store.import_page(self.page(self.machines[0]['url'], [dict(self.machines[0], expected_count=None)], [hit, zero, dict(at_only, observed_at='2026-10-01T13:00:00+09:00')]), self.machines[0]['url'])
+        self.assertEqual(self.store.next_target(self.day)[1], 2, 'AT/ARTが付いたらまた取る対象に戻る')
+
     def test_incomplete_table_and_mismatched_page_are_rejected(self):
         self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
         self.machines[0]['expected_count'] = 2
