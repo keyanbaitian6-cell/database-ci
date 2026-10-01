@@ -8,7 +8,8 @@
 - **バックアップの振り分け**（利用者の報告：Androidの書き出しの店舗にメルヘン2店舗しかない、PCで読むと「対象外610件」）：P’s CUBEの書き出しをメルヘンの読み込みに通すと、店が合わず全台が対象外になっていた（記録の変更なし）。Androidのメイン画面の書き出しの店舗に「P’s CUBE（専用の記録・全期間）」を追加、読み込みはファイル先頭が `pscube-viewer` ならP’s CUBEへ。PC版の「バックアップを読み込む」も同じ振り分け（`f90d1f5`）。
 - **P’s CUBEの間隔**（利用者の報告：放置したら人間確認なしでデータが表示されなくなった＝止められた可能性。「5分に1回発信元を書き換える」案は、制限のすり抜けになるため作らないと説明）：利用者の選択で間隔をP’s CUBEだけ5〜60秒・初期10秒（PC `AutoCapture` に範囲の引数、Android `AutoCaptureState` に範囲の引数。メルヘンは0.1〜4.5秒のまま）（`90d9cfc`）。「止められたら自動でOFF」「1回の量の上限」「一覧だけ」は今回選ばれていない。
 - **確認**：PC全テスト成功（P’s CUBE36件・既存一式）、Flutter全364件、JS・ブラウザ試験成功、解析の指摘は既存のみ。
-- **最終ビルド**：APK `0.5.15 / 2026100109`（ソース `c7a6e38`）`a/work/outputs/database-0.5.15-2026100109.apk`（92,538,049 bytes、SHA-256 `15944F0594CACF8A1A4C17FE1B19F84E2BC69DB85036E3FB09BC7529ECB9983C`）。Windows 3アプリ再ビルド、`smoke_frozen_capture.py` 成功、ZIP `a/work/outputs/database-windows-2026100109.zip`（150,679,814 bytes、SHA-256 `6E47E835EFB69FADA3A6B19BE99659E1769B9C25D91EB7FD44DB3832393224FD`、実データなし）。インストールは利用者。閲覧ページ（Web）には今夜の日付の見切れ・当たり0回の表示が未公開。
+- **最終ビルド**：APK `0.5.15 / 2026100109`（ソース `c7a6e38`）`a/work/outputs/database-0.5.15-2026100109.apk`（92,538,049 bytes、SHA-256 `15944F0594CACF8A1A4C17FE1B19F84E2BC69DB85036E3FB09BC7529ECB9983C`）。Windows 3アプリ再ビルド、`smoke_frozen_capture.py` 成功、ZIP `a/work/outputs/database-windows-2026100109.zip`（150,679,814 bytes、SHA-256 `6E47E835EFB69FADA3A6B19BE99659E1769B9C25D91EB7FD44DB3832393224FD`、実データなし）。インストールは利用者。
+- **閲覧ページ（iPhone）へも反映**（利用者「iPhoneブラウザ版への修正も同じように」）：メルヘンの閲覧ページでP’s CUBEのファイルを選んだとき、汎用のエラーではなくP’s CUBEのページへ案内（`136e3ee`、テスト追加で計57件成功）。`flutter build web` → `stage_viewer.py`（全体＋`--pscube-only`）で公開リポジトリ `d61bde0`、公開 `main.dart.js`・P’s CUBEの各ファイルは手元と一致、seed 404、`assets/assets/pscube_auto_probe.js`（判定スクリプト、実データなし）が新たに公開物に入った。公開ページを本物のApps Scriptで390px表示し、「表示する日付」が切れずに表示されることを画面で確認（メルヘン9,981台・10/1 23:23書き出し）、P’s CUBEのページもドライブから読み込み成功、JavaScriptエラー0件。
 
 ## 2026-10-01：実機でP’s CUBEの取り込みを確認、日付の見切れ修正、APK 0.5.13（Claude）
 
