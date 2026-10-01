@@ -56,6 +56,17 @@ def is_allowed_url(url):
     return location in STORE_NAMES
 
 
+def same_page_url(a, b):
+    """同じページのURLか。pywebview（WebView2）の get_current_url は日本語を元の文字に戻した形
+    （例 machine_name=L ｽﾏｽﾛ化物語 KH）、ページの location.href は%に置き換えた形
+    （machine_name=L%20%EF%BD%BD…）で返す（2026-10-01 実測）。そのまま比べると、日本語の機種名の
+    全台一覧で「ON・ページ切り替え待ち」から抜けられなかった（利用者の報告）。両方の%を戻して比べる。"""
+    from urllib.parse import unquote
+    if not isinstance(a, str) or not isinstance(b, str):
+        return a == b
+    return unquote(a, errors='surrogateescape') == unquote(b, errors='surrogateescape')
+
+
 def page_mismatch(current_url, payload):
     """Why the extracted data disagrees with the page actually shown, or None.
 
@@ -1219,7 +1230,7 @@ class _Bridge:
                     if not isinstance(probe, dict) or probe.get('error'):
                         reason = probe.get('error') if isinstance(probe, dict) else 'ページの準備待ち'
                         self._auto.pause('ON・待機：' + str(reason), generation)
-                    elif probe.get('url') != current or current != self._window.get_current_url():
+                    elif not same_page_url(probe.get('url'), current) or current != self._window.get_current_url():
                         self._auto.pause('ON・ページ切り替え待ち', generation)
                     elif probe.get('kind') == 'machines':
                         # JS serializes asynchronous selection; admission is checked

@@ -113,6 +113,25 @@ class BridgeAutoCaptureTests(unittest.TestCase):
         self.bridge._spawn.assert_called_once_with('graph', self.probe['raw'])
         self.assertTrue(self.bridge.get_auto_capture()['enabled'])
 
+    def test_japanese_machine_name_url_forms_count_as_the_same_page(self):
+        # WebView2 は日本語を戻した形、ページは%の形でURLを返す（2026-10-01 実測）。
+        decoded = BROWSER_URLS['saiwaichou'].replace('rack_info_kt', 'standlist_slot') + \
+            '?kind_code=21&machine_name=L ｽﾏｽﾛ化物語 KH&target_date=2026-10-01'
+        from urllib.parse import quote
+        encoded = decoded.split('machine_name=')[0] + 'machine_name=' + quote('L ｽﾏｽﾛ化物語 KH') + '&target_date=2026-10-01'
+        self.bridge._window.get_current_url.return_value = decoded
+        self.probe = dict(kind='table', url=encoded, raw=json.dumps(dict(
+            store='saiwaichou', machine='L ｽﾏｽﾛ化物語 KH', target_date='2026-10-01', source_url=encoded)))
+        self.bridge._auto_tick()
+        self.bridge._spawn.assert_called_once_with('table', self.probe['raw'])
+        self.assertNotIn('ページ切り替え待ち', self.bridge.get_auto_capture()['message'])
+
+    def test_a_really_different_page_still_waits(self):
+        self.probe = dict(self.probe, url=self.url.replace('rack_no=710', 'rack_no=711'))
+        self.bridge._auto_tick()
+        self.bridge._spawn.assert_not_called()
+        self.assertIn('ページ切り替え待ち', self.bridge.get_auto_capture()['message'])
+
     def test_challenge_waits_then_resumes_without_off(self):
         valid = self.probe
         self.probe = dict(error='確認画面で待機')
