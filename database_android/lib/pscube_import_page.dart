@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'auto_capture_state.dart';
 import 'pscube_auto.dart';
@@ -73,6 +74,15 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         ),
       )
       ..loadRequest(Uri.parse(PscubeStore.root));
+    // 普通のブラウザと同じく、ページ内の別サイト（人間確認の hCaptcha の窓）のCookieも
+    // 受け付ける。AndroidのWebViewは初期設定で拒否するため、確認済みを覚えられず、
+    // 台別ページを開くたびに人間確認が出ていた可能性がある（2026-10-01、利用者の報告）。
+    final platform = _web.platform;
+    final cookies = WebViewCookieManager().platform;
+    if (platform is AndroidWebViewController &&
+        cookies is AndroidWebViewCookieManager) {
+      unawaited(cookies.setAcceptThirdPartyCookies(platform, true));
+    }
     _autoTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (_) => unawaited(_autoTick()),
@@ -158,6 +168,18 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       }
       prior = count;
       await Future<void>.delayed(const Duration(milliseconds: 350));
+    }
+  }
+
+  /// サイトの中のページから次のページへは、リンクをたどるのと同じ形（ページ内で移動）で
+  /// 開く。アドレスを直接開くと「どのページから来たか」が付かず、普通のブラウザと
+  /// 違って見えるため（PC版も同じ形）。サイトの外にいるときだけ直接開く。
+  Future<void> _open(String url) async {
+    final current = Uri.tryParse(await _web.currentUrl() ?? '');
+    if (current?.host == 'www.pscube.jp') {
+      await _web.runJavaScript('location.assign(${jsonEncode(url)})');
+    } else {
+      await _web.loadRequest(Uri.parse(url));
     }
   }
 
@@ -291,7 +313,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         }
       }
       if (result.nextUrl != null && _page == page) {
-        await _web.loadRequest(Uri.parse(result.nextUrl!));
+        await _open(result.nextUrl!);
       }
     } catch (error) {
       if (mounted) setState(() => _status = '保存できませんでした：$error');
@@ -415,10 +437,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: _busy
-                          ? null
-                          : () =>
-                                _web.loadRequest(Uri.parse(PscubeStore.index)),
+                      onPressed: _busy ? null : () => _open(PscubeStore.index),
                       child: const Text('スロット機種一覧'),
                     ),
                   ),
