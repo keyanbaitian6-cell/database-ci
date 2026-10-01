@@ -44,6 +44,9 @@ SCROLL_SCRIPT = r'''(async () => {
     const list = findList();
     if (!list) return;
     list.lastElementChild?.scrollIntoView({block:'end'});
+    // 続きの台はページの一番下まで来たときに読み込まれる（最後の台が見えるだけでは来ない）。
+    // Android版と同じく一番下まで移動する（2026-10-02、表示6台・設置7台で止まった件）。
+    window.scrollTo(0, document.documentElement.scrollHeight);
     await new Promise(resolve => setTimeout(resolve, 350));
     // The site can replace the list when another batch arrives.
     const count = findList()?.children.length ?? -1;
