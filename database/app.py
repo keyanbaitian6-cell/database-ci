@@ -1,12 +1,14 @@
 from datetime import date, datetime
 from pathlib import Path
 import base64
+import math
 import os
 import re
 import subprocess
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
+import tkinter.font as tkfont
 import pscube_import
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
@@ -127,6 +129,74 @@ class BackupConflictsDialog(tk.Toplevel):
     def accept(self):
         self.selected = [incoming for var, incoming in self.checks if var.get()]
         self.destroy()
+
+
+def _mix(a, b, t):
+    a, b = int(a[1:], 16), int(b[1:], 16)
+    return '#' + ''.join(f'{round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t):02x}' for s in (16, 8, 0))
+
+
+class GradientButton(tk.Canvas):
+    """利用者指定のボタンデザイン（CSSの .btn-grad）をTkで再現したもの。
+
+    背景は #16A085 → #F4D03F（51%）→ #16A085 の横グラデーションを幅200%で敷き、
+    マウスを乗せると0.5秒かけて右端（background-position: right center）へ流す。
+    角丸10・文字は白・余白は上下15／左右45。影（0 0 20px #eee）は淡い背景では
+    ほぼ見えないため省いた。キーボードでもフォーカスして Enter／Space で押せる。
+    """
+    STOPS = ((0.0, '#16A085'), (0.51, '#F4D03F'), (1.0, '#16A085'))
+
+    def __init__(self, parent, text, command, font=('Yu Gothic UI', 12, 'bold'), padx=45, pady=15,
+                 radius=10, background='#f5f5f7'):
+        measure = tkfont.Font(root=parent, font=font)
+        width = measure.measure(text) + 2 * padx
+        height = measure.metrics('linespace') + 2 * pady
+        super().__init__(parent, width=width, height=height, highlightthickness=0, bd=0, background=background,
+                         cursor='hand2', takefocus=1)
+        self.command, self.width, self._offset, self._job = command, width, 0.0, None
+        span = 2 * width
+        row = []
+        for x in range(span):
+            at = x / (span - 1)
+            for (s0, c0), (s1, c1) in zip(self.STOPS, self.STOPS[1:]):
+                if at <= s1:
+                    row.append(_mix(c0, c1, (at - s0) / (s1 - s0)))
+                    break
+        self._image = tk.PhotoImage(master=self, width=span, height=height)
+        self._image.put(' '.join(['{' + ' '.join(row) + '}'] * height))
+        self._picture = self.create_image(0, 0, image=self._image, anchor='nw')
+        # 角丸：四隅の円の外側だけを背景色で塗りつぶす。
+        steps = 8
+        for cx, cy, sx, sy in ((radius, radius, -1, -1), (width - radius, radius, 1, -1),
+                               (radius, height - radius, -1, 1), (width - radius, height - radius, 1, 1)):
+            arc = [(cx + sx * radius * math.cos(math.pi / 2 * i / steps),
+                    cy + sy * radius * math.sin(math.pi / 2 * i / steps)) for i in range(steps + 1)]
+            corner = (cx + sx * radius, cy + sy * radius)
+            self.create_polygon(*[v for point in (*arc, corner) for v in point], fill=background, outline=background)
+        self.create_text(width / 2, height / 2, text=text, fill='#ffffff', font=font)
+        self._focus = self.create_rectangle(3, 3, width - 4, height - 4, outline='', dash=(2, 2))
+        self.bind('<Enter>', lambda _e: self._slide(-width))
+        self.bind('<Leave>', lambda _e: self._slide(0))
+        self.bind('<ButtonRelease-1>', self._release)
+        self.bind('<FocusIn>', lambda _e: self.itemconfigure(self._focus, outline='#ffffff'))
+        self.bind('<FocusOut>', lambda _e: self.itemconfigure(self._focus, outline=''))
+        for key in ('<Return>', '<KeyRelease-space>'):
+            self.bind(key, lambda _e: self.command())
+
+    def _release(self, event):
+        if 0 <= event.x < self.winfo_width() and 0 <= event.y < self.winfo_height():
+            self.command()
+
+    def _slide(self, target, duration=500, frame=16):
+        if self._job:
+            self.after_cancel(self._job)
+        start, count = self._offset, max(1, duration // frame)
+
+        def step(i=1):
+            self._offset = start + (target - start) * (i / count)
+            self.coords(self._picture, round(self._offset), 0)
+            self._job = self.after(frame, step, i + 1) if i < count else None
+        step()
 
 
 def apply_style(root):
@@ -305,8 +375,8 @@ def main():
 
     ttk.Label(tab_home, text='ブラウザで取り込む', style='H2.TLabel').pack(anchor='w')
     ttk.Label(tab_home, text='ふだんの取り込みは、ここから始めます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 12))
-    ttk.Button(tab_home, text='ブラウザを開いて取り込む', style='Accent.TButton',
-               command=lambda: open_browser_import()).pack(anchor='w', ipadx=22, ipady=9)
+    GradientButton(tab_home, text='メルヘンワールドを取り込む',
+                   command=lambda: open_browser_import()).pack(anchor='w')
     ttk.Button(tab_home, text='P’s CUBE（スロット）を取り込む',
                command=lambda: open_pscube_import()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
     ttk.Label(tab_home, style='Sub.TLabel', justify='left', text=(

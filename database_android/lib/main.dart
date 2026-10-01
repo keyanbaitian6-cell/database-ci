@@ -15,6 +15,7 @@ import 'data_checks.dart';
 import 'date_events.dart';
 import 'database_service.dart';
 import 'graph_preview.dart';
+import 'gradient_button.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
@@ -1558,13 +1559,12 @@ class ImportPage extends StatelessWidget {
                 const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
-                  child: FilledButton.icon(
+                  child: GradientButton(
                     onPressed: () => ImportPage.openBrowser(
                       Navigator.of(context),
                       controller,
                     ),
-                    icon: const Icon(Icons.table_chart_outlined),
-                    label: const Text('アプリ内ブラウザを開く'),
+                    label: 'メルヘンワールドを取り込む',
                   ),
                 ),
                 const SizedBox(height: 6),
