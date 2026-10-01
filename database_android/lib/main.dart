@@ -21,6 +21,7 @@ import 'machine_sections.dart';
 import 'models.dart';
 import 'normal_type.dart';
 import 'pscube_import_page.dart';
+import 'pscube_store.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'web_import_page.dart';
@@ -327,9 +328,14 @@ Future<void> _shareBackup(
 ) async {
   final options = await showDialog<_BackupExportOptions>(
     context: context,
-    builder: (_) => _BackupExportDialog(records: controller.records),
+    builder: (_) =>
+        _BackupExportDialog(records: controller.records, allowPscube: true),
   );
   if (options == null || !context.mounted) return;
+  if (options.store == pscubeBackupChoice) {
+    await _sharePscubeBackup(context);
+    return;
+  }
   try {
     final exported = await _withProgress(
       context,
@@ -490,9 +496,13 @@ class _BackupExportDialog extends StatefulWidget {
   const _BackupExportDialog({
     required this.records,
     this.title = 'バックアップの範囲を選択',
+    this.allowPscube = false,
   });
   final List<SlotRecord> records;
   final String title;
+
+  /// 店舗の選択肢に P’s CUBE（専用の記録）を出す（バックアップのときだけ。CSVは対象外）。
+  final bool allowPscube;
   @override
   State<_BackupExportDialog> createState() => _BackupExportDialogState();
 }
@@ -523,6 +533,11 @@ class _BackupExportDialogState extends State<_BackupExportDialog> {
               ...storeNames.entries.map(
                 (e) => DropdownMenuItem(value: e.key, child: Text(e.value)),
               ),
+              if (widget.allowPscube)
+                const DropdownMenuItem(
+                  value: pscubeBackupChoice,
+                  child: Text('P’s CUBE（専用の記録・全期間）'),
+                ),
             ],
             onChanged: (v) => setState(() {
               _store = v;
@@ -530,15 +545,21 @@ class _BackupExportDialogState extends State<_BackupExportDialog> {
             }),
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String?>(
-            initialValue: _day,
-            decoration: const InputDecoration(labelText: '日付'),
-            items: [
-              const DropdownMenuItem(value: null, child: Text('すべての日付')),
-              ...days.map((d) => DropdownMenuItem(value: d, child: Text(d))),
-            ],
-            onChanged: (v) => setState(() => _day = v),
-          ),
+          if (_store == pscubeBackupChoice)
+            const Text(
+              'P’s CUBEの記録は、メルヘンとは別のファイル（pscube-backup-android-…）で全期間を書き出します。',
+              style: TextStyle(fontSize: 12, color: AppColors.ash),
+            )
+          else
+            DropdownButtonFormField<String?>(
+              initialValue: _day,
+              decoration: const InputDecoration(labelText: '日付'),
+              items: [
+                const DropdownMenuItem(value: null, child: Text('すべての日付')),
+                ...days.map((d) => DropdownMenuItem(value: d, child: Text(d))),
+              ],
+              onChanged: (v) => setState(() => _day = v),
+            ),
         ],
       ),
       actions: [
@@ -568,6 +589,12 @@ Future<void> _importBackup(
   final path = picked?.path;
   if (path == null) return;
   if (!context.mounted) return;
+  final pscube = await isPscubeBackupFile(File(path));
+  if (!context.mounted) return;
+  if (pscube) {
+    await _importPscubeBackup(context, File(path));
+    return;
+  }
   try {
     // 大きなファイルも1行ずつ読む（全体を1つの文字列にしない）。中身を
     // 確かめてから1回で保存するので、途中で失敗しても何も保存されない。
@@ -2245,4 +2272,85 @@ class _RetentionNotices extends StatelessWidget {
 
 extension FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+/// バックアップの店舗の選択肢で P’s CUBE を表す値（メルヘンの店舗コードと重ならない）。
+const pscubeBackupChoice = '__pscube__';
+
+/// P’s CUBEのバックアップ（format が pscube-viewer）か。先頭だけを読んで判断する
+/// （メルヘンの全期間バックアップは大きいので丸ごと読まない）。
+Future<bool> isPscubeBackupFile(File file) async {
+  final raf = await file.open();
+  try {
+    final head = String.fromCharCodes(await raf.read(512));
+    return RegExp(r'"format"\s*:\s*"pscube-viewer"').hasMatch(head);
+  } finally {
+    await raf.close();
+  }
+}
+
+/// P’s CUBEのバックアップを書き出して共有する（P’s CUBE画面の共有ボタンと同じ）。
+Future<void> _sharePscubeBackup(BuildContext context) async {
+  final store = await PscubeStore.open();
+  try {
+    final file = await store.exportViewer();
+    final fileName = file.uri.pathSegments.last;
+    final shared = await SharePlus.instance.share(
+      ShareParams(
+        title: fileName,
+        subject: fileName,
+        text:
+            'PC版と共有するP’s CUBEのバックアップです。Google Driveの「database共有」などに保存してください。',
+        files: [XFile(file.path, mimeType: 'application/json')],
+      ),
+    );
+    if (shared.status != ShareResultStatus.dismissed) {
+      await store.markBackedUp();
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shared.status == ShareResultStatus.dismissed
+                ? '共有を取りやめました。バックアップ済みにはしていません。'
+                : 'P’s CUBEのバックアップを書き出しました（$fileName）。',
+          ),
+        ),
+      );
+    }
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('P’s CUBEのバックアップを書き出せませんでした：$error')),
+      );
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+/// P’s CUBEのバックアップを専用の記録へ統合する（メルヘンの記録には混ぜない）。
+Future<void> _importPscubeBackup(BuildContext context, File file) async {
+  final store = await PscubeStore.open();
+  try {
+    final result = await store.importBackup(await file.readAsString());
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'P’s CUBE：新規${result.added}件、更新${result.updated}件、同じ内容${result.unchanged}件、'
+            '新しい自分の数値を維持${result.keptLocal}件を取り込みました。',
+          ),
+        ),
+      );
+    }
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('P’s CUBEのバックアップを読み込めませんでした（何も保存していません）：$error')),
+      );
+    }
+  } finally {
+    await store.close();
+  }
 }

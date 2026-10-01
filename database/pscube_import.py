@@ -235,6 +235,16 @@ def auto_backup(store: 'PscubeStore', export_path, today: date | None = None) ->
         return 'バックアップに失敗（取り込みは保存済み）'
 
 
+def is_pscube_backup(path) -> bool:
+    """P’s CUBEのバックアップ（format が pscube-viewer）か。先頭だけ読む（メルヘンの全期間は大きいため）。"""
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(512).decode('utf-8', errors='ignore')
+    except OSError:
+        return False
+    return re.search(r'"format"\s*:\s*"pscube-viewer"', head) is not None
+
+
 def latest_pscube_backup(folder) -> Path | None:
     """同期フォルダの最新のP’s CUBEバックアップ。自分の自動コピーと閲覧用の軽いファイルは除く。"""
     candidates = [p for p in Path(folder).glob('pscube-*.json') if p.name not in (AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME)]

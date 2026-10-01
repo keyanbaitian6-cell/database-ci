@@ -9,7 +9,7 @@ from unittest import mock
 
 import pscube_import
 from pscube_import import (AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME, PscubeStore, ROOT_URL, _machine_key, _record_key,
-                           auto_backup, latest_pscube_backup, thin_graph)
+                           auto_backup, is_pscube_backup, latest_pscube_backup, thin_graph)
 
 SHOP = 'c740601'
 TODAY = date(2026, 10, 1)
@@ -211,6 +211,17 @@ class SyncTests(unittest.TestCase):
         meruhen.write_text(json.dumps({'format': core.BACKUP_FORMAT}), encoding='utf-8')
         os.utime(meruhen, (time.time() - 500, time.time() - 500))
         self.assertEqual(core.latest_backup_file(self.sync), meruhen)
+
+    def test_pscube_files_are_recognised_so_the_meruhen_import_does_not_skip_them_all(self):
+        self.use_sync_dir()
+        auto_backup(self.store, self.export, today=TODAY)
+        android = self.sync / 'pscube-backup-android-20261001-230000.json'
+        android.write_text((self.sync / AUTO_BACKUP_NAME).read_text(encoding='utf-8'), encoding='utf-8')
+        self.assertTrue(is_pscube_backup(android))
+        meruhen = self.sync / 'database-backup-android.json'
+        meruhen.write_text('{"format": "database-backup", "version": 1, "records": []}', encoding='utf-8')
+        self.assertFalse(is_pscube_backup(meruhen))
+        self.assertFalse(is_pscube_backup(self.sync / 'missing.json'))
 
 
 if __name__ == '__main__':

@@ -550,6 +550,10 @@ def main():
             filetypes=[('JSON', '*.json'), ('すべて', '*.*')])
         if not path:
             return
+        if pscube_import.is_pscube_backup(path):
+            # P’s CUBEのファイルをメルヘンの読み込みに通すと、全台が「対象外」になって何も入らない。
+            import_pscube_file(path, quiet=quiet)
+            return
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             plan = import_backup(db, path)
@@ -625,6 +629,11 @@ def main():
         if latest is None:
             messagebox.showinfo('見つかりません', 'このフォルダにP’s CUBEのバックアップ（pscube-backup-…）がありません。', parent=root)
             return
+        import_pscube_file(latest)
+
+    def import_pscube_file(latest, quiet=False):
+        """P’s CUBEのバックアップ1つを専用の記録へ統合する（メルヘンの記録には混ぜない）。"""
+        latest = Path(latest)
         store = pscube_import.PscubeStore(DATA_DIR / 'pscube.sqlite3')
         try:
             summary = store.import_backup(latest)
@@ -638,7 +647,8 @@ def main():
                 f'新しい自分の数値を維持{summary["kept_local"]}件（{latest.name}）。')
         logbox.insert('end', text + '\n')
         logbox.see('end')
-        messagebox.showinfo('読み込みました', text, parent=root)
+        if not quiet:
+            messagebox.showinfo('読み込みました', text, parent=root)
 
     def remember_synced(latest):
         save_settings(DATA_DIR, last_synced=dict(name=latest.name, mtime=latest.stat().st_mtime))
