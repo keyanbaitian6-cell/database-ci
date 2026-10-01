@@ -257,6 +257,16 @@ def is_pscube_backup(path) -> bool:
     return re.search(r'"format"\s*:\s*"pscube-viewer"', head) is not None
 
 
+def backup_file_name(now: datetime | None = None, source: str = 'pc') -> str:
+    """手で書き出すバックアップの名前（例 pscube-backup-pc-20261002-001500.json）。メルヘンと重ならない。"""
+    return f'pscube-backup-{source}-{(now or datetime.now()):%Y%m%d-%H%M%S}.json'
+
+
+def write_backup(store: 'PscubeStore', path) -> Path:
+    """全期間のバックアップ（復元に使える形）を [path] に書く。"""
+    return _write_json(Path(path), store.export_payload('backup'))
+
+
 def latest_pscube_backup(folder) -> Path | None:
     """同期フォルダの最新のP’s CUBEバックアップ。自分の自動コピーと閲覧用の軽いファイルは除く。"""
     candidates = [p for p in Path(folder).glob('pscube-*.json') if p.name not in (AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME)]
@@ -414,6 +424,19 @@ class PscubeStore:
         else:
             data['rack_captures'] = [row[0] for row in self.db.execute('SELECT key FROM rack_captures ORDER BY rowid')]
         return data
+
+    def days(self) -> list[str]:
+        """記録がある営業日（新しい順）。PC本体の「結果を見る」の日付の選択肢。"""
+        return sorted({json.loads(row[0])['day'] for row in self.db.execute('SELECT payload FROM records')}, reverse=True)
+
+    def machines_for(self, day: str) -> list[str]:
+        """[day] に記録がある機種（沖ドキは除く）。PC本体の「結果を見る」の機種の選択肢。"""
+        names = set()
+        for row in self.db.execute('SELECT payload FROM records'):
+            record = json.loads(row[0])
+            if record['day'] == day and not is_excluded_machine(record['machine']):
+                names.add(record['machine'])
+        return sorted(names)
 
     def export_viewer(self, path):
         return _write_json(Path(path), self.export_payload('backup'))

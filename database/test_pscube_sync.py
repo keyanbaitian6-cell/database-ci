@@ -223,6 +223,20 @@ class SyncTests(unittest.TestCase):
         self.assertFalse(is_pscube_backup(meruhen))
         self.assertFalse(is_pscube_backup(self.sync / 'missing.json'))
 
+    def test_days_machines_and_manual_backup_for_the_main_window(self):
+        from datetime import datetime
+        from pscube_import import backup_file_name, write_backup
+        self.assertEqual(self.store.days()[0], TODAY.isoformat())
+        self.assertEqual(len(self.store.days()), 40)
+        oki = machine('沖ﾄﾞｷ!BLACK')
+        put(self.store, oki, [record(oki, 9, TODAY.isoformat())])
+        self.assertEqual(self.store.machines_for(TODAY.isoformat()), ['ﾏｲｼﾞｬｸﾞﾗｰV'], '沖ドキは選択肢に出さない')
+        self.assertEqual(backup_file_name(datetime(2026, 10, 2, 0, 15, 0)), 'pscube-backup-pc-20261002-001500.json')
+        target = write_backup(self.store, self.sync / backup_file_name())
+        data = json.loads(target.read_text(encoding='utf-8'))
+        self.assertEqual((data['kind'], data['source']), ('backup', 'pc'))
+        self.assertEqual(latest_pscube_backup(self.sync), target, '同期フォルダの最新として読み込める')
+
 
 if __name__ == '__main__':
     unittest.main()

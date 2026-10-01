@@ -31,6 +31,10 @@ DATA_DIR = ROOT / 'data'
 MACHINE_DEFAULT = ''
 ALL_DAYS_LABEL = 'すべての日付'
 ALL_STORES_LABEL = 'すべての店舗'
+# P’s CUBE（専用の記録）を、メルヘンの2店舗と並べて選べるようにする（利用者の指示、2026-10-02）。
+PSCUBE_KEY = 'pscube'
+PSCUBE_LABEL = 'P’s CUBE（スロット）'
+PSCUBE_VIEWER_URL = 'https://keyanbaitian6-cell.github.io/database-viewer/pscube/'
 # Kept only for the Chrome-extension filename format they still describe;
 # no PC-side UI decodes these anymore (see AI_COLLABORATION.md).
 GRAPH_DOWNLOAD_RE = re.compile(
@@ -263,8 +267,9 @@ def main():
     identity.pack(fill='x')
     ttk.Label(identity, text='店舗').grid(row=0, column=0, sticky='w')
     settings = load_settings(DATA_DIR)
-    store_name = tk.StringVar(value=STORE_NAMES.get(settings.get('last_store'), STORE_NAMES['nagamachiminami']))
-    store_combo = ttk.Combobox(identity, textvariable=store_name, values=list(STORE_NAMES.values()),
+    store_name = tk.StringVar(value=PSCUBE_LABEL if settings.get('last_store') == PSCUBE_KEY else
+                              STORE_NAMES.get(settings.get('last_store'), STORE_NAMES['nagamachiminami']))
+    store_combo = ttk.Combobox(identity, textvariable=store_name, values=[*STORE_NAMES.values(), PSCUBE_LABEL],
                                 state='readonly', width=28)
     store_combo.grid(row=1, column=0, sticky='w', padx=(0, 16))
     ttk.Label(identity, text='日付').grid(row=0, column=1, sticky='w')
@@ -286,10 +291,40 @@ def main():
 
 
     def current_location():
+        if store_name.get() == PSCUBE_LABEL:
+            return PSCUBE_KEY
         return next((key for key, label in STORE_NAMES.items() if label == store_name.get()), None)
+
+    def pscube_store():
+        return pscube_import.PscubeStore(DATA_DIR / 'pscube.sqlite3')
+
+    def pscube_only(title):
+        """P’s CUBEを選んでいるときは、メルヘン専用の操作を止める（P’s CUBEの記録は変えない）。"""
+        if current_location() == PSCUBE_KEY:
+            messagebox.showinfo(title, 'P’s CUBEの記録は、この操作の対象外です。', parent=root)
+            return True
+        return False
+
+    def open_pscube_viewer():
+        import webbrowser
+        webbrowser.open(PSCUBE_VIEWER_URL)
+        logbox.insert('end', 'P’s CUBEの閲覧ページを開きました（採点・翌日候補）。Googleドライブの自動読み込みが未設定なら、'
+                             'ページの「Googleドライブの自動読み込みを設定」にApps ScriptのURLを入れてください。\n')
+        logbox.see('end')
 
     def refresh_days(*_args):
         location = current_location()
+        if location == PSCUBE_KEY:
+            store = pscube_store()
+            try:
+                days = store.days()
+            finally:
+                store.close()
+            day_combo['values'] = days
+            if day.get() not in days:
+                day.set(days[0] if days else '')
+            refresh_event()
+            return
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             days = db.days_for(location) if location else []
@@ -302,6 +337,14 @@ def main():
 
     def refresh_event(*_args):
         location, selected_day = current_location(), day.get()
+        if location == PSCUBE_KEY:
+            # イベントはメルヘンの記録だけ。P’s CUBEでは選べない。
+            event_combo['values'] = ['イベントなし']
+            event_name.set('イベントなし')
+            current_event_name.set('')
+            event_combo.configure(state='disabled')
+            return
+        event_combo.configure(state='readonly')
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             events = db.date_events(location=location, day=selected_day)
@@ -317,7 +360,7 @@ def main():
 
     def on_event_change(_event=None):
         location, selected_day = current_location(), day.get()
-        if not location or not selected_day:
+        if not location or not selected_day or location == PSCUBE_KEY:
             return
         selected = event_name.get()
         if selected == '自由記載…':
@@ -343,6 +386,16 @@ def main():
     def refresh_machines(*_args):
         location = current_location()
         target = day.get()
+        if location == PSCUBE_KEY:
+            store = pscube_store()
+            try:
+                machines = store.machines_for(target) if target else []
+            finally:
+                store.close()
+            machine_combo['values'] = machines
+            if machine.get() not in machines:
+                machine.set(machines[0] if machines else '')
+            return
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             machines = db.machines_for(location, target) if location and target else []
@@ -410,16 +463,23 @@ def main():
     backup_store = tk.StringVar(value=ALL_STORES_LABEL)
     backup_store_combo = ttk.Combobox(
         backup_buttons, textvariable=backup_store, state='readonly', width=16,
-        values=[ALL_STORES_LABEL, *STORE_NAMES.values()])
+        values=[ALL_STORES_LABEL, *STORE_NAMES.values(), PSCUBE_LABEL])
     backup_day = tk.StringVar(value=ALL_DAYS_LABEL)
     backup_day_combo = ttk.Combobox(backup_buttons, textvariable=backup_day, state='readonly', width=16)
 
     def current_backup_location():
         chosen = backup_store.get()
+        if chosen == PSCUBE_LABEL:
+            return PSCUBE_KEY
         return next((key for key, label in STORE_NAMES.items() if label == chosen), None)
 
     def refresh_backup_days():
         location = current_backup_location()
+        if location == PSCUBE_KEY:
+            # P’s CUBEは全期間をまとめて書き出す（復元に使える形）。
+            backup_day_combo['values'] = [ALL_DAYS_LABEL]
+            backup_day.set(ALL_DAYS_LABEL)
+            return
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             days = db.days_for(location)
@@ -516,7 +576,32 @@ def main():
         logbox.see('end')
         return output
 
+    def export_pscube_file():
+        name = pscube_import.backup_file_name()
+        folder = load_settings(DATA_DIR).get('sync_dir')
+        if folder and Path(folder).is_dir():
+            path = str(Path(folder) / name)
+        else:
+            path = filedialog.asksaveasfilename(
+                title='P’s CUBEのバックアップの保存先を選択（Google Driveのフォルダなど）',
+                initialfile=name, defaultextension='.json',
+                filetypes=[('JSON', '*.json'), ('すべて', '*.*')])
+        if not path:
+            return
+        store = pscube_store()
+        try:
+            count = len(store.export_payload('backup')['records'])
+            pscube_import.write_backup(store, path)
+        finally:
+            store.close()
+        logbox.insert('end', f'P’s CUBEのバックアップを書き出しました（全期間）：{count}件 → {path}\n')
+        logbox.see('end')
+        messagebox.showinfo('書き出しました', f'P’s CUBEの{count}件（全期間）を書き出しました。\n{path}', parent=root)
+
     def export_backup_file():
+        if current_backup_location() == PSCUBE_KEY:
+            export_pscube_file()
+            return
         chosen_day = backup_day.get()
         day = chosen_day if chosen_day and chosen_day != ALL_DAYS_LABEL else None
         location = current_backup_location()
@@ -763,6 +848,9 @@ def main():
         os.startfile(output)
 
     def open_result():
+        if current_location() == PSCUBE_KEY:
+            open_pscube_viewer()
+            return
         try:
             location, name, target = values()
         except ValueError as exc:
@@ -778,6 +866,9 @@ def main():
         os.startfile(output)
 
     def open_history():
+        if current_location() == PSCUBE_KEY:
+            open_pscube_viewer()
+            return
         try:
             db = Store(ROOT / 'data' / 'database.sqlite3')
             try:
@@ -789,6 +880,8 @@ def main():
             messagebox.showerror('過去の記録を開けません', str(exc), parent=root)
 
     def delete_record():
+        if pscube_only('台記録を削除'):
+            return
         try:
             refresh_days()
             refresh_machines()
@@ -839,6 +932,8 @@ def main():
         選んでいる店舗・日付・機種を元に、消す範囲を3つから選ぶ。確認のあとで
         消し、消した内容は「直前の保存を取り消す」で1回分だけ元に戻せる。
         """
+        if pscube_only('まとめて削除'):
+            return
         try:
             refresh_days()
             refresh_machines()
@@ -925,6 +1020,8 @@ def main():
 
         The note has no path into core.score; it is deliberately metadata only.
         """
+        if pscube_only('設定情報を記録'):
+            return
         try:
             refresh_days()
             refresh_machines()
