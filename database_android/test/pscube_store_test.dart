@@ -209,7 +209,8 @@ void main() {
       ),
       throwsFormatException,
     );
-    expect(await exported(), before);
+    // 書き出しの時刻は毎回変わるので、中身（機種・台・印）だけを比べる。
+    expect(await exported(), {...before, 'exported_at': anything});
   });
 
   test('並行取り込みと共有も保存順を守り、失敗後もキューが進む', () async {
@@ -240,5 +241,172 @@ void main() {
       throwsFormatException,
     );
     expect((await store.nextTarget(day)).url, record()['detail_url']);
+  });
+
+  group('バックアップ・同期（database/PSCUBE_SYNC.md）', () {
+    Future<PscubeStore> other() => PscubeStore.open(
+      path: '${dir.path}/other.sqlite3',
+      factory: databaseFactoryFfi,
+    );
+
+    test('ファイル名はメルヘンと重ならず、書き出しには種別・出どころ・時刻・取り込み済みの印が付く', () async {
+      expect(
+        PscubeStore.backupFileName(DateTime(2026, 10, 1, 9, 5, 7)),
+        'pscube-backup-android-20261001-090507.json',
+      );
+      await seedRack();
+      final data = await exported();
+      expect(data['format'], 'pscube-viewer');
+      expect(data['kind'], 'backup');
+      expect(data['source'], 'android');
+      expect(
+        data['exported_at'],
+        matches(
+          RegExp(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?[+-]\d\d:\d\d$'),
+        ),
+      );
+      expect(data['rack_captures'], hasLength(1));
+    });
+
+    test('別の端末へ往復でき、印も引き継がれる。2回目は変化なし', () async {
+      await seedRack();
+      final text = jsonEncode(await exported());
+      final second = await other();
+      addTearDown(second.close);
+      final first = await second.importBackup(text);
+      expect((first.added, first.updated, first.unchanged), (7, 0, 0));
+      expect((await second.nextTarget(day)).url, isNull);
+      final again = await second.importBackup(text);
+      expect((again.added, again.updated, again.unchanged), (0, 0, 7));
+    });
+
+    test('軽い閲覧用ファイル・他店・重複・孤立・不正な印・形式違いは何も保存しない', () async {
+      await seedRack();
+      final good = await exported();
+      Map<String, dynamic> copy() =>
+          jsonDecode(jsonEncode(good)) as Map<String, dynamic>;
+      final light = copy()..['kind'] = 'viewer';
+      final otherShop = copy();
+      (otherShop['machines'] as List)[0]['store'] = 'c1';
+      final lastBad = copy();
+      ((lastBad['records'] as List).last as Map)['rack'] = 0;
+      final duplicate = copy();
+      (duplicate['records'] as List).add((duplicate['records'] as List).first);
+      final orphan = copy()..['machines'] = [];
+      final strayMark = copy()..['rack_captures'] = ['["x"]'];
+      final second = await other();
+      addTearDown(second.close);
+      for (final bad in [
+        light,
+        otherShop,
+        lastBad,
+        duplicate,
+        orphan,
+        strayMark,
+        {'format': 'database-backup', 'version': 1},
+      ]) {
+        await expectLater(
+          second.importBackup(jsonEncode(bad)),
+          throwsFormatException,
+        );
+      }
+      await expectLater(
+        second.importBackup('これはJSONではない'),
+        throwsFormatException,
+      );
+      expect((await second.nextTarget(day)).remaining, 0);
+      expect(
+        (await second.importBackup(jsonEncode(good))).added,
+        7,
+        reason: '不正なファイルのあとでも、正しいファイルはそのまま入る',
+      );
+    });
+
+    test('古い数値で新しい数値を上書きせず、自分の機種タイプを残し、数値が変わった台は取得済みを外す', () async {
+      await seedRack();
+      final newer = record()
+        ..['games'] = 4000
+        ..['observed_at'] = '2026-10-01T20:00:00+09:00';
+      await store.importPage(
+        page(
+          machine['url'],
+          [
+            {...machine, 'machine_type': 'normal'},
+          ],
+          [newer],
+        ),
+        machine['url'],
+      );
+      final older = {
+        'format': 'pscube-viewer',
+        'version': 1,
+        'kind': 'backup',
+        'machines': [
+          {...machine, 'machine_type': 'other'},
+        ],
+        'records': [
+          record()
+            ..['games'] = 3500
+            ..['observed_at'] = '2026-10-01T15:00:00+09:00',
+        ],
+      };
+      final kept = await store.importBackup(jsonEncode(older));
+      expect(kept.keptLocal, 1);
+      var data = await exported();
+      expect(
+        (data['records'] as List).singleWhere((r) => r['day'] == day)['games'],
+        4000,
+      );
+      expect((data['machines'] as List).single['machine_type'], 'normal');
+      final newest = {
+        ...older,
+        'records': [
+          record()
+            ..['games'] = 5000
+            ..['observed_at'] = '2026-10-01T22:00:00+09:00',
+        ],
+        'rack_captures': <String>[],
+      };
+      final changed = await store.importBackup(jsonEncode(newest));
+      expect(changed.updated, 1);
+      expect((await store.nextTarget(day)).url, record()['detail_url']);
+      data = await exported();
+      expect(
+        (data['records'] as List).singleWhere((r) => r['day'] == day)['games'],
+        5000,
+      );
+    });
+
+    test('印の無い古い書き出しは、台別7日分のグラフがある日を取り込み済みとみなす', () async {
+      final daily = record()
+        ..['graph'] = {
+          'kind': 'daily',
+          'zero_y': 10,
+          'points': [
+            [0, 10],
+            [1, 6],
+          ],
+        };
+      final second = await other();
+      addTearDown(second.close);
+      await second.importBackup(
+        jsonEncode({
+          'format': 'pscube-viewer',
+          'version': 1,
+          'machines': [machine],
+          'records': [daily],
+        }),
+      );
+      expect((await second.nextTarget(day)).url, isNull);
+    });
+
+    test('最後にバックアップした時刻は共有を終えたときだけ残る', () async {
+      expect(await store.lastBackupAt(), isNull);
+      await store.markBackedUp(DateTime.utc(2026, 10, 1, 3));
+      expect(
+        (await store.lastBackupAt())!.toUtc(),
+        DateTime.utc(2026, 10, 1, 3),
+      );
+    });
   });
 }

@@ -1,5 +1,6 @@
 import { readWebArchive } from './archive.mjs';
 import { emptyData, parsePage, validateData, mergeData, machineKey, progress } from './data.mjs';
+import { REMOTE_KEY, backupFileName, buildBackup, fetchDrive } from './sync.mjs';
 import { scoreRecord, nextDayCandidates, bandOf, profileOf, SCORING_VERSION, MIN_SCORED_GAMES } from './scoring.mjs';
 
 const $ = id => document.getElementById(id);
@@ -23,12 +24,23 @@ async function readSaved() {
     });
   } finally { db.close(); }
 }
-async function save(next) {
+async function readMeta() {
+  const db = await openDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction('state').objectStore('state').get('meta');
+      request.onsuccess = () => resolve(request.result || {});
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}
+async function save(next, meta) {
   const db = await openDB();
   try {
     await new Promise((resolve, reject) => {
       const tx = db.transaction('state', 'readwrite');
       tx.objectStore('state').put(next, 'data');
+      if (meta) tx.objectStore('state').put(meta, 'meta');
       tx.oncomplete = resolve;
       tx.onerror = tx.onabort = () => reject(tx.error || new Error('端末への保存に失敗しました。'));
     });
@@ -197,14 +209,61 @@ $('machine-type').onchange = async () => {
   finally { busy = false; $('files').disabled = false; $('machine-type').disabled = false; render(); }
 };
 $('export').onclick = () => {
-  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const now = new Date();
+  const blob = new Blob([JSON.stringify(buildBackup(data, now))], { type: 'application/json' });
   const url = URL.createObjectURL(blob), a = element('a');
-  a.href = url; a.download = `pscube-viewer-${new Date().toISOString().slice(0, 10)}.json`; document.body.append(a); a.click(); a.remove();
+  a.href = url; a.download = backupFileName(now); document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 };
+// ---- Googleドライブの自動読み込み（メルヘンの閲覧ページと同じApps Script。仕様：PSCUBE_SYNC.md） ----
+const remoteUrl = () => { try { return localStorage.getItem(REMOTE_KEY); } catch { return null; } };
+function setRemoteUrl(url) {
+  try { if (url) localStorage.setItem(REMOTE_KEY, url); else localStorage.removeItem(REMOTE_KEY); } catch { /* 保存できなくても読み込みは使える */ }
+}
+function driveLabel() {
+  const has = !!remoteUrl();
+  $('drive-refresh').hidden = !has;
+  $('drive-url').value = has ? remoteUrl() : '';
+  if (!has) $('drive-status').textContent = 'Googleドライブ：未設定';
+}
+async function refreshDrive(manual) {
+  const url = remoteUrl();
+  if (!url || busy) return;
+  busy = true; $('files').disabled = true; $('export').disabled = true; $('drive-refresh').disabled = true;
+  $('drive-status').textContent = 'Googleドライブの最新を確認しています…';
+  try {
+    const meta = await readMeta().catch(() => ({}));
+    const result = await fetchDrive(url, meta.exported_at);
+    const time = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    if (result.unchanged) {
+      $('drive-status').textContent = `Googleドライブの内容は変わっていません（${result.exportedAt}）・${time}に確認`;
+    } else {
+      const next = mergeData(data, result.data);
+      await save(next, { exported_at: result.exportedAt, checked_at: new Date().toISOString() });
+      data = next; error(null);
+      $('drive-status').textContent = `Googleドライブの最新を読み込みました（${result.exportedAt ?? '時刻不明'}・${result.data.records.length}件）・${time}`;
+      refreshFilters(); render();
+    }
+  } catch (e) {
+    $('drive-status').textContent = `Googleドライブを読めませんでした：${e.message} 前の内容が残っています。`;
+    if (manual) error(null);
+  } finally {
+    busy = false; $('files').disabled = false; $('drive-refresh').disabled = false; $('export').disabled = !data.machines.length;
+  }
+}
+$('drive-refresh').onclick = () => refreshDrive(true);
+$('drive-save').onclick = () => {
+  const value = $('drive-url').value.trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(value)) {
+    $('drive-status').textContent = 'GoogleのスクリプトのURL（https://script.google.com/macros/s/…/exec）を入れてください。'; return;
+  }
+  setRemoteUrl(value); driveLabel(); refreshDrive(true);
+};
+$('drive-forget').onclick = () => { setRemoteUrl(null); driveLabel(); };
 try {
   $('files').disabled = true;
   const saved = await readSaved();
   if (saved) { data = validateData(saved); $('status').textContent = `このブラウザに保存した${data.records.length}件を表示しています。`; }
 } catch (e) { error(`保存内容を開けませんでした。${e.message}`); }
-finally { $('files').disabled = false; refreshFilters(); render(); }
+finally { $('files').disabled = false; refreshFilters(); render(); driveLabel(); }
+if (remoteUrl()) await refreshDrive(false);

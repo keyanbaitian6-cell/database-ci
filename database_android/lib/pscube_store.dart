@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import 'models.dart' show timestampWithOffset;
+
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
   PscubeStore._(this.db);
@@ -457,10 +459,20 @@ class PscubeStore {
     );
   }
 
-  Future<File> exportViewer({String? path}) =>
-      _serial(() => _exportViewer(path));
+  /// 共有フォルダに置くバックアップの名前。例 pscube-backup-android-20261001-120000.json
+  /// （メルヘンの database-backup-* と重ならない。半角英数字だけ）。
+  static String backupFileName(DateTime now) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return 'pscube-backup-android-${now.year}${two(now.month)}${two(now.day)}'
+        '-${two(now.hour)}${two(now.minute)}${two(now.second)}.json';
+  }
 
-  Future<File> _exportViewer(String? path) async {
+  /// 全期間のバックアップ（仕様：database/PSCUBE_SYNC.md）。[path] を省くと
+  /// 書類フォルダへ [backupFileName] の名前で書き、前に書いた自分のバックアップを消す。
+  Future<File> exportViewer({String? path, DateTime? now}) =>
+      _serial(() => _exportViewer(path, now ?? DateTime.now()));
+
+  Future<File> _exportViewer(String? path, DateTime now) async {
     final machines = (await db.query(
       'machines',
       columns: ['payload'],
@@ -471,20 +483,217 @@ class PscubeStore {
       columns: ['payload'],
       orderBy: 'rowid',
     )).map((r) => jsonDecode(r['payload'] as String)).toList();
-    final file = File(
-      path ??
-          '${(await getApplicationDocumentsDirectory()).path}/pscube-viewer.json',
-    );
+    final captures = (await db.query(
+      'rack_captures',
+      columns: ['key'],
+      orderBy: 'rowid',
+    )).map((r) => r['key'] as String).toList();
+    final folder = path == null
+        ? Directory((await getApplicationDocumentsDirectory()).path)
+        : null;
+    final file = File(path ?? '${folder!.path}/${backupFileName(now)}');
     final temp = File('${file.path}.tmp');
     await temp.writeAsString(
       jsonEncode({
         'format': 'pscube-viewer',
         'version': 1,
+        'kind': 'backup',
+        'source': 'android',
+        'exported_at': timestampWithOffset(now),
         'machines': machines,
         'records': records,
+        'rack_captures': captures,
       }),
       flush: true,
     );
-    return temp.rename(file.path);
+    final saved = await temp.rename(file.path);
+    if (folder != null) {
+      await for (final old in folder.list()) {
+        final name = old.uri.pathSegments.last;
+        if (old is File &&
+            old.path != saved.path &&
+            RegExp(r'^pscube-backup-android-\d{8}-\d{6}\.json$')
+                .hasMatch(name)) {
+          try {
+            await old.delete();
+          } on FileSystemException {
+            // 消せなくても書き出しは成功している。
+          }
+        }
+      }
+    }
+    return saved;
+  }
+
+  /// 最後にバックアップを書き出した時刻（共有を完了したときだけ [markBackedUp] で残す）。
+  Future<DateTime?> lastBackupAt() => _serial(() async {
+    final rows = await db.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: ['last_backup_at'],
+    );
+    return rows.isEmpty
+        ? null
+        : DateTime.tryParse(rows.first['value'] as String);
+  });
+
+  Future<void> markBackedUp([DateTime? at]) => _serial(
+    () => db.insert('state', {
+      'key': 'last_backup_at',
+      'value': timestampWithOffset(at ?? DateTime.now()),
+    }, conflictAlgorithm: ConflictAlgorithm.replace),
+  );
+
+  /// 他の端末のバックアップ（PC・ブラウザ）を統合する。消す操作はない。
+  ///
+  /// 台ごとの統合は取り込みと同じ [_merge]（古い数値で新しい数値を上書きしない）。
+  /// 軽い閲覧用ファイル（kind=viewer）と形式の不正は、1件も保存せずに止める。
+  Future<({int added, int updated, int unchanged, int keptLocal, int machines})>
+  importBackup(String text) => _serial(() => _importBackup(text));
+
+  Future<({int added, int updated, int unchanged, int keptLocal, int machines})>
+  _importBackup(String text) async {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(text);
+    } on FormatException {
+      throw const FormatException('P’s CUBEのバックアップではありません。');
+    }
+    if (decoded is! Map<String, dynamic> ||
+        decoded['format'] != 'pscube-viewer' ||
+        decoded['version'] != 1 ||
+        decoded['machines'] is! List ||
+        decoded['records'] is! List) {
+      throw const FormatException('P’s CUBEのバックアップではありません。');
+    }
+    if (decoded['kind'] == 'viewer') {
+      throw const FormatException('閲覧用の軽いファイルはバックアップではないため、読み込めません。');
+    }
+    final machines = [
+      for (final item in decoded['machines'] as List) _asMap(item),
+    ];
+    final records = [
+      for (final item in decoded['records'] as List) _asMap(item),
+    ];
+    if (machines.length > 10000 || records.length > 200000) {
+      throw const FormatException('バックアップの件数が多すぎます。');
+    }
+    machines.forEach(_machine);
+    records.forEach(_record);
+    final machineKeys = machines.map(_key).toSet();
+    final recordKeys = records.map((r) => _key(r, record: true)).toList();
+    if (machineKeys.length != machines.length ||
+        recordKeys.toSet().length != recordKeys.length) {
+      throw const FormatException('同じ機種・台が重複しています。');
+    }
+    if (records.any((r) => !machineKeys.contains(_key(r)))) {
+      throw const FormatException('台に対応する機種情報がありません。');
+    }
+    final Set<String> wanted;
+    if (decoded.containsKey('rack_captures')) {
+      final marks = decoded['rack_captures'];
+      if (marks is! List ||
+          marks.any((k) => k is! String) ||
+          !recordKeys.toSet().containsAll(marks.cast<String>())) {
+        throw const FormatException('取り込み済みの印が不正です。');
+      }
+      wanted = marks.cast<String>().toSet();
+    } else {
+      // 印の無い古い書き出し：台別7日分のグラフがある日は取り込み済みとみなす。
+      wanted = {
+        for (final r in records)
+          if (r['graph'] is Map && (r['graph'] as Map)['kind'] == 'daily')
+            _key(r, record: true),
+      };
+    }
+    // sqflite はトランザクション中の通常の問い合わせを待たせるので、先に全部読む。
+    final oldMachines = {
+      for (final row in await db.query('machines'))
+        row['key'] as String: _asMap(jsonDecode(row['payload'] as String)),
+    };
+    final oldRecords = {
+      for (final row in await db.query('records'))
+        row['key'] as String: _asMap(jsonDecode(row['payload'] as String)),
+    };
+    const numbers = ['bb', 'rb', 'at_art', 'games', 'my'];
+    var added = 0, updated = 0, unchanged = 0, keptLocal = 0;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final machine in machines) {
+        final key = _key(machine);
+        final previous = oldMachines[key];
+        batch.insert('machines', {
+          'key': key,
+          'payload': jsonEncode({
+            ...machine,
+            'expected_count':
+                machine['expected_count'] ?? previous?['expected_count'],
+            'machine_type':
+                previous?['machine_type'] ?? machine['machine_type'],
+          }),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final record in records) {
+        final key = _key(record, record: true);
+        final previous = oldRecords[key];
+        final saved = _merge(previous, record);
+        final numbersChanged =
+            previous != null && numbers.any((f) => previous[f] != saved[f]);
+        if (previous == null) {
+          added++;
+        } else if (numbersChanged ||
+            jsonEncode(saved) != jsonEncode(previous)) {
+          updated++;
+        } else {
+          unchanged++;
+        }
+        if (previous != null &&
+            identical(saved, previous) &&
+            numbers.any((f) => previous[f] != record[f])) {
+          keptLocal++;
+        }
+        if (numbersChanged) {
+          batch.delete('rack_captures', where: 'key=?', whereArgs: [key]);
+        }
+        batch.insert('records', {
+          'key': key,
+          'payload': jsonEncode(saved),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        if (wanted.contains(key) &&
+            numbers.every((f) => saved[f] == record[f])) {
+          batch.insert('rack_captures', {
+            'key': key,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+      if (records.isNotEmpty && await _dayIn(txn) == null) {
+        final latest = records
+            .map((r) => r['day'] as String)
+            .reduce((a, b) => a.compareTo(b) >= 0 ? a : b);
+        batch.insert('state', {
+          'key': 'last_day',
+          'value': latest,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await batch.commit(noResult: true);
+    });
+    return (
+      added: added,
+      updated: updated,
+      unchanged: unchanged,
+      keptLocal: keptLocal,
+      machines: machines.length,
+    );
+  }
+
+  Future<String?> _dayIn(DatabaseExecutor executor) async {
+    final rows = await executor.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: ['last_day'],
+    );
+    return rows.isEmpty ? null : rows.first['value'] as String;
   }
 }

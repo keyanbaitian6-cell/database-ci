@@ -9,13 +9,22 @@ from __future__ import annotations
 import json
 import math
 import re
+import shutil
 import sqlite3
 import sys
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+# バックアップ・Drive同期（仕様：PSCUBE_SYNC.md）。メルヘンの database-backup-* とは名前を分ける。
+AUTO_BACKUP_NAME = 'pscube-backup-auto.json'
+VIEWER_DRIVE_NAME = 'pscube-viewer-drive.json'
+SNAPSHOT_PATTERN = 'pscube-backup-????-??-??.json'
+SNAPSHOT_KEEP_DAYS = 7
+VIEWER_DAYS = 31
+VIEWER_GRAPH_POINTS = 16
+MAX_BACKUP_RECORDS = 200000
 SHOP = 'c740601'
 HOST = 'www.pscube.jp'
 ROOT_URL = f'https://{HOST}/dedamajyoho-P-townDMMpachi/{SHOP}/'
@@ -143,6 +152,92 @@ def _merge(old: dict | None, fresh: dict) -> dict:
     return chosen
 
 
+def thin_graph(graph: dict | None, limit: int = VIEWER_GRAPH_POINTS) -> dict | None:
+    """閲覧用に点を減らす。最初・最後・最高点・最低点（採点に使う終点・維持の元）は必ず残す。"""
+    if not graph or len(graph['points']) <= limit:
+        return graph
+    points = graph['points']
+    required = {0, len(points) - 1, min(range(len(points)), key=lambda i: points[i][1]),
+                max(range(len(points)), key=lambda i: points[i][1])}
+    others = [i for i in range(len(points)) if i not in required]
+    slots = limit - len(required)
+    spread = {others[round(k * (len(others) - 1) / (slots - 1))] for k in range(slots)}
+    chosen = sorted(required | spread)
+    return {**graph, 'points': [points[i] for i in chosen]}
+
+
+def _now_text() -> str:
+    return datetime.now().astimezone().isoformat(timespec='seconds')
+
+
+def _load_settings(data_dir) -> dict:
+    try:
+        loaded = json.loads((Path(data_dir) / 'settings.json').read_text(encoding='utf-8'))
+        return loaded if isinstance(loaded, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def sync_folder(data_dir) -> Path | None:
+    """メルヘンと同じ同期フォルダ（settings.json の sync_dir）。未設定・存在しなければ None。"""
+    folder = _load_settings(data_dir).get('sync_dir')
+    return Path(folder) if folder and Path(folder).is_dir() else None
+
+
+def _write_json(path: Path, payload: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    temporary.replace(path)
+    return path
+
+
+def auto_backup(store: 'PscubeStore', export_path, today: date | None = None) -> str:
+    """保存のあとに呼ぶ。書き出しに失敗しても取り込みは止めない（例外を出さない）。
+
+    ローカルの `pscube-viewer.json`、日付ごとの控え（7日分）、同期フォルダの
+    `pscube-backup-auto.json` と `pscube-viewer-drive.json` を作る。戻り値は画面に出す状態。
+    """
+    try:
+        data_dir = Path(export_path).parent
+        folder = sync_folder(data_dir)
+        today = today or date.today()
+        full = store.export_payload('backup')
+        local = _write_json(Path(export_path), full)
+        snapshots = (folder or data_dir) / 'backups'
+        snapshot = snapshots / f'pscube-backup-{today.isoformat()}.json'
+        snapshots.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(local, snapshot)
+        for old in snapshots.glob(SNAPSHOT_PATTERN):
+            try:
+                stamp = date.fromisoformat(old.stem[len('pscube-backup-'):])
+            except ValueError:
+                continue
+            if (today - stamp).days > SNAPSHOT_KEEP_DAYS:
+                old.unlink(missing_ok=True)
+        if folder is None:
+            return '同期フォルダ未設定（本体の「バックアップ・同期」で指定）'
+        shutil.copyfile(local, folder / AUTO_BACKUP_NAME)
+        light = _write_json(data_dir / VIEWER_DRIVE_NAME, store.export_payload('viewer'))
+        shutil.copyfile(light, folder / VIEWER_DRIVE_NAME)
+        return 'バックアップ済み'
+    except (OSError, ValueError, sqlite3.Error):
+        return 'バックアップに失敗（取り込みは保存済み）'
+
+
+def latest_pscube_backup(folder) -> Path | None:
+    """同期フォルダの最新のP’s CUBEバックアップ。自分の自動コピーと閲覧用の軽いファイルは除く。"""
+    candidates = [p for p in Path(folder).glob('pscube-*.json') if p.name not in (AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME)]
+    for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8-sig'))
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict) and payload.get('format') == FORMAT and payload.get('kind') != 'viewer':
+            return path
+    return None
+
+
 class PscubeStore:
     def __init__(self, path):
         self.path = Path(path)
@@ -267,16 +362,87 @@ class PscubeStore:
                 pending += [r['detail_url'] for r in rows if _record_key(r) not in captured]
         return (pending[0] if pending else None), len(pending)
 
+    def export_payload(self, kind='backup', today: date | None = None) -> dict:
+        """kind='backup'：全期間・グラフ全点・取り込み済みの印つき。'viewer'：閲覧ページ用の軽い版
+        （直近31日・グラフ16点まで。復元には使えない）。"""
+        machines = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM machines ORDER BY rowid')]
+        records = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM records ORDER BY rowid')]
+        data = {'format': FORMAT, 'version': 1, 'kind': kind, 'source': 'pc', 'exported_at': _now_text(),
+                'machines': machines, 'records': records}
+        if kind == 'viewer':
+            latest = max((r['day'] for r in records), default=None)
+            if latest:
+                first = (date.fromisoformat(latest) - timedelta(days=VIEWER_DAYS - 1)).isoformat()
+                data['records'] = [{**r, 'graph': thin_graph(r.get('graph'))} for r in records if r['day'] >= first]
+        else:
+            data['rack_captures'] = [row[0] for row in self.db.execute('SELECT key FROM rack_captures ORDER BY rowid')]
+        return data
+
     def export_viewer(self, path):
-        data = {'format': FORMAT, 'version': 1,
-                'machines': [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM machines ORDER BY rowid')],
-                'records': [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM records ORDER BY rowid')]}
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_suffix(target.suffix + '.tmp')
-        temporary.write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
-        temporary.replace(target)
-        return target
+        return _write_json(Path(path), self.export_payload('backup'))
+
+    def import_backup(self, source) -> dict:
+        """他の端末のバックアップ（PC・Android・ブラウザ）を統合する。消す操作はない。
+
+        台ごとの統合は取り込みと同じ `_merge`（古い数値で新しい数値を上書きしない）。軽い閲覧用
+        ファイル（kind='viewer'）は止める。形式が不正なら1件も保存しない。
+        """
+        data = json.loads(Path(source).read_text(encoding='utf-8-sig')) if isinstance(source, (str, Path)) else source
+        if not isinstance(data, dict) or data.get('format') != FORMAT or data.get('version') != 1 \
+                or not isinstance(data.get('machines'), list) or not isinstance(data.get('records'), list):
+            raise ValueError('P’s CUBEのバックアップではありません。')
+        if data.get('kind') == 'viewer':
+            raise ValueError('閲覧用の軽いファイルはバックアップではないため、読み込めません。')
+        if len(data['machines']) > 10000 or len(data['records']) > MAX_BACKUP_RECORDS:
+            raise ValueError('バックアップの件数が多すぎます。')
+        for m in data['machines']:
+            _validate_machine(m)
+        for r in data['records']:
+            _validate_record(r)
+        machine_keys = {_machine_key(m) for m in data['machines']}
+        record_keys = [_record_key(r) for r in data['records']]
+        if len(machine_keys) != len(data['machines']) or len(set(record_keys)) != len(record_keys):
+            raise ValueError('同じ機種・台が重複しています。')
+        if any(_machine_key(r) not in machine_keys for r in data['records']):
+            raise ValueError('台に対応する機種情報がありません。')
+        if 'rack_captures' in data:
+            captures = data['rack_captures']
+            if not isinstance(captures, list) or any(not isinstance(k, str) for k in captures) or not set(captures) <= set(record_keys):
+                raise ValueError('取り込み済みの印が不正です。')
+        else:
+            # 印の無い古い書き出し：台別7日分のグラフがある日は取り込み済みとみなす。
+            captures = [_record_key(r) for r in data['records'] if (r.get('graph') or {}).get('kind') == 'daily']
+        wanted = set(captures)
+        summary = {'added': 0, 'updated': 0, 'unchanged': 0, 'kept_local': 0, 'machines': len(data['machines'])}
+        with self.db:
+            for m in data['machines']:
+                key = _machine_key(m)
+                previous = self._read('machines', key) or {}
+                saved = {**m, 'expected_count': m.get('expected_count') or previous.get('expected_count'),
+                         'machine_type': previous.get('machine_type') or m.get('machine_type')}
+                self.db.execute('INSERT OR REPLACE INTO machines VALUES (?,?)', (key, json.dumps(saved, ensure_ascii=False)))
+            for r in data['records']:
+                key = _record_key(r)
+                previous = self._read('records', key)
+                saved = _merge(previous, r)
+                numbers = ('bb', 'rb', 'at_art', 'games', 'my')
+                if previous is None:
+                    summary['added'] += 1
+                elif any(previous[k] != saved[k] for k in numbers):
+                    summary['updated'] += 1
+                    self.db.execute('DELETE FROM rack_captures WHERE key=?', (key,))
+                elif saved != previous:
+                    summary['updated'] += 1
+                else:
+                    summary['unchanged'] += 1
+                if previous is not None and any(previous[k] != r[k] for k in numbers) and saved is previous:
+                    summary['kept_local'] += 1
+                self.db.execute('INSERT OR REPLACE INTO records VALUES (?,?)', (key, json.dumps(saved, ensure_ascii=False)))
+                if key in wanted and all(saved[k] == r[k] for k in numbers):
+                    self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (key,))
+            if data['records'] and not self._state('last_day'):
+                self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)', ('last_day', max(r['day'] for r in data['records'])))
+        return summary
 
 
 def run_session(db_path, export_path):
@@ -307,7 +473,7 @@ def run_session(db_path, export_path):
             db = PscubeStore(db_path)
             try:
                 result = db.import_page(raw, current)
-                db.export_viewer(export_path)
+                result['backup'] = auto_backup(db, export_path)
                 result['source_url'] = current
                 return result
             finally:
@@ -337,7 +503,7 @@ def run_session(db_path, export_path):
       };
       window.pscubeCaptureComplete = result => {
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
-        button.textContent = `${result.kind}を保存 · 残り${result.remaining}`;
+        button.textContent = `${result.kind}を保存 · 残り${result.remaining} · ${result.backup || ''}`;
         button.disabled = false;
         capturedUrl = null;
         if (result.next_url) location.href = result.next_url;

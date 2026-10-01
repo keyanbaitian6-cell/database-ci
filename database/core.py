@@ -1501,8 +1501,9 @@ def latest_backup_file(folder):
     """Newest backup JSON in ``folder`` (ignoring this app's own auto copy and
     the light viewer file, which has no graph images and must never be
     imported as if it were a backup)."""
+    # pscube-* はP’s CUBE用（別形式・大きい）。ここで読み込もうとしない。
     candidates = [p for p in Path(folder).glob('*.json')
-                  if p.name not in (AUTO_BACKUP_NAME, VIEWER_FILE_NAME)]
+                  if p.name not in (AUTO_BACKUP_NAME, VIEWER_FILE_NAME) and not p.name.startswith('pscube-')]
     for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             payload = json.loads(path.read_text(encoding='utf-8'))

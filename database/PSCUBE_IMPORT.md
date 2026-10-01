@@ -40,4 +40,4 @@ P’s CUBEの書き出しは専用の `pscube-viewer` 形式。
 `python -m unittest test_pscube_import.py`。実サイトでの認証後の操作と
 Android実機ビルドは別途確認する。
 
-採点・翌日候補（閲覧ページの試験表示）は `PSCUBE_SCORING.md` を参照。
+採点・翌日候補（閲覧ページの試験表示）は `PSCUBE_SCORING.md`、バックアップ・Drive同期は `PSCUBE_SYNC.md` を参照。

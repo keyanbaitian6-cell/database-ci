@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
+import pscube_import
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
@@ -544,6 +545,31 @@ def main():
         import_backup_file(str(latest))
         remember_synced(latest)
 
+    def import_pscube_from_sync():
+        """P’s CUBEの最新バックアップ（Android・ブラウザの書き出しなど）を専用の記録へ統合する。"""
+        folder = load_settings(DATA_DIR).get('sync_dir')
+        if not folder or not Path(folder).is_dir():
+            messagebox.showinfo('同期フォルダ未設定', '先に「同期フォルダを指定」してください。', parent=root)
+            return
+        latest = pscube_import.latest_pscube_backup(folder)
+        if latest is None:
+            messagebox.showinfo('見つかりません', 'このフォルダにP’s CUBEのバックアップ（pscube-backup-…）がありません。', parent=root)
+            return
+        store = pscube_import.PscubeStore(DATA_DIR / 'pscube.sqlite3')
+        try:
+            summary = store.import_backup(latest)
+            pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
+        except Exception as exc:
+            messagebox.showerror('取り込めません', str(exc), parent=root)
+            return
+        finally:
+            store.close()
+        text = (f'P’s CUBE：新規{summary["added"]}件、更新{summary["updated"]}件、同じ内容{summary["unchanged"]}件、'
+                f'新しい自分の数値を維持{summary["kept_local"]}件（{latest.name}）。')
+        logbox.insert('end', text + '\n')
+        logbox.see('end')
+        messagebox.showinfo('読み込みました', text, parent=root)
+
     def remember_synced(latest):
         save_settings(DATA_DIR, last_synced=dict(name=latest.name, mtime=latest.stat().st_mtime))
 
@@ -639,6 +665,7 @@ def main():
     ttk.Button(sync_buttons, text='同期フォルダを指定', command=choose_sync_dir).pack(side='left')
     ttk.Button(sync_buttons, text='同期フォルダの最新を読み込む', command=import_latest_from_sync).pack(side='left', padx=8)
     ttk.Button(sync_buttons, text='過去のバックアップから戻す', command=lambda: restore_from_snapshot()).pack(side='left')
+    ttk.Button(sync_box, text='P’s CUBEの同期フォルダの最新を読み込む', command=lambda: import_pscube_from_sync()).pack(anchor='w', pady=(8, 0))
 
     def open_summary():
         target = day.get().strip()

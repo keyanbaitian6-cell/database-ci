@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#f5f5f7">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; object-src 'none'; frame-src 'none'; base-uri 'none'">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="apple-touch-icon" href="../icons/Icon-180.png?v=panda-20260930">
   <link rel="stylesheet" href="style.css">
@@ -17,9 +17,18 @@
     <section class="panel">
       <h2>保存したページを読み込む</h2>
       <p>Safariで保存したWebアーカイブ、またはこの画面から書き出したJSONを選びます。内容はこのブラウザに保存されます。</p>
-      <div class="actions"><label class="button" for="files">ファイルを読み込む</label><input id="files" type="file" multiple><button id="export" type="button" disabled>JSONを書き出す</button></div>
+      <div class="actions"><label class="button" for="files">ファイルを読み込む</label><input id="files" type="file" multiple><button id="export" type="button" disabled>バックアップを書き出す</button></div>
       <p class="hint">Safariの共有 → オプション → Webアーカイブ →「ファイルに保存」。次の台を開いた後も、保存したページをここで読み込んでください。</p>
       <p id="status" role="status" aria-live="polite">まだ読み込んでいません。</p>
+      <div id="drive" class="drive">
+        <p id="drive-status" class="hint" role="status" aria-live="polite">Googleドライブ：未設定</p>
+        <div class="actions"><button id="drive-refresh" type="button" hidden>Driveの最新を読む</button></div>
+        <details id="drive-setup"><summary>Googleドライブの自動読み込みを設定</summary>
+          <label>Apps ScriptのURL（メルヘンの閲覧ページと同じもの）<input id="drive-url" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>
+          <div class="actions"><button id="drive-save" type="button">保存して読む</button><button id="drive-forget" type="button">設定を消す</button></div>
+          <p class="hint">PC版がDriveの「database共有」へ書く pscube-viewer-drive.json を読みます。Apps Scriptは更新が必要です（database/PSCUBE_SYNC.md）。</p>
+        </details>
+      </div>
       <p id="error" role="alert" hidden></p>
     </section>
     <section class="panel" id="filters" hidden>
