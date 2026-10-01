@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 2026-10-01：PC版を正本へ一本化（メルヘンの自動取り込みを取り込み）、P’s CUBEの自動取り込み（PC・Android）（Claude）
+
+- **一本化（利用者の選択「正本にまとめる」）**：PC版のメルヘン自動取り込み（ChatGPTが `…\g-p-…\database` で作業し未コミットだった `auto_capture.py`・`browser_import.py` の変更・テスト・`AUTO_CAPTURE_*.md`）を、内容を変えずに正本へ取り込んだ（`183543b`）。その作業の元 `a10a1ac` 以降、正本の `browser_import.py` は変わっておらず衝突なし。PC全155件（自動取り込み26件を含む）成功、WebView2のダミーページ試験2本（`smoke_auto_capture.py`・`smoke_auto_machine_switch.py`）成功。
+- **記録の引き継ぎ**：両フォルダの記録は同じ9,071台分で、もう1つのフォルダが数分新しい（06:54と06:49）。正本の `data/database.sqlite3`・`last_save.json`・`settings.json` を `data/backups/pre-merge-20261001/` に退避（旧DBのSHA-256 `15C09593…D535`）してから、もう1つのフォルダの `database.sqlite3`・`last_save.json` を複製（SHA-256一致、整合性チェックok、11,232行・最終 06:54:27）。`settings.json` は正本のまま（違いは最後に開いた店・日付・機種のみ、同期フォルダは同じ）。**今後PC版は正本フォルダ（`work\database-main\database`）の `start.cmd`／`bin` を使う。** もう1つのフォルダのファイルは消していない。
+- **P’s CUBEの自動取り込み**（利用者の選択：メルヘンと同じ仕様）：仕様は `database/PSCUBE_AUTO_CAPTURE.md`。ON/OFF・間隔0.1〜4.5秒・起動時OFF・人間確認／同意／読み込み中はONのまま待つ（押さない）・ONの間は手動取り込み不可・同じページは2回保存しない・同じページで3回失敗したら待機・未取得が無くなったら自動でOFF。ページ判定は `data.mjs` の `autoPageState` から `assets/pscube_auto_probe.js` を生成しPC・Androidで共用。PCは `pscube_import.py` の `AutoPilot`（Python側タイマー）と右下カード（`overlay_script`）、Androidは `pscube_import_page.dart`（メルヘンと同じ常駐通知）と `pscube_auto.dart`。
+- **確認**：PC `test_pscube_auto.py` 12件＋既存P’s CUBE20件＋全155件、Flutter全361件（新規4件）、解析の指摘8件はすべて今回触っていない既存ファイル。JS 55件、ブラウザ試験4本（新規 `test_pscube_auto_browser.mjs`：ダミーページで判定・カード表示・自動開始→保存→次ページ・二重開始なし・失敗報告・360×300、実サイトへの接続なし）。
+- **Androidの最終確認（利用者の依頼：昨日の自動取り込み）**：常駐（`dataSync`、Android 14以降の権限、6時間上限時の停止、タスク終了で停止）とON/OFFのつなぎ込みに問題なし。**見つかった点**：`POST_NOTIFICATIONS` が無いため、Android 13以降（端末はAndroid 16）では「自動取り込み：ON」の通知が通知欄に出ない（動作は続く）。未修正・利用者に相談。
+- **ビルド**：APK `0.5.12 / 2026100106`（ソース `48ffe75`、aaptで確認、判定スクリプト同梱）`a/work/outputs/database-0.5.12-2026100106.apk`（92,406,733 bytes、SHA-256 `6A3F5457C8C03E95F038633BD20C8C799B8C624EFBADE01811733B2FC65AD26D`）。Windows 3アプリ再ビルド（P’s CUBEに判定スクリプト同梱、本体・P’s CUBEに `auto_capture`）、`smoke_frozen_capture.py` で取り込みEXEの同梱コード一致と一時DB保存を確認。ZIP `a/work/outputs/database-windows-2026100106.zip`（150,677,803 bytes、SHA-256 `2AE619F9DF22818DB80E5AFAC9710A895CE102CFD6CA6B32BBE6097E80DF8944`、実データなし）。
+- **未実施・未確認**：端末への `adb install -r`（許可待ち）、実サイトでのP’s CUBE自動取り込み（人間確認が出るため利用者と一緒に確認が必要）。作業中に確認用コマンドへ誤って `git stash` が入り、未コミットの8ファイルを一時退避したが、直後に `git stash pop` で復元し中身とテストを確認済み（Codexの古い退避 `stash@{0}` は未変更）。
+
 ## 2026-10-01：P’s CUBEのバックアップ・Drive同期（PC・Android・iPhoneブラウザ）と、メルヘンの取り込みボタン（Claude）
 
 - 利用者の指示：「取り消しは付けない。PC版の自動バックアップ（名前は分ける）はそのまま、ドライブ同期をする。Android・iPhoneブラウザ版もほとんど同じ仕様」。続けて「PC本体の『ブラウザを開いて取り込む』を『メルヘンワールドを取り込む』に。メルヘンのボタンは指定のCSS（.btn-grad：#16A085→#F4D03F→#16A085、幅200%、ホバーで右端へ0.5秒、角丸10、白文字）に」。仕様は `database/PSCUBE_SYNC.md`（共有用）。
