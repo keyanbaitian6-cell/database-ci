@@ -1,5 +1,17 @@
 # database AI共同作業メモ
 
+## 2026-10-01：P’s CUBEのバックアップ・Drive同期（PC・Android・iPhoneブラウザ）と、メルヘンの取り込みボタン（Claude）
+
+- 利用者の指示：「取り消しは付けない。PC版の自動バックアップ（名前は分ける）はそのまま、ドライブ同期をする。Android・iPhoneブラウザ版もほとんど同じ仕様」。続けて「PC本体の『ブラウザを開いて取り込む』を『メルヘンワールドを取り込む』に。メルヘンのボタンは指定のCSS（.btn-grad：#16A085→#F4D03F→#16A085、幅200%、ホバーで右端へ0.5秒、角丸10、白文字）に」。仕様は `database/PSCUBE_SYNC.md`（共有用）。
+- **PC**（`pscube_import.py`）：P’s CUBEを1回保存するたびに `auto_backup`。ローカル `data/pscube-viewer.json`（全期間・種別backup・取り込み済みの印つき）、日付控え `backups/pscube-backup-YYYY-MM-DD.json`（7日分、同期フォルダが無ければ `data/backups/`）、同期フォルダ（メルヘンの `sync_dir` を共用）へ `pscube-backup-auto.json` と閲覧用の軽い `pscube-viewer-drive.json`（直近31日・グラフ最大16点。最初・最後・最高・最低点は必ず残すので採点は不変）。失敗しても取り込みは止めず、結果をボタンに表示。本体「バックアップ・同期」に「P’s CUBEの同期フォルダの最新を読み込む」を追加（`pscube-*` を更新日時順、閲覧用の軽いファイルは拒否）。統合は取り込みと同じ `_merge`（古い数値で新しい数値を上書きしない、数値が変わった台は台別取得済みを外す、自分の機種タイプ優先、消す操作なし）。メルヘン側の変更は `core.latest_backup_file` が `pscube-` で始まるファイルを読まないようにした1か所だけ。
+- **Android**（`pscube_store.dart`・`pscube_import_page.dart`）：自動同期はできない（メルヘンと同じ）。右上に「バックアップを読み込む」（PC・ブラウザのバックアップを統合、不正なら何も保存しない）と「書き出す（共有）」（名前 `pscube-backup-android-YYYYMMDD-HHMMSS.json`、前の自分の書き出しは消す、共有を取りやめたら書き出し済みにしない）。最後に書き出した日時（1日以上前なら注意）を表示。取り込みのたびの書き出しはやめた。
+- **iPhoneブラウザ**（`web/pscube/sync.mjs`・`app.mjs`）：開くとDriveの最新を読む。メルヘンの閲覧ページと同じApps ScriptのURL（同じブラウザの `database-viewer-remote`）に `?file=pscube`。書き出し時刻が前回と同じなら何もしない。違うファイル・エラー・時間切れは前の内容を残す。CSPの接続先に `script.google.com` と `script.googleusercontent.com` を追加。書き出しは `pscube-backup-browser-…json`（種別backup、台別グラフのある日を取り込み済みとして出す）。`tool/stage_viewer.py` の公開ファイルに `sync.mjs` を追加。
+- **Apps Script**（`tool/viewer_drive_script.gs`）：`?file=pscube` のときだけ `pscube-viewer-drive.json` を返す許可リスト方式に更新（未知の値はエラー）。**利用者が「デプロイを管理→編集→新バージョン」で更新するまで、閲覧ページは「Apps Scriptを更新してください」と出して何も変えない。**
+- **ボタン**：PCはTkで `GradientButton`（PhotoImageで200%幅のグラデーション、Enter／Spaceでも押せる、影は淡い背景で見えないため省略）。Androidは `lib/gradient_button.dart`（押している間に右端へ流れる。影あり）で「アプリ内ブラウザを開く」を「メルヘンワールドを取り込む」に。白文字は黄色の部分で読みにくい（指定どおり）。P’s CUBEのボタンは従来のまま。
+- **確認**：PC新規13件（自動バックアップ・名前の分離・7日の控え・軽いファイルが採点に必要な点を残す・失敗時・往復・不正ファイル拒否・古い数値で上書きしない・印・最新ファイル選択・メルヘンの探索がpscubeを読まない）＋既存P’s CUBE7件・既存125件成功。Flutter全354件（新規6件）＋ボタン3件成功、変更ファイルの解析は既存のinfo1件のみ。ブラウザ：同期6件・Drive画面試験（Apps Scriptは模擬）・既存ブラウザ試験・採点12件・data9件成功。言語をまたぐ確認：PCのバックアップをAndroidが80件読み込み・軽いファイルは拒否、検証用の実DB（39件）のコピーでPCが書いたファイルをブラウザの `validateData` で検証し1227番台の点数が全体／軽いファイルとも27.4で一致。Apps Scriptは模擬環境で許可リストを確認。
+- **配布物**：APK `0.5.11 / 2026100105`（ソース `82e0d7e`、aaptで確認）`a/work/outputs/database-0.5.11-2026100105.apk`（92,384,082 bytes、SHA-256 `4BC704FB6AA1DE3175E29079DEECA825BF38E55E05AC3DCB1BDBA2015406CE59`）。2026100104は同日の途中ビルドで配布・インストールしていない（成果物は削除）。Windows 3アプリを再ビルドし、検証用の別フォルダ（同期フォルダ付き）で本体を起動、新しいボタン表示と「P’s CUBEの同期フォルダの最新を読み込む」で80件取り込み・同期フォルダへの3ファイル書き出しを確認（クリックはWin32操作）。ZIP `a/work/outputs/database-windows-2026100105.zip`（150,637,796 bytes、SHA-256 `469D7DD5DF60A948E6D2440A0D85ECB367D3AAA964241C85AF60B64A775F65DA`、3フォルダ、実データ・reportsなし）。`build_windows.ps1` はWindows PowerShell 5.1で標準エラーを理由に止まっていたので、終了コードで判定するよう修正。
+- **未実施・未確認**：端末への `adb install -r`、閲覧ページの公開（どちらも利用者の許可待ち）、Apps Scriptの更新（利用者の作業）、実Drive・iPhone実機での読み込み、Drive上の容量（31日・台数次第で数十MBの見込み、Apps Scriptの上限はわからない）。
+
 ## 2026-10-01：P’s CUBEに採点と翌日候補を追加（閲覧ページ、試験表示。Claude）
 
 - 利用者の指示：メルヘンワールドと同じ運用（記録→採点→翌日候補）をP’s CUBEに適用。選択：「採点＋翌日候補」から着手、採点は「出玉やグラフなどのきれいさ」を考慮。設計・採用値・限界は `database/PSCUBE_SCORING.md`（共有用）。
