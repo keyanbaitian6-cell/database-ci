@@ -226,6 +226,81 @@ class AutoPilotTests(unittest.TestCase):
         self.assertTrue(self.pilot.state()['enabled'], '確認画面ではずっと待つ')
         self.assertIn('人間確認', self.message())
 
+    def test_no_query_while_a_page_is_loading(self):
+        # 読み込み中に問い合わせると、読み込みが終わるまで待たされる（2026-10-02 実測）。
+        self.pilot.configure(True, 10)
+        self.window.probe = page('A')
+        self.pilot.loading()
+        self.wait(30)
+        self.pilot.tick()
+        self.assertEqual(self.window.calls, [])
+        self.pilot.loaded()
+        self.wait(10)
+        self.pilot.tick()
+        self.assertEqual(self.window.calls, ['probe', 'start'])
+
+    def test_a_query_without_answer_gives_up_and_retries_later(self):
+        import threading, time
+        release = threading.Event()
+        slow = FakeWindow()
+        slow.probe = page('A')
+
+        def evaluate(script):
+            if script == PROBE and not release.is_set():
+                release.wait(2)
+                return None
+            return slow(script)
+        pilot = AutoPilot(evaluate, PROBE, auto=AutoCapture(clock=self.clock, minimum=5, maximum=60, default=10),
+                          eval_timeout=0.05)
+        pilot.configure(True, 10)
+        self.wait(10)
+        started = time.monotonic()
+        pilot.tick()
+        self.assertLess(time.monotonic() - started, 1.0, '返事を待ち続けない')
+        self.assertIsNone(pilot.pending)
+        release.set()
+        self.wait(10)
+        pilot.tick()
+        self.assertEqual(pilot.pending, 'A', '次の機会にやり直す')
+
+    def test_saving_completion_is_not_blocked_while_the_page_is_being_asked(self):
+        import threading
+        self.pilot.configure(True, 10)
+        self.window.probe = page('A')
+        self.wait(10)
+        self.pilot.tick()
+        finished = threading.Event()
+        original = self.window.__call__
+
+        def probe_with_concurrent_save(script):
+            if script == PROBE:
+                worker = threading.Thread(target=lambda: (self.pilot.finished(result={'next_url': 'B', 'remaining': 1, 'kind': '全台一覧'}), finished.set()))
+                worker.start()
+                worker.join(1)
+            return original(script)
+        self.pilot.evaluate = probe_with_concurrent_save
+        self.pilot.loaded()
+        self.wait(10)
+        self.pilot.tick()
+        self.assertTrue(finished.is_set(), '問い合わせ中でも保存完了の処理は進む')
+
+    def test_a_capture_that_never_finishes_is_released_after_90_seconds(self):
+        self.pilot.configure(True, 10)
+        self.window.probe = page('A')
+        self.wait(10)
+        self.pilot.tick()
+        self.assertEqual(self.pilot.pending, 'A')
+        self.wait(60)
+        self.pilot.tick()
+        self.assertEqual(self.window.calls.count('start'), 1, '90秒までは待つ')
+        self.wait(40)
+        self.pilot.tick()
+        self.assertIn('やり直します', self.message())
+        self.assertEqual(self.pilot.failures, {'A': 1})
+        self.wait(10)
+        self.pilot.tick()
+        self.assertEqual(self.window.calls.count('start'), 2)
+
     def test_interval_is_5_to_60_seconds_for_pscube(self):
         for bad in (4.9, 60.1, True, float('nan')):
             with self.assertRaises(ValueError):
@@ -247,7 +322,7 @@ class SessionStartTests(unittest.TestCase):
     def test_window_keeps_cookies_in_the_data_folder_instead_of_private_mode(self):
         import pscube_import
         started = {}
-        window = types.SimpleNamespace(events=types.SimpleNamespace(loaded=Handlers(), closed=Handlers()),
+        window = types.SimpleNamespace(events=types.SimpleNamespace(before_load=Handlers(), loaded=Handlers(), closed=Handlers()),
                                        evaluate_js=lambda script: None, get_current_url=lambda: pscube_import.ROOT_URL)
         fake = types.SimpleNamespace(create_window=lambda *a, **k: window,
                                      start=lambda **kwargs: (started.update(kwargs), [h() for h in window.events.closed.items]))

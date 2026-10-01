@@ -496,8 +496,15 @@ class AutoPilot:
     # 対象のページなのにデータが出ない（人間確認の画面でもない）状態が、この回数・秒数続いたら
     # 止められたとみなして自動取り込みをOFFにする（放置しても叩き続けない。利用者の選択、2026-10-01）。
     BLOCK_CHECKS, BLOCK_SECONDS = 5, 60
+    # ページへの問い合わせの時間制限（秒）。pywebview の evaluate_js は返事が来るまで待ち続け、
+    # ページの読み込み中は読み込みが終わるまで待つ（2026-10-02 実測）。サイトの返事が遅い・来ないと
+    # 自動取り込みが止まっていたため、返事が無ければあきらめて次の機会にやり直す。
+    EVAL_TIMEOUT = 10
+    # 取り込み（全台の表示→読み取り→保存）がこの秒数たっても終わらなければ、印を外してやり直す
+    # （ページ内の処理が途中で消えた場合に「取り込み中」のまま進まなくなるのを防ぐ）。
+    PENDING_TIMEOUT = 90
 
-    def __init__(self, evaluate, probe_script, saving=lambda: False, auto=None):
+    def __init__(self, evaluate, probe_script, saving=lambda: False, auto=None, eval_timeout=None):
         self.evaluate = evaluate
         self.probe_script = probe_script
         self.saving = saving
@@ -508,17 +515,34 @@ class AutoPilot:
         self.done = set()
         self.failures = {}
         self.pending = None
+        self.pending_since = None
+        self.loading_page = False
+        self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
+
+    def _eval(self, script):
+        """時間制限つきの問い合わせ。返事が無い・失敗したときは None（呼んだ側は次の機会にやり直す）。"""
+        box = {}
+
+        def run():
+            try:
+                box['value'] = self.evaluate(script)
+            except Exception as error:  # noqa: BLE001 - a failed query is treated as no answer
+                box['error'] = error
+
+        worker = threading.Thread(target=run, name='pscube-eval', daemon=True)
+        worker.start()
+        worker.join(self.eval_timeout)
+        if worker.is_alive() or 'error' in box:
+            return None
+        return box.get('value')
 
     def state(self):
         return self.auto.state()
 
     def render(self):
-        try:
-            self.evaluate('window.__pscubeRenderAuto && window.__pscubeRenderAuto(' +
-                          json.dumps(self.auto.state(), ensure_ascii=True) + ')')
-        except Exception:
-            pass
+        self._eval('window.__pscubeRenderAuto && window.__pscubeRenderAuto(' +
+                   json.dumps(self.auto.state(), ensure_ascii=True) + ')')
 
     def configure(self, enabled, seconds):
         with self._lock:
@@ -529,20 +553,40 @@ class AutoPilot:
         self.render()
         return self.auto.state()
 
+    def loading(self):
+        """ページの読み込みが始まった：読み込みが終わるまで問い合わせない（問い合わせると待たされる）。"""
+        with self._lock:
+            self.loading_page = True
+
     def loaded(self):
         """新しいページ：間隔ぶん待ってから判定する。途中で消えた取り込み（ページ移動）は待たない。"""
         with self._lock:
+            self.loading_page = False
             if self.pending is not None and not self.saving():
                 self.pending = None
+                self.pending_since = None
             self.auto.loaded()
         self.render()
 
     def tick(self):
         with self._lock:
+            if self.loading_page:
+                return
+            now = self.clock()
+            if (self.pending is not None and self.pending_since is not None and not self.saving()
+                    and now - self.pending_since >= self.PENDING_TIMEOUT):
+                signature, self.pending, self.pending_since = self.pending, None, None
+                self.failures[signature] = self.failures.get(signature, 0) + 1
+                self.auto.pause(f'ON・取り込みが{self.PENDING_TIMEOUT}秒たっても終わらないため、やり直します'
+                                f'（{self.failures[signature]}回目）')
             token = self.auto.due(busy=self.pending is not None or self.saving())
             if token is None:
                 return
-            raw = self.evaluate(self.probe_script)
+        # 問い合わせの間は鍵を持たない（保存完了の処理などを待たせない）。
+        raw = self._eval(self.probe_script)
+        with self._lock:
+            if self.loading_page:
+                return
             try:
                 probe = json.loads(raw) if isinstance(raw, str) else (raw or {})
             except ValueError:
@@ -572,8 +616,9 @@ class AutoPilot:
                 signature = probe['signature']
 
                 def start():
-                    if self.evaluate('window.__pscubeStartCapture ? window.__pscubeStartCapture() : false') is True:
+                    if self._eval('window.__pscubeStartCapture ? window.__pscubeStartCapture() : false') is True:
                         self.pending = signature
+                        self.pending_since = self.clock()
                         return True
                     return False
 
@@ -584,7 +629,7 @@ class AutoPilot:
     def finished(self, result=None, error=None):
         """保存の結果（手動の取り込みでも呼ばれる）。自動で始めた取り込みだけを数える。"""
         with self._lock:
-            signature, self.pending = self.pending, None
+            signature, self.pending, self.pending_since = self.pending, None, None
             enabled = self.auto.state()['enabled']
             if error is not None:
                 if signature is not None:
@@ -728,15 +773,19 @@ def run_session(db_path, export_path):
                 try:
                     result = self._submit_page(raw)
                 except Exception as error:
-                    self._window.evaluate_js('window.pscubeCaptureFailed?.(' + json.dumps(str(error), ensure_ascii=True) + ')')
+                    self._notify('window.pscubeCaptureFailed?.(' + json.dumps(str(error), ensure_ascii=True) + ')')
                     self.pilot.finished(error=str(error))
                     raise
                 # The site's scrolling changes location.hash. WebView2 may
                 # recreate pywebview's promise callbacks on that navigation,
                 # so deliver completion to our own stable DOM handler too.
                 self.pilot.finished(result=result)
-                self._window.evaluate_js('window.pscubeCaptureComplete?.(' + json.dumps(result, ensure_ascii=True) + ')')
+                self._notify('window.pscubeCaptureComplete?.(' + json.dumps(result, ensure_ascii=True) + ')')
                 return result
+
+        def _notify(self, script):
+            # 待たずに送る（ページが移っている途中だと evaluate_js が待たされ、保存の完了が遅れるため）。
+            threading.Thread(target=lambda: self.pilot._eval(script), name='pscube-notify', daemon=True).start()
 
         def capture_failed(self, message):
             # 読み取りの途中（保存の前）で失敗したとき。保存中の失敗は submit_page が数える。
@@ -784,6 +833,7 @@ def run_session(db_path, export_path):
     def closed():
         stop.set()
 
+    window.events.before_load += bridge.pilot.loading
     window.events.loaded += install_overlay
     window.events.closed += closed
     threading.Thread(target=auto_loop, name='pscube-auto', daemon=True).start()
