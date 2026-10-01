@@ -237,7 +237,11 @@ def apply_style(root):
     style.map('Link.TButton', background=[('active', page)], foreground=[('active', '#004499')])
     style.configure('TSeparator', background=hairline)
     style.configure('TCombobox', fieldbackground='#ffffff', background='#ffffff', padding=4)
-    style.map('TCombobox', fieldbackground=[('readonly', '#ffffff')], background=[('readonly', '#ffffff')])
+    style.map('TCombobox', fieldbackground=[('readonly', '#ffffff')], background=[('readonly', '#ffffff')],
+              # 読み取り専用の欄は、選ばれている文字（フォーカス時の選択）が白地に白で見えなくなることがあった
+              # （2026-10-02、起動直後の店舗名）。文字は常に濃い色、選択の背景は白で表示する。
+              foreground=[('disabled', mute), ('readonly', ink)],
+              selectforeground=[('readonly', ink)], selectbackground=[('readonly', '#ffffff')])
 
 
 def main():
