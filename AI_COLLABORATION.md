@@ -11,6 +11,13 @@
 - **閲覧ページ（database-viewer）を公開・更新するときは、必ず `tool/stage_viewer.py` を通す**。`build/web` には実際の記録（`assets/database_seed.json`）が同梱されるため、そのまま公開しない。
 - 作業が終わったらコミットして `main` へpushし、次のAIが同じ状態から始められるようにする。採点は `2026-09-29-v12`（当日500G以下と、サイトの数値が異常な台は採点しない。大当たり0回でグラフの無い台は終点・維持0点）が現行。
 
+## 2026-10-01：P’s CUBEブラウザ版を公開
+
+- 利用者の指示により、正本main `a3a5784` から `python database_android/tool/stage_viewer.py --pscube-only <公開リポジトリ>` を実行し、`pscube/` の5静的ファイルだけを追加。既存Flutter閲覧版は変更なし。実seedは正本クローンに存在せず、スクリプトの記録文字列照合は0種だった。実資料・抽出済み記録は追加していない。
+- 公開コミット：`keyanbaitian6-cell/database-viewer` の `4075e54f038bf95b29192915c10f771acff80f9e`。CLIの認証はimakurudev-engで公開先へのpushが403だったため、公開先所有者の接続済みGitHubコネクターで同一treeを作り、forceなしでmainを更新。
+- 公開URL：https://keyanbaitian6-cell.github.io/database-viewer/pscube/ 。[Pages run 36837404189](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/36837404189) 成功。公開5ファイルはHTTP 200・手元のSHA-256と全て一致、既存トップ200、`assets/assets/database_seed.json` は404。
+- 確認：データテスト9件成功、既存Chromiumブラウザテスト成功（アーカイブ読込・保存復元・JSON往復・失敗時保護・320/390/768px）。公開URLも390pxのChromiumで表示し、タイトル・ファイル選択欄・初期状態とJavaScriptエラー0件を確認。iPhone実機Safariは未確認。
+
 ## 2026-09-30：通常候補を★注目と☆長期傾向に分離（CodexによるClaude作業の継続）
 
 - 正本mainをpullして `a10a1ac` から開始。Claudeクラウドの途中の本番パッチはこのクローンにもorigin/mainにも無かったため、固定済みの `NEXT_DAY_FOCUS_PLAN_20260930.md` に従って本番実装を行った。新デザイン・パンダアイコン・採点v12・Driveの電池対策は維持。

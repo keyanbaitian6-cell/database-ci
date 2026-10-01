@@ -19,7 +19,8 @@ Android・PCの収集処理、共通モデル、採点式、既存Drive読み込
 ## iOSでの操作と制約
 
 配布後の入口は既存閲覧URL配下の `pscube/`（ローカル確認は同じ相対パス）。
-今回、公開サイトへのデプロイは実施していない。
+2026-10-01に公開済み：https://keyanbaitian6-cell.github.io/database-viewer/pscube/ 。
+公開コミット `4075e54`、配信5ファイルの一致とChromiumでの表示を確認（iPhone実機Safariは未確認）。
 
 1. SafariでP’s CUBEを開き、必要なら人が認証する。
 2. 対象ページを表示し、機種内一覧は最後までスクロールして台を表示させる。
