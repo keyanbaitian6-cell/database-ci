@@ -84,3 +84,22 @@ test('intermittent 404 / 5xx / network failure from Apps Script is retried twice
   const slow = sequence([404]);
   await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: slow.fetchImpl, retryDelays: [10000, 10000], timeoutMs: 30 }), /時間切れ/);
 });
+
+test('time with the page hidden (iPhone app switch) does not count toward the timeout', async () => {
+  const listeners = {};
+  globalThis.document = { visibilityState: 'visible',
+    addEventListener: (n, f) => { listeners[n] = f; }, removeEventListener: (n, f) => { if (listeners[n] === f) delete listeners[n]; } };
+  try {
+    let release;
+    const doc = { ...JSON.parse(JSON.stringify(data())), exported_at: 'v' };
+    const fetchImpl = () => new Promise(resolve => { release = () => resolve(respond(doc)()); });
+    const pending = fetchDrive(SCRIPT, null, { fetchImpl, timeoutMs: 40 });
+    await new Promise(r => setTimeout(r, 0));
+    document.visibilityState = 'hidden'; listeners.visibilitychange();
+    await new Promise(r => setTimeout(r, 80));   // 裏に回っている間は40msを過ぎても打ち切らない
+    document.visibilityState = 'visible'; listeners.visibilitychange();
+    release();
+    assert.equal((await pending).data.records.length, 2);
+    assert.equal(listeners.visibilitychange, undefined);
+  } finally { delete globalThis.document; }
+});

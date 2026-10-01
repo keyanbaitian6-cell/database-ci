@@ -108,7 +108,7 @@ const remoteHead = {...head, source: 'pc-viewer', exported_at: exportedAt};
 const remoteText = `${JSON.stringify(remoteHead).slice(0, -1)}, "records": [\n` +
   Array(200).fill(row).join(',\n') + '\n]}';
 
-function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetchImpl} = {}) {
+function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetchImpl, document} = {}) {
   const bytes = new TextEncoder().encode(text);
   const stats = {pulled: 0, cancelled: false, total: Math.ceil(bytes.length / chunkSize)};
   let offset = 0;
@@ -131,6 +131,7 @@ function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetc
     window: {}, TextDecoderStream, TransformStream, AbortController,
     setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     fetch: fetchImpl ?? (async () => response),
+    ...(document ? {document} : {}),
   };
   vm.runInNewContext(code, context);
   return {viewer: context.window.databaseViewer, stats};
@@ -239,4 +240,35 @@ test('Drive: intermittent 404 / 5xx / network failure is retried twice, other er
   const forbidden = sequence([403]);
   await assert.rejects(remote('', {timers, fetchImpl: forbidden.fetchImpl}).viewer.fromRemote(REMOTE, null), /（403）/);
   assert.equal(forbidden.calls.length, 1);
+});
+
+test('Drive: time spent with the page hidden (iPhone app switch) is not counted', async () => {
+  const listeners = {};
+  const document = {
+    visibilityState: 'visible',
+    addEventListener: (name, fn) => { listeners[name] = fn; },
+    removeEventListener: (name, fn) => { if (listeners[name] === fn) delete listeners[name]; },
+  };
+  const events = [];
+  const timers = {
+    setTimeout: (_callback, ms) => { events.push(`set ${ms}`); return events.length; },
+    clearTimeout: () => { events.push('clear'); },
+  };
+  let release;
+  const response = {ok: true, status: 200, headers: {get: () => 'application/json'}, body: new Response(remoteText).body};
+  const fetchImpl = () => new Promise((resolve) => { release = () => resolve(response); });
+  const {viewer} = remote('', {timers, fetchImpl, document});
+  const pending = viewer.fromRemote(REMOTE, null);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(typeof listeners.visibilitychange, 'function');
+  events.length = 0;
+  document.visibilityState = 'hidden';
+  listeners.visibilitychange();
+  assert.deepEqual(events, ['clear'], '裏に回ったら打ち切りの時計を止める');
+  document.visibilityState = 'visible';
+  listeners.visibilitychange();
+  assert.deepEqual(events, ['clear', 'clear', 'set 30000'], '戻ったら30秒を数え直す');
+  release();
+  assert.equal(JSON.parse(await pending).records.length, 200);
+  assert.equal(listeners.visibilitychange, undefined, '終わったら見張りを外す');
 });
