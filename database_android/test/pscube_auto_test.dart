@@ -40,23 +40,29 @@ void main() {
     expect(stopped.message, contains('3回失敗'));
   });
 
-  test('起動時はOFF・間隔3.5秒。ONの間でもOFFやページ移動の後の古い判定は使わない', () {
+  test('起動時はOFF・間隔10秒（5〜60秒）。OFFやページ移動の後の古い判定は使わない', () {
     var now = Duration.zero;
-    final auto = AutoCaptureState(elapsed: () => now);
+    final auto = AutoCaptureState(
+      elapsed: () => now,
+      minTenths: 50,
+      maxTenths: 600,
+      intervalTenths: 100,
+    );
     expect(auto.enabled, isFalse);
-    expect(auto.intervalTenths, 35);
+    expect(auto.intervalTenths, 100);
     auto.turnOn();
     expect(auto.due(busy: false), isNull, reason: '間隔が経つまでは見ない');
-    now += const Duration(milliseconds: 3500);
+    now += const Duration(seconds: 10);
     final token = auto.due(busy: false)!;
     expect(auto.current(token, 0), isTrue);
     auto.nextPage(1);
     expect(auto.current(token, 1), isFalse, reason: 'ページが移ったら古い判定は無効');
-    now += const Duration(milliseconds: 3500);
+    now += const Duration(seconds: 10);
     final next = auto.due(busy: false)!;
     auto.turnOff();
     expect(auto.current(next, 1), isFalse, reason: 'OFFの後は始めない');
-    expect(() => auto.setIntervalTenths(0), throwsRangeError);
-    expect(() => auto.setIntervalTenths(46), throwsRangeError);
+    expect(() => auto.setIntervalTenths(49), throwsRangeError);
+    expect(() => auto.setIntervalTenths(601), throwsRangeError);
+    expect(AutoCaptureState().intervalTenths, 35, reason: 'メルヘンは今までどおり3.5秒');
   });
 }

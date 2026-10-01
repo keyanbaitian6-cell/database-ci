@@ -5,11 +5,14 @@ import time
 
 
 class AutoCapture:
-    def __init__(self, clock=time.monotonic):
+    def __init__(self, clock=time.monotonic, minimum=0.1, maximum=4.5, default=3.5):
+        # 間隔の範囲はメルヘンが0.1〜4.5秒（初期3.5）。P’s CUBEは5〜60秒（初期10）で使う
+        # （サイトに止められないよう長めに。利用者の指定、2026-10-01）。
         self._lock = threading.RLock()
         self._clock = clock
+        self._minimum, self._maximum = minimum, maximum
         self._enabled = False
-        self._seconds = 3.5
+        self._seconds = default
         self._message = '停止中'
         self._generation = 0
         self._deadline = 0.0
@@ -23,11 +26,12 @@ class AutoCapture:
     def configure(self, enabled, seconds):
         if not isinstance(enabled, bool):
             raise ValueError('ON/OFFの指定が不正です。')
+        message = f'間隔は{self._minimum:g}〜{self._maximum:g}秒で指定してください。'
         if isinstance(seconds, bool):
-            raise ValueError('間隔は0.1〜4.5秒で指定してください。')
+            raise ValueError(message)
         seconds = float(seconds)
-        if not math.isfinite(seconds) or not 0.1 <= seconds <= 4.5:
-            raise ValueError('間隔は0.1〜4.5秒で指定してください。')
+        if not math.isfinite(seconds) or not self._minimum <= seconds <= self._maximum:
+            raise ValueError(message)
         with self._lock:
             self._generation += 1
             self._seconds = round(seconds * 10) / 10
