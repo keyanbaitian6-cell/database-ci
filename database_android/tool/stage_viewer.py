@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parents[1]
 BUILD = HERE / 'build' / 'web'
 SEED = HERE / 'assets' / 'database_seed.json'
 PSCUBE = HERE / 'web' / 'pscube'
-PSCUBE_FILES = {'index.html', 'style.css', 'app.mjs', 'data.mjs', 'archive.mjs'}
+PSCUBE_FILES = {'index.html', 'style.css', 'app.mjs', 'data.mjs', 'archive.mjs', 'scoring.mjs'}
 
 README = """# database 閲覧
 

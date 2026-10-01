@@ -1,5 +1,6 @@
 import { readWebArchive } from './archive.mjs';
 import { emptyData, parsePage, validateData, mergeData, machineKey, progress } from './data.mjs';
+import { scoreRecord, nextDayCandidates, bandOf, profileOf, SCORING_VERSION, MIN_SCORED_GAMES } from './scoring.mjs';
 
 const $ = id => document.getElementById(id);
 let data = emptyData(), selectedMachine = null, busy = false;
@@ -72,6 +73,39 @@ function graphView(graph) {
   line.setAttribute('points', points.map(p => `${x(p[0]).toFixed(2)},${y(p[1]).toFixed(2)}`).join(' '));
   svg.append(zero, line); return svg;
 }
+const candidateCache = new WeakMap();
+function candidatesOf(machine, day) {
+  let perData = candidateCache.get(data);
+  if (!perData) { perData = new Map(); candidateCache.set(data, perData); }
+  const key = `${machineKey(machine)}|${day}`;
+  if (!perData.has(key)) perData.set(key, nextDayCandidates(data, machine, day));
+  return perData.get(key);
+}
+function candidateTally(machine, day) {
+  if (!day) return '';
+  const { candidates } = candidatesOf(machine, day);
+  if (!candidates.length) return '';
+  const stars = candidates.filter(c => c.focus).length;
+  return `翌日候補 ★${stars}台・☆${candidates.length - stars}台`;
+}
+const scoreText = s => s.total == null ? s.reasons[0] : `${s.total.toFixed(1)}点${s.provisional ? '（暫定）' : ''}`;
+function renderNextDay(machine, day) {
+  const box = $('next-day'), kind = profileOf(machine) === 'normal' ? 'ノーマル（当たり頻度・出玉・グラフ）' : '出玉・グラフ';
+  const panel = [element('h3', '翌日の候補（試験表示）'),
+    element('p', `採点方式：${kind}（${SCORING_VERSION}）。★＝当日の情報があり、順位が安定していて、当日88点未満の台。☆＝長期傾向は上位だが★の条件を満たさない台。設定や勝ちを示すものではありません。`, 'hint')];
+  const result = day ? candidatesOf(machine, day) : null;
+  if (!result) panel.push(element('p', '営業日を選んでください。', 'empty'));
+  else if (!result.candidates.length) panel.push(element('p', `判断できた台が${result.eligible}台（4台未満）のため、候補は出しません。台別ページの7日分を取り込むと増えます。`, 'empty'));
+  else for (const c of result.candidates) {
+    const row = element('div', null, `cand${c.focus ? ' focus' : ''}`);
+    row.append(element('strong', `${c.focus ? '★' : '☆'} ${c.record.rack}番台`),
+      element('span', `指数${c.index.toFixed(1)}・${c.usedDays}日分・当日${c.todayScore == null ? '採点なし' : `${c.todayScore.toFixed(1)}点`}`),
+      element('small', `${c.reason}。日ごとの順位（新しい順）：${c.contributions.map(d => `${d.day.slice(5)} ${bandOf(d.rank)}`).join('／')}・安定性z=${c.stabilityZ.toFixed(2)}`));
+    panel.push(row);
+  }
+  box.replaceChildren(...panel);
+  return result;
+}
 function render() {
   const scopeMachines = data.machines.filter(m => scope(m) === $('store').value);
   $('totals').textContent = `${scopeMachines.length}機種 · 保存した台の記録 ${data.records.filter(r => scope(r) === $('store').value).length}件（日付別）`;
@@ -84,6 +118,8 @@ function render() {
       const state = progress(data, m, $('day').value), button = element('button', null, 'machine'); button.type = 'button';
       button.append(element('strong', m.machine), element('span', `${state.records.length}/${m.expected_count ?? '?'}台の数値 · 詳細 ${state.records.length - state.pending.length}台`));
       if (!state.complete) button.append(element('span', '全台の数値は未確認'));
+      const tally = candidateTally(m, $('day').value);
+      if (tally) button.append(element('span', tally, 'tally'));
       button.onclick = () => { selectedMachine = machineKey(m); render(); $('detail').scrollIntoView({ block: 'start' }); };
       return button;
     }));
@@ -97,14 +133,26 @@ function render() {
   $('machine-link').href = machine.url;
   $('next').hidden = !state.pending.length;
   if (state.pending.length) { $('next').href = state.pending[0].detail_url; $('next').textContent = `次の未取得台 ${state.pending[0].rack} を開く`; }
+  const nextDay = renderNextDay(machine, $('day').value);
+  const marks = new Map((nextDay?.candidates ?? []).map(c => [c.record.rack, c.focus ? '★' : '☆']));
   $('records').replaceChildren(...state.records.map(r => {
     const card = element('article', null, 'record'), head = element('div', null, 'record-head');
-    head.append(element('h3', `${r.rack}番台`), element('span', r.graph?.kind === 'daily' ? '詳細取得済' : '詳細未取得', `badge${r.graph?.kind === 'daily' ? ' done' : ''}`));
+    head.append(element('h3', `${r.rack}番台${marks.has(r.rack) ? ` ${marks.get(r.rack)}` : ''}`), element('span', r.graph?.kind === 'daily' ? '詳細取得済' : '詳細未取得', `badge${r.graph?.kind === 'daily' ? ' done' : ''}`));
     const stats = element('dl', null, 'stats');
     for (const [label, val] of [['BIG', r.bb], ['REG', r.rb], ['AT/ART', r.at_art], ['累計G', r.games], ['MY', r.my]]) {
       const div = element('div'); div.append(element('dt', label), element('dd', val.toLocaleString('ja-JP'))); stats.append(div);
     }
-    card.append(head, stats);
+    const score = scoreRecord(r, data), line = element('p', null, 'score');
+    line.append(element('strong', `採点 ${scoreText(score)}`));
+    card.append(head, line, stats);
+    const detail = element('details', null, 'why'); detail.append(element('summary', '採点の内訳'));
+    if (score.parts) {
+      const names = { hit: '当たり頻度', hold: '最大放出数（MY）', end: 'グラフ終点', retention: 'グラフ維持' };
+      detail.append(element('p', Object.entries(names).filter(([k]) => score.weights[k] > 0)
+        .map(([k, label]) => `${label} ${score.parts[k] == null ? '—' : score.parts[k].toFixed(1)}/${score.weights[k]}`).join('・'), 'hint'));
+    }
+    detail.append(...score.reasons.map(text => element('p', text, 'hint')));
+    card.append(detail);
     if (r.graph) { card.append(graphView(r.graph), element('p', `${r.graph.kind === 'daily' ? '台別ページ' : '一覧ページ'}の保存グラフ · 破線はゼロ · 台ごとに縮尺が異なります`, 'graph-note')); }
     else card.append(element('p', 'グラフ未取得', 'hint'));
     const link = element('a', 'この台のサイトページを開く'); link.href = r.detail_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; card.append(link);

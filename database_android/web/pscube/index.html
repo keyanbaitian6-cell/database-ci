@@ -34,9 +34,10 @@
       <label>機種タイプ<select id="machine-type"><option value="">未設定</option><option value="normal">ノーマルタイプ</option><option value="other">それ以外</option></select></label>
       <div class="actions"><a id="machine-link" class="button secondary" target="_blank" rel="noopener noreferrer">機種ページを開く</a><a id="next" class="button" target="_blank" rel="noopener noreferrer">次の未取得台を開く</a></div>
       <p class="hint">「詳細取得済」は台別ページの日別グラフを読み込んだ台です。一覧のグラフだけの場合は未取得として残します。当日の数値が変われば再取得の対象になります。</p>
+      <section id="next-day" aria-label="翌日の候補"></section>
       <div id="records"></div>
     </section>
-    <footer>最大放出数はMYとして表示します。採点・翌日候補は準備中です。<br>Safariから別サイトの画面を直接取り込む機能は、まだありません。</footer>
+    <footer>最大放出数はMYとして表示します。採点と翌日候補は試験表示で、設定や勝ちを示すものではありません（根拠は database/PSCUBE_SCORING.md）。<br>Safariから別サイトの画面を直接取り込む機能は、まだありません。</footer>
   </main>
   <script type="module" src="app.mjs"></script>
 </body>
