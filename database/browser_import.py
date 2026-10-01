@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageDraw
+from auto_capture import AUTO_CAPTURE_JS, AutoCapture
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
 from core import (STORE_NAMES, Store, normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
@@ -580,6 +582,7 @@ OVERLAY_JS = (
     "    } catch (e) { status.textContent = String(e); }\n"
     "  };\n"
     "  const status = document.createElement('span');\n"
+    "  status.id = 'database-capture-status';\n"
     "  status.style.cssText = 'font-size:11px;opacity:.9;white-space:normal;word-break:break-word';\n"
     "  captureBtn.style.cssText = 'padding:8px 10px;border:none;border-radius:6px;background:#0d8b74;"
     "color:#fff;cursor:pointer;font-size:13px;width:100%';\n"
@@ -626,7 +629,13 @@ OVERLAY_JS = (
     "    }\n"
     "    return items;\n"
     "  };\n"
-    "  const moveToNextMachine = async () => {\n"
+    "  let moveBusy = false, moveCommitted = false, moveEpoch = 0, pendingMachineFallback = null;\n"
+    "  const moveToNextMachine = async (revision = null) => {\n"
+    "    if (moveBusy) return;\n"
+    "    moveBusy = true;\n"
+    "    const epoch = moveEpoch, source = location.href;\n"
+    "    const valid = () => epoch === moveEpoch && source === location.href;\n"
+    "    try {\n"
     "    const id = pageIdentity();\n"
     "    status.textContent = '次の機種を探しています…';\n"
     "    const kind_code = new URL(location.href).searchParams.get('kind_code');\n"
@@ -634,8 +643,12 @@ OVERLAY_JS = (
     # badges), and on the live React-rendered site that element holds a
     # __reactFiber back-reference -> JSON.stringify throws "circular structure".
     "    const machines = (await waitForMachineLinks()).map(({name, url, count}) => ({name, url, count}));\n"
+    "    if (!valid()) return;\n"
     "    const raw = await window.pywebview.api.next_unimported_machine(JSON.stringify({...id, kind_code, machines}));\n"
     "    const data = JSON.parse(raw);\n"
+    "    if (!valid()) return;\n"
+    "    const finish = () => {\n"
+    "    if (!valid() || (revision !== null && (autoCancelled || autoWaitReason()))) return false;\n"
     "    if (data && data.url) {\n"
     "      try { localStorage.setItem('database-last-status', data.message || ''); } catch (e) {}\n"
     "      status.textContent = data.message || '';\n"
@@ -652,19 +665,26 @@ OVERLAY_JS = (
     "          const el = target.element;\n"
     "          const clickable = el.tagName === 'A' ? el : (el.closest('tr') || el);\n"
     "          const before = location.href;\n"
+    "          moveCommitted = true;\n"
     "          clickable.click();\n"
-    "          setTimeout(() => {\n"
-    "            if (location.href === before) {\n"
-    "              status.textContent = data.machine + ' の行を押しても移動しませんでした。一覧の機種名を直接押してください。';\n"
-    "            }\n"
-    "          }, 3000);\n"
-    "          return;\n"
+    "          if (revision !== null) pendingMachineFallback = {before, url: data.url, machine: data.machine, started: Date.now(), epoch};\n"
+    "          else setTimeout(() => { if (valid() && location.href === before) status.textContent = data.machine + ' の行を押しても移動しませんでした。一覧の機種名を直接押してください。'; }, 3000);\n"
+    "          return true;\n"
     "        }\n"
     "      }\n"
+    "      moveCommitted = true;\n"
     "      location.href = data.url;\n"
     "    } else {\n"
     "      status.textContent = (data && data.message) || '未取り込みの機種・グラフはありません。';\n"
     "    }\n"
+    "    return true;\n"
+    "    };\n"
+    "    if (revision === null) { finish(); } else {\n"
+    "      window.__databaseFinishMachine = finish;\n"
+    "      try { await window.pywebview.api.commit_auto_move(revision); }\n"
+    "      finally { window.__databaseFinishMachine = null; }\n"
+    "    }\n"
+    "    } finally { moveBusy = false; }\n"
     "  };\n"
     "  const moveToNextRack = async () => {\n"
     "    status.textContent = '次の未取り込み台を探しています…';\n"
@@ -694,9 +714,6 @@ OVERLAY_JS = (
     "  refreshProgress();\n"
     "  markMachines();\n"
     "  setTimeout(markMachines, 1000);\n"
-    "  if (new URLSearchParams(location.hash.replace(/^#/, '')).get('database_next_machine') === '1') {\n"
-    "    setTimeout(() => { moveToNextMachine().catch(e => { status.textContent = String(e); }); }, 0);\n"
-    "  }\n"
     # 位置はすべて「画面に見えている座標」で扱う。カードは zoom で拡大するため、
     # 見た目の大きさは getBoundingClientRect で測り、CSS の left/top には
     # zoom で割った値を入れる（そうしないと拡大したとき位置がずれる）。
@@ -756,7 +773,7 @@ OVERLAY_JS = (
     "      }\n"
     "    } catch (e) { status.textContent = String(e); }\n"
     "  };\n"
-    "})();"
+    + AUTO_CAPTURE_JS + "})();"
 )
 
 # 内部ブラウザにYouTubeを表示しない（クリックの邪魔になるため）。Android版
@@ -938,8 +955,10 @@ def _next_step(store, day, machine, location, current_rack=None):
 
 
 def _advance_signal_path():
+    import os
     import tempfile
-    return Path(tempfile.gettempdir()) / 'database-browser-advance-signal.json'
+    return Path(os.environ.get('DATABASE_ADVANCE_SIGNAL') or
+                str(Path(tempfile.gettempdir()) / 'database-browser-advance-signal.json'))
 
 
 def _write_advance_signal(message, next_url=None):
@@ -1093,9 +1112,146 @@ class _Bridge:
         self._script_path = str(script_path)
         self._window = None  # set once the window exists (for the real URL)
         self._children = []  # review windows still open when the browser closes
+        self._submit_lock = threading.Lock()
+        self._auto = AutoCapture()
+        self._overlay_ready = threading.Event()
+        self._auto_display = None
+        self._manual_continuation = True
+        self._advance_generation = None
+        self._auto_session = 0
+        self._advance_session = None
+        self._advance_url = None
+        self._pending_advance = None
+        import tempfile
+        import uuid
+        self._signal_path = Path(tempfile.gettempdir()) / f'database-advance-{uuid.uuid4().hex}.json'
         self._layout_folder = Path(db_path).parent
         self._layout = layout or {'window': dict(DEFAULT_BROWSER_LAYOUT['window']),
                                   'overlay': dict(DEFAULT_BROWSER_LAYOUT['overlay'])}
+
+    def get_auto_capture(self):
+        return dict(self._auto.state(), manual_continuation=self._manual_continuation)
+
+    def set_auto_capture(self, enabled, seconds=3.5):
+        with self._auto._lock:
+            self._auto.configure(enabled, seconds)
+            self._auto_session += 1
+            self._manual_continuation = False
+            return self.get_auto_capture()
+
+    def commit_auto_move(self, revision):
+        return self._auto.run_current(revision, lambda: self._window.evaluate_js(
+            'window.__databaseFinishMachine && window.__databaseFinishMachine()'))
+
+    def _poll_advance(self):
+        """Consume this browser's save result; defer movement behind a challenge."""
+        if self._signal_path.exists():
+            try:
+                payload = json.loads(self._signal_path.read_text(encoding='utf-8'))
+                self._signal_path.unlink()
+            except (OSError, ValueError):
+                return True
+            self._pending_advance = (payload, self._advance_generation,
+                                     self._advance_session, self._advance_url)
+        if self._pending_advance is None:
+            return False
+        payload, generation, session, source_url = self._pending_advance
+        message, url = payload.get('message'), payload.get('next_url')
+        if message:
+            self._window.evaluate_js("try { localStorage.setItem('database-last-status', " +
+                json.dumps(message) + "); } catch (e) {}")
+            self._window.evaluate_js('window.__databaseRefreshProgress && window.__databaseRefreshProgress()')
+            self._window.evaluate_js("(() => { const s = document.getElementById('database-capture-status'); "
+                "if (s) s.textContent = " + json.dumps(message) + '; })()')
+            payload.pop('message', None)
+        if url and is_allowed_url(url):
+            if generation is None:
+                self._window.evaluate_js('location.href = ' + json.dumps(url))
+            else:
+                state = self._auto.state()
+                if state['enabled'] and self._auto_session == session:
+                    # A reload or a manually resolved challenge changes the
+                    # document revision, but must not cancel this save's
+                    # continuation when the browser returns to its source.
+                    if not self._overlay_ready.is_set():
+                        return True
+                    current_url = self._window.get_current_url() or ''
+                    if current_url.split('#')[0] != (source_url or '').split('#')[0]:
+                        waiting = self._window.evaluate_js(
+                            'window.__databaseAutoWaitReason && window.__databaseAutoWaitReason()')
+                        if isinstance(waiting, dict) and ('確認画面' in waiting.get('error', '') or
+                                                         '読み込み' in waiting.get('error', '')):
+                            self._auto.pause('ON・確認画面の終了後に次へ進みます', state['revision'])
+                            self._render_auto()
+                            return True
+                        self._pending_advance = None
+                        return True
+                    moved = self._auto.run_current(state['revision'], lambda: self._window.evaluate_js(
+                        'window.__databaseAutoAdvance && window.__databaseAutoAdvance(' + json.dumps(url) + ')'))
+                    if not moved:
+                        self._auto.pause('ON・確認画面の終了後に次へ進みます', state['revision'])
+                        self._render_auto()
+                        return True
+        self._pending_advance = None
+        return True
+
+    def _loading(self):
+        self._overlay_ready.clear()
+        self._auto.loaded()  # Invalidate extraction from the previous document.
+
+    def _loaded(self):
+        self._auto.loaded()
+        self._auto_display = None
+        self._overlay_ready.set()
+
+    def _auto_tick(self):
+        """Python timer works independently of minimized-page JS timers."""
+        if not self._overlay_ready.is_set():
+            return
+        generation = self._auto.due(busy=any(c.poll() is None for c in self._children))
+        if generation is not None:
+            try:
+                current = self._window.get_current_url()
+                if not is_allowed_url(current or ''):
+                    self._auto.pause('ON・対象店舗のページ待ち', generation)
+                else:
+                    probe = self._window.evaluate_js('window.__databaseAutoProbe && window.__databaseAutoProbe()')
+                    if not isinstance(probe, dict) or probe.get('error'):
+                        reason = probe.get('error') if isinstance(probe, dict) else 'ページの準備待ち'
+                        self._auto.pause('ON・待機：' + str(reason), generation)
+                    elif probe.get('url') != current or current != self._window.get_current_url():
+                        self._auto.pause('ON・ページ切り替え待ち', generation)
+                    elif probe.get('kind') == 'machines':
+                        # JS serializes asynchronous selection; admission is checked
+                        # again in commit_auto_move after the awaited DB query.
+                        self._auto.run_current(generation, lambda: self._window.evaluate_js(
+                            'window.__databaseAutoMoveMachine(' + str(generation) + ')'))
+                    elif probe.get('kind') in ('table', 'graph'):
+                        raw = self._checked(probe['raw'])
+                        payload = json.loads(raw) if isinstance(raw, str) else raw
+                        if not isinstance(payload, dict) or payload.get('error'):
+                            self._auto.pause('ON・保存待機：読み取り内容を確認してください。', generation)
+                        else:
+                            day = resolve_day(payload)
+                            key = (probe['kind'], current.split('#')[0], day,
+                                   json.dumps(payload, sort_keys=True, ensure_ascii=False))
+                            self._auto.submit(generation, key, lambda: self._spawn(probe['kind'], raw))
+                    else:
+                        self._auto.pause('ON・対象ページ待ち', generation)
+            except Exception as exc:
+                # Errors never change the user's ON setting or repeat saves.
+                self._auto.pause('ON・待機：' + str(exc), generation)
+        self._render_auto()
+
+    def _render_auto(self):
+        state = self.get_auto_capture()
+        if state != self._auto_display:
+            try:
+                self._window.evaluate_js('window.__databaseRenderAuto && window.__databaseRenderAuto(' +
+                                         json.dumps(state, ensure_ascii=False) + ')')
+                self._auto_display = state
+            except Exception:
+                pass
 
     def save_overlay_layout(self, raw):
         """Remember where the overlay card is and how big (called on drag / －＋)."""
@@ -1377,6 +1533,17 @@ class _Bridge:
         return json.dumps({'message': f'取り消しました：{label}'}, ensure_ascii=False)
 
     def _spawn(self, kind, raw):
+        # The API is called on multiple pywebview threads. Admit only one save
+        # process at a time, including a manual click racing an automatic tick.
+        with self._auto._lock, self._submit_lock:
+            self._children = [c for c in self._children if c.poll() is None]
+            if self._children:
+                return False
+            self._spawn_unlocked(kind, raw)
+            return True
+
+    def _spawn_unlocked(self, kind, raw):
+        import os
         import subprocess
         import sys
         import tempfile
@@ -1391,7 +1558,13 @@ class _Bridge:
             command.append(self._script_path)
         command.extend([f'--confirm-{kind}', str(payload_path), self._db_path, self._reports_folder])
         self._children = [c for c in self._children if c.poll() is None]
-        self._children.append(subprocess.Popen(command))
+        state = self._auto.state()
+        self._advance_generation = state['revision'] if state['enabled'] else None
+        self._advance_session = self._auto_session if state['enabled'] else None
+        self._advance_url = self._window.get_current_url() if state['enabled'] else None
+        self._manual_continuation = not state['enabled']
+        self._children.append(subprocess.Popen(command, env={**os.environ,
+            'DATABASE_ADVANCE_SIGNAL': str(self._signal_path)}))
 
 
 def _load_payload(payload_path):
@@ -1602,6 +1775,7 @@ def run_session(db_path, reports_folder):
     # 動かした・大きさを変えた窓の配置を覚えておき、閉じたときに保存する。
     window.events.moved += lambda x, y: bridge._note_window(x=x, y=y)
     window.events.resized += lambda width, height: bridge._note_window(width=width, height=height)
+    window.events.before_load += bridge._loading
 
     def install_overlay():
         try:
@@ -1614,63 +1788,25 @@ def run_session(db_path, reports_folder):
         try:
             window.evaluate_js('window.__databaseLayout = ' + json.dumps(bridge._layout['overlay'])
                                + ';\n' + OVERLAY_JS)
+            bridge._loaded()
         except Exception:
             pass
 
     stop = threading.Event()
     window.events.closed += stop.set
+    def stop_auto_capture():
+        bridge.set_auto_capture(False, bridge.get_auto_capture()['seconds'])
+    window.events.closed += stop_auto_capture
 
     def watch_advance_signal():
-        signal_path = _advance_signal_path()
-        while not stop.wait(0.35):
-            if not signal_path.exists():
-                continue
+        while not stop.wait(0.1 if bridge.get_auto_capture()['enabled'] else 0.35):
             try:
-                payload = json.loads(signal_path.read_text(encoding='utf-8'))
-            except (OSError, ValueError):
-                payload = {}
-            try:
-                signal_path.unlink()
-            except OSError:
-                pass
-            message = payload.get('message')
-            next_url = payload.get('next_url')
-            if message:
-                try:
-                    window.evaluate_js(
-                        "try { localStorage.setItem('database-last-status', "
-                        + json.dumps(message) + "); } catch (e) {}")
-                except Exception:
-                    pass
-            try:
-                window.evaluate_js('window.__databaseRefreshProgress && window.__databaseRefreshProgress()')
-            except Exception:
-                pass
-            if next_url:
-                try:
-                    # window.load_url() calls the edgechromium backend's
-                    # load_url(), which sets the WebView2 control's Source
-                    # property directly with no thread marshalling -- unlike
-                    # evaluate_js() above, which routes through
-                    # self.webview.Invoke(...) and is safe to call from this
-                    # background thread. Calling load_url() here (off the
-                    # main/UI thread) is a WinForms/WPF cross-thread access
-                    # and silently does nothing on this build: no exception,
-                    # no navigation. Driving the same navigation through JS
-                    # instead goes through the same safe evaluate_js() path.
-                    window.evaluate_js('location.href = ' + json.dumps(next_url))
-                except Exception:
-                    pass
-            elif message:
-                # Staying on the same page (nothing left to advance to): the
-                # localStorage value above won't be picked up without a
-                # navigation, so show it directly on the current overlay too.
-                try:
-                    window.evaluate_js(
-                        "try { const s = document.querySelector('#database-overlay span'); "
-                        "if (s) s.textContent = " + json.dumps(message) + "; } catch (e) {}")
-                except Exception:
-                    pass
+                if not bridge._poll_advance():
+                    bridge._auto_tick()
+            except Exception as exc:
+                state = bridge.get_auto_capture()
+                if state['enabled']:
+                    bridge._auto.pause('ON・待機：' + str(exc), state['revision'])
 
     window.events.loaded += install_overlay
     webview.start(func=watch_advance_signal, gui='edgechromium')
