@@ -7,10 +7,12 @@ performed by the person in the embedded browser; this module reads rendered DOM.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 import sys
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -20,6 +22,20 @@ ROOT_URL = f'https://{HOST}/dedamajyoho-P-townDMMpachi/{SHOP}/'
 FORMAT = 'pscube-viewer'
 PACKAGE_ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
 CAPTURE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_capture.js'
+
+SCROLL_SCRIPT = r'''(async () => {
+  const findList = () => document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
+  let stable = 0, old = -1;
+  for (let i = 0; i < 70 && stable < 6; i++) {
+    const list = findList();
+    if (!list) return;
+    list.lastElementChild?.scrollIntoView({block:'end'});
+    await new Promise(resolve => setTimeout(resolve, 350));
+    // The site can replace the list when another batch arrives.
+    const count = findList()?.children.length ?? -1;
+    stable = count === old ? stable + 1 : 0; old = count;
+  }
+})()'''
 
 
 def site_url(raw: str, suffix: str | None = None):
@@ -64,7 +80,7 @@ def _validate_machine(m):
     if not isinstance(m.get('machine'), str) or not m['machine'].strip():
         raise ValueError('機種名を確認できません。')
     u = site_url(m.get('url'), 'nc-v05-011.php')
-    if parse_qs(u.query).get('bai') != [m['rate']]:
+    if parse_qs(u.query).get('bai') != [m['rate']] or parse_qs(u.query).get('cd_ps') not in (None, ['2']):
         raise ValueError('機種リンクの貸玉が一致しません。')
     count = m.get('expected_count')
     if count is not None and (type(count) is not int or not 1 <= count <= 5000):
@@ -95,13 +111,13 @@ def _validate_record(r):
         _number(r.get(name), name)
     g = r.get('graph')
     if g is not None:
-        if not isinstance(g, dict) or g.get('kind') not in ('overview', 'daily') or not isinstance(g.get('zero_y'), (int, float)):
+        if not isinstance(g, dict) or g.get('kind') not in ('overview', 'daily') or type(g.get('zero_y')) not in (int, float) or not math.isfinite(g['zero_y']):
             raise ValueError('グラフの形式が不正です。')
         points = g.get('points')
         if not isinstance(points, list) or not 2 <= len(points) <= 50000:
             raise ValueError('グラフの座標が不正です。')
         for i, point in enumerate(points):
-            if not isinstance(point, list) or len(point) != 2 or any(type(v) not in (int, float) for v in point):
+            if not isinstance(point, list) or len(point) != 2 or any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 1e7 for v in point):
                 raise ValueError('グラフの座標が不正です。')
             if i and point[0] < points[i - 1][0]:
                 raise ValueError('グラフの順序が不正です。')
@@ -175,7 +191,7 @@ class PscubeStore:
         if is_index and (data['records'] or not data['machines'] or parse_qs(actual.query).get('cd_ps') != ['2']):
             raise ValueError('スロット機種一覧を確認できません。')
         if is_table:
-            if parse_qs(actual.query).get('cd_ps') != ['2'] or len(data['machines']) != 1 or not data['records']:
+            if parse_qs(actual.query).get('cd_ps') not in (None, ['2']) or len(data['machines']) != 1 or not data['records']:
                 raise ValueError('全台一覧を確認できません。')
             old = self._read('machines', _machine_key(data['machines'][0]))
             if not old or not old.get('expected_count'):
@@ -184,7 +200,7 @@ class PscubeStore:
                 raise ValueError(f'表示は{len(data["records"])}台、設置台数は{old["expected_count"]}台です。全台を表示してから取り込んでください。')
             if any(_machine_key(r) != _machine_key(old) for r in data['records']):
                 raise ValueError('機種と台の情報が一致しません。')
-        if is_rack and len(data['records']) != 7:
+        if is_rack and (len(data['machines']) != 1 or len(data['records']) != 7):
             raise ValueError('7日分の台別データが揃っていません。')
         day = data['records'][0]['day'] if data['records'] else self._state('last_day')
         if is_rack:
@@ -194,6 +210,11 @@ class PscubeStore:
                 raise ValueError('先にこの台の全台一覧を取り込んでください。')
             if any(r['rack'] != current['rack'] or _machine_key(r) != _machine_key(current) for r in data['records']):
                 raise ValueError('台別7日分の内容が一致しません。')
+            if parse_qs(actual.query).get('cd_dai') != [str(current['rack'])] or _machine_key(data['machines'][0]) != _machine_key(current):
+                raise ValueError('表示中の台番号・機種と一致しません。')
+            expected = {(datetime.fromisoformat(day).date() - timedelta(days=i)).isoformat() for i in range(7)}
+            if {r['day'] for r in data['records']} != expected:
+                raise ValueError('連続した7日分の履歴ではありません。')
         if is_table and any(r['day'] != day for r in data['records']):
             raise ValueError('一覧内の日付が一致しません。')
         with self.db:
@@ -205,7 +226,10 @@ class PscubeStore:
                 self.db.execute('INSERT OR REPLACE INTO machines VALUES (?,?)', (key, json.dumps(saved, ensure_ascii=False)))
             for r in data['records']:
                 key = _record_key(r)
-                saved = _merge(self._read('records', key), r)
+                previous = self._read('records', key)
+                saved = _merge(previous, r)
+                if previous and any(previous[k] != saved[k] for k in ('bb', 'rb', 'at_art', 'games', 'my')):
+                    self.db.execute('DELETE FROM rack_captures WHERE key=?', (key,))
                 self.db.execute('INSERT OR REPLACE INTO records VALUES (?,?)', (key, json.dumps(saved, ensure_ascii=False)))
             if day:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)', ('last_day', day))
@@ -263,13 +287,28 @@ def run_session(db_path, export_path):
     class Bridge:
         def __init__(self):
             self._window = None
+            self._capture_lock = threading.Lock()
 
         def submit_page(self, raw):
+            with self._capture_lock:
+                try:
+                    result = self._submit_page(raw)
+                    # The site's scrolling changes location.hash. WebView2 may
+                    # recreate pywebview's promise callbacks on that navigation,
+                    # so deliver completion to our own stable DOM handler too.
+                    self._window.evaluate_js('window.pscubeCaptureComplete?.(' + json.dumps(result, ensure_ascii=True) + ')')
+                    return result
+                except Exception as error:
+                    self._window.evaluate_js('window.pscubeCaptureFailed?.(' + json.dumps(str(error), ensure_ascii=True) + ')')
+                    raise
+
+        def _submit_page(self, raw):
             current = self._window.get_current_url()
             db = PscubeStore(db_path)
             try:
                 result = db.import_page(raw, current)
                 db.export_viewer(export_path)
+                result['source_url'] = current
                 return result
             finally:
                 db.close()
@@ -287,29 +326,36 @@ def run_session(db_path, export_path):
       button.textContent = isRoot ? 'スロット機種一覧へ' : '未取得を取り込む';
       Object.assign(button.style, {position:'fixed',bottom:'18px',right:'18px',zIndex:'2147483647',
         background:'#304d6e',color:'white',padding:'14px 18px',border:'0',borderRadius:'10px',fontSize:'16px'});
+      const identity = raw => {
+        const u = new URL(raw);
+        if (!u.pathname.endsWith('nc-v06-001.php')) u.hash = '';
+        return u.href;
+      };
+      let capturedUrl = null;
+      window.pscubeCaptureFailed = error => {
+        button.textContent = String(error); button.disabled = false;
+      };
+      window.pscubeCaptureComplete = result => {
+        if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
+        button.textContent = `${result.kind}を保存 · 残り${result.remaining}`;
+        button.disabled = false;
+        capturedUrl = null;
+        if (result.next_url) location.href = result.next_url;
+      };
       button.onclick = async () => {
         if (isRoot) { location.href = indexUrl; return; }
         button.disabled = true; button.textContent = '読み込み中…';
         try {
-          const list = document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
-          if (list) {
-            let stable = 0, old = -1;
-            for (let i = 0; i < 70 && stable < 3; i++) {
-              list.lastElementChild?.scrollIntoView({block:'end'});
-              await new Promise(resolve => setTimeout(resolve, 350));
-              const count = list.children.length;
-              stable = count === old ? stable + 1 : 0; old = count;
-            }
-          }
+          await SCROLL_SCRIPT;
+          capturedUrl = location.href;
           const payload = CAPTURE_SCRIPT;
           const result = await window.pywebview.api.submit_page(payload);
-          button.textContent = `${result.kind}を保存 · 残り${result.remaining}`;
-          if (result.next_url) location.href = result.next_url;
+          window.pscubeCaptureComplete(result);
         } catch (error) { button.textContent = String(error.message || error); button.disabled = false; }
       };
       document.body.append(button);
     })();
-    '''.replace('CAPTURE_SCRIPT', script).replace('INDEX_URL', json.dumps(ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'))
+    '''.replace('SCROLL_SCRIPT', SCROLL_SCRIPT).replace('CAPTURE_SCRIPT', script).replace('INDEX_URL', json.dumps(ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'))
 
     def install_overlay():
         try:
@@ -322,7 +368,17 @@ def run_session(db_path, export_path):
     webview.start(gui='edgechromium')
 
 
+def runtime_root():
+    if getattr(sys, 'frozen', False):
+        executable_dir = Path(sys.executable).resolve().parent
+        for candidate in (executable_dir.parent, executable_dir.parent.parent, executable_dir):
+            if (candidate / 'data').exists() or (candidate / 'app.py').exists():
+                return candidate
+        return executable_dir
+    return Path(__file__).resolve().parent
+
+
 if __name__ == '__main__':
-    root = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+    root = runtime_root()
     run_session(sys.argv[1] if len(sys.argv) > 1 else root / 'data' / 'pscube.sqlite3',
                 sys.argv[2] if len(sys.argv) > 2 else root / 'data' / 'pscube-viewer.json')

@@ -1,5 +1,18 @@
 # database AI共同作業メモ
 
+## P’s CUBE保存・ビルド・実サイト確認の途中引継ぎ（2026-10-01）
+
+- `03ffff034613abdd52ca76820ee2ebd420b08b8b` の最新mainから着手。利用者の使用量上限で中断しており、今回の修正はまだ未コミット・未push。
+- PC／Androidの保存・共有・終了を直列化し、数値更新時は台別取得済みマーカーを無効化。台番号・日付・グラフ・URLの検証、Androidのページ遷移／終了競合、PCの完了通知と遅延読み込みを修正。実際の機種リンクにcd_psが無い場合を許容し、回帰テストを追加。
+- テスト：PC既存125件＋P’s CUBE7件、Flutter全348件成功。最後のcd_ps省略対応後はP’s CUBE6件とDart対象3ファイル解析を再実行し成功。ブラウザdata9件、既存P’s CUBEブラウザ確認、新規DOM入れ替えスクロールテストも成功。Safari実アーカイブを必要とするテストは未実行。
+- 最終Android APKは `0.5.10+2026100103`、releaseビルド・`adb install -r` 成功。端末 `RFGL146LVVW` / SM_A253C。アンインストール・データ消去は行っていない。
+- 実サイト：人間認証は利用者が手動実施。最終PC exeで機種一覧61件、マイジャグラーV33台、1227番台7日分を保存し、次1228へ移動。検証用DBは61機種・39記録・取得済み台1。専用JSONは閲覧側validateDataで検証成功。Android最終版も機種一覧・33台・1227番台7日分を保存し「残り92件」、共有シートにpscube-viewer.json 1件の表示を確認。外部送信はしていない。全機種／全台巡回の完了ではない。
+- メルヘンのPC本番DBのSHA-256は `15C09593959DBC7F4209379F6705EFF240F8892A563AB61FB03CEF2DBE07D535` のまま。Android上書き後は9/30の108機種・355台の表示を確認。
+- Git外の成果物は親workの `outputs/database-0.5.10-2026100103.apk` と `outputs/database-windows-2026100103.zip`。APK SHA-256 `046BDC0E4A2ADECE690BE8B992445FD4DA3E8BAF5000FEFB1036C01EE6C4E7A3`、ZIP SHA-256 `FB4AE209E8E5CBC1D08E18EA5DB74497598CA77B86A8DC073F6F639CF8F08FDB`。ZIPは3つのonedirフォルダを同梱し、実data／reportsは含めていない。
+- 引継ぎ後の確認（Claude、2026-10-01 20時台）：検証用PC本体（`reports/pscube-validation/launcher-smoke/database/database.exe`）で「P's CUBE（スロット）を取り込む」を押し、同じ検証用フォルダの `database-pscube.exe` が検証用の `data/pscube.sqlite3` `data/pscube-viewer.json` を引数に起動し、ウィンドウ「P’s CUBE 取り込み」が応答することを確認（実サイトは操作せず、人間認証は不要）。ZIP（SHA-256 `FB4AE209…8FDB` 一致、data／reportsなし）を `C:\Users\keyan\z1` へ展開し、本体・ブラウザ・P’s CUBEの3つが起動して応答することを確認（本体は展開先に空の `data/database.sqlite3` を作っただけ）。注意：深いフォルダ（約150文字のパス）へ展開するとnumpy内のパスが260文字を超えて展開に失敗した。短いフォルダへ展開する旨を `PSCUBE_IMPORT.md` に追記。再実行：PC既存125件・P’s CUBE7件、Flutter P’s CUBE6件・対象3ファイル解析が成功。メルヘンPC本番DBのSHA-256は `15C09593…D535`・64,032,768 bytes のまま、Android端末は 0.5.10 / 2026100103 のままメルヘン画面。コード変更なし（APK・exeの再ビルドなし）。
+- 残作業：最終レビュー、commit／mainへのpush。Android共有JSONの実内容照合・実閲覧UI表示・過去日hash選択は未確認。必要な範囲を判断して検証する。
+- 現在、Androidは共有シートを開いたまま（背後は次台移動後の再認証）。PCは元のP’s CUBE exeが1228、別途 `reports/pscube-validation/launcher-smoke/database/database.exe` の空データ検証用本体が起動中。詳細引継ぎは親workの `CLAUDE_HANDOFF_PSCUBE_20261001.md`。ログ・画面・専用検証DBは `database/reports/pscube-validation/` にありGitへ追加しない。
+
 ## 正本とデザインのルール（2026-09-25、利用者の指示）
 
 - **正本は GitHub `imakurudev-eng/database` の `main` だけ**。2026-09-25に新デザイン（旧ブランチ `codex/adopt-claude-ui`）と採点v10をマージした `5e6009c` 以降がそれ。

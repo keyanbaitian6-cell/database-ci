@@ -21,6 +21,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   String? _script;
   String _status = 'サイトの認証後、スロット機種一覧を開いてください。';
   bool _busy = false;
+  bool _loading = true;
+  int _page = 0;
+  String? _navigationUrl;
   int _remaining = 0;
 
   @override
@@ -28,24 +31,57 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     super.initState();
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) { if (mounted) setState(() {}); },
-        onWebResourceError: (error) {
-          if (error.isForMainFrame == true && mounted) {
-            setState(() => _status = 'ページを開けませんでした：${error.description}');
-          }
-        },
-      ))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) {
+            if (_navigationUrl != null && _samePage(_navigationUrl!, url)) {
+              return;
+            }
+            _navigationUrl = url;
+            _page++;
+            if (mounted) setState(() => _loading = true);
+          },
+          onPageFinished: (_) {
+            if (mounted) setState(() => _loading = false);
+          },
+          onWebResourceError: (error) {
+            if (error.isForMainFrame == true && mounted) {
+              setState(() => _status = 'ページを開けませんでした：${error.description}');
+            }
+          },
+        ),
+      )
       ..loadRequest(Uri.parse(PscubeStore.root));
     unawaited(_initialize());
+  }
+
+  // This site writes scroll position to the hash on its overview pages.
+  // A rack hash identifies the history day and must still match exactly.
+  bool _samePage(String first, String second) {
+    final a = Uri.parse(first);
+    final b = Uri.parse(second);
+    if (a.path.endsWith('nc-v06-001.php')) return a == b;
+    return a.replace(fragment: '') == b.replace(fragment: '');
   }
 
   Future<void> _initialize() async {
     try {
       final store = await PscubeStore.open();
-      final script = await rootBundle.loadString('assets/pscube_capture.js');
-      if (!mounted) { await store.close(); return; }
-      setState(() { _store = store; _script = script; });
+      String script;
+      try {
+        script = await rootBundle.loadString('assets/pscube_capture.js');
+      } catch (_) {
+        await store.close();
+        rethrow;
+      }
+      if (!mounted) {
+        await store.close();
+        return;
+      }
+      setState(() {
+        _store = store;
+        _script = script;
+      });
     } catch (error) {
       if (mounted) setState(() => _status = '取り込みの準備ができません：$error');
     }
@@ -63,47 +99,76 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     // a loading aid; PscubeStore checks against the installation count.
     var prior = -1;
     var stable = 0;
-    for (var i = 0; i < 70 && stable < 3; i++) {
+    for (var i = 0; i < 70 && stable < 6; i++) {
+      if (!mounted) return;
       final result = await _web.runJavaScriptReturningResult('''
         (() => {
           const list = document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
           if (!list) return -1;
           list.lastElementChild?.scrollIntoView({block:'end'});
+          window.scrollTo(0, document.documentElement.scrollHeight);
           return list.children.length;
         })()
       ''');
       final count = int.tryParse(result.toString()) ?? -1;
-      if (count == prior && count >= 0) { stable++; } else { stable = 0; }
+      if (count < 0) return;
+      if (count == prior && count >= 0) {
+        stable++;
+      } else {
+        stable = 0;
+      }
       prior = count;
       await Future<void>.delayed(const Duration(milliseconds: 350));
     }
   }
 
   Future<void> _capture() async {
-    if (_busy || _store == null || _script == null) return;
-    setState(() { _busy = true; _status = '表示中のデータを読み取っています…'; });
+    if (_busy || _loading || _store == null || _script == null) return;
+    final store = _store!;
+    final page = _page;
+    setState(() {
+      _busy = true;
+      _status = '表示中のデータを読み取っています…';
+    });
     try {
       final before = await _web.currentUrl();
       if (before == null) throw const FormatException('ページのURLを確認できません。');
       await _showFullList();
-      if (await _web.currentUrl() != before) throw const FormatException('読み取り中にページが切り替わりました。');
+      if (!mounted) return;
+      final capturedUrl = await _web.currentUrl();
+      if (_page != page ||
+          capturedUrl == null ||
+          !_samePage(before, capturedUrl)) {
+        throw const FormatException('読み取り中にページが切り替わりました。');
+      }
       final value = await _web.runJavaScriptReturningResult(_script!);
       // Android WebView may return the string once or twice JSON encoded.
       dynamic raw = value;
       for (var i = 0; i < 2 && raw is String; i++) {
         final decoded = jsonDecode(raw);
-        if (decoded is String) { raw = decoded; } else { raw = jsonEncode(decoded); break; }
+        if (decoded is String) {
+          raw = decoded;
+        } else {
+          raw = jsonEncode(decoded);
+          break;
+        }
       }
       if (raw is! String) raw = jsonEncode(raw);
-      if (await _web.currentUrl() != before) throw const FormatException('保存前にページが切り替わりました。');
-      final result = await _store!.importPage(raw, before);
-      await _store!.exportViewer();
+      if (!mounted) return;
+      if (_page != page || await _web.currentUrl() != capturedUrl) {
+        throw const FormatException('保存前にページが切り替わりました。');
+      }
+      final result = await store.importPage(raw, capturedUrl);
+      if (!mounted) return;
+      await store.exportViewer();
       if (!mounted) return;
       setState(() {
         _remaining = result.remaining;
         _status = '${result.kind}を保存しました。残り ${result.remaining} 件。';
       });
-      if (result.nextUrl != null) await _web.loadRequest(Uri.parse(result.nextUrl!));
+      if (result.nextUrl != null && _page == page) {
+        await _web.loadRequest(Uri.parse(result.nextUrl!));
+      }
     } catch (error) {
       if (mounted) setState(() => _status = '保存できませんでした：$error');
     } finally {
@@ -113,42 +178,78 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
 
   Future<void> _share() async {
     final store = _store;
-    if (store == null) return;
+    if (store == null || _busy) return;
+    setState(() => _busy = true);
     try {
       final file = await store.exportViewer();
-      await SharePlus.instance.share(ShareParams(
-        title: 'P’s CUBE データ',
-        files: [XFile(file.path, mimeType: 'application/json')],
-      ));
+      if (!mounted) return;
+      await SharePlus.instance.share(
+        ShareParams(
+          title: 'P’s CUBE データ',
+          files: [XFile(file.path, mimeType: 'application/json')],
+        ),
+      );
     } catch (error) {
       if (mounted) setState(() => _status = '書き出せませんでした：$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('P’s CUBE 取り込み'), actions: [
-      IconButton(tooltip: 'ブラウザ版へ共有', onPressed: _store == null ? null : _share,
-        icon: const Icon(Icons.ios_share)),
-    ]),
-    body: Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(_status),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(child: OutlinedButton(onPressed: _busy ? null : () => _web.loadRequest(Uri.parse(PscubeStore.index)),
-              child: const Text('スロット機種一覧'))),
-            const SizedBox(width: 8),
-            Expanded(child: FilledButton(onPressed: _busy || _store == null || _script == null ? null : _capture,
-              child: Text(_busy ? '読み込み中…' : '未取得を取り込む'))),
-          ]),
-          if (_remaining > 0) Text('次のページへ自動で移動します。残り $_remaining 件',
-            style: Theme.of(context).textTheme.bodySmall),
-        ],
-      )),
-      Expanded(child: WebViewWidget(controller: _web)),
-    ]),
+    appBar: AppBar(
+      title: const Text('P’s CUBE 取り込み'),
+      actions: [
+        IconButton(
+          tooltip: 'ブラウザ版へ共有',
+          onPressed: _busy || _store == null ? null : _share,
+          icon: const Icon(Icons.ios_share),
+        ),
+      ],
+    ),
+    body: Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(_status),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _busy
+                          ? null
+                          : () =>
+                                _web.loadRequest(Uri.parse(PscubeStore.index)),
+                      child: const Text('スロット機種一覧'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed:
+                          _busy || _loading || _store == null || _script == null
+                          ? null
+                          : _capture,
+                      child: Text(_busy || _loading ? '読み込み中…' : '未取得を取り込む'),
+                    ),
+                  ),
+                ],
+              ),
+              if (_remaining > 0)
+                Text(
+                  '次のページへ自動で移動します。残り $_remaining 件',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+            ],
+          ),
+        ),
+        Expanded(child: WebViewWidget(controller: _web)),
+      ],
+    ),
   );
 }

@@ -14,14 +14,25 @@ Androidは専用の `pscube.sqlite3` に保存する。PCの
 MYを最大放出数として保存する。機種タイプはブラウザ版で
 「ノーマル／その他」を設定できる。
 
-PC配布版に組み込む場合、`database-pscube.exe` を既存の
-`database-browser.exe` と同じ配布フォルダに置く。例：
+PC配布版は次のスクリプトで3つのアプリをまとめてビルドする。
+PyInstaller・pywebviewを入れたPython環境を指定する。リポジトリ直下で実行する例：
 
 ```powershell
-python -m PyInstaller --onefile --name database-pscube `
-  --add-data "database_android/assets/pscube_capture.js;database_android/assets" `
-  database/pscube_import.py
+.\database\build_windows.ps1 -Python 'Python環境\Scripts\python.exe'
 ```
+
+`database/bin` に `database`、`database-browser`、`database-pscube` の
+3フォルダができる。各フォルダのexeと`_internal`を一緒に配布し、
+3フォルダを同じ親フォルダに置いて `database/database.exe` から起動する。
+exeだけを抜き出さない。展開先のパスが長いと同梱ライブラリ（numpy等）の
+ファイルが260文字制限で展開できないため、`C:\Users\<名前>\` 直下など短いフォルダへ展開する。
+既存の `data` と `reports` を消したり、
+配布物のデータで置き換えたりしない。
+
+P’s CUBEの書き出しは専用の `pscube-viewer` 形式。
+既存メルヘンワールドのバックアップに混ぜず、このJSONも別途保管する。
+同時に保存・共有しないよう処理を直列化し、数値が更新された台は
+台別7日分を再取得する。部分的な全台一覧や不正なグラフ・日付は保存を拒否する。
 
 取り込み用JavaScriptは `node database_android/tool/build_pscube_capture.mjs` で
 ブラウザ版のパーサーから再生成する。保存済みのSafariアーカイブによる
