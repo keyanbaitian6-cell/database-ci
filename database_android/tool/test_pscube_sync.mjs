@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { emptyData, validateData, mergeData, recordKey } from '../web/pscube/data.mjs';
-import { backupFileName, timestampWithOffset, buildBackup, driveUrl, fetchDrive, REMOTE_KEY } from '../web/pscube/sync.mjs';
+import { backupFileName, timestampWithOffset, buildBackup, driveUrl, fetchDrive, REMOTE_KEY, DRIVE_RETRY_DELAYS_MS } from '../web/pscube/sync.mjs';
 
 const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
 const machine = { store: 'c740601', rate: '20', machine: '試験機種', expected_count: 2, url: `${base}nc-v05-011.php?cd_ps=2&bai=20` };
@@ -46,8 +46,8 @@ test('wrong file (old script returns Meruhen data), script error, bad JSON, HTTP
   await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: respond({ format: 'database-backup', exported_at: 'x' }) }), /Apps Scriptを更新/);
   await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: respond({ error: 'pscube-viewer-drive.json がGoogleドライブに見つかりません。' }) }), /見つかりません/);
   await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: respond('<html>login</html>') }), /読めません/);
-  await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: respond({}, 500) }), /500/);
-  await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: async () => { throw new TypeError('offline'); } }), /接続できません/);
+  await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: respond({}, 500), retryDelays: [] }), /500/);
+  await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: async () => { throw new TypeError('offline'); }, retryDelays: [] }), /接続できません/);
   const hang = (url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('a'), { name: 'AbortError' }))));
   await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: hang, timeoutMs: 20 }), /時間切れ/);
   const broken = { ...JSON.parse(JSON.stringify(data())), exported_at: 'x' }; broken.records[0].bb = -1;
@@ -61,4 +61,26 @@ test('Drive content merges without replacing newer local numbers or removing loc
   const merged = mergeData(local, fetched.data);
   assert.equal(merged.records.find(r => r.rack === 1).games, 4000);
   assert.ok(merged.records.some(r => r.rack === 9)); assert.ok(merged.records.some(r => r.rack === 2));
+});
+
+test('intermittent 404 / 5xx / network failure from Apps Script is retried twice, then reported', async () => {
+  assert.deepEqual(DRIVE_RETRY_DELAYS_MS, [1500, 3000]);
+  const doc = { ...JSON.parse(JSON.stringify(data())), exported_at: 'r' };
+  const sequence = statuses => { let i = 0; const calls = [];
+    const fetchImpl = async url => { calls.push(url); const s = statuses[Math.min(i++, statuses.length - 1)];
+      if (s === 'net') throw new TypeError('offline'); return respond(s === 200 ? doc : {}, s)(); };
+    return { fetchImpl, calls }; };
+  for (const statuses of [[404, 200], [503, 404, 200], ['net', 200]]) {
+    const s = sequence(statuses);
+    const result = await fetchDrive(SCRIPT, null, { fetchImpl: s.fetchImpl, retryDelays: [0, 0] });
+    assert.equal(result.data.records.length, 2); assert.equal(s.calls.length, statuses.length);
+  }
+  const always = sequence([404]);
+  await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: always.fetchImpl, retryDelays: [0, 0] }), /404/);
+  assert.equal(always.calls.length, 3);
+  const forbidden = sequence([403]);
+  await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: forbidden.fetchImpl, retryDelays: [0, 0] }), /403/);
+  assert.equal(forbidden.calls.length, 1, '403などは繰り返さない');
+  const slow = sequence([404]);
+  await assert.rejects(fetchDrive(SCRIPT, null, { fetchImpl: slow.fetchImpl, retryDelays: [10000, 10000], timeoutMs: 30 }), /時間切れ/);
 });
