@@ -68,7 +68,7 @@ node tool/test_pscube_browser.mjs
 
 1. iPhone実機でファイル選択、IndexedDB保存、ダウンロード、別タブからの復帰を確認する。
 2. 既存閲覧画面からこの入口への正式な導線を追加し、Flutter Web全体をビルドする。
-3. 公開するときは必ず既存の `tool/stage_viewer.py` を通し、実seedを除外する。このフォルダを含む `build/web` をそのまま公開しない。
+3. P’s CUBEページだけを既存公開先へ追加するときは `python tool/stage_viewer.py --pscube-only <公開リポジトリ>` を使う。公開先の `pscube/` へ5つの静的ファイルだけを追加し、既存のFlutter Web版には触れない。Flutter Web版の全体更新時は従来の `tool/stage_viewer.py <公開リポジトリ>` を使い、実seedを除外する。
 4. MYの評価仕様と収集方法を確定してから既存バックアップ・Drive配信・採点に接続する。
 
 作業開始時のmain: `d5a32f5476f67b192614e9555f21407e22d8a0df`。
