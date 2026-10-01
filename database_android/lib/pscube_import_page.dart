@@ -49,6 +49,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   bool _autoProbing = false;
   String _autoStatus = '停止中';
   final _autoDone = <String>{};
+  final _guard = PscubeAutoGuard();
+  final _clock = Stopwatch()..start();
   final _autoFailures = <String, int>{};
 
   @override
@@ -261,7 +263,16 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _decodeJs(await _web.runJavaScriptReturningResult(_probe!)),
       );
       if (!_auto.current(token, page)) return;
-      final decision = pscubeAutoDecision(probe, _autoDone, _autoFailures);
+      final decision = _guard.decide(
+        probe,
+        _autoDone,
+        _autoFailures,
+        _clock.elapsed,
+      );
+      if (decision.stop) {
+        await _stopAuto(decision.message);
+        return;
+      }
       _autoMessage(decision.message);
       final signature = decision.capture;
       if (signature != null) {

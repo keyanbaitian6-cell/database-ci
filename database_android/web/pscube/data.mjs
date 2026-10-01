@@ -144,11 +144,16 @@ export function autoPageState(rawUrl, dom) {
   try { url = siteUrl(rawUrl); } catch {
     return { ready: false, reason: '対象のページではありません（人間確認・同意の画面なら手動で操作してください）' };
   }
-  const wait = reason => ({ ready: false, reason });
   const has = selector => !!dom.querySelector(selector);
+  // 人間確認・約款の同意の画面（hCaptchaの窓、または注意書き）。ここではONのまま待つ。
+  const challenge = has('iframe[src*="hcaptcha"]') ||
+    /ロボットでないこと|約款に同意して|私は人間です/.test(dom.body?.textContent ?? '');
+  if (challenge) return { ready: false, challenge: true, reason: '人間確認・同意の画面（手動で操作してください）' };
+  // 対象のページなのに表示がそろわない。続くときはサイトに止められた可能性がある（missing）。
+  const wait = reason => ({ ready: false, missing: true, reason });
   const path = url.pathname;
   if (path.endsWith('nc-v03-001.php')) {
-    if (url.searchParams.get('cd_ps') !== '2') return wait('スロットの機種一覧ではありません');
+    if (url.searchParams.get('cd_ps') !== '2') return { ready: false, reason: 'スロットの機種一覧ではありません' };
     if (!has('#ulKI a.btn-ki')) return wait('機種一覧の表示待ち（人間確認・同意の画面なら手動で操作してください）');
     const identity = new URL(url); identity.hash = '';
     return { ready: true, kind: '機種一覧', signature: identity.href };
@@ -160,7 +165,7 @@ export function autoPageState(rawUrl, dom) {
     const identity = new URL(url); identity.hash = '';
     return { ready: true, kind: '全台一覧', signature: identity.href };
   }
-  if (!/^#\d{8}$/.test(url.hash)) return wait('台別ページの日付がまだ決まっていません');
+  if (!/^#\d{8}$/.test(url.hash)) return { ready: false, reason: '台別ページの日付がまだ決まっていません' };
   if (dom.querySelectorAll('td.column').length !== 7) {
     return wait('台別7日分の表示待ち（人間確認・同意の画面なら手動で操作してください）');
   }

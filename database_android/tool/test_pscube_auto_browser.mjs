@@ -29,7 +29,7 @@ await context.route('**/*', route => {
   const url = new URL(route.request().url());
   if (url.origin !== 'https://www.pscube.jp') { external.push(url.href); return route.abort(); }
   const key = url.pathname + url.search;
-  return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><head><meta charset="utf-8"></head><body>${pages[key] ?? '<p>人間であることを確認してください</p>'}</body></html>` });
+  return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><head><meta charset="utf-8"></head><body>${pages[key] ?? '<p>申し訳ありませんが、お客様がロボットでないことを確認させていただく必要があります。</p>'}</body></html>` });
 });
 const page = await context.newPage();
 const errors = [];
@@ -55,7 +55,12 @@ assert.match((await state()).reason, /全台一覧の表示待ち/, '日付が�
 await page.goto(`${base}nc-v03-001.php?cd_ps=1`);
 assert.match((await state()).reason, /スロットの機種一覧ではありません/);
 await page.goto(`${base}nc-v06-001.php?cd_dai=9#20261001`);
-assert.match((await state()).reason, /人間確認・同意の画面なら手動で操作/, '確認画面（表が無い）は待つ');
+s = await state();
+assert.equal(s.challenge, true, '確認画面（注意書き）を見分ける'); assert.match(s.reason, /人間確認・同意の画面/);
+pages[path(`${base}nc-v06-001.php?cd_dai=8`)] = '<p>メンテナンス中</p>';
+await page.goto(`${base}nc-v06-001.php?cd_dai=8#20261001`);
+s = await state();
+assert.equal(s.challenge, undefined); assert.equal(s.missing, true, '確認画面でもないのに表が無い＝止められた可能性');
 await page.goto(root);
 assert.equal((await state()).ready, false, '最初のページでは取り込まない');
 await page.goto(`${base}nc-v05-011.php?cd_ps=2&bai=20`);

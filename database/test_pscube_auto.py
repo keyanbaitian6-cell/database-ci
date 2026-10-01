@@ -193,6 +193,39 @@ class AutoPilotTests(unittest.TestCase):
         self.pilot.tick()
         self.assertEqual(self.pilot.pending, 'A')
 
+    def test_stops_when_the_site_keeps_showing_no_data_but_not_on_challenge_pages(self):
+        self.pilot.configure(True, 10)
+        self.window.probe = {'ready': False, 'missing': True, 'reason': '全台一覧の表示待ち'}
+        for _ in range(6):
+            self.wait(10)
+            self.pilot.tick()
+            self.assertTrue(self.pilot.state()['enabled'], '1分たつまでは待つ')
+        self.wait(10)
+        self.pilot.tick()
+        self.assertFalse(self.pilot.state()['enabled'])
+        self.assertIn('止められた可能性', self.message())
+        self.assertFalse(self.window.rendered[-1]['enabled'])
+
+    def test_challenge_pages_and_recovered_pages_do_not_count_toward_stopping(self):
+        self.pilot.configure(True, 10)
+        for i in range(12):
+            if i % 4 == 3:
+                self.window.probe = page(f'P{i}')
+            elif i % 2:
+                self.window.probe = {'ready': False, 'challenge': True, 'reason': '人間確認・同意の画面（手動で操作してください）'}
+            else:
+                self.window.probe = {'ready': False, 'missing': True, 'reason': '表示待ち'}
+            self.wait(10)
+            self.pilot.tick()
+            self.pilot.finished(result={'next_url': 'x', 'remaining': 1, 'kind': '全台一覧'}) if self.pilot.pending else None
+        self.assertTrue(self.pilot.state()['enabled'], '確認画面の間・表示が戻った後は止めない')
+        self.window.probe = {'ready': False, 'challenge': True, 'reason': '人間確認・同意の画面（手動で操作してください）'}
+        for _ in range(10):
+            self.wait(10)
+            self.pilot.tick()
+        self.assertTrue(self.pilot.state()['enabled'], '確認画面ではずっと待つ')
+        self.assertIn('人間確認', self.message())
+
     def test_interval_is_5_to_60_seconds_for_pscube(self):
         for bad in (4.9, 60.1, True, float('nan')):
             with self.assertRaises(ValueError):

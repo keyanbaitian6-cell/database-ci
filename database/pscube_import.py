@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import sys
 import threading
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -476,6 +477,9 @@ class AutoPilot:
     MAX_FAILURES = 3
     # P’s CUBEの間隔（秒）。サイトに止められないよう、メルヘン（0.1〜4.5秒）より長くする。
     MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 5, 60, 10
+    # 対象のページなのにデータが出ない（人間確認の画面でもない）状態が、この回数・秒数続いたら
+    # 止められたとみなして自動取り込みをOFFにする（放置しても叩き続けない。利用者の選択、2026-10-01）。
+    BLOCK_CHECKS, BLOCK_SECONDS = 5, 60
 
     def __init__(self, evaluate, probe_script, saving=lambda: False, auto=None):
         self.evaluate = evaluate
@@ -483,6 +487,8 @@ class AutoPilot:
         self.saving = saving
         self.auto = auto or AutoCapture(minimum=self.MIN_SECONDS, maximum=self.MAX_SECONDS,
                                         default=self.DEFAULT_SECONDS)
+        self.clock = getattr(self.auto, '_clock', time.monotonic)
+        self.missing = []
         self.done = set()
         self.failures = {}
         self.pending = None
@@ -527,6 +533,17 @@ class AutoPilot:
                 probe = {}
             if not isinstance(probe, dict):
                 probe = {}
+            now = self.clock()
+            if probe.get('missing') and not probe.get('challenge'):
+                self.missing.append(now)
+                if len(self.missing) >= self.BLOCK_CHECKS and now - self.missing[0] >= self.BLOCK_SECONDS:
+                    self.missing.clear()
+                    self.auto.configure(False, self.auto.state()['seconds'])
+                    self.auto.pause('サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。時間を空けてから、手動でONにしてください。')
+                    self.render()
+                    return
+            else:
+                self.missing.clear()
             if probe.get('busy'):
                 self.auto.pause('ON・保存処理中・完了待ち', token)
             elif not probe.get('ready'):

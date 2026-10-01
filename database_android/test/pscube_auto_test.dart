@@ -65,4 +65,33 @@ void main() {
     expect(() => auto.setIntervalTenths(601), throwsRangeError);
     expect(AutoCaptureState().intervalTenths, 35, reason: 'メルヘンは今までどおり3.5秒');
   });
+
+  test('確認画面ではない「データが出ない」が1分以上・5回以上続いたら止める。確認画面・表示の回復では数え直す', () {
+    final guard = PscubeAutoGuard();
+    const missing = {'ready': false, 'missing': true, 'reason': '表示待ち'};
+    const challenge = {'ready': false, 'challenge': true, 'reason': '人間確認'};
+    var now = Duration.zero;
+    ({String? capture, String message, bool stop}) at(Object probe) {
+      now += const Duration(seconds: 10);
+      return guard.decide(probe, {}, {}, now);
+    }
+
+    for (var i = 0; i < 6; i++) {
+      expect(at(missing).stop, isFalse);
+    }
+    final stopped = at(missing);
+    expect(stopped.stop, isTrue);
+    expect(stopped.message, contains('止められた可能性'));
+    for (var i = 0; i < 4; i++) {
+      at(missing);
+    }
+    expect(at(challenge).stop, isFalse, reason: '確認画面で数え直す');
+    for (var i = 0; i < 6; i++) {
+      expect(at(missing).stop, isFalse);
+    }
+    expect(at(ready('A')).capture, 'A', reason: '表示が戻れば取り込む');
+    for (var i = 0; i < 20; i++) {
+      expect(at(challenge).stop, isFalse, reason: '確認画面ではずっと待つ');
+    }
+  });
 }
