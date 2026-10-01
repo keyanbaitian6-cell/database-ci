@@ -271,6 +271,38 @@ void main() {
     expect(PscubeStore.noHits({'bb': 0, 'rb': 0, 'at_art': 1}), isFalse);
   });
 
+  test('沖ドキ（半角も）は回る対象にせず、表も保存しない（メルヘンと同じ約束）', () async {
+    final oki = {
+      ...machine,
+      'machine': '沖ﾄﾞｷ!GOLD-30',
+      'url':
+          '${PscubeStore.root}cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=oki',
+    };
+    final result = await store.importPage(
+      page(PscubeStore.index, [oki, machine]),
+      PscubeStore.index,
+    );
+    expect(result.remaining, 1);
+    expect((await store.nextTarget(day)).url, machine['url']);
+    final okiRecord = record()..['machine'] = '沖ﾄﾞｷ!GOLD-30';
+    await expectLater(
+      store.importPage(
+        page(
+          oki['url'] as String,
+          [
+            {...oki, 'expected_count': null},
+          ],
+          [okiRecord],
+        ),
+        oki['url'] as String,
+      ),
+      throwsFormatException,
+    );
+    expect((await exported())['records'], isEmpty);
+    expect(PscubeStore.isExcludedMachine('ｵｷﾄﾞｷ!'), isTrue);
+    expect(PscubeStore.isExcludedMachine('ﾏｲｼﾞｬｸﾞﾗｰV'), isFalse);
+  });
+
   group('バックアップ・同期（database/PSCUBE_SYNC.md）', () {
     Future<PscubeStore> other() => PscubeStore.open(
       path: '${dir.path}/other.sqlite3',

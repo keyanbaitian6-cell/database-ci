@@ -1,5 +1,5 @@
 import { readWebArchive } from './archive.mjs';
-import { emptyData, parsePage, validateData, mergeData, machineKey, progress, noHits } from './data.mjs';
+import { emptyData, parsePage, validateData, mergeData, machineKey, progress, noHits, isExcludedMachine } from './data.mjs';
 import { REMOTE_KEY, backupFileName, buildBackup, fetchDrive } from './sync.mjs';
 import { scoreRecord, nextDayCandidates, bandOf, profileOf, SCORING_VERSION, MIN_SCORED_GAMES } from './scoring.mjs';
 
@@ -119,7 +119,7 @@ function renderNextDay(machine, day) {
   return result;
 }
 function render() {
-  const scopeMachines = data.machines.filter(m => scope(m) === $('store').value);
+  const scopeMachines = data.machines.filter(m => scope(m) === $('store').value && !isExcludedMachine(m.machine));
   $('totals').textContent = `${scopeMachines.length}機種 · 保存した台の記録 ${data.records.filter(r => scope(r) === $('store').value).length}件（日付別）`;
   const machine = scopeMachines.find(m => machineKey(m) === selectedMachine);
   $('machines').hidden = !!machine; $('detail').hidden = !machine;

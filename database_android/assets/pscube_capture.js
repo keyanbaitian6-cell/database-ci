@@ -240,6 +240,9 @@ function mergeData(stored, incoming) {
   return validateData({ ...emptyData(), machines: [...machines.values()], records: [...records.values()] });
 }
 
+/** 沖ドキ（「沖ドキ」「オキドキ」、半角も）は取り込みの対象外（メルヘンと同じ約束）。 */
+const isExcludedMachine = name => /沖ドキ|オキドキ/.test(String(name ?? '').normalize('NFKC'));
+
 /** 当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。台別7日分は取りに行かない（PC・Androidと同じ）。 */
 const noHits = r => r.bb + r.rb + r.at_art === 0;
 

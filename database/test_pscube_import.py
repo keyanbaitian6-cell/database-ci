@@ -76,6 +76,22 @@ class PscubeImportTests(unittest.TestCase):
         self.store.import_page(self.page(self.machines[0]['url'], [dict(self.machines[0], expected_count=None)], [hit, zero, dict(at_only, observed_at='2026-10-01T13:00:00+09:00')]), self.machines[0]['url'])
         self.assertEqual(self.store.next_target(self.day)[1], 2, 'AT/ARTが付いたらまた取る対象に戻る')
 
+    def test_okidoki_machines_are_never_visited_or_saved(self):
+        # メルヘンと同じ約束：沖ドキ（半角の「沖ﾄﾞｷ」、「オキドキ」も）は対象外。
+        oki = {'store': 'c740601', 'rate': '20', 'machine': '沖ﾄﾞｷ!GOLD-30', 'expected_count': 1,
+               'url': ROOT_URL + 'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=oki'}
+        result = self.store.import_page(self.page(self.index_url, [oki, self.machines[0]]), self.index_url)
+        self.assertEqual(result['remaining'], 1, '回る対象は沖ドキ以外だけ')
+        self.assertEqual(self.store.next_target(self.day)[0], self.machines[0]['url'])
+        table = self.page(oki['url'], [dict(oki, expected_count=None)], [self.record(oki, 1600)])
+        with self.assertRaisesRegex(ValueError, '対象外'):
+            self.store.import_page(table, oki['url'])
+        self.assertEqual(self.store.export_payload()['records'], [])
+        from pscube_import import is_excluded_machine
+        for name in ('沖ドキ!DUO', 'オキドキ', 'ｵｷﾄﾞｷ!', '沖ﾄﾞｷ!BLACK'):
+            self.assertTrue(is_excluded_machine(name), name)
+        self.assertFalse(is_excluded_machine('ﾏｲｼﾞｬｸﾞﾗｰV'))
+
     def test_incomplete_table_and_mismatched_page_are_rejected(self):
         self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
         self.machines[0]['expected_count'] = 2

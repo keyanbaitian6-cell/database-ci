@@ -52,6 +52,13 @@ class PscubeStore {
   /// 当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。全台一覧の数値は保存するが、
   /// 台別7日分（グラフ）は取りに行かない（メルヘンv12を AT/ART も含めて引き継ぐ。利用者の指定、
   /// 2026-10-01）。PC版 `no_hits` と同じ。
+  /// 沖ドキ（「沖ドキ」「オキドキ」、半角も）は取り込みの対象外。メルヘンと同じ約束（2026-09-29、
+  /// P’s CUBEへの反映は2026-10-01）。回る対象にせず、表・グラフも保存しない。
+  static const excludedMachineWords = ['沖ドキ', '沖ﾄﾞｷ', 'オキドキ', 'ｵｷﾄﾞｷ'];
+
+  static bool isExcludedMachine(String? name) =>
+      excludedMachineWords.any((word) => (name ?? '').contains(word));
+
   static bool noHits(Map<String, dynamic> r) =>
       (r['bb'] as int) + (r['rb'] as int) + (r['at_art'] as int) == 0;
 
@@ -218,7 +225,7 @@ class PscubeStore {
     if (!indexPage && !tablePage && !rackPage) {
       throw const FormatException('取り込み対象の画面ではありません。');
     }
-    final machines = (data['machines'] as List).map(_asMap).toList();
+    var machines = (data['machines'] as List).map(_asMap).toList();
     final records = (data['records'] as List).map(_asMap).toList();
     if (machines.length > 10000 || records.length > 5000 || machines.isEmpty) {
       throw const FormatException('機種・台の件数が不正です。');
@@ -237,6 +244,16 @@ class PscubeStore {
     if (indexPage &&
         (current.queryParameters['cd_ps'] != '2' || records.isNotEmpty)) {
       throw const FormatException('スロット機種一覧ではありません。');
+    }
+    if (indexPage) {
+      machines = [
+        for (final machine in machines)
+          if (!isExcludedMachine(machine['machine'] as String?)) machine,
+      ];
+    } else if (isExcludedMachine(machines.first['machine'] as String?)) {
+      throw FormatException(
+        '${machines.first['machine']}は取り込みの対象外です（沖ドキ）。保存しませんでした。',
+      );
     }
     String? day;
     if (tablePage) {
@@ -430,6 +447,10 @@ class PscubeStore {
           if (byKey[key] != null) byKey[key]!,
       ];
     }
+    machines = [
+      for (final machine in machines)
+        if (!isExcludedMachine(machine['machine'] as String?)) machine,
+    ];
     if (machines.isEmpty) return (url: index, remaining: 0);
     if (day == null) {
       return (url: machines.first['url'] as String, remaining: machines.length);

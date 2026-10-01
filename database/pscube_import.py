@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import sys
 import threading
+import unicodedata
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -72,6 +73,16 @@ def compact_day(raw: str) -> str:
 
 def _key(*parts) -> str:
     return json.dumps(parts, ensure_ascii=False, separators=(',', ':'))
+
+
+# 沖ドキ（表記は「沖ドキ」「オキドキ」、半角の「沖ﾄﾞｷ」も）は取り込みの対象外。メルヘンと同じ約束
+# （利用者の指定、2026-09-29。P’s CUBEへの反映は2026-10-01）。回る対象にせず、表・グラフも保存しない。
+EXCLUDED_MACHINE_WORDS = ('沖ドキ', 'オキドキ')
+
+
+def is_excluded_machine(name) -> bool:
+    text = unicodedata.normalize('NFKC', str(name or ''))
+    return any(word in text for word in EXCLUDED_MACHINE_WORDS)
 
 
 def no_hits(r: dict) -> bool:
@@ -306,6 +317,10 @@ class PscubeStore:
             raise ValueError('機種一覧・台一覧・台別ページを開いてください。')
         if is_index and (data['records'] or not data['machines'] or parse_qs(actual.query).get('cd_ps') != ['2']):
             raise ValueError('スロット機種一覧を確認できません。')
+        if is_index:
+            data['machines'] = [m for m in data['machines'] if not is_excluded_machine(m['machine'])]
+        elif data['machines'] and is_excluded_machine(data['machines'][0]['machine']):
+            raise ValueError(f'{data["machines"][0]["machine"]}は取り込みの対象外です（沖ドキ）。保存しませんでした。')
         if is_table:
             if parse_qs(actual.query).get('cd_ps') not in (None, ['2']) or len(data['machines']) != 1 or not data['records']:
                 raise ValueError('全台一覧を確認できません。')
@@ -368,6 +383,7 @@ class PscubeStore:
         if active:
             by_key = {_machine_key(m): m for m in machines}
             machines = [by_key[key] for key in json.loads(active) if key in by_key]
+        machines = [m for m in machines if not is_excluded_machine(m['machine'])]
         if not machines:
             return ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2', 0
         if not day:

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readBinaryPlist, readWebArchive } from '../web/pscube/archive.mjs';
-import { emptyData, validateData, mergeData, progress, siteUrl } from '../web/pscube/data.mjs';
+import { emptyData, validateData, mergeData, progress, siteUrl, isExcludedMachine } from '../web/pscube/data.mjs';
 
 const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c1/cgi-bin/';
 const machine = { store: 'c1', rate: '20', machine: '試験機種', expected_count: 2, url: `${base}nc-v05-011.php?cd_ps=2&bai=20` };
@@ -66,4 +66,9 @@ test('binary Safari archive reads Japanese HTML and rejects broken offsets', () 
   const corrupt = Buffer.from(fixture); corrupt.fill(255, corrupt.length - 8);
   assert.throws(() => readBinaryPlist(corrupt));
   assert.throws(() => readBinaryPlist(fixture.subarray(0, 40)));
+});
+
+test('Okidoki machines (full- or half-width, either spelling) are excluded like Meruhen', () => {
+  for (const name of ['沖ドキ!DUO', '沖ﾄﾞｷ!GOLD-30', 'オキドキ', 'ｵｷﾄﾞｷ!']) assert.equal(isExcludedMachine(name), true, name);
+  assert.equal(isExcludedMachine('ﾏｲｼﾞｬｸﾞﾗｰV'), false);
 });
