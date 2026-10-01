@@ -306,6 +306,8 @@ def main():
     ttk.Label(tab_home, text='ふだんの取り込みは、ここから始めます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 12))
     ttk.Button(tab_home, text='ブラウザを開いて取り込む', style='Accent.TButton',
                command=lambda: open_browser_import()).pack(anchor='w', ipadx=22, ipady=9)
+    ttk.Button(tab_home, text='P’s CUBE（スロット）を取り込む',
+               command=lambda: open_pscube_import()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
     ttk.Label(tab_home, style='Sub.TLabel', justify='left', text=(
         '① 機種一覧・機種別の表・個別台グラフで「この画面を取り込む」\n'
         '② 表は表、グラフはグラフとして保存され、次の必要な台へ移動\n'
@@ -395,6 +397,27 @@ def main():
             logbox.see('end')
         except OSError as exc:
             messagebox.showerror('起動できません', f'ブラウザ取り込みを開始できません：{exc}', parent=root)
+
+    def open_pscube_import():
+        try:
+            if getattr(sys, 'frozen', False):
+                executable_dir = Path(sys.executable).resolve().parent
+                candidates = (
+                    executable_dir / 'database-pscube.exe',
+                    executable_dir.parent / 'database-pscube' / 'database-pscube.exe',
+                )
+                browser = next((candidate for candidate in candidates if candidate.exists()), None)
+                if browser is None:
+                    raise OSError('database-pscube.exe が見つかりません。配布フォルダ一式をそろえてください。')
+                command = [str(browser), str(ROOT / 'data' / 'pscube.sqlite3'),
+                           str(ROOT / 'data' / 'pscube-viewer.json')]
+            else:
+                command = [sys.executable, str(ROOT / 'pscube_import.py')]
+            subprocess.Popen(command, cwd=str(ROOT))
+            logbox.insert('end', 'P’s CUBE の取り込み画面を開きました。\n')
+            logbox.see('end')
+        except OSError as exc:
+            messagebox.showerror('起動できません', f'P’s CUBEを開始できません：{exc}', parent=root)
 
     def values():
         name, target = machine.get().strip(), day.get().strip()

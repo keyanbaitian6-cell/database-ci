@@ -19,6 +19,7 @@ import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
 import 'normal_type.dart';
+import 'pscube_import_page.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'web_import_page.dart';
@@ -1564,6 +1565,23 @@ class ImportPage extends StatelessWidget {
                     ),
                     icon: const Icon(Icons.table_chart_outlined),
                     label: const Text('アプリ内ブラウザを開く'),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Divider(height: 28),
+                const Text('P’s CUBE（スロット）',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 6),
+                const Text('サイトで認証後、機種一覧から全台一覧・台別7日分を順に保存します。'),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(builder: (_) => const PscubeImportPage()),
+                    ),
+                    icon: const Icon(Icons.travel_explore),
+                    label: const Text('P’s CUBE を開く'),
                   ),
                 ),
                 const SizedBox(height: 6),
