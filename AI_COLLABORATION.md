@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 2026-10-01 深夜：止められた気配で自動停止、沖ドキの除外（P’s CUBE）、ビルド0.5.16（Claude）
+
+- **止められない工夫**（利用者「負荷を最大限下げる工夫やCookieの処理を導入」→途中で「7日に1回は却下、確認画面を見分けて自動停止くらいならいい」）：判定 `autoPageState` が人間確認の画面（hCaptchaの窓・「ロボットでないこと」「約款に同意して」）を `challenge`、対象のページなのに表示がそろわない状態を `missing` として返す。確認画面ではONのまま待ち、`missing` が5回以上・1分以上続いたら止められたとみなして自動でOFF（再開は手動）。PC `AutoPilot`、Android `PscubeAutoGuard`（`df6ec58`）。7日に1回・1時間の上限・一覧だけは入れていない（`PSCUBE_ACCESS_PLAN.md` に決定を記録）。Cookieは前回の修正のまま（Androidはサードパーティ受け付け、PCは `data/pscube-webview` に保存、アプリ内にCookieを消す処理なし）。
+- **沖ドキの除外**（利用者「沖ドキという名前が入っているものは取り込まない約束は反映してある？」→していなかった）：メルヘンと同じく「沖ドキ」「オキドキ」（半角の「沖ﾄﾞｷ」も）は対象外。機種一覧の取り込みで回る対象から外し、次の対象にも選ばず、全台一覧・台別ページは「対象外です。保存しませんでした」で保存しない。閲覧ページの機種一覧にも出さない（`e4e5823`）。PC版の本番P’s CUBE記録には一覧に「沖ﾄﾞｷ!GOLD-30」「沖ﾄﾞｷ!BLACK」があったが台の記録は0件で、消したものはない。
+- **確認**：PC全テスト（P’s CUBE39件含む）、Flutter全366件、JS・ブラウザ試験成功。
+- **ビルド**：APK `0.5.16 / 2026100110`（ソース `749ac4c`）`a/work/outputs/database-0.5.16-2026100110.apk`（92,538,749 bytes、SHA-256 `FFF553D9F96BF8C10CB90A4B0B0830CDA699B5B7F7CF471EA6D42A35B8F97801`）。Windows 3アプリ再ビルド、`smoke_frozen_capture.py` 成功、ZIP `a/work/outputs/database-windows-2026100110.zip`（150,687,987 bytes、SHA-256 `3B337C5484A26264A41236B29D66FC867A5DA57C58045B5CC2DEA4D14CFC8625`、実データなし）。インストールは利用者。閲覧ページ（沖ドキを一覧に出さない）は未公開。
+
 ## 2026-10-01 夜：PC版のCookie・メルヘン自動取り込みの停止・当たり0回・バックアップの振り分け・P’s CUBEの間隔、最終ビルド（Claude）
 
 - **PC版P’s CUBEのCookie**（利用者「PC版も修正しておいて」）：pywebviewの初期設定はシークレットモード（起動ごとにCookieを消し、ブラウザはInPrivate）。`run_session` を `private_mode=False, storage_path=data/pscube-webview` に（`eff2f90`）。手元のテストページで、従来は再起動後にCookieが消え、修正後は残ることをWebView2で確認。`data` 配下なのでGit・ZIPに入らない。メルヘンの取り込み窓は変更なし。
