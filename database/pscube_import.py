@@ -152,6 +152,11 @@ def _validate_record(r):
                 raise ValueError('グラフの座標が不正です。')
             if i and point[0] < points[i - 1][0]:
                 raise ValueError('グラフの順序が不正です。')
+    if r.get('observed_at') is not None:
+        try:
+            datetime.fromisoformat(r['observed_at'])
+        except (TypeError, ValueError) as exc:
+            raise ValueError('更新時刻が不正です。') from exc
 
 
 def _merge(old: dict | None, fresh: dict) -> dict:
@@ -160,7 +165,9 @@ def _merge(old: dict | None, fresh: dict) -> dict:
     same = all(old[k] == fresh[k] for k in ('bb', 'rb', 'at_art', 'games', 'my'))
     old_time = old.get('observed_at') or ''
     fresh_time = fresh.get('observed_at') or ''
-    older = fresh_time < old_time if old_time and fresh_time else fresh['games'] < old['games']
+    # 表示文字列の大小は時差つき時刻の新旧と一致しない。Android・Webと同じく瞬間で比べる。
+    older = (datetime.fromisoformat(fresh_time).timestamp() < datetime.fromisoformat(old_time).timestamp()
+             if old_time and fresh_time else fresh['games'] < old['games'])
     if older and not same:
         return old
     chosen = old if older else fresh

@@ -660,58 +660,87 @@ def candidate_signature(snapshot):
 _RECORDS_START = re.compile(r'"records"\s*:\s*\[$')
 
 
-def read_backup_file(path, allow_viewer=False):
-    """(records, candidate_snapshots) of a backup, read line by line when possible.
+def _decode_backup_json(text):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'バックアップ内で {key} が重複しています。')
+            result[key] = value
+        return result
+    return json.loads(text, object_pairs_hook=unique)
 
-    The one-record-per-line layout (this PC app and the current Android app)
-    is parsed line by line, so the file is never held as one big string;
-    anything else (older Android exports) is read whole.
-    """
+
+def _validate_backup_envelope(payload, allow_viewer=False, elided_candidates=False):
+    if not isinstance(payload, dict) or payload.get('format') != BACKUP_FORMAT or not isinstance(payload.get('records'), list):
+        raise ValueError('バックアップファイルの形式が不正です。')
+    if type(payload.get('version')) is not int or payload['version'] != BACKUP_VERSION:
+        raise ValueError('対応していないバックアップのバージョンです。')
+    if payload.get('source') == 'pc-viewer' and not allow_viewer:
+        raise ValueError('これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。')
+    for key in ('candidate_snapshots', 'date_events'):
+        if key in payload and not isinstance(payload[key], list):
+            raise ValueError(f'{key} の形式が不正です。')
+    if payload.get('recovery_required', 0) != 0 or 'unreadable_date_events' in payload:
+        raise ValueError('読めないデータを含む救出用ファイルです。元のファイルを残して、データの修復を依頼してください。')
+    if any(not _valid_date_event(event) for event in payload.get('date_events', [])):
+        raise ValueError('イベント情報に読めない項目があります。')
+    if not elided_candidates:
+        for snapshot in payload.get('candidate_snapshots', []):
+            if not (isinstance(snapshot, dict) and snapshot.get('store') in STORE_NAMES
+                    and isinstance(snapshot.get('day'), str) and isinstance(snapshot.get('machine'), str)
+                    and snapshot['machine'].strip() and isinstance(snapshot.get('taken_at'), str)
+                    and snapshot['taken_at'] and isinstance(snapshot.get('candidates'), list)):
+                raise ValueError('翌日候補の記録に読めない項目があります。')
+
+
+def _read_backup_document(path, allow_viewer=False):
+    """Read record values separately, validating the complete JSON envelope before saving."""
     path = Path(path)
-    records, snapshots, section = [], [], 'header'
-    with path.open(encoding='utf-8') as source:
-        first = source.readline().strip()
+    records, snapshots, structure = [], [], []
+    streamed_candidates = False
+    with path.open(encoding='utf-8-sig') as source:
+        first = next((line.strip() for line in source if line.strip()), '')
         match = _RECORDS_START.search(first)
         if first.startswith('{') and match:
-            header = json.loads(first[:match.start()].rstrip().rstrip(',') + '}')
-            if not isinstance(header, dict) or header.get('format') != BACKUP_FORMAT:
-                raise ValueError('バックアップファイルの形式が不正です。')
-            if header.get('source') == 'pc-viewer' and not allow_viewer:
-                raise ValueError('これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。')
+            header = _decode_backup_json(first[:match.start()].rstrip().rstrip(',') + '}')
+            _validate_backup_envelope(dict(header, records=[]), allow_viewer)
+            structure.append(first)
             section = 'records'
             for line in source:
                 text = line.strip()
                 if not text:
                     continue
-                if text.startswith(']'):
+                if section == 'done' or text.startswith(']'):
+                    structure.append(text)
                     section = ('candidates' if section == 'records' and '"candidate_snapshots"' in text
                                and text.endswith('[') else 'done')
+                    streamed_candidates |= section == 'candidates'
                     continue
-                if section == 'done':
-                    continue
-                item = json.loads(text[:-1] if text.endswith(',') else text)
+                item = _decode_backup_json(text[:-1] if text.endswith(',') else text)
                 (records if section == 'records' else snapshots).append(item)
-            return records, snapshots
-    payload = json.loads(path.read_text(encoding='utf-8'))
-    found = payload.get('records') if isinstance(payload, dict) else None
-    if not isinstance(found, list):
-        raise ValueError('バックアップファイルの形式が不正です。')
-    extra = payload.get('candidate_snapshots')
-    return found, extra if isinstance(extra, list) else []
+                structure.append('null,' if text.endswith(',') else 'null')
+            payload = _decode_backup_json('\n'.join(structure))
+            _validate_backup_envelope(payload, allow_viewer, elided_candidates=streamed_candidates)
+            payload['records'] = records
+            if streamed_candidates:
+                payload['candidate_snapshots'] = snapshots
+            _validate_backup_envelope(payload, allow_viewer)
+            return payload
+    payload = _decode_backup_json(path.read_text(encoding='utf-8-sig'))
+    _validate_backup_envelope(payload, allow_viewer)
+    return payload
+
+
+def read_backup_file(path, allow_viewer=False):
+    """(records, candidate_snapshots), with the same checks for every supported layout."""
+    payload = _read_backup_document(path, allow_viewer)
+    return payload['records'], payload.get('candidate_snapshots', [])
 
 
 def read_backup_events(path):
-    """Read independent store/day event labels from a portable backup header."""
-    path = Path(path)
-    with path.open(encoding='utf-8') as source:
-        first = source.readline().strip()
-    match = _RECORDS_START.search(first)
-    if first.startswith('{') and match:
-        header = json.loads(first[:match.start()].rstrip().rstrip(',') + '}')
-    else:
-        header = json.loads(path.read_text(encoding='utf-8'))
-    raw_events = header.get('date_events', []) if isinstance(header, dict) else []
-    return [event for event in raw_events if _valid_date_event(event)] if isinstance(raw_events, list) else []
+    """Read event labels from any position in a validated portable backup."""
+    return _read_backup_document(path).get('date_events', [])
 
 
 def export_viewer(store, path, days=VIEWER_DAYS):
@@ -803,12 +832,22 @@ def export_backup(store, path, location=None, day=None):
 def _valid_backup_record(record):
     try:
         return (isinstance(record, dict) and record.get('kind_code') == 21
-                and record.get('store') in STORE_NAMES and record.get('machine')
-                and record.get('rack') is not None
+                and record.get('store') in STORE_NAMES
+                and isinstance(record.get('machine'), str) and record['machine'].strip()
+                and _valid_backup_numbers(record)
                 and record.get('confirmed_setting') in (*CONFIRMED_SETTING_OPTIONS, None)
-                and bool(date.fromisoformat(record.get('day', ''))))
+                and date.fromisoformat(record.get('day', '')).isoformat() == record['day'])
     except (ValueError, TypeError):
         return False
+
+
+def _valid_backup_numbers(record):
+    def integer(value):
+        return (type(value) is int and value >= 0
+                or type(value) is float and math.isfinite(value) and value >= 0 and value.is_integer())
+    return (integer(record.get('rack')) and record['rack'] > 0
+            and all(integer(record.get(key)) for key in ('games', 'bb', 'rb'))
+            and all(record.get(key) is None or integer(record[key]) for key in ('max_hold', 'previous_start')))
 
 
 def plan_backup_import(store, records):
@@ -1522,14 +1561,15 @@ def import_backup(store, path):
     ``store.save([incoming])``.
     """
     try:
-        records, snapshots = read_backup_file(path)
+        payload = _read_backup_document(path)
     except (OSError, ValueError) as exc:
         raise ValueError(f'バックアップファイルを読み込めません。{exc}') from exc
-    plan = plan_backup_import(store, records)
+    snapshots = payload.get('candidate_snapshots', [])
+    plan = plan_backup_import(store, payload['records'])
     plan['events_added'] = 0
     plan['event_conflicts'] = 0
     local_events = {(event['store'], event['day']): event for event in store.date_events()}
-    for event in read_backup_events(path):
+    for event in payload.get('date_events', []):
         key = (event['store'], event['day'])
         existing = local_events.get(key)
         if existing is None:

@@ -196,7 +196,7 @@ class ViewerData {
     final day = raw['day'];
     if (!storeNames.containsKey(raw['store']) ||
         (kind != null && kind != 21) ||
-        raw['rack'] is! num ||
+        !hasValidRecordNumbers(raw) ||
         machine is! String ||
         machine.trim().isEmpty ||
         day is! String ||

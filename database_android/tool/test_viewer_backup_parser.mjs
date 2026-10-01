@@ -100,6 +100,16 @@ test('Drive errors are reported verbatim without importing records', async () =>
   await assert.rejects(parse(JSON.stringify({error: 'fixture Drive error'})), /fixture Drive error/);
 });
 
+test('unknown or missing version is rejected in every JSON layout', async () => {
+  for (const version of [undefined, 99, '1', true]) {
+    const doc = {...head, version, records: [record]};
+    for (const text of [JSON.stringify(doc), JSON.stringify(doc, null, 2),
+      `${JSON.stringify({...head, version}).slice(0, -1)}, "records": [\n${row}\n]}`]) {
+      await assert.rejects(parse(text), /バージョン/);
+    }
+  }
+});
+
 // Googleドライブ（スクリプト）から読む場合。本文は少しずつ渡し、何回渡したか、
 // 途中で打ち切られたかを数える。
 const REMOTE = 'https://script.google.com/macros/s/fixture_ID-1/exec';

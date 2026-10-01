@@ -76,6 +76,9 @@
         if (!doc || doc.format !== 'database-backup' || !Array.isArray(doc.records)) {
           throw notBackup(doc && doc.format);
         }
+        if (doc.version !== 1) {
+          throw new Error('対応していないバックアップのバージョンです。');
+        }
         for (const key of ['candidate_snapshots', 'date_events']) {
           if (key in doc && !Array.isArray(doc[key])) {
             throw new Error(key + ' の形式が不正です。');
@@ -96,9 +99,7 @@
           let head = text.slice(0, match.index).trimEnd();
           if (head.endsWith(',')) head = head.slice(0, -1);
           header = JSON.parse(head + '}');
-          if (!header || header.format !== 'database-backup') {
-            throw notBackup(header && header.format);
-          }
+          validate({ ...header, records: [] });
           if (known && header.exported_at === known) {
             unchanged = true;
             return;

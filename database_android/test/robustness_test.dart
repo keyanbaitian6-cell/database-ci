@@ -258,7 +258,7 @@ void main() {
     });
 
     test('取り込めたら、進み具合を知らせ、取り消しで元に戻せる', () async {
-      final file = await backupOf([for (var i = 0; i < 5; i++) rec(i)]);
+      final file = await backupOf([for (var i = 1; i <= 5; i++) rec(i)]);
       final db = realDatabase(await newDatabasePath());
       final app = await openApp(db, today: '2026-09-27');
       final progress = <String>[];

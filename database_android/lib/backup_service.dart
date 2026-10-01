@@ -368,7 +368,7 @@ class BackupPlanner {
     final machine = raw['machine'];
     final day = raw['day'];
     final setting = raw['confirmed_setting'];
-    if (!storeOk || !kindOk || raw['rack'] == null) return false;
+    if (!storeOk || !kindOk || !hasValidRecordNumbers(raw)) return false;
     if (machine is! String || machine.trim().isEmpty) return false;
     if (day is! String) return false;
     if (setting != null && !confirmedSettingOptions.contains(setting)) {

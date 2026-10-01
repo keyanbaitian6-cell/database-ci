@@ -11,6 +11,22 @@ const storeNames = <String, String>{
 /// 採点や設定推測の入力には使わず、記録の注記としてだけ扱います。
 const confirmedSettingOptions = <String>['4以上', '5以上', '6'];
 
+/// 読み込む台の必須数値。未取得を0にせず、端数の台番号も切り捨てない。
+bool hasValidRecordNumbers(Map<String, dynamic> raw) {
+  bool integer(Object? value) =>
+      value is num &&
+      value.isFinite &&
+      value >= 0 &&
+      value == value.truncateToDouble();
+  return integer(raw['rack']) &&
+      (raw['rack'] as num) > 0 &&
+      ['games', 'bb', 'rb'].every((key) => integer(raw[key])) &&
+      [
+        'max_hold',
+        'previous_start',
+      ].every((key) => raw[key] == null || integer(raw[key]));
+}
+
 /// 機種名の表記ゆれ（`+` 区切り・連続した空白）をそろえる。
 ///
 /// サイトやPC版の古い記録では空白が `+` になっていることがある。そろえずに
