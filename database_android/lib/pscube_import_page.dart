@@ -10,6 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'auto_capture_state.dart';
+import 'browser_session.dart';
 import 'pscube_auto.dart';
 import 'pscube_connection.dart';
 import 'pscube_store.dart';
@@ -75,7 +76,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     if (_preparing) return;
     _preparing = true;
     try {
-      await preparePscubeBrowser(
+      await prepareBrowserSession(
         configureJavaScript: () =>
             _web.setJavaScriptMode(JavaScriptMode.unrestricted),
         configureNavigation: () => _web.setNavigationDelegate(

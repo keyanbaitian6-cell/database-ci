@@ -11,6 +11,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'capture_flow.dart';
+import 'browser_session.dart';
 import 'auto_capture_state.dart';
 import 'page_readiness.dart';
 import 'import_service.dart';
@@ -275,6 +276,10 @@ class _WebImportPageState extends State<WebImportPage> {
       'https://meruhenworld.pt.teramoba2.com/saiwaichou/rack_info';
 
   late final WebViewController _web;
+  bool _browserReady = false;
+  bool _preparingBrowser = false;
+  bool _openingPage = false;
+  bool _extractionChannelReady = false;
 
   /// 画面の状態（読み込み中・処理中・ページの世代・次のページでの予定）。
   /// 変え方は capture_flow.dart にまとめてある。ある機種の最後のグラフを
@@ -321,10 +326,17 @@ class _WebImportPageState extends State<WebImportPage> {
       }
       return;
     }
+    if (!_browserReady || _openingPage || _failedPage == _flow.page) {
+      _autoMessage('停止中（通信状態を確認して再読み込みしてください）');
+      return;
+    }
     setState(() => _autoChanging = true);
     try {
       if (Platform.isAndroid) await _autoService.invokeMethod<void>('start');
-      if (!mounted) {
+      if (!mounted ||
+          !_browserReady ||
+          _openingPage ||
+          _failedPage == _flow.page) {
         if (Platform.isAndroid) await _autoService.invokeMethod<void>('stop');
         return;
       }
@@ -398,6 +410,8 @@ class _WebImportPageState extends State<WebImportPage> {
       return;
     }
     _failedPage = _flow.page;
+    _extractions.navigationStarted();
+    unawaited(_stopAuto('停止中（通信エラー・Cookieと記録は保持しています）'));
     _loadTimer?.cancel();
     _flow.fail(_flow.page);
     setState(() => _error = message);
@@ -438,63 +452,104 @@ class _WebImportPageState extends State<WebImportPage> {
     if (kDebugMode && Platform.isAndroid) {
       unawaited(AndroidWebViewController.enableDebugging(true));
     }
-    _web = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        'DatabaseExtraction',
-        onMessageReceived: _receiveExtraction,
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (url) {
-            _navigationUrl = url;
-            _failedPage = -1;
-            _extractions.navigationStarted();
-            _loadTimer?.cancel();
-            _clickTimer?.cancel();
-            _noticeTimer?.cancel();
-            final start = _flow.pageStarted(url);
-            _auto.nextPage(start);
-            if (_auto.enabled) _autoMessage('ON・読み込み待ち');
-            _loadTimer = Timer(const Duration(seconds: 45), () {
-              if (_samePage(start)) {
-                _flow.loadTimedOut(start);
-                setState(
-                  () => _error = 'まだ読み込み完了を確認できません。通信状態を確認し、再読み込みしてください。',
+    _web = WebViewController();
+    unawaited(_prepareBrowser(_nagamachiminami));
+  }
+
+  Future<void> _prepareBrowser(String initialUrl) async {
+    if (_preparingBrowser) return;
+    _preparingBrowser = true;
+    try {
+      await prepareBrowserSession(
+        configureJavaScript: () async {
+          await _web.setJavaScriptMode(JavaScriptMode.unrestricted);
+          if (!mounted) return;
+          if (!_extractionChannelReady) {
+            await _web.addJavaScriptChannel(
+              'DatabaseExtraction',
+              onMessageReceived: _receiveExtraction,
+            );
+            _extractionChannelReady = true;
+          }
+        },
+        configureNavigation: () => _web.setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (url) {
+              _navigationUrl = url;
+              _failedPage = -1;
+              _extractions.navigationStarted();
+              _loadTimer?.cancel();
+              _clickTimer?.cancel();
+              _noticeTimer?.cancel();
+              final start = _flow.pageStarted(url);
+              _auto.nextPage(start);
+              if (_auto.enabled) _autoMessage('ON・読み込み待ち');
+              _loadTimer = Timer(const Duration(seconds: 45), () {
+                if (_samePage(start)) {
+                  _flow.loadTimedOut(start);
+                  setState(
+                    () => _error = 'まだ読み込み完了を確認できません。通信状態を確認し、再読み込みしてください。',
+                  );
+                }
+              });
+              if (mounted) {
+                setState(() {
+                  _notice = null;
+                  _error = null;
+                });
+              }
+            },
+            onPageFinished: (url) => unawaited(_afterPageFinished(url)),
+            onWebResourceError: (error) {
+              if (error.isForMainFrame != true || !mounted) return;
+              _failDocument(
+                error.url,
+                error.errorCode == -2 ||
+                        error.description.contains('ERR_NAME_NOT_RESOLVED')
+                    ? '接続先の名前を確認できませんでした（DNSエラー）。Cookieを消さずに再読み込みしてください。'
+                    : 'ページを読み込めませんでした（エラー ${error.errorCode}）。Cookieを消さずに再読み込みしてください。',
+              );
+            },
+            onHttpError: (error) {
+              final url = error.request?.uri.toString();
+              // 広告など別URLの失敗は止めず、表示対象のHTTPエラーだけ扱う。
+              if (url != null && (error.response?.statusCode ?? 0) >= 400) {
+                _failDocument(
+                  url,
+                  'ページを読み込めませんでした（HTTP ${error.response?.statusCode}）。Cookieを消さずに再読み込みしてください。',
                 );
               }
-            });
-            if (mounted) {
-              setState(() {
-                _notice = null;
-                _error = null;
-              });
-            }
-          },
-          onPageFinished: (url) => unawaited(_afterPageFinished(url)),
-          onWebResourceError: (error) {
-            if (error.isForMainFrame != true || !mounted) return;
-            _failDocument(
-              error.url,
-              'ページを読み込めませんでした。再読み込みしてください。\n${error.description}',
-            );
-          },
-          onHttpError: (error) {
-            final url = error.request?.uri.toString();
-            // 広告など別URLの失敗は止めず、表示対象のHTTPエラーだけ扱う。
-            if (url != null) {
-              _failDocument(
-                url,
-                'ページを読み込めませんでした（HTTP ${error.response?.statusCode}）。再読み込みしてください。',
-              );
-            }
-          },
-          onNavigationRequest: (request) => _allowed(request.url)
-              ? NavigationDecision.navigate
-              : NavigationDecision.prevent,
+            },
+            onNavigationRequest: (request) => _allowed(request.url)
+                ? NavigationDecision.navigate
+                : NavigationDecision.prevent,
+          ),
         ),
-      )
-      ..loadRequest(Uri.parse(_nagamachiminami));
+        configureCookies: () async {
+          final platform = _web.platform;
+          final cookies = WebViewCookieManager().platform;
+          if (platform is AndroidWebViewController &&
+              cookies is AndroidWebViewCookieManager) {
+            await cookies.setAcceptThirdPartyCookies(platform, true);
+          }
+        },
+        load: () async {
+          _navigationUrl = initialUrl;
+          await _web.loadRequest(Uri.parse(initialUrl));
+          if (mounted) setState(() => _browserReady = true);
+        },
+        active: () => mounted,
+      );
+    } catch (_) {
+      if (mounted) {
+        _browserReady = false;
+        _flow.fail(_flow.page);
+        setState(() => _error = 'Cookie・ブラウザ設定を準備できませんでした。再読み込みで再試行してください。');
+      }
+    } finally {
+      _preparingBrowser = false;
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _afterPageFinished(String url) async {
@@ -559,17 +614,47 @@ class _WebImportPageState extends State<WebImportPage> {
             uri?.path.startsWith('/saiwaichou/') == true);
   }
 
+  Future<void> _stopAuto(String message) async {
+    _auto.turnOff();
+    if (mounted) setState(() => _autoStatus = message);
+    if (Platform.isAndroid) {
+      try {
+        await _autoService.invokeMethod<void>('stop');
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _reloadPage() async {
+    if (_flow.busy || _openingPage || _preparingBrowser) return;
+    await _stopAuto('停止中（Cookieと記録を保持して再読み込み）');
+    if (!mounted) return;
+    final url = _navigationUrl;
+    await _openStore(url != null && _allowed(url) ? url : _nagamachiminami);
+  }
+
   Future<void> _openStore(String url) async {
+    if (!_allowed(url) || _flow.busy || _openingPage || _preparingBrowser) {
+      return;
+    }
+    setState(() => _openingPage = true);
     _flow.cancelExpectation();
     _flow.startLoading();
+    _extractions.navigationStarted();
+    _failedPage = _flow.page; // Reject old callbacks until the new load starts.
     setState(() => _error = null);
     try {
-      await _web.loadRequest(Uri.parse(url));
-    } catch (error) {
-      if (mounted) {
-        _flow.stopLoading();
-        setState(() => _error = '店舗のページを開けませんでした。\n$error');
+      if (!_browserReady) {
+        await _prepareBrowser(url);
+      } else {
+        await _web.loadRequest(Uri.parse(url));
       }
+    } catch (_) {
+      if (mounted) {
+        _flow.fail(_flow.page);
+        setState(() => _error = '店舗のページを開けませんでした。Cookieを消さずに再読み込みしてください。');
+      }
+    } finally {
+      if (mounted) setState(() => _openingPage = false);
     }
   }
 
@@ -1329,7 +1414,9 @@ class _WebImportPageState extends State<WebImportPage> {
         ),
         IconButton(
           tooltip: '再読み込み',
-          onPressed: _web.reload,
+          onPressed: _flow.busy || _openingPage || _preparingBrowser
+              ? null
+              : _reloadPage,
           icon: const Icon(Icons.refresh),
         ),
       ],
@@ -1342,11 +1429,15 @@ class _WebImportPageState extends State<WebImportPage> {
             spacing: 8,
             children: [
               OutlinedButton(
-                onPressed: () => _openStore(_nagamachiminami),
+                onPressed: _flow.busy || _openingPage || _preparingBrowser
+                    ? null
+                    : () => _openStore(_nagamachiminami),
                 child: const Text('長町南店'),
               ),
               OutlinedButton(
-                onPressed: () => _openStore(_saiwaichou),
+                onPressed: _flow.busy || _openingPage || _preparingBrowser
+                    ? null
+                    : () => _openStore(_saiwaichou),
                 child: const Text('幸町店'),
               ),
             ],

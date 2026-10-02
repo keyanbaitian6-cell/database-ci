@@ -1,4 +1,4 @@
-"""P's CUBE connection errors, independent of Cookies and captured SQLite data."""
+"""Scoped WebView2 errors shared by P's CUBE and Meruhen, separate from Cookies/SQLite."""
 from __future__ import annotations
 
 import html
@@ -18,7 +18,9 @@ def allowed_page(url):
 
 
 class BrowserConnection:
-    def __init__(self, root):
+    def __init__(self, root, *, page_allowed=allowed_page, same_response=None):
+        self.allowed_page = page_allowed
+        self.same_response = same_response
         self.url = root
         self.navigation_id = None
         self.failure = None
@@ -40,7 +42,9 @@ class BrowserConnection:
 
     def http_error(self, url, status):
         with self.lock:
-            if status < 400 or not allowed_page(self.url) or not allowed_page(url):
+            if status < 400 or not self.allowed_page(self.url) or not self.allowed_page(url):
+                return False
+            if self.same_response is not None and not self.same_response(self.url, url):
                 return False
             target, request = urlparse(self.url), urlparse(url)
             if target.path != request.path:
@@ -79,7 +83,7 @@ def retry_page(window, pilot, connection, saving):
         raise ValueError('保存中です。保存が終わってから押してください。')
     with connection.lock:
         target = connection.url
-        if not allowed_page(target):
+        if not connection.allowed_page(target):
             target = 'https://' + HOST + SHOP_PATH
     pilot.configure(False, pilot.state()['seconds'])
     pilot.connection_started()
@@ -98,17 +102,18 @@ def stop_navigation(window):
     return True
 
 
-def error_page(connection):
+def error_page(connection, title="P’s CUBE"):
+    title = html.escape(title)
     with connection.lock:
         message = html.escape(connection.failure['message'])
         report = html.escape('\n\n'.join(connection.history))
     return '''<!doctype html><html lang="ja"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>P’s CUBE 通信エラー</title>
+<title>''' + title + ''' 通信エラー</title>
 <style>body{font:16px sans-serif;background:#f5f7fa;color:#24384d;margin:32px;line-height:1.6}
 button{font-size:16px;padding:12px;border-radius:8px;border:1px solid #b8c5d8;background:white;color:#24384d}
 pre{white-space:pre-wrap;word-break:break-word;font-size:12px}</style>
-<h2>P’s CUBEのページを開けませんでした</h2><p>''' + message + '''</p>
+<h2>''' + title + '''のページを開けませんでした</h2><p>''' + message + '''</p>
 <p>取り込んだ記録とCookieは保持しています。</p>
 <button id="retry" disabled>もう一度開く</button>
 <details><summary>通信エラーの記録</summary><pre>''' + report + '''</pre></details>

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:database_android/browser_session.dart';
+
 import 'package:database_android/pscube_connection.dart';
 import 'package:database_android/pscube_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,7 +12,7 @@ void main() {
   test('初回通信はCookie設定完了まで待ち、失敗した場合は開かない', () async {
     final calls = <String>[];
     final cookies = Completer<void>();
-    final task = preparePscubeBrowser(
+    final task = prepareBrowserSession(
       configureJavaScript: () async => calls.add('js'),
       configureNavigation: () async => calls.add('navigation'),
       configureCookies: () {
@@ -27,7 +29,7 @@ void main() {
     expect(calls.last, 'load');
     calls.clear();
     await expectLater(
-      preparePscubeBrowser(
+      prepareBrowserSession(
         configureJavaScript: () async {},
         configureNavigation: () async {},
         configureCookies: () async => throw StateError('cookie setup failed'),
@@ -41,7 +43,7 @@ void main() {
   test('Cookie設定中に画面を閉じたら通信しない', () async {
     var active = true;
     var loads = 0;
-    await preparePscubeBrowser(
+    await prepareBrowserSession(
       configureJavaScript: () async {},
       configureNavigation: () async {},
       configureCookies: () async => active = false,

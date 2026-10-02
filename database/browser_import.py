@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageDraw
 from auto_capture import AUTO_CAPTURE_JS, AutoCapture
+from pscube_connection import BrowserConnection, error_page, install_webview2_handlers
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
 from core import (STORE_NAMES, Store, normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
@@ -465,7 +466,7 @@ OVERLAY_JS = (
     # カードの大きさ。サイトの文字や表に合わせて見やすい大きさに変えられる。
     # 倍率は localStorage に残すので、ページを移動しても同じ大きさのまま。
     # 位置と倍率は、ブラウザを閉じても残るようPython側のファイルに保存する
-    # （このブラウザはプライベートモードなので localStorage は閉じると消える）。
+    # （Cookie/localStorageは専用プロファイルに保持する。配置ファイルも従来どおり使う）。
     # 開くたびに install_overlay が window.__databaseLayout へ入れて渡す。
     "  const SIZE_MIN = 0.7, SIZE_MAX = 2, SIZE_STEP = 0.15;\n"
     "  const layout = window.__databaseLayout || {};\n"
@@ -592,6 +593,15 @@ OVERLAY_JS = (
     "      refreshProgress();\n"
     "    } catch (e) { status.textContent = String(e); }\n"
     "  };\n"
+    "  const retryBtn = document.createElement('button');\n"
+    "  retryBtn.id = 'database-browser-retry';\n"
+    "  retryBtn.textContent = '再読み込み（Cookie・記録は保持）';\n"
+    "  retryBtn.style.cssText = 'padding:6px;border:1px solid #b8c5d8;border-radius:6px;background:white;cursor:pointer';\n"
+    "  retryBtn.onclick = async () => {\n"
+    "    retryBtn.disabled = true;\n"
+    "    try { await window.pywebview.api.retry_page(); }\n"
+    "    catch (_) { status.textContent = '確認・保存中、またはページを開けませんでした。完了後に再試行してください。'; retryBtn.disabled = false; }\n"
+    "  };\n"
     "  const status = document.createElement('span');\n"
     "  status.id = 'database-capture-status';\n"
     "  status.style.cssText = 'font-size:11px;opacity:.9;white-space:normal;word-break:break-word';\n"
@@ -708,7 +718,7 @@ OVERLAY_JS = (
     "      status.textContent = (data && data.message) || '店舗・日付を特定できませんでした。機種別一覧か個別台のページで押してください。';\n"
     "    }\n"
     "  };\n"
-    "  card.append(grip, switchBtn, captureBtn, status, progress, undoBtn);\n"
+    "  card.append(grip, switchBtn, captureBtn, status, progress, undoBtn, retryBtn);\n"
     "  document.body.appendChild(card);\n"
     # Carries the "saved" / "残りN台" message across the page navigation that
     # a save (either kind) triggers -- set by the confirm subprocess (via
@@ -1122,6 +1132,7 @@ class _Bridge:
         self._reports_folder = str(reports_folder)
         self._script_path = str(script_path)
         self._window = None  # set once the window exists (for the real URL)
+        self._connection = BrowserConnection(DEFAULT_START, page_allowed=is_allowed_url, same_response=lambda a, b: same_page_url(a.split('#')[0], b.split('#')[0]))
         self._children = []  # review windows still open when the browser closes
         self._submit_lock = threading.Lock()
         self._auto = AutoCapture()
@@ -1145,10 +1156,33 @@ class _Bridge:
 
     def set_auto_capture(self, enabled, seconds=3.5):
         with self._auto._lock:
+            if enabled and self._connection.failure:
+                self._auto.configure(False, seconds)
+                self._auto.pause(self._connection.failure['message'])
+                return self.get_auto_capture()
             self._auto.configure(enabled, seconds)
             self._auto_session += 1
             self._manual_continuation = False
             return self.get_auto_capture()
+
+    def retry_page(self):
+        # Review children can still save a previously accepted capture.
+        with self._auto._lock, self._submit_lock:
+            if any(child.poll() is None for child in self._children):
+                raise ValueError('確認・保存中です。完了してから再読み込みしてください。')
+            self.set_auto_capture(False, self.get_auto_capture()['seconds'])
+            self._manual_continuation = False
+            self._pending_advance = None
+            self._advance_generation = None
+            self._signal_path.unlink(missing_ok=True)
+            self._loading()
+            with self._connection.lock:
+                target = self._connection.url
+            if not is_allowed_url(target):
+                target = DEFAULT_START
+            self._connection.start(target)
+            self._window.load_url(target)
+        return True
 
     def commit_auto_move(self, revision):
         return self._auto.run_current(revision, lambda: self._window.evaluate_js(
@@ -1156,6 +1190,8 @@ class _Bridge:
 
     def _poll_advance(self):
         """Consume this browser's save result; defer movement behind a challenge."""
+        if self._connection.failure:
+            return False
         if self._signal_path.exists():
             try:
                 payload = json.loads(self._signal_path.read_text(encoding='utf-8'))
@@ -1217,7 +1253,7 @@ class _Bridge:
 
     def _auto_tick(self):
         """Python timer works independently of minimized-page JS timers."""
-        if not self._overlay_ready.is_set():
+        if not self._overlay_ready.is_set() or self._connection.failure:
             return
         generation = self._auto.due(busy=any(c.poll() is None for c in self._children))
         if generation is not None:
@@ -1289,6 +1325,8 @@ class _Bridge:
             return raw
         if not isinstance(payload, dict) or payload.get('error') or self._window is None:
             return raw
+        if self._connection.failure:
+            return json.dumps({'error': self._connection.failure['message']}, ensure_ascii=False)
         try:
             current = self._window.get_current_url()
         except Exception:  # noqa: BLE001 - no URL means nothing to check
@@ -1547,6 +1585,8 @@ class _Bridge:
         # The API is called on multiple pywebview threads. Admit only one save
         # process at a time, including a manual click racing an automatic tick.
         with self._auto._lock, self._submit_lock:
+            if self._connection.failure:
+                return False
             self._children = [c for c in self._children if c.poll() is None]
             if self._children:
                 return False
@@ -1793,6 +1833,8 @@ def run_session(db_path, reports_folder):
             current = window.get_current_url() or ''
         except Exception:
             return
+        if bridge._connection.showing_error:
+            return
         if current and not current.startswith('data:') and not is_allowed_url(current):
             window.load_url(DEFAULT_START)
             return
@@ -1819,11 +1861,48 @@ def run_session(db_path, reports_folder):
                 if state['enabled']:
                     bridge._auto.pause('ON・待機：' + str(exc), state['revision'])
 
+    native_handlers = []
+
+    def failed():
+        connection = bridge._connection
+        with connection.lock:
+            if not connection.failure:
+                return
+            revision = connection.revision
+            message = connection.failure['message']
+        bridge._overlay_ready.clear()
+
+        def show():
+            with connection.lock:
+                if stop.is_set() or revision != connection.revision or not connection.failure or connection.showing_error:
+                    return
+                connection.showing_error = True
+                content = error_page(connection, title='メルヘン')
+            # No AutoCapture lock or UI wait inside a native callback.
+            bridge.set_auto_capture(False, bridge.get_auto_capture()['seconds'])
+            bridge._auto.pause(message)
+            window.load_html(content)
+        threading.Thread(target=show, name='meruhen-connection-error', daemon=True).start()
+
+    def install_native():
+        native_handlers.extend(install_webview2_handlers(
+            window, bridge._connection, failed, bridge._overlay_ready.clear))
+
+    if hasattr(window.events, 'before_show'):
+        window.events.before_show += install_native
     window.events.loaded += install_overlay
-    webview.start(func=watch_advance_signal, gui='edgechromium')
+    webview.start(func=watch_advance_signal, gui='edgechromium',
+                  private_mode=False, storage_path=str(webview_storage(db_path)))
     if bridge._layout['window'].get('x') is not None:
         save_browser_layout(Path(db_path).parent, bridge._layout)
     backup_after_session(bridge._children, db_path)
+
+
+def webview_storage(db_path):
+    """Persist shop consent/authentication independently of P's CUBE and SQLite."""
+    folder = Path(db_path).resolve().parent / 'meruhen-webview'
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def backup_after_session(children, db_path):

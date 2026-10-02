@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## メルヘンのCookie処理をPC・Androidでも修正（Codex、2026-10-02）
+
+- 利用者指定：両版のメルヘン取り込みもCookie処理を検討・実装。PCはpywebviewのプライベート設定を解除し `data/meruhen-webview` に保持。P’s CUBEのプロファイルと分離。
+- AndroidはCookie/JavaScript/チャネル/NavigationDelegate設定を順に待って初回読み込み。P’s CUBEの順序処理を `browser_session.dart` に共通化。設定失敗の再試行・画面破棄後のキャンセルも確認。
+- 両版でCookie・SQLiteを消さないネイティブ再読み込み。主ページのDNS/HTTP失敗でOFF、確認・保存中の再試行を拒否。PCのエラー監視・画面はP’s CUBEの実装をURL条件付きで共有。再読み込み前に古い次ページ移動通知を取り消す。
+- 検証：PC173件＋P’s CUBE56件、Flutter409件成功（実データを参照する既存1件は例示seedのため除外）。変更Dart 6ファイルのanalyzeは問題なし。Chromiumの再試行・Cookie/保存値保持・エラー画面と既存の表/グラフJS回帰を確認。
+- 実機の認証保持/403/DNSとWindows WebView2は未確認。APK/EXE未生成。詳細は `database/MERUHEN_COOKIE_REVIEW_20261002.md`。通常のgit pushの書き込み認証がないため、接続済みGitHubアカウント経由で同一内容をmainへ反映する。
+
+
 ## P’s CUBE：Cookie設定順と接続失敗時の復帰をAndroid・PCで修正（Codex、2026-10-02）
 
 - 利用者指定：Android 0.5.16でChromeからは開けるがアプリの取得通信は403、添付画面は `ERR_NAME_NOT_RESOLVED`。Cookieを消して認証が出てもアプリからは開けない。Cookie処理の変更とPC版の編集を依頼。
