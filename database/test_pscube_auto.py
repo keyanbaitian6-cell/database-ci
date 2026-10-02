@@ -204,7 +204,7 @@ class AutoPilotTests(unittest.TestCase):
         self.pilot.tick()
         self.assertFalse(self.pilot.state()['enabled'])
         self.assertIn('止められた可能性', self.message())
-        self.assertIn('サイトの記録を消してやり直す', self.message(), '止まったときに次の手を案内する')
+        self.assertIn('Cookieを消さずに', self.message(), '止まったときに記録を消さない復旧を案内する')
         self.assertFalse(self.window.rendered[-1]['enabled'])
 
     def test_challenge_pages_and_recovered_pages_do_not_count_toward_stopping(self):

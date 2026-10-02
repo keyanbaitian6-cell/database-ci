@@ -74,6 +74,7 @@ async function install(url, api) {
     window.pywebview = { api: {
       submit_page: async payload => { window.__calls.push(['submit', JSON.parse(payload)]); sessionStorage.setItem('submitted', payload); if (stub.fail) throw new Error(stub.fail); return stub.result; },
       capture_failed: async message => { window.__calls.push(['failed', message]); return true; },
+      retry_page: async () => { window.__calls.push(['retry']); return true; },
       reset_site: async () => { window.__calls.push(['reset']); return 'サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。'; },
       set_auto_capture: async (enabled, seconds) => { window.__calls.push(['auto', enabled, seconds]); return { enabled, seconds, message: enabled ? 'ON・次の取り込みを待っています' : '停止中', revision: 9 }; },
     } };
@@ -114,6 +115,18 @@ await page.evaluate(() => window.__pscubeRenderAuto({ enabled: true, seconds: 25
 await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 10, message: '古い', revision: 4 }));
 assert.equal(await page.locator('#database-pscube-auto-status').innerText(), 'ON・待機：人間確認');
 assert.equal(await page.locator('#database-pscube-interval').inputValue(), '25');
+// Cookie・保存値を保持する再試行は、消去APIや確認画面を使わない。
+await install(mUrl, {});
+await page.evaluate(() => { document.cookie='retained=keep; path=/'; localStorage.setItem('retained','keep'); });
+await page.locator('#database-pscube-retry').click();
+await page.waitForFunction(() => window.__calls.length === 1);
+assert.deepEqual(await page.evaluate(() => window.__calls), [['retry']]);
+assert.match(await page.evaluate(() => document.cookie), /retained=keep/);
+assert.equal(await page.evaluate(() => localStorage.getItem('retained')), 'keep');
+await install(mUrl, {});
+await page.evaluate(() => { window.__pscubeBusy = true; });
+await page.locator('#database-pscube-retry').click();
+assert.deepEqual(await page.evaluate(() => window.__calls), [], '保存中は再試行しない');
 // 「サイトの記録を消してやり直す」：確認でやめたら何もしない。OKならPython側へ頼み、結果を表示する。
 await install(mUrl, {});
 let dialogs = [];
@@ -145,7 +158,24 @@ await page.setViewportSize({ width: 360, height: 300 });
 const box = await page.locator('#database-pscube-card').boundingBox();
 assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= 360 && box.y + box.height <= 300, JSON.stringify(box));
 
+// DNSエラー画面は準備完了後だけ再試行する。
+const errorHtml = execFileSync(process.env.PYTHON || 'python', ['-c',
+  'import sys; from pscube_connection import BrowserConnection,error_page; c=BrowserConnection("https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/"); c.start(c.url,1); c.navigation_completed(1,False,"HostNameNotResolved"); sys.stdout.buffer.write(error_page(c).encode("utf-8"))'],
+  { cwd: database, env: { ...process.env, PYTHONUTF8: '1' } }).toString('utf8');
+await page.goto('about:blank');
+await page.setContent(errorHtml);
+assert.equal(await page.locator('#retry').isDisabled(), true);
+await page.evaluate(() => {
+  window.__retryCalls=0;
+  window.pywebview={api:{retry_page:async()=>{window.__retryCalls++}}};
+  window.dispatchEvent(new Event('pywebviewready'));
+});
+assert.match(await page.locator('body').innerText(), /DNSエラー/);
+await page.locator('#retry').click();
+assert.equal(await page.evaluate(() => window.__retryCalls), 1);
+assert.equal(await page.locator('#retry').isDisabled(), true);
+
 assert.deepEqual(errors, []);
 assert.deepEqual(external, []);
 await browser.close();
-console.log('PASS: ページ判定（3種類・確認画面・日付なし・対象外）、カードのON/OFF表示、自動開始→保存→次ページ、二重開始なし、失敗の報告、最初のページ、古い状態の無視、サイトの記録を消す（確認・保存中は断る）、360×300に収まる');
+console.log('PASS: ページ判定（3種類・確認画面・日付なし・対象外）、カードのON/OFF表示、自動開始→保存→次ページ、二重開始なし、失敗の報告、最初のページ、古い状態の無視、Cookie保持の再試行・DNSエラー画面、サイトの記録を消す（確認・保存中は断る）、360×300に収まる');

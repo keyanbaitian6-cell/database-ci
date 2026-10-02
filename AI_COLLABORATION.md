@@ -1,5 +1,17 @@
 # database AI共同作業メモ
 
+## P’s CUBE：Cookie設定順と接続失敗時の復帰をAndroid・PCで修正（Codex、2026-10-02）
+
+- 利用者指定：Android 0.5.16でChromeからは開けるがアプリの取得通信は403、添付画面は `ERR_NAME_NOT_RESOLVED`。Cookieを消して認証が出てもアプリからは開けない。Cookie処理の変更とPC版の編集を依頼。
+- AndroidはCookie・JavaScript・NavigationDelegateの設定完了後に初回通信する。Cookie設定が失敗した場合や画面破棄後は開かない。初期化中・読み込み失敗中の取得を防ぐ。
+- 両版にCookie・SQLite記録を消さないネイティブ再読み込みを追加。DNS/主ページの通信失敗と、現在の既知ページに対応するHTTP 400以上で自動取り込みを停止。広告・認証・別台の失敗は混ぜない。初回のWindows WebView2初期化前からNavigationイベントを監視する。
+- エラー履歴は画面の存続中だけ最大8件、クエリやCookie値を除外。取得中の失敗はAndroidのページ世代を無効化し、保存開始前のデータを拒否。保存済み記録を削除・初期化しない。
+- Cookie消去は既存の確認付き操作のみ。Androidはabout:blankの完了後、PCはWebView2停止後に消す。自動停止の案内をCookie消去から保持再試行へ変更。
+- 検証：PC関連56件・既存167件成功。Flutter全体407件成功、実データ303番台を参照する既存1件は空の例示seedでは失敗（実データを補わず除外して再実行）。変更した6ファイルのanalyzeは問題なし。Chromiumで両版共用のページ判定・PCカード・Cookie/保存値保持再試行・DNSエラー画面・消去確認・保存中の操作拒否・360×300表示を確認。
+- 未確認：実機AndroidのDNS差と403の解消、実際の人間認証、Windows WebView2実動作。未知APIパスの403は今回のHTTP判定対象外。APK/Windows EXEはこのLinux環境では生成していない。端末の0.5.16や既存EXEはソース変更だけでは更新されない。
+- 詳細は `database/PSCUBE_ACCESS_PLAN.md` の2026-10-02追記。
+
+
 ## P’s CUBE：末尾別データまとめを追加（Codex）
 
 - 利用者の指定：店の傾向を見るため、末尾0・1・2・3・5・6・7・8のデータまとめを項目追加。P’s CUBEのホームに既存と同じアウトラインボタンを追加。共通の日付切替・テーマ・台ごとの表／グラフを使う。

@@ -11,6 +11,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'auto_capture_state.dart';
 import 'pscube_auto.dart';
+import 'pscube_connection.dart';
 import 'pscube_store.dart';
 import 'theme.dart';
 
@@ -28,6 +29,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   String _status = 'サイトの認証後、スロット機種一覧を開いてください。';
   bool _busy = false;
   bool _loading = true;
+  bool _browserReady = false;
+  bool _preparing = false;
+  bool _opening = false;
+  Completer<void>? _blankLoaded;
+  final _connection = PscubeConnection();
   int _page = 0;
   String? _navigationUrl;
   int _remaining = 0;
@@ -56,45 +62,106 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   @override
   void initState() {
     super.initState();
-    _web = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (url) {
-            if (_navigationUrl != null && _samePage(_navigationUrl!, url)) {
-              return;
-            }
-            _navigationUrl = url;
-            _page++;
-            _auto.nextPage(_page);
-            if (_auto.enabled) _autoMessage('ON・読み込み待ち');
-            if (mounted) setState(() => _loading = true);
-          },
-          onPageFinished: (_) {
-            if (mounted) setState(() => _loading = false);
-          },
-          onWebResourceError: (error) {
-            if (error.isForMainFrame == true && mounted) {
-              setState(() => _status = 'ページを開けませんでした：${error.description}');
-            }
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(PscubeStore.root));
-    // 普通のブラウザと同じく、ページ内の別サイト（人間確認の hCaptcha の窓）のCookieも
-    // 受け付ける。AndroidのWebViewは初期設定で拒否するため、確認済みを覚えられず、
-    // 台別ページを開くたびに人間確認が出ていた可能性がある（2026-10-01、利用者の報告）。
-    final platform = _web.platform;
-    final cookies = WebViewCookieManager().platform;
-    if (platform is AndroidWebViewController &&
-        cookies is AndroidWebViewCookieManager) {
-      unawaited(cookies.setAcceptThirdPartyCookies(platform, true));
-    }
+    _web = WebViewController();
+    unawaited(_prepareBrowser());
     _autoTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (_) => unawaited(_autoTick()),
     );
     unawaited(_initialize());
+  }
+
+  Future<void> _prepareBrowser() async {
+    if (_preparing) return;
+    _preparing = true;
+    try {
+      await preparePscubeBrowser(
+        configureJavaScript: () =>
+            _web.setJavaScriptMode(JavaScriptMode.unrestricted),
+        configureNavigation: () => _web.setNavigationDelegate(
+          NavigationDelegate(
+            onPageStarted: (url) {
+              if (_navigationUrl != null &&
+                  _navigationUrl != url &&
+                  _samePage(_navigationUrl!, url)) {
+                return;
+              }
+              _navigationUrl = url;
+              _connection.start(url);
+              _page++;
+              _auto.nextPage(_page);
+              if (_auto.enabled) _autoMessage('ON・読み込み待ち');
+              if (mounted) setState(() => _loading = true);
+            },
+            onPageFinished: (url) {
+              if (url == 'about:blank' && _blankLoaded?.isCompleted == false) {
+                _blankLoaded!.complete();
+              }
+              if (mounted && _connection.finish(url)) {
+                setState(() => _loading = false);
+              }
+            },
+            onWebResourceError: (error) {
+              if (mounted &&
+                  _connection.networkError(
+                    url: error.url,
+                    mainFrame: error.isForMainFrame == true,
+                    code: error.errorCode,
+                    description: error.description,
+                  )) {
+                _connectionFailed();
+              }
+            },
+            onHttpError: (error) {
+              if (mounted &&
+                  _connection.httpError(
+                    url: error.request?.uri.toString(),
+                    status: error.response?.statusCode,
+                  )) {
+                _connectionFailed();
+              }
+            },
+          ),
+        ),
+        configureCookies: () async {
+          final platform = _web.platform;
+          final cookies = WebViewCookieManager().platform;
+          if (platform is AndroidWebViewController &&
+              cookies is AndroidWebViewCookieManager) {
+            await cookies.setAcceptThirdPartyCookies(platform, true);
+          }
+        },
+        load: () async {
+          _connection.start(PscubeStore.root);
+          await _web.loadRequest(Uri.parse(PscubeStore.root));
+          if (mounted) setState(() => _browserReady = true);
+        },
+        active: () => mounted,
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _status = 'ブラウザのCookie・接続設定を準備できませんでした。「もう一度開く」で再試行してください。';
+        });
+      }
+    } finally {
+      _preparing = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _connectionFailed() {
+    final message = _connection.failure!.message;
+    // Invalidate a capture already reading the DOM, before any awaited work.
+    _page++;
+    _auto.turnOff();
+    setState(() {
+      _loading = false;
+      _status = message;
+      _autoStatus = '停止中（通信エラー）';
+    });
+    unawaited(_stopAuto('停止中（通信エラー）'));
   }
 
   // This site writes scroll position to the hash on its overview pages.
@@ -182,12 +249,89 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   /// 開く。アドレスを直接開くと「どのページから来たか」が付かず、普通のブラウザと
   /// 違って見えるため（PC版も同じ形）。サイトの外にいるときだけ直接開く。
   Future<void> _open(String url) async {
-    final current = Uri.tryParse(await _web.currentUrl() ?? '');
-    if (current?.host == 'www.pscube.jp') {
-      await _web.runJavaScript('location.assign(${jsonEncode(url)})');
-    } else {
-      await _web.loadRequest(Uri.parse(url));
+    if (!_browserReady || _busy || _opening) return;
+    final target = Uri.parse(url);
+    if (!PscubeConnection.allowedPage(target)) {
+      throw const FormatException('対象のP’s CUBEページではありません。');
     }
+    setState(() => _opening = true);
+    try {
+      final current = Uri.tryParse(await _web.currentUrl() ?? '');
+      if (!mounted) return;
+      final insidePage =
+          _connection.canCapture && current?.host == 'www.pscube.jp';
+      _connection.start(url);
+      _page++;
+      _auto.nextPage(_page);
+      setState(() => _loading = true);
+      if (insidePage) {
+        await _web.runJavaScript('location.assign(${jsonEncode(url)})');
+      } else {
+        await _web.loadRequest(target);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _status = 'ページへ移動できませんでした。「もう一度開く」を試してください。';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  Future<void> _retryPage() async {
+    if (_busy || _opening || _preparing) return;
+    setState(() => _opening = true);
+    try {
+      await _stopAuto('停止中（手動で再読み込み）');
+      if (!mounted) return;
+      if (!_browserReady) {
+        await _prepareBrowser();
+        return;
+      }
+      final target = _connection.page;
+      final url = target != null && PscubeConnection.allowedPage(target)
+          ? target
+          : Uri.parse(PscubeStore.root);
+      // Loading the next URL replaces the failed document.
+      if (!mounted) return;
+      _page++;
+      _connection.start(url.toString());
+      _guard.reset();
+      setState(() {
+        _loading = true;
+        _status = 'Cookieと取り込んだ記録を保持して、ページを開き直しています…';
+      });
+      await _web.loadRequest(url);
+    } catch (_) {
+      if (mounted) setState(() => _status = 'ページを開き直せませんでした。通信状態を確認してください。');
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  Future<void> _showConnectionHistory() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('通信エラーの記録'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            _connection.history.isEmpty
+                ? 'この画面で記録した通信エラーはありません。'
+                : _connection.history.map((error) => error.report).join('\n\n'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Android WebView は文字列を1回か2回JSONにして返すことがある。
@@ -217,10 +361,14 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       await _stopAuto('停止中（開始済みの保存は完了まで待ちます）');
       return;
     }
+    if (!_browserReady || _opening || _connection.failure != null) {
+      _autoMessage('停止中（通信状態を確認して「もう一度開く」を押してください）');
+      return;
+    }
     setState(() => _autoChanging = true);
     try {
       if (Platform.isAndroid) await _autoService.invokeMethod<void>('start');
-      if (!mounted) {
+      if (!mounted || _connection.failure != null || _opening) {
         if (Platform.isAndroid) await _autoService.invokeMethod<void>('stop');
         return;
       }
@@ -251,6 +399,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     final token = _auto.due(
       busy:
           _busy ||
+          _opening ||
+          !_browserReady ||
+          _connection.failure != null ||
           _loading ||
           _store == null ||
           _script == null ||
@@ -286,7 +437,15 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   }
 
   Future<void> _capture({String? autoSignature, int? autoToken}) async {
-    if (_busy || _loading || _store == null || _script == null) return;
+    if (_busy ||
+        _opening ||
+        !_browserReady ||
+        !_connection.canCapture ||
+        _loading ||
+        _store == null ||
+        _script == null) {
+      return;
+    }
     final store = _store!;
     final page = _page;
     setState(() {
@@ -317,7 +476,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       if (!mounted) return;
       setState(() {
         _remaining = result.remaining;
-        _status = '${result.kind}を保存しました。残り ${result.remaining} 件。';
+        _status =
+            _connection.failure?.message ??
+            '${result.kind}を保存しました。残り ${result.remaining} 件。';
       });
       if (autoSignature != null) {
         _autoDone.add(autoSignature);
@@ -328,11 +489,17 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           _autoMessage('ON・${result.kind}を保存・残り${result.remaining}件・次のページへ');
         }
       }
-      if (result.nextUrl != null && _page == page) {
+      if (result.nextUrl != null && _page == page && _connection.canCapture) {
+        // The save has finished. _open itself still rejects a concurrent save.
+        setState(() => _busy = false);
         await _open(result.nextUrl!);
       }
     } catch (error) {
-      if (mounted) setState(() => _status = '保存できませんでした：$error');
+      if (mounted) {
+        setState(
+          () => _status = _connection.failure?.message ?? '保存できませんでした：$error',
+        );
+      }
       if (autoSignature != null && _auto.enabled) {
         final count = (_autoFailures[autoSignature] ?? 0) + 1;
         _autoFailures[autoSignature] = count;
@@ -382,12 +549,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     }
   }
 
-  /// PC版・ブラウザのバックアップを統合する。中身を確かめてから1回で保存するので、
-  /// 形式が不正なときは何も保存しない。
   /// サイトの記録（Cookie・保存データ）を消して最初のページを開き直す。取り込んだ記録は消さない。
-  /// 同じスマホのChromeでは開けるのにアプリだけデータが出なくなった（回線ではなくアプリに残る
-  /// Cookie等で止められていると考えられる、2026-10-02 利用者の報告）ときに使う。
+  /// 利用者が明示的に選んだ場合だけ。DNSやHTTP403の解決を保証しない。
   Future<void> _resetSite() async {
+    if (_busy || _opening || !_browserReady) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -395,7 +560,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         content: const Text(
           'このアプリのブラウザに残っているCookie・保存データを消して、P’s CUBEの最初のページを開き直します。'
           '取り込んだ記録は消えません。自動取り込みはOFFになります。\n\n'
-          '人間確認・同意が出たら手で操作してください。メルヘンの取り込み画面でも、次に開いたとき同意や確認が出ることがあります。',
+          'DNSエラーやHTTP403が直るとは限りません。人間確認・同意が出たら手で操作してください。'
+          'メルヘンの取り込み画面でも、次に開いたとき同意や確認が出ることがあります。',
         ),
         actions: [
           TextButton(
@@ -409,26 +575,39 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         ],
       ),
     );
-    if (ok != true || !mounted || _busy) return;
-    if (_auto.enabled) await _stopAuto('停止中（サイトの記録を消しました）');
+    if (ok != true || !mounted || _busy || _opening) return;
+    setState(() => _busy = true);
     try {
+      await _stopAuto('停止中（サイトの記録を消して開き直します）');
+      _blankLoaded = Completer<void>();
+      await _web.loadRequest(Uri.parse('about:blank'));
+      await _blankLoaded!.future.timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      _page++;
+      // Wait until the old site document is gone before clearing Cookies.
       await WebViewCookieManager().clearCookies();
       await _web.clearLocalStorage();
       await _web.clearCache();
-    } catch (error) {
-      if (mounted) setState(() => _status = 'サイトの記録を消せませんでした：$error');
-      return;
+      _autoDone.clear();
+      _autoFailures.clear();
+      _guard.reset();
+      if (!mounted) return;
+      _connection.start(PscubeStore.root);
+      setState(() {
+        _loading = true;
+        _status =
+            'サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。'
+            '人間確認・同意が出たら手で操作してください。';
+      });
+      await _web.loadRequest(Uri.parse(PscubeStore.root));
+    } catch (_) {
+      if (mounted) {
+        setState(() => _status = 'サイトの記録の消去・再読み込みに失敗しました。「もう一度開く」を試してください。');
+      }
+    } finally {
+      _blankLoaded = null;
+      if (mounted) setState(() => _busy = false);
     }
-    _autoDone.clear();
-    _autoFailures.clear();
-    _guard.reset();
-    if (!mounted) return;
-    setState(
-      () => _status =
-          'サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。最初のページを開き直します。'
-          '人間確認・同意が出たら手で操作してください。',
-    );
-    await _web.loadRequest(Uri.parse(PscubeStore.root));
   }
 
   Future<void> _restore() async {
@@ -476,7 +655,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       actions: [
         IconButton(
           tooltip: 'サイトの記録を消してやり直す',
-          onPressed: _busy ? null : _resetSite,
+          onPressed: _busy || _opening || !_browserReady ? null : _resetSite,
           icon: const Icon(Icons.cookie_outlined),
         ),
         IconButton(
@@ -499,13 +678,33 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(_status),
+              if (_connection.failure != null ||
+                  !_browserReady ||
+                  _status.contains('もう一度開く'))
+                Wrap(
+                  children: [
+                    TextButton.icon(
+                      onPressed: _busy || _opening || _preparing
+                          ? null
+                          : _retryPage,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('もう一度開く'),
+                    ),
+                    TextButton(
+                      onPressed: _showConnectionHistory,
+                      child: const Text('通信エラーの記録'),
+                    ),
+                  ],
+                ),
               Text(_backupText, style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: _busy ? null : () => _open(PscubeStore.index),
+                      onPressed: _busy || _opening || !_browserReady
+                          ? null
+                          : () => _open(PscubeStore.index),
                       child: const Text('スロット機種一覧'),
                     ),
                   ),
@@ -514,6 +713,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                     child: FilledButton(
                       onPressed:
                           _busy ||
+                              _opening ||
+                              !_browserReady ||
+                              !_connection.canCapture ||
                               _loading ||
                               _store == null ||
                               _script == null ||
@@ -541,7 +743,12 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                     foregroundColor: Colors.white,
                     minimumSize: const Size.fromHeight(48),
                   ),
-                  onPressed: _autoChanging || _store == null
+                  onPressed:
+                      _autoChanging ||
+                          _opening ||
+                          !_browserReady ||
+                          _connection.failure != null ||
+                          _store == null
                       ? null
                       : _toggleAuto,
                   icon: Icon(

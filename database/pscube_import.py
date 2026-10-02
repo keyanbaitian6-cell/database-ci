@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from auto_capture import AutoCapture
+from pscube_connection import BrowserConnection, error_page, install_webview2_handlers, retry_page, stop_navigation
 
 # バックアップ・Drive同期（仕様：PSCUBE_SYNC.md）。メルヘンの database-backup-* とは名前を分ける。
 AUTO_BACKUP_NAME = 'pscube-backup-auto.json'
@@ -65,7 +66,7 @@ RESET_SITE_SCRIPT = r'''(async () => {
   return true;
 })()'''
 BLOCKED_MESSAGE = ('サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。'
-                   '右下の「サイトの記録を消してやり直す」を押して人間確認をし直すか、時間を空けてから手動でONにしてください。')
+                   '時間を空けてから、Cookieを消さずに「もう一度開く」を試してください。')
 RESET_DONE_MESSAGE = ('サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。最初のページを開き直します。'
                       '人間確認・同意が出たら手で操作してください。')
 
@@ -79,6 +80,8 @@ def reset_site(window, pilot, saving):
     if saving():
         raise ValueError('保存中です。保存が終わってから押してください。')
     pilot.configure(False, pilot.state()['seconds'])
+    if not stop_navigation(window):
+        pilot._eval('window.stop && window.stop()')
     pilot._eval(RESET_SITE_SCRIPT)
     window.clear_cookies()
     with pilot._lock:
@@ -585,6 +588,7 @@ class AutoPilot:
         self.pending = None
         self.pending_since = None
         self.loading_page = False
+        self.connection_error = None
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
 
@@ -614,12 +618,27 @@ class AutoPilot:
 
     def configure(self, enabled, seconds):
         with self._lock:
+            if enabled and self.connection_error:
+                self.auto.pause(self.connection_error)
+                return self.auto.state()
             state = self.auto.configure(enabled, seconds)
             if enabled:
                 self.failures.clear()
                 self.done.clear()
         self.render()
         return self.auto.state()
+
+    def connection_failed(self, message):
+        """Native WebView2 callback: no JS/UI wait here."""
+        with self._lock:
+            self.connection_error = message
+            self.auto.configure(False, self.auto.state()['seconds'])
+            self.auto.pause(message)
+
+    def connection_started(self):
+        with self._lock:
+            self.connection_error = None
+            self.loading_page = True
 
     def loading(self):
         """ページの読み込みが始まった：読み込みが終わるまで問い合わせない（問い合わせると待たされる）。"""
@@ -633,12 +652,15 @@ class AutoPilot:
             if self.pending is not None and not self.saving():
                 self.pending = None
                 self.pending_since = None
-            self.auto.loaded()
+            if self.connection_error:
+                self.auto.pause(self.connection_error)
+            else:
+                self.auto.loaded()
         self.render()
 
     def tick(self):
         with self._lock:
-            if self.loading_page:
+            if self.loading_page or self.connection_error:
                 return
             now = self.clock()
             if (self.pending is not None and self.pending_since is not None and not self.saving()
@@ -653,7 +675,7 @@ class AutoPilot:
         # 問い合わせの間は鍵を持たない（保存完了の処理などを待たせない）。
         raw = self._eval(self.probe_script)
         with self._lock:
-            if self.loading_page:
+            if self.loading_page or self.connection_error:
                 return
             try:
                 probe = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -751,13 +773,24 @@ def overlay_script(capture_script, index_url):
       status.style.cssText = 'font-size:11px;color:#33445a;white-space:normal;word-break:break-word';
       status.textContent = '人間確認・同意の画面ではONのまま待ちます。確認は手動で操作してください。';
       const reset = document.createElement('button');
+      const retry = document.createElement('button');
+      retry.id = 'database-pscube-retry';
+      retry.type = 'button';
+      retry.textContent = 'もう一度開く（Cookie・記録は保持）';
+      Object.assign(retry.style, {background:'white',color:'#33445a',padding:'6px',border:'1px solid #b8c5d8',borderRadius:'6px',fontSize:'12px',cursor:'pointer'});
+      retry.onclick = async () => {
+        if (window.__pscubeBusy) { status.textContent = '保存中です。保存が終わってから押してください。'; return; }
+        retry.disabled = true;
+        try { await window.pywebview.api.retry_page(); }
+        catch (_) { retry.disabled = false; status.textContent = '開き直せませんでした。通信状態を確認してください。'; }
+      };
       reset.id = 'database-pscube-reset';
       reset.type = 'button';
       reset.textContent = 'サイトの記録を消してやり直す';
       Object.assign(reset.style, {background:'white',color:'#33445a',padding:'6px',border:'1px solid #b8c5d8',borderRadius:'6px',fontSize:'12px',cursor:'pointer'});
       reset.onclick = async () => {
         if (window.__pscubeBusy) { status.textContent = '保存中です。保存が終わってから押してください。'; return; }
-        if (!confirm('この画面に残っているCookie・保存データを消して、P’s CUBEの最初のページを開き直します。\n取り込んだ記録は消えません。自動取り込みはOFFになります。\n人間確認・同意が出たら手で操作してください。')) return;
+        if (!confirm('この画面に残っているCookie・保存データを消して、P’s CUBEの最初のページを開き直します。\n取り込んだ記録は消えません。自動取り込みはOFFになります。\nDNSエラーやHTTP403が直るとは限りません。人間確認・同意が出たら手で操作してください。')) return;
         reset.disabled = true;
         status.textContent = '消しています…';
         try {
@@ -767,7 +800,7 @@ def overlay_script(capture_script, index_url):
           status.textContent = '消せませんでした：' + String(error?.message || error);
         }
       };
-      card.append(button, auto, label, status, reset);
+      card.append(button, auto, label, status, retry, reset);
       const identity = raw => {
         const u = new URL(raw);
         if (!u.pathname.endsWith('nc-v06-001.php')) u.hash = '';
@@ -846,6 +879,7 @@ def run_session(db_path, export_path):
 
     script = CAPTURE.read_text(encoding='utf-8')
     probe = PROBE.read_text(encoding='utf-8')
+    connection = BrowserConnection(ROOT_URL)
 
     class Bridge:
         def __init__(self):
@@ -890,6 +924,8 @@ def run_session(db_path, export_path):
                 self._capture_lock.release()
 
         def _submit_page(self, raw):
+            if connection.failure:
+                raise ValueError(connection.failure['message'])
             current = self._window.get_current_url()
             db = PscubeStore(db_path)
             try:
@@ -900,12 +936,47 @@ def run_session(db_path, export_path):
             finally:
                 db.close()
 
+        def retry_page(self):
+            if not self._capture_lock.acquire(blocking=False):
+                raise ValueError('保存中です。保存が終わってから押してください。')
+            try:
+                return retry_page(self._window, self.pilot, connection, saving=lambda: False)
+            finally:
+                self._capture_lock.release()
+
     bridge = Bridge()
     window = webview.create_window('P’s CUBE 取り込み', ROOT_URL, width=1050, height=780, js_api=bridge)
     bridge._window = window
     bridge.pilot = AutoPilot(window.evaluate_js, probe, saving=bridge._capture_lock.locked)
     overlay = overlay_script(script, ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2')
     stop = threading.Event()
+    native_handlers = []
+
+    def failed():
+        with connection.lock:
+            if not connection.failure:
+                return
+            message = connection.failure['message']
+            revision = connection.revision
+        bridge.pilot.connection_failed(message)
+
+        def show():
+            with connection.lock:
+                if stop.is_set() or revision != connection.revision or not connection.failure:
+                    return
+                if connection.showing_error:
+                    return
+                connection.showing_error = True
+                content = error_page(connection)
+            # load_html uses WinForms Invoke; never wait for it inside a native
+            # UI callback or while holding the connection lock.
+            window.load_html(content)
+
+        threading.Thread(target=show, name='pscube-connection-error', daemon=True).start()
+
+    def install_native():
+        native_handlers.extend(install_webview2_handlers(
+            window, connection, failed, bridge.pilot.connection_started))
 
     def install_overlay():
         try:
@@ -927,6 +998,8 @@ def run_session(db_path, export_path):
         stop.set()
 
     window.events.before_load += bridge.pilot.loading
+    if hasattr(window.events, 'before_show'):
+        window.events.before_show += install_native
     window.events.loaded += install_overlay
     window.events.closed += closed
     threading.Thread(target=auto_loop, name='pscube-auto', daemon=True).start()

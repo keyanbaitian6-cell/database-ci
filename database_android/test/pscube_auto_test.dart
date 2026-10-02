@@ -84,7 +84,7 @@ void main() {
     expect(stopped.message, contains('止められた可能性'));
     expect(
       stopped.message,
-      contains('サイトの記録を消してやり直す'),
+      contains('Cookieを消さずに'),
       reason: '止まったときに次の手を案内する',
     );
     for (var i = 0; i < 4; i++) {
