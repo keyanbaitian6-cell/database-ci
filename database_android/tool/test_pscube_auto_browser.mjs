@@ -104,20 +104,24 @@ await page.waitForURL(`${base}nc-v06-001.php?cd_dai=1#20261001`);
 const submitted = JSON.parse(await page.evaluate(() => sessionStorage.getItem('submitted')));
 assert.equal(submitted.source_url, mUrl, '保存したのは移動前の全台一覧');
 assert.equal(submitted.records.length, 2);
-// 6台で一時的に止まっても、設置31台が揃ってから保存し台別へ進む。
-pages[path(mUrl)] = tableHtml(true, [1, 2, 3, 4, 5, 6]);
-await install(mUrl, { expected_count: 31, result: { kind: '全台一覧', remaining: 31, next_url: `${base}nc-v06-001.php?cd_dai=1#20261001` } });
-await page.evaluate(extra => {
-  let requested = false;
-  window.scrollTo = () => {
-    if (requested) return;
-    requested = true;
-    setTimeout(() => document.querySelector('li[id^="li-"]').parentElement.insertAdjacentHTML('beforeend', extra), 3000);
-  };
-}, Array.from({length: 25}, (_, n) => card(n + 7)).join(''));
-await page.evaluate(() => window.__pscubeStartCapture());
-await page.waitForURL(`${base}nc-v06-001.php?cd_dai=1#20261001`);
-assert.equal(JSON.parse(await page.evaluate(() => sessionStorage.getItem('submitted'))).records.length, 31);
+// 各機種で毎回スクロールし、6台で一時停止しても設置31台が揃ってから保存し台別へ進む。
+for (const tableUrl of [mUrl, `${mUrl}&nmk_kisyu=next`]) {
+  pages[path(tableUrl)] = tableHtml(true, [1, 2, 3, 4, 5, 6]);
+  await install(tableUrl, { expected_count: 31, result: { kind: '全台一覧', remaining: 31, next_url: `${base}nc-v06-001.php?cd_dai=1#20261001` } });
+  await page.evaluate(extra => {
+    let requested = false;
+    window.scrollTo = () => {
+      if (requested) return;
+      requested = true;
+      setTimeout(() => document.querySelector('li[id^="li-"]').parentElement.insertAdjacentHTML('beforeend', extra), 3000);
+    };
+  }, Array.from({length: 25}, (_, n) => card(n + 7)).join(''));
+  await page.evaluate(() => window.__pscubeStartCapture());
+  await page.waitForURL(`${base}nc-v06-001.php?cd_dai=1#20261001`);
+  const saved = JSON.parse(await page.evaluate(() => sessionStorage.getItem('submitted')));
+  assert.equal(saved.records.length, 31);
+  assert.equal(saved.source_url, tableUrl);
+}
 pages[path(mUrl)] = tableHtml();
 // 失敗：保存の前に失敗したらPythonへ知らせ、取り込み中の印を外す。
 await install(mUrl, { fail: '表示は1台、設置台数は2台です。' });
