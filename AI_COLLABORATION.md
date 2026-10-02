@@ -4,7 +4,8 @@
 
 - 利用者指定：10秒から7.1秒へ。PCのみ対応し、Android本体・バージョン・APKは変更しない。PCの範囲5〜60秒を維持し、スライダーを0.1秒刻み、表示を小数1桁へ変更。メルヘンの初期3.5秒は維持。
 - PC関連235件成功。7.0秒では待機、7.1秒で処理開始する時計のテストと、Chromiumで初期値・表示・0.1秒操作・Python APIへ7.1を渡す検証が成功。ブラウザ検証スクリプトはdatabase_android/tool内にあるが、PCのpscube_import.pyのカードを検証するもの。
-- PC配布の再ビルドと生成EXEの起動確認結果は、この節へ追記する。サイト上の実際のクリック間隔の測定は未実施。
+- `e25902db5bfb4fccf185e4b02a6d58d915714b72`をmainへ反映し、`database/build_windows.ps1 -BuildTag pc-interval-7p1-20261002`で3EXEを再ビルド。配布先は正本`database/bin`のdatabase・database-browser・database-pscubeの3フォルダ一式（依存DLLを含む）。APK再ビルドは未実施（利用者指定）。
+- 生成EXEの内蔵コード・JSをソースと照合し、メイン画面→両補助EXE→実WebView2の起動、一時DBの表/グラフ保存が成功。通常の既存data参照先を確認し、利用者data直下13ファイルのSHA-256不変。ログ/ハッシュ/マニフェストは`a/work/outputs/pc-interval-7.1-*20261002.*`と`user-data-hashes-before-interval-20261002.json`。サイト上の実際のクリック間隔の測定は未実施。取り込み窓を閉じて開き直すと初期7.1秒になる。
 
 ## 最新mainのWindows検証・EXE/APK 0.5.18（Codex、2026-10-02）
 
