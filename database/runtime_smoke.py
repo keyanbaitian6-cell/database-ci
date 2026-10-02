@@ -98,6 +98,18 @@ def run(module, kind, output):
                             window.native.Invoke(Action(lambda: native.append(
                                 str(window.native.webview.CoreWebView2.Environment.BrowserVersionString))))
                             result.update(api=api, webview2_version=native[0])
+                            if kind == 'pscube':
+                                # Exercise the packaged card on this inline page only.
+                                window.evaluate_js(module.overlay_script(
+                                    module.CAPTURE.read_text(encoding='utf-8'), module.ROOT_URL))
+                                state = options['js_api'].set_auto_capture(True, 6.5)
+                                window.evaluate_js('window.__pscubeRenderAuto(' + json.dumps(state) + ')')
+                                ui = window.evaluate_js('({label: document.querySelector("#database-pscube-card label").innerText, disabled: document.getElementById("database-pscube-interval").disabled, value: Number(document.getElementById("database-pscube-interval").value)})')
+                                assert 5 <= state['seconds'] <= 8, state
+                                assert ui['disabled'] and ui['value'] == state['seconds'], ui
+                                assert '5〜8秒ランダム' in ui['label'], ui
+                                options['js_api'].set_auto_capture(False, state['seconds'])
+                                result['random_interval'] = ui
                         except Exception as error:
                             result['error'] = repr(error)
                         finally:

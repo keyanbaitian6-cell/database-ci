@@ -6,8 +6,7 @@ import time
 
 class AutoCapture:
     def __init__(self, clock=time.monotonic, minimum=0.1, maximum=4.5, default=3.5):
-        # 間隔の範囲はメルヘンが0.1〜4.5秒（初期3.5）。PCのP’s CUBEは5〜60秒（初期7.1）で使う
-        # （利用者の指定：範囲は2026-10-01、PCの初期値7.1秒は2026-10-02）。
+        # メルヘンは0.1〜4.5秒（初期3.5）。サイト固有の待機は_scheduleで設定する。
         self._lock = threading.RLock()
         self._clock = clock
         self._minimum, self._maximum = minimum, maximum
@@ -22,6 +21,9 @@ class AutoCapture:
         with self._lock:
             return dict(enabled=self._enabled, seconds=self._seconds, message=self._message,
                         revision=self._generation)
+
+    def _schedule(self):
+        self._deadline = self._clock() + self._seconds
 
     def configure(self, enabled, seconds):
         if not isinstance(enabled, bool):
@@ -38,7 +40,7 @@ class AutoCapture:
             if enabled and not self._enabled:
                 self._seen.clear()
             self._enabled = enabled
-            self._deadline = self._clock() + self._seconds
+            self._schedule()
             self._message = '次の取り込みを待っています' if enabled else '停止中（実行済みの保存は完了まで待ちます）'
             return self.state()
 
@@ -47,20 +49,20 @@ class AutoCapture:
             if generation is not None and generation != self._generation:
                 return
             self._message = message
-            self._deadline = self._clock() + self._seconds
+            self._schedule()
 
     def loaded(self):
         # Give each new document the chosen interval to finish rendering.
         with self._lock:
             self._generation += 1
-            self._deadline = self._clock() + self._seconds
+            self._schedule()
 
     def due(self, busy=False):
         with self._lock:
             if not self._enabled:
                 return None
             if busy:
-                self._deadline = self._clock() + self._seconds
+                self._schedule()
                 self._message = '保存処理中・完了待ち'
                 return None
             if self._clock() < self._deadline:
@@ -76,10 +78,10 @@ class AutoCapture:
                 self.pause('ON・次のページ待ち（同じページは重複保存しません）')
                 return False
             if not action():
-                self._deadline = self._clock() + self._seconds
+                self._schedule()
                 return False
             self._seen.add(key)
-            self._deadline = self._clock() + self._seconds
+            self._schedule()
             self._message = '保存処理中・完了待ち'
             return True
 
@@ -88,7 +90,7 @@ class AutoCapture:
         with self._lock:
             if not self._enabled or generation != self._generation:
                 return False
-            self._deadline = self._clock() + self._seconds
+            self._schedule()
             return action()
 
 

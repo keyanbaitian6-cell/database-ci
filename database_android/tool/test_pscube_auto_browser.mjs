@@ -84,16 +84,14 @@ async function install(url, api) {
 }
 await install(mUrl, { result: { kind: '全台一覧', remaining: 2, next_url: `${base}nc-v06-001.php?cd_dai=1#20261001`, backup: 'バックアップ済み' } });
 assert.equal(await page.locator('#database-pscube-auto').innerText(), '自動取り込み：OFF（押すと開始）', '起動時はOFF');
-assert.equal(await page.locator('#database-pscube-interval').inputValue(), '7.1', 'PCのP’s CUBEは初期7.1秒');
-assert.equal(await page.locator('#database-pscube-interval').getAttribute('step'), '0.1');
-assert.match(await page.locator('#database-pscube-card label').innerText(), /7\.1秒/);
-await page.locator('#database-pscube-interval').evaluate(e => { e.value = '7.2'; e.dispatchEvent(new Event('input')); });
-assert.match(await page.locator('#database-pscube-card label').innerText(), /7\.2秒/);
-await page.locator('#database-pscube-interval').evaluate(e => { e.value = '7.1'; e.dispatchEvent(new Event('input')); });
+assert.equal(await page.locator('#database-pscube-interval').inputValue(), '6.5');
+assert.equal(await page.locator('#database-pscube-interval').getAttribute('step'), '0.0001');
+assert.equal(await page.locator('#database-pscube-interval').isDisabled(), true, 'OFFでもランダム間隔は固定指定しない');
+assert.match(await page.locator('#database-pscube-card label').innerText(), /5〜8秒ランダム/);
 // ON/OFFの切り替えはPython側へ頼み、返ってきた状態を表示する。
 await page.locator('#database-pscube-auto').click();
 await page.waitForFunction(() => document.getElementById('database-pscube-auto').textContent.includes('ON'));
-assert.deepEqual(await page.evaluate(() => window.__calls[0]), ['auto', true, 7.1]);
+assert.deepEqual(await page.evaluate(() => window.__calls[0]), ['auto', true, 6.5]);
 assert.equal(await page.locator('#database-pscube-capture').isDisabled(), true, 'ONの間は手動の取り込みを押せない');
 assert.equal(await page.locator('#database-pscube-interval').isDisabled(), true, 'ONの間は間隔を変えられない');
 assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('database-pscube-auto')).backgroundColor), 'rgb(8, 125, 89)');
@@ -136,10 +134,11 @@ await install(root, {});
 assert.equal(await page.evaluate(() => window.__pscubeStartCapture()), false);
 assert.equal(await page.locator('#database-pscube-capture').innerText(), 'スロット機種一覧へ');
 // 状態の表示（古い番号の状態は無視）。
-await page.evaluate(() => window.__pscubeRenderAuto({ enabled: true, seconds: 25, message: 'ON・待機：人間確認', revision: 5 }));
-await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 10, message: '古い', revision: 4 }));
+await page.evaluate(() => window.__pscubeRenderAuto({ enabled: true, seconds: 7.1234, message: 'ON・待機：人間確認', revision: 5 }));
+await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 5, message: '古い', revision: 4 }));
 assert.equal(await page.locator('#database-pscube-auto-status').innerText(), 'ON・待機：人間確認');
-assert.equal(await page.locator('#database-pscube-interval').inputValue(), '25');
+assert.equal(await page.locator('#database-pscube-interval').inputValue(), '7.1234');
+assert.match(await page.locator('#database-pscube-card label').innerText(), /今回 7\.1234秒/);
 // Cookie・保存値を保持する再試行は、消去APIや確認画面を使わない。
 await install(mUrl, {});
 await page.evaluate(() => { document.cookie='retained=keep; path=/'; localStorage.setItem('retained','keep'); });

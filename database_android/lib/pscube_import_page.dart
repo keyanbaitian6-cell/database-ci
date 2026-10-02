@@ -9,7 +9,6 @@ import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
-import 'auto_capture_state.dart';
 import 'browser_session.dart';
 import 'pscube_auto.dart';
 import 'pscube_connection.dart';
@@ -46,11 +45,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   // （assets/pscube_auto_probe.js）が ready のときだけ「未取得を取り込む」と同じ処理を始める。
   static const _autoService = MethodChannel('database/auto_capture');
   // 間隔はメルヘンより長い5〜60秒（初期7.1秒、0.1秒刻み。PC版と同じ）。
-  final _auto = AutoCaptureState(
-    minTenths: pscubeAutoMinTenths,
-    maxTenths: pscubeAutoMaxTenths,
-    intervalTenths: pscubeAutoDefaultTenths,
-  );
+  final _auto = pscubeRandomAutoState();
   Timer? _autoTimer;
   String? _probe;
   bool _autoChanging = false;
@@ -406,6 +401,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           _probe == null,
     );
     if (token == null) return;
+    setState(() {}); // 待機開始時に今回抽選した秒数を表示する。
     _autoProbing = true;
     try {
       final probe = jsonDecode(
@@ -761,24 +757,19 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
               ),
               Row(
                 children: [
-                  const Text('間隔', style: TextStyle(fontSize: 13)),
+                  const Text('5〜8秒ランダム', style: TextStyle(fontSize: 13)),
                   Expanded(
                     child: Slider(
-                      min: _auto.minTenths.toDouble(),
-                      max: _auto.maxTenths.toDouble(),
-                      divisions: _auto.maxTenths - _auto.minTenths,
-                      value: _auto.intervalTenths.toDouble(),
+                      min: 5,
+                      max: 8,
+                      value: _auto.interval.inMicroseconds / 1000000,
                       label:
-                          '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
-                      onChanged: _auto.enabled
-                          ? null
-                          : (value) => setState(
-                              () => _auto.setIntervalTenths(value.round()),
-                            ),
+                          '${(_auto.interval.inMicroseconds / 1000000).toStringAsFixed(4)}秒',
+                      onChanged: null,
                     ),
                   ),
                   Text(
-                    '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
+                    '${(_auto.interval.inMicroseconds / 1000000).toStringAsFixed(4)}秒',
                     style: const TextStyle(fontSize: 13),
                   ),
                 ],

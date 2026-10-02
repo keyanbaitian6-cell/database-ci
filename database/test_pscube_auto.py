@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from auto_capture import AutoCapture
-from pscube_import import AutoPilot
+from pscube_import import AutoPilot, PscubeRandomCapture
 
 PROBE = 'PROBE'
 START = 'window.__pscubeStartCapture ? window.__pscubeStartCapture() : false'
@@ -62,9 +62,43 @@ class AutoPilotTests(unittest.TestCase):
 
     def test_default_pilot_uses_the_pscube_range(self):
         pilot = AutoPilot(self.window, PROBE)
-        self.assertEqual(pilot.state()['seconds'], 7.1)
+        self.assertEqual(pilot.state()['seconds'], 6.5)
+        self.assertIsInstance(pilot.auto, PscubeRandomCapture)
         with self.assertRaises(ValueError):
             pilot.configure(True, 4.5)
+
+    def test_random_interval_all_choices_and_wait_does_not_redraw(self):
+        choices = iter(range(30001))
+        def draw(bound):
+            self.assertEqual(bound, 30001)
+            return next(choices)
+        auto = PscubeRandomCapture(clock=self.clock, draw=draw)
+        auto.configure(True, 5)
+        actual = [auto.state()['seconds']]
+        for _ in range(30000):
+            auto.loaded()
+            actual.append(auto.state()['seconds'])
+        self.assertEqual(len(set(actual)), 30001)
+        self.assertEqual((actual[0], actual[-1]), (5, 8))
+        self.assertEqual(actual[12345], 6.2345)
+        self.clock.now += 7.9999
+        self.assertIsNone(auto.due())
+        self.clock.now += .0001
+        self.assertIsNotNone(auto.due())
+        self.assertEqual(auto.state()['seconds'], 8)
+
+    def test_random_wait_redraws_on_pause_and_busy_and_off_stops(self):
+        draw = mock.Mock(side_effect=[0, 12345, 30000, 1])
+        auto = PscubeRandomCapture(clock=self.clock, draw=draw)
+        auto.configure(True, 6.5)
+        auto.pause('保存待ち')
+        self.assertEqual(auto.state()['seconds'], 6.2345)
+        self.assertIsNone(auto.due(busy=True))
+        self.assertEqual(auto.state()['seconds'], 8)
+        auto.configure(False, 8)
+        self.clock.now += 100
+        self.assertIsNone(auto.due())
+        self.assertEqual(draw.call_count, 4)
 
     def test_starts_off_and_never_looks_at_the_page_while_off(self):
         self.assertFalse(self.pilot.state()['enabled'])

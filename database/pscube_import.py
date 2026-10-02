@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import secrets
 import shutil
 import sqlite3
 import sys
@@ -582,6 +583,18 @@ class PscubeStore:
         return summary
 
 
+class PscubeRandomCapture(AutoCapture):
+    """Draw a new 100-microsecond interval for each scheduled wait, inclusive."""
+
+    def __init__(self, clock=time.monotonic, draw=secrets.randbelow):
+        super().__init__(clock=clock, minimum=5, maximum=8, default=6.5)
+        self._draw = draw
+
+    def _schedule(self):
+        self._seconds = 5 + self._draw(30001) / 10000
+        super()._schedule()
+
+
 class AutoPilot:
     """P’s CUBEの自動取り込みの判断（仕様：PSCUBE_AUTO_CAPTURE.md）。
 
@@ -592,7 +605,7 @@ class AutoPilot:
     """
     MAX_FAILURES = 3
     # P’s CUBEの間隔（秒）。サイトに止められないよう、メルヘン（0.1〜4.5秒）より長くする。
-    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 5, 60, 7.1
+    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 5, 8, 6.5
     # 対象のページなのにデータが出ない（人間確認の画面でもない）状態が、この回数・秒数続いたら
     # 止められたとみなして自動取り込みをOFFにする（放置しても叩き続けない。利用者の選択、2026-10-01）。
     BLOCK_CHECKS, BLOCK_SECONDS = 5, 60
@@ -608,8 +621,7 @@ class AutoPilot:
         self.evaluate = evaluate
         self.probe_script = probe_script
         self.saving = saving
-        self.auto = auto or AutoCapture(minimum=self.MIN_SECONDS, maximum=self.MAX_SECONDS,
-                                        default=self.DEFAULT_SECONDS)
+        self.auto = auto or PscubeRandomCapture()
         self.clock = getattr(self.auto, '_clock', time.monotonic)
         self.missing = []
         self.done = set()
@@ -792,10 +804,11 @@ def overlay_script(capture_script, index_url):
       label.style.cssText = 'font-size:12px;display:block;color:#33445a';
       const seconds = document.createElement('input');
       seconds.id = 'database-pscube-interval';
-      seconds.type = 'range'; seconds.min = '5'; seconds.max = '60'; seconds.step = '0.1'; seconds.value = '7.1';
+      seconds.type = 'range'; seconds.min = '5'; seconds.max = '8'; seconds.step = '0.0001'; seconds.value = '6.5';
+      seconds.disabled = true;
       seconds.style.width = '100%';
       const value = document.createElement('span');
-      value.textContent = '間隔：7.1秒';
+      value.textContent = '間隔：5〜8秒ランダム';
       label.append(value, seconds);
       const status = document.createElement('div');
       status.id = 'database-pscube-auto-status';
@@ -883,14 +896,13 @@ def overlay_script(capture_script, index_url):
         auto.style.background = autoEnabled ? '#087d59' : '#526078';
         auto.setAttribute('aria-pressed', String(autoEnabled));
         auto.disabled = autoChanging;
-        seconds.disabled = autoEnabled || autoChanging;
+        seconds.disabled = true;
         seconds.value = String(state.seconds);
-        value.textContent = '間隔：' + Number(state.seconds).toFixed(1) + '秒';
+        value.textContent = '5〜8秒ランダム（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
         status.textContent = state.message;
         if (!window.__pscubeBusy) button.disabled = autoEnabled && !isRoot;
         button.style.opacity = button.disabled ? '.5' : '1';
       };
-      seconds.oninput = () => { value.textContent = '間隔：' + Number(seconds.value).toFixed(1) + '秒'; };
       auto.onclick = async () => {
         if (autoChanging) return;
         autoChanging = true; auto.disabled = true;

@@ -40,22 +40,44 @@ void main() {
     expect(stopped.message, contains('3回失敗'));
   });
 
-  test('取り込み画面の初期間隔は7.1秒（5〜60秒、PC版と同じ）。7.0秒では見ない', () {
-    expect(
-      (pscubeAutoMinTenths, pscubeAutoMaxTenths, pscubeAutoDefaultTenths),
-      (50, 600, 71),
-    );
+  test('ランダム間隔の30,001通りと端点・100マイクロ秒刻みを確認', () {
     var now = Duration.zero;
-    final auto = AutoCaptureState(
+    var choice = 0;
+    final auto = pscubeRandomAutoState(
       elapsed: () => now,
-      minTenths: pscubeAutoMinTenths,
-      maxTenths: pscubeAutoMaxTenths,
-      intervalTenths: pscubeAutoDefaultTenths,
+      nextInt: (bound) {
+        expect(bound, 30001);
+        return choice++;
+      },
     )..turnOn();
-    now += const Duration(milliseconds: 7000);
+    final values = {auto.interval.inMicroseconds};
+    for (var i = 1; i <= 30000; i++) {
+      auto.nextPage(i);
+      values.add(auto.interval.inMicroseconds);
+    }
+    expect(values.length, 30001);
+    expect(values.first, 5000000);
+    expect(values.last, 8000000);
+    expect(values.every((v) => v % 100 == 0), isTrue);
+    now = const Duration(microseconds: 7999999);
     expect(auto.due(busy: false), isNull);
-    now += const Duration(milliseconds: 100);
+    expect(choice, 30001, reason: '待機中の確認で再抽選しない');
+    choice = 0;
+    now += const Duration(microseconds: 1);
     expect(auto.due(busy: false), isNotNull);
+    expect(auto.interval, const Duration(seconds: 5));
+    auto.turnOff();
+    now += const Duration(seconds: 100);
+    expect(auto.due(busy: false), isNull);
+  });
+
+  test('保存中は開始せず、新しい待機を抽選する', () {
+    var choice = 12345;
+    final auto = pscubeRandomAutoState(nextInt: (_) => choice)..turnOn();
+    expect(auto.interval.inMicroseconds, 6234500);
+    choice = 30000;
+    expect(auto.due(busy: true), isNull);
+    expect(auto.interval, const Duration(seconds: 8));
   });
 
   test('起動時はOFF・間隔10秒（5〜60秒）。OFFやページ移動の後の古い判定は使わない', () {
@@ -100,11 +122,7 @@ void main() {
     final stopped = at(missing);
     expect(stopped.stop, isTrue);
     expect(stopped.message, contains('止められた可能性'));
-    expect(
-      stopped.message,
-      contains('Cookieを消さずに'),
-      reason: '止まったときに次の手を案内する',
-    );
+    expect(stopped.message, contains('Cookieを消さずに'), reason: '止まったときに次の手を案内する');
     for (var i = 0; i < 4; i++) {
       at(missing);
     }
