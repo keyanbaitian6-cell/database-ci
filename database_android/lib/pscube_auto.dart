@@ -28,6 +28,12 @@ const pscubeAutoMaxFailures = 3;
   return (capture: signature, message: 'ON・取り込み中（${probe['kind'] ?? 'ページ'}）');
 }
 
+/// P’s CUBEの自動取り込みの間隔（0.1秒単位）。5〜60秒、初期7.1秒（利用者指定、2026-10-02。
+/// PC版 `AutoPilot` と同じ）。メルヘン（0.1〜4.5秒）より長い。
+const pscubeAutoMinTenths = 50;
+const pscubeAutoMaxTenths = 600;
+const pscubeAutoDefaultTenths = 71;
+
 /// 止められた気配の見張り（PC版 `AutoPilot` と同じ規則）。対象のページなのにデータが出ない
 /// （人間確認の画面でもない）状態が [blockChecks] 回・[blockSpan] 以上続いたら止める（2026-10-01）。
 class PscubeAutoGuard {

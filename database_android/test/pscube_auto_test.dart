@@ -40,6 +40,24 @@ void main() {
     expect(stopped.message, contains('3回失敗'));
   });
 
+  test('取り込み画面の初期間隔は7.1秒（5〜60秒、PC版と同じ）。7.0秒では見ない', () {
+    expect(
+      (pscubeAutoMinTenths, pscubeAutoMaxTenths, pscubeAutoDefaultTenths),
+      (50, 600, 71),
+    );
+    var now = Duration.zero;
+    final auto = AutoCaptureState(
+      elapsed: () => now,
+      minTenths: pscubeAutoMinTenths,
+      maxTenths: pscubeAutoMaxTenths,
+      intervalTenths: pscubeAutoDefaultTenths,
+    )..turnOn();
+    now += const Duration(milliseconds: 7000);
+    expect(auto.due(busy: false), isNull);
+    now += const Duration(milliseconds: 100);
+    expect(auto.due(busy: false), isNotNull);
+  });
+
   test('起動時はOFF・間隔10秒（5〜60秒）。OFFやページ移動の後の古い判定は使わない', () {
     var now = Duration.zero;
     final auto = AutoCaptureState(

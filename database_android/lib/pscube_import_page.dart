@@ -44,11 +44,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   // 起動時OFF・常駐通知。サイトのボタン・人間確認・同意には触れず、表示中のページを読む判定
   // （assets/pscube_auto_probe.js）が ready のときだけ「未取得を取り込む」と同じ処理を始める。
   static const _autoService = MethodChannel('database/auto_capture');
-  // 間隔はメルヘンより長い5〜60秒（初期10秒）。サイトに止められないため（2026-10-01）。
+  // 間隔はメルヘンより長い5〜60秒（初期7.1秒、0.1秒刻み。PC版と同じ）。
   final _auto = AutoCaptureState(
-    minTenths: 50,
-    maxTenths: 600,
-    intervalTenths: 100,
+    minTenths: pscubeAutoMinTenths,
+    maxTenths: pscubeAutoMaxTenths,
+    intervalTenths: pscubeAutoDefaultTenths,
   );
   Timer? _autoTimer;
   String? _probe;
@@ -773,9 +773,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                     child: Slider(
                       min: _auto.minTenths.toDouble(),
                       max: _auto.maxTenths.toDouble(),
-                      divisions: (_auto.maxTenths - _auto.minTenths) ~/ 10,
+                      divisions: _auto.maxTenths - _auto.minTenths,
                       value: _auto.intervalTenths.toDouble(),
-                      label: '${_auto.intervalTenths ~/ 10}秒',
+                      label:
+                          '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
                       onChanged: _auto.enabled
                           ? null
                           : (value) => setState(
@@ -784,7 +785,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                     ),
                   ),
                   Text(
-                    '${_auto.intervalTenths ~/ 10}秒',
+                    '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
                     style: const TextStyle(fontSize: 13),
                   ),
                 ],
