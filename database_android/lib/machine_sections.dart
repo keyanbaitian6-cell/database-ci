@@ -29,9 +29,13 @@ class MachineSection extends StatefulWidget {
     this.footer,
     this.graph,
     this.onGraphChanged,
+    this.showMachine = false,
   });
 
   final String machine;
+
+  /// 複数機種を一緒に出すときに、台ごとの機種名を表示する。
+  final bool showMachine;
 
   /// 台番号順の台と点数。
   final List<(SlotRecord, ScoreResult)> entries;
@@ -181,7 +185,7 @@ class _MachineSectionState extends State<MachineSection> {
               longTrendRacks: widget.longTrendRacks,
               onTap: widget.onTap,
               onLongPress: widget.onLongPress,
-              showMachine: variety,
+              showMachine: variety || widget.showMachine,
             ),
           )
         else
@@ -191,7 +195,7 @@ class _MachineSectionState extends State<MachineSection> {
             longTrendRacks: widget.longTrendRacks,
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
-            showMachine: variety,
+            showMachine: variety || widget.showMachine,
           ),
         ?widget.footer,
       ],

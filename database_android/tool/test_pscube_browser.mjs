@@ -85,6 +85,15 @@ try {
   await page.goto(origin+prefix+'pscube/');
   await accessibility();
   assert.equal(JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).records.length,56);
+  await page.getByRole('button',{name:'末尾別データまとめ',exact:true}).click();
+  await page.getByText('末尾別まとめ',{exact:true}).waitFor();
+  await page.screenshot({path:process.env.PSCUBE_SUFFIX_SCREENSHOT || '/tmp/pscube-suffix-summary.png'});
+  await page.getByRole('button',{name:'末尾1',exact:true}).click();
+  await page.getByText('末尾1の内訳',{exact:true}).waitFor();
+  await page.getByText('グラフ表示',{exact:true}).click();
+  await page.screenshot({path:'/tmp/pscube-suffix-details.png'});
+  await page.goto(origin+prefix+'pscube/');await accessibility();
+
   assert.equal(await page.getByText('準備版',{exact:true}).count(),0);
   await page.screenshot({path:process.env.PSCUBE_SCREENSHOT || '/tmp/pscube-shared-home.png'});
   await page.mouse.move(200,700);

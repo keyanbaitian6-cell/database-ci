@@ -6,6 +6,7 @@ import 'exploratory_page.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
+import 'pscube_suffix_page.dart';
 import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
@@ -37,9 +38,10 @@ class ViewerApp extends StatelessWidget {
 
 /// [store] の [day] より前の30日間に、記録がある日の数（採点の比較に使える日数）。
 int historyDays(List<SlotRecord> all, String store, String day) {
-  final first = DateTime.parse(
-    day,
-  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
+  final first = DateTime.parse(day)
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
   return {
     for (final r in all)
       if (r.store == store &&
@@ -304,11 +306,12 @@ class _ViewerHomeState extends State<ViewerHome> {
                     ),
                 ],
                 onChanged: (value) {
-                  if (value != null)
+                  if (value != null) {
                     update(() {
                       machine = value;
                       type = typeOf(machine);
                     });
+                  }
                 },
               ),
               const SizedBox(height: 16),
@@ -591,6 +594,23 @@ class _ViewerHomeState extends State<ViewerHome> {
           stores: viewerStoreNames(all),
         ),
         const SizedBox(height: 10),
+        if (isPscubeStore(store) && day != null) ...[
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => PscubeSuffixPage(
+                  data: data,
+                  store: store,
+                  day: day,
+                  onDayChanged: (changed) => setState(() => _day = changed),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.table_chart_outlined),
+            label: const Text('末尾別データまとめ'),
+          ),
+          const SizedBox(height: 8),
+        ],
         OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
