@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## エージェントAIのレビュー2点の再現確認（Claude、2026-10-02 夜）
+
+- 依頼：レビューで成立未確認の2点を、最新mainの既存ガードで確認し、再現したものだけ最小修正。DB・記録・Cookie・バックアップは消さない。実サイトの巡回・人間認証の自動操作なし。台別取得とPC初期7.1秒は維持。Androidのビルドは不要。
+- **1. Windows WebView2：認証・同意先へのトップレベル遷移後のHTTPエラーで本文を置き換えるか → 再現・修正（`ee43dd7`）**。一時プロファイル・127.0.0.1の疑似ページ・本番の `BrowserConnection` / `install_webview2_handlers` / `present_connection_failure` で実測（WebView2 154）。どのページでもHTTPエラーは `WebResourceResponseReceived(4xx)` →`NavigationCompleted(IsSuccess=False, Unknown)` の順。許可リスト外のページ（同じホストの同意ページ、別パスの認証ページ、対象ページからの302で着く同意ページ）では `http_error` が無視するため、完了通知が「通信」失敗になり、サイトの本文（同意ボタン）がアプリのエラー画面に置き換わっていた（自動もOFF）。修正：表示中の文書そのものにサーバーが4xx以上で答えたら記録し（`document_status`、次の遷移で消す）、その完了通知は通信失敗にしない。対象ページの403で自動OFF・本文保持、DNS・接続不可のエラー画面、別URL（広告等）の4xxは従来どおり。回帰：`test_pscube_connection.py` に2件（修正前のコードで失敗を確認）、実WebView2のopt-in `tests/smoke_consent_http_error.py`（修正前は3ケースでエラー画面、修正後は本文が残る）。メルヘン側も同じクラスなので同じ扱い。
+- **2. Android WebView：同一URLの再試行後に前回分の通信エラーが届いたら新しい試行を失敗にするか → 処理としてはする／実機で起きるかは未確認、修正なし**。`PscubeConnection.networkError` はURL（fragment除く）だけで今の文書に結び付け、試行の区別がない。再試行は `start` →reload→ `onPageStarted` で再び `start`。その後に同じURLの遅延エラーが届く条件を一時テスト（コミットせず削除）で模擬すると、失敗として記録され、新しい試行が正常に終わっても `canCapture=false` のまま。メルヘン `_failDocument` もURL一致だけで判定。webview_flutter の `WebResourceError` には遷移の識別子がなく、Android WebViewが前回分のエラーを新しい `onPageStarted` の後に届けるかは**未確認**。確認には、通信失敗を起こせる手元のサーバーと、実機（または実WebViewのインストルメンテーションテスト）でコールバックの順番を記録する必要がある（Androidのビルド・インストールが必要なため今回は実施せず）。影響は誤った停止表示（自動OFF・「もう一度開く」の再押下で回復）で、データは消えない。
+- 検証：PC本体174件、P’s CUBE 63件、`smoke_cookie_retry.py`（両サイト・接続不可のエラー画面と復帰を含む）成功（既知のpywebview `_returnValuesCallbacks` 警告あり）。`database/bin` 再ビルド（ソース `ee43dd7`、ZIPなし）、`smoke_frozen_capture.py`・`smoke_frozen_runtime.py`（結果 `a/work/outputs/frozen-runtime-consent-http-20261002.json`）成功、`database/data` 直下13ファイルのSHA-256不変。
+
 ## P’s CUBE：台別ページは今後も取る（利用者の決定）・7.1秒の確認（Claude、2026-10-02 夜）
 
 - 利用者の回答：スマホのChromeでは台番号を押した先（台別ページ）も「問題なし」で表示される。「全台一覧だけで取り込む（台別ページを開かない）」案は**変えちゃだめ**＝採用しない。台別ページの取得は今の仕様のまま。代わりに「取り込む間隔7.1秒にして今夜実行してみる」（7.1秒であることを確認済み）。
