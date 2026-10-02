@@ -1945,7 +1945,10 @@ if __name__ == '__main__':
     else:
         root = Path(__file__).parent
     args = sys.argv[1:]
-    if args and args[0] in ('--confirm-table', '--confirm-graph'):
+    if len(args) == 2 and args[0] == '--smoke-local':
+        from runtime_smoke import run
+        run(sys.modules[__name__], 'meruhen', args[1])
+    elif args and args[0] in ('--confirm-table', '--confirm-graph'):
         payload_arg, db_arg, reports_arg = args[1], Path(args[2]), Path(args[3])
         target = _confirm_table if args[0] == '--confirm-table' else _confirm_graph
         target(payload_arg, db_arg, reports_arg)

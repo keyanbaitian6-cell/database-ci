@@ -13,6 +13,29 @@ RACK = ROOT_URL + 'cgi-bin/nc-v06-001.php?cd_dai=1526#20261001'
 
 
 class ConnectionTests(unittest.TestCase):
+    def test_native_error_document_data_uri_keeps_failure_and_retry_target(self):
+        self.c.navigation_completed(1, False, 'HostNameNotResolved')
+        failure = self.c.failure
+        window = types.SimpleNamespace(load_html=mock.Mock())
+        self.assertTrue(present_connection_failure(window, self.c, self.c.revision))
+        self.assertTrue(self.c.error_document_url.startswith('data:text/html;charset=utf-8;base64,'))
+        self.c.start(self.c.error_document_url, 2)
+        self.assertEqual(self.c.url, RACK)
+        self.assertIs(self.c.failure, failure)
+        self.assertTrue(self.c.showing_error)
+        self.c.start(ROOT_URL, 3)
+        self.assertIsNone(self.c.error_document_url)
+        self.assertIsNone(self.c.failure)
+
+    def test_failed_http_navigation_keeps_the_site_response(self):
+        self.assertTrue(self.c.http_error(RACK.split('#')[0], 403))
+        failure = self.c.failure
+        self.assertFalse(self.c.navigation_completed(1, False, 'Unknown'))
+        self.assertIs(self.c.failure, failure)
+        window = types.SimpleNamespace(load_html=mock.Mock())
+        self.assertFalse(present_connection_failure(window, self.c, self.c.revision))
+        window.load_html.assert_not_called()
+
     def test_native_retry_forces_reload_instead_of_assigning_same_source(self):
         core = types.SimpleNamespace(Source=RACK, Reload=mock.Mock(), Navigate=mock.Mock())
         native = types.SimpleNamespace(webview=types.SimpleNamespace(CoreWebView2=core), Invoke=lambda action: action())

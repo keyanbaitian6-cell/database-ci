@@ -1116,4 +1116,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == '--smoke-local':
+        from runtime_smoke import run
+        run(sys.modules[__name__], 'main', sys.argv[2])
+    else:
+        main()

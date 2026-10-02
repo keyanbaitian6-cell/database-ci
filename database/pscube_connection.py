@@ -1,6 +1,7 @@
 """Scoped WebView2 errors shared by P's CUBE and Meruhen, separate from Cookies/SQLite."""
 from __future__ import annotations
 
+import base64
 import html
 import threading
 from datetime import datetime, timezone
@@ -27,17 +28,20 @@ class BrowserConnection:
         self.history = []
         self.revision = 0
         self.showing_error = False
+        self.error_document_url = None
         self.lock = threading.RLock()
 
     def start(self, url, navigation_id=None):
         with self.lock:
-            # The application's error page is about:blank, not a site request.
-            if self.showing_error and url == 'about:blank':
+            # WebView2 may report NavigateToString as about:blank or the exact
+            # data URI of our HTML. Neither is a new site request.
+            if self.showing_error and url in ('about:blank', self.error_document_url):
                 return
             self.url = str(url)
             self.navigation_id = navigation_id
             self.failure = None
             self.showing_error = False
+            self.error_document_url = None
             self.revision += 1
 
     def http_error(self, url, status):
@@ -60,6 +64,11 @@ class BrowserConnection:
     def navigation_completed(self, navigation_id, success, error):
         with self.lock:
             if self.showing_error or navigation_id != self.navigation_id or success:
+                return False
+            # Real WebView2 reports HTTP 403 as IsSuccess=False/Unknown after
+            # WebResourceResponseReceived. Its document can contain consent;
+            # do not reclassify that HTTP response as a transport failure.
+            if self.failure and self.failure['kind'] == 'HTTP':
                 return False
             if str(error) in ('OperationCanceled', 'ConnectionAborted'):
                 return False  # replacing a document is not a new site failure
@@ -130,6 +139,8 @@ def present_connection_failure(window, connection, revision, title="P’s CUBE")
             return False  # Keep the site's own response visible and operable.
         connection.showing_error = True
         content = error_page(connection, title)
+        connection.error_document_url = ('data:text/html;charset=utf-8;base64,'
+            + base64.b64encode(content.encode('utf-8')).decode('ascii'))
     window.load_html(content)
     return True
 

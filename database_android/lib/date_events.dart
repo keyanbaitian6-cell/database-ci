@@ -42,7 +42,7 @@ class DateEvent {
         name.trim().length > 60) {
       return null;
     }
-    return DateEvent(store: store as String, day: day as String, name: name.trim());
+    return DateEvent(store: store, day: day, name: name.trim());
   }
 }
 

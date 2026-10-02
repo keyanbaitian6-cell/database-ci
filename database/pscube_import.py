@@ -746,7 +746,7 @@ def overlay_script(capture_script, index_url):
       const card = document.createElement('div');
       card.id = 'database-pscube-card';
       Object.assign(card.style, {position:'fixed',bottom:'14px',right:'14px',zIndex:'2147483647',width:'250px',
-        maxHeight:'calc(100vh - 28px)',overflowY:'auto',background:'white',border:'1px solid #c9d2df',borderRadius:'12px',
+        maxHeight:'calc(100vh - 50px)',overflowY:'auto',background:'white',border:'1px solid #c9d2df',borderRadius:'12px',
         padding:'10px',boxShadow:'0 4px 18px rgba(0,0,0,.18)',fontFamily:'sans-serif',display:'grid',gap:'8px'});
       const button = document.createElement('button');
       button.id = 'database-pscube-capture';
@@ -1027,5 +1027,9 @@ def runtime_root():
 
 if __name__ == '__main__':
     root = runtime_root()
-    run_session(sys.argv[1] if len(sys.argv) > 1 else root / 'data' / 'pscube.sqlite3',
-                sys.argv[2] if len(sys.argv) > 2 else root / 'data' / 'pscube-viewer.json')
+    if len(sys.argv) == 3 and sys.argv[1] == '--smoke-local':
+        from runtime_smoke import run
+        run(sys.modules[__name__], 'pscube', sys.argv[2])
+    else:
+        run_session(sys.argv[1] if len(sys.argv) > 1 else root / 'data' / 'pscube.sqlite3',
+                    sys.argv[2] if len(sys.argv) > 2 else root / 'data' / 'pscube-viewer.json')
