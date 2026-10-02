@@ -13,6 +13,7 @@ import 'auto_capture_state.dart';
 import 'browser_session.dart';
 import 'pscube_auto.dart';
 import 'pscube_connection.dart';
+import 'pscube_list_wait.dart';
 import 'pscube_store.dart';
 import 'theme.dart';
 
@@ -218,33 +219,23 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     super.dispose();
   }
 
-  Future<void> _showFullList() async {
-    // The site lazily adds cards as the user scrolls. Count-stability is only
-    // a loading aid; PscubeStore checks against the installation count.
-    var prior = -1;
-    var stable = 0;
-    for (var i = 0; i < 70 && stable < 6; i++) {
-      if (!mounted) return;
-      final result = await _web.runJavaScriptReturningResult('''
+  Future<void> _showFullList({int? expectedCount, int? page}) =>
+      waitForPscubeList(
+        expectedCount: expectedCount,
+        isCurrent: () => mounted && (page == null || _page == page),
+        scrollAndCount: () async {
+          final result = await _web.runJavaScriptReturningResult('''
         (() => {
           const list = document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
           if (!list) return -1;
           list.lastElementChild?.scrollIntoView({block:'end'});
           window.scrollTo(0, document.documentElement.scrollHeight);
-          return list.children.length;
+          return ${expectedCount == null ? 'list.children.length' : 'document.querySelectorAll(\'li[id^="li-"]\').length'};
         })()
       ''');
-      final count = int.tryParse(result.toString()) ?? -1;
-      if (count < 0) return;
-      if (count == prior && count >= 0) {
-        stable++;
-      } else {
-        stable = 0;
-      }
-      prior = count;
-      await Future<void>.delayed(const Duration(milliseconds: 350));
-    }
-  }
+          return int.tryParse(result.toString()) ?? -1;
+        },
+      );
 
   /// サイトの中のページから次のページへは、リンクをたどるのと同じ形（ページ内で移動）で
   /// 開く。アドレスを直接開くと「どのページから来たか」が付かず、普通のブラウザと
@@ -462,7 +453,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     try {
       final before = await _web.currentUrl();
       if (before == null) throw const FormatException('ページのURLを確認できません。');
-      await _showFullList();
+      final expectedCount = await store.installationCount(before);
+      if (!mounted || _page != page) return;
+      await _showFullList(expectedCount: expectedCount, page: page);
       if (!mounted) return;
       final capturedUrl = await _web.currentUrl();
       if (_page != page ||

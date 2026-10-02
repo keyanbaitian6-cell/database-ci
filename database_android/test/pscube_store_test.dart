@@ -100,6 +100,54 @@ void main() {
     await dir.delete(recursive: true);
   });
 
+  test('現在の機種URLから設置台数を読み取り、記録や保存値を変えない', () async {
+    final known = {...machine, 'expected_count': 31};
+    final other = {
+      ...machine,
+      'machine': '別機種',
+      'url': '${machine['url']}&nmk_kisyu=other',
+    };
+    await store.importPage(
+      page(PscubeStore.index, [known, other]),
+      PscubeStore.index,
+    );
+    final before = {
+      for (final table in ['machines', 'records', 'state'])
+        table: await store.db.query(table),
+    };
+    expect(await store.installationCount('${machine['url']}#scroll=6'), 31);
+    expect(await store.installationCount(other['url'] as String), 1);
+    expect(
+      await store.installationCount(
+        (machine['url'] as String).replaceFirst(
+          'cd_ps=2&bai=20',
+          'bai=20&cd_ps=2',
+        ),
+      ),
+      31,
+    );
+    expect(
+      await store.installationCount(
+        (machine['url'] as String).replaceFirst('bai=20', 'bai=5'),
+      ),
+      isNull,
+    );
+    expect(await store.installationCount(PscubeStore.index), isNull);
+    for (final table in before.keys) {
+      expect(await store.db.query(table), before[table]);
+    }
+  });
+
+  test('未登録URLの設置台数は推測せず、別店舗を拒否する', () async {
+    expect(await store.installationCount(machine['url'] as String), isNull);
+    expect(
+      store.installationCount(
+        (machine['url'] as String).replaceFirst('c740601', 'c999999'),
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('一覧・台別7日・再読込・JSON書き出しと保存復元', () async {
     final payload = await seedRack();
     await store.importPage(payload, record()['detail_url']);

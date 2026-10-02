@@ -49,6 +49,34 @@ class PscubeStore {
 
   Future<void> close() => _serial(db.close);
 
+  /// Read only the known count for this exact machine/rate URL; do not guess.
+  Future<int?> installationCount(String? currentUrl) => _serial(() async {
+    final current = Uri.tryParse(currentUrl ?? '');
+    if (current == null || !current.path.endsWith('nc-v05-011.php')) {
+      return null;
+    }
+    _site(currentUrl, 'nc-v05-011.php');
+    String queryIdentity(Uri uri) {
+      final query = uri.queryParametersAll;
+      final keys = query.keys.toList()..sort();
+      return jsonEncode([
+        for (final key in keys) [key, query[key]],
+      ]);
+    }
+
+    final query = queryIdentity(current);
+    final counts = <int>{};
+    for (final row in await db.query('machines', columns: ['payload'])) {
+      final machine = _asMap(jsonDecode(row['payload'] as String));
+      final stored = _site(machine['url'] as String?, 'nc-v05-011.php');
+      if (queryIdentity(stored) == query) {
+        final count = machine['expected_count'];
+        if (count is int && count >= 1 && count <= 5000) counts.add(count);
+      }
+    }
+    return counts.length == 1 ? counts.single : null;
+  });
+
   /// 当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。全台一覧の数値は保存するが、
   /// 台別7日分（グラフ）は取りに行かない（メルヘンv12を AT/ART も含めて引き継ぐ。利用者の指定、
   /// 2026-10-01）。PC版 `no_hits` と同じ。
