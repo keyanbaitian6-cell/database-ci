@@ -29,6 +29,9 @@ class BrowserConnection:
         self.revision = 0
         self.showing_error = False
         self.error_document_url = None
+        # HTTP status (>= 400) the server returned for the current top-level
+        # document, whether or not it is a target page (consent/auth pages too).
+        self.document_status = None
         self.lock = threading.RLock()
 
     def start(self, url, navigation_id=None):
@@ -42,10 +45,13 @@ class BrowserConnection:
             self.failure = None
             self.showing_error = False
             self.error_document_url = None
+            self.document_status = None
             self.revision += 1
 
     def http_error(self, url, status):
         with self.lock:
+            if status >= 400 and unquote(str(url).split('#')[0]) == unquote(self.url.split('#')[0]):
+                self.document_status = status
             if status < 400 or not self.allowed_page(self.url) or not self.allowed_page(url):
                 return False
             if self.same_response is not None and not self.same_response(self.url, url):
@@ -69,6 +75,13 @@ class BrowserConnection:
             # WebResourceResponseReceived. Its document can contain consent;
             # do not reclassify that HTTP response as a transport failure.
             if self.failure and self.failure['kind'] == 'HTTP':
+                return False
+            # The same IsSuccess=False/Unknown follows an HTTP error on a page
+            # outside the target list, e.g. a consent or human-check page
+            # reached by a top-level navigation or redirect (measured on
+            # WebView2 154, 2026-10-02). The server answered: keep its
+            # document for manual operation instead of an app error page.
+            if self.document_status is not None:
                 return False
             if str(error) in ('OperationCanceled', 'ConnectionAborted'):
                 return False  # replacing a document is not a new site failure

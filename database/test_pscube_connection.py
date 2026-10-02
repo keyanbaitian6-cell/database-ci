@@ -36,6 +36,42 @@ class ConnectionTests(unittest.TestCase):
         self.assertFalse(present_connection_failure(window, self.c, self.c.revision))
         window.load_html.assert_not_called()
 
+    def test_http_error_on_a_consent_or_auth_page_keeps_the_site_document(self):
+        # Top-level consent/auth pages are outside the target list. WebView2 reports
+        # WebResourceResponseReceived(403) then NavigationCompleted(False, Unknown).
+        window = types.SimpleNamespace(load_html=mock.Mock())
+        for number, url in enumerate([ROOT_URL + 'agree.php', 'https://www.pscube.jp/auth/check?x=1'], start=2):
+            self.c.start(url, number)
+            self.assertFalse(self.c.http_error(url, 403), '対象外のページは自動停止の理由にしない')
+            self.assertFalse(self.c.navigation_completed(number, False, 'Unknown'), 'サーバーが答えた本文は通信失敗ではない')
+            self.assertIsNone(self.c.failure)
+            self.assertFalse(present_connection_failure(window, self.c, self.c.revision))
+        window.load_html.assert_not_called()
+        # A redirect from a target page: NavigationStarting reports the new URL, then the
+        # 302 for the old URL and the 403 for the consent page arrive.
+        self.c.start(RACK, 4)
+        self.c.start(ROOT_URL + 'agree.php', 4)
+        self.assertFalse(self.c.http_error(RACK.split('#')[0], 302))
+        self.c.http_error(ROOT_URL + 'agree.php', 403)
+        self.assertFalse(self.c.navigation_completed(4, False, 'Unknown'))
+        self.assertIsNone(self.c.failure)
+
+    def test_transport_failures_and_subresource_errors_still_show_the_error_page(self):
+        # No response for the document itself: still a communication failure.
+        self.c.start(ROOT_URL + 'agree.php', 2)
+        self.assertFalse(self.c.http_error('https://ads.example/a.php', 403))
+        self.assertTrue(self.c.navigation_completed(2, False, 'Unknown'))
+        self.assertEqual(self.c.failure['kind'], '通信')
+        self.c.start(ROOT_URL + 'agree.php', 3)
+        self.assertTrue(self.c.navigation_completed(3, False, 'HostNameNotResolved'))
+        self.assertIn('DNS', self.c.failure['message'])
+        # The previous page's status does not carry over to the next navigation.
+        self.c.start(ROOT_URL + 'agree.php', 4)
+        self.c.http_error(ROOT_URL + 'agree.php', 403)
+        self.c.start(RACK, 5)
+        self.assertTrue(self.c.navigation_completed(5, False, 'ConnectionAborted') is False)
+        self.assertTrue(self.c.navigation_completed(5, False, 'CannotConnect'))
+
     def test_native_retry_forces_reload_instead_of_assigning_same_source(self):
         core = types.SimpleNamespace(Source=RACK, Reload=mock.Mock(), Navigate=mock.Mock())
         native = types.SimpleNamespace(webview=types.SimpleNamespace(CoreWebView2=core), Invoke=lambda action: action())
