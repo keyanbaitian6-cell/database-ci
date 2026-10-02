@@ -15,6 +15,7 @@ import sys
 import threading
 import unicodedata
 import time
+from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -40,8 +41,10 @@ PROBE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_auto_probe.js'
 
 SCROLL_SCRIPT = r'''(async () => {
   const findList = () => document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
+  const target = typeof expectedCount === 'number' ? expectedCount : null;
   let stable = 0, old = -1;
-  for (let i = 0; i < 70 && stable < 6; i++) {
+  // 台数が一時的に止まっても、既知の設置台数に届くまでは待つ（最大24.5秒）。
+  for (let i = 0; i < 70; i++) {
     const list = findList();
     if (!list) return;
     list.lastElementChild?.scrollIntoView({block:'end'});
@@ -50,8 +53,10 @@ SCROLL_SCRIPT = r'''(async () => {
     window.scrollTo(0, document.documentElement.scrollHeight);
     await new Promise(resolve => setTimeout(resolve, 350));
     // The site can replace the list when another batch arrives.
-    const count = findList()?.children.length ?? -1;
+    const count = target === null ? (findList()?.children.length ?? -1)
+      : document.querySelectorAll('li[id^="li-"]').length;
     stable = count === old ? stable + 1 : 0; old = count;
+    if (stable >= 6 && (target === null || count >= target)) return;
   }
 })()'''
 
@@ -326,6 +331,30 @@ def latest_pscube_backup(folder) -> Path | None:
         if isinstance(payload, dict) and payload.get('format') == FORMAT and payload.get('kind') != 'viewer':
             return path
     return None
+
+
+def installation_count(db_path, current_url):
+    """表示中の全台一覧の設置台数を読み取り専用で取得。別機種・貸玉の台数は使わない。"""
+    current = site_url(current_url)
+    if not current.path.endswith('nc-v05-011.php') or not Path(db_path).is_file():
+        return None
+    identity = (current.path, parse_qs(current.query))
+    with closing(sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        try:
+            machines = db.execute('SELECT payload FROM machines').fetchall()
+        except sqlite3.OperationalError as error:
+            if 'no such table' in str(error):
+                return None
+            raise
+        counts = set()
+        for row in machines:
+            machine = json.loads(row[0])
+            stored = site_url(machine['url'])
+            if (stored.path, parse_qs(stored.query)) == identity:
+                count = machine.get('expected_count')
+                if type(count) is int and 1 <= count <= 5000:
+                    counts.add(count)
+        return counts.pop() if len(counts) == 1 else None
 
 
 class PscubeStore:
@@ -820,7 +849,12 @@ def overlay_script(capture_script, index_url):
         window.__pscubeBusy = true;
         button.disabled = true; button.textContent = '読み込み中…';
         try {
+          const before = location.href;
+          const expectedCount = location.pathname.endsWith('nc-v05-011.php')
+            ? await window.pywebview.api.get_installation_count() : null;
+          if (identity(location.href) !== identity(before)) throw new Error('読み取り中にページが切り替わりました。');
           await SCROLL_SCRIPT;
+          if (identity(location.href) !== identity(before)) throw new Error('読み取り中にページが切り替わりました。');
           capturedUrl = location.href;
           const payload = CAPTURE_SCRIPT;
           const result = await window.pywebview.api.submit_page(payload);
@@ -886,6 +920,9 @@ def run_session(db_path, export_path):
             self._window = None
             self._capture_lock = threading.Lock()
             self.pilot = None
+
+        def get_installation_count(self):
+            return installation_count(db_path, self._window.get_current_url())
 
         def submit_page(self, raw):
             with self._capture_lock:

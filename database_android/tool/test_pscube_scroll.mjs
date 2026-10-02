@@ -49,7 +49,26 @@ try {
   await plain.evaluate(loadsAtBottom);
   await plain.evaluate(oldScroll);
   assert.equal(await plain.locator('li').count(), 6, 'fixture reproduces the old stall');
+  // 31台のうち6台だけ先に表示され、残りの応答に3秒かかるページ。
+  // 6回(2.1秒)の台数安定だけで終了すると、全台表示前に保存して3回失敗する。
+  const delayed = await browser.newPage();
+  await delayed.setContent(`<ul>${Array.from({length: 6}, (_, n) => `<li id="li-${n + 1}">${n + 1}</li>`).join('')}</ul>`);
+  await delayed.evaluate(() => {
+    let requested = false;
+    window.scrollTo = () => {
+      if (requested) return;
+      requested = true;
+      setTimeout(() => {
+        const list = document.querySelector('ul');
+        for (let n = 7; n <= 31; n++) {
+          const card = document.createElement('li'); card.id = `li-${n}`; list.append(card);
+        }
+      }, 3000);
+    };
+  });
+  await delayed.evaluate(script => { const expectedCount = 31; return eval(script); }, scroll);
+  assert.equal(await delayed.locator('li').count(), 31, 'known installation count must outlast a 3-second lazy response');
   await page.setContent('<h2>台別7日履歴</h2>');
   await page.evaluate(scroll);
-  console.log('PASS: replacement lists load all 61 cards; bottom-only lazy load reaches 7 of 7; rack page returns without scrolling');
+  console.log('PASS: replacement lists load all 61 cards; bottom-only lazy load reaches 7 of 7; delayed 6 -> 31 waits for the installation count; rack page returns without scrolling');
 } finally { await browser.close(); }

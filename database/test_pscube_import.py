@@ -4,7 +4,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from pscube_import import PscubeStore, ROOT_URL
+from pscube_import import PscubeStore, ROOT_URL, installation_count
 
 
 class PscubeImportTests(unittest.TestCase):
@@ -33,6 +33,26 @@ class PscubeImportTests(unittest.TestCase):
                 'games': 1854, 'my': 1921, 'observed_at': '2026-10-01T12:00:00+09:00',
                 'detail_url': ROOT_URL + f'cgi-bin/nc-v06-001.php?cd_dai={rack}#{day.replace("-", "")}',
                 'graph': {'kind': 'overview', 'zero_y': 10, 'points': [[0, 10], [1, 8]]}}
+
+    def test_installation_count_uses_the_current_machine_without_writing(self):
+        self.machines[0]['expected_count'] = 31
+        self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        before = self.store.path.read_bytes()
+        self.assertEqual(installation_count(self.store.path, self.machines[0]['url'] + '#scroll=6'), 31)
+        self.assertEqual(installation_count(self.store.path, self.machines[1]['url']), 1)
+        reordered = self.machines[0]['url'].replace('cd_ps=2&bai=20', 'bai=20&cd_ps=2')
+        self.assertEqual(installation_count(self.store.path, reordered), 31)
+        self.assertIsNone(installation_count(self.store.path, self.machines[0]['url'].replace('bai=20', 'bai=5')))
+        self.assertIsNone(installation_count(self.store.path, self.index_url))
+        self.assertEqual(self.store.path.read_bytes(), before)
+
+    def test_unknown_installation_count_does_not_create_a_database(self):
+        path = Path(self.tmp.name) / 'missing.sqlite3'
+        self.assertIsNone(installation_count(path, self.machines[0]['url']))
+        self.assertFalse(path.exists())
+        self.assertIsNone(installation_count(self.store.path, self.machines[0]['url']))
+        with self.assertRaises(ValueError):
+            installation_count(self.store.path, self.machines[0]['url'].replace('c740601', 'c999999'))
 
     def test_index_table_rack_cycle_and_export(self):
         index = self.page(self.index_url, self.machines)

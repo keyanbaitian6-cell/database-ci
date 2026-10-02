@@ -19,7 +19,7 @@ const base = `${root}cgi-bin/`;
 const mUrl = `${base}nc-v05-011.php?cd_ps=2&bai=20`;
 const indexHtml = `<ul id="ulKI"><li><a class="btn-ki" href="${mUrl}"><span class="nc-label">試験機種</span><span class="nc-lower">2台</span></a></li></ul>`;
 const card = rack => `<li id="li-${rack}"><a href="${base}nc-v06-001.php?cd_dai=${rack}#20261001">${rack}</a><table>${Object.entries({ 'toku1-count': 3, 'toku5-count': 1, 'toku4-count': 0, sum_game: 600, sadama_s: 120 }).map(([key, value]) => `<tr data-key="${key}"><td>${key}</td><td>${value}</td></tr>`).join('')}</table><div id="ca-${rack}"><svg><path stroke="#f0e448" stroke-width="2" d="M0,10 L10,2 M0,0 L0,0"/><path stroke="#ffffff" stroke-width="0" d="M0,10 L10,10"/></svg></div></li>`;
-const tableHtml = (selected = true) => `<title>P'sCUBE｜試験機種</title><h1>SLOT</h1><li data-ymd="20261001"${selected ? ' class="selected"' : ''}>本日</li><ul>${[1, 3].map(card).join('')}</ul>`;
+const tableHtml = (selected = true, racks = [1, 3]) => `<title>P'sCUBE｜試験機種</title><h1>SLOT</h1><li data-ymd="20261001"${selected ? ' class="selected"' : ''}>本日</li><ul>${racks.map(card).join('')}</ul>`;
 const rackHtml = `<title>P'sCUBE｜試験機種</title><h1>SLOT</h1><h2>台番号 1</h2><a href="${mUrl}">機種データ</a><table><tr>${Array.from({ length: 7 }, (_, i) => `<td class="column"><div>${[i ? `${i}日前` : '本日', 3, 1, 0, '1/150', 600, 120, 20].map(v => `<div>${v}</div>`).join('')}</div></td>`).join('')}</tr></table>${Array.from({ length: 7 }, (_, i) => `<div id="svg${i}"><svg><path class="amcharts-graph-stroke" d="M0,10 L10,1 M0,0 L0,0"/><path class="amcharts-axis-zero-grid" d="M0,10 L10,10"/></svg></div>`).join('')}`;
 let pages = {};
 const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined });
@@ -72,6 +72,7 @@ async function install(url, api) {
   await page.evaluate(stub => {
     window.__calls = [];
     window.pywebview = { api: {
+      get_installation_count: async () => stub.expected_count ?? 2,
       submit_page: async payload => { window.__calls.push(['submit', JSON.parse(payload)]); sessionStorage.setItem('submitted', payload); if (stub.fail) throw new Error(stub.fail); return stub.result; },
       capture_failed: async message => { window.__calls.push(['failed', message]); return true; },
       retry_page: async () => { window.__calls.push(['retry']); return true; },
@@ -103,6 +104,21 @@ await page.waitForURL(`${base}nc-v06-001.php?cd_dai=1#20261001`);
 const submitted = JSON.parse(await page.evaluate(() => sessionStorage.getItem('submitted')));
 assert.equal(submitted.source_url, mUrl, '保存したのは移動前の全台一覧');
 assert.equal(submitted.records.length, 2);
+// 6台で一時的に止まっても、設置31台が揃ってから保存し台別へ進む。
+pages[path(mUrl)] = tableHtml(true, [1, 2, 3, 4, 5, 6]);
+await install(mUrl, { expected_count: 31, result: { kind: '全台一覧', remaining: 31, next_url: `${base}nc-v06-001.php?cd_dai=1#20261001` } });
+await page.evaluate(extra => {
+  let requested = false;
+  window.scrollTo = () => {
+    if (requested) return;
+    requested = true;
+    setTimeout(() => document.querySelector('li[id^="li-"]').parentElement.insertAdjacentHTML('beforeend', extra), 3000);
+  };
+}, Array.from({length: 25}, (_, n) => card(n + 7)).join(''));
+await page.evaluate(() => window.__pscubeStartCapture());
+await page.waitForURL(`${base}nc-v06-001.php?cd_dai=1#20261001`);
+assert.equal(JSON.parse(await page.evaluate(() => sessionStorage.getItem('submitted'))).records.length, 31);
+pages[path(mUrl)] = tableHtml();
 // 失敗：保存の前に失敗したらPythonへ知らせ、取り込み中の印を外す。
 await install(mUrl, { fail: '表示は1台、設置台数は2台です。' });
 await page.evaluate(() => window.__pscubeStartCapture());
