@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from auto_capture import AutoCapture
-from pscube_connection import BrowserConnection, error_page, install_webview2_handlers, retry_page, stop_navigation
+from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, retry_page, stop_navigation
 
 # バックアップ・Drive同期（仕様：PSCUBE_SYNC.md）。メルヘンの database-backup-* とは名前を分ける。
 AUTO_BACKUP_NAME = 'pscube-backup-auto.json'
@@ -958,25 +958,21 @@ def run_session(db_path, export_path):
                 return
             message = connection.failure['message']
             revision = connection.revision
-        bridge.pilot.connection_failed(message)
-
         def show():
             with connection.lock:
                 if stop.is_set() or revision != connection.revision or not connection.failure:
                     return
                 if connection.showing_error:
                     return
-                connection.showing_error = True
-                content = error_page(connection)
-            # load_html uses WinForms Invoke; never wait for it inside a native
-            # UI callback or while holding the connection lock.
-            window.load_html(content)
+            bridge.pilot.connection_failed(message)
+            if not present_connection_failure(window, connection, revision):
+                bridge.pilot.render()
 
         threading.Thread(target=show, name='pscube-connection-error', daemon=True).start()
 
     def install_native():
         native_handlers.extend(install_webview2_handlers(
-            window, connection, failed, bridge.pilot.connection_started))
+            window, connection, failed))
 
     def install_overlay():
         try:
@@ -984,6 +980,8 @@ def run_session(db_path, export_path):
             window.evaluate_js(overlay)
         except Exception:
             pass
+        if not connection.failure and not connection.showing_error:
+            bridge.pilot.connection_started()
         bridge.pilot.loaded()
 
     def auto_loop():

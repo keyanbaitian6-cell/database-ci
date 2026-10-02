@@ -18,3 +18,26 @@ Future<void> prepareBrowserSession({
     await step();
   }
 }
+
+/// Force a reload for an unchanged URL, retaining hash-based history dates.
+Future<void> reopenBrowserPage({
+  required Uri target,
+  required Future<String?> Function() currentUrl,
+  required Future<void> Function() reload,
+  required Future<void> Function(Uri) load,
+  required bool Function() active,
+}) async {
+  if (!active()) return;
+  String? current;
+  try {
+    current = await currentUrl();
+  } catch (_) {}
+  if (!active()) return;
+  final uri = Uri.tryParse(current ?? '');
+  if (uri != null &&
+      uri.replace(fragment: '') == target.replace(fragment: '')) {
+    await reload();
+  } else {
+    await load(target);
+  }
+}

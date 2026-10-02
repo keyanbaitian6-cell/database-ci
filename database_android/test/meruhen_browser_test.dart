@@ -99,7 +99,13 @@ void main() {
       expect(platform.controller.loads, isEmpty);
       platform.settings!.complete();
       await tester.pumpAndSettle();
-      expect(platform.steps, ['js', 'channel', 'navigation', 'cookies', 'load']);
+      expect(platform.steps, [
+        'js',
+        'channel',
+        'navigation',
+        'cookies',
+        'load',
+      ]);
       await tester.tap(find.text('自動取り込み：OFF'));
       await tester.pump();
       expect(find.text('自動取り込み：ON'), findsOneWidget);
@@ -118,6 +124,7 @@ void main() {
       await tester.tap(find.byTooltip('再読み込み'));
       await tester.pumpAndSettle();
       expect(platform.controller.loads, [root, root]);
+      expect(platform.controller.reloads, 1);
       expect(platform.cookieClears, 0);
       expect(platform.controller.storageClears, 0);
       expect(platform.controller.cacheClears, 0);

@@ -2,9 +2,10 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from auto_capture import AutoCapture
-from pscube_connection import BrowserConnection, allowed_page, error_page, install_webview2_handlers, retry_page
+from pscube_connection import BrowserConnection, allowed_page, error_page, install_webview2_handlers, retry_page, reopen_page, retry_target, present_connection_failure
 from pscube_import import AutoPilot, ROOT_URL, PscubeStore
 from test_pscube_auto import FakeWindow, Clock, Handlers, PROBE
 
@@ -12,6 +13,39 @@ RACK = ROOT_URL + 'cgi-bin/nc-v06-001.php?cd_dai=1526#20261001'
 
 
 class ConnectionTests(unittest.TestCase):
+    def test_native_retry_forces_reload_instead_of_assigning_same_source(self):
+        core = types.SimpleNamespace(Source=RACK, Reload=mock.Mock(), Navigate=mock.Mock())
+        native = types.SimpleNamespace(webview=types.SimpleNamespace(CoreWebView2=core), Invoke=lambda action: action())
+        window = types.SimpleNamespace(native=native, load_url=mock.Mock())
+        with mock.patch.dict('sys.modules', System=types.SimpleNamespace(Action=lambda callback: callback)):
+            reopen_page(window, RACK)
+            core.Reload.assert_called_once()
+            core.Navigate.assert_not_called()
+            core.Source = 'about:blank'
+            reopen_page(window, RACK)
+            core.Navigate.assert_not_called()
+        self.assertEqual(window.load_url.call_args_list, [mock.call(RACK), mock.call(RACK)])
+
+    def test_retry_keeps_selected_hash_but_not_another_document(self):
+        window = types.SimpleNamespace(get_current_url=lambda: RACK.replace('20261001', '20260930'))
+        self.assertEqual(retry_target(window, self.c, ROOT_URL), RACK.replace('20261001', '20260930'))
+        window.get_current_url = lambda: ROOT_URL
+        self.assertEqual(retry_target(window, self.c, ROOT_URL), RACK)
+
+    def test_http_response_is_not_replaced_and_stale_dns_does_not_replace_new_page(self):
+        window = types.SimpleNamespace(load_html=mock.Mock())
+        self.c.http_error(RACK, 403)
+        self.assertFalse(present_connection_failure(window, self.c, self.c.revision))
+        self.assertFalse(self.c.showing_error)
+        self.assertIsNotNone(self.c.failure)
+        window.load_html.assert_not_called()
+        self.c.start(RACK, 2)
+        self.c.navigation_completed(2, False, 'HostNameNotResolved')
+        old = self.c.revision
+        self.c.start(ROOT_URL, 3)
+        self.assertFalse(present_connection_failure(window, self.c, old))
+        window.load_html.assert_not_called()
+
     def setUp(self):
         self.c = BrowserConnection(ROOT_URL)
         self.c.start(RACK, 1)

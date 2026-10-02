@@ -29,6 +29,7 @@ class CookieSessionTests(unittest.TestCase):
         self.path.write_bytes(b'retained records')
         self.bridge = browser._Bridge(self.path, self.path.parent, 'browser_import.py')
         self.window = mock.Mock()
+        self.window.native = None
         self.window.get_current_url.return_value = browser.DEFAULT_START
         self.bridge._window = self.window
 
@@ -67,6 +68,21 @@ class CookieSessionTests(unittest.TestCase):
         self.window.load_url.assert_not_called()
         self.assertTrue(self.bridge.get_auto_capture()['enabled'])
 
+    def test_retry_does_not_hold_auto_lock_while_the_ui_waits_for_before_load(self):
+        completed = threading.Event()
+
+        def load(_):
+            worker = threading.Thread(target=lambda: (self.bridge._loading(), completed.set()), daemon=True)
+            worker.start()
+            self.assertTrue(completed.wait(1), 'synchronous before_load must be able to obtain the auto lock')
+            self.assertFalse(self.bridge.set_auto_capture(True, 1)['enabled'])
+            self.assertFalse(self.bridge._spawn('table', '{}'))
+            worker.join(1)
+
+        self.window.load_url.side_effect = load
+        self.bridge.retry_page()
+        self.assertFalse(self.bridge._retrying)
+
     def test_failure_blocks_auto_and_capture_but_ads_and_other_days_do_not(self):
         c = self.bridge._connection
         url = browser.BROWSER_URLS['saiwaichou'] + '?target_date=2026-10-01'
@@ -79,6 +95,8 @@ class CookieSessionTests(unittest.TestCase):
         self.window.evaluate_js.assert_not_called()
         self.assertFalse(self.bridge._spawn('table', '{}'))
         self.assertFalse(self.bridge.set_auto_capture(True, 1)['enabled'])
+        self.bridge._loaded()
+        self.assertIn('403', self.bridge.get_auto_capture()['message'])
         self.assertIn('403', json.loads(self.bridge._checked('{}'))['error'])
         self.window.get_current_url.side_effect = RuntimeError('no current page')
         self.assertIn('403', json.loads(self.bridge._checked('{}'))['error'])
@@ -113,13 +131,12 @@ class CookieSessionTests(unittest.TestCase):
             window.events.before_show.handlers[0]()
             control.NavigationStarting.handlers[0](control,
                 types.SimpleNamespace(Uri=browser.DEFAULT_START, NavigationId=1))
-            core.WebResourceResponseReceived.handlers[0](core,
-                types.SimpleNamespace(Request=types.SimpleNamespace(Uri=browser.DEFAULT_START),
-                                      Response=types.SimpleNamespace(StatusCode=403)))
+            control.NavigationCompleted.handlers[0](control,
+                types.SimpleNamespace(NavigationId=1, IsSuccess=False, WebErrorStatus='HostNameNotResolved'))
             self.assertTrue(shown.wait(2), 'the error page is shown off the native callback thread')
             self.assertFalse(bridge.get_auto_capture()['enabled'])
             self.assertIn('メルヘン', window.load_html.call_args.args[0])
-            self.assertIn('HTTP 403', window.load_html.call_args.args[0])
+            self.assertIn('DNSエラー', window.load_html.call_args.args[0])
             window.evaluate_js.assert_not_called()
             window.clear_cookies.assert_not_called()
 

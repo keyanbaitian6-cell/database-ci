@@ -54,7 +54,7 @@ class BrowserController extends PlatformWebViewController {
   late BrowserDelegate delegate;
   String? url;
   final loads = <String>[];
-  int storageClears = 0, cacheClears = 0, jsCalls = 0;
+  int storageClears = 0, cacheClears = 0, jsCalls = 0, reloads = 0;
   @override
   Future<void> setJavaScriptMode(JavaScriptMode mode) async {}
   @override
@@ -67,6 +67,12 @@ class BrowserController extends PlatformWebViewController {
     loads.add(url!);
     delegate.started?.call(url!);
     delegate.finished?.call(url!);
+  }
+
+  @override
+  Future<void> reload() async {
+    reloads++;
+    await loadRequest(LoadRequestParams(uri: Uri.parse(url!)));
   }
 
   @override
@@ -146,6 +152,7 @@ void main() {
         await tester.tap(find.text('もう一度開く'));
         await tester.pumpAndSettle();
         expect(web.loads, [PscubeStore.root, PscubeStore.root]);
+        expect(web.reloads, 1);
         expect(
           web.jsCalls,
           0,

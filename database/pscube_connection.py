@@ -4,7 +4,7 @@ from __future__ import annotations
 import html
 import threading
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 HOST = 'www.pscube.jp'
 SHOP_PATH = '/dedamajyoho-P-townDMMpachi/c740601/'
@@ -74,21 +74,63 @@ class BrowserConnection:
         p = urlparse(url)
         report = (datetime.now(timezone.utc).isoformat() + f' {kind} {code}\n'
                   + f'{p.scheme}://{p.netloc}{p.path}')
-        self.failure = {'message': message, 'report': report}
+        self.failure = {'message': message, 'report': report, 'kind': kind}
         self.history = (self.history + [report])[-8:]
 
 
 def retry_page(window, pilot, connection, saving):
     if saving():
         raise ValueError('保存中です。保存が終わってから押してください。')
-    with connection.lock:
-        target = connection.url
-        if not connection.allowed_page(target):
-            target = 'https://' + HOST + SHOP_PATH
+    target = retry_target(window, connection, 'https://' + HOST + SHOP_PATH)
     pilot.configure(False, pilot.state()['seconds'])
     pilot.connection_started()
     connection.start(target)
+    reopen_page(window, target)
+    return True
+
+
+def retry_target(window, connection, fallback):
+    with connection.lock:
+        target = connection.url
+    if not connection.allowed_page(target):
+        return fallback
+    try:
+        current = window.get_current_url()
+    except Exception:
+        return target
+    if (isinstance(current, str) and connection.allowed_page(current)
+            and unquote(current.split('#')[0]) == unquote(target.split('#')[0])):
+        return current  # Preserve a selected history day changed only in the hash.
+    return target
+
+
+def reopen_page(window, target):
+    """Source assignment may ignore the current URL: explicitly reload/navigate."""
+    native = getattr(window, 'native', None)
+    if native is None:
+        window.load_url(target)
+        return
+    from System import Action
+
+    same_source = []
+    native.Invoke(Action(lambda: same_source.append(
+        unquote(str(native.webview.CoreWebView2.Source)) == unquote(target))))
+    # Keep pywebview's real_url, readiness events and browser state consistent.
     window.load_url(target)
+    if same_source[0]:
+        native.Invoke(Action(lambda: native.webview.CoreWebView2.Reload()))
+
+
+def present_connection_failure(window, connection, revision, title="P’s CUBE"):
+    """Called off the UI thread. HTTP documents may contain manual CAPTCHA."""
+    with connection.lock:
+        if revision != connection.revision or not connection.failure or connection.showing_error:
+            return False
+        if connection.failure['kind'] == 'HTTP':
+            return False  # Keep the site's own response visible and operable.
+        connection.showing_error = True
+        content = error_page(connection, title)
+    window.load_html(content)
     return True
 
 

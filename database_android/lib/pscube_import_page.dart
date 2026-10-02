@@ -305,7 +305,13 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _loading = true;
         _status = 'Cookieと取り込んだ記録を保持して、ページを開き直しています…';
       });
-      await _web.loadRequest(url);
+      await reopenBrowserPage(
+        target: url,
+        currentUrl: _web.currentUrl,
+        reload: _web.reload,
+        load: _web.loadRequest,
+        active: () => mounted,
+      );
     } catch (_) {
       if (mounted) setState(() => _status = 'ページを開き直せませんでした。通信状態を確認してください。');
     } finally {

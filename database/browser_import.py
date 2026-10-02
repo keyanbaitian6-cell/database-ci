@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageDraw
 from auto_capture import AUTO_CAPTURE_JS, AutoCapture
-from pscube_connection import BrowserConnection, error_page, install_webview2_handlers
+from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page, retry_target
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
 from core import (STORE_NAMES, Store, normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
@@ -1135,6 +1135,7 @@ class _Bridge:
         self._connection = BrowserConnection(DEFAULT_START, page_allowed=is_allowed_url, same_response=lambda a, b: same_page_url(a.split('#')[0], b.split('#')[0]))
         self._children = []  # review windows still open when the browser closes
         self._submit_lock = threading.Lock()
+        self._retrying = False
         self._auto = AutoCapture()
         self._overlay_ready = threading.Event()
         self._auto_display = None
@@ -1156,6 +1157,8 @@ class _Bridge:
 
     def set_auto_capture(self, enabled, seconds=3.5):
         with self._auto._lock:
+            if enabled and self._retrying:
+                return self.get_auto_capture()
             if enabled and self._connection.failure:
                 self._auto.configure(False, seconds)
                 self._auto.pause(self._connection.failure['message'])
@@ -1168,7 +1171,7 @@ class _Bridge:
     def retry_page(self):
         # Review children can still save a previously accepted capture.
         with self._auto._lock, self._submit_lock:
-            if any(child.poll() is None for child in self._children):
+            if self._retrying or any(child.poll() is None for child in self._children):
                 raise ValueError('確認・保存中です。完了してから再読み込みしてください。')
             self.set_auto_capture(False, self.get_auto_capture()['seconds'])
             self._manual_continuation = False
@@ -1176,12 +1179,16 @@ class _Bridge:
             self._advance_generation = None
             self._signal_path.unlink(missing_ok=True)
             self._loading()
-            with self._connection.lock:
-                target = self._connection.url
-            if not is_allowed_url(target):
-                target = DEFAULT_START
+            target = retry_target(self._window, self._connection, DEFAULT_START)
             self._connection.start(target)
-            self._window.load_url(target)
+            self._retrying = True
+        # before_load is synchronous in pywebview: never hold AutoCapture's
+        # lock while invoking the UI, or a waiting callback can deadlock.
+        try:
+            reopen_page(self._window, target)
+        finally:
+            with self._auto._lock:
+                self._retrying = False
         return True
 
     def commit_auto_move(self, revision):
@@ -1249,6 +1256,8 @@ class _Bridge:
     def _loaded(self):
         self._auto.loaded()
         self._auto_display = None
+        if self._connection.failure:
+            self._auto.pause(self._connection.failure['message'])
         self._overlay_ready.set()
 
     def _auto_tick(self):
@@ -1585,7 +1594,7 @@ class _Bridge:
         # The API is called on multiple pywebview threads. Admit only one save
         # process at a time, including a manual click racing an automatic tick.
         with self._auto._lock, self._submit_lock:
-            if self._connection.failure:
+            if self._retrying or self._connection.failure:
                 return False
             self._children = [c for c in self._children if c.poll() is None]
             if self._children:
@@ -1876,12 +1885,11 @@ def run_session(db_path, reports_folder):
             with connection.lock:
                 if stop.is_set() or revision != connection.revision or not connection.failure or connection.showing_error:
                     return
-                connection.showing_error = True
-                content = error_page(connection, title='メルヘン')
             # No AutoCapture lock or UI wait inside a native callback.
             bridge.set_auto_capture(False, bridge.get_auto_capture()['seconds'])
             bridge._auto.pause(message)
-            window.load_html(content)
+            if not present_connection_failure(window, connection, revision, title='メルヘン'):
+                bridge._render_auto()
         threading.Thread(target=show, name='meruhen-connection-error', daemon=True).start()
 
     def install_native():

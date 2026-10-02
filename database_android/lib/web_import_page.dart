@@ -629,10 +629,13 @@ class _WebImportPageState extends State<WebImportPage> {
     await _stopAuto('停止中（Cookieと記録を保持して再読み込み）');
     if (!mounted) return;
     final url = _navigationUrl;
-    await _openStore(url != null && _allowed(url) ? url : _nagamachiminami);
+    await _openStore(
+      url != null && _allowed(url) ? url : _nagamachiminami,
+      reload: true,
+    );
   }
 
-  Future<void> _openStore(String url) async {
+  Future<void> _openStore(String url, {bool reload = false}) async {
     if (!_allowed(url) || _flow.busy || _openingPage || _preparingBrowser) {
       return;
     }
@@ -645,6 +648,14 @@ class _WebImportPageState extends State<WebImportPage> {
     try {
       if (!_browserReady) {
         await _prepareBrowser(url);
+      } else if (reload) {
+        await reopenBrowserPage(
+          target: Uri.parse(url),
+          currentUrl: _web.currentUrl,
+          reload: _web.reload,
+          load: _web.loadRequest,
+          active: () => mounted,
+        );
       } else {
         await _web.loadRequest(Uri.parse(url));
       }
