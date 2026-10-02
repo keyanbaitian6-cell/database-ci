@@ -7,6 +7,7 @@ import 'pscube_suffix.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'viewer_data.dart';
+import 'viewer_bridge.dart';
 import 'viewer_pages.dart';
 
 class PscubeSuffixPage extends StatefulWidget {
@@ -16,16 +17,23 @@ class PscubeSuffixPage extends StatefulWidget {
     required this.store,
     required this.day,
     this.onDayChanged,
+    this.onDataChanged,
+    this.saveSuffixEvent,
   });
   final ViewerData data;
   final String store, day;
   final ValueChanged<String>? onDayChanged;
+  final ValueChanged<ViewerData>? onDataChanged;
+  final Future<String?> Function(String scope, String day, bool enabled)?
+  saveSuffixEvent;
   @override
   State<PscubeSuffixPage> createState() => _PscubeSuffixPageState();
 }
 
 class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
   late String _day = widget.day;
+  late ViewerData _data = widget.data;
+  bool _savingMark = false;
   var _period = PscubeSuffixPeriod.day;
   var _type = PscubeSuffixType.all;
   final _scroll = ScrollController();
@@ -52,7 +60,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
     await Future<void>.delayed(Duration.zero);
     if (!mounted || key != (_day, _period, _type)) return;
     final report = summarizePscubeSuffixes(
-      widget.data.records,
+      _data.records,
       store: widget.store,
       day: _day,
       period: _period,
@@ -61,14 +69,14 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
     final selectedDay = _period == PscubeSuffixPeriod.day
         ? report
         : summarizePscubeSuffixes(
-            widget.data.records,
+            _data.records,
             store: widget.store,
             day: _day,
             type: _type,
           );
     final history = _period == PscubeSuffixPeriod.day
         ? summarizePscubeSuffixes(
-            widget.data.records,
+            _data.records,
             store: widget.store,
             day: _day,
             period: PscubeSuffixPeriod.week,
@@ -91,11 +99,38 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
     _calculate();
   }
 
+  Future<void> _setMark(bool enabled) async {
+    if (_savingMark) return;
+    final day = _day;
+    setState(() => _savingMark = true);
+    try {
+      final text = await (widget.saveSuffixEvent ?? setPscubeSuffixEvent)(
+        widget.store,
+        day,
+        enabled,
+      );
+      if (text == null) throw StateError('印を保存できませんでした。');
+      final data = ViewerData.parse(text);
+      widget.onDataChanged?.call(data);
+      if (mounted) {
+        setState(() => _data = data);
+        _calculate();
+      }
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('末尾イベの印を保存できませんでした。\n$error')));
+    } finally {
+      if (mounted) setState(() => _savingMark = false);
+    }
+  }
+
   void _open(PscubeSuffixSummary summary) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => _PscubeSuffixDetails(
-          data: widget.data,
+          data: _data,
           store: widget.store,
           summary: summary,
         ),
@@ -272,9 +307,25 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                   curve: Curves.easeOut,
                 );
               },
-              title: Text(
-                dayWithWeekday(d.end),
-                style: const TextStyle(fontSize: 14),
+              title: Wrap(
+                spacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    dayWithWeekday(d.end),
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  if (_data.dateEventFor(widget.store, d.end) != null)
+                    Semantics(
+                      label: '末尾イベ',
+                      child: const ExcludeSemantics(
+                        child: Chip(
+                          label: Text('末尾イベ'),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ),
+                ],
               ),
               subtitle: Text(
                 d.leaders.isEmpty
@@ -378,9 +429,11 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
       appBar: AppBar(
         title: const Text('末尾別データまとめ'),
         bottom: ViewerDateBar(
-          days: viewerDays(widget.data.records, widget.store),
+          days: viewerDays(_data.records, widget.store),
           day: _day,
           onChanged: _changeDay,
+          event: _data.dateEventFor(widget.store, _day)?.name,
+          eventFor: (day) => _data.dateEventFor(widget.store, day)?.name,
         ),
       ),
       floatingActionButton: ScrollTopButton(controller: _scroll),
@@ -392,6 +445,15 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
             Text(
               storeDisplayName(widget.store),
               style: const TextStyle(color: AppColors.ash),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: SwitchListTile(
+                title: const Text('末尾イベの印'),
+                subtitle: Text(_savingMark ? '保存中…' : '自分用の印。付ける・外すができます。'),
+                value: _data.dateEventFor(widget.store, _day) != null,
+                onChanged: _savingMark ? null : _setMark,
+              ),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<PscubeSuffixType>(

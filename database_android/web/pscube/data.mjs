@@ -172,6 +172,22 @@ export function autoPageState(rawUrl, dom) {
   return { ready: true, kind: '台別7日分', signature: url.href };
 }
 
+export const suffixEventKey = e => JSON.stringify([e.store, e.rate, e.day]);
+export function validateSuffixEvents(raw) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > 100000) fail('末尾イベの印が不正です。');
+  const result = raw.map(e => {
+    if (!e || typeof e.store !== 'string' || !/^c\d+$/.test(e.store) ||
+        typeof e.rate !== 'string' || !/^\d+(?:\.\d+)?$/.test(e.rate) || !validDay(e.day) ||
+        typeof e.enabled !== 'boolean' || typeof e.updated_at !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/.test(e.updated_at) ||
+        !Number.isFinite(Date.parse(e.updated_at))) fail('末尾イベの印が不正です。');
+    return {store:e.store, rate:e.rate, day:e.day, enabled:e.enabled, updated_at:e.updated_at};
+  });
+  if (new Set(result.map(suffixEventKey)).size !== result.length) fail('末尾イベの印が重複しています。');
+  return result;
+}
+
 export function validateData(raw) {
   if (raw?.format !== FORMAT || raw.version !== 1 || !Array.isArray(raw.machines) || !Array.isArray(raw.records) || raw.records.length > 100000 || raw.machines.length > 10000) fail('P’s CUBEの保存ファイルではありません。');
   const basic = r => {
@@ -206,7 +222,18 @@ export function validateData(raw) {
   if (new Set(machines.map(machineKey)).size !== machines.length || new Set(records.map(recordKey)).size !== records.length) fail('同じ機種・台が重複しています。');
   const known = new Set(machines.map(machineKey));
   if (records.some(r => !known.has(machineKey(r)))) fail('台に対応する機種情報がありません。');
-  return { format: FORMAT, version: 1, machines, records };
+  const suffixEvents = validateSuffixEvents(raw.suffix_events);
+  return { format: FORMAT, version: 1, machines, records,
+    ...(suffixEvents.length ? {suffix_events:suffixEvents} : {}) };
+}
+
+export function mergeSuffixEvents(stored = [], incoming = []) {
+  const marks = new Map(stored.map(e => [suffixEventKey(e), e]));
+  for (const e of incoming) {
+    const previous = marks.get(suffixEventKey(e));
+    if (!previous || Date.parse(e.updated_at) >= Date.parse(previous.updated_at)) marks.set(suffixEventKey(e), e);
+  }
+  return [...marks.values()];
 }
 
 export function mergeData(stored, incoming) {
@@ -235,7 +262,10 @@ export function mergeData(stored, incoming) {
     }
     records.set(key, { ...preferred, graph });
   }
-  return validateData({ ...emptyData(), machines: [...machines.values()], records: [...records.values()] });
+  // Marks are independent of machine/rack data. An explicit removal is retained
+  // as a dated false value so an older backup cannot bring the mark back.
+  return validateData({ ...emptyData(), machines: [...machines.values()], records: [...records.values()],
+    suffix_events:mergeSuffixEvents(old.suffix_events, fresh.suffix_events) });
 }
 
 /** 沖ドキ（「沖ドキ」「オキドキ」、半角も）は取り込みの対象外（メルヘンと同じ約束）。 */

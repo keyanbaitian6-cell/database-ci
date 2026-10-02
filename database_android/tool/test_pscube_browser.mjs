@@ -86,14 +86,23 @@ try {
   await accessibility();
   assert.equal(JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).records.length,56);
   await page.getByRole('button',{name:'末尾別データまとめ',exact:true}).click();
+  await page.getByRole('switch',{name:/末尾イベの印/}).click();
+  await page.getByRole('switch',{checked:true}).waitFor();
+  const marksBefore=(await readStored('database-pscube-viewer','state','data')).suffix_events;
+  assert.equal(marksBefore[0].enabled,true);
+  assert.equal((await readStored('database-pscube-viewer','state','data')).records.length,56);
+  await page.reload();await accessibility();
+  await page.getByRole('button',{name:'末尾別データまとめ',exact:true}).click();
+  await page.getByRole('switch',{checked:true}).waitFor();
   const headline = page.getByRole('group',{name:/平均点の首位：/});
   await headline.waitFor();
   assert.ok((await headline.boundingBox()).y < 852, 'day winner is immediately visible');
   await page.screenshot({path:process.env.PSCUBE_SUFFIX_SCREENSHOT || '/tmp/pscube-suffix-summary.png'});
   await page.mouse.move(200,700); await page.mouse.wheel(0,600); await page.waitForTimeout(300);
   await page.getByRole('group',{name:/^日別の首位/}).waitFor();
+  assert.ok((await page.getByRole('button',{name:/2026-10-01.*末尾イベ/s}).count())>0);
   await page.screenshot({path:'/tmp/pscube-suffix-history.png'});
-  await page.mouse.wheel(0,-600); await page.waitForTimeout(300);
+  await page.mouse.wheel(0,-400); await page.waitForTimeout(300);
   await page.getByRole('button',{name:'8末尾すべての順位・内訳を見る',exact:true}).click();
   await page.mouse.move(200,700); await page.mouse.wheel(0,900); await page.waitForTimeout(300);
   await page.getByRole('button',{name:'末尾1',exact:true}).click();
@@ -135,6 +144,19 @@ try {
   const backup=JSON.parse(await fs.readFile(await download.path(),'utf8'));
   assert.equal(backup.records.length,56);assert.equal(backup.records[0].max_hold,undefined);
   assert.ok(backup.records[0].my>0);
+  assert.deepEqual(backup.suffix_events,marksBefore,'mark survives a PC-style import and is included in browser backup');
+  await page.evaluate(async oldBackup=>{
+    await window.databaseViewer.setSuffixEvent('pscube:c740601:20','2026-10-01',false);
+    await window.databaseViewer.save(JSON.stringify(oldBackup));
+  },backup);
+  assert.equal((await readStored('database-pscube-viewer','state','data')).suffix_events[0].enabled,false,'old marked backup does not undo a removal');
+  const recordsBefore=JSON.stringify((await readStored('database-pscube-viewer','state','data')).records);
+  const refused=await page.evaluate(async()=>{
+    try {await window.databaseViewer.setSuffixEvent('pscube:c740601:5','2026-10-01',true);return false;} catch{return true;}
+  });
+  assert.equal(refused,true);
+  assert.equal(JSON.stringify((await readStored('database-pscube-viewer','state','data')).records),recordsBefore);
+
   await page.evaluate(()=>window.databaseViewer.setPscubeType('pscube:c740601:20','マイジャグラーV','other'));
   assert.equal((await readStored('database-pscube-viewer','state','data')).machines[0].machine_type,'other');
   const badChooser=page.waitForEvent('filechooser');
@@ -149,6 +171,19 @@ try {
   await page.waitForFunction(()=>document.querySelector('flt-semantics')!=null);
   await page.getByText(/Googleドライブ/).first().waitFor();
   assert.ok(driveRequests.some(url=>url.includes('file=pscube')));
+  assert.equal((await readStored('database-pscube-viewer','state','data')).suffix_events[0].enabled,false,'Drive update preserves removal');
+  await page.evaluate(async incoming=>{
+    await Promise.all([
+      window.databaseViewer.setSuffixEvent('pscube:c740601:20','2026-09-30',true),
+      window.databaseViewer.save(JSON.stringify(incoming)),
+      window.databaseViewer.setSuffixEvent('pscube:c740601:20','2026-09-29',true),
+    ]);
+  },data);
+  const afterConcurrent=await readStored('database-pscube-viewer','state','data');
+  assert.equal(afterConcurrent.records.length,56);
+  assert.ok(afterConcurrent.suffix_events.some(e=>e.day==='2026-09-30'&&e.enabled));
+  assert.ok(afterConcurrent.suffix_events.some(e=>e.day==='2026-09-29'&&e.enabled));
+  assert.equal(afterConcurrent.suffix_events.find(e=>e.day==='2026-10-01').enabled,false);
   assert.deepEqual(errors,[]);
   console.log('PASS: old IndexedDB migration, shared UI, data/graph tabs, day navigation, original Meruhen preservation, root P’s CUBE import, export, category, failed import and Drive source');
 } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}

@@ -40,6 +40,119 @@ SlotRecord row(
   },
 );
 void main() {
+  test(
+    'suffix marks become shared date labels and remain separate by day and rate',
+    () {
+      final raw = fixture();
+      raw['suffix_events'] = [
+        {
+          'store': 'c740601',
+          'rate': '20',
+          'day': '2026-10-01',
+          'enabled': true,
+          'updated_at': '2026-10-02T00:00:00Z',
+        },
+        {
+          'store': 'c740601',
+          'rate': '20',
+          'day': '2026-09-30',
+          'enabled': false,
+          'updated_at': '2026-10-02T00:00:00Z',
+        },
+        {
+          'store': 'c740601',
+          'rate': '5',
+          'day': '2026-09-30',
+          'enabled': true,
+          'updated_at': '2026-10-02T00:00:00Z',
+        },
+      ];
+      final data = ViewerData.parse(jsonEncode(raw));
+      expect(data.dateEventFor(store, '2026-10-01')?.name, '末尾イベ');
+      expect(data.dateEventFor(store, '2026-09-30'), isNull);
+      expect(data.dateEventFor('pscube:c740601:5', '2026-09-30')?.name, '末尾イベ');
+      expect(data.records.length, 56);
+      final bad = fixture();
+      bad['suffix_events'] = [
+        {
+          'store': 'c740601',
+          'rate': '20',
+          'day': '2026-02-30',
+          'enabled': true,
+          'updated_at': '2026-10-02T00:00:00Z',
+        },
+      ];
+      expect(() => ViewerData.parse(jsonEncode(bad)), throwsFormatException);
+    },
+  );
+  testWidgets(
+    'manual mark updates the shared date bar and history; removal and save failure',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final raw = fixture();
+      ViewerData? updated;
+      bool fail = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: PscubeSuffixPage(
+            data: ViewerData.parse(jsonEncode(raw)),
+            store: store,
+            day: '2026-10-01',
+            onDataChanged: (data) => updated = data,
+            saveSuffixEvent: (scope, day, enabled) async {
+              expect(scope, store);
+              if (fail) throw StateError('保存失敗');
+              raw['suffix_events'] = [
+                {
+                  'store': 'c740601',
+                  'rate': '20',
+                  'day': day,
+                  'enabled': enabled,
+                  'updated_at': '2026-10-02T00:00:00Z',
+                },
+              ];
+              return jsonEncode(raw);
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final toggle = find.byType(SwitchListTile);
+      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+      expect(
+        tester.widget<ViewerDateBar>(find.byType(ViewerDateBar)).event,
+        '末尾イベ',
+      );
+      expect(updated?.dateEventFor(store, '2026-10-01')?.name, '末尾イベ');
+      await tester.scrollUntilVisible(
+        find.widgetWithText(ListTile, '2026-10-01（木）'),
+        400,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.widgetWithText(Chip, '末尾イベ'), findsOneWidget);
+      await tester.tap(find.widgetWithText(ListTile, '2026-10-01（木）'));
+      await tester.pumpAndSettle();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+      expect(
+        tester.widget<ViewerDateBar>(find.byType(ViewerDateBar)).event,
+        isNull,
+      );
+      fail = true;
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+      expect(find.textContaining('末尾イベの印を保存できませんでした'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test('ranking respects displayed ties, null scores, and changes by day', () {
     PscubeSuffixSummary summary(int digit, String day, double? total) =>
         PscubeSuffixSummary(digit, [

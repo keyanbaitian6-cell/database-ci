@@ -72,3 +72,33 @@ test('Okidoki machines (full- or half-width, either spelling) are excluded like 
   for (const name of ['沖ドキ!DUO', '沖ﾄﾞｷ!GOLD-30', 'オキドキ', 'ｵｷﾄﾞｷ!']) assert.equal(isExcludedMachine(name), true, name);
   assert.equal(isExcludedMachine('ﾏｲｼﾞｬｸﾞﾗｰV'), false);
 });
+
+const mark = (enabled = true, updated_at = '2026-10-02T00:00:00Z', patch = {}) =>
+  ({store:'c1',rate:'20',day:'2026-10-01',enabled,updated_at,...patch});
+test('optional suffix marks preserve old backups and validate scope, dates and removals', () => {
+  assert.equal(validateData(data()).suffix_events, undefined);
+  assert.deepEqual(validateData({...data(),suffix_events:[mark()]}).suffix_events, [mark()]);
+  for (const bad of [{day:'2026-02-30'}, {rate:20}, {store:'nagamachiminami'},
+    {enabled:'true'}, {updated_at:'bad'}, {updated_at:'2026-10-02'}]) {
+    assert.throws(() => validateData({...data(),suffix_events:[mark(true,undefined,bad)]}));
+  }
+  assert.throws(() => validateData({...data(),suffix_events:{}}));
+  assert.throws(() => validateData({...data(),suffix_events:[mark(),mark()]}));
+});
+test('imports without marks preserve them; newer removals survive older marked backups', () => {
+  const marked = {...data(),suffix_events:[mark()]};
+  assert.deepEqual(mergeData(marked,data()).suffix_events,[mark()]);
+  const removed = {...data(),suffix_events:[mark(false,'2026-10-03T00:00:00Z')]};
+  assert.deepEqual(mergeData(removed,marked).suffix_events,removed.suffix_events);
+  assert.deepEqual(mergeData(marked,removed).suffix_events,removed.suffix_events);
+  const restored = {...data(),suffix_events:[mark(true,'2026-10-04T00:00:00Z')]};
+  assert.deepEqual(mergeData(removed,restored).suffix_events,restored.suffix_events);
+  assert.deepEqual(mergeData(removed,removed),validateData(removed));
+});
+test('suffix marks are per store, rate and day and do not change records or scoring inputs', () => {
+  const marks=[mark(),mark(true,undefined,{rate:'5'}),mark(true,undefined,{store:'c2'}),mark(true,undefined,{day:'2026-09-30'})];
+  const merged=mergeData({...data(),suffix_events:marks},data());
+  assert.equal(merged.suffix_events.length,4);
+  assert.deepEqual(merged.records,validateData(data()).records);
+  assert.deepEqual(merged.machines,validateData(data()).machines);
+});

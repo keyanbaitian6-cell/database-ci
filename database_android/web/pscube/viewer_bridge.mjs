@@ -1,5 +1,5 @@
 import {readWebArchive} from './archive.mjs';
-import {emptyData, validateData, mergeData, parsePage} from './data.mjs';
+import {emptyData, validateData, mergeData, parsePage, validDay, suffixEventKey, mergeSuffixEvents, validateSuffixEvents} from './data.mjs';
 import {REMOTE_KEY, fetchDrive, buildBackup, backupFileName} from './sync.mjs';
 
 // Reuse the old database and keys so the already imported records survive.
@@ -25,10 +25,19 @@ async function write(data, meta) {
   try {
     await new Promise((resolve, reject) => {
       const tx = db.transaction('state', 'readwrite');
-      tx.objectStore('state').put(data, 'data');
-      tx.objectStore('state').put(meta, 'meta');
+      const state = tx.objectStore('state'), current = state.get('data');
+      let failure;
+      current.onsuccess = () => {
+        try {
+          // Merge only marks against the latest stored value. Import/type
+          // changes retain their existing record and explicit-null semantics.
+          const marks = mergeSuffixEvents(validateSuffixEvents(current.result?.suffix_events), validateSuffixEvents(data.suffix_events));
+          state.put(validateData({...data, suffix_events:marks}), 'data');
+          state.put(meta, 'meta');
+        } catch (e) { failure = e; tx.abort(); }
+      };
       tx.oncomplete = resolve;
-      tx.onerror = tx.onabort = () => reject(tx.error || new Error('端末に保存できませんでした。'));
+      tx.onerror = tx.onabort = () => reject(failure || tx.error || new Error('端末に保存できませんでした。'));
     });
   } finally { db.close(); }
 }
@@ -60,8 +69,41 @@ export async function readPscubeFiles(files, existing) {
   }
   return envelope(data, {file: files.map(f => f.name).join('、'), exported_at: exportedAt});
 }
+// Read and update only the mark in one IDB transaction. Concurrent imports and
+// other tabs cannot have their records replaced by a stale read of this page.
+async function setSuffixEvent(scope, day, enabled) {
+  const match = /^pscube:(c\d+):(\d+(?:\.\d+)?)$/.exec(scope ?? '');
+  if (!match || !validDay(day) || typeof enabled !== 'boolean') throw new Error('末尾イベの店舗・日付が不正です。');
+  const [, store, rate] = match, db = await open();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('state', 'readwrite'), state = tx.objectStore('state');
+      const data = state.get('data'), meta = state.get('meta');
+      let updated, failure;
+      data.onsuccess = () => {
+        try {
+          if (!data.result) throw new Error('先にデータを読み込んでください。');
+          const valid = validateData(data.result);
+          if (!valid.records.some(r => r.store === store && r.rate === rate && r.day === day)) throw new Error('この店舗・日付の記録がありません。');
+          const key = suffixEventKey({store,rate,day});
+          const previous = (valid.suffix_events ?? []).find(e => suffixEventKey(e) === key);
+          const updatedAt = new Date(Math.max(Date.now(), previous ? Date.parse(previous.updated_at) + 1 : 0)).toISOString();
+          updated = validateData({...valid, suffix_events:[
+            ...(valid.suffix_events ?? []).filter(e => suffixEventKey(e) !== key),
+            {store,rate,day,enabled,updated_at:updatedAt},
+          ]});
+          state.put(updated, 'data');
+        } catch (e) { failure = e; tx.abort(); }
+      };
+      tx.oncomplete = () => resolve(envelope(updated, meta.result ?? {}));
+      tx.onerror = tx.onabort = () => reject(failure || tx.error || new Error('印を端末に保存できませんでした。'));
+    });
+  } finally { db.close(); }
+}
+
 export function createPscubeBridge() {
   return {
+    setSuffixEvent,
     pick() {
       return new Promise((resolve, reject) => {
         const input = document.createElement('input');

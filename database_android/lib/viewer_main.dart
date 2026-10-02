@@ -38,10 +38,9 @@ class ViewerApp extends StatelessWidget {
 
 /// [store] の [day] より前の30日間に、記録がある日の数（採点の比較に使える日数）。
 int historyDays(List<SlotRecord> all, String store, String day) {
-  final first = DateTime.parse(day)
-      .subtract(const Duration(days: 30))
-      .toIso8601String()
-      .substring(0, 10);
+  final first = DateTime.parse(
+    day,
+  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
   return {
     for (final r in all)
       if (r.store == store &&
@@ -603,6 +602,9 @@ class _ViewerHomeState extends State<ViewerHome> {
                   store: store,
                   day: day,
                   onDayChanged: (changed) => setState(() => _day = changed),
+                  onDataChanged: (updated) {
+                    if (mounted) setState(() => _show(updated));
+                  },
                 ),
               ),
             ),

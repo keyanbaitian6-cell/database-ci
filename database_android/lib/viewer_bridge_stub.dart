@@ -23,3 +23,9 @@ Future<String?> setPscubeMachineType(
   String machine,
   String? type,
 ) async => null;
+
+Future<String?> setPscubeSuffixEvent(
+  String scope,
+  String day,
+  bool enabled,
+) async => null;

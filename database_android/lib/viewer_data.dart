@@ -56,6 +56,36 @@ class ViewerData {
     }
     var skipped = 0;
     final pscube = decoded['format'] == 'pscube-viewer';
+    if (pscube && decoded['suffix_events'] != null) {
+      final marks = decoded['suffix_events'];
+      if (marks is! List || marks.length > 100000)
+        throw const FormatException('末尾イベの印が不正です。');
+      final seen = <String>{};
+      for (final raw in marks) {
+        if (raw is! Map ||
+            raw['store'] is! String ||
+            !RegExp(r'^c\d+$').hasMatch(raw['store']) ||
+            raw['rate'] is! String ||
+            !RegExp(r'^\d+(?:\.\d+)?$').hasMatch(raw['rate']) ||
+            raw['day'] is! String ||
+            !isValidRecordDay(raw['day']) ||
+            raw['enabled'] is! bool ||
+            raw['updated_at'] is! String ||
+            !RegExp(
+              r'^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$',
+            ).hasMatch(raw['updated_at']) ||
+            DateTime.tryParse(raw['updated_at']) == null)
+          throw const FormatException('末尾イベの印が不正です。');
+        final event = DateEvent(
+          store: 'pscube:${raw['store']}:${raw['rate']}',
+          day: raw['day'],
+          name: '末尾イベ',
+        );
+        if (!seen.add(event.key))
+          throw const FormatException('末尾イベの印が重複しています。');
+        if (raw['enabled'] == true) dateEvents[event.key] = event;
+      }
+    }
     final incoming = pscube
         ? pscubeViewerRecords(decoded)
         : decoded['records'] as List;

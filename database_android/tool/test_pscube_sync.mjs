@@ -103,3 +103,12 @@ test('time with the page hidden (iPhone app switch) does not count toward the ti
     assert.equal(listeners.visibilitychange, undefined);
   } finally { delete globalThis.document; }
 });
+
+test('browser backup restores suffix marks and explicit removals; Drive without marks keeps local marks', async () => {
+  const marks=[{store:'c740601',rate:'20',day:'2026-10-01',enabled:true,updated_at:'2026-10-02T00:00:00Z'},
+    {store:'c740601',rate:'20',day:'2026-09-30',enabled:false,updated_at:'2026-10-02T00:00:01Z'}];
+  const local={...data(),suffix_events:marks};
+  assert.deepEqual(validateData(JSON.parse(JSON.stringify(buildBackup(local)))).suffix_events,marks);
+  const remote=await fetchDrive(SCRIPT,null,{fetchImpl:respond({...data(),exported_at:'new'})});
+  assert.deepEqual(mergeData(local,remote.data).suffix_events,marks);
+});

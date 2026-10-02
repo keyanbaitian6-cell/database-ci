@@ -66,3 +66,17 @@ Future<String?> setPscubeMachineType(
   String? type,
 ) async =>
     (await _setPscubeType(scope.toJS, machine.toJS, type?.toJS).toDart)?.toDart;
+
+@JS('databaseViewer.setSuffixEvent')
+external JSPromise<JSString?> _setSuffixEvent(
+  JSString scope,
+  JSString day,
+  JSBoolean enabled,
+);
+
+Future<String?> setPscubeSuffixEvent(
+  String scope,
+  String day,
+  bool enabled,
+) async =>
+    (await _setSuffixEvent(scope.toJS, day.toJS, enabled.toJS).toDart)?.toDart;
