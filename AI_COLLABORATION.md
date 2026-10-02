@@ -5,6 +5,7 @@
 - 利用者指定：固定7.1秒から5〜8秒を数万通りでランダム化。0.0001秒刻み30,001通りを待機設定ごとに抽選。PCはsecrets、AndroidはRandom.secure。UIには範囲と抽選値を表示し、間隔スライダーは表示専用。
 - メルヘン・保存・Cookie・採点は維持。拒否時の停止も維持。ランダム化でIP規制が解消するかはわからない。描画・保存・100msの確認周期があるため、実際のクリック時刻が100マイクロ秒刻みになる保証はない。
 - PC106件、Flutter426件、疑似ページのChromium回帰が成功。Android0.5.21+2026100302。詳細とビルド後の結果は`database/PSCUBE_RANDOM_INTERVAL_20261003.md`。
+- ソース`7e67027`から3EXEとrelease APK生成。生成3EXEの内蔵コード/JS/DLLと起動・両補助アプリ呼び出し・実WebView2のランダム間隔表示が成功（一時DB/ページのみ）。APKは`a/work/outputs/database-0.5.21-2026100302.apk`、署名は従来と同じ。実サイトとAndroid実機は未実施。最終解析error/warning0、既存info17件。
 
 ## Androidの各機種の全台表示待ち・0.5.20（Codex、2026-10-03）
 
