@@ -4,6 +4,19 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// A second installation of the same app, selected only for an explicit clone build.
+// Keep the Kotlin namespace/classes and all Flutter behavior shared with the original.
+val databaseClone = providers.environmentVariable("DATABASE_ANDROID_CLONE").getOrElse("original")
+require(databaseClone == "original" || databaseClone == "pscube") {
+    "DATABASE_ANDROID_CLONE must be original or pscube"
+}
+val databaseApplicationId = if (databaseClone == "pscube") {
+    "com.keyan.database_android.pscube"
+} else {
+    "com.keyan.database_android"
+}
+val databaseAppLabel = if (databaseClone == "pscube") "database P’s CUBE" else "database"
+
 android {
     namespace = "com.keyan.database_android"
     compileSdk = flutter.compileSdkVersion
@@ -15,8 +28,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.keyan.database_android"
+        applicationId = databaseApplicationId
+        manifestPlaceholders["databaseAppLabel"] = databaseAppLabel
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

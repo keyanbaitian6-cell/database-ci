@@ -1,5 +1,11 @@
 # database AI共同作業メモ
 
+## Androidの同機能クローン（Codex、2026-10-03）
+
+- 利用者指定：既存版＋クローン1つ。クローンは`database P’s CUBE` / `com.keyan.database_android.pscube`。名前だけ用途を分け、両サイトの機能は既存と同じ。アプリ内の画面・採点・保存・Cookie・自動取得コードは変更しない。
+- Gradle環境変数`DATABASE_ANDROID_CLONE=pscube`でID/ラベルだけを切替。未指定は既存版のID/ラベル。Activity/Serviceは完全修飾名で元のKotlinクラスを参照する。APKごとの規則に従いpubspecは0.5.21+2026100303へ増加。
+- 既存版と別のDB/Cookie領域になり、Cookieはクローン内で手動認証。既存版の削除・データ消去・自動移行はしない。実機の同時取り込みと画面OFF継続は未確認。詳細`database_android/ANDROID_CLONE_BUILD.md`。
+
 ## P’s CUBEのPC・Androidランダム待機（Codex、2026-10-03）
 
 - 利用者指定：固定7.1秒から5〜8秒を数万通りでランダム化。0.0001秒刻み30,001通りを待機設定ごとに抽選。PCはsecrets、AndroidはRandom.secure。UIには範囲と抽選値を表示し、間隔スライダーは表示専用。
