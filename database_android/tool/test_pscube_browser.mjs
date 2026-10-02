@@ -86,8 +86,16 @@ try {
   await accessibility();
   assert.equal(JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).records.length,56);
   await page.getByRole('button',{name:'末尾別データまとめ',exact:true}).click();
-  await page.getByText('末尾別まとめ',{exact:true}).waitFor();
+  const headline = page.getByRole('group',{name:/平均点の首位：/});
+  await headline.waitFor();
+  assert.ok((await headline.boundingBox()).y < 852, 'day winner is immediately visible');
   await page.screenshot({path:process.env.PSCUBE_SUFFIX_SCREENSHOT || '/tmp/pscube-suffix-summary.png'});
+  await page.mouse.move(200,700); await page.mouse.wheel(0,600); await page.waitForTimeout(300);
+  await page.getByRole('group',{name:/^日別の首位/}).waitFor();
+  await page.screenshot({path:'/tmp/pscube-suffix-history.png'});
+  await page.mouse.wheel(0,-600); await page.waitForTimeout(300);
+  await page.getByRole('button',{name:'8末尾すべての順位・内訳を見る',exact:true}).click();
+  await page.mouse.move(200,700); await page.mouse.wheel(0,900); await page.waitForTimeout(300);
   await page.getByRole('button',{name:'末尾1',exact:true}).click();
   await page.getByText('末尾1の内訳',{exact:true}).waitFor();
   await page.getByText('グラフ表示',{exact:true}).click();
@@ -144,3 +152,4 @@ try {
   assert.deepEqual(errors,[]);
   console.log('PASS: old IndexedDB migration, shared UI, data/graph tabs, day navigation, original Meruhen preservation, root P’s CUBE import, export, category, failed import and Drive source');
 } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
+

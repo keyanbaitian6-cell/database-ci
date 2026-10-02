@@ -40,6 +40,105 @@ SlotRecord row(
   },
 );
 void main() {
+  test('ranking respects displayed ties, null scores, and changes by day', () {
+    PscubeSuffixSummary summary(int digit, String day, double? total) =>
+        PscubeSuffixSummary(digit, [
+          (
+            row(10 + digit, day),
+            ScoreResult(
+              total: total,
+              provisional: true,
+              referenceCount: 1,
+              reasons: [],
+            ),
+          ),
+        ]);
+    final report = PscubeSuffixReport(
+      summaries: [
+        PscubeSuffixSummary(0, []),
+        summary(1, '2026-10-02', 72.01),
+        summary(2, '2026-10-02', 72.04),
+        summary(3, '2026-10-02', 69),
+        summary(5, '2026-10-02', null),
+        summary(6, '2026-10-01', 92),
+        summary(7, '2026-10-01', 30),
+      ],
+      excludedInvalid: 0,
+      excludedSuffix: 0,
+      start: '2026-10-01',
+      end: '2026-10-02',
+    );
+    final boundary = PscubeSuffixReport(
+      summaries: [
+        summary(1, '2026-10-02', 1.15),
+        summary(2, '2026-10-02', 1.14),
+      ],
+      excludedInvalid: 0,
+      excludedSuffix: 0,
+      start: '2026-10-02',
+      end: '2026-10-02',
+    );
+    expect(1.15.toStringAsFixed(1), '1.1');
+    expect(boundary.leaders.length, 2);
+    final days = report.daily;
+    expect(days.map((d) => d.end), ['2026-10-02', '2026-10-01']);
+    expect(days.first.leaders.map((s) => s.suffix), [1, 2]);
+    expect(days.first.ranked.map((s) => days.first.rankOf(s)), [1, 1, 3]);
+    expect(days.last.leaders.single.suffix, 6);
+    expect(
+      days.first.ranked.any((s) => s.suffix == 0 || s.suffix == 5),
+      isFalse,
+    );
+    final unscored = summarizePscubeSuffixes(
+      [row(11, '2026-10-02', games: 500)],
+      store: store,
+      day: '2026-10-02',
+    );
+    expect(unscored.leaders, isEmpty);
+    expect(unscored.daily.single.records, 1);
+  });
+  testWidgets(
+    'historical day tap updates the headline; no-score days have no winner',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final raw = fixture();
+      for (final r in raw['records'] as List) {
+        if (r['day'] == '2026-10-01') r['games'] = 500;
+      }
+      final data = ViewerData.parse(jsonEncode(raw));
+      String? changed;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: PscubeSuffixPage(
+            data: data,
+            store: store,
+            day: '2026-10-01',
+            onDayChanged: (day) => changed = day,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('採点なし（500G以下など）'), findsOneWidget);
+      expect(find.textContaining('平均点の首位：'), findsNothing);
+      final history = find.widgetWithText(ListTile, '2026-09-30（水）');
+      // Select the historical row by its unique date label.
+      await tester.ensureVisible(history);
+      await tester.tap(history);
+      await tester.pumpAndSettle();
+      expect(changed, '2026-09-30');
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('suffix-day-ranking')),
+          matching: find.textContaining('平均点の首位：'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test(
     'eight explicit suffixes, empty groups and physical racks across days',
     () {
@@ -70,45 +169,48 @@ void main() {
       expect(zero.positivePercent, isNull);
     },
   );
-  test('calendar windows exclude future days, other stores/rates and invalid numbers', () {
-    final all = [
-      row(11, '2026-09-24'),
-      row(11, '2026-09-25'),
-      row(11, '2026-10-01'),
-      row(11, '2026-10-02'),
-      row(21, '2026-10-01', scope: 'pscube:c740601:5'),
-      row(31, '2026-10-01', scope: 'pscube:c999999:20'),
-      row(41, '2026-10-01', games: 88888888),
-    ];
-    final week = summarizePscubeSuffixes(
-      all,
-      store: store,
-      day: '2026-10-01',
-      period: PscubeSuffixPeriod.week,
-    );
-    expect(week.start, '2026-09-25');
-    expect(week.records, 2);
-    expect(week.excludedInvalid, 1);
-    expect(week.racks, 1);
-    expect(week.days, 2);
-    final saved = summarizePscubeSuffixes(
-      all,
-      store: store,
-      day: '2026-10-01',
-      period: PscubeSuffixPeriod.saved,
-    );
-    expect(saved.records, 3);
-    final day = summarizePscubeSuffixes(all, store: store, day: '2026-10-01');
-    expect(day.records, 1);
-    final month = summarizePscubeSuffixes(
-      [row(10, '2026-09-01'), row(10, '2026-09-02')],
-      store: store,
-      day: '2026-10-01',
-      period: PscubeSuffixPeriod.month,
-    );
-    expect(month.start, '2026-09-02');
-    expect(month.records, 1);
-  });
+  test(
+    'calendar windows exclude future days, other stores/rates and invalid numbers',
+    () {
+      final all = [
+        row(11, '2026-09-24'),
+        row(11, '2026-09-25'),
+        row(11, '2026-10-01'),
+        row(11, '2026-10-02'),
+        row(21, '2026-10-01', scope: 'pscube:c740601:5'),
+        row(31, '2026-10-01', scope: 'pscube:c999999:20'),
+        row(41, '2026-10-01', games: 88888888),
+      ];
+      final week = summarizePscubeSuffixes(
+        all,
+        store: store,
+        day: '2026-10-01',
+        period: PscubeSuffixPeriod.week,
+      );
+      expect(week.start, '2026-09-25');
+      expect(week.records, 2);
+      expect(week.excludedInvalid, 1);
+      expect(week.racks, 1);
+      expect(week.days, 2);
+      final saved = summarizePscubeSuffixes(
+        all,
+        store: store,
+        day: '2026-10-01',
+        period: PscubeSuffixPeriod.saved,
+      );
+      expect(saved.records, 3);
+      final day = summarizePscubeSuffixes(all, store: store, day: '2026-10-01');
+      expect(day.records, 1);
+      final month = summarizePscubeSuffixes(
+        [row(10, '2026-09-01'), row(10, '2026-09-02')],
+        store: store,
+        day: '2026-10-01',
+        period: PscubeSuffixPeriod.month,
+      );
+      expect(month.start, '2026-09-02');
+      expect(month.records, 1);
+    },
+  );
   test('type filter, MY averages and positive graph denominators', () {
     GraphMeasurement graph(double end) =>
         GraphMeasurement(baselineY: 100, peakY: 80, troughY: 110, endY: end);
@@ -159,14 +261,60 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(PscubeSuffixPage), findsOneWidget);
       expect(find.byType(ViewerDateBar), findsOneWidget);
+      final ranking = find.byKey(const ValueKey('suffix-day-ranking'));
+      expect(ranking, findsOneWidget);
+      final expected = summarizePscubeSuffixes(
+        data.records,
+        store: store,
+        day: '2026-10-01',
+      );
+      expect(
+        find.descendant(
+          of: ranking,
+          matching: find.textContaining(
+            '平均点の首位：末尾${expected.leaders.first.suffix}',
+          ),
+        ),
+        findsOneWidget,
+      );
+      // The winner and its evidence are visible before any horizontal scroll.
+      expect(
+        tester
+            .getRect(
+              find.descendant(
+                of: ranking,
+                matching: find.textContaining('平均点の首位：'),
+              ),
+            )
+            .bottom,
+        lessThan(852),
+      );
+      expect(find.byType(DataTable), findsNothing);
+      await tester.scrollUntilVisible(
+        find.text('数値一覧・末尾別の内訳'),
+        500,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('数値一覧・末尾別の内訳'));
+      await tester.pumpAndSettle();
       expect(find.byType(DataTable), findsOneWidget);
       for (final digit in pscubeSuffixes) {
-        expect(find.text('末尾$digit'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(DataTable),
+            matching: find.text('末尾$digit'),
+          ),
+          findsOneWidget,
+        );
       }
       expect(find.text('末尾4'), findsNothing);
       expect(find.text('末尾9'), findsNothing);
-      await tester.ensureVisible(find.text('末尾1'));
-      await tester.tap(find.text('末尾1'));
+      await tester.ensureVisible(
+        find.descendant(of: find.byType(DataTable), matching: find.text('末尾1')),
+      );
+      await tester.tap(
+        find.descendant(of: find.byType(DataTable), matching: find.text('末尾1')),
+      );
       await tester.pumpAndSettle();
       expect(find.text('末尾1の内訳'), findsOneWidget);
       expect(find.byType(MachineDataTable), findsOneWidget);
@@ -193,14 +341,48 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.textContaining('7件（台×日）'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.textContaining('7件（台×日）'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byType(DropdownButtonFormField<PscubeSuffixPeriod>),
+      -400,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.byType(DropdownButtonFormField<PscubeSuffixPeriod>));
     await tester.pumpAndSettle();
     await tester.tap(find.text('過去7日').last);
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.textContaining('7台・49件（台×日）'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.textContaining('7台・49件（台×日）'), findsOneWidget);
+    expect(find.byKey(const ValueKey('suffix-period-ranking')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('suffix-day-ranking')),
+      -500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    // Period selection must not relabel the selected day as a period winner.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('suffix-day-ranking')),
+        matching: find.textContaining('の末尾順位'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byTooltip('前の記録日'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.textContaining('7台・42件（台×日）'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.textContaining('7台・42件（台×日）'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

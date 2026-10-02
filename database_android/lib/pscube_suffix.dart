@@ -79,6 +79,46 @@ class PscubeSuffixReport {
   int get racks => summaries.fold(0, (n, s) => n + s.racks);
   int get days =>
       summaries.expand((s) => s.entries.map((e) => e.$1.day)).toSet().length;
+
+  /// Rank at the precision shown on screen so equal displayed points tie.
+  List<PscubeSuffixSummary> get ranked {
+    final result = summaries.where((s) => s.averageScore != null).toList();
+    result.sort((a, b) {
+      final score = _shownScore(b).compareTo(_shownScore(a));
+      return score != 0 ? score : a.suffix.compareTo(b.suffix);
+    });
+    return result;
+  }
+
+  double _shownScore(PscubeSuffixSummary s) =>
+      double.parse(s.averageScore!.toStringAsFixed(1));
+  int rankOf(PscubeSuffixSummary summary) =>
+      1 + ranked.where((s) => _shownScore(s) > _shownScore(summary)).length;
+  List<PscubeSuffixSummary> get leaders =>
+      ranked.where((s) => rankOf(s) == 1).toList();
+
+  /// Reuse the existing record scores; do not score each historical day again.
+  List<PscubeSuffixReport> get daily {
+    final dates =
+        summaries.expand((s) => s.entries.map((e) => e.$1.day)).toSet().toList()
+          ..sort((a, b) => b.compareTo(a));
+    return [
+      for (final day in dates)
+        PscubeSuffixReport(
+          summaries: [
+            for (final s in summaries)
+              PscubeSuffixSummary(
+                s.suffix,
+                s.entries.where((e) => e.$1.day == day).toList(),
+              ),
+          ],
+          excludedInvalid: 0,
+          excludedSuffix: 0,
+          start: day,
+          end: day,
+        ),
+    ];
+  }
 }
 
 PscubeSuffixReport summarizePscubeSuffixes(
