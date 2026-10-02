@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 最新mainのWindows検証・EXE/APK 0.5.18（Codex、2026-10-02）
+
+- `9abd6c7`までの最新mainを正本へ取り込み、Cookie3修正と後続の共通閲覧画面・末尾印を保持。実WebView2でHTTP403後のfailed NavigationCompletedによる本文置換と、エラーHTMLのdata URIで元URLを失う問題を修正。小窓カードの高さも修正。`31b3cbb`をmainへpushしてEXE/APKをビルド。
+- PC235件、Flutter417件、303番台の既存実データ1件、JS/Chromium回帰成功。analyzeはerror/warning0・info17（`--no-fatal-infos`）。両サイトの実WebView2でCookie/localStorageの再起動保持・同URLreload・fragment・HTTP403でOFF/本文保持・接続失敗後の復帰・一時DBの不変を確認。
+- 3EXEの内蔵コード/JS/DLLを照合し、メイン画面から両補助EXEの起動とAPI初期化成功。WebView2 `154.0.4258.48`。通常rootが既存databaseであることを確認し、利用者data直下13ファイルのSHA-256不変。検証は明示的`--smoke-local`で一時DB/ページへ切り替えた。
+- 配布：正本`database/bin`の3フォルダ。APK `a/work/outputs/database-0.5.18-2026100202.apk`、92,686,361 bytes、SHA-256 `97E3F06B105CA822CE560D203508EAAF988DF1671634B4CA5DF84C1FEE1B3C6A`。接続端末の旧APKと署名一致、versionCode増加確認。APKインストール・新APKの実機WebViewは未実施。非公開アーカイブ抽出は資料がなくSKIP。詳細と失敗/警告は`database/WINDOWS_COOKIE_VALIDATION_20261002.md`、ログは`a/work/outputs`。
+
+
 ## Cookie変更の既存動作への影響を再検討・追加修正（Codex、2026-10-02）
 
 - 利用者指定：今までの動作への影響を再検討。最新 `44ffa13` のmainを取り込み、メルヘン/P’s CUBEのAndroid・PCの通常取り込み・移動・認証・保存を確認。

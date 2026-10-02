@@ -24,7 +24,7 @@ def child(site, phase, folder, base, recovery):
     import webview
     import browser_import as meruhen
     import pscube_import as pscube
-    from pscube_connection import BrowserConnection
+    from pscube_connection import BrowserConnection, reopen_page
 
     module = meruhen if site == 'meruhen' else pscube
     allowed = lambda url: urlparse(url or '').netloc in {urlparse(base).netloc, urlparse(recovery).netloc}
@@ -134,7 +134,9 @@ def child(site, phase, folder, base, recovery):
             # A real localhost HTTP rejection retains its own consent document.
             js("fetch('/control?status=403')")
             wait(lambda: js('window.controlDone'), '403 control')
-            bridge.retry_page()
+            bridge.set_auto_capture(True, 60 if site == 'pscube' else 4.5)
+            assert auto()['enabled']
+            reopen_page(window, window.get_current_url())
             try:
                 wait(lambda: c.failure and c.failure['kind'] == 'HTTP', 'native HTTP403 detected')
             except AssertionError:
@@ -142,7 +144,7 @@ def child(site, phase, folder, base, recovery):
                                           'failure': c.failure, 'events': events}
                 raise
             wait(lambda: js("!!document.getElementById('local-consent')"), 'site consent retained')
-            assert not auto()['enabled']
+            wait(lambda: not auto()['enabled'], 'HTTP403 stops auto capture')
             assert not c.showing_error
             js("window.controlDone=false;fetch('/control?status=200').then(()=>window.controlDone=true)")
             wait(lambda: js('window.controlDone'), '200 control')
