@@ -5,6 +5,7 @@
 - 利用者指定：既存版＋クローン1つ。クローンは`database P’s CUBE` / `com.keyan.database_android.pscube`。名前だけ用途を分け、両サイトの機能は既存と同じ。アプリ内の画面・採点・保存・Cookie・自動取得コードは変更しない。
 - Gradle環境変数`DATABASE_ANDROID_CLONE=pscube`でID/ラベルだけを切替。未指定は既存版のID/ラベル。Activity/Serviceは完全修飾名で元のKotlinクラスを参照する。APKごとの規則に従いpubspecは0.5.21+2026100303へ増加。
 - 既存版と別のDB/Cookie領域になり、Cookieはクローン内で手動認証。既存版の削除・データ消去・自動移行はしない。実機の同時取り込みと画面OFF継続は未確認。詳細`database_android/ANDROID_CLONE_BUILD.md`。
+- ソース`785ac99`からreleaseビルド成功。APK `a/work/outputs/database-pscube-clone-0.5.21-2026100303.apk`、92,686,385 bytes、SHA256 `10B3958AA099DEB705DE19FF565AD17F21D8F1E1EC0CD93A0DBF02811A7F2C3B`。aaptのID/名前/version、署名、DEXの起動/サービスクラスを確認。元APKと3 ABIのlibapp.so・assets47ファイル一致。通常ビルドの元ID/名前も生成Manifestで確認。実機インストール/同時取り込みは未実施、既存seedのSHA不変。
 
 ## P’s CUBEのPC・Androidランダム待機（Codex、2026-10-03）
 
