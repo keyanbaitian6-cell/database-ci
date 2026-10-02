@@ -4,7 +4,8 @@
 
 - 利用者がPC版を試す間のAndroid版ビルドとインストールコマンドを依頼。PCと同じく、保存済みの設置台数未満なら約2秒の安定だけでは終えず、各機種で毎回下までスクロールする修正。最大70回、台数一致の保存ガード、台別取得、P’s CUBE初期7.1秒・メルヘン3.5秒を維持。
 - 関連21件・全Flutter425件成功、analyze error/warning0・既存info17。一時DB/疑似時計で2機種の遅延6→31台、上限、ページ移動中断、設置台数読取による記録不変を確認。端末の現行0.5.19/2026100203は読み取りのみ。
-- pubspecを0.5.20+2026100301へ増加。APKビルドと署名確認結果はこの節に追記。インストール・新APKの実機WebView/実サイトは未実施。詳細 `database_android/PSCUBE_LIST_WAIT_FIX_20261003.md`。
+- ソース `5c6027265a2de31fd88f250082d727a2f44cfbb0` をmainへ反映し、`flutter build apk --release --no-pub` 成功。APK `a/work/outputs/database-0.5.20-2026100301.apk`、92,686,361 bytes、SHA-256 `8B819E91574106732337F1E4CA3A027172B333C05FEE5B4AB1A48902EF69DDE6`。aaptで0.5.20/2026100301を確認、apksignerで署名有効・前回0.5.19 APKと証明書一致。ローカルseedのSHA不変も確認。
+- 接続端末 `RFGL146LVVW` は0.5.19/2026100203で、新APKのversionCodeはそれより大きい。上書きは `adb -s RFGL146LVVW install -r <上記APKの絶対パス>`。アンインストール・データ消去は不要。インストール・新APKの実機WebView/実サイトは未実施。詳細 `database_android/PSCUBE_LIST_WAIT_FIX_20261003.md`、マニフェスト `a/work/outputs/android-list-wait-artifact-20261003.json`。
 
 ## PC P’s CUBE：表示6台・設置31台で3回失敗後に待機（Codex、2026-10-02）
 
