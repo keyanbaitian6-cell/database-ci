@@ -83,11 +83,16 @@ async function install(url, api) {
 }
 await install(mUrl, { result: { kind: '全台一覧', remaining: 2, next_url: `${base}nc-v06-001.php?cd_dai=1#20261001`, backup: 'バックアップ済み' } });
 assert.equal(await page.locator('#database-pscube-auto').innerText(), '自動取り込み：OFF（押すと開始）', '起動時はOFF');
-assert.equal(await page.locator('#database-pscube-interval').inputValue(), '10', 'P’s CUBEは初期10秒');
+assert.equal(await page.locator('#database-pscube-interval').inputValue(), '7.1', 'PCのP’s CUBEは初期7.1秒');
+assert.equal(await page.locator('#database-pscube-interval').getAttribute('step'), '0.1');
+assert.match(await page.locator('#database-pscube-card label').innerText(), /7\.1秒/);
+await page.locator('#database-pscube-interval').evaluate(e => { e.value = '7.2'; e.dispatchEvent(new Event('input')); });
+assert.match(await page.locator('#database-pscube-card label').innerText(), /7\.2秒/);
+await page.locator('#database-pscube-interval').evaluate(e => { e.value = '7.1'; e.dispatchEvent(new Event('input')); });
 // ON/OFFの切り替えはPython側へ頼み、返ってきた状態を表示する。
 await page.locator('#database-pscube-auto').click();
 await page.waitForFunction(() => document.getElementById('database-pscube-auto').textContent.includes('ON'));
-assert.deepEqual(await page.evaluate(() => window.__calls[0]), ['auto', true, 10]);
+assert.deepEqual(await page.evaluate(() => window.__calls[0]), ['auto', true, 7.1]);
 assert.equal(await page.locator('#database-pscube-capture').isDisabled(), true, 'ONの間は手動の取り込みを押せない');
 assert.equal(await page.locator('#database-pscube-interval').isDisabled(), true, 'ONの間は間隔を変えられない');
 assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('database-pscube-auto')).backgroundColor), 'rgb(8, 125, 89)');

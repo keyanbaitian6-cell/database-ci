@@ -563,7 +563,7 @@ class AutoPilot:
     """
     MAX_FAILURES = 3
     # P’s CUBEの間隔（秒）。サイトに止められないよう、メルヘン（0.1〜4.5秒）より長くする。
-    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 5, 60, 10
+    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 5, 60, 7.1
     # 対象のページなのにデータが出ない（人間確認の画面でもない）状態が、この回数・秒数続いたら
     # 止められたとみなして自動取り込みをOFFにする（放置しても叩き続けない。利用者の選択、2026-10-01）。
     BLOCK_CHECKS, BLOCK_SECONDS = 5, 60
@@ -763,10 +763,10 @@ def overlay_script(capture_script, index_url):
       label.style.cssText = 'font-size:12px;display:block;color:#33445a';
       const seconds = document.createElement('input');
       seconds.id = 'database-pscube-interval';
-      seconds.type = 'range'; seconds.min = '5'; seconds.max = '60'; seconds.step = '1'; seconds.value = '10';
+      seconds.type = 'range'; seconds.min = '5'; seconds.max = '60'; seconds.step = '0.1'; seconds.value = '7.1';
       seconds.style.width = '100%';
       const value = document.createElement('span');
-      value.textContent = '間隔：10秒';
+      value.textContent = '間隔：7.1秒';
       label.append(value, seconds);
       const status = document.createElement('div');
       status.id = 'database-pscube-auto-status';
@@ -851,12 +851,12 @@ def overlay_script(capture_script, index_url):
         auto.disabled = autoChanging;
         seconds.disabled = autoEnabled || autoChanging;
         seconds.value = String(state.seconds);
-        value.textContent = '間隔：' + Number(state.seconds).toFixed(0) + '秒';
+        value.textContent = '間隔：' + Number(state.seconds).toFixed(1) + '秒';
         status.textContent = state.message;
         if (!window.__pscubeBusy) button.disabled = autoEnabled && !isRoot;
         button.style.opacity = button.disabled ? '.5' : '1';
       };
-      seconds.oninput = () => { value.textContent = '間隔：' + Number(seconds.value).toFixed(0) + '秒'; };
+      seconds.oninput = () => { value.textContent = '間隔：' + Number(seconds.value).toFixed(1) + '秒'; };
       auto.onclick = async () => {
         if (autoChanging) return;
         autoChanging = true; auto.disabled = true;

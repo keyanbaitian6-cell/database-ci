@@ -62,7 +62,7 @@ class AutoPilotTests(unittest.TestCase):
 
     def test_default_pilot_uses_the_pscube_range(self):
         pilot = AutoPilot(self.window, PROBE)
-        self.assertEqual(pilot.state()['seconds'], 10)
+        self.assertEqual(pilot.state()['seconds'], 7.1)
         with self.assertRaises(ValueError):
             pilot.configure(True, 4.5)
 
@@ -74,10 +74,13 @@ class AutoPilotTests(unittest.TestCase):
         self.assertEqual(self.window.calls, [])
 
     def test_waits_the_interval_then_waits_on_pages_that_are_not_ready(self):
-        self.pilot.configure(True, 10)
+        self.pilot.configure(True, 7.1)
         self.pilot.tick()
         self.assertEqual(self.window.calls, [], '間隔が経つまでは見ない')
-        self.wait()
+        self.clock.now = 107.0
+        self.pilot.tick()
+        self.assertEqual(self.window.calls, [], '7.0秒ではまだ開始しない')
+        self.clock.now = 107.1
         self.window.probe = {'ready': False, 'reason': '台別7日分の表示待ち（人間確認・同意の画面なら手動で操作してください）'}
         self.pilot.tick()
         self.assertEqual(self.window.calls, ['probe'])

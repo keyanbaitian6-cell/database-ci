@@ -1,5 +1,11 @@
 # database AI共同作業メモ
 
+## PCのP’s CUBE自動取り込みを初期7.1秒に変更（Codex、2026-10-02）
+
+- 利用者指定：10秒から7.1秒へ。PCのみ対応し、Android本体・バージョン・APKは変更しない。PCの範囲5〜60秒を維持し、スライダーを0.1秒刻み、表示を小数1桁へ変更。メルヘンの初期3.5秒は維持。
+- PC関連235件成功。7.0秒では待機、7.1秒で処理開始する時計のテストと、Chromiumで初期値・表示・0.1秒操作・Python APIへ7.1を渡す検証が成功。ブラウザ検証スクリプトはdatabase_android/tool内にあるが、PCのpscube_import.pyのカードを検証するもの。
+- PC配布の再ビルドと生成EXEの起動確認結果は、この節へ追記する。サイト上の実際のクリック間隔の測定は未実施。
+
 ## 最新mainのWindows検証・EXE/APK 0.5.18（Codex、2026-10-02）
 
 - `9abd6c7`までの最新mainを正本へ取り込み、Cookie3修正と後続の共通閲覧画面・末尾印を保持。実WebView2でHTTP403後のfailed NavigationCompletedによる本文置換と、エラーHTMLのdata URIで元URLを失う問題を修正。小窓カードの高さも修正。`31b3cbb`をmainへpushしてEXE/APKをビルド。

@@ -6,8 +6,8 @@ import time
 
 class AutoCapture:
     def __init__(self, clock=time.monotonic, minimum=0.1, maximum=4.5, default=3.5):
-        # 間隔の範囲はメルヘンが0.1〜4.5秒（初期3.5）。P’s CUBEは5〜60秒（初期10）で使う
-        # （サイトに止められないよう長めに。利用者の指定、2026-10-01）。
+        # 間隔の範囲はメルヘンが0.1〜4.5秒（初期3.5）。PCのP’s CUBEは5〜60秒（初期7.1）で使う
+        # （利用者の指定：範囲は2026-10-01、PCの初期値7.1秒は2026-10-02）。
         self._lock = threading.RLock()
         self._clock = clock
         self._minimum, self._maximum = minimum, maximum
