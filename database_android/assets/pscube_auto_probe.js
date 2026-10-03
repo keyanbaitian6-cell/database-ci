@@ -46,29 +46,36 @@ function netMedalsOfProbe(raw) {
   return found;
 }
 
-/** PC/Androidの台別ページ取得。サイト自身の認証済み通信を使い、差枚を同じ記録に載せる。 */
+/** PC/Androidの台別ページ取得。サイト自身の認証済み通信を使い、差枚を同じ記録に載せる。
+ *
+ * 差枚の元データが取れない（通信失敗・拒否・形式の違い）ときも、台別の数値・グラフは今までどおり
+ * 返して保存させ、差枚は空欄のまま（0にしない）`net_warning` に理由を付ける。巡回を止めないため
+ * （利用者の選択、2026-10-03）。翌日以降にその台を開けば、過去6日分の差枚もそこで埋まる。 */
 async function capturePageWithNet(page, site = window) {
   const captured = parsePage(page);
   const url = siteUrl(page.url);
   if (!url.pathname.endsWith('nc-v06-001.php')) return captured;
   const rack = Number(url.searchParams.get('cd_dai'));
   const day = url.hash.slice(1);
-  if (!site.api?.apikey || !site.api?.token || typeof site.jQuery?.ajax !== 'function') {
-    fail('差枚の元データを取得できません。P’s CUBEの読み込み完了後に再試行してください。');
+  try {
+    if (!site.api?.apikey || !site.api?.token || typeof site.jQuery?.ajax !== 'function') {
+      fail('サイトの通信の準備ができていません');
+    }
+    const response = await new Promise((resolve, reject) => {
+      site.jQuery.ajax({
+        url: 'nc-m06-003.php',
+        data: {cd_dai: String(rack), YMD_biz: day,
+          apikey: site.api.apikey, _i: site.api.token._i, _t: site.api.token._t},
+        dataType: 'json', timeout: 12000,
+      }).done(resolve).fail((xhr) => reject(new Error(`通信に失敗しました（HTTP ${xhr?.status ?? '?'}）`)));
+    });
+    const values = netMedalsOfProbe({rack, day, graph: response?.Graph?.src});
+    return validateData({...captured, records:captured.records.map(record => ({
+      ...record, ...(values.has(record.day) ? {net_medals: values.get(record.day)} : {}),
+    }))});
+  } catch (error) {
+    return {...captured, net_warning: `差枚は未取得：${String(error?.message ?? error).slice(0, 120)}`};
   }
-  const response = await new Promise((resolve, reject) => {
-    site.jQuery.ajax({
-      url: 'nc-m06-003.php',
-      data: {cd_dai: String(rack), YMD_biz: day,
-        apikey: site.api.apikey, _i: site.api.token._i, _t: site.api.token._t},
-      dataType: 'json', timeout: 12000,
-    }).done(resolve).fail((xhr) => reject(new Error(
-      `差枚の元データを取得できません（HTTP ${xhr?.status ?? '?'}）。再試行してください。`)));
-  });
-  const values = netMedalsOfProbe({rack, day, graph: response?.Graph?.src});
-  return validateData({...captured, records:captured.records.map(record => ({
-    ...record, ...(values.has(record.day) ? {net_medals: values.get(record.day)} : {}),
-  }))});
 }
 function dayFromCompact(s) {
   if (!/^\d{8}$/.test(s || '')) fail('営業日を特定できません。日付を選んで保存してください。');

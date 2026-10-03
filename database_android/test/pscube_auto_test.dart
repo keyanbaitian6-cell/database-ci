@@ -10,6 +10,19 @@ Map<String, Object> ready(String signature, [String kind = '全台一覧']) => {
 };
 
 void main() {
+  test('差枚は未取得の理由を取り込み結果から読む（無い・壊れた結果は null）', () {
+    expect(
+      pscubeNetWarning(
+        '{"records":[],"net_warning":"差枚は未取得：通信に失敗しました（HTTP 403）"}',
+      ),
+      '差枚は未取得：通信に失敗しました（HTTP 403）',
+    );
+    expect(pscubeNetWarning('{"records":[]}'), isNull);
+    expect(pscubeNetWarning('{"net_warning":""}'), isNull);
+    expect(pscubeNetWarning('not json'), isNull);
+    expect(pscubeNetWarning('[1]'), isNull);
+  });
+
   test('確認画面・読み込み中・対象外は理由を出して待つ（押さない）', () {
     final d = pscubeAutoDecision(
       {'ready': false, 'reason': '台別7日分の表示待ち（人間確認・同意の画面なら手動で操作してください）'},

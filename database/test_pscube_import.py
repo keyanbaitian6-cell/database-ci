@@ -80,6 +80,66 @@ class PscubeImportTests(unittest.TestCase):
         self.assertEqual(len(data['records']), 14)
         self.assertEqual(data['records'][0]['my'], 1921)
 
+    def rack_history(self, machine, rack, last_day, nets):
+        rows = []
+        for ago in range(7):
+            day = (date.fromisoformat(last_day) - timedelta(days=ago)).isoformat()
+            row = self.record(machine, rack, day)
+            row['graph'] = {'kind': 'daily', 'zero_y': 10, 'points': [[0, 10], [1, 6]]}
+            if day in nets:
+                row['net_medals'] = nets[day]
+            rows.append(row)
+        return rows
+
+    def test_net_medals_are_kept_through_table_recapture_backup_and_filled_on_the_next_day(self):
+        machine = self.machines[0]
+        self.store.import_page(self.page(self.index_url, [machine]), self.index_url)
+        record = self.record(machine, 1120)
+        table = self.page(machine['url'], [dict(machine, expected_count=None)], [record])
+        self.store.import_page(table, machine['url'])
+        # 差枚の元データが取れなかった台：数値・グラフは保存し、差枚は空欄（0にしない）で次へ進む。
+        missing = self.page(record['detail_url'], [dict(machine, expected_count=None)],
+                            self.rack_history(machine, 1120, self.day, {}))
+        missing['net_warning'] = '差枚は未取得：通信に失敗しました（HTTP 403）'
+        result = self.store.import_page(missing, record['detail_url'])
+        self.assertEqual(result['net_warning'], missing['net_warning'])
+        self.assertIsNone(result['next_url'])
+        saved = {r['day']: r for r in self.store.export_payload('backup')['records']}
+        self.assertEqual(len(saved), 7)
+        self.assertTrue(all('net_medals' not in r or r['net_medals'] is None for r in saved.values()))
+        self.assertEqual(saved[self.day]['graph']['kind'], 'daily')
+        # 手動の再取り込み（同じ台別ページ）で差枚が入る。MYとは別の値。
+        nets = {self.day: 14118, '2026-09-30': -250}
+        retry = self.page(record['detail_url'], [dict(machine, expected_count=None)],
+                          self.rack_history(machine, 1120, self.day, nets))
+        self.assertNotIn('net_warning', self.store.import_page(retry, record['detail_url']))
+        # 一覧の再取り込み（差枚なし・同じ数値）でも差枚は消えない。
+        self.store.import_page(table, machine['url'])
+        saved = {r['day']: r for r in self.store.export_payload('backup')['records']}
+        self.assertEqual((saved[self.day]['net_medals'], saved[self.day]['my']), (14118, 1921))
+        self.assertEqual(saved['2026-09-30']['net_medals'], -250)
+        self.assertIsNone(saved['2026-09-29'].get('net_medals'))
+        # 翌日の巡回でその台を開けば、前日までの空欄も埋まる（サイトにある7日分）。
+        next_day = '2026-10-02'
+        table2 = self.page(machine['url'], [dict(machine, expected_count=None)], [self.record(machine, 1120, next_day)])
+        self.assertEqual(self.store.import_page(table2, machine['url'])['next_url'],
+                         self.record(machine, 1120, next_day)['detail_url'])
+        later = self.rack_history(machine, 1120, next_day, {next_day: 300, self.day: 14118, '2026-09-29': 42})
+        self.store.import_page(self.page(self.record(machine, 1120, next_day)['detail_url'],
+                                         [dict(machine, expected_count=None)], later),
+                               self.record(machine, 1120, next_day)['detail_url'])
+        saved = {r['day']: r for r in self.store.export_payload('backup')['records']}
+        self.assertEqual((saved[next_day]['net_medals'], saved['2026-09-29']['net_medals']), (300, 42))
+        # バックアップから別のPCへ復元しても差枚は残る。
+        backup = Path(self.tmp.name) / 'pscube-backup.json'
+        backup.write_text(json.dumps(self.store.export_payload('backup'), ensure_ascii=False), encoding='utf-8')
+        other = PscubeStore(Path(self.tmp.name) / 'other.sqlite3')
+        self.addCleanup(other.close)
+        other.import_backup(backup)
+        restored = {r['day']: r for r in other.export_payload('backup')['records']}
+        self.assertEqual(restored[self.day]['net_medals'], 14118)
+        self.assertEqual(restored['2026-09-29']['net_medals'], 42)
+
     def test_racks_without_any_hit_are_saved_but_their_seven_day_page_is_skipped(self):
         # 当たりが1回もない台（0回転を含む）は、数値は保存し、台別7日分は取りに行かない。
         self.machines[0]['expected_count'] = 3

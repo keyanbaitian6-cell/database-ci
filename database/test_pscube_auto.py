@@ -169,6 +169,17 @@ class AutoPilotTests(unittest.TestCase):
         self.pilot.tick()
         self.assertEqual(self.window.calls.count('start'), 4)
 
+    def test_saved_rack_without_net_medals_says_so_and_continues(self):
+        self.pilot.configure(True, 10)
+        self.window.probe = page('A', '台別7日分')
+        self.wait(10)
+        self.pilot.tick()
+        self.pilot.finished(result={'kind': '台別7日分', 'remaining': 4, 'next_url': 'x',
+                                    'net_warning': '差枚は未取得：通信に失敗しました（HTTP 403）'})
+        self.assertTrue(self.pilot.state()['enabled'], '差枚が取れなくても巡回は止めない')
+        self.assertIn('差枚は未取得', self.message())
+        self.assertIn('A', self.pilot.done)
+
     def test_turns_itself_off_when_nothing_is_left(self):
         self.pilot.configure(True, 5)
         self.window.probe = page('A', '台別7日分')

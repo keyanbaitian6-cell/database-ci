@@ -464,8 +464,12 @@ class PscubeStore:
             next_url, remaining = data['machines'][0]['url'], len(data['machines'])
         else:
             next_url, remaining = self.next_target(day)
-        return {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
-                'kind': '機種一覧' if is_index else '全台一覧' if is_table else '台別7日分'}
+        result = {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
+                  'kind': '機種一覧' if is_index else '全台一覧' if is_table else '台別7日分'}
+        if is_rack and isinstance(data.get('net_warning'), str):
+            # 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
+            result['net_warning'] = data['net_warning'][:200]
+        return result
 
     def next_target(self, day=None):
         day = day or self._state('last_day')
@@ -778,7 +782,8 @@ class AutoPilot:
                     self.auto.configure(False, self.auto.state()['seconds'])
                     self.auto.pause('すべて取り込みました（自動取り込みを停止しました）')
                 elif enabled:
-                    self.auto.pause(f'ON・{result.get("kind", "")}を保存・残り{result.get("remaining", "?")}件・次のページへ')
+                    self.auto.pause(f'ON・{result.get("kind", "")}を保存・残り{result.get("remaining", "?")}件・次のページへ'
+                                    + ('（差枚は未取得）' if result.get('net_warning') else ''))
         self.render()
 
 
@@ -857,7 +862,7 @@ def overlay_script(capture_script, index_url):
       window.pscubeCaptureFailed = error => { idle(String(error)); };
       window.pscubeCaptureComplete = result => {
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
-        idle(`${result.kind}を保存 · 残り${result.remaining} · ${result.backup || ''}`);
+        idle(`${result.kind}を保存 · 残り${result.remaining}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
         capturedUrl = null;
         if (result.next_url) location.href = result.next_url;
       };

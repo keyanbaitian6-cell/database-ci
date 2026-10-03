@@ -60,8 +60,31 @@ try {
       return request;
     };
   });
+  // 差枚の元データが取れなくても、台別の数値・グラフは保存用に返す。差枚は空欄（0にしない）で理由を付ける。
   const failed = JSON.parse(await page.evaluate(script));
-  assert.match(failed.error, /差枚の元データを取得できません（HTTP 403）/);
+  assert.equal(failed.error, undefined, failed.error);
+  assert.equal(failed.records.length, 7);
+  assert.ok(failed.records.every(r => r.net_medals === undefined || r.net_medals === null));
+  assert.equal(failed.records[0].my, 120);
+  assert.match(failed.net_warning, /差枚は未取得：通信に失敗しました（HTTP 403）/);
+  assert.equal(failed.source_url, url);
+  // 形式の違う応答・サイトの通信の準備ができていない場合も同じ。
+  await page.evaluate(() => {
+    window.jQuery.ajax = () => {
+      const request = {
+        done(callback) { queueMicrotask(() => callback({Graph:{src:{datas:{g:[], p:[]}}}})); return request; },
+        fail() { return request; },
+      };
+      return request;
+    };
+  });
+  const malformed = JSON.parse(await page.evaluate(script));
+  assert.equal(malformed.records.length, 7);
+  assert.match(malformed.net_warning, /差枚は未取得：P’s CUBEのグラフJSONではありません/);
+  await page.evaluate(() => { delete window.api; });
+  const unready = JSON.parse(await page.evaluate(script));
+  assert.equal(unready.records.length, 7);
+  assert.match(unready.net_warning, /差枚は未取得：サイトの通信の準備ができていません/);
   await page.close();
-  console.log('PASS: PC/Android rack capture saves exact net values and rejects source failures');
+  console.log('PASS: PC/Android rack capture saves exact net values; source failures keep the rack data with net left empty');
 } finally { await browser.close(); }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'auto_capture_state.dart';
@@ -45,6 +46,18 @@ AutoCaptureState pscubeRandomAutoState({
     intervalTenths: 65,
     selectInterval: () => Duration(microseconds: 5000000 + draw(30001) * 100),
   );
+}
+
+/// 台別ページの取り込み結果に付いた「差枚は未取得」の理由（無ければ null）。
+/// 差枚の元データが取れなくても数値・グラフは保存し、差枚は空欄のまま進む（2026-10-03）。
+String? pscubeNetWarning(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    final warning = decoded is Map ? decoded['net_warning'] : null;
+    return warning is String && warning.isNotEmpty ? warning : null;
+  } on FormatException {
+    return null;
+  }
 }
 
 /// 止められた気配の見張り（PC版 `AutoPilot` と同じ規則）。対象のページなのにデータが出ない

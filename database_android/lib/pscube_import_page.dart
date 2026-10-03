@@ -460,12 +460,15 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         throw const FormatException('読み取り中にページが切り替わりました。');
       }
       // 台別ページでは元グラフの通信も行う。WebViewの評価結果はPromiseを
-      // 待たないため、ページ内で完了を記録してから読み取る。
+      // 待たないため、ページ内で完了を記録してから読み取る。前の読み取りの
+      // 遅れた結果を取り違えないよう、読み取りごとの番号で結果を分ける。
+      final run = DateTime.now().microsecondsSinceEpoch;
       await _web.runJavaScript('''
+        window.__pscubeCaptureRun = $run;
         window.__pscubeCaptureResult = null;
         Promise.resolve(${_script!}).then(
-          value => { window.__pscubeCaptureResult = value; },
-          error => { window.__pscubeCaptureResult = JSON.stringify({error: String(error)}); }
+          value => { if (window.__pscubeCaptureRun === $run) window.__pscubeCaptureResult = value; },
+          error => { if (window.__pscubeCaptureRun === $run) window.__pscubeCaptureResult = JSON.stringify({error: String(error)}); }
         );
       ''');
       var complete = false;
@@ -476,7 +479,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           throw const FormatException('読み取り中にページが切り替わりました。');
         }
         final ready = await _web.runJavaScriptReturningResult(
-          'window.__pscubeCaptureResult != null',
+          'window.__pscubeCaptureRun === $run && window.__pscubeCaptureResult != null',
         );
         if (ready == true || ready.toString() == 'true') {
           complete = true;
@@ -485,7 +488,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         await Future<void>.delayed(const Duration(milliseconds: 200));
       }
       if (!complete) {
-        throw const FormatException('差枚の元データの読み取りが時間切れになりました。再試行してください。');
+        throw const FormatException('ページの読み取りが時間切れになりました。再試行してください。');
       }
       final raw = _decodeJs(
         await _web.runJavaScriptReturningResult('window.__pscubeCaptureResult'),
@@ -499,12 +502,15 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         throw const FormatException('保存前にページが切り替わりました。');
       }
       final result = await store.importPage(raw, capturedUrl);
+      // 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
+      final netWarning = pscubeNetWarning(raw);
       if (!mounted) return;
       setState(() {
         _remaining = result.remaining;
         _status =
             _connection.failure?.message ??
-            '${result.kind}を保存しました。残り ${result.remaining} 件。';
+            '${result.kind}を保存しました。残り ${result.remaining} 件。'
+                '${netWarning == null ? '' : '（$netWarning）'}';
       });
       if (autoSignature != null) {
         _autoDone.add(autoSignature);
@@ -512,7 +518,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         if (_auto.enabled && result.nextUrl == null) {
           await _stopAuto('すべて取り込みました（自動取り込みを停止しました）');
         } else if (_auto.enabled) {
-          _autoMessage('ON・${result.kind}を保存・残り${result.remaining}件・次のページへ');
+          _autoMessage(
+            'ON・${result.kind}を保存・残り${result.remaining}件・次のページへ'
+            '${netWarning == null ? '' : '（差枚は未取得）'}',
+          );
         }
       }
       if (result.nextUrl != null && _page == page && _connection.canCapture) {
