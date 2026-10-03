@@ -1299,13 +1299,11 @@ class _ResultsPageState extends State<ResultsPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      if (machineCount > 6 || _query.text.isNotEmpty) ...[
-                        MachineSearchField(
-                          controller: _query,
-                          onChanged: () => setState(() {}),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
+                      MachineSearchField(
+                        controller: _query,
+                        onChanged: () => setState(() {}),
+                      ),
+                      const SizedBox(height: 8),
                       MachineSummaryList(
                         summaries: shown,
                         onPick: _openMachine,
@@ -1339,8 +1337,8 @@ class _ResultsPageState extends State<ResultsPage> {
                       const Spacer(),
                       // 機種ごとに出るので、目立たない灰色にする。バラエティは
                       // 別々の機種の集まりなので出さない（機種ごとの削除は
-                      // 「過去の記録」から）。
-                      if (!s.variety)
+                      // 「過去の記録」から）。台番号で一部だけを表示中も出さない。
+                      if (!s.variety && byMachine[s.machine]!.length == s.racks)
                         TextButton.icon(
                           style: TextButton.styleFrom(
                             foregroundColor: AppColors.ash,
@@ -1668,18 +1666,11 @@ class _HistoryPageState extends State<HistoryPage> {
   @override
   Widget build(BuildContext context) {
     final all = widget.controller.records;
-    // 機種名の判定は機種ごとに1回だけ（記録ごとに文字をそろえ直すと、
-    // 1文字打つたびに待たされる）。
-    final matched = <String, bool>{};
-    bool matches(String machine) => matched[machine] ??=
-        (type?.matches(machine) ?? true) &&
-        machineMatches(machine, _query.text);
-    // 1〜3台の機種（バラエティ）かどうかは、その日その店の全台で数えるので、
-    // 店舗だけで絞ってからまとめ、機種名・種別の絞り込みはまとめた後にかける。
-    // バラエティは「バラエティ」で検索すれば全台、機種名で当たればその機種の台だけ。
-    final varietyQuery =
-        _query.text.trim().isNotEmpty &&
-        machineMatches(varietyGroupName, _query.text);
+    final search = RecordQuery(_query.text);
+    final matchedTypes = <String, bool>{};
+    bool matchesType(String machine) =>
+        matchedTypes[machine] ??= type?.matches(machine) ?? true;
+    // バラエティの区分はその日・店舗の全台で決めてから検索する。
     final days = [
       for (final (day, groups) in groupHistoryByDay(
         all.where((r) => store.isEmpty || r.store == store),
@@ -1688,21 +1679,18 @@ class _HistoryPageState extends State<HistoryPage> {
           day,
           [
             for (final g in groups)
-              if (!g.variety)
-                if (matches(g.machine)) g else ...const <HistoryGroup>[]
-              else
-                ...() {
-                  final rows = [
-                    for (final r in g.rows)
-                      if (varietyQuery
-                          ? (type?.matches(r.machine) ?? true)
-                          : matches(r.machine))
-                        r,
-                  ];
-                  return rows.isEmpty
-                      ? const <HistoryGroup>[]
-                      : [g.withRows(rows)];
-                }(),
+              ...() {
+                final groupMatches = search.matchesMachine(g.machine);
+                final rows = [
+                  for (final r in g.rows)
+                    if (matchesType(r.machine) &&
+                        (groupMatches || search.matches(r)))
+                      r,
+                ];
+                return rows.isEmpty
+                    ? const <HistoryGroup>[]
+                    : [g.withRows(rows)];
+              }(),
           ],
         ),
     ].where((d) => d.$2.isNotEmpty).toList();
@@ -1723,7 +1711,7 @@ class _HistoryPageState extends State<HistoryPage> {
               : const EmptyState(
                   icon: Icons.search_off,
                   title: '条件に合う記録がありません',
-                  body: '店舗・種別・機種名の絞り込みを変えてください。',
+                  body: '店舗・種別・機種名・台番号の絞り込みを変えてください。',
                 );
         }
         final (day, groups) = days[index - 1];
@@ -1854,6 +1842,7 @@ class _HistoryPageState extends State<HistoryPage> {
             day: group.day,
             store: group.store,
             machine: group.machine,
+            query: _query.text,
             // 機種名で絞り込んだバラエティは、その機種の台だけを開く。
             only: group.variety
                 ? {for (final r in group.rows) r.machine}
@@ -1933,10 +1922,12 @@ class HistoryGroupPage extends StatefulWidget {
     required this.store,
     required this.machine,
     this.only,
+    this.query = '',
   });
   final AppController controller;
   final String day, store, machine;
   final Set<String>? only;
+  final String query;
 
   @override
   State<HistoryGroupPage> createState() => _HistoryGroupPageState();
@@ -1978,6 +1969,7 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
             final varietyNames = variety
                 ? varietyMachines(snapshot.data!.scored.values.map((e) => e.$1))
                 : const <String>{};
+            final search = RecordQuery(widget.query);
             final scored =
                 snapshot.data!.scored.values
                     .where(
@@ -1985,6 +1977,11 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
                           ? varietyNames.contains(r.$1.machine) &&
                                 (widget.only?.contains(r.$1.machine) ?? true)
                           : r.$1.machine == widget.machine,
+                    )
+                    .where(
+                      (e) =>
+                          search.matchesMachine(widget.machine) ||
+                          search.matches(e.$1),
                     )
                     .toList()
                   ..sort((a, b) => a.$1.rack.compareTo(b.$1.rack));

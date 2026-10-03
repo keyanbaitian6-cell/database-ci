@@ -153,7 +153,7 @@ class ViewerMachinePage extends StatefulWidget {
   final ViewerData data;
   final String store, machine, day;
 
-  /// 一覧の機種名の絞り込み。バラエティのときだけ、一致する機種の台に絞る。
+  /// 一覧の機種名・台番号の絞り込みを、この画面でも引き継ぐ。
   final String query;
   final ValueChanged<String>? onDayChanged;
   @override
@@ -203,10 +203,11 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
             r,
       ]..sort((a, b) => a.rack.compareTo(b.rack));
       final grouped = [for (final r in rows) (r, scoreRecord(r, data.records))];
-      _entries = variety && !machineMatches(varietyGroupName, widget.query)
+      final search = RecordQuery(widget.query);
+      _entries = !search.matchesMachine(widget.machine)
           ? [
               for (final e in grouped)
-                if (machineMatches(e.$1.machine, widget.query)) e,
+                if (search.matches(e.$1)) e,
             ]
           : grouped;
       // 候補はホームと同じ店舗・日付の全台から選び、表示中の台にだけ★を付ける。

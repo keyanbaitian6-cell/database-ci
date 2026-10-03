@@ -50,6 +50,31 @@ bool machineMatches(String machine, String query) {
   return folded.isEmpty || foldForSearch(machine).contains(folded);
 }
 
+/// 機種名の部分一致、または台番号の完全一致。数字だけなら従来の機種名検索も
+/// 残す（「3」で「ジャグラー3」も探せる）。「123番台」「#123」は台番号だけ。
+/// 1回の絞り込みで使い回し、検索語と同じ機種名を台ごとに正規化し直さない。
+class RecordQuery {
+  RecordQuery(String query) : _folded = foldForSearch(query) {
+    final match = _rackPattern.firstMatch(_folded);
+    rack = match == null ? null : int.tryParse(match.group(1)!);
+    _rackOnly =
+        match != null && (_folded.startsWith('#') || _folded.endsWith('番台'));
+  }
+
+  static final _rackPattern = RegExp(r'^#?([0-9]+)(?:番台)?$');
+  final String _folded;
+  final _machines = <String, bool>{};
+  late final int? rack;
+  late final bool _rackOnly;
+
+  bool matchesMachine(String machine) => _machines[machine] ??=
+      !_rackOnly &&
+      (_folded.isEmpty || foldForSearch(machine).contains(_folded));
+
+  bool matches(SlotRecord record) =>
+      matchesMachine(record.machine) || record.rack == rack;
+}
+
 /// 結果タブの機種一覧の1行ぶん。[variety] なら1〜3台の機種をまとめた
 /// バラエティ（[machine] は [varietyGroupName]、[machines] はまとめた機種数）。
 class MachineSummary {
@@ -101,7 +126,7 @@ Map<String, List<(SlotRecord, ScoreResult)>> groupForList(
   return groups;
 }
 
-/// 機種名の絞り込みで、まとまり [summary] の台 [rows] のうち何を出すか。
+/// 機種名・台番号の絞り込みで、まとまり [summary] の台 [rows] のうち何を出すか。
 /// 出さないなら null。バラエティは、検索語が「バラエティ」に一致すれば全台、
 /// 含む機種のどれかに一致すればその機種の台だけを出す。
 List<(SlotRecord, ScoreResult)>? filterForList(
@@ -109,11 +134,11 @@ List<(SlotRecord, ScoreResult)>? filterForList(
   List<(SlotRecord, ScoreResult)> rows,
   String query,
 ) {
-  if (machineMatches(summary.machine, query)) return rows;
-  if (!summary.variety) return null;
+  final search = RecordQuery(query);
+  if (search.matchesMachine(summary.machine)) return rows;
   final matching = [
     for (final e in rows)
-      if (machineMatches(e.$1.machine, query)) e,
+      if (search.matches(e.$1)) e,
   ];
   return matching.isEmpty ? null : matching;
 }

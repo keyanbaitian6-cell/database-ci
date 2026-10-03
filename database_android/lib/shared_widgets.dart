@@ -146,7 +146,7 @@ class DaySummaryCard extends StatelessWidget {
   }
 }
 
-/// 機種名で絞り込む入力欄。ひらがな・半角カナでも一致する（[machineMatches]）。
+/// 機種名・台番号で絞り込む共通入力欄（[RecordQuery]）。
 class MachineSearchField extends StatelessWidget {
   const MachineSearchField({
     super.key,
@@ -164,7 +164,7 @@ class MachineSearchField extends StatelessWidget {
     decoration: InputDecoration(
       isDense: true,
       prefixIcon: const Icon(Icons.search),
-      hintText: '機種名で絞り込み（例：じゃぐらー）',
+      hintText: '機種名・台番号（例：123番台）',
       suffixIcon: controller.text.isEmpty
           ? null
           : IconButton(
@@ -215,7 +215,7 @@ class MachineSummaryList extends StatelessWidget {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 12),
         child: Text(
-          '機種名に一致する機種がありません。',
+          'この日の検索条件に合う台がありません。機種名・台番号を変えるか、×で検索を解除してください。',
           style: TextStyle(color: AppColors.ash),
         ),
       );

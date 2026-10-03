@@ -678,15 +678,12 @@ class _ViewerHomeState extends State<ViewerHome> {
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
-          // バラエティを1行にまとめても検索を残す。日付・店舗を変えた後も
-          // 入力済みの検索語を解除できるようにする。
-          if (machineCount > 6 || _query.text.isNotEmpty) ...[
-            MachineSearchField(
-              controller: _query,
-              onChanged: () => setState(() {}),
-            ),
-            const SizedBox(height: 8),
-          ],
+          // 1機種だけでも台番号から探せる。
+          MachineSearchField(
+            controller: _query,
+            onChanged: () => setState(() {}),
+          ),
+          const SizedBox(height: 8),
           MachineSummaryList(summaries: shown, onPick: _openMachine),
         ],
       ],
