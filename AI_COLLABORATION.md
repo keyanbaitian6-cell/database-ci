@@ -5,7 +5,7 @@
 - 利用者の作業効率化・利便性改善依頼。Android結果・履歴とメルヘン/P’s CUBE共通閲覧画面に台番号の完全一致検索を追加。全角・`123番台`・`#123`に対応し、機種数が少なくても検索欄を表示。詳細・グラフ・日付切替へ条件を引き継ぐ。
 - 一部の台だけを表示中は機種全体の削除ボタンを非表示。検索は表示対象だけに適用し、採点・候補・バラエティ区分・保存形式を維持。
 - 関連46件成功、全体432件成功・実データ不足の既存採点テスト1件失敗（変更前でも再現）。解析error/warningなし・既存info17。Webビルドと既存Chromium回帰、全角台番号検索の実ブラウザ操作が成功。詳細 `database_android/SEARCH_USABILITY_REVIEW_20261003.md`。
-- ソース修正のみ。公開viewer更新・APK生成・実機インストールは未実施。
+- 利用者の追加許可を受け、iPhoneブラウザ向けの公開viewerも更新。公開先 `keyanbaitian6-cell/database-viewer` の `main` は `57782a472b199ea592651314a304ce2ffe97ecf7`。Pagesビルド成功、公開 `main.dart.js`・`flutter_bootstrap.js` のSHA-256がstage済み成果物と一致、seed URLは404。既存CanvasKitを維持して共通閲覧画面のChromium回帰と全角台番号検索を確認。APK生成・実機インストールは未実施。
 
 ## Androidの同機能クローン（Codex、2026-10-03）
 

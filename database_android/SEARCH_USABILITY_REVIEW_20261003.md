@@ -32,4 +32,4 @@
 
 ## 反映範囲
 
-ソースと回帰テストの変更。採点・保存形式・取得処理の変更はない。公開 `database-viewer` の更新、APK生成・端末へのインストールは今回実施していない。iPhone/Android実機での新操作は未確認。
+ソースと回帰テストの変更。採点・保存形式・取得処理の変更はない。利用者の追加許可後、公開 `database-viewer` の `main` を `57782a472b199ea592651314a304ce2ffe97ecf7` に更新した。公開先は `https://keyanbaitian6-cell.github.io/database-viewer/`。Pagesビルドは成功し、公開 `main.dart.js` と `flutter_bootstrap.js` のSHA-256はstage済み成果物と一致する。seedの公開URLは404。公開先にあるCanvasKitを維持し、起動設定のエンジン情報も一致させた。APK生成・端末へのインストールは実施していない。iPhone/Android実機での新操作は未確認。
