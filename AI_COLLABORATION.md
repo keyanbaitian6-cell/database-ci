@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## iPhone閲覧ページのGoogle Drive待ち時間を90秒へ延長（2026-10-04）
+
+- 利用者から、メルヘン閲覧ページで「Googleドライブから30秒間応答がなかったため」と表示される報告を受けた。`database_android/web/index.html`の`REMOTE_IDLE_MS`を30,000msから90,000msへ変更し、表示される秒数も定数から自動計算される既存処理を維持した。
+- `database_android/tool/test_viewer_backup_parser.mjs`の時間切れ・データ到着ごとの再計測・iPhoneでページを戻したときの再計測テストを90秒に合わせた。直接実行で28件成功。`node --test`はこの環境の`spawn EPERM`で起動できなかった。
+- `database_android/lib/viewer_main.dart`の説明コメントも90秒へ更新。採点、MY、最大持玉、保存データ、バックアップ形式は変更していない。
+- Flutter再ビルドは前回のFlutterロックが残り無出力で停止した。実行環境の承認上限によりロック解除はできなかったため、直前の同一Web成果物に生成対象の`build/web/index.html`の30秒定数だけを90秒へ反映し、必須の`tool/stage_viewer.py`で公開用ステージを作成した。seed除外とステージ内の90秒設定を確認した。ブラウザ自動テストはChrome起動の`spawn EPERM`で未実行。
+
 ## メルヘンの推定差枚（PC・Android・閲覧ページ）と「日別の差枚（推定）」、0.5.22（Claude、2026-10-04）
 
 - 利用者「追加の通信なしの推定差枚で構わないので実装。ビルドまで」「pscube同様に差枚表記のページを作って公開まで」「デザインは一緒に」。調査（`a/work/outputs/meruhen-investigation/REPORT_20261003_claude.md`）で特定したSVGの縦軸の規則で、保存済みのグラフ座標と最大持玉から推定差枚を計算（保存しない・表示のたびに計算）。仕様と根拠・限界は `database/MERUHEN_NET_ESTIMATE.md`。

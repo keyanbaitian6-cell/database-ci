@@ -644,7 +644,7 @@ class _ViewerHomeState extends State<ViewerHome> {
           ),
         if (_loading) const LinearProgressIndicator(),
         // Driveの確認中は動く表示にしない（動いている間は画面を描き直し続け、
-        // 電池を使うため）。30秒間なにも届かなければ打ち切る（web/index.html）。
+        // 電池を使うため）。90秒間なにも届かなければ打ち切る（web/index.html）。
         if (_syncing)
           const Padding(
             padding: EdgeInsets.only(bottom: 8),

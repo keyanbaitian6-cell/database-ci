@@ -174,10 +174,10 @@ test('Drive: an older one-line export with the same time is also skipped', async
   assert.equal(JSON.parse(await again.fromRemote(REMOTE, 'other')).records.length, 1);
 });
 
-test('Drive: gives up after 30 seconds without any data', async () => {
+test('Drive: gives up after 90 seconds without any data', async () => {
   const delays = [];
   const timers = {
-    // 30秒を待たずに、すぐ時間切れにする。
+    // 90秒を待たずに、すぐ時間切れにする。
     setTimeout: (callback, ms) => {
       delays.push(ms);
       return setTimeout(callback, 0);
@@ -188,11 +188,11 @@ test('Drive: gives up after 30 seconds without any data', async () => {
     options.signal.addEventListener('abort', () => reject(new Error('aborted')));
   });
   const {viewer} = remote('', {timers, fetchImpl});
-  await assert.rejects(viewer.fromRemote(REMOTE, exportedAt), /30秒間応答がなかった/);
-  assert.deepEqual(delays, [30000]);
+  await assert.rejects(viewer.fromRemote(REMOTE, exportedAt), /90秒間応答がなかった/);
+  assert.deepEqual(delays, [90000]);
 });
 
-test('Drive: the 30 seconds restart whenever data arrives', async () => {
+test('Drive: the 90 seconds restart whenever data arrives', async () => {
   const delays = [];
   let cleared = 0;
   const timers = {
@@ -210,7 +210,7 @@ test('Drive: the 30 seconds restart whenever data arrives', async () => {
   assert.equal(result.records.length, 200);
   // 最初、応答の後、そして届くたびに数え直す。最後に止める。
   assert.ok(delays.length >= stats.total + 2, `${delays.length} restarts for ${stats.total} chunks`);
-  assert.ok(delays.every((ms) => ms === 30000));
+  assert.ok(delays.every((ms) => ms === 90000));
   assert.equal(cleared, delays.length + 1);
 });
 
@@ -220,9 +220,9 @@ test('Drive: only the Google script address is read', async () => {
 });
 
 test('Drive: intermittent 404 / 5xx / network failure is retried twice, other errors are not', async () => {
-  // やり直しの待ち（1.5秒・3秒）はすぐ進め、30秒の打ち切りはそのままにする。
+  // やり直しの待ち（1.5秒・3秒）はすぐ進め、90秒の打ち切りはそのままにする。
   const timers = {
-    setTimeout: (callback, ms) => setTimeout(callback, ms === 30000 ? ms : 0),
+    setTimeout: (callback, ms) => setTimeout(callback, ms === 90000 ? ms : 0),
     clearTimeout,
   };
   const ok = () => ({ok: true, status: 200, headers: {get: () => 'application/json'},
@@ -277,7 +277,7 @@ test('Drive: time spent with the page hidden (iPhone app switch) is not counted'
   assert.deepEqual(events, ['clear'], '裏に回ったら打ち切りの時計を止める');
   document.visibilityState = 'visible';
   listeners.visibilitychange();
-  assert.deepEqual(events, ['clear', 'clear', 'set 30000'], '戻ったら30秒を数え直す');
+  assert.deepEqual(events, ['clear', 'clear', 'set 90000'], '戻ったら90秒を数え直す');
   release();
   assert.equal(JSON.parse(await pending).records.length, 200);
   assert.equal(listeners.visibilitychange, undefined, '終わったら見張りを外す');
