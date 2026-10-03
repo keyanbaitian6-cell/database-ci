@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## P’s CUBEの差枚をPC・Androidの取り込みで保存（PR #1 を引き継いでmainへ、Claude、2026-10-03）
+
+- 依頼：ChatGPT/Codexが中断したPR #1（`codex/handoff-pscube-net-pc-android-20261003`）をレビュー・修正・検証してmainへ。差枚＝`Graph.src` の各日の終点Y−始点Y（×`anjYUnit`）。MYとは別。メルヘンは見送り。
+- レビュー結果：差枚の計算（`web/pscube/data.mjs` の `netMedalsOfProbe`）、生成スクリプト（ソースと一致・末尾の埋め込み可）、PCのPromise待ちとページ同一性の再確認は妥当。台別ページごとに `nc-m06-003.php` へサイト自身の認証値で1回通信が増える（認証値の使い回しはiPhoneショートカットで1120番台の実績あり、PC・Android実機は未確認）。
+- **利用者の選択で変更**：差枚の元データが取れない（通信失敗・拒否・形式違い・準備前）ときも、台別の数値・グラフは保存して次へ進み、差枚は空欄（0にしない）で `net_warning`「差枚は未取得：…」をPCのカード・自動の状態、Androidの状態欄に出す（途中実装は保存を止め、3回失敗でその台に待機＝夜間の巡回が止まっていた）。
+- Android：完了待ちを読み取りごとの番号で分け、前の読み取りの遅れた結果を取り違えない。`pscubeNetWarning`（`lib/pscube_auto.dart`）。
+- 古い記録の差枚：日々の巡回で当たりのある台の台別ページを開くたび、サイトにある7日分の差枚が数値の同じ既存記録へ入る（`_merge`）。手動でもその台別ページで「未取得を取り込む」で再取り込みできる（取り込み済みでも断らない）。差枚未取得の別管理は追加していない。当たり0回の台は従来どおり台別へ行かないので差枚は空欄のまま。
+- 検証：PC本体174件・P’s CUBE（`test_pscube_*`）全件、JS関連（net/data15/auto/sync9/scoring13/drive/scroll）成功、Flutter434件成功・失敗1件は実データ（303番台seed）が必要な既存テスト（例示seedのworktreeのため）、変更Dartのanalyze問題なし。`test_pscube_capture.mjs` は非公開アーカイブが無くSKIP（未実行扱い）、`test_pscube_browser.mjs` はWeb版のビルドが必要で未実行。**実WebView2（PC）**：新規 `database/tests/smoke_pscube_net_capture.py`（一時DB、全通信をWebView2内で応答し実サイトに接続しない）で自動の一覧→全台→台別、差枚7日分（1120例+14,118）保存・MY不変、取得拒否でも台別保存＋差枚空欄を確認。`smoke_cookie_retry.py` は間隔指定60秒がランダム5〜8秒化（`7e67027`）で拒否されていたため8秒へ直して成功。
+- 反映：PRブランチへpush後、mainを `e79bc22` へ早送り（GitHubでPR #1はMERGED）。`database/bin` 再ビルド（ZIPなし）、`smoke_frozen_capture.py`・`smoke_frozen_runtime.py`（`a/work/outputs/frozen-runtime-pscube-net-20261003.json`）成功。ビルド前後で `database/data` の `database.sqlite3`・`last_save.json` が変化＝22:56に利用者のメルヘン取り込み窓（22:42起動）が保存したもの。P’s CUBEのデータは不変。
+- **APKは未ビルド**（利用者「Android版のビルドはお願いしてからで」「まだ修正あるかも」）。ビルド時は通常版とクローン版（`com.keyan.database_android.pscube`、端末に0.5.21/2026100303）の両方を検討。端末の通常版は0.5.21/2026100302。実サイト・Android実機での差枚取得は未確認。
+
 ## P’s CUBEの元グラフから差枚を取り込む（Codex、2026-10-03）
 
 - 利用者がiPhoneショートカットで取得した2026-10-02・1120番台の実応答を確認。`Graph.src.datas.g`の`YMD_biz`と`xField`/`yField`で日別系列を選び、`datas.p`の先頭Y=7,092、末尾Y=21,210から差枚+14,118枚と算出。バックアップのMY=14,209とは別値。認証情報や実応答はコミットしない。
