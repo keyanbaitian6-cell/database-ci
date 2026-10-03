@@ -134,7 +134,7 @@ def child(site, phase, folder, base, recovery):
             # A real localhost HTTP rejection retains its own consent document.
             js("fetch('/control?status=403')")
             wait(lambda: js('window.controlDone'), '403 control')
-            bridge.set_auto_capture(True, 60 if site == 'pscube' else 4.5)
+            bridge.set_auto_capture(True, 8 if site == 'pscube' else 4.5)  # P's CUBE: 5-8 s random (7e67027)
             assert auto()['enabled']
             reopen_page(window, window.get_current_url())
             try:
