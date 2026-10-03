@@ -5,9 +5,10 @@ import 'models.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 
-/// 1日分の差枚（元グラフを取得できた台だけ）。差枚の無い台は0にせず数えない。
-class PscubeDayNet {
-  const PscubeDayNet({
+/// 1日分の差枚（P’s CUBEは元グラフの確定差枚、メルヘンはグラフと最大持玉からの推定差枚。
+/// 差枚の無い台は0にせず数えない）。
+class DayNet {
+  const DayNet({
     required this.day,
     required this.total,
     required this.captured,
@@ -15,19 +16,19 @@ class PscubeDayNet {
   });
   final String day;
 
-  /// 差枚を取得できた台の合計。1台も無い日は null（0ではない）。
+  /// 差枚がある台の合計。1台も無い日は null（0ではない）。
   final int? total;
 
-  /// 差枚を取得できた台数／その日の記録の台数（数値異常の台は除く）。
+  /// 差枚がある台数／その日の記録の台数（数値異常の台は除く）。
   final int captured, racks;
 
-  /// 取得できた台の平均（四捨五入）。1台も無い日は null。
+  /// 差枚がある台の平均（四捨五入）。1台も無い日は null。
   int? get average => captured == 0 ? null : (total! / captured).round();
 }
 
-/// [store]（P’s CUBEの店舗・貸玉）の日ごとの差枚。新しい日が先。
+/// [store] の日ごとの差枚。新しい日が先。
 /// 別店舗・別貸玉は混ぜない。サイトの数値が異常な台は合計・平均・台数に入れない。
-List<PscubeDayNet> pscubeDailyNet(Iterable<SlotRecord> records, String store) {
+List<DayNet> dailyNet(Iterable<SlotRecord> records, String store) {
   final byDay = <String, List<SlotRecord>>{};
   for (final r in records) {
     if (r.store == store && !hasImplausibleNumbers(r)) {
@@ -40,9 +41,9 @@ List<PscubeDayNet> pscubeDailyNet(Iterable<SlotRecord> records, String store) {
       () {
         final nets = [
           for (final r in byDay[day]!)
-            if (r.netMedals != null) r.netMedals!,
+            if (r.netValue != null) r.netValue!,
         ];
-        return PscubeDayNet(
+        return DayNet(
           day: day,
           total: nets.isEmpty ? null : nets.reduce((a, b) => a + b),
           captured: nets.length,
@@ -53,8 +54,9 @@ List<PscubeDayNet> pscubeDailyNet(Iterable<SlotRecord> records, String store) {
 }
 
 /// 月（`2026-10`）ごとの日別の差枚。日付をタップすると、その日を選んでホームへ戻る。
-class PscubeDailyNetPage extends StatefulWidget {
-  const PscubeDailyNetPage({
+/// P’s CUBEとメルヘンで同じ画面。メルヘンは推定差枚であることを見出しと注記で示す。
+class DailyNetPage extends StatefulWidget {
+  const DailyNetPage({
     super.key,
     required this.records,
     required this.store,
@@ -65,14 +67,12 @@ class PscubeDailyNetPage extends StatefulWidget {
   final String store, day;
   final ValueChanged<String>? onDayChanged;
   @override
-  State<PscubeDailyNetPage> createState() => _PscubeDailyNetPageState();
+  State<DailyNetPage> createState() => _DailyNetPageState();
 }
 
-class _PscubeDailyNetPageState extends State<PscubeDailyNetPage> {
-  late final List<PscubeDayNet> _all = pscubeDailyNet(
-    widget.records,
-    widget.store,
-  );
+class _DailyNetPageState extends State<DailyNetPage> {
+  late final bool _estimated = !isPscubeStore(widget.store);
+  late final List<DayNet> _all = dailyNet(widget.records, widget.store);
   late String _month = widget.day.substring(0, 7);
   int _sortColumn = 0;
   bool _ascending = true;
@@ -84,14 +84,14 @@ class _PscubeDailyNetPageState extends State<PscubeDailyNetPage> {
   static String _monthLabel(String month) =>
       '${month.substring(0, 4)}年${int.parse(month.substring(5))}月';
 
-  List<PscubeDayNet> _rows() {
+  List<DayNet> _rows() {
     final rows = [
       for (final d in _all)
         if (d.day.startsWith(_month)) d,
     ];
-    int compare(PscubeDayNet a, PscubeDayNet b) {
+    int compare(DayNet a, DayNet b) {
       // 差枚の無い日は、並べ替えの向きにかかわらず最後に置く。
-      int? value(PscubeDayNet d) => switch (_sortColumn) {
+      int? value(DayNet d) => switch (_sortColumn) {
         1 => d.total,
         2 => d.average,
         _ => null,
@@ -128,7 +128,7 @@ class _PscubeDailyNetPageState extends State<PscubeDailyNetPage> {
     const bold = TextStyle(fontWeight: FontWeight.w800);
     String medals(int? value) => value == null ? '—' : signedMedals(value);
     return Scaffold(
-      appBar: AppBar(title: const Text('日別の差枚')),
+      appBar: AppBar(title: Text(_estimated ? '日別の差枚（推定）' : '日別の差枚')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -231,12 +231,18 @@ class _PscubeDailyNetPageState extends State<PscubeDailyNetPage> {
               style: TextStyle(fontSize: 12, color: AppColors.ash),
             ),
             const SizedBox(height: 12),
-            const Notice(
-              text:
-                  '総差枚・平均差枚は、台別ページで差枚の元データを取得できた台だけの合計・平均です'
-                  '（取得台数＝取得できた台／その日の記録の台）。当たり0回の台・沖ドキ・未取得の台は含まないため、'
-                  '店舗全体の総差枚ではありません。差枚の無い日は「—」（0ではありません）。'
-                  'サイトの数値が異常な台は除いています。MYは差枚ではありません。',
+            Notice(
+              text: _estimated
+                  ? '推定差枚です。サイトは差枚の数値を出していないため、保存したグラフの形と最大持玉から'
+                        '縦軸の目盛りを割り出して計算しています（確定値ではありません。誤差はおよそ'
+                        'グラフ1目盛り分：通常±6枚、大きく動いた台は±10〜30枚）。'
+                        '総差枚・平均差枚は計算できた台だけの合計・平均です（取得台数＝計算できた台／その日の記録の台）。'
+                        'グラフの無い台・最大持玉の無い台・目盛りを決められない台は含まないため、店舗全体の総差枚ではありません。'
+                        '差枚の無い日は「—」（0ではありません）。最大持玉は差枚ではありません。'
+                  : '総差枚・平均差枚は、台別ページで差枚の元データを取得できた台だけの合計・平均です'
+                        '（取得台数＝取得できた台／その日の記録の台）。当たり0回の台・沖ドキ・未取得の台は含まないため、'
+                        '店舗全体の総差枚ではありません。差枚の無い日は「—」（0ではありません）。'
+                        'サイトの数値が異常な台は除いています。MYは差枚ではありません。',
             ),
           ],
         ),

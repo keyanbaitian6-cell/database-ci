@@ -1,5 +1,5 @@
 import 'package:database_android/models.dart';
-import 'package:database_android/pscube_daily_net_page.dart';
+import 'package:database_android/daily_net_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -39,9 +39,38 @@ final records = [
   row(2, '2026-09-30'),
 ];
 
+SlotRecord meruhen(
+  int rack,
+  String day, {
+  required int maxHold,
+  required List<double> heights,
+}) {
+  final curve = [
+    for (final (i, h) in heights.indexed) [i * 10.0 + 0.5, 200.5 - h],
+  ];
+  final ys = curve.map((p) => p[1]);
+  return SlotRecord(
+    store: 'nagamachiminami',
+    day: day,
+    rack: rack,
+    machine: 'ハナハナ',
+    games: 8000,
+    bb: 30,
+    rb: 30,
+    maxHold: maxHold,
+    graph: GraphMeasurement(
+      baselineY: 200.5,
+      peakY: ys.reduce((a, b) => a < b ? a : b),
+      troughY: ys.reduce((a, b) => a > b ? a : b),
+      endY: curve.last[1],
+      curve: curve,
+    ),
+  );
+}
+
 void main() {
   test('日ごとの差枚は取得できた台だけを合計し、無い日は0にしない', () {
-    final days = pscubeDailyNet(records, store);
+    final days = dailyNet(records, store);
     expect(
       [for (final d in days) d.day],
       ['2026-10-02', '2026-10-01', '2026-09-30'],
@@ -68,7 +97,7 @@ void main() {
             body: TextButton(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => PscubeDailyNetPage(
+                  builder: (_) => DailyNetPage(
                     records: records,
                     store: store,
                     day: '2026-10-02',
@@ -119,5 +148,46 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened, '2026-09-30');
     expect(find.text('開く'), findsOneWidget, reason: 'ホームへ戻る');
+  });
+
+  testWidgets('メルヘンは推定差枚として同じ表を出す', (tester) async {
+    final rows = [
+      meruhen(
+        615,
+        '2026-10-03',
+        maxHold: 2376,
+        heights: [0, -63, 40, 147, 128],
+      ),
+      meruhen(779, '2026-10-03', maxHold: 1982, heights: [0, -8, 163, 97]),
+      SlotRecord(
+        store: 'nagamachiminami',
+        day: '2026-10-03',
+        rack: 1,
+        machine: 'ハナハナ',
+        games: 100,
+        bb: 0,
+        rb: 0,
+      ), // グラフの無い台は数えない
+    ];
+    final days = dailyNet(rows, 'nagamachiminami');
+    expect(
+      (days.single.total, days.single.captured, days.single.racks),
+      (2500, 2, 3),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DailyNetPage(
+          records: rows,
+          store: 'nagamachiminami',
+          day: '2026-10-03',
+        ),
+      ),
+    );
+    expect(find.text('日別の差枚（推定）'), findsOneWidget);
+    expect(find.text('メルヘンワールド長町南店　2026年10月のデータ'), findsOneWidget);
+    expect(find.text('+2,500'), findsNWidgets(2), reason: '当日と期間累計');
+    expect(find.text('+1,250'), findsNWidgets(2));
+    expect(find.text('2/3'), findsOneWidget);
+    expect(find.textContaining('推定差枚です'), findsOneWidget);
   });
 }

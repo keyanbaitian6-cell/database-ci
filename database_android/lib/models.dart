@@ -2,6 +2,8 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'meruhen_net.dart';
+
 const storeNames = <String, String>{
   'nagamachiminami': 'メルヘンワールド長町南店',
   'saiwaichou': 'スーパーメルヘンワールド幸町',
@@ -318,6 +320,29 @@ class SlotRecord {
   int? get my => isPscube ? (extra['my'] as num?)?.toInt() : null;
   int? get netMedals =>
       isPscube ? (extra['net_medals'] as num?)?.toInt() : null;
+
+  /// メルヘンの推定差枚（グラフと最大持玉から計算、`meruhen_net.dart`）。確定差枚ではない。
+  int? get estimatedNetMedals {
+    final g = graph;
+    if (isPscube || g == null) return null;
+    return meruhenNetEstimate(
+      baselineY: g.baselineY,
+      peakY: g.peakY,
+      troughY: g.troughY,
+      endY: g.endY,
+      peakX: g.peakX,
+      troughX: g.troughX,
+      endX: g.endX,
+      curve: g.curve,
+      maxHold: maxHold,
+    );
+  }
+
+  /// 画面に出す差枚：P’s CUBEは元グラフの確定差枚、メルヘンは推定差枚。
+  int? get netValue => isPscube ? netMedals : estimatedNetMedals;
+
+  /// [netValue] の呼び方。メルヘンは推定であることを必ず添える。
+  String get netLabel => isPscube ? '差枚' : '推定差枚';
   int get atArt => isPscube ? (extra['at_art'] as num?)?.toInt() ?? 0 : 0;
   int? get outputValue => isPscube ? my : maxHold;
   String get outputLabel => isPscube ? 'MY' : '最大持玉';

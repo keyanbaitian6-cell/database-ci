@@ -37,8 +37,8 @@ class DaySummaryCard extends StatelessWidget {
     final pscube = entries.firstOrNull?.$1.isPscube == true;
     final nets = [
       for (final e in entries)
-        if (!hasImplausibleNumbers(e.$1) && e.$1.netMedals != null)
-          e.$1.netMedals!,
+        if (!hasImplausibleNumbers(e.$1) && e.$1.netValue != null)
+          e.$1.netValue!,
     ];
     final odd = suspiciousDuplicates(entries.map((e) => e.$1));
     final missingByMachine = <String, List<int>>{};
@@ -65,12 +65,14 @@ class DaySummaryCard extends StatelessWidget {
               '${skipped > 0 ? '（大当たり0回でグラフ省略$skipped台は除く）' : ''}',
               style: const TextStyle(color: AppColors.ash, fontSize: 13),
             ),
-            if (pscube) ...[
+            if (entries.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
                 nets.isEmpty
-                    ? '差枚はまだ取得していません（0/${entries.length}台）'
-                    : '記録内の差枚合計 ${signedMedals(nets.reduce((a, b) => a + b))}枚'
+                    ? (pscube
+                          ? '差枚はまだ取得していません（0/${entries.length}台）'
+                          : '推定差枚を計算できる台がありません（0/${entries.length}台）')
+                    : '記録内の${pscube ? '差枚' : '推定差枚'}合計 ${signedMedals(nets.reduce((a, b) => a + b))}枚'
                           '（${nets.length}/${entries.length}台）'
                           '・平均 ${signedMedals((nets.reduce((a, b) => a + b) / nets.length).round())}枚',
                 style: const TextStyle(
@@ -78,9 +80,12 @@ class DaySummaryCard extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const Text(
-                '表示中の記録にある台だけの合計です。店舗全体の総差枚ではありません。',
-                style: TextStyle(color: AppColors.ash, fontSize: 12),
+              Text(
+                pscube
+                    ? '表示中の記録にある台だけの合計です。店舗全体の総差枚ではありません。'
+                    : '推定差枚はグラフと最大持玉からの計算で、確定値ではありません（誤差あり）。'
+                          '表示中の記録にある台だけの合計です。',
+                style: const TextStyle(color: AppColors.ash, fontSize: 12),
               ),
             ],
             const SizedBox(height: 8),
@@ -569,7 +574,7 @@ class RackStats extends StatelessWidget {
         Text(
           'BIG ${record.bb}　REG ${record.rb}　${record.outputLabel} ${record.outputValue ?? '—'}'
           '${record.isPscube ? '　AT/ART ${record.atArt}' : ''}'
-          '${record.netMedals == null ? '' : '　差枚 ${signedMedals(record.netMedals!)}枚'}',
+          '${record.netValue == null || hasImplausibleNumbers(record) ? '' : '　${record.netLabel} ${signedMedals(record.netValue!)}枚'}',
         ),
         Text(
           '観測量（設定判別の信頼度ではありません）：${reliabilityLabel(record.games)}'

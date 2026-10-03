@@ -6,7 +6,7 @@ import 'exploratory_page.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
-import 'pscube_daily_net_page.dart';
+import 'daily_net_page.dart';
 import 'pscube_suffix_page.dart';
 import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
@@ -578,6 +578,26 @@ class _ViewerHomeState extends State<ViewerHome> {
     ],
   );
 
+  Widget _dailyNetButton(
+    List<SlotRecord> all,
+    String store,
+    String day,
+    String label,
+  ) => OutlinedButton.icon(
+    onPressed: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DailyNetPage(
+          records: all,
+          store: store,
+          day: day,
+          onDayChanged: (changed) => setState(() => _day = changed),
+        ),
+      ),
+    ),
+    icon: const Icon(Icons.calendar_month_outlined),
+    label: Text(label),
+  );
+
   Widget _results(ViewerData data) {
     final all = data.records;
     final store = _store ?? all.first.store;
@@ -668,20 +688,12 @@ class _ViewerHomeState extends State<ViewerHome> {
             label: const Text('末尾別データまとめ'),
           ),
           const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => PscubeDailyNetPage(
-                  records: all,
-                  store: store,
-                  day: day,
-                  onDayChanged: (changed) => setState(() => _day = changed),
-                ),
-              ),
-            ),
-            icon: const Icon(Icons.calendar_month_outlined),
-            label: const Text('日別の差枚'),
-          ),
+          _dailyNetButton(all, store, day, '日別の差枚'),
+          const SizedBox(height: 8),
+        ],
+        // メルヘンは保存したグラフと最大持玉からの推定差枚（P’s CUBEと同じ画面）。
+        if (!isPscubeStore(store) && day != null) ...[
+          _dailyNetButton(all, store, day, '日別の差枚（推定）'),
           const SizedBox(height: 8),
         ],
         OutlinedButton.icon(

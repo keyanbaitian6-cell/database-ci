@@ -1777,6 +1777,81 @@ def measurement_preview(row):
     return None, None
 
 
+# メルヘンの推定差枚（グラフの座標と最大持玉から計算する。追加の通信なし）。Android版
+# `database_android/lib/meruhen_net.dart` と同じ規則。サイトは差枚の数値を返さないため、
+# SVG（高さ400、ゼロ線200.5・上下180px）の縦軸の片側の幅 R 枚を、1,000・2,000・4,000…
+# （以降2,000刻み）のうち振れ幅が収まる最小の段階として、最大持玉（谷から山までの最大の
+# 上がり幅）と合わせて決める（2026-10-03の調査：保存済み約6,200件の統計、BIG・REG・回転数との
+# 照合、実機での高さ変更）。確定差枚ではないので「推定」と表示し、決められない台は None。
+MERUHEN_AXIS_STEPS = (1000,) + tuple(range(2000, 40001, 2000))
+_MERUHEN_ZERO_Y, _MERUHEN_TOP_Y = 200.5, 20.5
+
+
+def _rise(values):
+    low = rise = 0.0
+    for value in values:
+        low = min(low, value)
+        rise = max(rise, value - low)
+    return rise
+
+
+def meruhen_net_estimate(measurement, max_hold):
+    """Estimated net medals for a Meruhen rack, or None when it cannot be determined."""
+    if not isinstance(measurement, dict) or max_hold is None or not 0 <= max_hold <= 100000:
+        return None
+    try:
+        baseline = float(measurement['baseline_y'])
+        peak = baseline - float(measurement['peak_y'])
+        trough = baseline - float(measurement.get('trough_y', measurement['end_y']))
+        end = baseline - float(measurement['end_y'])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if abs(baseline - _MERUHEN_ZERO_Y) > 0.01:
+        return None  # 高さ400以外のSVGは未確認
+    half = _MERUHEN_ZERO_Y - _MERUHEN_TOP_Y
+    amp = max(abs(peak), abs(trough), abs(end))
+    if amp == 0:
+        return 0
+
+    def fits(index):
+        step = MERUHEN_AXIS_STEPS[index]
+        previous = MERUHEN_AXIS_STEPS[index - 1] if index else 0
+        unit = step / half
+        return previous - unit / 2 < amp * unit <= step + unit / 2
+
+    chosen = None
+    curve = measurement.get('curve')
+    if isinstance(curve, list) and len(curve) >= 2:
+        rise = _rise(baseline - float(point[1]) for point in curve)
+        if rise <= 0:
+            return None
+        for index, step in enumerate(MERUHEN_AXIS_STEPS):
+            if fits(index) and max_hold / (rise * step / half) >= 0.98:
+                chosen = step
+    else:
+        peak_x, trough_x, end_x = (measurement.get(k) for k in ('peak_x', 'trough_x', 'end_x'))
+        if peak_x is None or trough_x is None:
+            low = max(peak, 0.0)
+        else:
+            points = sorted([(0.0, 0.0), (float(peak_x), peak), (float(trough_x), trough),
+                             (float(end_x) if end_x is not None else float('inf'), end)], key=lambda p: p[0])
+            low = _rise(value for _, value in points)
+        high = max(peak, 0.0) - min(trough, 0.0)
+        feasible = [step for index, step in enumerate(MERUHEN_AXIS_STEPS)
+                    if fits(index) and low * step / half * 0.98 - step / half <= max_hold
+                    <= high * step / half * 1.3 + step / half]
+        if len(feasible) == 1:
+            chosen = feasible[0]
+    if chosen is None:
+        return None
+    value = end * chosen / half
+    return int(value + 0.5) if value >= 0 else -int(-value + 0.5)  # Dartの round と同じ（0から遠い側）
+
+
+def signed_medals(value):
+    return f'{value:+,}' if value else '0'
+
+
 def measurement_preview_html(row):
     """Render measurement_preview() as ready-to-embed HTML with a caption when reconstructed."""
     kind, payload = measurement_preview(row)
@@ -1827,11 +1902,13 @@ def report(store, day, machine, folder, location='nagamachiminami'):
         svg = measurement_preview_html(r)
         total = s['total']
         max_hold_display = '—' if r.get('max_hold') is None else str(r['max_hold'])
+        net = meruhen_net_estimate(measurement, r.get('max_hold'))
+        net_display = '—' if net is None or implausible_numbers(r) else signed_medals(net)
         setting_display = r.get('confirmed_setting') or '—'
         estimate = r['setting_estimate']
         estimate_display = candidate_label(estimate)
         cells = [str(r['rack']) + (f" {candidate_marks[int(r['rack'])]}" if int(r['rack']) in candidate_marks else ''), str(r['games']), str(r['bb']), str(r['rb']), max_hold_display,
-                 setting_display, estimate_display]
+                 net_display, setting_display, estimate_display]
         cells += [fmt(s[k]) for k in ('max_hold','hits','positive','retention')]
         total_text = fmt(total)
         if total is not None and s['provisional']:
@@ -1851,9 +1928,9 @@ def report(store, day, machine, folder, location='nagamachiminami'):
         source_link = (f' <a href="{html.escape(estimate["source"], quote=True)}">出典</a>'
                        if estimate else '')
         data_cells = (f'<td class="rack">{html.escape(cells[0])}</td>'
-                      + ''.join(f'<td>{html.escape(c)}</td>' for c in cells[1:6])
-                      + f'<td>{html.escape(cells[6])}{source_link}</td>'
-                      + ''.join(f'<td>{html.escape(c)}</td>' for c in cells[7:]))
+                      + ''.join(f'<td>{html.escape(c)}</td>' for c in cells[1:7])
+                      + f'<td>{html.escape(cells[7])}{source_link}</td>'
+                      + ''.join(f'<td>{html.escape(c)}</td>' for c in cells[8:]))
         body.append(
             '<tr>' + data_cells
             + f'<td><span class="badge {tier(total)}">{html.escape(total_text)}</span></td>'
@@ -1862,8 +1939,8 @@ def report(store, day, machine, folder, location='nagamachiminami'):
               f'data-graph="{graph_html}" onclick="showGraph(this)">{svg}</button></td>'
             + f'<td>{evidence}</td>'
             + f'<td class="reasons">{reason_tags}</td></tr>')
-    header_groups = [(1, ''), (6, '表示データ'), (4, '得点内訳'), (1, '総合'), (4, '参考')]
-    header = ['台番号','表示G','BB','RB','最大持玉','設定情報（手入力）','設定候補（BB/RB）','持玉 /20','当り /60','終点 /10','維持 /10',
+    header_groups = [(1, ''), (7, '表示データ'), (4, '得点内訳'), (1, '総合'), (4, '参考')]
+    header = ['台番号','表示G','BB','RB','最大持玉','推定差枚','設定情報（手入力）','設定候補（BB/RB）','持玉 /20','当り /60','終点 /10','維持 /10',
               '合計 /100','比較（件数/日数）','相対グラフ','確認画像','状態・注意']
     done = sum(r['score']['total'] is not None for r in results)
     totals = [r['score']['total'] for r in results if r['score']['total'] is not None]
@@ -1995,6 +2072,7 @@ a.evidence:hover{{text-decoration:underline}}
 独自の結果評価です。出率・差枚・設定確率を表す点数ではありません。<br>
 比較：同店・同機種の過去30日、回転数が概ね半分〜2倍（最低500G）の台。当日・未来は比較に使いません。比較件数・日数・回転数が少ないほど中間へ補正します。<br>
 当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、暫定表示と欠測幅を示します。<br>
+「推定差枚」はグラフの形と最大持玉から縦軸の目盛りを割り出した計算で、確定値ではありません（誤差はおよそグラフ1目盛り分。決められない台は「—」）。<br>
 「設定候補」は公開BB/RB確率との条件付き比較です。各設定を同じ重みと仮定したモデル内中央80%候補範囲で、確定設定・実際の設定確率・翌日の予測ではありません。<br>計算版：{VERSION}</div></header>
 <section class="kpis">
 <div class="kpi"><b>{len(results)}</b><span>台数</span></div>

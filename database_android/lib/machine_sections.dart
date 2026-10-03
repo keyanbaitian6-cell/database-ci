@@ -375,15 +375,17 @@ class MachineDataTable extends StatelessWidget {
     );
     final avg = rackAverages(entries);
     final pscube = entries.firstOrNull?.$1.isPscube == true;
+    // P’s CUBEは元グラフの確定差枚、メルヘンはグラフと最大持玉からの推定差枚。
+    final netLabel = entries.firstOrNull?.$1.netLabel ?? '差枚';
     final columns = <(String, double)>[
       ..._columns.take(7),
-      if (pscube) ('差枚', 78.0),
+      (netLabel, 78.0),
       ..._columns.skip(7),
     ];
     final netValues = [
       for (final e in entries)
-        if (!hasImplausibleNumbers(e.$1) && e.$1.netMedals != null)
-          e.$1.netMedals!,
+        if (!hasImplausibleNumbers(e.$1) && e.$1.netValue != null)
+          e.$1.netValue!,
     ];
     // 暫定点は、記録が少ないうちはほぼ全台に付く。各行には書かず、
     // 表の上に1回だけ断る。
@@ -490,12 +492,12 @@ class MachineDataTable extends StatelessWidget {
                               hitRate(entries[i].$1.games, entries[i].$1.rb),
                             ),
                             _text('${entries[i].$1.outputValue ?? '—'}'),
-                            if (pscube)
-                              _text(
-                                entries[i].$1.netMedals == null
-                                    ? '—'
-                                    : signedMedals(entries[i].$1.netMedals!),
-                              ),
+                            _text(
+                              hasImplausibleNumbers(entries[i].$1) ||
+                                      entries[i].$1.netValue == null
+                                  ? '—'
+                                  : signedMedals(entries[i].$1.netValue!),
+                            ),
                             _setting(context, entries[i].$1),
                             _score(entries[i].$2),
                           ])
@@ -519,15 +521,14 @@ class MachineDataTable extends StatelessWidget {
                 _text(avg.rbRate),
                 _text('${avg.maxHold ?? '—'}'),
               ],
-              if (pscube)
-                _text(
-                  netValues.isEmpty
-                      ? '—'
-                      : signedMedals(
-                          (netValues.reduce((a, b) => a + b) / netValues.length)
-                              .round(),
-                        ),
-                ),
+              _text(
+                netValues.isEmpty
+                    ? '—'
+                    : signedMedals(
+                        (netValues.reduce((a, b) => a + b) / netValues.length)
+                            .round(),
+                      ),
+              ),
               _text(''),
               _text(avg.score?.toStringAsFixed(1) ?? '—', bold: true),
             ].indexed)
@@ -575,7 +576,9 @@ class MachineDataTable extends StatelessWidget {
         Text(
           [
             '表は横にスライドできます',
-            if (pscube) '差枚は元グラフの取得済み${netValues.length}/${entries.length}台',
+            pscube
+                ? '差枚は元グラフの取得済み${netValues.length}/${entries.length}台'
+                : '推定差枚はグラフと最大持玉からの計算（誤差あり・計算できた${netValues.length}/${entries.length}台）',
             if (provisional > 0)
               provisional == entries.length
                   ? '点数はすべて暫定（少数データ・欠測を含む）'
