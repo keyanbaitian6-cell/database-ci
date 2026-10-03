@@ -872,7 +872,8 @@ def overlay_script(capture_script, index_url):
           await SCROLL_SCRIPT;
           if (identity(location.href) !== identity(before)) throw new Error('読み取り中にページが切り替わりました。');
           capturedUrl = location.href;
-          const payload = CAPTURE_SCRIPT;
+          const payload = await CAPTURE_SCRIPT;
+          if (identity(location.href) !== identity(before)) throw new Error('読み取り中にページが切り替わりました。');
           const result = await window.pywebview.api.submit_page(payload);
           window.pscubeCaptureComplete(result);
         } catch (error) {

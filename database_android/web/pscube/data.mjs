@@ -8,6 +8,66 @@ export function validDay(day) {
   return typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) &&
     Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day;
 }
+const graphSafe = value => Number.isSafeInteger(value) && Math.abs(value) <= 10000000;
+const graphDay = value => {
+  if (!Number.isSafeInteger(value) || !/^\d{8}$/.test(String(value))) fail('グラフの日付が不正です。');
+  const day = dayFromCompact(String(value));
+  if (!validDay(day)) fail('グラフの日付が不正です。');
+  return day;
+};
+
+/** P’s CUBEの連続グラフの元数値。各日の始点と終点の差がその日の差枚。 */
+export function netMedalsOfProbe(raw) {
+  const rack = typeof raw?.rack === 'string' && /^\d+$/.test(raw.rack) ? Number(raw.rack) : raw?.rack;
+  if (!raw || !Number.isSafeInteger(rack) || rack < 1 ||
+      !/^\d{8}$/.test(raw.day ?? '') || !raw.graph ||
+      !Array.isArray(raw.graph.datas?.g) || !Array.isArray(raw.graph.datas?.p) ||
+      raw.graph.datas.g.length < 1 || raw.graph.datas.g.length > 7 ||
+      raw.graph.datas.p.length > 50000) fail('P’s CUBEのグラフJSONではありません。');
+  const selectedDay = graphDay(Number(raw.day));
+  const factor = raw.graph.anjYUnit ?? 1;
+  if (!Number.isFinite(factor) || factor <= 0 || factor > 100000) fail('グラフの単位が不正です。');
+  const found = new Map(), fields = new Set();
+  for (const line of raw.graph.datas.g) {
+    const day = graphDay(line.YMD_biz), x = line.xField, y = line.yField;
+    if (day > selectedDay || found.has(day) || typeof x !== 'string' || typeof y !== 'string' ||
+        !/^out-\d+$/.test(x) || !/^value-\d+$/.test(y) || fields.has(y)) fail('グラフの日付・系列が不正です。');
+    fields.add(y);
+    const points = raw.graph.datas.p.filter(p => p && Object.hasOwn(p, x) && Object.hasOwn(p, y));
+    if (points.length < 2 || points.some((p, i) => !graphSafe(p[x]) || !graphSafe(p[y]) ||
+        (i && p[x] < points[i - 1][x]))) fail('グラフの元数値が不正です。');
+    const net = (points.at(-1)[y] - points[0][y]) * factor;
+    if (!Number.isSafeInteger(net) || Math.abs(net) > 1000000) fail('差枚の数値が不正です。');
+    found.set(day, net);
+  }
+  if (!found.has(selectedDay)) fail('選択日のグラフがありません。');
+  return found;
+}
+
+/** PC/Androidの台別ページ取得。サイト自身の認証済み通信を使い、差枚を同じ記録に載せる。 */
+export async function capturePageWithNet(page, site = window) {
+  const captured = parsePage(page);
+  const url = siteUrl(page.url);
+  if (!url.pathname.endsWith('nc-v06-001.php')) return captured;
+  const rack = Number(url.searchParams.get('cd_dai'));
+  const day = url.hash.slice(1);
+  if (!site.api?.apikey || !site.api?.token || typeof site.jQuery?.ajax !== 'function') {
+    fail('差枚の元データを取得できません。P’s CUBEの読み込み完了後に再試行してください。');
+  }
+  const response = await new Promise((resolve, reject) => {
+    site.jQuery.ajax({
+      url: 'nc-m06-003.php',
+      data: {cd_dai: String(rack), YMD_biz: day,
+        apikey: site.api.apikey, _i: site.api.token._i, _t: site.api.token._t},
+      dataType: 'json', timeout: 12000,
+    }).done(resolve).fail((xhr) => reject(new Error(
+      `差枚の元データを取得できません（HTTP ${xhr?.status ?? '?'}）。再試行してください。`)));
+  });
+  const values = netMedalsOfProbe({rack, day, graph: response?.Graph?.src});
+  return validateData({...captured, records:captured.records.map(record => ({
+    ...record, ...(values.has(record.day) ? {net_medals: values.get(record.day)} : {}),
+  }))});
+}
 function dayFromCompact(s) {
   if (!/^\d{8}$/.test(s || '')) fail('営業日を特定できません。日付を選んで保存してください。');
   const day = `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6)}`;

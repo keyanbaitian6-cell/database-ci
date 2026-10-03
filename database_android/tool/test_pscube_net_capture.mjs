@@ -1,0 +1,67 @@
+// PC pywebview and Android WebView run this same generated page extractor.
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+
+const script = readFileSync(new URL('../assets/pscube_capture.js', import.meta.url), 'utf8');
+const graph = {datas:{
+  g:[
+    {YMD_biz:20261001,xField:'out-1',yField:'value-1'},
+    {YMD_biz:20261002,xField:'out-2',yField:'value-2'},
+  ],
+  p:[
+    {'out-1':0,'value-1':100}, {'out-1':10,'value-1':75},
+    {'out-2':10,'value-2':75}, {'out-2':20,'value-2':200},
+  ],
+}};
+const columns = Array.from({length:7}, (_, i) =>
+  `<td class="column"><div>${[
+    i ? `${i}日前` : '本日', '3', '1', '0', '0', '600', '120', '0',
+  ].map(value => `<div>${value}</div>`).join('')}</div></td>`).join('');
+const html = `<html><head><meta charset="utf-8"><title>P'sCUBE｜試験機種</title></head><body>
+  <h1>SLOT</h1><h2>台番号 1120</h2>
+  <a href="nc-v05-011.php?cd_ps=2&bai=20">全台一覧</a>
+  <table><tr>${columns}</tr></table></body></html>`;
+const url = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1120#20261002';
+const browser = await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_PATH || undefined, args:['--no-sandbox']});
+try {
+  const page = await browser.newPage();
+  await page.addInitScript(graphData => {
+    window.api = {apikey:'test',token:{_i:'test',_t:'test'}};
+    window.jQuery = {ajax: options => {
+      window.graphRequest = options;
+      const request = {
+        done(callback) { queueMicrotask(() => callback({Graph:{src:graphData}})); return request; },
+        fail() { return request; },
+      };
+      return request;
+    }};
+  }, graph);
+  await page.route('**/*', route => route.request().isNavigationRequest()
+    ? route.fulfill({status:200, contentType:'text/html; charset=utf-8', body:html}) : route.abort());
+  await page.goto(url, {waitUntil:'domcontentloaded'});
+  const captured = JSON.parse(await page.evaluate(script));
+  assert.equal(captured.error, undefined, captured.error);
+  assert.equal(captured.records.length, 7);
+  assert.equal(captured.records[0].net_medals, 125);
+  assert.equal(captured.records[1].net_medals, -25);
+  assert.equal(captured.records[0].my, 120);
+  assert.equal(captured.records[2].net_medals, undefined);
+  const request = await page.evaluate(() => ({url:window.graphRequest.url, data:window.graphRequest.data}));
+  assert.equal(request.url, 'nc-m06-003.php');
+  assert.equal(request.data.cd_dai, '1120');
+  assert.equal(request.data.YMD_biz, '20261002');
+  await page.evaluate(() => {
+    window.jQuery.ajax = () => {
+      const request = {
+        done() { return request; },
+        fail(callback) { queueMicrotask(() => callback({status:403})); return request; },
+      };
+      return request;
+    };
+  });
+  const failed = JSON.parse(await page.evaluate(script));
+  assert.match(failed.error, /差枚の元データを取得できません（HTTP 403）/);
+  await page.close();
+  console.log('PASS: PC/Android rack capture saves exact net values and rejects source failures');
+} finally { await browser.close(); }

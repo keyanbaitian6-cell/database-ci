@@ -17,6 +17,24 @@ const browser = await chromium.launch({headless:true, executablePath:process.env
 try {
   for (const [folder, suffix, machines, records] of examples) {
     const page = await browser.newPage();
+    if (folder === 'pscube-1526-archive') {
+      await page.addInitScript(() => {
+        window.api = {apikey:'test',token:{_i:'test',_t:'test'}};
+        window.jQuery = {ajax: () => {
+          const request = {
+            done(callback) {
+              queueMicrotask(() => callback({Graph:{src:{datas:{
+                g:[{YMD_biz:20261001,xField:'out-1',yField:'value-1'}],
+                p:[{'out-1':0,'value-1':100},{'out-1':10,'value-1':142}],
+              }}}}));
+              return request;
+            },
+            fail() { return request; },
+          };
+          return request;
+        }};
+      });
+    }
     const url = `https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/${suffix}`;
     // Remove active scripts: the capture reads DOM, while real site JS may call APIs.
     const html = readFileSync(`${archiveRoot}/${folder}/main.html`, 'utf8')
@@ -29,6 +47,9 @@ try {
     assert.equal(result.source_url, url);
     assert.equal(result.machines.length, machines);
     assert.equal(result.records.length, records);
+    if (folder === 'pscube-1526-archive') {
+      assert.equal(result.records.find(r => r.day === '2026-10-01').net_medals, 42);
+    }
     if (process.env.PSCUBE_CAPTURE_OUTPUT_DIR) {
       writeFileSync(`${process.env.PSCUBE_CAPTURE_OUTPUT_DIR}/${folder}.json`, JSON.stringify(result));
     }

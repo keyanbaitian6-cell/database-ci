@@ -163,6 +163,26 @@ void main() {
     expect((await store.nextTarget(day)).url, isNull);
   });
 
+  test('台別で取得した差枚をMYと別に保存し、一覧の再取り込みでも保持する', () async {
+    final payload = jsonDecode(await seedRack()) as Map<String, dynamic>;
+    final records = payload['records'] as List<dynamic>;
+    (records[0] as Map<String, dynamic>)['net_medals'] = 14118;
+    (records[1] as Map<String, dynamic>)['net_medals'] = -250;
+    await store.importPage(jsonEncode(payload), record()['detail_url']);
+    await store.importPage(
+      page(machine['url'], [machine], [record()]),
+      machine['url'],
+    );
+    final saved = (await exported())['records'] as List<dynamic>;
+    final selected = saved.singleWhere((row) => row['day'] == day);
+    expect(selected['net_medals'], 14118);
+    expect(selected['my'], 1921);
+    expect(
+      saved.singleWhere((row) => row['day'] == '2026-09-30')['net_medals'],
+      -250,
+    );
+  });
+
   test('数値更新は取得済みを解除し、古い詳細と結び付けない', () async {
     await seedRack();
     final fresh = record()

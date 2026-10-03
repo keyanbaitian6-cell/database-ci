@@ -459,7 +459,37 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           !_samePage(before, capturedUrl)) {
         throw const FormatException('読み取り中にページが切り替わりました。');
       }
-      final raw = _decodeJs(await _web.runJavaScriptReturningResult(_script!));
+      // 台別ページでは元グラフの通信も行う。WebViewの評価結果はPromiseを
+      // 待たないため、ページ内で完了を記録してから読み取る。
+      await _web.runJavaScript('''
+        window.__pscubeCaptureResult = null;
+        Promise.resolve(${_script!}).then(
+          value => { window.__pscubeCaptureResult = value; },
+          error => { window.__pscubeCaptureResult = JSON.stringify({error: String(error)}); }
+        );
+      ''');
+      var complete = false;
+      for (var attempt = 0; attempt < 75; attempt++) {
+        if (!mounted ||
+            _page != page ||
+            await _web.currentUrl() != capturedUrl) {
+          throw const FormatException('読み取り中にページが切り替わりました。');
+        }
+        final ready = await _web.runJavaScriptReturningResult(
+          'window.__pscubeCaptureResult != null',
+        );
+        if (ready == true || ready.toString() == 'true') {
+          complete = true;
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+      if (!complete) {
+        throw const FormatException('差枚の元データの読み取りが時間切れになりました。再試行してください。');
+      }
+      final raw = _decodeJs(
+        await _web.runJavaScriptReturningResult('window.__pscubeCaptureResult'),
+      );
       if (!mounted) return;
       // OFFを押した・ページが移った後に、古い自動の取り込みを保存しない。
       if (autoToken != null && !_auto.current(autoToken, page)) {

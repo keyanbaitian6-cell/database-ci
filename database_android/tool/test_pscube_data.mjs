@@ -22,7 +22,9 @@ test('source graph gives signed daily net medals and keeps MY independent', () =
     p:[{'out-1':0,'value-1':7092},{'out-1':25,'value-1':21210}],
   }}};
   assert.equal(netMedalsOfProbe(probe).get('2026-10-01'), 14118);
+  assert.equal(netMedalsOfProbe({...probe,rack:'1'}).get('2026-10-01'), 14118);
   const updated = applyGraphProbe(data(), probe);
+  assert.equal(applyGraphProbe(data(), {...probe,rack:'1'}).records[0].net_medals, 14118);
   assert.equal(updated.records[0].net_medals, 14118);
   assert.equal(updated.records[0].my, 120);
   assert.equal(mergeData(updated, data()).records[0].net_medals, 14118);
