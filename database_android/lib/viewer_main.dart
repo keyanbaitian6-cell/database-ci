@@ -6,6 +6,7 @@ import 'exploratory_page.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
+import 'pscube_daily_net_page.dart';
 import 'pscube_suffix_page.dart';
 import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
@@ -665,6 +666,21 @@ class _ViewerHomeState extends State<ViewerHome> {
             ),
             icon: const Icon(Icons.table_chart_outlined),
             label: const Text('末尾別データまとめ'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => PscubeDailyNetPage(
+                  records: all,
+                  store: store,
+                  day: day,
+                  onDayChanged: (changed) => setState(() => _day = changed),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.calendar_month_outlined),
+            label: const Text('日別の差枚'),
           ),
           const SizedBox(height: 8),
         ],
