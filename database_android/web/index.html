@@ -233,7 +233,7 @@
             if (!file) { resolve(null); return; }
             try {
               const head = await file.slice(0, 4096).text();
-              if (/\.webarchive$/i.test(file.name) || head.startsWith('bplist') || head.includes('WebMainResource') || /"format"\s*:\s*"pscube-viewer"/.test(head)) {
+              if (/\.webarchive$/i.test(file.name) || head.startsWith('bplist') || head.includes('WebMainResource') || /"format"\s*:\s*"pscube-viewer"/.test(head) || (/"rack"\s*:/.test(head) && /"graph"\s*:/.test(head))) {
                 resolve(await (await pscubeModule()).readPscubeFiles([file]));
               } else resolve(finish(await parse(file.stream()), file.name));
             }
@@ -353,6 +353,7 @@
         return value;
       },
       async exportBackup() { return (await pscubeBridge()).exportBackup(); },
+      async importGraph(text) { return (await pscubeBridge()).importGraph(text); },
       async setSuffixEvent(scope, day, enabled) {
         return (await pscubeBridge()).setSuffixEvent(scope, day, enabled);
       },

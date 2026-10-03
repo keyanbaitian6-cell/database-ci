@@ -11,6 +11,19 @@ const storeNames = <String, String>{
 bool isPscubeStore(String value) =>
     RegExp(r'^pscube:c\d+:\d+(?:\.\d+)?$').hasMatch(value);
 
+String signedMedals(int value) {
+  final digits = value.abs().toString();
+  final chunks = <String>[];
+  for (var end = digits.length; end > 0; end -= 3) {
+    chunks.add(digits.substring(end - 3 < 0 ? 0 : end - 3, end));
+  }
+  return '${value > 0
+      ? '+'
+      : value < 0
+      ? '-'
+      : ''}${chunks.reversed.join(',')}';
+}
+
 String storeDisplayName(String store) {
   if (isPscubeStore(store)) {
     final parts = store.split(':');
@@ -303,6 +316,8 @@ class SlotRecord {
   final int? maxHold;
   bool get isPscube => extra['source'] == 'pscube' && isPscubeStore(store);
   int? get my => isPscube ? (extra['my'] as num?)?.toInt() : null;
+  int? get netMedals =>
+      isPscube ? (extra['net_medals'] as num?)?.toInt() : null;
   int get atArt => isPscube ? (extra['at_art'] as num?)?.toInt() ?? 0 : 0;
   int? get outputValue => isPscube ? my : maxHold;
   String get outputLabel => isPscube ? 'MY' : '最大持玉';

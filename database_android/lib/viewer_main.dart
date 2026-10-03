@@ -38,9 +38,10 @@ class ViewerApp extends StatelessWidget {
 
 /// [store] の [day] より前の30日間に、記録がある日の数（採点の比較に使える日数）。
 int historyDays(List<SlotRecord> all, String store, String day) {
-  final first = DateTime.parse(
-    day,
-  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
+  final first = DateTime.parse(day)
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
   return {
     for (final r in all)
       if (r.store == store &&
@@ -270,6 +271,54 @@ class _ViewerHomeState extends State<ViewerHome> {
       await exportPscubeBackup();
     } catch (error) {
       if (mounted) setState(() => _error = 'バックアップを書き出せませんでした。\n$error');
+    }
+  }
+
+  Future<void> _pastePscubeGraph() async {
+    final field = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('差枚の元データを取り込む'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('P’s CUBEで実行したショートカットの結果を貼り付けます。既にある台の記録に差枚を追加します。'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: field,
+              maxLines: 5,
+              decoration: const InputDecoration(labelText: 'グラフJSONを貼り付け'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('閉じる'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, field.text.trim()),
+            child: const Text('取り込む'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (text == null || text.isEmpty || !mounted) return;
+    try {
+      final updated = await importPscubeGraph(text);
+      if (updated == null) return;
+      await saveViewerData(updated);
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _show(ViewerData.parse(updated));
+      });
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('差枚の元データを取り込みました。')));
+    } catch (error) {
+      if (mounted) setState(() => _error = '差枚の元データを取り込めませんでした。\n$error');
     }
   }
 
@@ -594,6 +643,12 @@ class _ViewerHomeState extends State<ViewerHome> {
         ),
         const SizedBox(height: 10),
         if (isPscubeStore(store) && day != null) ...[
+          OutlinedButton.icon(
+            onPressed: _pastePscubeGraph,
+            icon: const Icon(Icons.content_paste),
+            label: const Text('差枚の元データを貼り付け'),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(

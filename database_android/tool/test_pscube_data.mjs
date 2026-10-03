@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readBinaryPlist, readWebArchive } from '../web/pscube/archive.mjs';
 import { emptyData, validateData, mergeData, progress, siteUrl, isExcludedMachine } from '../web/pscube/data.mjs';
+import {netMedalsOfProbe, applyGraphProbe} from '../web/pscube/graph_probe.mjs';
 
 const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c1/cgi-bin/';
 const machine = { store: 'c1', rate: '20', machine: '試験機種', expected_count: 2, url: `${base}nc-v05-011.php?cd_ps=2&bai=20` };
@@ -14,6 +15,36 @@ test('MY and source identity survive round trip without max_hold conversion', ()
   const saved = validateData(JSON.parse(JSON.stringify(data())));
   assert.equal(saved.records[0].my, 120); assert.equal(saved.records[0].max_hold, undefined);
   assert.deepEqual(validateData(saved), saved);
+});
+test('source graph gives signed daily net medals and keeps MY independent', () => {
+  const probe = {rack:1, day:'20261001', graph:{datas:{
+    g:[{YMD_biz:20261001, xField:'out-1', yField:'value-1'}],
+    p:[{'out-1':0,'value-1':7092},{'out-1':25,'value-1':21210}],
+  }}};
+  assert.equal(netMedalsOfProbe(probe).get('2026-10-01'), 14118);
+  const updated = applyGraphProbe(data(), probe);
+  assert.equal(updated.records[0].net_medals, 14118);
+  assert.equal(updated.records[0].my, 120);
+  assert.equal(mergeData(updated, data()).records[0].net_medals, 14118);
+  assert.equal(mergeData(updated, data({games:700})).records[0].net_medals, undefined,
+    'newer changed site numbers require a fresh graph measurement');
+  assert.equal(validateData(JSON.parse(JSON.stringify(updated))).records[0].net_medals, 14118);
+  for (const bad of [
+    {...probe, graph:{datas:{...probe.graph.datas,g:[{...probe.graph.datas.g[0],YMD_biz:20261002}]}}},
+    {...probe, graph:{datas:{...probe.graph.datas,p:[{'out-1':0,'value-1':0}]}}},
+    {...probe, graph:{...probe.graph,anjYUnit:-1}},
+  ]) assert.throws(() => netMedalsOfProbe(bad));
+  assert.throws(() => validateData(data({net_medals:1.5})));
+});
+test('negative day values stay negative; ambiguous rack and missing selected day are rejected', () => {
+  const probe={rack:1,day:'20261001',graph:{datas:{
+    g:[{YMD_biz:20261001,xField:'out-1',yField:'value-1'}],
+    p:[{'out-1':0,'value-1':6000},{'out-1':20,'value-1':5000}],
+  },anjYUnit:2}};
+  assert.equal(applyGraphProbe(data(),probe).records[0].net_medals,-2000);
+  const ambiguous=mergeData(data(),data({rate:'5'},{rate:'5',url:`${base}nc-v05-011.php?cd_ps=2&bai=5`}));
+  assert.throws(()=>applyGraphProbe(ambiguous,probe),/複数店舗/);
+  assert.throws(()=>applyGraphProbe(data(),{...probe,day:'20261002'}),/選択日のグラフ/);
 });
 test('missing counts, bad date, mismatched rack, shop and graph fail closed', () => {
   for (const patch of [{ my: null }, { day: '2026-02-30' }, { rack: 2 }, { store: 'c2' },

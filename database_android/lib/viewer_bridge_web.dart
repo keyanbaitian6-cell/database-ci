@@ -24,6 +24,9 @@ external JSPromise<JSString?> _load();
 @JS('databaseViewer.exportBackup')
 external JSPromise<JSAny?> _exportBackup();
 
+@JS('databaseViewer.importGraph')
+external JSPromise<JSString?> _importGraph(JSString text);
+
 @JS('databaseViewer.setPscubeType')
 external JSPromise<JSString?> _setPscubeType(
   JSString scope,
@@ -59,6 +62,9 @@ String? loadRemoteUrl() => _getRemote()?.toDart;
 void saveRemoteUrl(String? url) => _setRemote(url?.toJS);
 
 Future<void> exportPscubeBackup() async => await _exportBackup().toDart;
+
+Future<String?> importPscubeGraph(String text) async =>
+    (await _importGraph(text.toJS).toDart)?.toDart;
 
 Future<String?> setPscubeMachineType(
   String scope,

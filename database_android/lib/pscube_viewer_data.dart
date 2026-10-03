@@ -43,6 +43,11 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
         throw FormatException('$field の数値が不正です。');
       }
     }
+    if (item['net_medals'] != null &&
+        (item['net_medals'] is! int ||
+            (item['net_medals'] as int).abs() > 1000000)) {
+      throw const FormatException('差枚の数値が不正です。');
+    }
     final day = item['day'];
     if (day is! String || !isValidRecordDay(day))
       throw const FormatException('営業日が不正です。');
@@ -110,6 +115,7 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
         'source_store': item['store'],
         'rate': item['rate'],
         'my': item['my'],
+        'net_medals': item['net_medals'],
         'at_art': item['at_art'],
         'machine_type': m['machine_type'],
         'pscube_graph_kind': rawGraph is Map ? rawGraph['kind'] : null,

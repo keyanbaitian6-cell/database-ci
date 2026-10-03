@@ -170,6 +170,7 @@ try {
   await driveResponse;
   await page.waitForFunction(()=>document.querySelector('flt-semantics')!=null);
   await page.getByText(/Googleドライブ/).first().waitFor();
+  await page.getByText('Googleドライブの最新（56台）を読み込みました。').last().waitFor();
   assert.ok(driveRequests.some(url=>url.includes('file=pscube')));
   assert.equal((await readStored('database-pscube-viewer','state','data')).suffix_events[0].enabled,false,'Drive update preserves removal');
   await page.evaluate(async incoming=>{
@@ -184,7 +185,23 @@ try {
   assert.ok(afterConcurrent.suffix_events.some(e=>e.day==='2026-09-30'&&e.enabled));
   assert.ok(afterConcurrent.suffix_events.some(e=>e.day==='2026-09-29'&&e.enabled));
   assert.equal(afterConcurrent.suffix_events.find(e=>e.day==='2026-10-01').enabled,false);
+  const probe={rack:1,day:'20261001',graph:{datas:{
+    g:[{YMD_biz:20261001,xField:'out-1',yField:'value-1'}],
+    p:[{'out-1':0,'value-1':7092},{'out-1':25,'value-1':21210}],
+  }}};
+  await page.getByRole('button',{name:'差枚の元データを貼り付け',exact:true}).click();
+  await page.getByRole('textbox',{name:'グラフJSONを貼り付け'}).fill(JSON.stringify(probe));
+  await page.getByRole('button',{name:'取り込む',exact:true}).click();
+  await page.waitForFunction(async()=>{
+    const db=await new Promise((resolve,reject)=>{const q=indexedDB.open('database-pscube-viewer',1);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    const value=await new Promise((resolve,reject)=>{const q=db.transaction('state').objectStore('state').get('data');q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    db.close();return value?.records?.some(r=>r.rack===1&&r.day==='2026-10-01'&&r.net_medals===14118);
+  });
+  await page.mouse.move(200,700); await page.mouse.wheel(0,350);
+  await page.getByText(/記録内の差枚合計 \+14,118枚（1\/8台）/).waitFor();
+  const withNet=await readStored('database-pscube-viewer','state','data');
+  assert.equal(withNet.records.find(r=>r.rack===1&&r.day==='2026-10-01').net_medals,14118);
+  assert.equal(withNet.records.find(r=>r.rack===1&&r.day==='2026-10-01').my,500);
   assert.deepEqual(errors,[]);
-  console.log('PASS: old IndexedDB migration, shared UI, data/graph tabs, day navigation, original Meruhen preservation, root P’s CUBE import, export, category, failed import and Drive source');
+  console.log('PASS: old IndexedDB migration, shared UI, data/graph tabs, day navigation, original Meruhen preservation, root P’s CUBE import, export, category, failed import, Drive source and signed graph import');
 } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
-

@@ -374,6 +374,17 @@ class MachineDataTable extends StatelessWidget {
       color: Colors.white,
     );
     final avg = rackAverages(entries);
+    final pscube = entries.firstOrNull?.$1.isPscube == true;
+    final columns = <(String, double)>[
+      ..._columns.take(7),
+      if (pscube) ('差枚', 78.0),
+      ..._columns.skip(7),
+    ];
+    final netValues = [
+      for (final e in entries)
+        if (!hasImplausibleNumbers(e.$1) && e.$1.netMedals != null)
+          e.$1.netMedals!,
+    ];
     // 暫定点は、記録が少ないうちはほぼ全台に付く。各行には書かず、
     // 表の上に1回だけ断る。
     final provisional = entries
@@ -432,7 +443,7 @@ class MachineDataTable extends StatelessWidget {
                 width: _machineWidth,
                 color: _headColor,
               ),
-            for (final (label, width) in _columns)
+            for (final (label, width) in columns)
               _cell(
                 Text(
                   label == '推定設定' &&
@@ -458,6 +469,7 @@ class MachineDataTable extends StatelessWidget {
                         ? [
                             _text('異常'),
                             for (var k = 0; k < 6; k++) _text('—'),
+                            if (pscube) _text('—'),
                             _setting(context, entries[i].$1),
                             _score(entries[i].$2),
                           ]
@@ -478,11 +490,17 @@ class MachineDataTable extends StatelessWidget {
                               hitRate(entries[i].$1.games, entries[i].$1.rb),
                             ),
                             _text('${entries[i].$1.outputValue ?? '—'}'),
+                            if (pscube)
+                              _text(
+                                entries[i].$1.netMedals == null
+                                    ? '—'
+                                    : signedMedals(entries[i].$1.netMedals!),
+                              ),
                             _setting(context, entries[i].$1),
                             _score(entries[i].$2),
                           ])
                     .indexed)
-              _cell(child, width: _columns[index].$2, color: stripe(i)),
+              _cell(child, width: columns[index].$2, color: stripe(i)),
           ]),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -501,10 +519,19 @@ class MachineDataTable extends StatelessWidget {
                 _text(avg.rbRate),
                 _text('${avg.maxHold ?? '—'}'),
               ],
+              if (pscube)
+                _text(
+                  netValues.isEmpty
+                      ? '—'
+                      : signedMedals(
+                          (netValues.reduce((a, b) => a + b) / netValues.length)
+                              .round(),
+                        ),
+                ),
               _text(''),
               _text(avg.score?.toStringAsFixed(1) ?? '—', bold: true),
             ].indexed)
-              _cell(child, width: _columns[index].$2, color: averageColor),
+              _cell(child, width: columns[index].$2, color: averageColor),
           ],
         ),
       ],
@@ -548,6 +575,7 @@ class MachineDataTable extends StatelessWidget {
         Text(
           [
             '表は横にスライドできます',
+            if (pscube) '差枚は元グラフの取得済み${netValues.length}/${entries.length}台',
             if (provisional > 0)
               provisional == entries.length
                   ? '点数はすべて暫定（少数データ・欠測を含む）'

@@ -208,6 +208,7 @@ export function validateData(raw) {
     if (!integer(r.rack) || r.rack < 1 || !validDay(r.day) || !url.pathname.endsWith('nc-v06-001.php') ||
         url.searchParams.get('cd_dai') !== String(r.rack) || url.hash !== `#${r.day.replaceAll('-', '')}`) fail('台番号・営業日・リンクが一致しません。');
     for (const k of ['bb', 'rb', 'at_art', 'games', 'my']) if (!integer(r[k])) fail('台の数値が不正です。');
+    if (r.net_medals != null && (!Number.isSafeInteger(r.net_medals) || Math.abs(r.net_medals) > 1000000)) fail('差枚の数値が不正です。');
     let graph = null;
     if (r.graph != null) {
       const g = r.graph;
@@ -217,7 +218,8 @@ export function validateData(raw) {
     }
     if (r.observed_at != null && (typeof r.observed_at !== 'string' || !Number.isFinite(Date.parse(r.observed_at)))) fail('更新時刻が不正です。');
     return { ...base, rack: r.rack, day: r.day, bb: r.bb, rb: r.rb, at_art: r.at_art, games: r.games, my: r.my,
-      detail_url: url.href, observed_at: r.observed_at ?? null, graph };
+      detail_url: url.href, observed_at: r.observed_at ?? null, graph,
+      ...(r.net_medals == null ? {} : {net_medals: r.net_medals}) };
   });
   if (new Set(machines.map(machineKey)).size !== machines.length || new Set(records.map(recordKey)).size !== records.length) fail('同じ機種・台が重複しています。');
   const known = new Set(machines.map(machineKey));
@@ -260,7 +262,9 @@ export function mergeData(stored, incoming) {
       graph = preferred.graph?.kind === 'daily' ? preferred.graph
         : alternate.graph?.kind === 'daily' ? alternate.graph : preferred.graph ?? alternate.graph;
     }
-    records.set(key, { ...preferred, graph });
+    const alternate = older ? r : previous;
+    records.set(key, { ...preferred, graph,
+      ...(sameNumbers && preferred.net_medals == null && alternate.net_medals != null ? {net_medals:alternate.net_medals} : {}) });
   }
   // Marks are independent of machine/rack data. An explicit removal is retained
   // as a dated false value so an older backup cannot bring the mark back.

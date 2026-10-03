@@ -34,6 +34,12 @@ class DaySummaryCard extends StatelessWidget {
     final provisional = scored.where((e) => e.$2.provisional).length;
     final noGraph = entries.where((e) => !e.$1.graphDone).length;
     final skipped = entries.where((e) => e.$1.graphNotNeeded).length;
+    final pscube = entries.firstOrNull?.$1.isPscube == true;
+    final nets = [
+      for (final e in entries)
+        if (!hasImplausibleNumbers(e.$1) && e.$1.netMedals != null)
+          e.$1.netMedals!,
+    ];
     final odd = suspiciousDuplicates(entries.map((e) => e.$1));
     final missingByMachine = <String, List<int>>{};
     for (final e in entries.where((e) => !e.$1.graphDone)) {
@@ -59,6 +65,24 @@ class DaySummaryCard extends StatelessWidget {
               '${skipped > 0 ? '（大当たり0回でグラフ省略$skipped台は除く）' : ''}',
               style: const TextStyle(color: AppColors.ash, fontSize: 13),
             ),
+            if (pscube) ...[
+              const SizedBox(height: 4),
+              Text(
+                nets.isEmpty
+                    ? '差枚はまだ取得していません（0/${entries.length}台）'
+                    : '記録内の差枚合計 ${signedMedals(nets.reduce((a, b) => a + b))}枚'
+                          '（${nets.length}/${entries.length}台）'
+                          '・平均 ${signedMedals((nets.reduce((a, b) => a + b) / nets.length).round())}枚',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Text(
+                '表示中の記録にある台だけの合計です。店舗全体の総差枚ではありません。',
+                style: TextStyle(color: AppColors.ash, fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 8),
             if (scored.isEmpty)
               const Text(
@@ -77,9 +101,8 @@ class DaySummaryCard extends StatelessWidget {
               ),
             if (missingByMachine.isNotEmpty)
               Theme(
-                data: Theme.of(
-                  context,
-                ).copyWith(dividerColor: Colors.transparent),
+                data: Theme.of(context)
+                    .copyWith(dividerColor: Colors.transparent),
                 child: ExpansionTile(
                   tilePadding: EdgeInsets.zero,
                   childrenPadding: EdgeInsets.zero,
@@ -545,7 +568,8 @@ class RackStats extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           'BIG ${record.bb}　REG ${record.rb}　${record.outputLabel} ${record.outputValue ?? '—'}'
-          '${record.isPscube ? '　AT/ART ${record.atArt}' : ''}',
+          '${record.isPscube ? '　AT/ART ${record.atArt}' : ''}'
+          '${record.netMedals == null ? '' : '　差枚 ${signedMedals(record.netMedals!)}枚'}',
         ),
         Text(
           '観測量（設定判別の信頼度ではありません）：${reliabilityLabel(record.games)}'

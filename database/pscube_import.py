@@ -187,6 +187,8 @@ def _validate_record(r):
         raise ValueError('台番号または日付とリンクが一致しません。')
     for name in ('bb', 'rb', 'at_art', 'games', 'my'):
         _number(r.get(name), name)
+    if r.get('net_medals') is not None and (type(r['net_medals']) is not int or abs(r['net_medals']) > 1000000):
+        raise ValueError('差枚の数値が不正です。')
     g = r.get('graph')
     if g is not None:
         if not isinstance(g, dict) or g.get('kind') not in ('overview', 'daily') or type(g.get('zero_y')) not in (int, float) or not math.isfinite(g['zero_y']):
@@ -224,7 +226,8 @@ def _merge(old: dict | None, fresh: dict) -> dict:
         if not graph or graph['kind'] != 'daily':
             second = other.get('graph')
             graph = second if second and second['kind'] == 'daily' else graph or second
-        return {**chosen, 'graph': graph}
+        return {**chosen, 'graph': graph,
+                **({'net_medals': other['net_medals']} if chosen.get('net_medals') is None and other.get('net_medals') is not None else {})}
     return chosen
 
 

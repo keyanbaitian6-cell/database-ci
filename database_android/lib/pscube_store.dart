@@ -160,6 +160,11 @@ class PscubeStore {
       final value = row[field];
       if (value is! int || value < 0) throw FormatException('$field の数値が不正です。');
     }
+    if (row['net_medals'] != null &&
+        (row['net_medals'] is! int ||
+            (row['net_medals'] as int).abs() > 1000000)) {
+      throw const FormatException('差枚の数値が不正です。');
+    }
     final graph = row['graph'];
     if (graph != null) {
       if (graph is! Map ||
@@ -437,11 +442,13 @@ class PscubeStore {
     if (older && !same) return old;
     final chosen = older ? old : fresh;
     final other = older ? fresh : old;
+    final net = chosen['net_medals'] ?? other['net_medals'];
     if (!same) return chosen;
     final graph = chosen['graph'];
     final alternate = other['graph'];
     return {
       ...chosen,
+      if (net != null) 'net_medals': net,
       'graph': graph is Map && graph['kind'] == 'daily'
           ? graph
           : alternate is Map && alternate['kind'] == 'daily'

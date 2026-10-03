@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parents[1]
 BUILD = HERE / 'build' / 'web'
 SEED = HERE / 'assets' / 'database_seed.json'
 PSCUBE = HERE / 'web' / 'pscube'
-PSCUBE_FILES = {'index.html', 'data.mjs', 'archive.mjs', 'scoring.mjs', 'sync.mjs', 'viewer_bridge.mjs', 'viewer_bootstrap.mjs'}
+PSCUBE_FILES = {'index.html', 'data.mjs', 'archive.mjs', 'scoring.mjs', 'sync.mjs', 'graph_probe.mjs', 'viewer_bridge.mjs', 'viewer_bootstrap.mjs'}
 
 README = """# database 閲覧
 
@@ -64,7 +64,7 @@ def stage_pscube(target):
         data = (PSCUBE / name).read_bytes()
         if any(p.encode() in data for p in probes):
             sys.exit(f'{name} に記録らしい文字列があります。公開しません。')
-        if b'WebMainResource' in data and name not in {'archive.mjs'}:
+        if b'WebMainResource' in data and name not in {'archive.mjs', 'viewer_bridge.mjs'}:
             sys.exit(f'{name} にWebアーカイブの内容が混入しています。')
         (dest / name).write_bytes(data)
     print(f'OK: {dest} にP’s CUBEの公開ファイルだけを用意しました（記録の文字列 {len(probes)} 種で確認、該当なし）。')

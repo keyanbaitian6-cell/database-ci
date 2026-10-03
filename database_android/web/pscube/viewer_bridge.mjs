@@ -1,5 +1,6 @@
 import {readWebArchive} from './archive.mjs';
-import {emptyData, validateData, mergeData, parsePage, validDay, suffixEventKey, mergeSuffixEvents, validateSuffixEvents} from './data.mjs';
+import {emptyData, validateData, mergeData, parsePage, validDay, machineKey, suffixEventKey, mergeSuffixEvents, validateSuffixEvents} from './data.mjs';
+import {applyGraphProbe} from './graph_probe.mjs';
 import {REMOTE_KEY, fetchDrive, buildBackup, backupFileName} from './sync.mjs';
 
 // Reuse the old database and keys so the already imported records survive.
@@ -29,10 +30,13 @@ async function write(data, meta) {
       let failure;
       current.onsuccess = () => {
         try {
-          // Merge only marks against the latest stored value. Import/type
-          // changes retain their existing record and explicit-null semantics.
-          const marks = mergeSuffixEvents(validateSuffixEvents(current.result?.suffix_events), validateSuffixEvents(data.suffix_events));
-          state.put(validateData({...data, suffix_events:marks}), 'data');
+          // Another tab or Drive refresh may have saved a graph after read().
+          // Merge against the latest value inside this transaction, while
+          // keeping explicit machine type edits (including null removals).
+          const latest = current.result ? mergeData(validateData(current.result), data) : data;
+          const types = new Map(data.machines.map(m => [machineKey(m), m.machine_type]));
+          state.put(validateData({...latest, machines:latest.machines.map(m =>
+            types.has(machineKey(m)) ? {...m, machine_type:types.get(machineKey(m))} : m)}), 'data');
           state.put(meta, 'meta');
         } catch (e) { failure = e; tx.abort(); }
       };
@@ -50,7 +54,8 @@ export async function isPscubeFile(file) {
   if (/\.webarchive$/i.test(file.name)) return true;
   const head = await file.slice(0, 4096).text();
   return head.startsWith('bplist') || head.includes('WebMainResource') ||
-    /"format"\s*:\s*"pscube-viewer"/.test(head);
+    /"format"\s*:\s*"pscube-viewer"/.test(head) ||
+    (/"rack"\s*:/.test(head) && /"graph"\s*:/.test(head));
 }
 export async function readPscubeFiles(files, existing) {
   const old = existing ?? (await read()).data;
@@ -63,6 +68,10 @@ export async function readPscubeFiles(files, existing) {
       fresh = parsePage(await readWebArchive(await file.arrayBuffer()));
     } else {
       const raw = JSON.parse((await file.text()).replace(/^\uFEFF/, ''));
+      if (raw?.graph && raw?.rack) {
+        data = applyGraphProbe(data, raw);
+        continue;
+      }
       fresh = validateData(raw); exportedAt = raw.exported_at ?? null;
     }
     data = mergeData(data, fresh);
@@ -104,6 +113,12 @@ async function setSuffixEvent(scope, day, enabled) {
 export function createPscubeBridge() {
   return {
     setSuffixEvent,
+    async importGraph(text) {
+      const saved = await read();
+      if (!saved.data) throw new Error('先にP’s CUBEのバックアップを読み込んでください。');
+      const data = applyGraphProbe(saved.data, JSON.parse(text));
+      return envelope(data, {...saved.meta, file: 'P’s CUBEグラフJSON'});
+    },
     pick() {
       return new Promise((resolve, reject) => {
         const input = document.createElement('input');
