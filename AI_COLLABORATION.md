@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## メルヘンの推定差枚（PC・Android・閲覧ページ）と「日別の差枚（推定）」、0.5.22（Claude、2026-10-04）
+
+- 利用者「追加の通信なしの推定差枚で構わないので実装。ビルドまで」「pscube同様に差枚表記のページを作って公開まで」「デザインは一緒に」。調査（`a/work/outputs/meruhen-investigation/REPORT_20261003_claude.md`）で特定したSVGの縦軸の規則で、保存済みのグラフ座標と最大持玉から推定差枚を計算（保存しない・表示のたびに計算）。仕様と根拠・限界は `database/MERUHEN_NET_ESTIMATE.md`。
+- 実装（`fe283ce`）：PC `core.meruhen_net_estimate`＋結果の表に「推定差枚」列と注記。Android・閲覧ページ `lib/meruhen_net.dart`、`SlotRecord.estimatedNetMedals`／`netValue`／`netLabel`（P’s CUBEは確定差枚・メルヘンは推定差枚）。機種の表の差枚列・この日のまとめ・台の詳細で「推定差枚」と表示。日別ページは共通化（`lib/daily_net_page.dart`、`DailyNetPage`／`dailyNet`）し、メルヘンでは見出し「日別の差枚（推定）」と推定の注記。閲覧ページのホームに「日別の差枚（推定）」ボタン（P’s CUBEと同じ位置）。確定差枚の項目（`net_medals`）・採点・MY・最大持玉・保存形式は変更なし。決まらない台は空欄（0にしない）。
+- 照合：PCとDartの計算が閲覧用データ11,806件で全件一致（全座標あり・4点のみの両方）。全座標で10,270件、4点のみで6,729件を推定、両方で出た6,372件中の食い違い1件。山・谷の時刻が無い古い4点の記録は、順番が分からないので上がり幅の下限を始点→山にした（並べ替えの差でPCとDartが27件食い違ったのを修正）。テスト：PC `tests/test_meruhen_net.py` 5件・PC全体成功、Flutter全443件成功（新規 `meruhen_net_test`・`daily_net_test` のメルヘン例）、analyze error/warning 0。
+- ビルド：`database/bin` 再ビルド（ZIPなし）、`smoke_frozen_capture`・`smoke_frozen_runtime` 成功（ビルド中に `pscube.sqlite3` 等が変化＝利用者のP’s CUBE巡回）。APK 通常版 `database-0.5.22-2026100403.apk`（`com.keyan.database_android`、92,788,409 bytes、SHA-256 `8EAE9D2B9261A57B9A4C90DF3C116C079CF5D97E23121AC8D435CA90FB3BF54E`）、クローン `database-pscube-clone-0.5.22-2026100402.apk`（`com.keyan.database_android.pscube`、92,788,433 bytes、SHA-256 `33B192DD6488AC11DAA7A2658495BF29E884CB5EC171185586A05460554ADCC9`）。aaptでID・名前・版、apksignerで署名証明書が前回0.5.21（通常・クローン）と同一を確認。**注意**：最初の通常版ビルドは失敗していたのに古い `app-release.apk`（前回のクローン）をコピーしてしまい、aaptで気付いて削除・再ビルド（そのため通常版は2026100403、2026100401は欠番）。ビルド前に `app-release.apk` を消し、コピー後にaaptで確かめること。
+- 公開：`flutter build web` →`tool/stage_viewer.py` 全体モード（記録文字列90件で該当なし）→公開リポジトリ `1c270c9`（Pages成功）。ステージ物で `test_pscube_browser.mjs` 成功、公開 `main.dart.js` 等はステージと一致、seed 404。公開ページに手元データを入れたヘッドレス表示で「日別の差枚（推定）」を確認、JSエラー0。手元表示の例（10/1 −60,083・243/355台、10/2 −33,284・257/355台、10/3 +127,582・353/355台）。
+
 ## 閲覧ページ（iPhone）：P’s CUBEの「日別の差枚」（Claude、2026-10-03 夜）
 
 - 利用者の依頼と見本の写真（日付・総差枚・平均差枚・評価の月別表、見出しで並べ替え、期間累計、日付から当日へ）。「評価の欄はつけなくていい」。P’s CUBEのホームの「末尾別データまとめ」の下に「日別の差枚」ボタン→ `lib/pscube_daily_net_page.dart`（`3b58295`）。月の選択、表（日付・総差枚・平均差枚・取得台数）、期間累計の行（常に最後）、日付・総差枚・平均差枚で並べ替え、日付タップでホームのその日へ。既存の共通部品（Card・DataTable・Notice・Dropdown・`shortDayLabel`）で作成。
