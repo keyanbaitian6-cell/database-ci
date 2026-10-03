@@ -1,5 +1,11 @@
 # database AI共同作業メモ
 
+## 閲覧ページ（iPhone）：P’s CUBEの「日別の差枚」（Claude、2026-10-03 夜）
+
+- 利用者の依頼と見本の写真（日付・総差枚・平均差枚・評価の月別表、見出しで並べ替え、期間累計、日付から当日へ）。「評価の欄はつけなくていい」。P’s CUBEのホームの「末尾別データまとめ」の下に「日別の差枚」ボタン→ `lib/pscube_daily_net_page.dart`（`3b58295`）。月の選択、表（日付・総差枚・平均差枚・取得台数）、期間累計の行（常に最後）、日付・総差枚・平均差枚で並べ替え、日付タップでホームのその日へ。既存の共通部品（Card・DataTable・Notice・Dropdown・`shortDayLabel`）で作成。
+- 集計：選んだP’s CUBEの店舗・貸玉だけ。差枚を取得できた台だけの合計・平均（平均＝合計÷取得台数、期間累計も同じ）。差枚の無い台は数えず、無い日は「—」（0にしない）。サイトの数値異常の台は除外。「店舗全体の総差枚ではない」と注記（当たり0回・沖ドキ・未取得を含まない）。
+- 検証：新規テスト2件（計算・画面：月の切替、累計、並べ替え、別貸玉を混ぜない、—表示、日付でホームへ）、Flutter全437件成功、analyze error/warning 0。Web版をビルドして既存 `tool/test_pscube_browser.mjs` 成功。手元の実データ（`database/data/pscube-viewer.json`）で393×852表示を確認（横にはみ出さない）。**公開は未実施**（利用者の確認待ち。公開時は `tool/stage_viewer.py` の全体モード）。
+
 ## P’s CUBEの差枚をPC・Androidの取り込みで保存（PR #1 を引き継いでmainへ、Claude、2026-10-03）
 
 - 依頼：ChatGPT/Codexが中断したPR #1（`codex/handoff-pscube-net-pc-android-20261003`）をレビュー・修正・検証してmainへ。差枚＝`Graph.src` の各日の終点Y−始点Y（×`anjYUnit`）。MYとは別。メルヘンは見送り。
