@@ -134,6 +134,51 @@ void main() {
     expect(nextDayBottomScenario(row, all), contains('他台は固定'));
     expect(nextDayBottomScenario(row, all), contains('★継続の予測ではありません'));
   });
+  test('iPhoneの閲覧ページ用：専門用語のあとに意味を添え、数字と判定は同じ', () {
+    final all = steady();
+    final row = all.firstWhere((r) => r.day == '2026-09-10' && r.rack == 1);
+    final e = nextDayEvidence(row, all);
+    final score = scoreRecord(row, all).total;
+    final plain = regularCandidateDetail(row, all, e);
+    final explained = regularCandidateDetail(row, all, e, explain: true);
+    expect(explained, isNot(plain));
+    // 同じ数字・同じ判定を出す。
+    expect(explained, contains('z=${e.stabilityZ.toStringAsFixed(2)}'));
+    expect(explained, contains('寄与${signedContribution(e.today!.gap!)}'));
+    expect(explained, contains('☆ 長期傾向の上位'));
+    expect(plain, contains('☆ 長期傾向の上位'));
+    // 専門用語のあとに意味がある。
+    expect(
+      explained,
+      contains('当たり順位 上（同じ日・同じ機種で回転数が近い台の中で、当たりの回数が多い方から4分の1以内）'),
+    );
+    expect(explained, contains('（この日だけで見た当たりの軽さ。0が平均'));
+    expect(
+      explained,
+      contains('安定性 z=${e.stabilityZ.toStringAsFixed(2)}（毎日のように当たりが多い側だったかの目安'),
+    );
+    expect(
+      explained,
+      contains('当日の合計点（この日の結果の点数）が${score!.toStringAsFixed(1)}点で、88点以上のため'),
+    );
+    expect(explained, contains('翌日最下位の仮定（もし翌日この台が同じ機種で一番当たりが少なかったら）'));
+    expect(focusReason(e, score, explain: true), startsWith('★注目にしない理由'));
+    expect(focusReason(e, 80, explain: true), startsWith('★注目の条件をすべて満たしています'));
+    // Androidアプリ（explainなし）の文は変えていない。
+    expect(focusReason(e, score), contains('88点以上のため★注目から除外'));
+    expect(e.todayText, startsWith('選択日 6000G・当たり順位 上・寄与'));
+    final skipped = nextDayEvidence(rec(10, 1, games: 499, hits: 0), [
+      for (final r in all)
+        if (r.day == '2026-09-10' && r.rack == 1)
+          rec(10, 1, games: 499, hits: 0)
+        else
+          r,
+    ]);
+    expect(
+      skipped.todayTextExplained,
+      '選択日（この日）の結果は、当たりの軽さ（指数）の計算に入っていません（500G未満）',
+    );
+  });
   test('バラエティは88以上を理由に除外しない', () {
     final row = rec(10, 1).copyWith(machine: '少数機種');
     expect(

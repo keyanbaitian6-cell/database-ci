@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'data_checks.dart';
@@ -1172,11 +1173,20 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
                     style: const TextStyle(fontSize: 11, color: AppColors.ash),
                   ),
                   Text(
-                    '${evidence.todayText}\n${evidence.bandsText}\n${focusReason(evidence, score)}',
+                    kIsWeb
+                        // iPhoneの閲覧ページだけ、専門用語のあとに意味を添える。
+                        ? '${evidence.todayTextExplained}\n'
+                              '当たり順位の内訳：${evidence.bandsText}（上＝多い方から4分の1以内、下＝少ない方から4分の1以内）\n'
+                              '${focusReason(evidence, score, explain: true)}'
+                        : '${evidence.todayText}\n${evidence.bandsText}\n${focusReason(evidence, score)}',
                     style: const TextStyle(fontSize: 11, color: AppColors.ash),
                   ),
                   Text(
-                    nextDayBottomScenario(c.record, widget.allRecords),
+                    nextDayBottomScenario(
+                      c.record,
+                      widget.allRecords,
+                      explain: kIsWeb,
+                    ),
                     style: const TextStyle(fontSize: 11, color: AppColors.ash),
                   ),
                 ],

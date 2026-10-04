@@ -34,9 +34,9 @@ List<(String machine, List<int> racks)> suspiciousDuplicates(
 /// Warning text for the racks that look duplicated (only those including
 /// [rack] when given), or null when nothing looks off.
 String? duplicateWarning(Iterable<SlotRecord> machineRows, {int? rack}) {
-  final groups = suspiciousDuplicates(
-    machineRows,
-  ).where((g) => rack == null || g.$2.contains(rack)).toList();
+  final groups = suspiciousDuplicates(machineRows)
+      .where((g) => rack == null || g.$2.contains(rack))
+      .toList();
   if (groups.isEmpty) return null;
   final racks = groups.map((g) => '${g.$2.join('・')}番台').join('、');
   return '⚠ $racksの数値（回転・BIG・REG）が完全に同じです。台番号のずれがないか確認してください。';
@@ -216,6 +216,27 @@ class NextDayEvidence {
     return '選択日の結果は指数に入っていません（$reason）';
   }
 
+  /// [todayText] の、専門用語のあとに意味を添えた版（iPhoneの閲覧ページ用。2026-10-05、利用者
+  /// 「専門用語のあとにわかりやすい意味を書いてほしい」）。数字と判定は同じ。
+  String get todayTextExplained {
+    final d = today;
+    final what = record.pscubeOutputProfile ? 'MY' : '当たりの回数';
+    if (todayUsed) {
+      return '選択日（この日）：${record.games}G。'
+          '${record.pscubeOutputProfile ? 'MY' : '当たり'}順位 ${d!.band}'
+          '（同じ日・同じ機種で回転数が近い台の中で、$whatが'
+          '${d.band == '上'
+              ? '多い方から4分の1以内'
+              : d.band == '下'
+              ? '少ない方から4分の1以内'
+              : '真ん中あたり'}）。'
+          '寄与${signedContribution(d.gap!)}'
+          '（この日だけで見た当たりの軽さ。0が平均で、＋なら軽い。過去の日の寄与をならしたものが「平均より」の数字）';
+    }
+    return '選択日（この日）の結果は、当たりの軽さ（指数）の計算に入っていません'
+        '（${todayText.substring(todayText.indexOf('（') + 1)}';
+  }
+
   String get bandsText => ['上', '中', '下']
       .map(
         (b) =>
@@ -235,9 +256,10 @@ NextDayEvidence nextDayEvidence(
 }) {
   // 日付は YYYY-MM-DD なので文字列のまま比べる（台ごと・記録ごとに日付へ
   // 変換し直すと、結果タブで全機種の候補を出すときに重い）。
-  final first = DateTime.parse(
-    record.day,
-  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
+  final first = DateTime.parse(record.day)
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
   // 同じ店舗・機種の記録だけを見る（店舗・機種ごとの仕分けは一覧ごとに1回）。
   // 日ごとにまとめておき、1日ぶんを探すたびに全部を見直さない。
   final byDay = <String, List<SlotRecord>>{};
@@ -302,7 +324,12 @@ bool candidateIsFocus(ProvisionalCandidate c, List<SlotRecord> all) =>
       scoreRecord(c.record, all).total,
     );
 
-String focusReason(NextDayEvidence e, double? todayScore) {
+String focusReason(
+  NextDayEvidence e,
+  double? todayScore, {
+  bool explain = false,
+}) {
+  if (explain) return _focusReasonExplained(e, todayScore);
   if (todayScore != null && todayScore >= 88) {
     return '当日${todayScore.toStringAsFixed(1)}点：88点以上のため★注目から除外';
   }
@@ -311,11 +338,30 @@ String focusReason(NextDayEvidence e, double? todayScore) {
   return '当日情報あり・安定性基準を満たす${todayScore == null ? '（当日点数なし）' : '・当日88点未満'}';
 }
 
+/// [focusReason] の、専門用語のあとに意味を添えた版（iPhoneの閲覧ページ用）。判定は同じ。
+String _focusReasonExplained(NextDayEvidence e, double? todayScore) {
+  if (todayScore != null && todayScore >= 88) {
+    return '★注目にしない理由：当日の合計点（この日の結果の点数）が${todayScore.toStringAsFixed(1)}点で、'
+        '88点以上のため（★注目は当日88点未満の台だけ。88点以上でも☆長期傾向には残します）';
+  }
+  if (!e.todayUsed) {
+    return '★注目にしない理由：選択日（この日）の結果が、当たりの軽さの計算に入っていないため';
+  }
+  if (e.stabilityZ < 1.96) {
+    return '★注目にしない理由：安定性（毎日のように当たりが多い側だったか）が基準の1.96に届かないため';
+  }
+  return '★注目の条件をすべて満たしています（選択日の結果が計算に入っている・安定性が1.96以上'
+      '${todayScore == null ? '・当日の点数なし' : '・当日の合計点が88点未満'}）';
+}
+
+/// [explain]：専門用語のあとに意味を添える（iPhoneの閲覧ページ用）。数字と判定は同じ。
 String regularCandidateDetail(
   SlotRecord record,
   List<SlotRecord> all,
-  NextDayEvidence e,
-) {
+  NextDayEvidence e, {
+  bool explain = false,
+}) {
+  if (explain) return _regularCandidateDetailExplained(record, all, e);
   final history = machineHistory(all, record.store, record.machine);
   final selected = provisionalNextDayCandidates(
     history.where((r) => r.day == record.day).toList(),
@@ -360,12 +406,70 @@ String regularCandidateDetail(
       '直近3暦日の点数（参考。選択条件には使わない）：$recent';
 }
 
+String _regularCandidateDetailExplained(
+  SlotRecord record,
+  List<SlotRecord> all,
+  NextDayEvidence e,
+) {
+  final history = machineHistory(all, record.store, record.machine);
+  final selected = provisionalNextDayCandidates(
+    history.where((r) => r.day == record.day).toList(),
+    history,
+  ).candidates.any((c) => c.record.rack == record.rack);
+  final score = scoreRecord(record, all).total;
+  final label = !selected
+      ? 'この台は☆長期傾向の上位（同じ機種で、当たりの軽さが上から4分の1に入る台）に選ばれていません'
+      : qualifiesForNextDayFocus(e, score)
+      ? '★ 翌日向けに注目（☆長期傾向の上位のうち、下の条件をすべて満たす台）'
+      : '☆ 長期傾向の上位（同じ機種で、当たりの軽さが上から4分の1に入る台）。★注目ではありません';
+  final influential = e.contributions.where((d) => d.gap != null).toList()
+    ..sort((a, b) => b.gap!.compareTo(a.gap!));
+  final target = DateTime.parse(record.day);
+  final recent =
+      [
+            for (var i = 0; i < 3; i++)
+              target
+                  .subtract(Duration(days: i))
+                  .toIso8601String()
+                  .substring(0, 10),
+          ]
+          .map((day) {
+            final row = history
+                .where((r) => r.rack == record.rack && r.day == day)
+                .firstOrNull;
+            final total = row == null ? null : scoreRecord(row, all).total;
+            return '$day ${row == null
+                ? '未取得'
+                : total == null
+                ? '未採点'
+                : '${total.toStringAsFixed(1)}点'}';
+          })
+          .join('／');
+  final pushing = influential
+      .where((d) => d.gap! > 0)
+      .take(2)
+      .map((d) => '${d.day} ${signedContribution(d.gap!)}')
+      .join('／');
+  return '$label\n'
+      '${e.todayTextExplained}\n'
+      '記録日ごとの当たり順位の内訳：${e.bandsText}（上＝多い方から4分の1以内、下＝少ない方から4分の1以内）\n'
+      '${focusReason(e, score, explain: true)}\n'
+      '記録日ごとの当たり順位と寄与（新しい順。寄与＝その日だけで見た当たりの軽さ、0が平均）：'
+      '${e.contributions.map((d) => '${d.day} ${d.band}${d.gap == null ? '' : '（寄与${signedContribution(d.gap!)}）'}').join('／')}\n'
+      '指数（当たりの軽さ）を押し上げている日：${pushing.isEmpty ? 'なし' : pushing}\n'
+      '${e.contributions.length >= 10 ? '次に記録が増えると計算から外れる日：${e.contributions.last.day}（当たりの軽さは、新しい10記録日だけで計算するため）' : '計算に使う10記録日にはまだ届いていません（記録が増えるほど値が落ち着きます）'}\n'
+      '${nextDayBottomScenario(record, all, explain: true)}\n'
+      '安定性 z=${e.stabilityZ.toStringAsFixed(2)}（毎日のように当たりが多い側だったかの目安。'
+      '0なら多い日と少ない日が半々、大きいほど多い側の日が続いている。1.96以上を「安定している」とみなします）。'
+      '統計の検定の結果や、高設定の確率・予測の当たりやすさを示すものではありません。\n'
+      '直近3日の当日の合計点（その日の結果の点数。参考で、★や☆を選ぶ条件には使っていません）：$recent';
+}
+
 /// Identical nine-decimal comparison on PC and Dart; never rank the displayed
 /// one-decimal value. Days/latest date are evidence-based deterministic ties.
 int compareNextDayEvidence(NextDayEvidence a, NextDayEvidence b) {
-  final byIndex = double.parse(
-    b.rawIndex!.toStringAsFixed(9),
-  ).compareTo(double.parse(a.rawIndex!.toStringAsFixed(9)));
+  final byIndex = double.parse(b.rawIndex!.toStringAsFixed(9))
+      .compareTo(double.parse(a.rawIndex!.toStringAsFixed(9)));
   if (byIndex != 0) return byIndex;
   final byDays = b.usedDays.compareTo(a.usedDays);
   if (byDays != 0) return byDays;
@@ -376,14 +480,22 @@ int compareNextDayEvidence(NextDayEvidence a, NextDayEvidence b) {
 /// A sensitivity scenario, NOT a prediction: same games/peer count as the
 /// latest usable day, strictly bottom rank, every OTHER rack held fixed.
 /// Also rolls the 10-day window and 30-calendar-day expiry forward by one day.
-String nextDayBottomScenario(SlotRecord record, List<SlotRecord> all) {
+String nextDayBottomScenario(
+  SlotRecord record,
+  List<SlotRecord> all, {
+  bool explain = false,
+}) {
   final history = machineHistory(all, record.store, record.machine);
   final rows = history.where((r) => r.day == record.day).toList();
   final eligible = [
     for (final r in rows) nextDayEvidence(r, history),
   ].where((e) => e.rawIndex != null).toList()..sort(compareNextDayEvidence);
   final e = eligible.where((e) => e.record.rack == record.rack).firstOrNull;
-  if (e == null || eligible.length < 4) return '翌日最下位の目安：判定材料が足りません';
+  if (e == null || eligible.length < 4) {
+    return explain
+        ? '翌日最下位の仮定（翌日この台が同じ機種で一番当たりが少なかったら）：判定材料が足りません'
+        : '翌日最下位の目安：判定材料が足りません';
+  }
   final latest = e.contributions.where((d) => d.gap != null).first;
   final next = DateTime.parse(record.day).add(const Duration(days: 1));
   final first = next
@@ -399,7 +511,11 @@ String nextDayBottomScenario(SlotRecord record, List<SlotRecord> all) {
       latest.games /
       (latest.games + shrinkGames);
   final n = kept.where((d) => d.gap != null).length + 1;
-  if (n < 3) return '翌日最下位なら判定日数不足（他台を固定した仮定）';
+  if (n < 3) {
+    return explain
+        ? '翌日最下位の仮定（翌日この台が同じ機種で一番当たりが少なかったら）：計算に使える日数が足りなくなります'
+        : '翌日最下位なら判定日数不足（他台を固定した仮定）';
+  }
   final raw = 50 + (kept.fold(0.0, (s, d) => s + (d.gap ?? 0)) + gap) / (n + 5);
   final hypothetical = NextDayEvidence(record, [
     NextDayContribution(
@@ -419,6 +535,12 @@ String nextDayBottomScenario(SlotRecord record, List<SlotRecord> all) {
       )
       .length;
   final remains = position < (eligible.length * .25).ceil();
+  if (explain) {
+    return '翌日最下位の仮定（もし翌日この台が同じ機種で一番当たりが少なかったら）：'
+        '指数（当たりの軽さ、50が平均）${e.index!.toStringAsFixed(1)}→${raw.toStringAsFixed(1)}、'
+        '${remains ? '☆長期傾向の上位に残る' : '☆長期傾向の上位から外れる'}見込み'
+        '（回転数と比べる台の数は直近の記録日と同じ、ほかの台は変わらないと仮定。★が続くかの予測ではありません）';
+  }
   return '翌日最下位の仮定：指数${e.index!.toStringAsFixed(1)}→${raw.toStringAsFixed(1)}・'
       '${remains ? '長期傾向の上位に残る' : '長期傾向の上位から外れる'}目安'
       '（直近使用日と同じ回転数・比較台数、他台は固定。★継続の予測ではありません）';

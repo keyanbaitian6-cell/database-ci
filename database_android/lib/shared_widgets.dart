@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'data_checks.dart';
@@ -467,6 +468,18 @@ class RackTrend extends StatelessWidget {
                     : forecast.index == null
                     ? 'この台の当たりの軽さ（過去傾向）：まだ判定できません'
                           '（同じ機種で${forecast.days}日分／3日分から判定）'
+                    : kIsWeb
+                    // iPhoneの閲覧ページだけ、専門用語のあとに意味を添える（2026-10-05、利用者の依頼）。
+                    ? 'この台の当たりの軽さ（過去傾向）：'
+                          '${signedIndex(forecast.index!)}'
+                          '（過去${forecast.days}日分・データ量${forecast.confidence}）\n'
+                          '・当たりの軽さ＝同じ日・同じ機種で、回転数が近い台と比べて、'
+                          '当たりの回数が多かったか少なかったか。過去の日をならした値で、'
+                          '0が平均、＋なら当たりが多め（軽い）、−なら少なめ（重い）。\n'
+                          '・データ量＝計算に使えた日数の目安（少＝3〜6日、中＝7日以上）。\n'
+                          '★注目・☆長期傾向（下の「理由」）を選ぶ根拠に使っています。'
+                          '今日の合計点（この日の結果の点数）とは別のものです。\n'
+                          '$regularReferenceCandidateNote\n$nextDayValidationNote'
                     : 'この台の当たりの軽さ（過去傾向）：'
                           '${signedIndex(forecast.index!)}'
                           '（過去${forecast.days}日分・データ量${forecast.confidence}）\n'
@@ -491,7 +504,12 @@ class RackTrend extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Text(
-                        regularCandidateDetail(record, all, evidence),
+                        regularCandidateDetail(
+                          record,
+                          all,
+                          evidence,
+                          explain: kIsWeb,
+                        ),
                         style: const TextStyle(
                           color: AppColors.ash,
                           fontSize: 12,
