@@ -170,6 +170,10 @@ class _DailyNetPageState extends State<DailyNetPage> {
                     showCheckboxColumn: false,
                     columnSpacing: 18,
                     horizontalMargin: 12,
+                    // イベント名（日付の下の2行目）が入る表は、行を少し高くする。
+                    // 標準の48では、2行がはみ出してイベント名が切れる。
+                    dataRowMinHeight: widget.eventFor == null ? null : 56,
+                    dataRowMaxHeight: widget.eventFor == null ? null : 56,
                     headingRowColor: const WidgetStatePropertyAll(
                       AppColors.ice,
                     ),

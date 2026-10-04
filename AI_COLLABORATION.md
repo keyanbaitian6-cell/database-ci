@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 日別の差枚：日付リストのイベント名が出ない件（行の高さ・未公開）（Claude、2026-10-04）
+
+- 利用者がiPhoneの「日別の差枚（推定）」を見て「日付リストにイベント名が出ていない」と報告（スクリーンショットは9/22〜9/30、イベント表示なし）。データ（`database-viewer.json` の `date_events`）には長町南の9/14〜10/2のイベントがある。
+- 原因は2つ。①イベント名を日付の下に出す変更（`3396152`、10:53）は、公開済みの閲覧ページ（最新の公開 `a38c8ca` ＝ 90秒の待ち時間、00:55）より後で、**まだ公開していなかった**。②日付セルが2行（日付＋イベント名）になる表で、`DataTable` の行の高さが標準の48固定のため4pxはみ出す（`daily_net_test` の失敗の原因＝前の記録の「既知」はこれ）。
+- 修正：イベント名を渡す画面（`eventFor` あり）の行の高さを56に（`lib/daily_net_page.dart`）。`daily_net_test` が通る。Flutter全456件成功。閲覧ページを `flutter build web -t lib/viewer_main.dart --release --base-href /database-viewer/` でビルドし、`tool/stage_viewer.py` で `C:/Users/keyan/database-viewer` に配置（記録の誤りなし）。**公開（commit・push）は利用者の確認待ち**。
+- 公開版の差分（改行の違いを除く）：`main.dart.js`、`version.json`、P’s CUBEの読み取りスクリプト `assets/assets/pscube_*.js`・`pscube/data.mjs`（`autoPageState` が選ばれた日 `day` を返す、前の記録のとおり表示には影響しない）。
+
 ## P’s CUBE：手動で取り込むときも、次の機種・台番へ進む／0.5.24（Claude、2026-10-04）
 
 - 利用者「CUBEのほうも変えて、ビルドまで」（メルヘンの「手動のときは一覧の上から探し直さず次の機種・台番へ」と同じ）。
