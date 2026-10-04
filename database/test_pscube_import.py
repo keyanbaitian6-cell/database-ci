@@ -77,11 +77,15 @@ class PscubeImportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.import_page(rack, record['detail_url'], expected_day=today)
         self.store.import_page(rack, record['detail_url'], expected_day=yesterday)
-        # 機種一覧を取り直しても、取り込み日が決まっていれば最初の機種へ戻らず、昨日の未取得の先頭へ進む。
-        again = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday)
+        # 機種一覧を取り直しても、取り込み日とその日の基準の時刻が決まっていれば、最初の機種へ戻らず、昨日の未取得の先頭へ進む。
+        known = {yesterday: '2026-10-01T12:00:00+09:00'}
+        again = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, fresh_since=known)
         self.assertEqual(again['next_url'], self.machines[1]['url'])
-        bottom = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom')
+        bottom = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom', fresh_since=known)
         self.assertEqual(bottom['next_url'], self.machines[1]['url'])
+        # 基準の時刻がまだ無い（今回まだ1ページも保存していない）ときは、決めた向きの最初の機種で基準を確かめる。
+        fresh = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom')
+        self.assertEqual(fresh['next_url'], self.machines[-1]['url'])
 
     def test_manual_import_continues_from_the_saved_page_instead_of_the_top_of_the_list(self):
         """手動のとき：飛ばした上の機種へ戻らず、保存したページの次（同じ機種の台→次の機種）へ。最後まで来たら最初へ回る。"""
@@ -118,6 +122,49 @@ class PscubeImportTests(unittest.TestCase):
         self.assertEqual(result['next_url'], url(c, 100))
         self.assertEqual(save_rack(c, 100, manual=True), url(c, 101))
         self.assertEqual(save_rack(c, 101, manual=True), a['url'], '最後の機種まで来たら、取りこぼした甲機へ回る')
+
+    def test_numbers_saved_earlier_in_the_day_are_taken_again(self):
+        """昼に取った機種を、夜の取り込みで「済み」として飛ばさない（2026-10-04、P’s CUBEで下からが上に飛んだ件）。"""
+        a, b, c = [dict(m, expected_count=1) for m in (self.machines[0], self.machines[1],
+                   {**self.machines[0], 'machine': 'Lうみねこ', 'url': self.machines[0]['url'].replace('L東京喰種', 'Lうみねこ')})]
+        self.store.import_page(self.page(self.index_url, [a, b, c]), self.index_url)
+
+        def at(machine, rack, time, games=1854):
+            return dict(self.record(machine, rack), observed_at=f'2026-10-01T{time}:00+09:00', games=games)
+
+        def table(machine, rack, time, games=1854, **kw):
+            return self.store.import_page(self.page(machine['url'], [dict(machine, expected_count=None)], [at(machine, rack, time, games)]), machine['url'], **kw)
+
+        def rack_page(machine, rack, time, **kw):
+            url = self.record(machine, rack)['detail_url']
+            rows = [dict(self.record(machine, rack, (date.fromisoformat(self.day) - timedelta(days=i)).isoformat()),
+                         observed_at=f'2026-10-01T{time}:00+09:00') for i in range(7)]
+            return self.store.import_page(self.page(url, [dict(machine, expected_count=None)], rows), url, **kw)
+
+        # 昼（11:12）に3機種とも全台一覧・台別ページまで取った。
+        for i, m in enumerate((a, b, c)):
+            table(m, 100 + i, '11:12'); rack_page(m, 100 + i, '11:12')
+        self.assertIsNone(self.store.next_target(self.day, 'bottom')[0], '基準が無ければ、これまでどおり済み')
+        # 夜（23:12）に下から。最初の丙機（うみねこ）の全台一覧で基準23:12が分かり、次は乙機の全台一覧を取り直す。
+        night = table(c, 102, '23:12', games=6000, direction='bottom')
+        self.assertEqual(night['fresh_since'], {self.day: '2026-10-01T23:12:00+09:00'})
+        self.assertEqual(night['next_url'], self.record(c, 102)['detail_url'], '数値が変わった台は台別ページも取り直す')
+        after_rack = rack_page(c, 102, '23:12', direction='bottom', fresh_since=night['fresh_since'])
+        self.assertEqual(after_rack['next_url'], b['url'], '昼の数値のままの乙機を飛ばさない')
+        # 乙機は昼から数値が変わっていない：全台一覧を取り直せば、台別ページは取り直さない（次は甲機）。
+        same = table(b, 101, '23:12', direction='bottom', fresh_since=after_rack['fresh_since'])
+        self.assertEqual(same['next_url'], a['url'])
+        table(a, 100, '23:12', direction='bottom', fresh_since=after_rack['fresh_since'])
+        self.assertIsNone(self.store.next_target(self.day, 'bottom', fresh_since='2026-10-01T23:12:00+09:00')[0],
+                          '今回取った分は、その後サイトの時刻が進んでも取り直さない（終わらなくならない）')
+
+    def test_the_cutoff_stops_at_the_end_of_the_business_day(self):
+        from pscube_import import stale_cutoff
+        end = datetime.fromisoformat('2026-10-02T02:00:00+09:00').timestamp()
+        self.assertEqual(stale_cutoff('2026-10-01', '2026-10-03T09:00:00+09:00'), end, '終わった日は翌日の午前2時で頭打ち')
+        self.assertEqual(stale_cutoff('2026-10-01', '2026-10-01T23:12:00+09:00'),
+                         datetime.fromisoformat('2026-10-01T23:12:00+09:00').timestamp())
+        self.assertIsNone(stale_cutoff('2026-10-01', None))
 
     def test_installation_count_uses_the_current_machine_without_writing(self):
         self.machines[0]['expected_count'] = 31

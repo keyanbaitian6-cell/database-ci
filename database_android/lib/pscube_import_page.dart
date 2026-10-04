@@ -60,6 +60,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前2時で営業日が変わる。
   String? _targetDay;
   String _direction = 'top';
+  // {日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は取り直す。
+  // 画面を開いている間（手動の取り込みも）続き、自動取り込みをONにするたびに作り直す。
+  final Map<String, String> _freshSince = {};
 
   @override
   void initState() {
@@ -391,6 +394,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       }
       _autoDone.clear();
       _autoFailures.clear();
+      _freshSince.clear();
       _auto.turnOn();
       setState(() => _autoStatus = 'ON・次の取り込みを待っています');
     } catch (error) {
@@ -533,6 +537,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         direction: _direction,
         // 自動取り込みがOFFのとき（手動）は、一覧の最初からではなく、保存したページの次へ進む。
         manual: !_auto.enabled,
+        freshSince: _freshSince,
       );
       // 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
       final netWarning = pscubeNetWarning(raw);

@@ -381,6 +381,128 @@ void main() {
     expect(await saveRack(c, 101), a['url'], reason: '最後の機種まで来たら、取りこぼした甲機へ回る');
   });
 
+  test('昼に取った機種を、夜の取り込みで「済み」として飛ばさない（PC版と同じ）', () async {
+    Map<String, dynamic> named(String name) => {
+      ...machine,
+      'machine': name,
+      'expected_count': 1,
+      'url': '${PscubeStore.root}cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&k=$name',
+    };
+    final a = named('甲機'), b = named('乙機'), c = named('丙機');
+    await store.importPage(
+      page(PscubeStore.index, [a, b, c]),
+      PscubeStore.index,
+    );
+    Map<String, dynamic> rec(
+      Map<String, dynamic> m,
+      int rack,
+      String time, [
+      String d = day,
+      int games = 1854,
+    ]) => record(d)
+      ..['machine'] = m['machine']
+      ..['rack'] = rack
+      ..['games'] = games
+      ..['observed_at'] = '2026-10-01T$time:00+09:00'
+      ..['detail_url'] =
+          '${PscubeStore.root}cgi-bin/nc-v06-001.php?cd_dai=$rack&k=${m['machine']}#${d.replaceAll('-', '')}';
+    final fresh = <String, String>{};
+    Future<String?> table(
+      Map<String, dynamic> m,
+      int rack,
+      String time, {
+      int games = 1854,
+      Map<String, String>? since,
+    }) async => (await store.importPage(
+      page(
+        m['url'] as String,
+        [
+          {...m, 'expected_count': null},
+        ],
+        [rec(m, rack, time, day, games)],
+      ),
+      m['url'] as String,
+      direction: 'bottom',
+      freshSince: since,
+    )).nextUrl;
+    Future<String?> rack(
+      Map<String, dynamic> m,
+      int no,
+      String time, {
+      Map<String, String>? since,
+    }) async {
+      final url = rec(m, no, time)['detail_url'] as String;
+      return (await store.importPage(
+        page(
+          url,
+          [
+            {...m, 'expected_count': null},
+          ],
+          [
+            for (var i = 0; i < 7; i++)
+              rec(
+                m,
+                no,
+                time,
+                DateTime.parse('${day}T00:00:00Z')
+                    .subtract(Duration(days: i))
+                    .toIso8601String()
+                    .substring(0, 10),
+              ),
+          ],
+        ),
+        url,
+        direction: 'bottom',
+        freshSince: since,
+      )).nextUrl;
+    }
+
+    String detail(Map<String, dynamic> m, int no) =>
+        rec(m, no, '00:00')['detail_url'] as String;
+    // 昼（11:12）に3機種とも取った。
+    for (final (i, m) in [a, b, c].indexed) {
+      await table(m, 100 + i, '11:12');
+      await rack(m, 100 + i, '11:12');
+    }
+    expect(
+      (await store.nextTarget(day, 'bottom')).url,
+      isNull,
+      reason: '基準が無ければ、これまでどおり済み',
+    );
+    // 夜（23:12）に下から：丙機の全台一覧で基準が分かり、数値が変わった台は台別ページも取り直す。
+    expect(
+      await table(c, 102, '23:12', games: 6000, since: fresh),
+      detail(c, 102),
+    );
+    expect(fresh, {day: '2026-10-01T23:12:00+09:00'});
+    expect(
+      await rack(c, 102, '23:12', since: fresh),
+      b['url'],
+      reason: '昼の数値のままの乙機を飛ばさない',
+    );
+    expect(
+      await table(b, 101, '23:12', since: fresh),
+      a['url'],
+      reason: '数値が変わっていなければ台別ページは取り直さない',
+    );
+    expect(await table(a, 100, '23:12', since: fresh), isNull);
+    expect(
+      (await store.nextTarget(
+        day,
+        'bottom',
+        null,
+        fresh[day],
+      )).url,
+      isNull,
+      reason: '今回取った分は、その後サイトの時刻が進んでも取り直さない（終わらなくならない）',
+    );
+    expect(
+      pscubeStaleCutoff('2026-10-01', '2026-10-03T09:00:00+09:00'),
+      DateTime.parse('2026-10-02T02:00:00+09:00').millisecondsSinceEpoch,
+      reason: '終わった日は翌日の午前2時で頭打ち',
+    );
+  });
+
   test('当たりが1回もない台（0回転を含む）は数値を保存し、台別7日分は取りに行かない', () async {
     final m = {...machine, 'expected_count': 2};
     await store.importPage(page(PscubeStore.index, [m]), PscubeStore.index);
@@ -669,11 +791,13 @@ void main() {
       expectedDay: yesterday,
     );
     expect(table.nextUrl, record(yesterday)['detail_url']);
-    // 機種一覧を取り直しても、最初の機種へ戻らず、昨日の未取得の先頭へ進む。
+    // 機種一覧を取り直しても、その日の基準の時刻が分かっていれば、最初の機種へ戻らず、昨日の未取得の先頭へ進む。
+    final known = {yesterday: '2026-10-01T12:00:00+09:00'};
     final again = await store.importPage(
       page(PscubeStore.index, [machine, second]),
       PscubeStore.index,
       expectedDay: yesterday,
+      freshSince: known,
     );
     expect(again.nextUrl, record(yesterday)['detail_url']);
     final bottom = await store.importPage(
@@ -681,8 +805,16 @@ void main() {
       PscubeStore.index,
       expectedDay: yesterday,
       direction: 'bottom',
+      freshSince: known,
     );
     expect(bottom.nextUrl, second['url'], reason: '下からなら二つ目の機種から');
+    // 基準の時刻がまだ無い（今回まだ1ページも保存していない）ときは、決めた向きの最初の機種で確かめる。
+    final unknown = await store.importPage(
+      page(PscubeStore.index, [machine, second]),
+      PscubeStore.index,
+      expectedDay: yesterday,
+    );
+    expect(unknown.nextUrl, machine['url']);
     // 台別ページ：ハッシュの日が取り込み日と違えば保存しない。
     final history = [
       for (var i = 0; i < 7; i++)

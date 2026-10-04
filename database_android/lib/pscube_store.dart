@@ -6,6 +6,22 @@ import 'package:sqflite/sqflite.dart';
 
 import 'models.dart' show timestampWithOffset;
 
+/// 時差つきの時刻文字列を比べられる数（ミリ秒）に。読めなければ null。
+int? _instant(Object? text) =>
+    text is String ? DateTime.tryParse(text)?.millisecondsSinceEpoch : null;
+
+/// [day] の記録がこれより古い「サイトの更新時刻」なら取り直す（昼に取った数値を夜の分として残さない）。
+/// [freshSince]：今回の取り込みで最初に保存したページのサイトの更新時刻。その日の営業が終わった後
+/// （翌日の午前2時以降）の数値はもう変わらないので、そこで頭打ち。PC版 `stale_cutoff` と同じ。
+int? pscubeStaleCutoff(String? day, String? freshSince) {
+  final since = _instant(freshSince);
+  if (since == null || day == null) return null;
+  final dayEnd = DateTime.parse('${day}T00:00:00+09:00')
+      .add(const Duration(days: 1, hours: 2))
+      .millisecondsSinceEpoch;
+  return since < dayEnd ? since : dayEnd;
+}
+
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
   PscubeStore._(this.db);
@@ -227,14 +243,25 @@ class PscubeStore {
   /// [expectedDay]：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
   /// [direction]：`top`＝機種を一覧の上から、`bottom`＝下から次の機種を選ぶ。
   /// [manual]：手動の取り込み。次のページは、一覧の最初から探し直さず、いま保存したページの次から探す。
+  /// [freshSince]：{日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は
+  /// 全台一覧から取り直す（数値が変わった台だけ台別ページも）。このページで分かった分をここに足す
+  /// （呼び出し側が持ち続けて、次の保存でも渡す）。
   Future<({int saved, int remaining, String kind, String? nextUrl})> importPage(
     String raw,
     String? currentUrl, {
     String? expectedDay,
     String direction = 'top',
     bool manual = false,
+    Map<String, String>? freshSince,
   }) => _serial(
-    () => _importPage(raw, currentUrl, expectedDay, direction, manual),
+    () => _importPage(
+      raw,
+      currentUrl,
+      expectedDay,
+      direction,
+      manual,
+      freshSince ?? <String, String>{},
+    ),
   );
 
   Future<({int saved, int remaining, String kind, String? nextUrl})>
@@ -244,6 +271,7 @@ class PscubeStore {
     String? expectedDay,
     String direction,
     bool manual,
+    Map<String, String> freshSince,
   ) async {
     if (direction != 'top' && direction != 'bottom') {
       throw const FormatException('取り込みの向きが不正です。');
@@ -430,8 +458,25 @@ class PscubeStore {
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
     });
+    if ((tablePage || rackPage) &&
+        day != null &&
+        !freshSince.containsKey(day)) {
+      String? newest;
+      for (final r in records) {
+        final time = r['observed_at'];
+        if (r['day'] != day || _instant(time) == null) continue;
+        if (newest == null || _instant(time)! > _instant(newest)!) {
+          newest = time as String;
+        }
+      }
+      if (newest != null) freshSince[day] = newest;
+    }
     // 取り込み日を指定しているときは、一覧から最初の機種ではなく、その日の未取得の先頭へ進む。
-    final next = indexPage && expectedDay == null
+    // ただし、その日の基準の時刻がまだ無い（今回まだ1ページも保存していない）ときは、決めた向きの
+    // 最初の機種を開く（開いた機種の全台一覧で基準が分かる）。
+    final next =
+        indexPage &&
+            (expectedDay == null || !freshSince.containsKey(expectedDay))
         ? (
             url:
                 (direction == 'bottom' ? machines.last : machines.first)['url']
@@ -451,6 +496,7 @@ class PscubeStore {
                     records.singleWhere((r) => r['day'] == day)['rack'] as int,
                   )
                 : null,
+            freshSince[expectedDay ?? day],
           );
     return (
       saved: records.length,
@@ -503,15 +549,19 @@ class PscubeStore {
     String? day,
     String direction = 'top',
     (String, int?)? after,
-  ]) => _serial(() => _nextTarget(day, direction, after));
+    String? freshSince,
+  ]) => _serial(() => _nextTarget(day, direction, after, freshSince));
 
   /// [after]：手動の取り込みで、いま保存したページ（機種のキー、台番号。全台一覧ならnull）。
   /// 一覧の最初から探し直さず、そのページの次（機種の並びの順、機種の中は台番号の小さい順）から
   /// 探し、最後まで行って残りが無いときだけ最初へ回る。
+  /// [freshSince]：今回の取り込みの基準の時刻（[pscubeStaleCutoff]）。全台一覧が揃っていても、数値が
+  /// それより古い機種は全台一覧から取り直す（以前は昼に一度取った機種を夜も「済み」として飛ばしていた）。
   Future<({String? url, int remaining})> _nextTarget([
     String? day,
     String direction = 'top',
     (String, int?)? after,
+    String? freshSince,
   ]) async {
     day ??= await _day();
     var machines = (await db.query(
@@ -553,13 +603,23 @@ class PscubeStore {
     )).map((r) => r['key'] as String).toSet();
     // (機種の並び順, 台番号（全台一覧は-1）, URL)
     final pending = <(int, int, String)>[];
+    final cutoff = pscubeStaleCutoff(day, freshSince);
     for (final (index, machine) in machines.indexed) {
       final rows =
           records
               .where((r) => _key(r) == _key(machine) && r['day'] == day)
               .toList()
             ..sort((a, b) => (a['rack'] as int).compareTo(b['rack'] as int));
-      if (rows.length != machine['expected_count']) {
+      // 一番古い数値で判断する（台別ページは1台ずつしか新しくならない）。時刻の分からない台は使わない。
+      final times = [
+        for (final r in rows)
+          if (_instant(r['observed_at']) case final time?) time,
+      ];
+      final oldest = times.isEmpty
+          ? null
+          : times.reduce((a, b) => a < b ? a : b);
+      if (rows.length != machine['expected_count'] ||
+          (cutoff != null && oldest != null && oldest < cutoff)) {
         pending.add((index, -1, machine['url'] as String));
       } else {
         pending.addAll(

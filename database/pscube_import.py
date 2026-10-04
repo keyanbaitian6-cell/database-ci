@@ -251,6 +251,27 @@ def _validate_record(r):
             raise ValueError('更新時刻が不正です。') from exc
 
 
+def _instant(text):
+    """時差つきの時刻文字列を比べられる数（秒）に。読めなければ None。"""
+    try:
+        return datetime.fromisoformat(text).timestamp() if text else None
+    except ValueError:
+        return None
+
+
+def stale_cutoff(day, fresh_since):
+    """[day] の記録がこれより古い「サイトの更新時刻」なら、取り直す（昼に取った数値を夜の分として残さない）。
+
+    fresh_since：今回の取り込みで最初に保存したページのサイトの更新時刻（その日の最新に近い）。
+    ただし、その日の営業が終わった後（翌日の午前2時以降）の数値はもう変わらないので、そこで頭打ちにする
+    （終わった日の記録を、日をまたいで何度も取り直さない）。"""
+    since = _instant(fresh_since)
+    if since is None or not day:
+        return None
+    day_end = datetime.fromisoformat(f'{day}T00:00:00+09:00') + timedelta(days=1, hours=BUSINESS_DAY_CUTOFF_HOUR)
+    return min(since, day_end.timestamp())
+
+
 def _merge(old: dict | None, fresh: dict) -> dict:
     if old is None:
         return fresh
@@ -426,10 +447,14 @@ class PscubeStore:
         row = self.db.execute('SELECT value FROM state WHERE key=?', (key,)).fetchone()
         return row[0] if row else None
 
-    def import_page(self, raw, current_url, expected_day=None, direction='top', manual=False):
+    def import_page(self, raw, current_url, expected_day=None, direction='top', manual=False, fresh_since=None):
         """expected_day：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
         direction：'top'＝機種の一覧の上から、'bottom'＝下から次の機種を選ぶ。
-        manual：手動の取り込み。次のページは、一覧の最初から探し直さず、いま保存したページの次から探す。"""
+        manual：手動の取り込み。次のページは、一覧の最初から探し直さず、いま保存したページの次から探す。
+        fresh_since：{日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は
+        全台一覧から取り直す（数値が変わった台だけ台別ページも取り直す）。結果の 'fresh_since' に、この
+        ページで分かった分を足して返す（呼び出し側が覚えて、次の保存で渡す）。"""
+        fresh_since = dict(fresh_since or {})
         if direction not in DIRECTIONS:
             raise ValueError('取り込みの向きが不正です。')
         data = json.loads(raw) if isinstance(raw, str) else raw
@@ -511,7 +536,13 @@ class PscubeStore:
                                 ('active_machine_keys', json.dumps([_machine_key(m) for m in data['machines']], ensure_ascii=False)))
             if is_rack:
                 self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (_record_key(current),))
-        if is_index and not expected_day:
+        if (is_table or is_rack) and day and day not in fresh_since:
+            times = [r.get('observed_at') for r in data['records'] if r['day'] == day and _instant(r.get('observed_at'))]
+            if times:
+                fresh_since[day] = max(times, key=_instant)
+        # 機種一覧からは、決めた向きの最初の機種を開く。取り込み日を指定していても、その日の基準の時刻が
+        # まだ無い（今回まだ1ページも保存していない）ときは同じ：開いた機種の全台一覧で基準が分かる。
+        if is_index and (not expected_day or expected_day not in fresh_since):
             first = data['machines'][-1] if direction == 'bottom' else data['machines'][0]
             next_url, remaining = first['url'], len(data['machines'])
         else:
@@ -521,16 +552,20 @@ class PscubeStore:
                 after = (_machine_key(data['machines'][0]), None)
             elif manual and is_rack:
                 after = (_machine_key(current), current['rack'])
-            next_url, remaining = self.next_target(expected_day or day, direction, after)
+            target_day = expected_day or day
+            next_url, remaining = self.next_target(target_day, direction, after, fresh_since.get(target_day))
         result = {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
-                  'kind': '機種一覧' if is_index else '全台一覧' if is_table else '台別7日分'}
+                  'kind': '機種一覧' if is_index else '全台一覧' if is_table else '台別7日分', 'fresh_since': fresh_since}
         if is_rack and isinstance(data.get('net_warning'), str):
             # 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
             result['net_warning'] = data['net_warning'][:200]
         return result
 
-    def next_target(self, day=None, direction='top', after=None):
+    def next_target(self, day=None, direction='top', after=None, fresh_since=None):
         """次に開くページ。direction='bottom' なら機種を一覧の下から数える。
+
+        fresh_since：今回の取り込みの基準の時刻（`stale_cutoff`）。全台一覧が揃っていても、数値がそれより古い
+        機種は、全台一覧から取り直す（以前は、昼に一度取った機種を夜も「済み」として飛ばしていた。2026-10-04）。
 
         after：手動の取り込みで、いま保存したページ（機種のキー、台番号。全台一覧ならNone）。
         一覧の最初から探し直さず、そのページの次（機種の並びの順、機種の中は台番号の小さい順）から探し、
@@ -551,9 +586,13 @@ class PscubeStore:
         pending = []   # (機種の並び順, 台番号（全台一覧は-1）, URL)
         all_rows = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM records')]
         captured = {row[0] for row in self.db.execute('SELECT key FROM rack_captures')}
+        cutoff = stale_cutoff(day, fresh_since)
         for index, machine in enumerate(machines):
             rows = sorted((r for r in all_rows if _machine_key(r) == _machine_key(machine) and r['day'] == day), key=lambda r: r['rack'])
-            if len(rows) != machine.get('expected_count'):
+            # 一番古い数値で判断する（台別ページは1台ずつしか新しくならない）。更新時刻が分からない台は判断に使わない
+            # （分からないまま「古い」とすると、同じ全台一覧を取り直し続けてしまう）。
+            oldest = min((_instant(r.get('observed_at')) for r in rows if _instant(r.get('observed_at'))), default=None)
+            if len(rows) != machine.get('expected_count') or (cutoff is not None and oldest is not None and oldest < cutoff):
                 pending.append((index, -1, machine['url']))
             else:
                 pending += [(index, r['rack'], r['detail_url']) for r in rows if _record_key(r) not in captured and not no_hits(r)]
@@ -712,6 +751,9 @@ class AutoPilot:
         # 取り込み日（None＝サイトの表示どおり）と、機種を数える向き。起動のたびに戻る。
         self.target_day = None
         self.direction = 'top'
+        # {日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は取り直す。
+        # 画面を開いている間（手動の取り込みも）続き、自動取り込みをONにするたびに作り直す。
+        self.fresh_since = {}
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
 
@@ -765,6 +807,8 @@ class AutoPilot:
             if enabled and self.connection_error:
                 self.auto.pause(self.connection_error)
                 return self.state()
+            if enabled and not self.auto.state()['enabled']:
+                self.fresh_since = {}
             self.auto.configure(enabled, seconds)
             if enabled:
                 self.failures.clear()
@@ -1159,7 +1203,9 @@ def run_session(db_path, export_path):
                 # 自動取り込みがOFFのとき（手動）は、一覧の最初からではなく、保存したページの次へ進む。
                 manual = not self.pilot.auto.state()['enabled']
                 result = db.import_page(raw, current, expected_day=self.pilot.target_day,
-                                        direction=self.pilot.direction, manual=manual)
+                                        direction=self.pilot.direction, manual=manual,
+                                        fresh_since=self.pilot.fresh_since)
+                self.pilot.fresh_since = result.pop('fresh_since')
                 result['backup'] = auto_backup(db, export_path)
                 result['source_url'] = current
                 return result
