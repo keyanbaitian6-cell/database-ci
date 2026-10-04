@@ -26,6 +26,7 @@ import 'shared_widgets.dart';
 import 'theme.dart';
 import 'web_import_page.dart';
 import 'picked_file.dart';
+import 'storage_usage_page.dart';
 import 'viewer_pages.dart' show ViewerDateBar, viewerDays;
 
 // 翌日候補の「平均より +13」表示は machine_sections.dart へ移した。既存の
@@ -224,6 +225,11 @@ class AppShell extends StatelessWidget {
             onSelected: (value) => switch (value) {
               'export' => _shareBackup(context, controller),
               'import' => _importBackup(context, controller),
+              'storage' => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const StorageUsagePage(),
+                ),
+              ),
               _ => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => TrashPage(controller: controller),
@@ -241,6 +247,10 @@ class AppShell extends StatelessWidget {
               const PopupMenuItem(
                 value: 'trash',
                 child: Text('ゴミ箱（$trashDays日間）'),
+              ),
+              const PopupMenuItem(
+                value: 'storage',
+                child: Text('保存領域の内訳（見るだけ）'),
               ),
             ],
           ),
