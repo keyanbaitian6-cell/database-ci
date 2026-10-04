@@ -5,6 +5,7 @@ import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'backup_service.dart';
 import 'candidate_log.dart';
@@ -560,6 +561,16 @@ class AppController extends ChangeNotifier {
   /// 3日より前のものを消す。共有先のアプリが後から読むことがあるので、すぐには
   /// 消さない。失敗しても動作には関係ない。
   Future<void> _cleanTemporaryFiles() async {
+    // バックアップの読み込みでファイルを選んだときの写し（cache/file_picker）は、起動時にまとめて消す
+    // （以前の版は消しておらず、読み込むたびに溜まっていた。2026-10-05、通常版で604.7MB）。
+    // 起動の直後は、ファイルを選んでいる途中ではないので安全。
+    if (Platform.isAndroid) {
+      try {
+        await FilePicker.clearTemporaryFiles();
+      } on Object {
+        // 片付けに失敗しても動作には関係ない。
+      }
+    }
     try {
       final dir = await getTemporaryDirectory();
       final limit = DateTime.now().subtract(const Duration(days: 3));

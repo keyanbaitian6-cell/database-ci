@@ -25,6 +25,7 @@ import 'pscube_store.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'web_import_page.dart';
+import 'picked_file.dart';
 import 'viewer_pages.dart' show ViewerDateBar, viewerDays;
 
 // 翌日候補の「平均より +13」表示は machine_sections.dart へ移した。既存の
@@ -588,7 +589,20 @@ Future<void> _importBackup(
   );
   final path = picked?.path;
   if (path == null) return;
-  if (!context.mounted) return;
+  // 選んだファイルの写し（アプリの一時置き場）は、読み終えたら消す（溜めない）。
+  try {
+    if (!context.mounted) return;
+    await _importPickedBackup(context, controller, path);
+  } finally {
+    await discardPickedCopy(path);
+  }
+}
+
+Future<void> _importPickedBackup(
+  BuildContext context,
+  AppController controller,
+  String path,
+) async {
   final pscube = await isPscubeBackupFile(File(path));
   if (!context.mounted) return;
   if (pscube) {
@@ -1219,7 +1233,9 @@ class _ResultsPageState extends State<ResultsPage> {
     final longTrendRacks = <String, Set<int>>{};
     for (final c in candidates.candidates) {
       if (!visibleKeys.contains(c.record.key)) continue;
-      (candidateIsFocus(c, widget.controller.records) ? candidateRacks : longTrendRacks)
+      (candidateIsFocus(c, widget.controller.records)
+              ? candidateRacks
+              : longTrendRacks)
           .putIfAbsent(
             c.variety ? varietyGroupName : c.record.machine,
             () => {},
@@ -1594,8 +1610,10 @@ class ImportPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 const Divider(height: 28),
-                const Text('P’s CUBE（スロット）',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                const Text(
+                  'P’s CUBE（スロット）',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
                 const SizedBox(height: 6),
                 const Text('サイトで認証後、機種一覧から全台一覧・台別7日分を順に保存します。'),
                 const SizedBox(height: 10),
@@ -1603,7 +1621,9 @@ class ImportPage extends StatelessWidget {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(builder: (_) => const PscubeImportPage()),
+                      MaterialPageRoute<void>(
+                        builder: (_) => const PscubeImportPage(),
+                      ),
                     ),
                     icon: const Icon(Icons.travel_explore),
                     label: const Text('P’s CUBE を開く'),
@@ -1988,11 +2008,15 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
             final visibleKeys = {for (final e in scored) e.$1.key};
             final candidateRacks = {
               for (final c in snapshot.data!.candidates.candidates)
-                if (visibleKeys.contains(c.record.key) && candidateIsFocus(c, widget.controller.records)) c.record.rack,
+                if (visibleKeys.contains(c.record.key) &&
+                    candidateIsFocus(c, widget.controller.records))
+                  c.record.rack,
             };
             final longTrendRacks = {
               for (final c in snapshot.data!.candidates.candidates)
-                if (visibleKeys.contains(c.record.key) && !candidateIsFocus(c, widget.controller.records)) c.record.rack,
+                if (visibleKeys.contains(c.record.key) &&
+                    !candidateIsFocus(c, widget.controller.records))
+                  c.record.rack,
             };
             return ListView(
               key: ValueKey(_day),
@@ -2296,8 +2320,7 @@ Future<void> _sharePscubeBackup(BuildContext context) async {
       ShareParams(
         title: fileName,
         subject: fileName,
-        text:
-            'PC版と共有するP’s CUBEのバックアップです。Google Driveの「database共有」などに保存してください。',
+        text: 'PC版と共有するP’s CUBEのバックアップです。Google Driveの「database共有」などに保存してください。',
         files: [XFile(file.path, mimeType: 'application/json')],
       ),
     );
@@ -2344,7 +2367,9 @@ Future<void> _importPscubeBackup(BuildContext context, File file) async {
   } catch (error) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('P’s CUBEのバックアップを読み込めませんでした（何も保存していません）：$error')),
+        SnackBar(
+          content: Text('P’s CUBEのバックアップを読み込めませんでした（何も保存していません）：$error'),
+        ),
       );
     }
   } finally {

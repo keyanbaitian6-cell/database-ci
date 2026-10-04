@@ -16,6 +16,7 @@ import 'pscube_connection.dart';
 import 'pscube_list_wait.dart';
 import 'pscube_store.dart';
 import 'theme.dart';
+import 'picked_file.dart';
 
 class PscubeImportPage extends StatefulWidget {
   const PscubeImportPage({super.key});
@@ -712,6 +713,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     } catch (error) {
       if (mounted) setState(() => _status = '読み込めませんでした（何も保存していません）：$error');
     } finally {
+      // 選んだファイルの写し（アプリの一時置き場）は、読み終えたら消す（溜めない）。
+      await discardPickedCopy(path);
       if (mounted) setState(() => _busy = false);
     }
   }

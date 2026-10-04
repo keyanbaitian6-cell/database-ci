@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## Android：バックアップ読み込みで選んだファイルの写しが溜まっていた（Claude、2026-10-05）
+
+- 利用者「Android版でバックアップを読み込んだら、ダウンロードしたファイルは削除してる？貯めこんでいってない？」。
+- 事実：ファイル選び（`file_picker` 13.1.0 → `android_file_picker` 2.0.0 の `FileUtils.kt`）は、選んだファイルをアプリのキャッシュ `cache/file_picker/<時刻>/<名前>` へ丸ごと写し、`FilePicker.clearTemporaryFiles()` を呼ぶまで残す。アプリは一度も呼んでいなかった（`_cleanTemporaryFiles` は一時フォルダの直下の自分のファイルだけを3日で消し、`file_picker/` の中は見ていなかった）。スマホ（0.5.26）の `dumpsys diskstats`：通常版のキャッシュ604.7MB・データ765.8MB。リリース版は `run-as` で中を見られないため、604.7MBのうち写しがどれだけかは**未確認**（WebViewのサイトのキャッシュも同じキャッシュに入る）。
+- 修正：①読み込みが終わったら（成功・失敗とも）写しを消す（新規 `lib/picked_file.dart` の `discardPickedCopy`。`.../file_picker/<時刻>/` の中のファイルだけを消し、空になった時刻のフォルダも消す。それ以外のパス＝元のファイルには触れない）。メルヘン・P’s CUBE（本体の雲アイコンの読み込み `main.dart`）と、P’s CUBE取り込み画面の読み込み（`pscube_import_page.dart` の `_restore`）。食い違いの確認画面は自分の控え（`import-cache`）を読むので、写しは読み終えた時点で消してよい。②起動時に `FilePicker.clearTemporaryFiles()`（Androidだけ）で、これまでに溜まった写しもまとめて消す（`AppController._cleanTemporaryFiles`）。
+- 確認：新規 `test/picked_file_test.dart`（写しだけ消す・元のファイルは消さない・ほかのファイルがあればフォルダを残す）、Flutter全460件成功、analyze error/warning 0。**APKは未ビルド**（依頼待ち）。実機での減り方は未確認。
+
 ## 不具合修正：開き直すと、今夜取った機種まで「古い表」として取り直していた（PC・Android、メルヘン・P’s CUBE）／0.5.26（Claude、2026-10-05）
 
 - 利用者「手動で取り込むボタンを押した場合は次の台番・下の機種へ行く仕様にしなかったっけ？PCのメルヘンで反応してくれない。P’s CUBEもかも」。
