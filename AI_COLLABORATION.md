@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## P’s CUBE：手動で取り込むときも、次の機種・台番へ進む／0.5.24（Claude、2026-10-04）
+
+- 利用者「CUBEのほうも変えて、ビルドまで」（メルヘンの「手動のときは一覧の上から探し直さず次の機種・台番へ」と同じ）。
+- 変更（手動＝自動取り込みがOFFのときだけ）：保存したページの次から探す。全台一覧を保存したら、その機種の台別ページ（台番号の小さい順）へ。台別ページを保存したら、同じ機種の次の台番、済めば次の機種（機種の並びの順。向きが「下から」なら下→上）。最後まで行って残りが無いときだけ最初へ回る（取りこぼしの機種）。自動取り込みと、機種一覧を保存したあとの動きは変更なし。
+- PC：`PscubeStore.import_page(manual=)`・`next_target(after=)`、`Bridge._submit_page` が `not pilot.auto.state()['enabled']` を渡す（`pscube_import.py`）。Android：`PscubeStore.importPage(manual:)`・`nextTarget(after)`、`pscube_import_page.dart` が `!_auto.enabled` を渡す。
+- 確認：`test_pscube_import.py`（飛ばした甲機へ戻らない→乙機の台→丙機の表→最後は甲機へ回る）、`pscube_store_test.dart`（同じ流れ）。PC全187件＋P’s CUBE 46件、Flutter（P’s CUBE関連32件、全体は454件が成功し1件は既知の `daily_net_test`）。**実サイト・Android実機では未確認**。
+- ビルド：`database/bin` 再ビルド（ZIPなし）、`smoke_frozen_capture`・`smoke_frozen_runtime` 成功。0.5.24には上のメルヘンの2件の修正（全角スペースの機種名・手動で次の機種へ）も含む。APK 通常版 `database-0.5.24-2026100406.apk`（`com.keyan.database_android`、92,804,977 bytes、SHA-256 `CB7CB73980C0D77E8B50171265A3C709E3B07D628E23B2CA5182B3D7FE211BF2`）、クローン `database-pscube-clone-0.5.24-2026100407.apk`（`com.keyan.database_android.pscube`、92,805,001 bytes、SHA-256 `73652903B69403A749498FC1A2C1275FB8B08092EC8DEA75A0553745298E5DFC`）。aaptでID・名前・版、apksignerで署名証明書が前回（0.5.23）と同一（`4332fcb9…`）を確認。出力はどちらも `a/work/outputs/`。
+
 ## メルヘン：手動で取り込むときは、機種一覧の上から探し直さず、次の機種へ進む（Claude、2026-10-04）
 
 - 利用者「自動で取り込んでいる場合でないとき（手動で取り込みボタンを押しているとき）は、いちいち一番上からの機種を参照しないで、次の機種・台番に飛ぶ仕様にしてほしい」。

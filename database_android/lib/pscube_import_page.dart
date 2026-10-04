@@ -531,6 +531,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         capturedUrl,
         expectedDay: _targetDay,
         direction: _direction,
+        // 自動取り込みがOFFのとき（手動）は、一覧の最初からではなく、保存したページの次へ進む。
+        manual: !_auto.enabled,
       );
       // 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
       final netWarning = pscubeNetWarning(raw);

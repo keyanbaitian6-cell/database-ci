@@ -83,6 +83,42 @@ class PscubeImportTests(unittest.TestCase):
         bottom = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom')
         self.assertEqual(bottom['next_url'], self.machines[1]['url'])
 
+    def test_manual_import_continues_from_the_saved_page_instead_of_the_top_of_the_list(self):
+        """手動のとき：飛ばした上の機種へ戻らず、保存したページの次（同じ機種の台→次の機種）へ。最後まで来たら最初へ回る。"""
+        a, b, c = [dict(m, expected_count=2) for m in (self.machines[0], self.machines[1],
+                   {**self.machines[0], 'machine': 'L無職転生', 'url': self.machines[0]['url'].replace('L東京喰種', 'L無職転生')})]
+        self.store.import_page(self.page(self.index_url, [a, b, c]), self.index_url)
+
+        def history(machine, rack):
+            rows = []
+            for ago in range(7):
+                day = (date.fromisoformat(self.day) - timedelta(days=ago)).isoformat()
+                rows.append(self.record(machine, rack, day))
+            return rows
+
+        def save_table(machine, manual):
+            records = [self.record(machine, 100), self.record(machine, 101)]
+            page = self.page(machine['url'], [dict(machine, expected_count=None)], records)
+            return self.store.import_page(page, machine['url'], manual=manual), records
+
+        def save_rack(machine, rack, manual):
+            url = self.record(machine, rack)['detail_url']
+            page = self.page(url, [dict(machine, expected_count=None)], history(machine, rack))
+            return self.store.import_page(page, url, manual=manual)['next_url']
+
+        url = lambda machine, rack: self.record(machine, rack)['detail_url']
+        # 甲機（一覧の一番上）は飛ばして、乙機・丙機だけを取り込む。
+        result, _ = save_table(b, manual=False)
+        self.assertEqual(result['next_url'], a['url'], '自動（手動でない）は、これまでどおり一覧の最初の未取得')
+        result, _ = save_table(b, manual=True)
+        self.assertEqual(result['next_url'], url(b, 100), '手動：保存した機種の台へ（上の甲機へ戻らない）')
+        self.assertEqual(save_rack(b, 100, manual=True), url(b, 101), '手動：同じ機種の次の台番')
+        self.assertEqual(save_rack(b, 101, manual=True), c['url'], '乙機が済んだら、次の機種（丙機）の表へ（上の甲機へ戻らない）')
+        result, _ = save_table(c, manual=True)
+        self.assertEqual(result['next_url'], url(c, 100))
+        self.assertEqual(save_rack(c, 100, manual=True), url(c, 101))
+        self.assertEqual(save_rack(c, 101, manual=True), a['url'], '最後の機種まで来たら、取りこぼした甲機へ回る')
+
     def test_installation_count_uses_the_current_machine_without_writing(self):
         self.machines[0]['expected_count'] = 31
         self.store.import_page(self.page(self.index_url, self.machines), self.index_url)

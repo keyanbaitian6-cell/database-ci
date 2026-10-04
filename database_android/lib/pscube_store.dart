@@ -226,12 +226,16 @@ class PscubeStore {
 
   /// [expectedDay]：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
   /// [direction]：`top`＝機種を一覧の上から、`bottom`＝下から次の機種を選ぶ。
+  /// [manual]：手動の取り込み。次のページは、一覧の最初から探し直さず、いま保存したページの次から探す。
   Future<({int saved, int remaining, String kind, String? nextUrl})> importPage(
     String raw,
     String? currentUrl, {
     String? expectedDay,
     String direction = 'top',
-  }) => _serial(() => _importPage(raw, currentUrl, expectedDay, direction));
+    bool manual = false,
+  }) => _serial(
+    () => _importPage(raw, currentUrl, expectedDay, direction, manual),
+  );
 
   Future<({int saved, int remaining, String kind, String? nextUrl})>
   _importPage(
@@ -239,6 +243,7 @@ class PscubeStore {
     String? currentUrl,
     String? expectedDay,
     String direction,
+    bool manual,
   ) async {
     if (direction != 'top' && direction != 'bottom') {
       throw const FormatException('取り込みの向きが不正です。');
@@ -433,7 +438,20 @@ class PscubeStore {
                     as String?,
             remaining: machines.length,
           )
-        : await _nextTarget(expectedDay ?? day, direction);
+        : await _nextTarget(
+            expectedDay ?? day,
+            direction,
+            !manual
+                ? null
+                : tablePage
+                ? (_key(machines.single), null)
+                : rackPage
+                ? (
+                    _key(machines.single),
+                    records.singleWhere((r) => r['day'] == day)['rack'] as int,
+                  )
+                : null,
+          );
     return (
       saved: records.length,
       remaining: next.remaining,
@@ -484,11 +502,16 @@ class PscubeStore {
   Future<({String? url, int remaining})> nextTarget([
     String? day,
     String direction = 'top',
-  ]) => _serial(() => _nextTarget(day, direction));
+    (String, int?)? after,
+  ]) => _serial(() => _nextTarget(day, direction, after));
 
+  /// [after]：手動の取り込みで、いま保存したページ（機種のキー、台番号。全台一覧ならnull）。
+  /// 一覧の最初から探し直さず、そのページの次（機種の並びの順、機種の中は台番号の小さい順）から
+  /// 探し、最後まで行って残りが無いときだけ最初へ回る。
   Future<({String? url, int remaining})> _nextTarget([
     String? day,
     String direction = 'top',
+    (String, int?)? after,
   ]) async {
     day ??= await _day();
     var machines = (await db.query(
@@ -528,28 +551,40 @@ class PscubeStore {
       'rack_captures',
       columns: ['key'],
     )).map((r) => r['key'] as String).toSet();
-    final pending = <String>[];
-    for (final machine in machines) {
+    // (機種の並び順, 台番号（全台一覧は-1）, URL)
+    final pending = <(int, int, String)>[];
+    for (final (index, machine) in machines.indexed) {
       final rows =
           records
               .where((r) => _key(r) == _key(machine) && r['day'] == day)
               .toList()
             ..sort((a, b) => (a['rack'] as int).compareTo(b['rack'] as int));
       if (rows.length != machine['expected_count']) {
-        pending.add(machine['url'] as String);
+        pending.add((index, -1, machine['url'] as String));
       } else {
         pending.addAll(
           rows
               .where(
                 (r) => !captured.contains(_key(r, record: true)) && !noHits(r),
               )
-              .map((r) => r['detail_url'] as String),
+              .map((r) => (index, r['rack'] as int, r['detail_url'] as String)),
         );
       }
     }
+    var ordered = pending;
+    final position = after == null
+        ? -1
+        : machines.indexWhere((m) => _key(m) == after.$1);
+    if (after != null && position >= 0 && pending.isNotEmpty) {
+      // 全台一覧を保存した機種は、その機種の台から（-2は全台一覧より前）。台別ページなら、その台の次から。
+      final here = after.$2 ?? -2;
+      bool later((int, int, String) e) =>
+          e.$1 > position || (e.$1 == position && e.$2 > here);
+      ordered = [...pending.where(later), ...pending.where((e) => !later(e))];
+    }
     return (
-      url: pending.isEmpty ? null : pending.first,
-      remaining: pending.length,
+      url: ordered.isEmpty ? null : ordered.first.$3,
+      remaining: ordered.length,
     );
   }
 

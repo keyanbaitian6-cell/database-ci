@@ -311,6 +311,76 @@ void main() {
     expect((await store.nextTarget(day)).url, record()['detail_url']);
   });
 
+  test('手動のときは、飛ばした上の機種へ戻らず、保存したページの次へ進む（最後まで来たら最初へ回る）', () async {
+    Map<String, dynamic> named(String name) => {
+      ...machine,
+      'machine': name,
+      'expected_count': 2,
+      'url': '${PscubeStore.root}cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&k=$name',
+    };
+    final a = named('甲機'), b = named('乙機'), c = named('丙機');
+    await store.importPage(
+      page(PscubeStore.index, [a, b, c]),
+      PscubeStore.index,
+    );
+    Map<String, dynamic> rec(
+      Map<String, dynamic> m,
+      int rack, [
+      String d = day,
+    ]) => record(d)
+      ..['machine'] = m['machine']
+      ..['rack'] = rack
+      ..['detail_url'] =
+          '${PscubeStore.root}cgi-bin/nc-v06-001.php?cd_dai=$rack&k=${m['machine']}#${d.replaceAll('-', '')}';
+    Future<String?> saveTable(Map<String, dynamic> m, bool manual) async =>
+        (await store.importPage(
+          page(
+            m['url'] as String,
+            [
+              {...m, 'expected_count': null},
+            ],
+            [rec(m, 100), rec(m, 101)],
+          ),
+          m['url'] as String,
+          manual: manual,
+        )).nextUrl;
+    Future<String?> saveRack(Map<String, dynamic> m, int rack) async {
+      final url = rec(m, rack)['detail_url'] as String;
+      return (await store.importPage(
+        page(
+          url,
+          [
+            {...m, 'expected_count': null},
+          ],
+          [
+            for (var ago = 0; ago < 7; ago++)
+              rec(
+                m,
+                rack,
+                DateTime.parse('${day}T00:00:00Z')
+                    .subtract(Duration(days: ago))
+                    .toIso8601String()
+                    .substring(0, 10),
+              ),
+          ],
+        ),
+        url,
+        manual: true,
+      )).nextUrl;
+    }
+
+    String url(Map<String, dynamic> m, int rack) =>
+        rec(m, rack)['detail_url'] as String;
+    // 甲機（一覧の一番上）は飛ばして、乙機・丙機だけを取り込む。
+    expect(await saveTable(b, false), a['url'], reason: '自動（手動でない）は一覧の最初の未取得');
+    expect(await saveTable(b, true), url(b, 100), reason: '手動：保存した機種の台へ');
+    expect(await saveRack(b, 100), url(b, 101), reason: '手動：同じ機種の次の台番');
+    expect(await saveRack(b, 101), c['url'], reason: '乙機が済んだら次の機種（丙機）の表へ');
+    expect(await saveTable(c, true), url(c, 100));
+    expect(await saveRack(c, 100), url(c, 101));
+    expect(await saveRack(c, 101), a['url'], reason: '最後の機種まで来たら、取りこぼした甲機へ回る');
+  });
+
   test('当たりが1回もない台（0回転を含む）は数値を保存し、台別7日分は取りに行かない', () async {
     final m = {...machine, 'expected_count': 2};
     await store.importPage(page(PscubeStore.index, [m]), PscubeStore.index);

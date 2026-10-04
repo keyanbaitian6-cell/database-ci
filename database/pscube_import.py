@@ -426,9 +426,10 @@ class PscubeStore:
         row = self.db.execute('SELECT value FROM state WHERE key=?', (key,)).fetchone()
         return row[0] if row else None
 
-    def import_page(self, raw, current_url, expected_day=None, direction='top'):
+    def import_page(self, raw, current_url, expected_day=None, direction='top', manual=False):
         """expected_day：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
-        direction：'top'＝機種の一覧の上から、'bottom'＝下から次の機種を選ぶ。"""
+        direction：'top'＝機種の一覧の上から、'bottom'＝下から次の機種を選ぶ。
+        manual：手動の取り込み。次のページは、一覧の最初から探し直さず、いま保存したページの次から探す。"""
         if direction not in DIRECTIONS:
             raise ValueError('取り込みの向きが不正です。')
         data = json.loads(raw) if isinstance(raw, str) else raw
@@ -515,7 +516,12 @@ class PscubeStore:
             next_url, remaining = first['url'], len(data['machines'])
         else:
             # 取り込み日を指定しているときは、一覧から最初の機種ではなく、その日の未取得の先頭へ進む。
-            next_url, remaining = self.next_target(expected_day or day, direction)
+            after = None
+            if manual and is_table:
+                after = (_machine_key(data['machines'][0]), None)
+            elif manual and is_rack:
+                after = (_machine_key(current), current['rack'])
+            next_url, remaining = self.next_target(expected_day or day, direction, after)
         result = {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
                   'kind': '機種一覧' if is_index else '全台一覧' if is_table else '台別7日分'}
         if is_rack and isinstance(data.get('net_warning'), str):
@@ -523,8 +529,12 @@ class PscubeStore:
             result['net_warning'] = data['net_warning'][:200]
         return result
 
-    def next_target(self, day=None, direction='top'):
-        """次に開くページ。direction='bottom' なら機種を一覧の下から数える。"""
+    def next_target(self, day=None, direction='top', after=None):
+        """次に開くページ。direction='bottom' なら機種を一覧の下から数える。
+
+        after：手動の取り込みで、いま保存したページ（機種のキー、台番号。全台一覧ならNone）。
+        一覧の最初から探し直さず、そのページの次（機種の並びの順、機種の中は台番号の小さい順）から探し、
+        最後まで行って残りが無いときだけ最初へ回る。"""
         day = day or self._state('last_day')
         machines = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM machines ORDER BY rowid')]
         active = self._state('active_machine_keys')
@@ -538,16 +548,23 @@ class PscubeStore:
             return ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2', 0
         if not day:
             return machines[0]['url'], len(machines)
-        pending = []
+        pending = []   # (機種の並び順, 台番号（全台一覧は-1）, URL)
         all_rows = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM records')]
         captured = {row[0] for row in self.db.execute('SELECT key FROM rack_captures')}
-        for machine in machines:
+        for index, machine in enumerate(machines):
             rows = sorted((r for r in all_rows if _machine_key(r) == _machine_key(machine) and r['day'] == day), key=lambda r: r['rack'])
             if len(rows) != machine.get('expected_count'):
-                pending.append(machine['url'])
+                pending.append((index, -1, machine['url']))
             else:
-                pending += [r['detail_url'] for r in rows if _record_key(r) not in captured and not no_hits(r)]
-        return (pending[0] if pending else None), len(pending)
+                pending += [(index, r['rack'], r['detail_url']) for r in rows if _record_key(r) not in captured and not no_hits(r)]
+        if after is not None and pending:
+            keys = [_machine_key(m) for m in machines]
+            if after[0] in keys:
+                # 全台一覧を保存した機種は、その機種の台から（-2は全台一覧より前）。台別ページなら、その台の次から。
+                here = (keys.index(after[0]), -2 if after[1] is None else after[1])
+                pending = [e for e in pending if e[:2] > here] + [e for e in pending if e[:2] <= here]
+        urls = [e[2] for e in pending]
+        return (urls[0] if urls else None), len(urls)
 
     def export_payload(self, kind='backup', today: date | None = None) -> dict:
         """kind='backup'：全期間・グラフ全点・取り込み済みの印つき。'viewer'：閲覧ページ用の軽い版
@@ -1139,7 +1156,10 @@ def run_session(db_path, export_path):
             current = self._window.get_current_url()
             db = PscubeStore(db_path)
             try:
-                result = db.import_page(raw, current, expected_day=self.pilot.target_day, direction=self.pilot.direction)
+                # 自動取り込みがOFFのとき（手動）は、一覧の最初からではなく、保存したページの次へ進む。
+                manual = not self.pilot.auto.state()['enabled']
+                result = db.import_page(raw, current, expected_day=self.pilot.target_day,
+                                        direction=self.pilot.direction, manual=manual)
                 result['backup'] = auto_backup(db, export_path)
                 result['source_url'] = current
                 return result
