@@ -37,4 +37,27 @@ void main() {
       contains('取り込み日は2026-10-03ですが、表示中は2026-10-04'),
     );
   });
+
+  test('手動のときは、済ませた機種の次から探し、先が無いときだけ最初へ戻る', () {
+    const names = ['甲機', '乙機', 'L無職転生　NM', '丁機'];
+    // 印が無い・一覧に無い：最初から1回だけ。
+    for (final unknown in [null, '不明']) {
+      final passes = machineSearchPasses(names, unknown);
+      expect(passes, hasLength(1));
+      expect(passes.single.$1, [0, 1, 2, 3]);
+      expect(passes.single.$2, '');
+    }
+    // 乙機のあと：丙（無職転生）・丁から。次に、最初からの見直し（案内付き）。
+    final after = machineSearchPasses(names, '乙機');
+    expect(after[0].$1, [2, 3]);
+    expect(after[0].$2, '');
+    expect(after[1].$1, [0, 1, 2, 3]);
+    expect(after[1].$2, contains('最後まで来たので'));
+    // 空白の違い（全角・半角・連続）は同じ機種として探す。
+    expect(machineSearchPasses(names, 'L無職転生 NM')[0].$1, [3]);
+    // 一覧の最後の機種のあとは、先に探す機種が無いので、すぐ最初からの見直しになる。
+    final last = machineSearchPasses(names, '丁機');
+    expect(last[0].$1, isEmpty);
+    expect(last[1].$1, [0, 1, 2, 3]);
+  });
 }

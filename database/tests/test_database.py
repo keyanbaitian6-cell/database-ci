@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import quote
 
 from PIL import Image, ImageDraw
 
@@ -371,9 +372,11 @@ class BrowserImportTests(unittest.TestCase):
 
             all_done = query(None, machine='完了機', day='2026-09-14')
             # 機種が全部済んだら、機種一覧ページへ案内する（サイト自身のページ）。
+            # 手動で次の機種を探すための「いま済ませた機種」の印も付く。
             self.assertTrue(all_done['url'].endswith(
                 '/nagamachiminami/rack_info_kt/?kind_code=21'
-                '#database_next_machine=1&database_day=2026-09-14'))
+                '#database_next_machine=1&database_day=2026-09-14&database_after='
+                + quote('完了機', safe='')))
             self.assertEqual(all_done['reason'], 'all_done')
             self.assertIn('機種一覧', all_done['message'])
 
@@ -986,7 +989,8 @@ class BackupSharingTests(unittest.TestCase):
             self.assertIn('機種一覧へ移動', message)                 # 機種が終わったので一覧ページへ
             self.assertTrue(next_url.endswith(
                 '/nagamachiminami/rack_info_kt/?kind_code=21'
-                '#database_next_machine=1&database_day=2026-09-13'))
+                '#database_next_machine=1&database_day=2026-09-13&database_after='
+                + quote('テスト', safe='')))
             self.assertIn('すべて完了しました', message)              # 日の全グラフが揃ったことは案内する
             self.assertFalse([o for o in opened if o[0] == 'open'])   # が、まとめのウィンドウは開かない
             # 取り消せる（グラフだけが外れて、一覧の行は残る）

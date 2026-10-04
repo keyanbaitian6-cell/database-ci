@@ -88,6 +88,34 @@ class DaySelectionTests(unittest.TestCase):
         self.assertEqual((result['machine'], result['direct']), ('乙機', True))
         self.assertIn(f'target_date={yesterday}', result['url'])
 
+    def test_manual_import_goes_to_the_machine_after_the_finished_one(self):
+        """手動のとき：機種が済んだら、一覧の上から探し直さず、その機種の次へ進む。"""
+        day = '2026-10-03'
+        graph = dict(baseline_x=1, baseline_y=200, peak_x=2, peak_y=100, trough_x=3, trough_y=250, end_x=4, end_y=150)
+        db = Store(self.folder / 'test.db')
+        # 乙機だけ済んでいる。甲機（一覧の上）は取りこぼし、丙機は未取込。
+        db.save([dict(row(rack=r, machine='乙機', day=day), graph_measurement=graph,
+                      detail_url=f'{HOST}/standgraph/?rack_no={r}&target_date={day}') for r in (1, 2, 3)])
+        db.close()
+        self.assertEqual(self.ask(day=day)['machine'], '甲機', '印が無ければ、これまでどおり一覧の上から')
+        after = self.ask(day=day, after='乙機')
+        self.assertEqual(after['machine'], '丙機', '乙機の次へ（上の取りこぼしへ戻らない）')
+        self.assertNotIn('最後まで来た', after['message'])
+        # 一覧の最後の機種のあとは、取りこぼしを探して最初へ戻る（そう知らせる）。
+        wrapped = self.ask(day=day, after='丙機')
+        self.assertEqual(wrapped['machine'], '甲機')
+        self.assertIn('最後まで来たので、一覧の最初から', wrapped['message'])
+        # 下からの向きなら、一覧の下→上の並びでの「次」。
+        self.bridge.set_target_day(None, 'bottom')
+        self.assertEqual(self.ask(day=day, after='丙機')['machine'], '甲機', '丙機の次（下から数えて）は乙機＝済みなので甲機')
+        self.assertEqual(self.ask(day=day, after='不明な機種')['machine'], '丙機', '知らない機種名の印は無視して、これまでどおり')
+
+    def test_the_list_url_carries_the_finished_machine(self):
+        from browser_import import machine_list_url
+        url = machine_list_url('nagamachiminami', '2026-10-03', after='L無職転生　NM')
+        self.assertTrue(url.endswith('&database_after=L%E7%84%A1%E8%81%B7%E8%BB%A2%E7%94%9F%E3%80%80NM'), url)
+        self.assertNotIn('database_after', machine_list_url('nagamachiminami', '2026-10-03'))
+
     def test_a_page_for_another_day_is_not_saved(self):
         yesterday, today = recent_days()[1], recent_days()[0]
         self.bridge.set_target_day(yesterday)

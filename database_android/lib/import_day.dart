@@ -2,6 +2,8 @@
 /// （database/browser_import.py）と同じ規則。P’s CUBEは `pscube_auto.dart`。
 library;
 
+import 'models.dart' show normalizeMachineName;
+
 /// 取り込み日として選べる営業日（新しい順）。[today] は営業日の今日
 /// （`todayIso()`：日本時間の午前2時までは前日）。
 List<String> recentImportDays(String today, [int count = 7]) {
@@ -33,4 +35,25 @@ String withTargetDate(String url, String day) {
 String? targetDayMismatch(String? target, String? shown) {
   if (target == null || shown == null || shown == target) return null;
   return '取り込み日は$targetですが、表示中は$shownです。日付を$targetに合わせてください。保存しませんでした。';
+}
+
+/// 機種一覧で次に探す順。[names] は一覧の並び（向きを反映済み）。
+///
+/// 手動で取り込んでいるとき、いま済ませた機種 [after] があれば、一覧の上から探し直さず
+/// その機種の次から探す。先に見つからなければ、取りこぼしを探して最初から見直す
+/// （この2回目だけ案内の頭に付ける文を返す）。[after] が無い・一覧に無いときは、
+/// 最初から1回だけ探す。PC版の `next_unimported_machine`（browser_import.py）と同じ規則。
+List<(List<int>, String)> machineSearchPasses(
+  List<String> names,
+  String? after,
+) {
+  String squash(String? value) =>
+      normalizeMachineName(value ?? '').replaceAll(RegExp(r'\s+'), '');
+  final every = [for (var i = 0; i < names.length; i++) i];
+  final key = squash(after);
+  final index = key.isEmpty
+      ? -1
+      : [for (final n in names) squash(n)].indexOf(key);
+  if (index < 0) return [(every, '')];
+  return [(every.sublist(index + 1), ''), (every, '最後まで来たので、一覧の最初から残りを探しました。')];
 }

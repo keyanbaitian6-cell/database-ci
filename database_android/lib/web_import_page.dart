@@ -310,6 +310,9 @@ class _WebImportPageState extends State<WebImportPage> {
   // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前2時で営業日が変わる。
   String? _targetDay;
   String _direction = 'top';
+  // 手動で取り込んでいるとき、いま済ませた機種。機種一覧へ戻ったあと、一覧の上から探し直さず
+  // この機種の次から探すために一度だけ使う（自動取り込みは使わない）。
+  String? _afterMachine;
 
   bool _autoCurrent(int? token, int page) =>
       token == null || _auto.current(token, page);
@@ -930,6 +933,7 @@ class _WebImportPageState extends State<WebImportPage> {
       }
       _flow.expectPage(notice: '$saved$step $warning'.trim(), advance: allDone);
       _flow.startLoading();
+      _afterMachine = allDone && autoToken == null ? machine : null;
       try {
         await _web.loadRequest(Uri.parse(url));
       } catch (error) {
@@ -1177,69 +1181,77 @@ class _WebImportPageState extends State<WebImportPage> {
           machines: [for (final item in machines) '${item['name'] ?? ''}'],
         );
 
-        // 先に、表を保存済みでグラフだけ残っている機種を再開する。
-        for (var index = 0; index < machines.length; index++) {
-          final status = statuses[index];
-          if (status == null || status['done'] == status['total']) continue;
-          final target = widget.onNext(
-            store: store,
-            day: day,
-            machine: machines[index]['name'] as String?,
-            rack: null,
-          );
-          if (target.url != null && _allowed(target.url!) && active()) {
-            _flow.expectPage(
-              notice:
-                  '未取得グラフが残る${machines[index]['name']}へ移動します。次：${target.rack}番台（残り${target.remaining}台）',
+        // 手動で取り込んでいるときは、一覧の上から探し直さず、いま済ませた機種の次
+        // （一覧の並びの順）から探す。先が無くなったときだけ、取りこぼしを探して最初から見直す。
+        final passes = machineSearchPasses([
+          for (final item in machines) '${item['name'] ?? ''}',
+        ], autoToken == null && !automatic ? _afterMachine : null);
+        _afterMachine = null;
+        for (final (order, prefix) in passes) {
+          // 先に、表を保存済みでグラフだけ残っている機種を再開する。
+          for (final index in order) {
+            final status = statuses[index];
+            if (status == null || status['done'] == status['total']) continue;
+            final target = widget.onNext(
+              store: store,
+              day: day,
+              machine: machines[index]['name'] as String?,
+              rack: null,
             );
-            _flow.startLoading();
-            moved = true;
-            await _web.loadRequest(Uri.parse(target.url!));
-            return;
-          }
-          // Older screenshot/backup records can have the table but no saved
-          // per-rack detail links.  Re-read this displayed table before moving
-          // on, otherwise this machine would stay permanently incomplete.
-          final tableUrl = machines[index]['url'] as String?;
-          if (tableUrl != null &&
-              _allowed(tableUrl) &&
-              isTargetKindUrl(tableUrl)) {
-            final name = machines[index]['name'] as String? ?? 'この機種';
-            moved = await _openMachineTable(
-              machines[index],
-              '$name の一覧を更新して、未取得グラフを続けます。',
-              autoToken: autoToken,
-              toggleRevision: toggleRevision,
-            );
-            return;
-          }
-        }
-
-        // 新規の機種、または設置台数が変わった機種は、現在の表を保存し直す。
-        for (var index = 0; index < machines.length; index++) {
-          final status = statuses[index];
-          final listedCount = (machines[index]['count'] as num?)?.toInt();
-          final changed =
-              status != null &&
-              listedCountNeedsReimport(
-                listed: listedCount,
-                saved: status['total'] ?? 0,
+            if (target.url != null && _allowed(target.url!) && active()) {
+              _flow.expectPage(
+                notice:
+                    '$prefix未取得グラフが残る${machines[index]['name']}へ移動します。次：${target.rack}番台（残り${target.remaining}台）',
               );
-          if (status != null && !changed) continue;
-          final targetUrl = machines[index]['url'] as String?;
-          if (targetUrl != null &&
-              _allowed(targetUrl) &&
-              isTargetKindUrl(targetUrl)) {
-            final name = machines[index]['name'] as String? ?? 'この機種';
-            moved = await _openMachineTable(
-              machines[index],
-              changed
-                  ? '$name は設置台数が変わっています。現在の表を取り込んでください。'
-                  : '$name は未取込です。現在の表を取り込んでください。',
-              autoToken: autoToken,
-              toggleRevision: toggleRevision,
-            );
-            return;
+              _flow.startLoading();
+              moved = true;
+              await _web.loadRequest(Uri.parse(target.url!));
+              return;
+            }
+            // Older screenshot/backup records can have the table but no saved
+            // per-rack detail links.  Re-read this displayed table before moving
+            // on, otherwise this machine would stay permanently incomplete.
+            final tableUrl = machines[index]['url'] as String?;
+            if (tableUrl != null &&
+                _allowed(tableUrl) &&
+                isTargetKindUrl(tableUrl)) {
+              final name = machines[index]['name'] as String? ?? 'この機種';
+              moved = await _openMachineTable(
+                machines[index],
+                '$prefix$name の一覧を更新して、未取得グラフを続けます。',
+                autoToken: autoToken,
+                toggleRevision: toggleRevision,
+              );
+              return;
+            }
+          }
+
+          // 新規の機種、または設置台数が変わった機種は、現在の表を保存し直す。
+          for (final index in order) {
+            final status = statuses[index];
+            final listedCount = (machines[index]['count'] as num?)?.toInt();
+            final changed =
+                status != null &&
+                listedCountNeedsReimport(
+                  listed: listedCount,
+                  saved: status['total'] ?? 0,
+                );
+            if (status != null && !changed) continue;
+            final targetUrl = machines[index]['url'] as String?;
+            if (targetUrl != null &&
+                _allowed(targetUrl) &&
+                isTargetKindUrl(targetUrl)) {
+              final name = machines[index]['name'] as String? ?? 'この機種';
+              moved = await _openMachineTable(
+                machines[index],
+                changed
+                    ? '$prefix$name は設置台数が変わっています。現在の表を取り込んでください。'
+                    : '$prefix$name は未取込です。現在の表を取り込んでください。',
+                autoToken: autoToken,
+                toggleRevision: toggleRevision,
+              );
+              return;
+            }
           }
         }
         _showNotice(

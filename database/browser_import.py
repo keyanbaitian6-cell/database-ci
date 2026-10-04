@@ -20,7 +20,7 @@ import threading
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from PIL import Image, ImageDraw
 from auto_capture import AUTO_CAPTURE_JS, AutoCapture
@@ -669,7 +669,8 @@ OVERLAY_JS = (
     # __reactFiber back-reference -> JSON.stringify throws "circular structure".
     "    const machines = (await waitForMachineLinks()).map(({name, url, count}) => ({name, url, count}));\n"
     "    if (!valid()) return;\n"
-    "    const raw = await window.pywebview.api.next_unimported_machine(JSON.stringify({...id, kind_code, machines}));\n"
+    "    const after = revision === null ? (new URLSearchParams(location.hash.replace(/^#/, '')).get('database_after') || '') : '';\n"
+    "    const raw = await window.pywebview.api.next_unimported_machine(JSON.stringify({...id, kind_code, machines, after}));\n"
     "    const data = JSON.parse(raw);\n"
     "    if (!valid()) return;\n"
     "    const finish = () => {\n"
@@ -964,15 +965,19 @@ def is_excluded_machine(location, name):
     return any(word in text for word in words)
 
 
-def machine_list_url(location, day):
+def machine_list_url(location, day, after=None):
     """The site's own machine-list page (the same one the table import already
-    fetches to cross-check rack counts)."""
+    fetches to cross-check rack counts).
+
+    after：いま済ませた機種名。手動で取り込んでいるときは、一覧の上から探し直さず、
+    この機種の次から探す（自動取り込みはこの印を使わず、これまでどおり決まった向きで探す）。"""
     # The fragment is local-only.  The overlay uses it after a completed
     # machine to select the next necessary machine; it does not capture data.
     # The site does not keep target_date in this category-list URL, so retain
     # the already validated saved day in a local-only fragment.
+    marker = f'&database_after={quote(after, safe="")}' if after else ''
     return (f'https://{HOST}/{location}/rack_info_kt/?kind_code=21'
-            f'#database_next_machine=1&database_day={day}')
+            f'#database_next_machine=1&database_day={day}{marker}')
 
 
 def _next_step(store, day, machine, location, current_rack=None):
@@ -987,7 +992,7 @@ def _next_step(store, day, machine, location, current_rack=None):
         return dict(kind='no_rows', url=None,
                     text='この機種・日付の一覧をまだ取り込んでいません。先に一覧を取り込んでください。')
     if target is None:
-        return dict(kind='machine_done', url=machine_list_url(location, day),
+        return dict(kind='machine_done', url=machine_list_url(location, day, after=machine),
                     text='この機種はすべて取り込み済みです。機種一覧へ移動します。')
     rack = int(target['rack'])
     url = target.get('detail_url')
@@ -1558,40 +1563,62 @@ class _Bridge:
         db = Store(self._db_path)
         try:
             progress = machine_progress(db, store_path, day)
-            for machine in machines:
-                key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
-                done_total = progress.get(key)
-                if done_total is None or done_total[0] >= done_total[1]:
-                    continue
-                step = _next_step(db, day, machine['name'], store_path)
-                if step['kind'] == 'next' and listed_url(step.get('url')):
-                    return json.dumps({'url': step['url'], 'reason': 'graph',
-                                       'message': f"未取得グラフが残る{machine['name']}へ移動します。{step['text']}"},
-                                      ensure_ascii=False)
-                # Old rows can lack detail_url.  Re-import this displayed table
-                # so it records current per-rack links before resuming graphs.
-                return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
-                                   'machine': machine['name'], 'reason': 'table', 'direct': direct,
-                                   'message': f"{machine['name']}の一覧を更新して、未取得グラフを続けます。"},
-                                  ensure_ascii=False)
 
-            for machine in machines:
-                key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
-                done_total = progress.get(key)
-                # 一覧の台数が保存台数より「多い」ときだけ取り込み直しを案内する。
-                # 一覧は今の設置台数なので、減台後に前日分を取り込むと保存台数の方が
-                # 多くなる。取り込み直しても台は上書きされるだけで消えないため、
-                # 「少ない」を台数変更として扱うと同じ機種へ戻し続けてしまう。
-                changed = (done_total is not None and machine['count'] is not None and
-                           machine['count'] > done_total[1])
-                if done_total is None or changed:
-                    message = (f"{machine['name']}は設置台数が変わっています。現在の表を取り込んでください。"
-                               if changed else
-                               f"{machine['name']}は未取込です。現在の表を取り込んでください。")
+            def search(candidates, prefix=''):
+                for machine in candidates:
+                    key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
+                    done_total = progress.get(key)
+                    if done_total is None or done_total[0] >= done_total[1]:
+                        continue
+                    step = _next_step(db, day, machine['name'], store_path)
+                    if step['kind'] == 'next' and listed_url(step.get('url')):
+                        return json.dumps({'url': step['url'], 'reason': 'graph',
+                                           'message': f"{prefix}未取得グラフが残る{machine['name']}へ移動します。{step['text']}"},
+                                          ensure_ascii=False)
+                    # Old rows can lack detail_url.  Re-import this displayed table
+                    # so it records current per-rack links before resuming graphs.
                     return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
                                        'machine': machine['name'], 'reason': 'table', 'direct': direct,
-                                       'message': message},
+                                       'message': f"{prefix}{machine['name']}の一覧を更新して、未取得グラフを続けます。"},
                                       ensure_ascii=False)
+
+                for machine in candidates:
+                    key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
+                    done_total = progress.get(key)
+                    # 一覧の台数が保存台数より「多い」ときだけ取り込み直しを案内する。
+                    # 一覧は今の設置台数なので、減台後に前日分を取り込むと保存台数の方が
+                    # 多くなる。取り込み直しても台は上書きされるだけで消えないため、
+                    # 「少ない」を台数変更として扱うと同じ機種へ戻し続けてしまう。
+                    changed = (done_total is not None and machine['count'] is not None and
+                               machine['count'] > done_total[1])
+                    if done_total is None or changed:
+                        message = (f"{machine['name']}は設置台数が変わっています。現在の表を取り込んでください。"
+                                   if changed else
+                                   f"{machine['name']}は未取込です。現在の表を取り込んでください。")
+                        return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
+                                           'machine': machine['name'], 'reason': 'table', 'direct': direct,
+                                           'message': prefix + message},
+                                          ensure_ascii=False)
+                return None
+
+            # 手動で取り込んでいるとき（一覧のURLに「いま済ませた機種」の印がある）は、
+            # 一覧の上から探し直さず、その機種の次（一覧の並びの順）から探す。次に進む先が
+            # 無くなったときだけ、取りこぼしを探して一覧の最初から見直す。
+            after_key = re.sub(r'\s+', '', normalize_machine_name(payload.get('after')))
+            if after_key:
+                keys = [re.sub(r'\s+', '', normalize_machine_name(m['name'])) for m in machines]
+                if after_key in keys:
+                    found = search(machines[keys.index(after_key) + 1:])
+                    if found:
+                        return found
+                    found = search(machines, '最後まで来たので、一覧の最初から残りを探しました。')
+                    if found:
+                        return found
+                    return json.dumps({'url': None, 'reason': 'all_done',
+                                       'message': '未取り込みの機種・グラフはありません。'}, ensure_ascii=False)
+            found = search(machines)
+            if found:
+                return found
         finally:
             db.close()
         return json.dumps({'url': None, 'reason': 'all_done',

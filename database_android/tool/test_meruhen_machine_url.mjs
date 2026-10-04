@@ -39,6 +39,24 @@ try {
   assert.equal(name(byName['SガメラXR'.replace('X', '2X')].url), 'S ガメラ2 XR');
   assert.equal(name(byName['L転生したらスライムだった件'].url), 'L転生したら スライムだった件', '改行・字下げは半角1つへ');
   assert.equal(machines.length, 4);
+  // 手動（自動OFFの「この画面を取り込む」）では、URLの印（いま済ませた機種）を渡す。自動では渡さない。
+  assert.equal(await page.evaluate(() => window.__asked.after), '', '自動の移動には印を渡さない');
+  await page.goto('https://meruhenworld.pt.teramoba2.com/nagamachiminami/rack_info_kt/?kind_code=21#database_next_machine=1&database_day=2026-10-03&database_after=L%E7%84%A1%E8%81%B7%E8%BB%A2%E7%94%9F%E3%80%80NM');
+  await page.evaluate(() => {
+    window.__asked = null;
+    window.pywebview = {api: {
+      retry_page: async () => {}, progress: async () => JSON.stringify({text: ''}),
+      machine_status: async () => JSON.stringify({status: []}), save_overlay_layout: async () => true,
+      get_auto_capture: async () => ({enabled: false, seconds: 3.5, revision: 1, message: '停止中', days: [], target_day: null, direction: 'top', manual_continuation: false}),
+      next_unimported_machine: async raw => { window.__asked = JSON.parse(raw); return JSON.stringify({url: null, message: 'x'}); },
+    }};
+  });
+  await page.evaluate(overlay);
+  const capture = page.locator('button:has-text("この画面を取り込む")').first();
+  await capture.evaluate(button => { button.disabled = false; });   // 試験ではサイトの読み込み完了通知が無い
+  await capture.click();
+  await page.waitForFunction(() => window.__asked);
+  assert.equal(await page.evaluate(() => window.__asked.after), 'L無職転生　NM', '手動は済ませた機種の次から探す');
   assert.deepEqual(errors, []);
   console.log('meruhen machine url test: ok');
 } finally {
