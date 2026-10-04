@@ -85,19 +85,32 @@ export function hedgedFetch(url, {
   });
 }
 
-/** 応答の先頭を見て、その続きも読める本文を返す。{ head: 先頭の文字, stream: 先頭から全部 } */
-export async function peekBody(response) {
+/**
+ * 応答の先頭を見て、その続きも読める本文を返す。{ head: 先頭の文字, stream: 先頭から全部 }
+ * 通信の断片は短いこともあるので、先頭が [size] バイトそろうまで（または終わりまで）読んでから見る。
+ */
+export async function peekBody(response, size = 64) {
   const reader = response.body.getReader();
-  const first = await reader.read();
-  const head = first.value ? new TextDecoder().decode(first.value.subarray(0, 64)) : '';
+  const early = [];
+  let length = 0, done = false;
+  while (length < size) {
+    const next = await reader.read();
+    if (next.done) { done = true; break; }
+    early.push(next.value);
+    length += next.value.length;
+  }
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const part of early) { joined.set(part, offset); offset += part.length; }
+  const head = new TextDecoder().decode(joined.subarray(0, size));
   let sent = false;
   const stream = new ReadableStream({
     async pull(controller) {
       if (!sent) {
         sent = true;
-        if (first.value) { controller.enqueue(first.value); return; }
-        if (first.done) { controller.close(); return; }
+        if (length) { controller.enqueue(joined); return; }
       }
+      if (done) { controller.close(); return; }
       const next = await reader.read();
       if (next.done) controller.close(); else controller.enqueue(next.value);
     },

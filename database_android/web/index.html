@@ -289,11 +289,12 @@
         const httpError = (status) => new Error('Googleドライブから読めませんでした（' + status + '）。');
         try {
           let full;
+          let version = null;
           try {
             // 先に更新の目印だけを確かめる（新しいApps Scriptのとき数行の返事）。前に読んだときと
             // 同じなら、ファイルは読まない。古いスクリプトは全文を返すので、そのまま使う。
             const checked = await checkVersion(url + '?check=1', options);
-            var version = checked.version ?? null;
+            version = checked.version ?? null;
             if (isUnchanged(versions.get(), version, known || null)) return null;
             if (checked.stream) full = { response: checked.response, stream: checked.stream };
             else if (!checked.response.ok) throw Object.assign(new Error('http'), { status: checked.response.status });

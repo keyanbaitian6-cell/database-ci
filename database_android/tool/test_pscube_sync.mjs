@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { emptyData, validateData, mergeData, recordKey } from '../web/pscube/data.mjs';
+import { checkVersion } from '../web/drive_fetch.mjs';
 import { backupFileName, timestampWithOffset, buildBackup, driveUrl, fetchDrive, REMOTE_KEY, DRIVE_RETRY_DELAYS_MS } from '../web/pscube/sync.mjs';
 
 const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
@@ -188,4 +189,17 @@ test('slow 404 from one request does not hide a success from another', async () 
   };
   const result = await fetchDrive(SCRIPT, null, { fetchImpl, hedgeMs: 30, versions: memory() });
   assert.equal(result.exportedAt, 's');
+});
+
+test('the check reply is recognised even when it arrives in tiny pieces', async () => {
+  const text = JSON.stringify({ format: 'drive-check', version: 'v7', name: 'pscube-viewer-drive.json' });
+  const bytes = new TextEncoder().encode(text);
+  const tiny = () => new Response(new ReadableStream({ start(c) { for (const b of bytes) c.enqueue(new Uint8Array([b])); c.close(); } }));
+  const checked = await checkVersion('https://x/exec?check=1', { fetchImpl: async () => tiny() });
+  assert.equal(checked.version, 'v7');
+  const whole = JSON.stringify(data());
+  const pieces = new TextEncoder().encode(whole);
+  const slow = () => new Response(new ReadableStream({ start(c) { for (let i = 0; i < pieces.length; i += 5) c.enqueue(pieces.subarray(i, i + 5)); c.close(); } }));
+  const old = await checkVersion('https://x/exec?check=1', { fetchImpl: async () => slow() });
+  assert.equal(await new Response(old.stream).text(), whole, '古いスクリプトの全文は、先頭を見たあとも欠けずに渡る');
 });
