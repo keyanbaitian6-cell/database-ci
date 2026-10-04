@@ -1869,6 +1869,113 @@ def scored_rows(store, day, machine, location='nagamachiminami'):
             for r in store.rows(day, machine, location)]
 
 
+# PC版「結果を見る」で開くHTML（機種の結果・この日のまとめ・過去の記録）の見た目。
+# 利用者が渡したデザイン（Flip7 Design System：ティール・コーラル・ゴールドのレトロで遊び心のある配色、
+# 角丸のカード、色つきの光る影、リボン風の見出し、扇形のカード、1〜3位の金・銀・銅）を参考にした
+# （2026-10-04）。PCのページだけに使う。各ページの元のCSSの後ろに置いて上書きするので、
+# 数値・文言・並び・機能は変えない。動きは控えめにし、動きを減らす設定の端末では止める。
+FLIP7_CSS = """
+:root{--f7-teal:#2BA8A2;--f7-teal-l:#3CC4BD;--f7-teal-d:#1E8C86;--f7-teal-bg:#E8F6F5;
+  --f7-gold:#FFD23F;--f7-gold-l:#FFE47A;--f7-gold-d:#E6B800;--f7-coral:#EF6C4A;--f7-coral-l:#FF8A6A;
+  --f7-coral-d:#D45233;--f7-cream:#FFF8E7;--f7-sky:#5DADE2;--f7-surface:#EFF8F7;--f7-ink:#1E3B3A;
+  --f7-mute:#5D7472;--f7-line:#CFE9E6;
+  --f7-shadow-card:0 4px 20px rgba(43,168,162,.10);--f7-glow-teal:0 4px 20px rgba(43,168,162,.30);
+  --f7-glow-gold:0 4px 20px rgba(255,210,63,.40);--f7-glow-coral:0 4px 20px rgba(239,108,74,.35);
+  --f7-bounce:cubic-bezier(.34,1.56,.64,1);
+  --frost:var(--f7-surface);--bg:var(--f7-surface);--ice:var(--f7-teal-bg);--ash:var(--f7-mute);--muted:var(--f7-mute);
+  --mist:var(--f7-mute);--pebble:var(--f7-teal-bg);--hairline:var(--f7-line);--line:var(--f7-line);
+  --blue:var(--f7-teal);--link:var(--f7-teal-d);--ink:var(--f7-ink);--navy:var(--f7-teal-d);--green:var(--f7-teal-d);
+  --amber:var(--f7-coral-d);--card:#fff}
+body{background:linear-gradient(180deg,var(--f7-teal-bg) 0,var(--f7-surface) 360px);color:var(--f7-ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Yu Gothic UI","Meiryo",sans-serif}
+a{color:var(--f7-teal-d)}
+.f7-brand{display:flex;align-items:center;gap:18px;margin:0 0 6px}
+.f7-fan{position:relative;flex:0 0 74px;height:62px}
+.f7-fan i{position:absolute;left:24px;top:6px;width:28px;height:42px;border-radius:6px;border:2.5px solid var(--f7-ink);
+  transform-origin:50% 115%;box-shadow:0 2px 6px rgba(30,59,58,.18)}
+.f7-fan i:nth-child(1){background:var(--f7-coral);transform:rotate(-24deg)}
+.f7-fan i:nth-child(2){background:var(--f7-sky);transform:rotate(-12deg)}
+.f7-fan i:nth-child(3){background:var(--f7-teal);transform:rotate(0)}
+.f7-fan i:nth-child(4){background:var(--f7-gold);transform:rotate(12deg)}
+.f7-fan i:nth-child(5){background:var(--f7-cream);transform:rotate(24deg)}
+.f7-fan i:nth-child(5)::after{content:"7";position:absolute;inset:0;display:grid;place-items:center;font-weight:800;
+  font-size:22px;color:var(--f7-gold-d);text-shadow:-1px -1px 0 var(--f7-ink),1px -1px 0 var(--f7-ink),-1px 1px 0 var(--f7-ink),1px 1px 0 var(--f7-ink)}
+.f7-brand h1,.f7-brand h1:first-child{display:inline-block;margin:0;padding:6px 22px 8px;background:var(--f7-cream);
+  border:3px solid var(--f7-ink);border-radius:8px;color:var(--f7-teal-d);font-weight:800;letter-spacing:2px;
+  transform:rotate(-2deg) skewX(-6deg);box-shadow:4px 4px 0 var(--f7-teal-d)}
+h2{font-weight:800;letter-spacing:1px;color:var(--f7-teal-d)}
+main>section>h2,.candidate h2{padding-bottom:6px;border-bottom:3px dashed var(--f7-teal-l)}
+.sub{color:var(--f7-mute)}
+.kpi{background:#fff;border:none;border-left:6px solid var(--f7-teal-l);border-radius:16px;box-shadow:var(--f7-shadow-card)}
+.kpi b{color:var(--f7-teal-d);font-weight:800}
+.candidate{background:linear-gradient(135deg,var(--f7-cream),#fff 60%);border:none;border-left:6px solid var(--f7-gold);
+  border-radius:24px;box-shadow:var(--f7-glow-gold)}
+.candidate-tag{background:var(--f7-coral);color:#fff;font-weight:700}
+.candidate-list li{border-bottom:2px dashed var(--f7-line)}
+.candidate-list b{color:var(--f7-teal-d)}
+.table-wrap,.card,.record-group,.empty{border:none;border-radius:24px;box-shadow:var(--f7-shadow-card);background:#fff}
+thead tr.group th{background:var(--f7-teal-bg);color:var(--f7-teal-d);font-weight:800}
+thead tr.labels th,.record-group th{background:var(--f7-teal-d);color:#fff;font-weight:700}
+tbody td{border-bottom:1px solid #E3F1EF}
+tbody tr:hover,tr.pick:hover{background:#FFF6D6}
+td.rack{color:var(--f7-teal-d);font-weight:800}
+/* 機種の結果：「補完・注意の理由」が細い列に押し込まれ、1台の行が300px以上の高さになっていた。幅を持たせる。 */
+td.reasons{min-width:320px;line-height:1.5}
+.tag{background:var(--f7-teal-bg);color:var(--f7-teal-d);font-weight:600}
+.badge{border-radius:999px;font-weight:800;transition:transform .2s var(--f7-bounce)}
+.badge.high{background:linear-gradient(180deg,var(--f7-gold-l),var(--f7-gold) 55%,var(--f7-gold-d));color:var(--f7-ink);
+  border:none;box-shadow:var(--f7-glow-gold)}
+.badge.mid{background:var(--f7-teal-bg);color:var(--f7-teal-d);border:2px solid var(--f7-teal-l)}
+.badge.low{background:var(--f7-cream);color:var(--f7-mute);border:1px solid #EADFC2}
+.badge.reference{background:var(--f7-teal-bg);color:var(--f7-teal-d)}
+.badge.provisional{background:var(--f7-gold-l);color:#6B5300}
+.badge.pending{background:var(--f7-cream);color:var(--f7-mute)}
+tr:hover .badge{transform:scale(1.06)}
+.record-group{border-left:6px solid var(--f7-teal-l);margin:14px 0;transition:box-shadow .2s ease}
+.record-group:has(details[open]){border-left-color:var(--f7-gold);box-shadow:var(--f7-glow-gold)}
+summary:before{color:var(--f7-coral)}
+.store{color:var(--f7-teal-d)}
+.event{background:var(--f7-coral);color:#fff}
+select,input{background:var(--f7-cream);border:2px solid var(--f7-line);border-radius:16px;color:var(--f7-ink)}
+select:focus,input:focus{outline:none;border-color:var(--f7-teal);box-shadow:0 0 0 4px rgba(43,168,162,.15)}
+.rack-btn{color:var(--f7-teal-d)}
+.graph-btn{border-radius:16px;transition:transform .2s var(--f7-bounce),box-shadow .2s ease}
+.graph-btn:hover{transform:translateY(-2px);box-shadow:var(--f7-glow-teal)}
+.graph-btn svg,.graph-btn img{border-radius:16px;border:2px solid var(--f7-line)}
+.miss{background:var(--f7-cream);border:none;border-left:6px solid var(--f7-coral);border-radius:24px;box-shadow:var(--f7-shadow-card)}
+.miss summary{color:var(--f7-coral-d)}
+.reconstructed-note{color:var(--f7-coral-d)}
+.modal{background:rgba(30,59,58,.55)}
+.modal-card{border:3px solid var(--f7-ink);border-radius:32px;box-shadow:0 8px 32px rgba(30,59,58,.25)}
+.modal-card h3{color:var(--f7-teal-d);font-weight:800;padding-bottom:6px;border-bottom:3px dashed var(--f7-teal-l)}
+.modal-close{width:34px;height:34px;border-radius:999px;background:var(--f7-coral);color:#fff;line-height:1;
+  box-shadow:var(--f7-glow-coral);transition:transform .2s var(--f7-bounce)}
+.modal-close:hover{transform:scale(1.1)}
+.modal-card .kpi{box-shadow:none;border-left-width:4px;background:var(--f7-teal-bg)}
+div.strip{border:2px solid var(--f7-line);border-radius:16px}
+footer{color:var(--f7-mute)}
+/* この日のまとめ：上位の1〜3位を金・銀・銅に */
+.card tr.pick td.rank{text-align:center}
+.card tr.pick td.rank{font-weight:800}
+.card tr.pick:nth-child(-n+3) td.rank{color:transparent;position:relative}
+.card tr.pick:nth-child(-n+3) td.rank::before{content:"";position:absolute;left:50%;top:50%;width:30px;height:30px;
+  margin:-15px 0 0 -15px;border-radius:999px;display:grid;place-items:center;font-size:15px;color:var(--f7-ink)}
+.card tr.pick:nth-child(1) td.rank::before{content:"1";background:linear-gradient(180deg,var(--f7-gold-l),var(--f7-gold-d));box-shadow:var(--f7-glow-gold)}
+.card tr.pick:nth-child(2) td.rank::before{content:"2";background:linear-gradient(180deg,#F1F4F6,#AEB8BF);box-shadow:0 4px 14px rgba(120,135,145,.35)}
+.card tr.pick:nth-child(3) td.rank::before{content:"3";background:linear-gradient(180deg,var(--f7-coral-l),var(--f7-coral-d));color:#fff;box-shadow:var(--f7-glow-coral)}
+.card tr.pick:nth-child(1) td.rank::after{content:"\\1F451";position:absolute;left:50%;top:50%;margin:-27px 0 0 4px;font-size:14px;
+  line-height:1;color:#000;animation:f7-crown 1.5s infinite}
+.card tr.pick:nth-child(1){background:linear-gradient(90deg,#FFF6D6,#fff 70%)}
+.card tr.pick:nth-child(1) .badge.high{animation:f7-glow 2s infinite}
+@keyframes f7-crown{0%,100%{transform:translateY(0) rotate(0)}25%{transform:translateY(-3px) rotate(-8deg)}
+  50%{transform:translateY(0) rotate(0)}75%{transform:translateY(-3px) rotate(8deg)}}
+@keyframes f7-glow{0%,100%{box-shadow:0 4px 12px rgba(255,210,63,.30);transform:scale(1)}50%{box-shadow:0 4px 24px rgba(255,210,63,.70);transform:scale(1.03)}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media(max-width:760px){.f7-fan{display:none}}
+"""
+FLIP7_FAN = '<span class="f7-fan" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>'
+
+
 def report(store, day, machine, folder, location='nagamachiminami'):
     if location not in STORE_NAMES:
         raise ValueError('対象外の店舗です。')
@@ -2067,8 +2174,8 @@ a.evidence:hover{{text-decoration:underline}}
 .modal-close{{position:absolute;top:14px;right:16px;border:none;background:none;font-size:20px;
   cursor:pointer;color:var(--ash)}}
 @media(max-width:760px){{main{{padding:24px 16px}}.kpis{{grid-template-columns:1fr 1fr}}}}
-</style></head><body><main>
-<header><h1>database 結果</h1><div class="sub">{html.escape(STORE_NAMES[location])} ｜ {html.escape(machine)} ｜ {day}{event_label} ｜ 1000円46枚 {source_html}<br>
+{FLIP7_CSS}</style></head><body><main>
+<header><div class="f7-brand">{FLIP7_FAN}<h1>database 結果</h1></div><div class="sub">{html.escape(STORE_NAMES[location])} ｜ {html.escape(machine)} ｜ {day}{event_label} ｜ 1000円46枚 {source_html}<br>
 独自の結果評価です。出率・差枚・設定確率を表す点数ではありません。<br>
 比較：同店・同機種の過去30日、回転数が概ね半分〜2倍（最低500G）の台。当日・未来は比較に使いません。比較件数・日数・回転数が少ないほど中間へ補正します。<br>
 当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、暫定表示と欠測幅を示します。<br>
@@ -2200,7 +2307,7 @@ header{{display:flex;justify-content:space-between;gap:20px;align-items:end;flex
 .modal-close{{position:absolute;top:10px;right:14px;border:none;background:none;font-size:20px;cursor:pointer;color:var(--muted)}}
 .reconstructed-note{{font-size:12px;color:var(--amber);margin:8px 0 0}}
 @media(max-width:760px){{main{{padding:16px}}.kpis{{grid-template-columns:1fr}}summary{{grid-template-columns:1fr;gap:5px}}summary:before{{display:none}}.summary{{text-align:left}}}}
-</style></head><body><main><header><div><h1>database 過去の記録</h1><div class="sub">店舗と日付ごとに保存した機種・採点結果を確認できます。台番号を押すとスランプグラフを見られます。<br>{html.escape(scope)}</div></div><div class="filters"><label>店舗<select id="store-filter"><option value="">すべての店舗</option>{store_options}</select></label><label>日付<input id="date-filter" type="date"></label><label>機種<select id="machine-filter"><option value="">すべての機種</option>{machine_options}</select></label></div></header>
+{FLIP7_CSS}</style></head><body><main><header><div><div class="f7-brand">{FLIP7_FAN}<h1>database 過去の記録</h1></div><div class="sub">店舗と日付ごとに保存した機種・採点結果を確認できます。台番号を押すとスランプグラフを見られます。<br>{html.escape(scope)}</div></div><div class="filters"><label>店舗<select id="store-filter"><option value="">すべての店舗</option>{store_options}</select></label><label>日付<input id="date-filter" type="date"></label><label>機種<select id="machine-filter"><option value="">すべての機種</option>{machine_options}</select></label></div></header>
 <section class="kpis"><div class="kpi"><b id="kpi-stores">{len(locations)}</b><span>店舗</span></div><div class="kpi"><b id="kpi-days">{len(dates)}</b><span>日分</span></div><div class="kpi"><b id="kpi-machines">{len(machines)}</b><span>機種</span></div><div class="kpi"><b id="kpi-rows">{len(stored)}</b><span>台データ</span></div></section>
 <section id="records">{''.join(groups)}{empty}</section><footer>更新：{generated} ｜ 計算版：{VERSION}</footer></main>
 <div id="graph-modal" class="modal" hidden><div class="modal-card"><button type="button" class="modal-close" onclick="closeGraph()" aria-label="閉じる">×</button><h3 id="graph-modal-title"></h3><div id="graph-modal-body"></div></div></div>
@@ -2396,7 +2503,7 @@ tr.pick{{cursor:pointer}} tr.pick:hover{{background:#f4f8fb}}
 .modal-card{{background:#fff;border-radius:8px;padding:24px;max-width:520px;width:100%;max-height:88vh;overflow:auto;position:relative;border:1px solid var(--hairline)}}
 .modal-card h3{{margin:0 0 6px;font-size:18px;font-weight:600}}
 .modal-close{{position:absolute;top:14px;right:16px;border:none;background:none;font-size:20px;cursor:pointer;color:var(--ash)}}
-</style></head><body><main><h1>{html.escape(day)} のまとめ</h1>{event_subtitle}
+{FLIP7_CSS}</style></head><body><main><div class="f7-brand">{FLIP7_FAN}<h1>{html.escape(day)} のまとめ</h1></div>{event_subtitle}
 <p class="sub">実績点の上位{top}台（機種横断の記録表示で、狙い台順位ではありません）。台をクリックするとグラフと当たり回数を表示します。独自の結果評価であり、出率・設定を表すものではありません。</p>
 {''.join(sections)}</main>
 <div id="detail-modal" class="modal" hidden><div class="modal-card"><button type="button" class="modal-close" onclick="closeDetail()" aria-label="閉じる">×</button><h3 id="detail-title"></h3><div id="detail-body"></div></div></div>
