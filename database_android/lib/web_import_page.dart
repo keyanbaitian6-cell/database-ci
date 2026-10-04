@@ -18,6 +18,8 @@ import 'import_service.dart';
 import 'models.dart' show isValidRecordDay, storeNames;
 import 'theme.dart';
 import 'web_extraction_channel.dart';
+import 'import_day.dart';
+import 'list_views.dart' show shortDayLabel;
 
 class WebTableExtraction {
   const WebTableExtraction({
@@ -304,6 +306,10 @@ class _WebImportPageState extends State<WebImportPage> {
   bool _autoProbing = false;
   bool _legacyAdvanceAllowed = true;
   String _autoStatus = '停止中';
+  // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
+  // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前2時で営業日が変わる。
+  String? _targetDay;
+  String _direction = 'top';
 
   bool _autoCurrent(int? token, int page) =>
       token == null || _auto.current(token, page);
@@ -314,8 +320,10 @@ class _WebImportPageState extends State<WebImportPage> {
     }
   }
 
-  Future<void> _toggleAuto() async {
+  /// [direction]：「上から取り込む」「下から取り込む」から始めるとき。省略は今の向きのまま。
+  Future<void> _toggleAuto([String? direction]) async {
     if (_autoChanging) return;
+    if (!_auto.enabled && direction != null) _direction = direction;
     if (_auto.enabled) {
       _auto.turnOff();
       setState(() => _autoStatus = '停止中（開始済みの保存は完了まで待ちます）');
@@ -683,6 +691,11 @@ class _WebImportPageState extends State<WebImportPage> {
         day: decoded['day'] as String?,
       );
       if (mismatch != null) throw FormatException(mismatch);
+      final dayMismatch = targetDayMismatch(
+        _targetDay,
+        decoded['day'] as String?,
+      );
+      if (dayMismatch != null) throw FormatException(dayMismatch);
       if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
       final rows = ((decoded['rows'] as List<dynamic>?) ?? const [])
           .map((item) => Map<String, dynamic>.from(item as Map))
@@ -790,6 +803,11 @@ class _WebImportPageState extends State<WebImportPage> {
         rack: decoded['rack'] as int?,
       );
       if (mismatch != null) throw FormatException(mismatch);
+      final dayMismatch = targetDayMismatch(
+        _targetDay,
+        decoded['day'] as String?,
+      );
+      if (dayMismatch != null) throw FormatException(dayMismatch);
       if (!_samePage(page) || !_autoCurrent(autoToken, page)) return;
       if (isExcludedMachine(
         decoded['store'] as String?,
@@ -1083,7 +1101,7 @@ class _WebImportPageState extends State<WebImportPage> {
           return;
         }
         final store = decoded['store'] as String?;
-        final day = decoded['day'] as String?;
+        final day = _targetDay ?? decoded['day'] as String?;
         var machines = [
           for (final raw in (decoded['machines'] as List<dynamic>?) ?? const [])
             Map<String, dynamic>.from(raw as Map),
@@ -1104,7 +1122,7 @@ class _WebImportPageState extends State<WebImportPage> {
           );
           return;
         }
-        machines = visible;
+        machines = _direction == 'bottom' ? visible.reversed.toList() : visible;
         // 初めて開いた機種一覧にはサイト側の日付がありません。最初の機種別
         // 一覧を開けば選択中の日付を読めるため、そこで表の取り込みを始める。
         // グラフ完了後に戻る場合はURLフラグメントから日付を復元しているので、
@@ -1255,6 +1273,18 @@ class _WebImportPageState extends State<WebImportPage> {
         !_autoCurrent(autoToken, _flow.page) ||
         (toggleRevision != null && _auto.revision != toggleRevision)) {
       return false;
+    }
+    final chosenDay = _targetDay;
+    if (chosenDay != null &&
+        url != null &&
+        _allowed(url) &&
+        isTargetKindUrl(url)) {
+      // 取り込み日を指定しているときは、サイトの行を押さず（押すと、サイトが選んでいる日付に
+      // なってしまう）、日付つきのURLで開く。サイトが日付を選んだときに自分で付ける形。
+      _flow.expectPage(notice: notice);
+      _flow.startLoading();
+      await _web.loadRequest(Uri.parse(withTargetDate(url, chosenDay)));
+      return true;
     }
     final starts = _flow.page;
     _flow.expectPage(notice: notice);
@@ -1545,6 +1575,66 @@ class _WebImportPageState extends State<WebImportPage> {
                         '${(_auto.intervalTenths / 10).toStringAsFixed(1)}秒',
                         style: const TextStyle(fontSize: 13),
                       ),
+                    ],
+                  ),
+                  // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+                  // 上から／下から：機種を一覧のどちら側から取り込むか。押すと自動取り込みをONにする。
+                  DropdownButtonFormField<String>(
+                    key: ValueKey('meruhen-day-$_targetDay'),
+                    initialValue: _targetDay ?? '',
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: '日付指定取り込み（取り込む日）',
+                      isDense: true,
+                    ),
+                    items: [
+                      const DropdownMenuItem(
+                        value: '',
+                        child: Text('指定なし（サイトの表示どおり）'),
+                      ),
+                      for (final (i, day) in recentImportDays(
+                        todayIso(),
+                      ).indexed)
+                        DropdownMenuItem(
+                          value: day,
+                          child: Text(
+                            '${shortDayLabel(day)}${i == 0 ? '　今の営業日' : ''}',
+                          ),
+                        ),
+                    ],
+                    onChanged: _auto.enabled
+                        ? null
+                        : (value) => setState(
+                            () => _targetDay = value == null || value.isEmpty
+                                ? null
+                                : value,
+                          ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      for (final (direction, label) in const [
+                        ('top', '上から取り込む'),
+                        ('bottom', '下から取り込む'),
+                      ])
+                        Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              right: direction == 'top' ? 6 : 0,
+                            ),
+                            child: FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.appleBlue,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size.fromHeight(44),
+                              ),
+                              onPressed: _auto.enabled || _autoChanging
+                                  ? null
+                                  : () => _toggleAuto(direction),
+                              child: Text(label),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   Align(

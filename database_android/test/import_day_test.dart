@@ -1,0 +1,40 @@
+import 'package:database_android/import_day.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('取り込み日の選択肢は、営業日の今日から7日前まで', () {
+    final days = recentImportDays('2026-10-03');
+    expect(
+      (days.first, days[1], days.last, days.length),
+      ('2026-10-03', '2026-10-02', '2026-09-27', 7),
+    );
+  });
+
+  test('機種の表のURLに target_date を付ける（機種名の符号化は変えない）', () {
+    const url =
+        'https://meruhenworld.pt.teramoba2.com/nagamachiminami/standlist_slot/?kind_code=21&machine_name=L%2520%25E7%2594%25B2';
+    expect(withTargetDate(url, '2026-10-03'), '$url&target_date=2026-10-03');
+    expect(
+      withTargetDate('$url&target_date=2026-10-04', '2026-10-03'),
+      '$url&target_date=2026-10-03',
+    );
+    expect(
+      withTargetDate('$url#x', '2026-10-03'),
+      '$url&target_date=2026-10-03#x',
+    );
+    expect(
+      withTargetDate('https://example.test/a', '2026-10-03'),
+      'https://example.test/a?target_date=2026-10-03',
+    );
+  });
+
+  test('取り込み日と違う日は理由を返し、指定なし・同じ日・日付不明は通す', () {
+    expect(targetDayMismatch(null, '2026-10-04'), isNull);
+    expect(targetDayMismatch('2026-10-03', '2026-10-03'), isNull);
+    expect(targetDayMismatch('2026-10-03', null), isNull);
+    expect(
+      targetDayMismatch('2026-10-03', '2026-10-04'),
+      contains('取り込み日は2026-10-03ですが、表示中は2026-10-04'),
+    );
+  });
+}

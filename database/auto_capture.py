@@ -117,8 +117,32 @@ AUTO_CAPTURE_JS = r'''
   autoStatus.id = 'database-auto-status';
   autoStatus.style.cssText = 'font-size:11px;white-space:normal;word-break:break-word';
   autoStatus.textContent = '確認画面ではONのまま待機。確認は手動で操作してください。';
+  // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+  // 上から／下から：機種を一覧のどちら側から取り込むか。どちらも押すと自動取り込みをONにする。
+  const autoDayBox = document.createElement('div');
+  autoDayBox.style.cssText = 'font-size:12px;display:block';
+  const autoDayText = document.createElement('span');
+  autoDayText.textContent = '日付指定取り込み（取り込む日）';
+  const autoDay = document.createElement('select');
+  autoDay.id = 'database-auto-day';
+  autoDay.setAttribute('aria-label', '日付指定取り込み（取り込む日）');
+  autoDay.style.cssText = 'width:100%;margin-top:4px;padding:4px;font-size:12px';
+  autoDayBox.append(autoDayText, autoDay);
+  const autoStartRow = document.createElement('div');
+  autoStartRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px';
+  const makeStart = (id, text) => {
+    const button = document.createElement('button');
+    button.id = id; button.type = 'button'; button.textContent = text; button.disabled = true;
+    button.style.cssText = 'padding:8px 2px;border:2px solid #b8c5d8;border-radius:6px;background:#304d6e;color:white;cursor:pointer;font-size:12px;font-weight:bold';
+    return button;
+  };
+  const autoTop = makeStart('database-auto-top', '上から取り込む');
+  const autoBottom = makeStart('database-auto-bottom', '下から取り込む');
+  autoStartRow.append(autoTop, autoBottom);
   card.insertBefore(autoButton, captureBtn);
   card.insertBefore(autoLabel, captureBtn);
+  card.insertBefore(autoDayBox, captureBtn);
+  card.insertBefore(autoStartRow, captureBtn);
   card.insertBefore(autoStatus, captureBtn);
   let autoEnabled = false;
   let autoChanging = false;
@@ -135,13 +159,36 @@ AUTO_CAPTURE_JS = r'''
     autoSeconds.disabled = autoEnabled || autoChanging;
     autoSeconds.value = String(state.seconds);
     autoValue.textContent = '間隔：' + Number(state.seconds).toFixed(1) + '秒';
+    // 取り込み日の選択肢は、午前2時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
+    const days = Array.isArray(state.days) ? state.days : [];
+    if (JSON.stringify(days) !== autoDay.dataset.days) {
+      autoDay.dataset.days = JSON.stringify(days);
+      autoDay.textContent = '';
+      const none = document.createElement('option');
+      none.value = ''; none.textContent = '指定なし（サイトの表示どおり）';
+      autoDay.append(none);
+      days.forEach((day, i) => {
+        const option = document.createElement('option');
+        const d = new Date(day + 'T00:00:00');
+        option.value = day;
+        option.textContent = (d.getMonth() + 1) + '/' + d.getDate() + '（' + '日月火水木金土'[d.getDay()] + '）' + (i === 0 ? '　今の営業日' : '');
+        autoDay.append(option);
+      });
+    }
+    autoDay.value = state.target_day || '';
+    autoDay.disabled = autoEnabled || autoChanging;
+    for (const button of [autoTop, autoBottom]) {
+      button.disabled = autoEnabled || autoChanging;
+      button.style.opacity = button.disabled ? '.5' : '1';
+      button.style.outline = autoEnabled && button === (state.direction === 'bottom' ? autoBottom : autoTop) ? '3px solid #087d59' : '';
+    }
     autoStatus.textContent = state.message;
     captureBtn.disabled = autoEnabled;
     captureBtn.style.opacity = autoEnabled ? '.5' : '1';
     undoBtn.disabled = autoEnabled;
   };
   autoSeconds.oninput = () => { autoValue.textContent = '間隔：' + Number(autoSeconds.value).toFixed(1) + '秒'; };
-  autoButton.onclick = async () => {
+  const toggleAuto = async (enable, direction) => {
     if (autoChanging) return;
     moveEpoch++;
     moveCommitted = false;
@@ -149,16 +196,26 @@ AUTO_CAPTURE_JS = r'''
     autoCancelled = autoEnabled;
     autoChanging = true;
     autoButton.disabled = true;
+    autoTop.disabled = autoBottom.disabled = true;
     try {
-      const state = await window.pywebview.api.set_auto_capture(!autoEnabled, Number(autoSeconds.value));
+      const state = await window.pywebview.api.set_auto_capture(enable, Number(autoSeconds.value), autoDay.value, direction);
       autoChanging = false;
       autoCancelled = !state.enabled;
       window.__databaseRenderAuto(state);
     } catch (error) {
       autoChanging = false;
+      autoCancelled = false;
       autoButton.disabled = false;
+      autoTop.disabled = autoBottom.disabled = autoEnabled;
       autoStatus.textContent = '切り替えに失敗しました。必要ならブラウザを閉じて停止してください。';
     }
+  };
+  autoButton.onclick = () => toggleAuto(!autoEnabled, null);
+  autoTop.onclick = () => { if (!autoEnabled) toggleAuto(true, 'top'); };
+  autoBottom.onclick = () => { if (!autoEnabled) toggleAuto(true, 'bottom'); };
+  autoDay.onchange = async () => {
+    try { window.__databaseRenderAuto(await window.pywebview.api.set_target_day(autoDay.value, null)); }
+    catch (error) { autoStatus.textContent = '取り込み日を変えられませんでした：' + String(error && error.message || error); }
   };
   const autoWaitReason = () => {
     if (document.readyState !== 'complete') return {error: 'ON・読み込み完了待ち'};
@@ -244,6 +301,8 @@ AUTO_CAPTURE_JS = r'''
   // Keep the stop control near the top, including in short windows.
   card.insertBefore(autoButton, switchBtn);
   card.insertBefore(autoLabel, switchBtn);
+  card.insertBefore(autoDayBox, switchBtn);
+  card.insertBefore(autoStartRow, switchBtn);
   window.addEventListener('resize', fitCard);
   new ResizeObserver(fitCard).observe(card);
   fitCard();

@@ -36,6 +36,43 @@ try {
   assert.match(await page.locator('#database-capture-status').innerText(), /確認・保存中/);
   const box = await page.locator('#database-overlay').boundingBox();
   assert.ok(box.x >= 0 && box.y >= 0 && box.x+box.width <= 390 && box.y+box.height <= 850);
+  // 日付指定取り込み・上から／下から：日付を選ぶとPython側へ伝え、押すと選んだ日と向きで自動取り込みを始める。
+  await page.evaluate(() => {
+    window.__calls = [];
+    const days = ['2026-10-01', '2026-09-30', '2026-09-29'];
+    const state = (enabled, day, direction) => ({enabled, seconds: 3.5, revision: 5 + window.__calls.length, message: enabled ? 'ON' : '停止中', target_day: day || null, direction: direction || 'top', days});
+    window.__target = {day: '', direction: 'top'};
+    window.pywebview.api.set_target_day = async (day, direction) => {
+      window.__calls.push(['target', day, direction]);
+      window.__target = {day, direction: direction || window.__target.direction};
+      return state(false, day, window.__target.direction);
+    };
+    window.pywebview.api.set_auto_capture = async (enabled, seconds, day, direction) => {
+      window.__calls.push(['auto', enabled, seconds, day, direction]);
+      window.__target = {day, direction: direction || window.__target.direction};
+      return state(enabled, day, window.__target.direction);
+    };
+    window.__databaseRenderAuto(state(false, '', 'top'));
+  });
+  assert.deepEqual(await page.locator('#database-auto-day option').allInnerTexts(),
+    ['指定なし（サイトの表示どおり）', '10/1（木）　今の営業日', '9/30（水）', '9/29（火）']);
+  assert.equal(await page.locator('#database-auto-top').innerText(), '上から取り込む');
+  assert.equal(await page.locator('#database-auto-bottom').innerText(), '下から取り込む');
+  await page.locator('#database-auto-day').selectOption('2026-09-30');
+  await page.waitForFunction(() => window.__calls.some(c => c[0] === 'target'));
+  assert.deepEqual(await page.evaluate(() => window.__calls.at(-1)), ['target', '2026-09-30', null]);
+  await page.locator('#database-auto-bottom').click();
+  await page.waitForFunction(() => document.getElementById('database-auto-toggle').textContent.includes('ON'));
+  assert.deepEqual(await page.evaluate(() => window.__calls.at(-1)), ['auto', true, 3.5, '2026-09-30', 'bottom']);
+  assert.equal(await page.locator('#database-auto-top').isDisabled(), true, 'ONの間は押せない');
+  assert.equal(await page.locator('#database-auto-day').isDisabled(), true, 'ONの間は日付を変えられない');
+  // 営業日が変わったら（午前2時）、選択肢を作り直す。選んだ日は残る。
+  await page.evaluate(() => window.__databaseRenderAuto({enabled: false, seconds: 3.5, revision: 99, message: '停止中', target_day: '2026-09-30', direction: 'bottom', days: ['2026-10-02', '2026-10-01', '2026-09-30']}));
+  assert.deepEqual(await page.locator('#database-auto-day option').allInnerTexts(),
+    ['指定なし（サイトの表示どおり）', '10/2（金）　今の営業日', '10/1（木）', '9/30（水）']);
+  assert.equal(await page.locator('#database-auto-day').inputValue(), '2026-09-30');
+  const box2 = await page.locator('#database-overlay').boundingBox();
+  assert.ok(box2.x >= 0 && box2.y >= 0 && box2.x+box2.width <= 390 && box2.y+box2.height <= 850, 'カードは窓に収まる');
   await page.goto('about:blank');
   await page.setContent(scripts[1]);
   assert.equal(await page.locator('#retry').isDisabled(), true);

@@ -679,7 +679,7 @@ OVERLAY_JS = (
     # site answered it with an empty page ("該当する台情報がありません").
     # This only moves between pages; nothing is captured until the user
     # presses the capture button on the table page.
-    "      if (data.machine && (data.reason === 'table' || data.reason === 'need_day')) {\n"
+    "      if (data.machine && !data.direct && (data.reason === 'table' || data.reason === 'need_day')) {\n"
     "        const key = s => String(s || '').normalize('NFKC').replace(/\\+/g, ' ').replace(/\\s+/g, '');\n"
     "        const target = machineLinks().find(item => key(item.name) === key(data.machine));\n"
     "        if (target && target.element) {\n"
@@ -932,6 +932,26 @@ def today_iso(now=None):
     return (now - timedelta(hours=BUSINESS_DAY_CUTOFF_HOUR)).date().isoformat()
 
 
+DIRECTIONS = ('top', 'bottom')
+
+
+def recent_days(now=None, count=7):
+    """取り込み日として選べる営業日（新しい順）。日本時間の午前2時までは前日が「今日」。"""
+    latest = date.fromisoformat(today_iso(now))
+    return [(latest - timedelta(days=i)).isoformat() for i in range(count)]
+
+
+def with_target_date(url, day):
+    """機種の表のURLに、取り込み日を付ける（`target_date`）。サイトが日付を選んだときに自分で付ける形で、
+    すでにある `target_date` は置き換える。名前の符号化は変えない（文字列のまま付け足す）。"""
+    base, hash_, fragment = url.partition('#')
+    if re.search(r'([?&])target_date=[^&]*', base):
+        base = re.sub(r'([?&])target_date=[^&]*', lambda m: f'{m.group(1)}target_date={day}', base)
+    else:
+        base += ('&' if '?' in base else '?') + f'target_date={day}'
+    return base + hash_ + fragment
+
+
 def is_excluded_machine(location, name):
     """取り込みの対象外の機種か。長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」「沖ﾄﾞｷ」）
     ため、NFKCで全角へそろえてから判定する（「ｼﾞｬｸﾞﾗｰ」も「ジャグラー」として扱う）。"""
@@ -1137,6 +1157,10 @@ class _Bridge:
         self._submit_lock = threading.Lock()
         self._retrying = False
         self._auto = AutoCapture()
+        # 日付指定取り込み：取り込む営業日（None＝サイトの表示どおり）と、機種を数える向き
+        # （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。
+        self._target_day = None
+        self._direction = 'top'
         self._overlay_ready = threading.Event()
         self._auto_display = None
         self._manual_continuation = True
@@ -1153,12 +1177,30 @@ class _Bridge:
                                   'overlay': dict(DEFAULT_BROWSER_LAYOUT['overlay'])}
 
     def get_auto_capture(self):
-        return dict(self._auto.state(), manual_continuation=self._manual_continuation)
+        return dict(self._auto.state(), manual_continuation=self._manual_continuation,
+                    target_day=self._target_day, direction=self._direction, days=recent_days())
 
-    def set_auto_capture(self, enabled, seconds=3.5):
+    def set_target_day(self, day=None, direction=None):
+        """取り込み日・向きを決める。day: None＝変えない、''＝指定なし。ONの間は変えられない。"""
+        with self._auto._lock:
+            if self._auto.state()['enabled']:
+                raise ValueError('自動取り込みをOFFにしてから変えてください。')
+            if day is not None:
+                if day != '' and day not in recent_days():
+                    raise ValueError('取り込み日は、直近7日の営業日から選んでください。')
+                self._target_day = day or None
+            if direction is not None:
+                if direction not in DIRECTIONS:
+                    raise ValueError('取り込みの向きが不正です。')
+                self._direction = direction
+            return self.get_auto_capture()
+
+    def set_auto_capture(self, enabled, seconds=3.5, day=None, direction=None):
         with self._auto._lock:
             if enabled and self._retrying:
                 return self.get_auto_capture()
+            if enabled and not self._auto.state()['enabled'] and (day is not None or direction is not None):
+                self.set_target_day(day, direction)
             if enabled and self._connection.failure:
                 self._auto.configure(False, seconds)
                 self._auto.pause(self._connection.failure['message'])
@@ -1341,6 +1383,14 @@ class _Bridge:
         except Exception:  # noqa: BLE001 - no URL means nothing to check
             return raw
         reason = page_mismatch(current, payload)
+        if not reason and self._target_day:
+            try:
+                shown = resolve_day(payload)
+            except ValueError:
+                shown = None
+            if shown and shown != self._target_day:
+                reason = (f'取り込み日は{self._target_day}ですが、表示中は{shown}です。'
+                          f'日付を{self._target_day}に合わせてください。保存しませんでした。')
         return json.dumps({'error': reason}, ensure_ascii=False) if reason else raw
 
     def submit_table(self, raw):
@@ -1405,7 +1455,7 @@ class _Bridge:
         except (TypeError, ValueError):
             return json.dumps({'url': None, 'message': '機種一覧を読み取れませんでした。'}, ensure_ascii=False)
         store_path = payload.get('store')
-        day = payload.get('day')
+        day = self._target_day or payload.get('day')
         raw_machines = payload.get('machines') or []
         if store_path not in STORE_NAMES:
             return json.dumps({'url': None,
@@ -1491,6 +1541,11 @@ class _Bridge:
             count = raw_machine.get('count')
             machines.append(dict(name=name, url=url,
                                  count=int(count) if isinstance(count, (int, float)) else None))
+        if self._direction == 'bottom':
+            machines.reverse()
+        # 取り込み日を指定しているときは、サイトの行を押さず、日付つきのURLで機種の表を開く
+        # （行を押すと、サイトが選んでいる日付になってしまうため）。
+        direct = bool(self._target_day)
         if not machines:
             if only_excluded:
                 return all_done_message
@@ -1511,7 +1566,8 @@ class _Bridge:
                                       ensure_ascii=False)
                 # Old rows can lack detail_url.  Re-import this displayed table
                 # so it records current per-rack links before resuming graphs.
-                return json.dumps({'url': machine['url'], 'machine': machine['name'], 'reason': 'table',
+                return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
+                                   'machine': machine['name'], 'reason': 'table', 'direct': direct,
                                    'message': f"{machine['name']}の一覧を更新して、未取得グラフを続けます。"},
                                   ensure_ascii=False)
 
@@ -1528,8 +1584,9 @@ class _Bridge:
                     message = (f"{machine['name']}は設置台数が変わっています。現在の表を取り込んでください。"
                                if changed else
                                f"{machine['name']}は未取込です。現在の表を取り込んでください。")
-                    return json.dumps({'url': machine['url'], 'machine': machine['name'],
-                                       'reason': 'table', 'message': message},
+                    return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
+                                       'machine': machine['name'], 'reason': 'table', 'direct': direct,
+                                       'message': message},
                                       ensure_ascii=False)
         finally:
             db.close()
