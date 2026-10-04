@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## 日付指定取り込み・上から／下から取り込む・P’s CUBEのスクロール修正、0.5.23（Claude、2026-10-04）
+
+- 利用者「寝てしまって取り込み途中で日付変わって自動取り込みが使えなくなった。PC・Android版ともに日付指定取り込みボタンが欲しい（P’s CUBEにも）。上から取り込む・下から取り込むボタンも」「台数が多い機種で下へ行こうとするのが速すぎて固まる件も検討」。利用者の選択：その日の分だけ取り込みを続ける／並びは機種の一覧の上から・下から／日付が変わる基準は日本時間の午前2時／P’s CUBEとメルヘンのPC・Android。仕様と限界は `database/IMPORT_DAY_AND_DIRECTION.md`。
+- **P’s CUBE**（`563bca5`）：PCのカードとAndroid画面に、取り込む日（直近7日の営業日）の選択と「上から取り込む」「下から取り込む」を追加。日付を指定すると、表示中のページの日が違えば保存せず待つ（全台一覧はサイトの日付タブを手で合わせる。URLで日付を指定できるかは未確認のため、アプリは日付タブを押さない）。次のページはその日の未取得の先頭で、機種一覧を取り直しても最初の機種へ戻らない。全部済むと自動でOFFにして日付指定を外す。判定スクリプト `autoPageState` が選ばれた日 `day` を返す。
+- **P’s CUBEの下へのスクロール**：350ミリ秒ごとに毎回一番下へ飛ぶ処理が、サイトの続きの読み込み（一番下に着いたとき）を詰まらせる原因と推測（実サイトでの再現はしていない）。少しずつ進み（画面の8割）、一番下に着いたら1回だけ「最後の台を見せて一番下へ」、新しい台が出るまで待つ（押し込まない）、届いたら400msおいて続ける、4秒増えなければ少し戻って再度下へ（最大5回）、設置台数に届いたら終了（不明なら3秒増えなければ終了）、最長約90秒に変更。PC `SCROLL_SCRIPT`・Android `waitForPscubeList` で同じ規則。Chromiumの試験で、20台ずつ届く64台・遅れて届く31台・止まった一覧（着いたときの1回と再試行だけ、`scrollTo`の連打なし）を確認。
+- **メルヘン**（`6f1011d`）：同じボタンをPCのカード（`auto_capture.py`）とAndroid画面（`web_import_page.dart`）に。日付を指定すると、機種の表をサイトの行を押す代わりに日付つきURL（`…standlist_slot/?kind_code=21&machine_name=…&target_date=日付`。保存済みの取り込み元URLと行が反応しないときの予備の移動ですでに使っている形）で開く。別の日のページは保存しない（PC `_checked`・Androidの確認）。向きは機種の一覧を上から／下から。
+- 確認：PC一式・P’s CUBE・新規 `tests/test_meruhen_day.py`（6件）、ブラウザ・JS 70件（カードの日付選択・開始ボタン、スクロール）、Flutter全454件、変更Dartのanalyze error/warning 0。実WebView2のメルヘンの確認（`smoke_auto_machine_switch` 成功、`smoke_auto_capture` は変更前のコードでも4回中1回時間切れ＝もともとのばらつき、変更後も4回中1回）、`smoke_browser_lifecycle` 成功。**実サイト・Android実機での動作は未確認**（日付つきURLで機種の表が開くか、日付タブを合わせたあとの続き、Androidの機種の選び方の通し試験）。
+- ビルド：`database/bin` 再ビルド（ZIPなし）、`smoke_frozen_capture`・`smoke_frozen_runtime` 成功。APK 通常版 `database-0.5.23-2026100404.apk`（`com.keyan.database_android`、92,804,977 bytes、SHA-256 `2509285013B45019D1060256CD2D0B50C0C55E8BF7466F3FE877EE3333469B45`）、クローン `database-pscube-clone-0.5.23-2026100405.apk`（`com.keyan.database_android.pscube`、92,805,005 bytes、SHA-256 `6D7A8AFCDEE0CD5D0256DD93FC61AE15D685466EA1FBC886DD9DB8F340EBB3BC`）。aaptでID・名前・版、apksignerで署名証明書が前回までと同一（`4332fcb9…`）を確認。スマホは未接続のため現在の版は未確認。ビルドが `Invalid depfile … kernel_snapshot_program.d` で止まり終了コード127になったため、`.dart_tool/flutter_build` を消して再実行した（古い `apk/release/app-release.apk` は前回の0.5.22のまま残っていた：コピー前に版を確認すること）。
+- 閲覧ページ（iPhone）の公開：待ち時間90秒の変更はCodexが公開済み（公開リポジトリの履歴は古い土台の上に作られていたが、中身は私の最新ビルドと同一：改行の違いだけ。`flutter_build` 一式のSHAで確認）。今回の変更は閲覧ページの画面には影響しないため再公開していない（`web/pscube/data.mjs` の `autoPageState` だけ公開版と差がある）。
+- 作業中にCodexの別worktree `database-viewer-efficient`（ブランチ `codex/viewer-drive-efficient-20261004`）があることを確認。触っていない。
+
 ## iPhone閲覧ページのGoogle Drive待ち時間を90秒へ延長（2026-10-04）
 
 - 利用者から、メルヘン閲覧ページで「Googleドライブから30秒間応答がなかったため」と表示される報告を受けた。`database_android/web/index.html`の`REMOTE_IDLE_MS`を30,000msから90,000msへ変更し、表示される秒数も定数から自動計算される既存処理を維持した。
