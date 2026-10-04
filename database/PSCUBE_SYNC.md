@@ -66,3 +66,9 @@ URLを知っている人はファイルの中身を読める（メルヘンと�
 - 31日より前の記録は閲覧ページに自動では入らない（全期間は手でバックアップを読み込む）。
 - 実Driveへの書き込み・Apps Scriptの更新・iPhone実機での読み込みは、利用者の環境でないと確認できない。
   確認した範囲は `AI_COLLABORATION.md` に分けて書く。
+
+## Googleドライブ読み込みの出し直しと更新の目印（2026-10-04）
+
+- Apps Script（`database_android/tool/viewer_drive_script.gs`）の返事は、ときどき固まり、30〜90秒たってから404を返す。閲覧ページ（メルヘン・P’s CUBE共通、`database_android/web/drive_fetch.mjs`）は、8秒返事がなければ同じリクエストをもう1本出し、先に成功した方を使う（最大4本）。
+- `?check=1`（P’s CUBEは `?file=pscube&check=1`）を付けると、新しいApps Scriptは中身を読まず `{"format":"drive-check","version":"<更新時刻>-<サイズ>"}` だけを返す。閲覧ページは、前に読んだときと目印も書き出し時刻も同じなら、ファイルを読まない。古いApps Scriptは全文を返すので、そのまま使う。
+- 目印を使うには、Apps Scriptを更新する（「デプロイを管理」→ 編集 → 新バージョン。URLは変わらない）。更新しなくても閲覧ページは動く。

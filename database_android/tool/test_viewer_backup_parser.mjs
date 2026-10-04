@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as driveFetch from '../web/drive_fetch.mjs';
 
 // Execute the exact browser importer through its normal URL entry point.
 // Synthetic data only: no browser, Drive access, IndexedDB, or user records.
@@ -118,7 +119,19 @@ const remoteHead = {...head, source: 'pc-viewer', exported_at: exportedAt};
 const remoteText = `${JSON.stringify(remoteHead).slice(0, -1)}, "records": [\n` +
   Array(200).fill(row).join(',\n') + '\n]}';
 
-function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetchImpl, document} = {}) {
+// web/index.html は隔離環境で動かすため、共通部品（web/drive_fetch.mjs）は差し込み口 window.databaseDriveFetch で渡す。
+// やり直しの待ちはなくし、8秒の出し直しは起こさない（出し直しは hedge: で試す）。
+function driveModule({hedgeMs = 1e9, retryDelays = [0, 0, 0], storage = new Map()} = {}) {
+  const store = {getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => { storage.set(k, v); }};
+  return {
+    ...driveFetch,
+    hedgedFetch: (url, options) => driveFetch.hedgedFetch(url, {hedgeMs, retryDelays, ...options}),
+    checkVersion: (url, options) => driveFetch.checkVersion(url, {hedgeMs, retryDelays, ...options}),
+    versionStore: (source) => driveFetch.versionStore(source, store),
+  };
+}
+
+function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetchImpl, document, drive} = {}) {
   const bytes = new TextEncoder().encode(text);
   const stats = {pulled: 0, cancelled: false, total: Math.ceil(bytes.length / chunkSize)};
   let offset = 0;
@@ -143,6 +156,7 @@ function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetc
     fetch: fetchImpl ?? (async () => response),
     ...(document ? {document} : {}),
   };
+  context.window.databaseDriveFetch = driveModule(drive);
   vm.runInNewContext(code, context);
   return {viewer: context.window.databaseViewer, stats};
 }
@@ -219,7 +233,7 @@ test('Drive: only the Google script address is read', async () => {
   await assert.rejects(viewer.fromRemote('https://example.com/exec', null), /GoogleのスクリプトのURL/);
 });
 
-test('Drive: intermittent 404 / 5xx / network failure is retried twice, other errors are not', async () => {
+test('Drive: intermittent 404 / 5xx / network failure is retried (up to four requests), other errors are not', async () => {
   // やり直しの待ち（1.5秒・3秒）はすぐ進め、90秒の打ち切りはそのままにする。
   const timers = {
     setTimeout: (callback, ms) => setTimeout(callback, ms === 90000 ? ms : 0),
@@ -246,7 +260,7 @@ test('Drive: intermittent 404 / 5xx / network failure is retried twice, other er
   }
   const always = sequence([404]);
   await assert.rejects(remote('', {timers, fetchImpl: always.fetchImpl}).viewer.fromRemote(REMOTE, null), /（404）/);
-  assert.equal(always.calls.length, 3);
+  assert.equal(always.calls.length, 4);
   const forbidden = sequence([403]);
   await assert.rejects(remote('', {timers, fetchImpl: forbidden.fetchImpl}).viewer.fromRemote(REMOTE, null), /（403）/);
   assert.equal(forbidden.calls.length, 1);
@@ -289,4 +303,68 @@ test('a P’s CUBE file points to the P’s CUBE page instead of a generic error
   const spread = '{"format": "pscube-viewer", "version": 1, "records": [\n]}';
   await assert.rejects(parse(spread), /P’s CUBEのページ/);
   await assert.rejects(parse(JSON.stringify({format: 'other', records: []})), /databaseのバックアップファイルではありません/);
+});
+
+// --- 2026-10-04：返事が固まるApps Scriptへの対策（出し直し）と、更新の目印だけの確認 ---
+
+const checkReply = (version) => new Response(JSON.stringify({format: 'drive-check', version, name: 'database-viewer.json'}));
+
+test('Drive: a new script answers the check; the same version and export time reads nothing more', async () => {
+  const storage = new Map();
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return url.endsWith('?check=1') ? checkReply('v1') : new Response(remoteText);
+  };
+  const first = remote('', {fetchImpl, drive: {storage}});
+  const loaded = JSON.parse(await first.viewer.fromRemote(REMOTE, null));
+  assert.equal(loaded.records.length, 200);
+  assert.deepEqual(calls, [`${REMOTE}?check=1`, REMOTE]);
+  assert.match(storage.get('database-viewer-drive-version-meruhen'), /"version":"v1"/);
+  calls.length = 0;
+  const again = remote('', {fetchImpl, drive: {storage}});
+  assert.equal(await again.viewer.fromRemote(REMOTE, exportedAt), null);
+  assert.deepEqual(calls, [`${REMOTE}?check=1`], '目印が同じなら、ファイルは読まない');
+  calls.length = 0;
+  const changed = remote('', {fetchImpl: async (url) => { calls.push(url); return url.endsWith('?check=1') ? checkReply('v2') : new Response(remoteText); }, drive: {storage}});
+  // 目印が変わったらファイルを読む。書き出し時刻が表示中と同じなら反映は要らない（目印だけ更新する）。
+  assert.equal(await changed.viewer.fromRemote(REMOTE, exportedAt), null);
+  assert.deepEqual(calls, [`${REMOTE}?check=1`, REMOTE]);
+  assert.match(storage.get('database-viewer-drive-version-meruhen'), /"version":"v2"/);
+  calls.length = 0;
+  const other = remote('', {fetchImpl: async (url) => { calls.push(url); return url.endsWith('?check=1') ? checkReply('v3') : new Response(remoteText); }, drive: {storage}});
+  assert.equal(JSON.parse(await other.viewer.fromRemote(REMOTE, '2026-09-29T23:00:00+09:00')).records.length, 200);
+  assert.deepEqual(calls, [`${REMOTE}?check=1`, REMOTE], '表示中と書き出し時刻が違えば反映する');
+});
+
+test('Drive: an old script (answers the check with the whole file) still works and the body is not fetched twice', async () => {
+  const calls = [];
+  const {viewer} = remote('', {fetchImpl: async (url) => { calls.push(url); return new Response(remoteText); }});
+  assert.equal(JSON.parse(await viewer.fromRemote(REMOTE, null)).records.length, 200);
+  assert.deepEqual(calls, [`${REMOTE}?check=1`]);
+});
+
+test('Drive: a request with no answer is joined by a second one; the first success wins', async () => {
+  let n = 0, stopped = 0;
+  const fetchImpl = (_url, options) => {
+    if (n++ === 0) {
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => { stopped++; reject(new Error('aborted')); }));
+    }
+    return Promise.resolve(new Response(remoteText));
+  };
+  const started = Date.now();
+  const {viewer} = remote('', {fetchImpl, drive: {hedgeMs: 30}});
+  assert.equal(JSON.parse(await viewer.fromRemote(REMOTE, null)).records.length, 200);
+  assert.ok(Date.now() - started < 2000);
+  assert.equal(n, 2);
+  assert.equal(stopped, 1, '固まった方は止める');
+});
+
+test('Drive: a request that was cut off late by a 404 does not hide the success of another', async () => {
+  let n = 0;
+  const fetchImpl = () => n++ === 0
+    ? new Promise((resolve) => setTimeout(() => resolve({ok: false, status: 404, headers: {get: () => 'text/html'}, body: null}), 150))
+    : new Promise((resolve) => setTimeout(() => resolve(new Response(remoteText)), 10));
+  const {viewer} = remote('', {fetchImpl, drive: {hedgeMs: 30}});
+  assert.equal(JSON.parse(await viewer.fromRemote(REMOTE, null)).records.length, 200);
 });

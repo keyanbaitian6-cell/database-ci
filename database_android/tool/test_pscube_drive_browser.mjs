@@ -26,9 +26,10 @@ const rec=(rack,day,games)=>({store:'c740601',rate:'20',machine:machine.machine,
 const doc=(exported_at,games)=>({format:'pscube-viewer',version:1,kind:'viewer',source:'pc',exported_at,
   machines:[machine],records:[rec(1,'2026-10-01',games),rec(2,'2026-10-01',3100)]});
 const SCRIPT='https://script.google.com/macros/s/AKfycb_TEST/exec';
-let reply=doc('2026-10-01T20:00:00+09:00',3000),requests=[];
-await page.route('https://script.google.com/**',route=>{requests.push(route.request().url());return route.fulfill({status:200,
-  contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(reply)});});
+let reply=doc('2026-10-01T20:00:00+09:00',3000),requests=[],scriptVersion=null;   // scriptVersion: 新しいApps Scriptの更新の目印（nullは古いスクリプト＝全文を返す）
+await page.route('https://script.google.com/**',route=>{const url=route.request().url();requests.push(url);
+  const body=scriptVersion&&url.includes('check=1')?{format:'drive-check',version:scriptVersion,name:'pscube-viewer-drive.json'}:reply;
+  return route.fulfill({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(body)});});
 try{
   await page.goto(origin+'/setup');
   await page.evaluate(async()=>{const {createPscubeBridge}=await import('/pscube/viewer_bridge.mjs');window.databaseViewer=createPscubeBridge();});
@@ -38,7 +39,7 @@ try{
   assert.equal(requests.length,0);
   await page.evaluate(url=>window.databaseViewer.setRemote(url),SCRIPT);
   assert.equal(await page.evaluate(()=>window.databaseViewer.getRemote()),SCRIPT);
-  await sync(null);assert.deepEqual(requests,[SCRIPT+'?file=pscube']);
+  await sync(null);assert.deepEqual(requests,[SCRIPT+'?file=pscube&check=1'],'古いスクリプトは全文を返す：そのまま使う');
   assert.equal(JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).records[0].games,3000);
   assert.equal(await sync(reply.exported_at),null);
   reply=doc('2026-10-02T08:00:00+09:00',3600);await sync(null);
@@ -59,6 +60,15 @@ try{
   assert.match(saved.exported_at,/[+-]\d\d:\d\d$/);
   await page.evaluate(()=>window.databaseViewer.setRemote(null));
   assert.equal(await page.evaluate(()=>window.databaseViewer.getRemote()),null);
+  // 新しいApps Script：目印が同じなら、ファイルは読まない（実ブラウザのlocalStorageに目印を覚える）。
+  await page.evaluate(url=>window.databaseViewer.setRemote(url),SCRIPT);
+  scriptVersion='v1';reply=doc('2026-10-03T08:00:00+09:00',3700);requests=[];
+  await sync(null);assert.deepEqual(requests,[SCRIPT+'?file=pscube&check=1',SCRIPT+'?file=pscube']);
+  requests=[];assert.equal(await sync('2026-10-03T08:00:00+09:00'),null);
+  assert.deepEqual(requests,[SCRIPT+'?file=pscube&check=1'],'目印も書き出し時刻も同じ：確認だけ');
+  scriptVersion='v2';reply=doc('2026-10-03T21:00:00+09:00',3800);requests=[];
+  await sync('2026-10-03T08:00:00+09:00');assert.equal(requests.length,2,'目印が変わったら読む');
+  assert.equal(JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).records[0].games,3800);
   assert.deepEqual(errors,[]);
-  console.log('PASS: shared Drive bridge URL validation, source, unchanged/new data, failed sync preservation, export and settings');
+  console.log('PASS: shared Drive bridge URL validation, source, unchanged/new data, version check (old and new script), failed sync preservation, export and settings');
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

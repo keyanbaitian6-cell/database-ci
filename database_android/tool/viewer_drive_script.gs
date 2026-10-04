@@ -19,6 +19,8 @@
 //   （指定なし）  → database-viewer.json   … メルヘンの閲覧ページ
 //   ?file=pscube → pscube-viewer-drive.json … P’s CUBEの閲覧ページ（database/PSCUBE_SYNC.md）
 // 既存のURLのまま使うには、「デプロイを管理」→ 編集 → 「新バージョン」で更新する。
+// （2026-10-04：?check=1 を追加。更新しなくても閲覧ページは動くが、更新すると、変わっていないとき
+//  ファイルを読み直さず、Googleの返事が固まる回数も減らせる。）
 const FILES = { '': 'database-viewer.json', pscube: 'pscube-viewer-drive.json' };
 
 function doGet(e) {
@@ -32,9 +34,20 @@ function doGet(e) {
     if (file.isTrashed()) continue;
     if (!latest || file.getLastUpdated() > latest.getLastUpdated()) latest = file;
   }
-  return respond(latest
-    ? latest.getBlob().getDataAsString('UTF-8')
-    : JSON.stringify({ error: fileName + ' がGoogleドライブに見つかりません。PC版で取り込むと作られます。' }));
+  if (!latest) {
+    return respond(JSON.stringify({ error: fileName + ' がGoogleドライブに見つかりません。PC版で取り込むと作られます。' }));
+  }
+  // ?check=1 のときは、中身を読まず「更新の目印」だけを返す（閲覧ページが、前に読んだときと
+  // 同じなら、ファイルを読み直さないため）。目印はファイルの更新時刻とサイズ。
+  // この形（format が drive-check）を返さない古いスクリプトには、閲覧ページは今までどおり全文を読む。
+  if (e && e.parameter && e.parameter.check) {
+    return respond(JSON.stringify({
+      format: 'drive-check',
+      version: latest.getLastUpdated().getTime() + '-' + latest.getSize(),
+      name: fileName,
+    }));
+  }
+  return respond(latest.getBlob().getDataAsString('UTF-8'));
 }
 
 function respond(body) {
