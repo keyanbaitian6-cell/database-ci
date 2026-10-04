@@ -1,60 +1,126 @@
 import 'package:database_android/pscube_list_wait.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// 実サイトの動きの模型：一番下に着く（arrive）と続きが届く。届くまでの時間は [latency]。
+class FakeList {
+  FakeList({
+    required this.total,
+    this.first = 6,
+    this.batch = 20,
+    this.latency = Duration.zero,
+    this.loads = true,
+  }) : count = first;
+
+  final int total, first, batch;
+  final Duration latency;
+  final bool loads;
+  int count;
+  Duration elapsed = Duration.zero;
+  Duration? _arrivesAt;
+  var atBottom = false;
+  final actions = <PscubeScroll>[];
+
+  Future<void> delay(Duration duration) async {
+    elapsed += duration;
+  }
+
+  Future<PscubeListView> scroll(PscubeScroll action) async {
+    actions.add(action);
+    switch (action) {
+      case PscubeScroll.arrive:
+        atBottom = true;
+        if (loads && count < total && _arrivesAt == null) {
+          _arrivesAt = elapsed + latency;
+        }
+      case PscubeScroll.nudge:
+        atBottom = false;
+        _arrivesAt = null; // 読み込みが始まらなかったので、もう一度下に着けば始まる
+      case PscubeScroll.step:
+        atBottom = actions.where((a) => a == PscubeScroll.step).length % 3 == 0;
+      case PscubeScroll.none:
+        break;
+    }
+    if (_arrivesAt != null && elapsed >= _arrivesAt!) {
+      count = (count + batch).clamp(0, total);
+      _arrivesAt = null;
+      atBottom = false; // 台が増えて、また下に続く
+    }
+    return (count: count, atBottom: atBottom);
+  }
+}
+
 void main() {
-  test('各機種で6台の一時安定を越えて、3秒後の31台まで毎回スクロールする', () async {
+  test('各機種で6台の一時安定を越えて、3秒後に届く31台まで待つ', () async {
     for (var machine = 0; machine < 2; machine++) {
-      var elapsed = Duration.zero;
-      final counts = <int>[];
+      final list = FakeList(
+        total: 31,
+        batch: 25,
+        latency: const Duration(seconds: 3),
+      );
       await waitForPscubeList(
         expectedCount: 31,
         isCurrent: () => true,
-        scrollAndCount: () async {
-          final count = elapsed < const Duration(seconds: 3) ? 6 : 31;
-          counts.add(count);
-          return count;
-        },
-        delay: (duration) async => elapsed += duration,
+        scroll: list.scroll,
+        delay: list.delay,
       );
-      expect(counts.first, 6);
-      expect(counts.last, 31);
-      expect(elapsed, greaterThan(const Duration(seconds: 3)));
+      expect(list.count, 31);
+      expect(list.elapsed, greaterThan(const Duration(seconds: 3)));
     }
   });
 
-  test('台数不足が続いても最大70回で終了する', () async {
-    var calls = 0;
-    var elapsed = Duration.zero;
+  test('台数の多い機種は20台ずつ届く64台まで、少しずつ進んで届いたところで終わる', () async {
+    final list = FakeList(total: 64, first: 20);
+    await waitForPscubeList(
+      expectedCount: 64,
+      isCurrent: () => true,
+      scroll: list.scroll,
+      delay: list.delay,
+    );
+    expect(list.count, 64);
+    expect(list.elapsed, lessThan(const Duration(seconds: 30)));
+    expect(
+      list.actions.where((a) => a == PscubeScroll.nudge),
+      isEmpty,
+      reason: '読み込みが止まっていないので戻らない',
+    );
+  });
+
+  test('続きが来ないときは、速く何度も下へ押し込まず、4秒ごとに少し戻って最大5回で終わる', () async {
+    final list = FakeList(total: 31, loads: false);
     await waitForPscubeList(
       expectedCount: 31,
       isCurrent: () => true,
-      scrollAndCount: () async {
-        calls++;
-        return 6;
-      },
-      delay: (duration) async => elapsed += duration,
+      scroll: list.scroll,
+      delay: list.delay,
     );
-    expect(calls, 70);
-    expect(elapsed, const Duration(milliseconds: 24500));
+    final arrives = list.actions.where((a) => a == PscubeScroll.arrive).length;
+    final nudges = list.actions.where((a) => a == PscubeScroll.nudge).length;
+    expect(nudges, 5);
+    expect(arrives, lessThanOrEqualTo(6), reason: '着いたときの1回と、戻ってからの再試行だけ');
+    expect(list.count, 6);
+    // 以前は70回、毎回一番下へ飛んでいた。
+    expect(
+      list.actions.where((a) => a == PscubeScroll.arrive).length +
+          list.actions.where((a) => a == PscubeScroll.step).length,
+      lessThan(40),
+    );
   });
 
-  test('設置台数不明の一覧は既存の安定待ちで終了する', () async {
-    var calls = 0;
+  test('設置台数が不明の一覧は、一番下で3秒増えなければ終わる', () async {
+    final list = FakeList(total: 6, loads: false);
     await waitForPscubeList(
       isCurrent: () => true,
-      scrollAndCount: () async {
-        calls++;
-        return 6;
-      },
-      delay: (_) async {},
+      scroll: list.scroll,
+      delay: list.delay,
     );
-    expect(calls, 7);
+    expect(list.count, 6);
+    expect(list.elapsed, lessThan(const Duration(seconds: 12)));
   });
 
   test('台別など一覧がないページは待機しない', () async {
     await waitForPscubeList(
       isCurrent: () => true,
-      scrollAndCount: () async => -1,
+      scroll: (_) async => (count: -1, atBottom: false),
       delay: (_) async => fail('一覧がない場合は待たない'),
     );
   });
@@ -65,12 +131,29 @@ void main() {
     await waitForPscubeList(
       expectedCount: 31,
       isCurrent: () => current,
-      scrollAndCount: () async {
+      scroll: (_) async {
         calls++;
-        return 6;
+        return (count: 6, atBottom: false);
       },
       delay: (_) async => current = false,
     );
     expect(calls, 1);
+  });
+
+  test('最長でも360回（およそ90秒）で終わる', () async {
+    var calls = 0;
+    var elapsed = Duration.zero;
+    await waitForPscubeList(
+      expectedCount: 31,
+      isCurrent: () => true,
+      // 台は増えず、一番下でも上でもない位置を行き来する（戻る回数の上限にも掛からない状態）
+      scroll: (_) async {
+        calls++;
+        return (count: 6, atBottom: false);
+      },
+      delay: (duration) async => elapsed += duration,
+    );
+    expect(calls, pscubeListMaxTicks);
+    expect(elapsed, const Duration(milliseconds: 250 * 360 + 400));
   });
 }

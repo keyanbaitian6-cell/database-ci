@@ -537,4 +537,104 @@ void main() {
       );
     });
   });
+
+  test('上から・下からで、次に開く機種を一覧の端から選ぶ', () async {
+    final second = {
+      ...machine,
+      'machine': '二つ目',
+      'url': '${machine['url']}&nmk_kisyu=second',
+    };
+    final index = page(PscubeStore.index, [machine, second]);
+    expect(
+      (await store.importPage(index, PscubeStore.index)).nextUrl,
+      machine['url'],
+    );
+    expect(
+      (await store.importPage(
+        index,
+        PscubeStore.index,
+        direction: 'bottom',
+      )).nextUrl,
+      second['url'],
+    );
+    expect((await store.nextTarget(day, 'top')).url, machine['url']);
+    expect((await store.nextTarget(day, 'bottom')).url, second['url']);
+    expect(
+      () => store.importPage(index, PscubeStore.index, direction: 'sideways'),
+      throwsFormatException,
+    );
+  });
+
+  test('取り込み日を指定すると、違う日のページは保存せず、その日の未取得の先頭へ進む', () async {
+    const yesterday = '2026-10-03', today = '2026-10-04';
+    final second = {
+      ...machine,
+      'machine': '二つ目',
+      'url': '${machine['url']}&nmk_kisyu=second',
+    };
+    await store.importPage(
+      page(PscubeStore.index, [machine, second]),
+      PscubeStore.index,
+    );
+    // 日付が変わったあと、サイトの表示は新しい日。取り込み日（昨日）を指定していると保存しない。
+    expect(
+      () => store.importPage(
+        page(machine['url'], [machine], [record(today)]),
+        machine['url'],
+        expectedDay: yesterday,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('取り込み日は2026-10-03ですが、表示中は2026-10-04'),
+        ),
+      ),
+    );
+    expect(((await exported())['records'] as List), isEmpty);
+    // 昨日の日付タブに合わせれば保存でき、次は昨日の台別ページ。
+    final table = await store.importPage(
+      page(machine['url'], [machine], [record(yesterday)]),
+      machine['url'],
+      expectedDay: yesterday,
+    );
+    expect(table.nextUrl, record(yesterday)['detail_url']);
+    // 機種一覧を取り直しても、最初の機種へ戻らず、昨日の未取得の先頭へ進む。
+    final again = await store.importPage(
+      page(PscubeStore.index, [machine, second]),
+      PscubeStore.index,
+      expectedDay: yesterday,
+    );
+    expect(again.nextUrl, record(yesterday)['detail_url']);
+    final bottom = await store.importPage(
+      page(PscubeStore.index, [machine, second]),
+      PscubeStore.index,
+      expectedDay: yesterday,
+      direction: 'bottom',
+    );
+    expect(bottom.nextUrl, second['url'], reason: '下からなら二つ目の機種から');
+    // 台別ページ：ハッシュの日が取り込み日と違えば保存しない。
+    final history = [
+      for (var i = 0; i < 7; i++)
+        record(
+          DateTime.utc(
+            2026,
+            10,
+            3,
+          ).subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+        ),
+    ];
+    final rackUrl = record(yesterday)['detail_url'] as String;
+    final rack = page(rackUrl, [
+      {
+        ...machine,
+        'url': (machine['url'] as String).replaceAll('cd_ps=2&', ''),
+      },
+    ], history);
+    expect(
+      () => store.importPage(rack, rackUrl, expectedDay: today),
+      throwsFormatException,
+    );
+    await store.importPage(rack, rackUrl, expectedDay: yesterday);
+  });
 }

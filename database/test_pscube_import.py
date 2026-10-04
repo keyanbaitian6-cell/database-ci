@@ -4,7 +4,9 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from pscube_import import PscubeStore, ROOT_URL, installation_count
+from datetime import datetime
+
+from pscube_import import PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days
 
 
 class PscubeImportTests(unittest.TestCase):
@@ -33,6 +35,53 @@ class PscubeImportTests(unittest.TestCase):
                 'games': 1854, 'my': 1921, 'observed_at': '2026-10-01T12:00:00+09:00',
                 'detail_url': ROOT_URL + f'cgi-bin/nc-v06-001.php?cd_dai={rack}#{day.replace("-", "")}',
                 'graph': {'kind': 'overview', 'zero_y': 10, 'points': [[0, 10], [1, 8]]}}
+
+    def test_business_day_changes_at_2am_japan_time(self):
+        self.assertEqual(business_day(datetime(2026, 10, 4, 1, 59)), '2026-10-03')
+        self.assertEqual(business_day(datetime(2026, 10, 4, 2, 0)), '2026-10-04')
+        self.assertEqual(business_day(datetime(2026, 10, 4, 23, 30)), '2026-10-04')
+        days = recent_business_days(datetime(2026, 10, 4, 1, 0))
+        self.assertEqual((days[0], days[1], days[-1], len(days)), ('2026-10-03', '2026-10-02', '2026-09-27', 7))
+
+    def test_direction_picks_the_machine_from_the_top_or_the_bottom_of_the_list(self):
+        self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        first, last = self.machines[0]['url'], self.machines[-1]['url']
+        self.assertEqual(self.store.next_target(self.day, 'top')[0], first)
+        self.assertEqual(self.store.next_target(self.day, 'bottom')[0], last)
+        top = PscubeStore(Path(self.tmp.name) / 'top.sqlite3')
+        bottom = PscubeStore(Path(self.tmp.name) / 'bottom.sqlite3')
+        self.addCleanup(top.close)
+        self.addCleanup(bottom.close)
+        self.assertEqual(top.import_page(self.page(self.index_url, self.machines), self.index_url, direction='top')['next_url'], first)
+        self.assertEqual(bottom.import_page(self.page(self.index_url, self.machines), self.index_url, direction='bottom')['next_url'], last)
+        with self.assertRaises(ValueError):
+            top.import_page(self.page(self.index_url, self.machines), self.index_url, direction='sideways')
+
+    def test_expected_day_refuses_other_days_and_resumes_from_the_first_pending_page(self):
+        yesterday, today = '2026-10-03', '2026-10-04'
+        machine = self.machines[0]
+        self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        # 日付が変わったあと、サイトの表示は新しい日。取り込み日（昨日）を指定していると保存しない。
+        table_today = self.page(machine['url'], [dict(machine, expected_count=None)], [self.record(machine, 1526, today)])
+        with self.assertRaisesRegex(ValueError, '取り込み日は2026-10-03ですが、表示中は2026-10-04'):
+            self.store.import_page(table_today, machine['url'], expected_day=yesterday)
+        self.assertEqual(self.store.days(), [], '保存されていない')
+        # 昨日の日付タブに合わせれば保存できる。次は昨日の台別ページ。
+        record = self.record(machine, 1526, yesterday)
+        table = self.page(machine['url'], [dict(machine, expected_count=None)], [record])
+        result = self.store.import_page(table, machine['url'], expected_day=yesterday)
+        self.assertEqual(result['next_url'], record['detail_url'])
+        # 台別ページ：ハッシュの日が取り込み日と違えば保存しない。
+        history = [self.record(machine, 1526, (datetime.fromisoformat(yesterday) - __import__('datetime').timedelta(days=i)).date().isoformat()) for i in range(7)]
+        rack = self.page(record['detail_url'], [dict(machine, expected_count=None)], history)
+        with self.assertRaises(ValueError):
+            self.store.import_page(rack, record['detail_url'], expected_day=today)
+        self.store.import_page(rack, record['detail_url'], expected_day=yesterday)
+        # 機種一覧を取り直しても、取り込み日が決まっていれば最初の機種へ戻らず、昨日の未取得の先頭へ進む。
+        again = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday)
+        self.assertEqual(again['next_url'], self.machines[1]['url'])
+        bottom = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom')
+        self.assertEqual(bottom['next_url'], self.machines[1]['url'])
 
     def test_installation_count_uses_the_current_machine_without_writing(self):
         self.machines[0]['expected_count'] = 31

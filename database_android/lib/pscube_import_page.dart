@@ -10,6 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'browser_session.dart';
+import 'list_views.dart' show shortDayLabel;
 import 'pscube_auto.dart';
 import 'pscube_connection.dart';
 import 'pscube_list_wait.dart';
@@ -55,6 +56,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   final _guard = PscubeAutoGuard();
   final _clock = Stopwatch()..start();
   final _autoFailures = <String, int>{};
+  // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
+  // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前2時で営業日が変わる。
+  String? _targetDay;
+  String _direction = 'top';
 
   @override
   void initState() {
@@ -218,17 +223,34 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       waitForPscubeList(
         expectedCount: expectedCount,
         isCurrent: () => mounted && (page == null || _page == page),
-        scrollAndCount: () async {
+        scroll: (action) async {
+          // 1回の問い合わせで、決められた動きを1つだけ行い、台数と位置を返す。
+          final move = switch (action) {
+            PscubeScroll.none => '',
+            PscubeScroll.step => 'window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));',
+            PscubeScroll.arrive => "list.lastElementChild?.scrollIntoView({block:'end'}); window.scrollTo(0, document.documentElement.scrollHeight);",
+            PscubeScroll.nudge =>
+              'window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));',
+          };
+          // 設置台数が分かっているときは、リストごと入れ替わっても数えられるよう全体から数える。
+          final countJs = expectedCount == null
+              ? 'list.children.length'
+              : r'''document.querySelectorAll('li[id^="li-"]').length''';
           final result = await _web.runJavaScriptReturningResult('''
         (() => {
           const list = document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
-          if (!list) return -1;
-          list.lastElementChild?.scrollIntoView({block:'end'});
-          window.scrollTo(0, document.documentElement.scrollHeight);
-          return ${expectedCount == null ? 'list.children.length' : 'document.querySelectorAll(\'li[id^="li-"]\').length'};
+          if (!list) return '-1|0';
+          $move
+          const count = $countJs;
+          const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
+          return count + '|' + (bottom ? 1 : 0);
         })()
       ''');
-          return int.tryParse(result.toString()) ?? -1;
+          final parts = result.toString().replaceAll('"', '').split('|');
+          return (
+            count: int.tryParse(parts.first) ?? -1,
+            atBottom: parts.length > 1 && parts[1] == '1',
+          );
         },
       );
 
@@ -348,12 +370,14 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     }
   }
 
-  Future<void> _toggleAuto() async {
+  /// [direction]：「上から取り込む」「下から取り込む」から始めるとき。省略は今の向きのまま。
+  Future<void> _toggleAuto([String? direction]) async {
     if (_autoChanging) return;
     if (_auto.enabled) {
       await _stopAuto('停止中（開始済みの保存は完了まで待ちます）');
       return;
     }
+    if (direction != null) _direction = direction;
     if (!_browserReady || _opening || _connection.failure != null) {
       _autoMessage('停止中（通信状態を確認して「もう一度開く」を押してください）');
       return;
@@ -413,6 +437,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _autoDone,
         _autoFailures,
         _clock.elapsed,
+        targetDay: _targetDay,
       );
       if (decision.stop) {
         await _stopAuto(decision.message);
@@ -501,7 +526,12 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       if (_page != page || await _web.currentUrl() != capturedUrl) {
         throw const FormatException('保存前にページが切り替わりました。');
       }
-      final result = await store.importPage(raw, capturedUrl);
+      final result = await store.importPage(
+        raw,
+        capturedUrl,
+        expectedDay: _targetDay,
+        direction: _direction,
+      );
       // 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
       final netWarning = pscubeNetWarning(raw);
       if (!mounted) return;
@@ -516,7 +546,13 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _autoDone.add(autoSignature);
         _autoFailures.remove(autoSignature);
         if (_auto.enabled && result.nextUrl == null) {
-          await _stopAuto('すべて取り込みました（自動取り込みを停止しました）');
+          final day = _targetDay;
+          setState(() => _targetDay = null);
+          await _stopAuto(
+            day == null
+                ? 'すべて取り込みました（自動取り込みを停止しました）'
+                : '${int.parse(day.substring(5, 7))}/${int.parse(day.substring(8))}の分をすべて取り込みました（自動取り込みを停止しました）',
+          );
         } else if (_auto.enabled) {
           _autoMessage(
             'ON・${result.kind}を保存・残り${result.remaining}件・次のページへ'
@@ -793,6 +829,70 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                   ),
                   label: Text('自動取り込み：${_auto.enabled ? 'ON' : 'OFF'}'),
                 ),
+              ),
+              // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+              // 上から／下から：機種を一覧のどちら側から取り込むか。押すと自動取り込みをONにする。
+              DropdownButtonFormField<String>(
+                key: ValueKey('pscube-day-$_targetDay'),
+                initialValue: _targetDay ?? '',
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: '日付指定取り込み（取り込む日）',
+                  isDense: true,
+                ),
+                items: [
+                  const DropdownMenuItem(
+                    value: '',
+                    child: Text('指定なし（サイトの表示どおり）'),
+                  ),
+                  for (final (i, day) in pscubeRecentBusinessDays().indexed)
+                    DropdownMenuItem(
+                      value: day,
+                      child: Text(
+                        '${shortDayLabel(day)}${i == 0 ? '　今の営業日' : ''}',
+                      ),
+                    ),
+                ],
+                onChanged: _auto.enabled
+                    ? null
+                    : (value) => setState(
+                        () => _targetDay = value == null || value.isEmpty
+                            ? null
+                            : value,
+                      ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  for (final (direction, label) in const [
+                    ('top', '上から取り込む'),
+                    ('bottom', '下から取り込む'),
+                  ])
+                    Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          right: direction == 'top' ? 6 : 0,
+                        ),
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.appleBlue,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(44),
+                          ),
+                          onPressed:
+                              _auto.enabled ||
+                                  _autoChanging ||
+                                  _opening ||
+                                  !_browserReady ||
+                                  _connection.failure != null ||
+                                  _store == null
+                              ? null
+                              : () => _toggleAuto(direction),
+                          child: Text(label),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               Row(
                 children: [

@@ -224,13 +224,25 @@ class PscubeStore {
     return rows.isEmpty ? null : rows.first['value'] as String;
   }
 
+  /// [expectedDay]：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
+  /// [direction]：`top`＝機種を一覧の上から、`bottom`＝下から次の機種を選ぶ。
   Future<({int saved, int remaining, String kind, String? nextUrl})> importPage(
     String raw,
-    String? currentUrl,
-  ) => _serial(() => _importPage(raw, currentUrl));
+    String? currentUrl, {
+    String? expectedDay,
+    String direction = 'top',
+  }) => _serial(() => _importPage(raw, currentUrl, expectedDay, direction));
 
   Future<({int saved, int remaining, String kind, String? nextUrl})>
-  _importPage(String raw, String? currentUrl) async {
+  _importPage(
+    String raw,
+    String? currentUrl,
+    String? expectedDay,
+    String direction,
+  ) async {
+    if (direction != 'top' && direction != 'bottom') {
+      throw const FormatException('取り込みの向きが不正です。');
+    }
     final data = _asMap(jsonDecode(raw));
     if (data['error'] != null) throw FormatException('${data['error']}');
     if (data['format'] != 'pscube-viewer' ||
@@ -341,6 +353,12 @@ class PscubeStore {
         throw const FormatException('連続した7日分の履歴ではありません。');
       }
     }
+    if (expectedDay != null && (tablePage || rackPage) && day != expectedDay) {
+      final where = tablePage ? '全台一覧の日付タブを' : 'このページを';
+      throw FormatException(
+        '取り込み日は$expectedDayですが、表示中は$dayです。$where$expectedDayに合わせてください。保存しませんでした。',
+      );
+    }
     day ??= await _day();
     // Read old values before the transaction. sqflite queues ordinary Database
     // calls while a transaction is active, so querying db inside it deadlocks.
@@ -407,9 +425,15 @@ class PscubeStore {
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
     });
-    final next = indexPage
-        ? (url: machines.first['url'] as String?, remaining: machines.length)
-        : await _nextTarget(day);
+    // 取り込み日を指定しているときは、一覧から最初の機種ではなく、その日の未取得の先頭へ進む。
+    final next = indexPage && expectedDay == null
+        ? (
+            url:
+                (direction == 'bottom' ? machines.last : machines.first)['url']
+                    as String?,
+            remaining: machines.length,
+          )
+        : await _nextTarget(expectedDay ?? day, direction);
     return (
       saved: records.length,
       remaining: next.remaining,
@@ -457,10 +481,15 @@ class PscubeStore {
     };
   }
 
-  Future<({String? url, int remaining})> nextTarget([String? day]) =>
-      _serial(() => _nextTarget(day));
+  Future<({String? url, int remaining})> nextTarget([
+    String? day,
+    String direction = 'top',
+  ]) => _serial(() => _nextTarget(day, direction));
 
-  Future<({String? url, int remaining})> _nextTarget([String? day]) async {
+  Future<({String? url, int remaining})> _nextTarget([
+    String? day,
+    String direction = 'top',
+  ]) async {
     day ??= await _day();
     var machines = (await db.query(
       'machines',
@@ -486,6 +515,7 @@ class PscubeStore {
       for (final machine in machines)
         if (!isExcludedMachine(machine['machine'] as String?)) machine,
     ];
+    if (direction == 'bottom') machines = machines.reversed.toList();
     if (machines.isEmpty) return (url: index, remaining: 0);
     if (day == null) {
       return (url: machines.first['url'] as String, remaining: machines.length);

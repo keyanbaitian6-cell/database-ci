@@ -148,4 +148,56 @@ void main() {
       expect(at(challenge).stop, isFalse, reason: '確認画面ではずっと待つ');
     }
   });
+
+  test('営業日は日本時間の午前2時で切り替わり、取り込み日は直近7日から選ぶ', () {
+    expect(pscubeBusinessDay(DateTime(2026, 10, 4, 1, 59)), '2026-10-03');
+    expect(pscubeBusinessDay(DateTime(2026, 10, 4, 2, 0)), '2026-10-04');
+    expect(pscubeBusinessDay(DateTime(2026, 10, 4, 23, 30)), '2026-10-04');
+    final days = pscubeRecentBusinessDays(DateTime(2026, 10, 4, 1, 0));
+    expect(
+      (days.first, days[1], days.last, days.length),
+      ('2026-10-03', '2026-10-02', '2026-09-27', 7),
+    );
+  });
+
+  test('取り込み日と違う日のページは取り込まず待つ。指定なしならこれまでどおり取り込む', () {
+    final probe = {
+      'ready': true,
+      'kind': '全台一覧',
+      'signature': 'T',
+      'day': '2026-10-04',
+    };
+    final wait = pscubeAutoDecision(probe, {}, {}, targetDay: '2026-10-03');
+    expect(wait.capture, isNull);
+    expect(wait.message, contains('取り込み日は10/3ですが、表示中は10/4'));
+    expect(wait.message, contains('日付タブ'));
+    final same = pscubeAutoDecision(
+      {...probe, 'day': '2026-10-03'},
+      {},
+      {},
+      targetDay: '2026-10-03',
+    );
+    expect(same.capture, 'T');
+    expect(pscubeAutoDecision(probe, {}, {}).capture, 'T');
+    // 台別ページでは「このページを」。
+    final rack = pscubeAutoDecision(
+      {...probe, 'kind': '台別7日分'},
+      {},
+      {},
+      targetDay: '2026-10-03',
+    );
+    expect(rack.message, contains('このページを'));
+    // 日付タブの食い違いは「止められた」扱いにしない（待つだけ）。
+    final guard = PscubeAutoGuard();
+    for (var i = 0; i < 20; i++) {
+      final d = guard.decide(
+        probe,
+        {},
+        {},
+        Duration(seconds: 10 * i),
+        targetDay: '2026-10-03',
+      );
+      expect(d.stop, isFalse);
+    }
+  });
 }

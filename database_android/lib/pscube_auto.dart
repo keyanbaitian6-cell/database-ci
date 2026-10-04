@@ -8,11 +8,40 @@ import 'auto_capture_state.dart';
 /// 仕様：database/PSCUBE_AUTO_CAPTURE.md。
 const pscubeAutoMaxFailures = 3;
 
+/// 営業日（yyyy-mm-dd）。日本時間の午前2時まではまだ前日（利用者の指定、2026-10-04）。
+/// PC版 `business_day`・`recent_business_days`（database/pscube_import.py）と同じ規則。
+const pscubeBusinessDayCutoffHour = 2;
+
+String pscubeBusinessDay([DateTime? now]) {
+  final day = (now ?? DateTime.now()).subtract(
+    const Duration(hours: pscubeBusinessDayCutoffHour),
+  );
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${day.year}-${two(day.month)}-${two(day.day)}';
+}
+
+/// 取り込み日として選べる営業日（新しい順）。サイトが見せるのは本日〜6日前の7日分。
+List<String> pscubeRecentBusinessDays([DateTime? now, int count = 7]) {
+  final latest = DateTime.parse('${pscubeBusinessDay(now)}T00:00:00Z');
+  return [
+    for (var i = 0; i < count; i++)
+      latest.subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+  ];
+}
+
+String _shortDay(String day) {
+  final parts = day.split('-');
+  return '${int.parse(parts[1])}/${int.parse(parts[2])}';
+}
+
+/// [targetDay]：取り込み日を指定しているとき。違う日のページは取り込まず待つ
+/// （サイトのボタンはアプリが押さない：全台一覧は日付タブを手で合わせてもらう）。
 ({String? capture, String message}) pscubeAutoDecision(
   Object? probe,
   Set<String> done,
-  Map<String, int> failures,
-) {
+  Map<String, int> failures, {
+  String? targetDay,
+}) {
   if (probe is! Map) return (capture: null, message: 'ON・待機：ページの準備待ち');
   final signature = probe['signature'];
   if (probe['busy'] == true) {
@@ -20,6 +49,16 @@ const pscubeAutoMaxFailures = 3;
   }
   if (probe['ready'] != true || signature is! String) {
     return (capture: null, message: 'ON・待機：${probe['reason'] ?? 'ページの準備待ち'}');
+  }
+  final shown = probe['day'];
+  if (targetDay != null && shown is String && shown != targetDay) {
+    final hint = probe['kind'] == '全台一覧' ? '全台一覧の日付タブを' : 'このページを';
+    return (
+      capture: null,
+      message:
+          'ON・待機：取り込み日は${_shortDay(targetDay)}ですが、表示中は${_shortDay(shown)}です。'
+          '$hint${_shortDay(targetDay)}に合わせてください',
+    );
   }
   if (done.contains(signature)) {
     return (capture: null, message: 'ON・次のページ待ち（同じページは重複保存しません）');
@@ -83,8 +122,9 @@ class PscubeAutoGuard {
     Object? probe,
     Set<String> done,
     Map<String, int> failures,
-    Duration now,
-  ) {
+    Duration now, {
+    String? targetDay,
+  }) {
     if (probe is Map &&
         probe['missing'] == true &&
         probe['challenge'] != true) {
@@ -96,7 +136,12 @@ class PscubeAutoGuard {
     } else {
       _missing.clear();
     }
-    final decision = pscubeAutoDecision(probe, done, failures);
+    final decision = pscubeAutoDecision(
+      probe,
+      done,
+      failures,
+      targetDay: targetDay,
+    );
     return (capture: decision.capture, message: decision.message, stop: false);
   }
 }

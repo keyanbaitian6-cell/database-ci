@@ -36,28 +36,54 @@ SHOP = 'c740601'
 HOST = 'www.pscube.jp'
 ROOT_URL = f'https://{HOST}/dedamajyoho-P-townDMMpachi/{SHOP}/'
 FORMAT = 'pscube-viewer'
+# 営業日の切り替わり時刻。日本時間の午前2時まではまだ前日の営業日（利用者の指定、2026-10-04）。
+BUSINESS_DAY_CUTOFF_HOUR = 2
+DIRECTIONS = ('top', 'bottom')
 PACKAGE_ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
 CAPTURE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_capture.js'
 PROBE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_auto_probe.js'
 
 SCROLL_SCRIPT = r'''(async () => {
+  // 台数の多い機種の全台一覧を、サイトの続きの読み込み（一番下に着いたときに始まる）に合わせて表示する。
+  // 以前は350ミリ秒ごとに毎回一番下へ飛んでいたため、読み込みの途中で何度も押し込んでしまい、
+  // 読み込みが詰まって止まることがあった（2026-10-04、利用者の報告）。
+  // 今は、少しずつ進み、一番下に着いたら新しい台が出るまで待つ（待つ間は下へ押し込まない）。
+  // 4秒たっても増えないときだけ、少し戻ってもう一度下へ進む（最大5回）。
   const findList = () => document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
   const target = typeof expectedCount === 'number' ? expectedCount : null;
-  let stable = 0, old = -1;
-  // 台数が一時的に止まっても、既知の設置台数に届くまでは待つ（最大24.5秒）。
-  for (let i = 0; i < 70; i++) {
+  const scale = typeof scrollDelayScale === 'number' ? scrollDelayScale : 1;   // 試験用：待ち時間の倍率
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms * scale));
+  const countCards = () => target === null ? (findList()?.children.length ?? -1)
+    : document.querySelectorAll('li[id^="li-"]').length;
+  const atBottom = () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
+  let last = -1, quiet = 0, nudges = 0, armed = true;
+  for (let tick = 0; tick < 360; tick++) {          // 1回250ミリ秒、最長およそ90秒
     const list = findList();
     if (!list) return;
-    list.lastElementChild?.scrollIntoView({block:'end'});
-    // 続きの台はページの一番下まで来たときに読み込まれる（最後の台が見えるだけでは来ない）。
-    // Android版と同じく一番下まで移動する（2026-10-02、表示6台・設置7台で止まった件）。
-    window.scrollTo(0, document.documentElement.scrollHeight);
-    await new Promise(resolve => setTimeout(resolve, 350));
-    // The site can replace the list when another batch arrives.
-    const count = target === null ? (findList()?.children.length ?? -1)
-      : document.querySelectorAll('li[id^="li-"]').length;
-    stable = count === old ? stable + 1 : 0; old = count;
-    if (stable >= 6 && (target === null || count >= target)) return;
+    const count = countCards();
+    if (count > last) {                              // 続きが届いた：描画が落ち着くのを待つ
+      last = count; quiet = 0; armed = true;          // 新しい最後の台まで、もう一度下へ
+      await sleep(400);
+    } else if (atBottom()) quiet++;
+    // 設置台数が分かっていれば届いたら終わり。不明なら、一番下で3秒増えなければ終わり。
+    if (target === null ? quiet >= 12 : (count >= target && quiet >= 1)) { await sleep(300); return; }
+    if (atBottom()) {
+      if (armed) {                                   // 着いたときに1回だけ：最後の台を見せて、一番下まで
+        list.lastElementChild?.scrollIntoView({block:'end'});
+        window.scrollTo(0, document.documentElement.scrollHeight);
+        armed = false;
+      }
+      else if (quiet >= 16) {                        // 4秒増えない：少し戻って、もう一度下へ
+        if (++nudges > 5) return;
+        window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));
+        armed = true; quiet = 0;
+        await sleep(400);
+      }
+    } else {
+      window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));
+      armed = true;
+    }
+    await sleep(250);
   }
 })()'''
 
@@ -97,6 +123,23 @@ def reset_site(window, pilot, saving):
         pilot.auto.pause(RESET_DONE_MESSAGE)
     window.load_url(ROOT_URL)
     return RESET_DONE_MESSAGE
+
+
+def business_day(now: datetime | None = None) -> str:
+    """今の営業日（yyyy-mm-dd）。日本時間の午前2時までは前日として数える。"""
+    now = now or datetime.now()
+    return (now - timedelta(hours=BUSINESS_DAY_CUTOFF_HOUR)).date().isoformat()
+
+
+def recent_business_days(now: datetime | None = None, count: int = 7) -> list[str]:
+    """取り込み日として選べる営業日（新しい順）。サイトが見せるのは本日〜6日前の7日分。"""
+    latest = date.fromisoformat(business_day(now))
+    return [(latest - timedelta(days=i)).isoformat() for i in range(count)]
+
+
+def _short_day(day: str) -> str:
+    parsed = date.fromisoformat(day)
+    return f'{parsed.month}/{parsed.day}'
 
 
 def site_url(raw: str, suffix: str | None = None):
@@ -383,7 +426,11 @@ class PscubeStore:
         row = self.db.execute('SELECT value FROM state WHERE key=?', (key,)).fetchone()
         return row[0] if row else None
 
-    def import_page(self, raw, current_url):
+    def import_page(self, raw, current_url, expected_day=None, direction='top'):
+        """expected_day：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
+        direction：'top'＝機種の一覧の上から、'bottom'＝下から次の機種を選ぶ。"""
+        if direction not in DIRECTIONS:
+            raise ValueError('取り込みの向きが不正です。')
         data = json.loads(raw) if isinstance(raw, str) else raw
         if not isinstance(data, dict) or data.get('error'):
             raise ValueError(data.get('error', 'ページを読めませんでした。') if isinstance(data, dict) else 'ページの形式が不正です。')
@@ -439,6 +486,9 @@ class PscubeStore:
                 raise ValueError('連続した7日分の履歴ではありません。')
         if is_table and any(r['day'] != day for r in data['records']):
             raise ValueError('一覧内の日付が一致しません。')
+        if expected_day and (is_table or is_rack) and day != expected_day:
+            where = '全台一覧の日付タブを' if is_table else 'このページを'
+            raise ValueError(f'取り込み日は{expected_day}ですが、表示中は{day}です。{where}{expected_day}に合わせてください。保存しませんでした。')
         with self.db:
             for m in data['machines']:
                 key = _machine_key(m)
@@ -460,10 +510,12 @@ class PscubeStore:
                                 ('active_machine_keys', json.dumps([_machine_key(m) for m in data['machines']], ensure_ascii=False)))
             if is_rack:
                 self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (_record_key(current),))
-        if is_index:
-            next_url, remaining = data['machines'][0]['url'], len(data['machines'])
+        if is_index and not expected_day:
+            first = data['machines'][-1] if direction == 'bottom' else data['machines'][0]
+            next_url, remaining = first['url'], len(data['machines'])
         else:
-            next_url, remaining = self.next_target(day)
+            # 取り込み日を指定しているときは、一覧から最初の機種ではなく、その日の未取得の先頭へ進む。
+            next_url, remaining = self.next_target(expected_day or day, direction)
         result = {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
                   'kind': '機種一覧' if is_index else '全台一覧' if is_table else '台別7日分'}
         if is_rack and isinstance(data.get('net_warning'), str):
@@ -471,7 +523,8 @@ class PscubeStore:
             result['net_warning'] = data['net_warning'][:200]
         return result
 
-    def next_target(self, day=None):
+    def next_target(self, day=None, direction='top'):
+        """次に開くページ。direction='bottom' なら機種を一覧の下から数える。"""
         day = day or self._state('last_day')
         machines = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM machines ORDER BY rowid')]
         active = self._state('active_machine_keys')
@@ -479,6 +532,8 @@ class PscubeStore:
             by_key = {_machine_key(m): m for m in machines}
             machines = [by_key[key] for key in json.loads(active) if key in by_key]
         machines = [m for m in machines if not is_excluded_machine(m['machine'])]
+        if direction == 'bottom':
+            machines.reverse()
         if not machines:
             return ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2', 0
         if not day:
@@ -637,6 +692,9 @@ class AutoPilot:
         self.pending_since = None
         self.loading_page = False
         self.connection_error = None
+        # 取り込み日（None＝サイトの表示どおり）と、機種を数える向き。起動のたびに戻る。
+        self.target_day = None
+        self.direction = 'top'
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
 
@@ -658,23 +716,44 @@ class AutoPilot:
         return box.get('value')
 
     def state(self):
-        return self.auto.state()
+        state = dict(self.auto.state())
+        state.update(target_day=self.target_day, direction=self.direction, days=recent_business_days())
+        return state
 
     def render(self):
         self._eval('window.__pscubeRenderAuto && window.__pscubeRenderAuto(' +
-                   json.dumps(self.auto.state(), ensure_ascii=True) + ')')
+                   json.dumps(self.state(), ensure_ascii=True) + ')')
 
-    def configure(self, enabled, seconds):
+    def set_target(self, day=None, direction=None):
+        """取り込み日・向きを決める。day: None＝変えない、''＝指定なし。自動取り込みのONの間は変えられない。"""
         with self._lock:
+            if self.auto.state()['enabled']:
+                raise ValueError('自動取り込みをOFFにしてから変えてください。')
+            if day is not None:
+                if day != '' and day not in recent_business_days():
+                    raise ValueError('取り込み日は、サイトが見せる直近7日の営業日から選んでください。')
+                self.target_day = day or None
+            if direction is not None:
+                if direction not in DIRECTIONS:
+                    raise ValueError('取り込みの向きが不正です。')
+                self.direction = direction
+        self.render()
+        return self.state()
+
+    def configure(self, enabled, seconds, day=None, direction=None):
+        with self._lock:
+            if enabled and not self.auto.state()['enabled']:
+                if day is not None or direction is not None:
+                    self.set_target(day, direction)
             if enabled and self.connection_error:
                 self.auto.pause(self.connection_error)
-                return self.auto.state()
-            state = self.auto.configure(enabled, seconds)
+                return self.state()
+            self.auto.configure(enabled, seconds)
             if enabled:
                 self.failures.clear()
                 self.done.clear()
         self.render()
-        return self.auto.state()
+        return self.state()
 
     def connection_failed(self, message):
         """Native WebView2 callback: no JS/UI wait here."""
@@ -746,6 +825,11 @@ class AutoPilot:
                 self.auto.pause('ON・保存処理中・完了待ち', token)
             elif not probe.get('ready'):
                 self.auto.pause('ON・待機：' + str(probe.get('reason') or 'ページの準備待ち'), token)
+            elif self.target_day and probe.get('day') and probe['day'] != self.target_day:
+                # 取り込み日と違う日のページ。サイトのボタンはアプリが押さない：全台一覧は日付タブを手で合わせてもらう。
+                hint = ('全台一覧の日付タブを' if probe.get('kind') == '全台一覧' else 'このページを')
+                self.auto.pause(f'ON・待機：取り込み日は{_short_day(self.target_day)}ですが、表示中は{_short_day(probe["day"])}です。'
+                                f'{hint}{_short_day(self.target_day)}に合わせてください', token)
             elif probe.get('signature') in self.done:
                 self.auto.pause('ON・次のページ待ち（同じページは重複保存しません）', token)
             elif self.failures.get(probe.get('signature'), 0) >= self.MAX_FAILURES:
@@ -780,7 +864,9 @@ class AutoPilot:
                     self.failures.pop(signature, None)
                 if enabled and not result.get('next_url'):
                     self.auto.configure(False, self.auto.state()['seconds'])
-                    self.auto.pause('すべて取り込みました（自動取り込みを停止しました）')
+                    day, self.target_day = self.target_day, None
+                    self.auto.pause('すべて取り込みました（自動取り込みを停止しました）' if not day else
+                                    f'{_short_day(day)}の分をすべて取り込みました（自動取り込みを停止しました）')
                 elif enabled:
                     self.auto.pause(f'ON・{result.get("kind", "")}を保存・残り{result.get("remaining", "?")}件・次のページへ'
                                     + ('（差枚は未取得）' if result.get('net_warning') else ''))
@@ -808,6 +894,28 @@ def overlay_script(capture_script, index_url):
       auto.type = 'button';
       Object.assign(auto.style, {color:'white',padding:'10px',border:'2px solid #b8c5d8',borderRadius:'6px',fontSize:'14px',fontWeight:'bold',cursor:'pointer',background:'#526078'});
       auto.textContent = '自動取り込み：OFF（押すと開始）';
+      // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+      // 上から／下から：機種を一覧のどちら側から取り込むか。どちらも押すと自動取り込みをONにする。
+      const dayLabel = document.createElement('div');
+      dayLabel.style.cssText = 'font-size:12px;display:block;color:#33445a';
+      const dayText = document.createElement('span');
+      dayText.textContent = '日付指定取り込み（取り込む日）';
+      const daySelect = document.createElement('select');
+      daySelect.id = 'database-pscube-day';
+      daySelect.setAttribute('aria-label', '日付指定取り込み（取り込む日）');
+      Object.assign(daySelect.style, {width:'100%',marginTop:'4px',padding:'6px',fontSize:'13px'});
+      dayLabel.append(dayText, daySelect);
+      const startRow = document.createElement('div');
+      startRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px';
+      const mkStart = (id, text) => {
+        const b = document.createElement('button');
+        b.id = id; b.type = 'button'; b.textContent = text;
+        Object.assign(b.style, {color:'white',padding:'10px 4px',border:'2px solid #b8c5d8',borderRadius:'6px',fontSize:'13px',fontWeight:'bold',cursor:'pointer',background:'#304d6e'});
+        return b;
+      };
+      const topButton = mkStart('database-pscube-top', '上から取り込む');
+      const bottomButton = mkStart('database-pscube-bottom', '下から取り込む');
+      startRow.append(topButton, bottomButton);
       const label = document.createElement('label');
       label.style.cssText = 'font-size:12px;display:block;color:#33445a';
       const seconds = document.createElement('input');
@@ -850,7 +958,7 @@ def overlay_script(capture_script, index_url):
           status.textContent = '消せませんでした：' + String(error?.message || error);
         }
       };
-      card.append(button, auto, label, status, retry, reset);
+      card.append(button, auto, dayLabel, startRow, label, status, retry, reset);
       const identity = raw => {
         const u = new URL(raw);
         if (!u.pathname.endsWith('nc-v06-001.php')) u.hash = '';
@@ -909,14 +1017,55 @@ def overlay_script(capture_script, index_url):
         seconds.value = String(state.seconds);
         value.textContent = '5〜8秒ランダム（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
         status.textContent = state.message;
+        // 取り込み日の選択肢は、午前2時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
+        const days = Array.isArray(state.days) ? state.days : [];
+        if (JSON.stringify(days) !== daySelect.dataset.days) {
+          daySelect.dataset.days = JSON.stringify(days);
+          daySelect.textContent = '';
+          const none = document.createElement('option');
+          none.value = ''; none.textContent = '指定なし（サイトの表示どおり）';
+          daySelect.append(none);
+          days.forEach((day, i) => {
+            const o = document.createElement('option');
+            const d = new Date(day + 'T00:00:00');
+            o.value = day;
+            o.textContent = (d.getMonth() + 1) + '/' + d.getDate() + '（' + '日月火水木金土'[d.getDay()] + '）' + (i === 0 ? '　今の営業日' : '');
+            daySelect.append(o);
+          });
+        }
+        daySelect.value = state.target_day || '';
+        daySelect.disabled = autoEnabled || autoChanging;
+        for (const b of [topButton, bottomButton]) {
+          b.disabled = autoEnabled || autoChanging || isRoot;
+          b.style.opacity = b.disabled ? '.5' : '1';
+          b.style.outline = !autoEnabled ? '' : (b === (state.direction === 'bottom' ? bottomButton : topButton) ? '3px solid #087d59' : '');
+        }
         if (!window.__pscubeBusy) button.disabled = autoEnabled && !isRoot;
         button.style.opacity = button.disabled ? '.5' : '1';
       };
+      daySelect.onchange = async () => {
+        try { window.__pscubeRenderAuto(await window.pywebview.api.set_target_day(daySelect.value, null)); }
+        catch (error) { status.textContent = '取り込み日を変えられませんでした：' + String(error?.message || error); }
+      };
+      const startFrom = async direction => {
+        if (autoChanging || autoEnabled || isRoot) return;
+        autoChanging = true; topButton.disabled = bottomButton.disabled = auto.disabled = true;
+        try {
+          const state = await window.pywebview.api.set_auto_capture(true, Number(seconds.value), daySelect.value, direction);
+          autoChanging = false;
+          window.__pscubeRenderAuto(state);
+        } catch (error) {
+          autoChanging = false; auto.disabled = false; topButton.disabled = bottomButton.disabled = false;
+          status.textContent = '自動取り込みを始められませんでした：' + String(error?.message || error);
+        }
+      };
+      topButton.onclick = () => startFrom('top');
+      bottomButton.onclick = () => startFrom('bottom');
       auto.onclick = async () => {
         if (autoChanging) return;
         autoChanging = true; auto.disabled = true;
         try {
-          const state = await window.pywebview.api.set_auto_capture(!autoEnabled, Number(seconds.value));
+          const state = await window.pywebview.api.set_auto_capture(!autoEnabled, Number(seconds.value), daySelect.value, null);
           autoChanging = false;
           window.__pscubeRenderAuto(state);
         } catch (error) {
@@ -970,8 +1119,11 @@ def run_session(db_path, export_path):
                 self.pilot.finished(error=str(message)[:300])
             return True
 
-        def set_auto_capture(self, enabled, seconds):
-            return self.pilot.configure(enabled, seconds)
+        def set_auto_capture(self, enabled, seconds, day=None, direction=None):
+            return self.pilot.configure(enabled, seconds, day, direction)
+
+        def set_target_day(self, day=None, direction=None):
+            return self.pilot.set_target(day, direction)
 
         def reset_site(self):
             if not self._capture_lock.acquire(blocking=False):
@@ -987,7 +1139,7 @@ def run_session(db_path, export_path):
             current = self._window.get_current_url()
             db = PscubeStore(db_path)
             try:
-                result = db.import_page(raw, current)
+                result = db.import_page(raw, current, expected_day=self.pilot.target_day, direction=self.pilot.direction)
                 result['backup'] = auto_backup(db, export_path)
                 result['source_url'] = current
                 return result

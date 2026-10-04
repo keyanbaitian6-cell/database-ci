@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from auto_capture import AutoCapture
-from pscube_import import AutoPilot, PscubeRandomCapture
+from pscube_import import AutoPilot, recent_business_days, PscubeRandomCapture
 
 PROBE = 'PROBE'
 START = 'window.__pscubeStartCapture ? window.__pscubeStartCapture() : false'
@@ -179,6 +179,57 @@ class AutoPilotTests(unittest.TestCase):
         self.assertTrue(self.pilot.state()['enabled'], '差枚が取れなくても巡回は止めない')
         self.assertIn('差枚は未取得', self.message())
         self.assertIn('A', self.pilot.done)
+
+    def test_target_day_and_direction_are_set_with_the_start_and_cleared_when_done(self):
+        today, yesterday = recent_business_days()[:2]
+        state = self.pilot.configure(True, 10, yesterday, 'bottom')
+        self.assertEqual((state['enabled'], state['target_day'], state['direction']), (True, yesterday, 'bottom'))
+        self.assertEqual(state['days'][:2], [today, yesterday])
+        self.assertEqual(self.window.rendered[-1]['target_day'], yesterday)
+        with self.assertRaises(ValueError):
+            self.pilot.set_target('', 'top')   # ONの間は変えられない
+        self.window.probe = {**page('R', '台別7日分'), 'day': yesterday}
+        self.wait(10)
+        self.pilot.tick()
+        self.pilot.finished(result={'kind': '台別7日分', 'remaining': 0, 'next_url': None})
+        state = self.pilot.state()
+        self.assertEqual((state['enabled'], state['target_day']), (False, None))
+        self.assertIn('分をすべて取り込みました', self.message())
+        self.assertEqual(state['direction'], 'bottom', '向きは覚えておく')
+
+    def test_target_day_validation(self):
+        for bad in ('2026-01-01', 'yesterday', '2026-13-40'):
+            with self.assertRaises(ValueError):
+                self.pilot.set_target(bad)
+        with self.assertRaises(ValueError):
+            self.pilot.set_target(None, 'sideways')
+        state = self.pilot.set_target(recent_business_days()[3], 'bottom')
+        self.assertEqual((state['target_day'], state['direction']), (recent_business_days()[3], 'bottom'))
+        self.assertIsNone(self.pilot.set_target('')['target_day'])
+        self.assertEqual(self.pilot.set_target(None)['direction'], 'bottom', '省略は今の設定のまま')
+
+    def test_a_page_for_another_day_waits_instead_of_capturing(self):
+        today, yesterday = recent_business_days()[:2]
+        self.pilot.configure(True, 10, yesterday)
+        self.window.probe = {**page('T', '全台一覧'), 'day': today}
+        self.wait(10)
+        self.pilot.tick()
+        self.assertNotIn('start', self.window.calls)
+        self.assertIn('日付タブ', self.message())
+        self.assertTrue(self.pilot.state()['enabled'], '待つだけ。止められた扱いにはしない')
+        self.assertEqual(self.pilot.missing, [])
+        # 日付タブを合わせると取り込む。
+        self.window.probe = {**page('T', '全台一覧'), 'day': yesterday}
+        self.wait(10)
+        self.pilot.tick()
+        self.assertIn('start', self.window.calls)
+        # 指定なしなら、どの日のページでも取り込む（これまでどおり）。
+        other = AutoPilot(FakeWindow(), PROBE, auto=AutoCapture(clock=self.clock, minimum=5, maximum=60, default=10))
+        other.configure(True, 10)
+        other.evaluate.probe = {**page('X', '全台一覧'), 'day': today}
+        self.wait(10)
+        other.tick()
+        self.assertIn('start', other.evaluate.calls)
 
     def test_turns_itself_off_when_nothing_is_left(self):
         self.pilot.configure(True, 5)
