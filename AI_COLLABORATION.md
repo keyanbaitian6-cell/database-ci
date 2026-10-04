@@ -8,6 +8,7 @@
 - **2 更新の目印**（`checkVersion`・`versionStore`・`tool/viewer_drive_script.gs`）：先に `?check=1` で、中身を読まず更新時刻＋サイズの目印だけを返してもらう（新しいApps Script）。前に読んだときと目印も書き出し時刻も同じなら、ファイルを読まない。目印は読む前に確かめ、読み終えて正しいと分かってから覚える。**古いApps Scriptは `?check=1` を知らず全文を返す**ので、その全文をそのまま使う（二重に読まない）＝更新しなくても動く。**目印を使うにはApps Scriptの更新が必要**（「デプロイを管理」→ 編集 → 新バージョン、URLは変わらない）。
 - 配線：メルヘン `web/index.html` の `fromRemote`、P’s CUBE `web/pscube/sync.mjs` の `fetchDrive`（`pscube/viewer_bridge.mjs` 経由）。試験用の差し込み口 `window.databaseDriveFetch`（隔離環境では `import()` が使えないため）。Dart側は変更なし。
 - 確認：`test_pscube_sync.mjs` 14件、`test_viewer_backup_parser.mjs` 32件（新規：目印・古いスクリプト・出し直し・遅い404）、`test_pscube_drive_browser.mjs`（実ブラウザ・新旧スクリプト）、新規 `tool/test_viewer_built_drive.mjs`（ビルドした実物の index.html）、JS一式が成功。Apps Scriptは手元の模擬で `?check=1` の返事を確認。**実際のiPhone・実サイト・更新後のApps Scriptでの動作は未確認**。
+- 追記（同日）：閲覧ページを公開（database-viewer `6f83695`、`peekBody` が細切れの返事でも目印を読めるよう修正 `b0beba7` を含む）。ビルドした閲覧ページから本物のApps Script（更新前）で、メルヘン12,377件・P’s CUBE 2,659件を読めることを確認（P’s CUBEの1回は1本目が8秒無応答→出し直しの2本目で11.8秒で成功）。利用者がApps Scriptを新バージョンで更新し、`?check=1` が目印だけを返すことを確認（Chromeで直接開くと複数アカウントのため `/macros/u/1/` に書き換わって「ファイルを開くことができません」になるが、閲覧ページの読み込みには影響しない）。**利用者がiPhoneで確認OK**（読み込みエラーなし）。
 - 利用者の提案（保存したデータはそのままに、開いたときの自動読み込みをやめ、日付指定で読み込む）への見解：方向（開くたびの大きな読み込みを減らす）には賛成。ただし日付指定にしても、Apps Scriptは直近60日の1ファイルしか返せず、日付で絞れない（絞るにはPCが日付ごとのファイルを書き、閲覧ページが足りない日だけ読んで合わせる作りに変える必要があり、大きな変更）。2の「先に更新の目印だけ確認」で、変わっていなければ開くたびの読み込みは数行で済む。
 
 ## 日別の差枚：日付リストのイベント名が出ない件（行の高さ・未公開）（Claude、2026-10-04）
