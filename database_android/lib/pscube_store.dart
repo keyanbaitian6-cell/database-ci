@@ -13,13 +13,16 @@ int? _instant(Object? text) =>
 /// [day] の記録がこれより古い「サイトの更新時刻」なら取り直す（昼に取った数値を夜の分として残さない）。
 /// [freshSince]：今回の取り込みで最初に保存したページのサイトの更新時刻。その日の営業が終わった後
 /// （翌日の午前2時以降）の数値はもう変わらないので、そこで頭打ち。PC版 `stale_cutoff` と同じ。
+/// 取り込みを開き直しただけで、少し前（今夜）に取った分まで取り直さないよう、3時間の余裕を持たせる（昼と夜のような差だけを取り直す。2026-10-05、開き直した後に手動の「次へ」が済んだ機種の表へ向かった不具合）。営業が終わった日は、その日の23時より後に取った分を最終とみなす。
+const pscubeStaleMargin = Duration(hours: 3);
+
 int? pscubeStaleCutoff(String? day, String? freshSince) {
   final since = _instant(freshSince);
   if (since == null || day == null) return null;
   final dayEnd = DateTime.parse('${day}T00:00:00+09:00')
       .add(const Duration(days: 1, hours: 2))
       .millisecondsSinceEpoch;
-  return since < dayEnd ? since : dayEnd;
+  return (since < dayEnd ? since : dayEnd) - pscubeStaleMargin.inMilliseconds;
 }
 
 /// P's CUBE records live apart from the Meruhen database and its store codes.

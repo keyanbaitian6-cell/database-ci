@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 不具合修正：開き直すと、今夜取った機種まで「古い表」として取り直していた（PC・Android、メルヘン・P’s CUBE）／0.5.26（Claude、2026-10-05）
+
+- 利用者「手動で取り込むボタンを押した場合は次の台番・下の機種へ行く仕様にしなかったっけ？PCのメルヘンで反応してくれない。P’s CUBEもかも」。
+- 原因（前の2件の修正 `50df028`・`076e48e` による不具合）：基準を「今回の取り込みを始めた時刻（P’s CUBEは最初のページのサイト時刻）」そのままにしていたため、取り込み画面を開き直すと（0:17）、今夜22〜0時に取った機種まで基準より古いと判定し、手動の「次へ」が次の台番・次の機種ではなく、済んだ機種の「表を取り込み直してください」へ向かった（データのコピーで再現：東京リベンジャーズの次が北斗の拳の表の取り直し）。
+- 修正：基準に3時間の余裕（PC `core.STALE_MARGIN_HOURS`・`pscube_import.STALE_MARGIN_HOURS`、Android `staleMargin`・`pscubeStaleMargin`）。取り直すのは、取り込みを始めた時刻の3時間前より前に取った機種だけ（昼11時と夜23時のような差）。営業が終わった日は、その日の23時より後に取った分を最終とみなす（翌日の午前2時の3時間前）。データのコピーで、開き直した直後に済んだ機種へ戻らないことを確認。
+- 確認：PC `tests/test_meruhen_day.py`（0:17に開き直しても23:00に取った機種は取り直さない を追加、頭打ちの値を更新）、`test_pscube_import.py`、Android `import_day_test.dart`・`pscube_store_test.dart`。PC全試験・P’s CUBE、Flutter 458件、`smoke_frozen_capture` 成功、`smoke_frozen_runtime`（P’s CUBE）はAPKのビルドと同時に動かした1回目が失敗、2回目は成功（原因は未確認、負荷と推測）。`database/bin` 再ビルド。
+- APK 0.5.26：通常版 `database-0.5.26-2026100410.apk`（92,821,361 bytes、SHA-256 `84AC47F90421334CE571E6C46F2280CE3D0A093B1026CF736B590F65B11FAD59`）、クローン `database-pscube-clone-0.5.26-2026100411.apk`（92,821,385 bytes、SHA-256 `6EEDB6C811B60A8D007032B2CDAE5DB10A2178D265539413FA34E10A44062B0B`）。aaptでID・版、apksignerで署名証明書が前回と同一（`4332fcb9…`）を確認。
+
 ## メルヘン：昼に取った機種を、夜の取り込みで「済み」として飛ばしていた（PC・Android）／0.5.25（Claude、2026-10-04）
 
 - 利用者「メルヘンも調べてビルドまで」（P’s CUBEの同じ件の続き）。

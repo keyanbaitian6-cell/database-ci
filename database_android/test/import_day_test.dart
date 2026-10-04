@@ -45,14 +45,14 @@ void main() {
         '2026-10-03',
         DateTime.parse('2026-10-03T22:00:00+09:00'),
       ),
-      DateTime.parse('2026-10-03T22:00:00+09:00').millisecondsSinceEpoch,
+      DateTime.parse('2026-10-03T19:00:00+09:00').millisecondsSinceEpoch,
     );
     expect(
       staleCaptureCutoff(
         '2026-10-03',
         DateTime.parse('2026-10-05T10:00:00+09:00'),
       ),
-      DateTime.parse('2026-10-04T02:00:00+09:00').millisecondsSinceEpoch,
+      DateTime.parse('2026-10-03T23:00:00+09:00').millisecondsSinceEpoch,
     );
   });
 

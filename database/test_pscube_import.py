@@ -160,10 +160,11 @@ class PscubeImportTests(unittest.TestCase):
 
     def test_the_cutoff_stops_at_the_end_of_the_business_day(self):
         from pscube_import import stale_cutoff
-        end = datetime.fromisoformat('2026-10-02T02:00:00+09:00').timestamp()
-        self.assertEqual(stale_cutoff('2026-10-01', '2026-10-03T09:00:00+09:00'), end, '終わった日は翌日の午前2時で頭打ち')
-        self.assertEqual(stale_cutoff('2026-10-01', '2026-10-01T23:12:00+09:00'),
-                         datetime.fromisoformat('2026-10-01T23:12:00+09:00').timestamp())
+        at = lambda text: datetime.fromisoformat(text).timestamp()
+        self.assertEqual(stale_cutoff('2026-10-01', '2026-10-03T09:00:00+09:00'), at('2026-10-01T23:00:00+09:00'),
+                         '終わった日は、その日の23時より後に取った分が最終（翌日の午前2時の3時間前）')
+        self.assertEqual(stale_cutoff('2026-10-01', '2026-10-01T23:12:00+09:00'), at('2026-10-01T20:12:00+09:00'),
+                         '基準の3時間前より前に取った分だけ取り直す')
         self.assertIsNone(stale_cutoff('2026-10-01', None))
 
     def test_installation_count_uses_the_current_machine_without_writing(self):

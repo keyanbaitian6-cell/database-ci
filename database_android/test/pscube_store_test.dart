@@ -487,19 +487,14 @@ void main() {
     );
     expect(await table(a, 100, '23:12', since: fresh), isNull);
     expect(
-      (await store.nextTarget(
-        day,
-        'bottom',
-        null,
-        fresh[day],
-      )).url,
+      (await store.nextTarget(day, 'bottom', null, fresh[day])).url,
       isNull,
       reason: '今回取った分は、その後サイトの時刻が進んでも取り直さない（終わらなくならない）',
     );
     expect(
       pscubeStaleCutoff('2026-10-01', '2026-10-03T09:00:00+09:00'),
-      DateTime.parse('2026-10-02T02:00:00+09:00').millisecondsSinceEpoch,
-      reason: '終わった日は翌日の午前2時で頭打ち',
+      DateTime.parse('2026-10-01T23:00:00+09:00').millisecondsSinceEpoch,
+      reason: '終わった日は、その日の23時より後に取った分が最終',
     );
   });
 

@@ -259,6 +259,10 @@ def _instant(text):
         return None
 
 
+# 取り込みを開き直しただけで、少し前（今夜）に取った分まで取り直さないよう、3時間の余裕を持たせる（昼と夜のような差だけを取り直す。2026-10-05、開き直した後に手動の「次へ」が済んだ機種の表へ向かった不具合）。営業が終わった日は、その日の23時より後に取った分を最終とみなす。
+STALE_MARGIN_HOURS = 3
+
+
 def stale_cutoff(day, fresh_since):
     """[day] の記録がこれより古い「サイトの更新時刻」なら、取り直す（昼に取った数値を夜の分として残さない）。
 
@@ -269,7 +273,7 @@ def stale_cutoff(day, fresh_since):
     if since is None or not day:
         return None
     day_end = datetime.fromisoformat(f'{day}T00:00:00+09:00') + timedelta(days=1, hours=BUSINESS_DAY_CUTOFF_HOUR)
-    return min(since, day_end.timestamp())
+    return min(since, day_end.timestamp()) - STALE_MARGIN_HOURS * 3600
 
 
 def _merge(old: dict | None, fresh: dict) -> dict:
