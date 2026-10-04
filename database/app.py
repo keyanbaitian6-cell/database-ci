@@ -135,6 +135,14 @@ class BackupConflictsDialog(tk.Toplevel):
         self.destroy()
 
 
+# PC本体の見た目（2026-10-04、利用者が渡した Flip7 Design System を参考に。結果のHTML＝core.FLIP7_CSS と同じ配色）。
+# ティール・コーラル・ゴールド・クリーム、ティールの淡い背景。並び・文言・働きは変えない。
+F7 = dict(page='#EFF8F7', card='#FFFFFF', ink='#1E3B3A', mute='#5D7472', line='#CFE9E6',
+          teal='#2BA8A2', teal_l='#3CC4BD', teal_d='#1E8C86', teal_bg='#E8F6F5', tab='#D6EEEC',
+          gold='#FFD23F', gold_l='#FFE47A', gold_d='#E6B800', coral='#EF6C4A', coral_l='#FF8A6A',
+          coral_d='#D45233', cream='#FFF8E7', sky='#5DADE2')
+
+
 def _mix(a, b, t):
     a, b = int(a[1:], 16), int(b[1:], 16)
     return '#' + ''.join(f'{round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t):02x}' for s in (16, 8, 0))
@@ -148,13 +156,14 @@ class GradientButton(tk.Canvas):
     角丸10・文字は白・余白は上下15／左右45。影（0 0 20px #eee）は淡い背景では
     ほぼ見えないため省いた。キーボードでもフォーカスして Enter／Space で押せる。
     """
-    STOPS = ((0.0, '#16A085'), (0.51, '#F4D03F'), (1.0, '#16A085'))
+    STOPS = ((0.0, '#1E8C86'), (0.51, '#FFD23F'), (1.0, '#1E8C86'))   # 2026-10-04：Flip7のティールとゴールド
 
     def __init__(self, parent, text, command, font=('Yu Gothic UI', 12, 'bold'), padx=45, pady=15,
-                 radius=10, background='#f5f5f7'):
+                 radius=None, background=F7['page']):
         measure = tkfont.Font(root=parent, font=font)
         width = measure.measure(text) + 2 * padx
         height = measure.metrics('linespace') + 2 * pady
+        radius = height // 2 if radius is None else radius   # 丸い両端（ピル形）
         super().__init__(parent, width=width, height=height, highlightthickness=0, bd=0, background=background,
                          cursor='hand2', takefocus=1)
         self.command, self.width, self._offset, self._job = command, width, 0.0, None
@@ -170,7 +179,7 @@ class GradientButton(tk.Canvas):
         self._image.put(' '.join(['{' + ' '.join(row) + '}'] * height))
         self._picture = self.create_image(0, 0, image=self._image, anchor='nw')
         # 角丸：四隅の円の外側だけを背景色で塗りつぶす。
-        steps = 8
+        steps = 16
         for cx, cy, sx, sy in ((radius, radius, -1, -1), (width - radius, radius, 1, -1),
                                (radius, height - radius, -1, 1), (width - radius, height - radius, 1, 1)):
             arc = [(cx + sx * radius * math.cos(math.pi / 2 * i / steps),
@@ -203,10 +212,50 @@ class GradientButton(tk.Canvas):
         step()
 
 
+class FlipTitle(tk.Canvas):
+    """画面の題字：扇形に広げた5枚のカードと、クリーム地・濃い枠の少し傾いたリボン（Flip7のロゴ風）。"""
+
+    def __init__(self, parent, text):
+        font = tkfont.Font(root=parent, family='Yu Gothic UI', size=20, weight='bold')
+        text_w, text_h = font.measure(text), font.metrics('linespace')
+        fan_w, pad = 74, 22
+        width, height = fan_w + text_w + 2 * pad + 30, max(64, text_h + 26)
+        super().__init__(parent, width=width, height=height, highlightthickness=0, bd=0, background=F7['page'])
+        ink = F7['ink']
+        # 扇形のカード（-24°〜24°）。最後の1枚に「7」。
+        pivot_x, pivot_y, card_w, card_h = 34, height - 8, 22, 34
+        colors = (F7['coral'], F7['sky'], F7['teal'], F7['gold'], F7['cream'])
+        for angle, color in zip((-24, -12, 0, 12, 24), colors):
+            rad = math.radians(angle)
+            corners = []
+            for dx, dy in ((-card_w / 2, -card_h - 10), (card_w / 2, -card_h - 10), (card_w / 2, -10), (-card_w / 2, -10)):
+                corners += [pivot_x + dx * math.cos(rad) - dy * math.sin(rad), pivot_y + dx * math.sin(rad) + dy * math.cos(rad)]
+            self.create_polygon(*corners, fill=color, outline=ink, width=2)
+        rad = math.radians(24)
+        cx, cy = pivot_x - (-10 - card_h / 2) * math.sin(rad), pivot_y + (-10 - card_h / 2) * math.cos(rad)
+        self.create_text(cx, cy, text='7', fill=F7['gold_d'], angle=-24, font=('Yu Gothic UI', 13, 'bold'))
+        # リボン：影（ティール）→ クリーム地・濃い枠の平行四辺形。全体を少し（2°）傾ける。
+        x0, x1, y0, y1, skew = fan_w, width - 6, 8, height - 10, 6
+        center_x, center_y = (x0 + x1) / 2, (y0 + y1) / 2
+        tilt = math.radians(-2)
+
+        def rotated(points, shift=0):
+            out = []
+            for x, y in zip(points[::2], points[1::2]):
+                x, y = x - center_x, y - center_y
+                out += [center_x + x * math.cos(tilt) - y * math.sin(tilt) + shift,
+                        center_y + x * math.sin(tilt) + y * math.cos(tilt) + shift]
+            return out
+        body = [x0 + skew, y0, x1, y0, x1 - skew, y1, x0, y1]
+        self.create_polygon(*rotated(body, 4), fill=F7['teal_d'], outline=F7['teal_d'])
+        self.create_polygon(*rotated(body), fill=F7['cream'], outline=ink, width=3)
+        self.create_text(center_x, center_y, text=text, fill=F7['teal_d'], angle=2, font=font)
+
+
 def apply_style(root):
-    """One quiet look for the whole window (Apple-style: white cards on a light
-    gray page, a single blue for the primary action, hairline borders)."""
-    page, hairline, ink, mute, blue = '#f5f5f7', '#d2d2d7', '#1d1d1f', '#707070', '#0071e3'
+    """One look for the whole window (2026-10-04: Flip7 colours — teal, coral, gold and cream on a
+    light teal page; gold for the primary action, coral for deleting; same layout and wording)."""
+    page, hairline, ink, mute, blue = F7['page'], F7['line'], F7['ink'], F7['mute'], F7['teal']
     style = ttk.Style(root)
     style.theme_use('clam')
     root.configure(background=page)
@@ -215,33 +264,46 @@ def apply_style(root):
                     lightcolor=page, darkcolor=page, focuscolor=page)
     style.configure('TFrame', background=page)
     style.configure('TLabel', background=page, foreground=ink)
-    style.configure('Title.TLabel', font=('Yu Gothic UI', 24, 'bold'))
-    style.configure('H2.TLabel', font=('Yu Gothic UI', 15, 'bold'))
-    style.configure('H3.TLabel', font=('Yu Gothic UI', 10, 'bold'))
+    style.configure('Title.TLabel', font=('Yu Gothic UI', 24, 'bold'), foreground=F7['teal_d'])
+    style.configure('H2.TLabel', font=('Yu Gothic UI', 15, 'bold'), foreground=F7['teal_d'])
+    style.configure('H3.TLabel', font=('Yu Gothic UI', 10, 'bold'), foreground=F7['teal_d'])
     style.configure('Sub.TLabel', foreground=mute)
     style.configure('TNotebook', background=page, borderwidth=0, tabmargins=(0, 0, 0, 0))
-    style.configure('TNotebook.Tab', background=page, foreground=mute, padding=(16, 9), borderwidth=0,
+    style.configure('TNotebook.Tab', background=F7['tab'], foreground=F7['teal_d'], padding=(18, 9), borderwidth=0,
                     font=('Yu Gothic UI', 10, 'bold'))
-    style.map('TNotebook.Tab', background=[('selected', '#ffffff')], foreground=[('selected', ink)])
-    style.configure('TLabelframe', background=page, bordercolor=hairline, relief='solid')
-    style.configure('TLabelframe.Label', background=page, foreground=ink, font=('Yu Gothic UI', 10, 'bold'))
+    style.map('TNotebook.Tab', background=[('selected', F7['teal']), ('active', F7['teal_bg'])],
+              foreground=[('selected', '#ffffff')])
+    style.configure('TLabelframe', background=page, bordercolor=F7['teal_l'], relief='solid')
+    style.configure('TLabelframe.Label', background=page, foreground=F7['teal_d'], font=('Yu Gothic UI', 10, 'bold'))
     for name in ('TCheckbutton', 'TRadiobutton'):
-        style.configure(name, background=page)
-    style.configure('TButton', background='#e8e8ed', foreground=ink, padding=(14, 7), borderwidth=0, relief='flat')
-    style.map('TButton', background=[('active', '#dcdce1'), ('pressed', '#d2d2d7')])
-    style.configure('Accent.TButton', background=blue, foreground='#ffffff', font=('Yu Gothic UI', 12, 'bold'),
+        style.configure(name, background=page, indicatorbackground=F7['cream'], indicatorforeground=F7['teal_d'],
+                        upperbordercolor=F7['teal_l'], lowerbordercolor=F7['teal_l'])
+        style.map(name, background=[('active', page)], indicatorbackground=[('selected', F7['gold'])])
+    style.configure('TButton', background=F7['tab'], foreground=F7['teal_d'], padding=(14, 7), borderwidth=0, relief='flat',
+                    font=('Yu Gothic UI', 10, 'bold'))
+    style.map('TButton', background=[('pressed', F7['teal_l']), ('active', F7['teal_bg'])],
+              foreground=[('disabled', mute)])
+    style.configure('Accent.TButton', background=F7['gold'], foreground=ink, font=('Yu Gothic UI', 12, 'bold'),
                     padding=(18, 8))
-    style.map('Accent.TButton', background=[('active', '#0077ed'), ('pressed', '#006edb')],
-              foreground=[('disabled', '#ffffff')])
-    style.configure('Link.TButton', background=page, foreground='#0066cc', padding=(4, 2))
-    style.map('Link.TButton', background=[('active', page)], foreground=[('active', '#004499')])
-    style.configure('TSeparator', background=hairline)
-    style.configure('TCombobox', fieldbackground='#ffffff', background='#ffffff', padding=4)
-    style.map('TCombobox', fieldbackground=[('readonly', '#ffffff')], background=[('readonly', '#ffffff')],
+    style.map('Accent.TButton', background=[('pressed', F7['gold_d']), ('active', F7['gold_l'])],
+              foreground=[('disabled', mute)])
+    # 消す・戻せない操作はコーラル（結果のHTMLの注意の色と同じ）。
+    style.configure('Danger.TButton', background=F7['coral'], foreground='#ffffff', font=('Yu Gothic UI', 10, 'bold'),
+                    padding=(14, 7), borderwidth=0, relief='flat')
+    style.map('Danger.TButton', background=[('pressed', F7['coral_d']), ('active', F7['coral_l'])])
+    style.configure('Link.TButton', background=page, foreground=F7['teal_d'], padding=(4, 2))
+    style.map('Link.TButton', background=[('active', page)], foreground=[('active', ink)])
+    style.configure('TSeparator', background=F7['teal_l'])
+    style.configure('TCombobox', fieldbackground=F7['cream'], background=F7['cream'], padding=4,
+                    arrowcolor=F7['teal_d'], bordercolor=F7['teal_l'])
+    style.map('TCombobox', fieldbackground=[('readonly', F7['cream'])], background=[('readonly', F7['cream'])],
               # 読み取り専用の欄は、選ばれている文字（フォーカス時の選択）が白地に白で見えなくなることがあった
               # （2026-10-02、起動直後の店舗名）。文字は常に濃い色、選択の背景は白で表示する。
               foreground=[('disabled', mute), ('readonly', ink)],
-              selectforeground=[('readonly', ink)], selectbackground=[('readonly', '#ffffff')])
+              selectforeground=[('readonly', ink)], selectbackground=[('readonly', F7['cream'])])
+    style.configure('TEntry', fieldbackground=F7['cream'], bordercolor=F7['teal_l'])
+    style.configure('Vertical.TScrollbar', background=F7['tab'], troughcolor=page, arrowcolor=F7['teal_d'],
+                    bordercolor=page)
 
 
 def main():
@@ -252,7 +314,7 @@ def main():
     apply_style(root)
     frame = ttk.Frame(root, padding=(28, 20, 28, 14))
     frame.pack(fill='both', expand=True)
-    ttk.Label(frame, text='database', style='Title.TLabel').pack(anchor='w', pady=(0, 12))
+    FlipTitle(frame, 'database').pack(anchor='w', pady=(0, 12))
     # 記録欄は先に下端へ確保しておく（後から詰め込むと、タブに押されて見えなくなるため）
     log_frame = ttk.Frame(frame)
     log_frame.pack(side='bottom', fill='x', pady=(10, 0))
@@ -504,7 +566,8 @@ def main():
 
     ttk.Label(log_frame, text='記録', style='H3.TLabel').pack(anchor='w')
     logbox = tk.Text(log_frame, wrap='word', height=6, font=('Yu Gothic UI', 10), relief='flat',
-                     highlightthickness=1, highlightbackground='#d2d2d7', background='#ffffff', padx=8, pady=6)
+                     highlightthickness=2, highlightbackground=F7['line'], highlightcolor=F7['teal_l'],
+                     background=F7['cream'], foreground=F7['ink'], padx=10, pady=8)
     logbox.pack(fill='x', pady=(4, 0))
 
     def open_browser_import():
@@ -786,7 +849,8 @@ def main():
             'その後に追加した台は消えません。')).pack(anchor='w', padx=20)
         listbox = tk.Listbox(dialog, height=8, activestyle='none', exportselection=False,
                              font=('Yu Gothic UI', 11), relief='flat', highlightthickness=1,
-                             highlightbackground='#d2d2d7')
+                             highlightbackground=F7['line'], background=F7['cream'], foreground=F7['ink'],
+                             selectbackground=F7['teal'], selectforeground='#ffffff')
         for stamp, path in snapshots:
             listbox.insert('end', f'{stamp:%Y-%m-%d}（{"月火水木金土日"[stamp.weekday()]}）　{path.stat().st_size / 1e6:.1f}MB')
         listbox.selection_set(0)
@@ -990,7 +1054,7 @@ def main():
             def pick():
                 selected['key'] = choice.get()
                 dialog.destroy()
-            ttk.Button(buttons, text='削除へ進む', command=pick).pack(side='left')
+            ttk.Button(buttons, text='削除へ進む', style='Danger.TButton', command=pick).pack(side='left')
             ttk.Button(buttons, text='キャンセル', style='Accent.TButton', command=dialog.destroy).pack(side='left', padx=8)
             root.wait_window(dialog)
             key = selected.get('key')
@@ -1086,8 +1150,8 @@ def main():
     ttk.Button(results_buttons, text='この日のまとめ（両店舗）', command=open_summary).pack(side='left')
     ttk.Button(results_buttons, text='選んだ機種の結果を開く', command=open_result).pack(side='left', padx=8)
     ttk.Button(results_buttons, text='過去の記録を見る', command=open_history).pack(side='left')
-    ttk.Button(results_buttons, text='台記録を削除', command=delete_record).pack(side='left', padx=8)
-    ttk.Button(results_buttons, text='まとめて削除…', command=delete_group).pack(side='left')
+    ttk.Button(results_buttons, text='台記録を削除', style='Danger.TButton', command=delete_record).pack(side='left', padx=8)
+    ttk.Button(results_buttons, text='まとめて削除…', style='Danger.TButton', command=delete_group).pack(side='left')
     ttk.Button(results_buttons, text='設定情報を記録', command=edit_confirmed_setting).pack(side='left', padx=8)
 
     def undo_last():
