@@ -62,10 +62,14 @@ class DailyNetPage extends StatefulWidget {
     required this.store,
     required this.day,
     this.onDayChanged,
+    this.eventFor,
   });
   final List<SlotRecord> records;
   final String store, day;
   final ValueChanged<String>? onDayChanged;
+
+  /// 月別一覧の日付に添えるイベント名。無い日は日付だけ表示する。
+  final String? Function(String day)? eventFor;
   @override
   State<DailyNetPage> createState() => _DailyNetPageState();
 }
@@ -193,7 +197,24 @@ class _DailyNetPageState extends State<DailyNetPage> {
                             DataCell(
                               TextButton(
                                 onPressed: () => _open(d.day),
-                                child: Text(shortDayLabel(d.day)),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(shortDayLabel(d.day)),
+                                    if (widget.eventFor?.call(d.day)
+                                        case final event?)
+                                      Text(
+                                        event,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.ash,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                             DataCell(Text(medals(d.total))),

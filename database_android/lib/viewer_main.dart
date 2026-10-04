@@ -582,8 +582,9 @@ class _ViewerHomeState extends State<ViewerHome> {
     List<SlotRecord> all,
     String store,
     String day,
-    String label,
-  ) => OutlinedButton.icon(
+    String label, {
+    String? Function(String day)? eventFor,
+  }) => OutlinedButton.icon(
     onPressed: () => Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => DailyNetPage(
@@ -591,6 +592,7 @@ class _ViewerHomeState extends State<ViewerHome> {
           store: store,
           day: day,
           onDayChanged: (changed) => setState(() => _day = changed),
+          eventFor: eventFor,
         ),
       ),
     ),
@@ -688,12 +690,24 @@ class _ViewerHomeState extends State<ViewerHome> {
             label: const Text('末尾別データまとめ'),
           ),
           const SizedBox(height: 8),
-          _dailyNetButton(all, store, day, '日別の差枚'),
+          _dailyNetButton(
+            all,
+            store,
+            day,
+            '日別の差枚',
+            eventFor: (changed) => data.dateEventFor(store, changed)?.name,
+          ),
           const SizedBox(height: 8),
         ],
         // メルヘンは保存したグラフと最大持玉からの推定差枚（P’s CUBEと同じ画面）。
         if (!isPscubeStore(store) && day != null) ...[
-          _dailyNetButton(all, store, day, '日別の差枚（推定）'),
+          _dailyNetButton(
+            all,
+            store,
+            day,
+            '日別の差枚（推定）',
+            eventFor: (changed) => data.dateEventFor(store, changed)?.name,
+          ),
           const SizedBox(height: 8),
         ],
         OutlinedButton.icon(

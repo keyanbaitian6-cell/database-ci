@@ -102,6 +102,7 @@ void main() {
                     store: store,
                     day: '2026-10-02',
                     onDayChanged: (day) => opened = day,
+                    eventFor: (day) => day == '2026-10-01' ? '華の日' : null,
                   ),
                 ),
               ),
@@ -115,6 +116,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('P’s CUBE（20スロ）　2026年10月のデータ'), findsOneWidget);
     expect(find.text('10/1（木）'), findsOneWidget);
+    expect(find.text('華の日'), findsOneWidget);
     expect(find.text('10/2（金）'), findsOneWidget);
     expect(find.text('9/30（水）'), findsNothing, reason: '選んだ月だけ');
     expect(find.text('+50'), findsOneWidget);
