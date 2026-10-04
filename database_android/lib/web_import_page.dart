@@ -2383,7 +2383,11 @@ const _machineLinksScript = r'''
         .replace(/\s+/g, ' ').trim();
       const count = (row.innerText || '').match(/(\d+)\s*台/);
       const kind = url.searchParams.get('kind_code') || '21';
-      const encoded = encodeURIComponent(encodeURIComponent(name));
+      // サイト自身の機種名は全角スペースを含む（「L無職転生　NM」）。URLにはその綴りを使う
+      // （半角に直すと空のページになる）。ここで畳むのは改行・半角スペースだけ。
+      const urlName = (row.querySelector('.wrap-machine-name')?.textContent || row.textContent || '')
+        .replace(/[ \t\r\n\f\v]+/g, ' ').trim();
+      const encoded = encodeURIComponent(encodeURIComponent(urlName));
       return {name,
         url: `${location.origin}/${store}/standlist_slot/?kind_code=${encodeURIComponent(kind)}&machine_name=${encoded}`,
         count: count ? Number(count[1]) : null};

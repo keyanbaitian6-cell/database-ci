@@ -632,7 +632,11 @@ OVERLAY_JS = (
     "      const element = row.querySelector('.wrap-machine-name') || row;\n"
     "      const name = (element.textContent || '').replace(/\\s+/g, ' ').trim();\n"
     "      const countMatch = (row.innerText || '').match(/(\\d+)\\s*台/);\n"
-    "      const encoded = encodeURIComponent(encodeURIComponent(name));\n"
+    # The site's own name keeps full-width spaces ("L無職転生　NM"). The URL must use that
+    # spelling: collapsing it to an ASCII space opens an empty page. Only layout
+    # whitespace (ASCII space/newline) is collapsed here.
+    "      const urlName = (element.textContent || '').replace(/[ \\t\\r\\n\\f\\v]+/g, ' ').trim();\n"
+    "      const encoded = encodeURIComponent(encodeURIComponent(urlName));\n"
     "      return {name, url: location.origin + '/' + currentStore + '/standlist_slot/?kind_code=' +\n"
     "        encodeURIComponent(kind) + '&machine_name=' + encoded,\n"
     "        count: countMatch ? Number(countMatch[1]) : null, element};\n"
