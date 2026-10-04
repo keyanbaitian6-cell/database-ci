@@ -28,7 +28,7 @@ from pscube_connection import BrowserConnection, install_webview2_handlers, pres
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
 from core import (STORE_NAMES, Store, normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
-                  graph_done, machine_progress, no_hits, progress_text, remember_for_undo, undo_last_save)
+                  graph_done, machine_last_capture, machine_progress, no_hits, stale_capture_cutoff, progress_text, remember_for_undo, undo_last_save)
 
 BROWSER_URLS = {
     'nagamachiminami': f'https://{HOST}/nagamachiminami/rack_info',
@@ -1170,6 +1170,10 @@ class _Bridge:
         # （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。
         self._target_day = None
         self._direction = 'top'
+        # 今回の取り込みを始めた時刻。その日の機種の表をこれより前に取ったきりなら取り直す
+        # （昼に取った機種を、夜の取り込みで「済み」として飛ばさない。2026-10-04）。
+        # 画面を開いたとき・自動取り込みをONにしたときに決める。
+        self._fresh_since = datetime.now().astimezone()
         self._overlay_ready = threading.Event()
         self._auto_display = None
         self._manual_continuation = True
@@ -1214,6 +1218,8 @@ class _Bridge:
                 self._auto.configure(False, seconds)
                 self._auto.pause(self._connection.failure['message'])
                 return self.get_auto_capture()
+            if enabled and not self._auto.state()['enabled']:
+                self._fresh_since = datetime.now().astimezone()
             self._auto.configure(enabled, seconds)
             self._auto_session += 1
             self._manual_continuation = False
@@ -1567,12 +1573,18 @@ class _Bridge:
         db = Store(self._db_path)
         try:
             progress = machine_progress(db, store_path, day)
+            last_capture = machine_last_capture(db, store_path, day)
+            cutoff = stale_capture_cutoff(day, self._fresh_since)
+
+            def stale(key):
+                # 今回の取り込みより前に取ったきりの機種（昼の数値のまま）。表から取り直す。
+                return cutoff is not None and key in last_capture and last_capture[key] < cutoff
 
             def search(candidates, prefix=''):
                 for machine in candidates:
                     key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
                     done_total = progress.get(key)
-                    if done_total is None or done_total[0] >= done_total[1]:
+                    if done_total is None or done_total[0] >= done_total[1] or stale(key):
                         continue
                     step = _next_step(db, day, machine['name'], store_path)
                     if step['kind'] == 'next' and listed_url(step.get('url')):
@@ -1595,9 +1607,13 @@ class _Bridge:
                     # 「少ない」を台数変更として扱うと同じ機種へ戻し続けてしまう。
                     changed = (done_total is not None and machine['count'] is not None and
                                machine['count'] > done_total[1])
-                    if done_total is None or changed:
+                    old = done_total is not None and stale(key)
+                    if done_total is None or changed or old:
                         message = (f"{machine['name']}は設置台数が変わっています。現在の表を取り込んでください。"
                                    if changed else
+                                   f"{machine['name']}は前に取った表のままです。現在の表を取り込み直してください"
+                                   "（数値が変わった台だけグラフも取り直します）。"
+                                   if old else
                                    f"{machine['name']}は未取込です。現在の表を取り込んでください。")
                         return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
                                            'machine': machine['name'], 'reason': 'table', 'direct': direct,

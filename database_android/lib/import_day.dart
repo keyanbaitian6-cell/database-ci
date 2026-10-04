@@ -37,6 +37,18 @@ String? targetDayMismatch(String? target, String? shown) {
   return '取り込み日は$targetですが、表示中は$shownです。日付を$targetに合わせてください。保存しませんでした。';
 }
 
+/// [day] の機種の表を、これより前に取ったきりなら取り直す（昼に取った数値を夜の分として残さない）。
+/// [since]：今回の取り込みを始めた時刻。その日の営業が終わった後（翌日の午前2時以降）の数値は
+/// もう変わらないので、そこで頭打ち。PC版 `stale_capture_cutoff`（core.py）と同じ。
+int? staleCaptureCutoff(String? day, DateTime? since) {
+  if (day == null || since == null) return null;
+  final dayEnd = DateTime.parse('${day}T00:00:00+09:00')
+      .add(const Duration(days: 1, hours: 2))
+      .millisecondsSinceEpoch;
+  final start = since.millisecondsSinceEpoch;
+  return start < dayEnd ? start : dayEnd;
+}
+
 /// 機種一覧で次に探す順。[names] は一覧の並び（向きを反映済み）。
 ///
 /// 手動で取り込んでいるとき、いま済ませた機種 [after] があれば、一覧の上から探し直さず

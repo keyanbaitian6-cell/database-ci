@@ -1249,16 +1249,26 @@ class AppController extends ChangeNotifier {
     String key(String name) =>
         normalizeMachineName(name).replaceAll(RegExp(r'\s+'), '');
     final counts = <String, List<int>>{};
+    // 'newest'：その機種の行の一番新しい取り込み時刻（ミリ秒）。昼に取ったきりの機種を見分ける。
+    final newest = <String, int>{};
     for (final r in records.where((r) => r.store == store && r.day == target)) {
       final c = counts.putIfAbsent(key(r.machine), () => [0, 0]);
       c[1]++;
       if (r.graphDone) c[0]++;
+      final at = DateTime.tryParse(r.capturedAt ?? '')?.millisecondsSinceEpoch;
+      if (at != null && at > (newest[key(r.machine)] ?? 0)) {
+        newest[key(r.machine)] = at;
+      }
     }
     return [
       for (final name in machines)
         counts[key(name)] == null
             ? null
-            : {'done': counts[key(name)]![0], 'total': counts[key(name)]![1]},
+            : {
+                'done': counts[key(name)]![0],
+                'total': counts[key(name)]![1],
+                if (newest[key(name)] case final at?) 'newest': at,
+              },
     ];
   }
 

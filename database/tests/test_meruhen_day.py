@@ -124,6 +124,38 @@ class DaySelectionTests(unittest.TestCase):
         self.assertTrue(url.endswith('&database_after=L%E7%84%A1%E8%81%B7%E8%BB%A2%E7%94%9F%E3%80%80NM'), url)
         self.assertNotIn('database_after', machine_list_url('nagamachiminami', '2026-10-03'))
 
+    def test_machines_taken_earlier_in_the_day_are_taken_again(self):
+        """昼に取った機種を、夜の取り込みで「済み」として飛ばさない（P’s CUBEと同じ、2026-10-04）。"""
+        day = '2026-10-03'
+        graph = dict(baseline_x=1, baseline_y=200, peak_x=2, peak_y=100, trough_x=3, trough_y=250, end_x=4, end_y=150)
+        db = Store(self.folder / 'test.db')
+        for name, at in (('甲機', '11:00'), ('乙機', '11:00'), ('丙機', '23:00')):
+            db.save([dict(row(rack=r, machine=name, day=day), graph_measurement=graph,
+                          captured_at=f'{day}T{at}:00+09:00',
+                          detail_url=f'{HOST}/standgraph/?rack_no={r}&target_date={day}') for r in (1, 2, 3)])
+        db.close()
+        at = lambda text: datetime.fromisoformat(text)
+        self.bridge._fresh_since = at('2026-10-03T10:00:00+09:00')
+        self.assertEqual(self.ask(day=day)['reason'], 'all_done', '取り込みを始める前に取った分が無ければ、これまでどおり')
+        self.bridge._fresh_since = at('2026-10-03T22:00:00+09:00')   # 夜に取り込みを始めた
+        night = self.ask(day=day)
+        self.assertEqual((night['machine'], night['reason']), ('甲機', 'table'))
+        self.assertIn('前に取った表のまま', night['message'])
+        self.bridge.set_target_day(None, 'bottom')
+        self.assertEqual(self.ask(day=day)['machine'], '乙機', '下からでも、今夜取った丙機は飛ばして乙機')
+        # 翌日以降に開いたとき：基準は営業終わり（翌日の午前2時）で頭打ち。それより前に取った分は（夜の23時でも）
+        # 表を1回取り直す（数値が同じならグラフは取り直さない）。午前2時より後に取った分は、もう取り直さない。
+        self.bridge._fresh_since = at('2026-10-05T10:00:00+09:00')
+        self.assertEqual(self.ask(day=day)['machine'], '丙機')
+        db = Store(self.folder / 'test.db')
+        for name in ('甲機', '乙機', '丙機'):
+            db.save([dict(row(rack=r, machine=name, day=day), captured_at='2026-10-04T09:00:00+09:00') for r in (1, 2, 3)])
+        db.close()
+        self.assertEqual(self.ask(day=day)['reason'], 'all_done', '営業が終わった後に取り直した分は、日をまたいでも取り直さない')
+        from core import stale_capture_cutoff
+        self.assertEqual(stale_capture_cutoff(day, at('2026-10-05T10:00:00+09:00')),
+                         at('2026-10-04T02:00:00+09:00').timestamp())
+
     def test_a_page_for_another_day_is_not_saved(self):
         yesterday, today = recent_days()[1], recent_days()[0]
         self.bridge.set_target_day(yesterday)

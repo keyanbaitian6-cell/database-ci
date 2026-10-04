@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## メルヘン：昼に取った機種を、夜の取り込みで「済み」として飛ばしていた（PC・Android）／0.5.25（Claude、2026-10-04）
+
+- 利用者「メルヘンも調べてビルドまで」（P’s CUBEの同じ件の続き）。
+- 調査（`database.sqlite3` のコピー）：10/04の記録は両店とも今夜22〜23時に取ったもので、昼に取った分は無く、今日は実害なし。ただし次の機種は「その日のグラフが揃った機種は済み」で決めていたので、昼に取り込むと夜はその機種を飛ばす作りだった（P’s CUBEと同じ）。
+- 修正：メルヘンはサイトの更新時刻を持たないので、**今回の取り込みを始めた時刻**（取り込みの画面を開いた・自動取り込みをONにした時刻：PC `_Bridge._fresh_since`、Android `_freshSince`）を基準にする。その日の機種の行の一番新しい取り込み時刻（`captured_at`）が基準より前なら、表を取り直す（「前に取った表のままです」と案内）。数値が変わった台だけグラフが外れて取り直しになる（既存の `Store.save`／Androidの表の保存の規則）。基準はその日の営業終わり（翌日の午前2時）で頭打ち（PC `core.stale_capture_cutoff`、Android `import_day.dart` の `staleCaptureCutoff`）。今回取った分は取り直さない（終わらなくならない）。グラフの残りを再開する前にも、古い表は先に取り直す。PC `core.machine_last_capture`、Android `AppController.machineStatuses` が 'newest' を返す。
+- 確認：PC `tests/test_meruhen_day.py`（昼11:00の甲乙・夜23:00の丙→夜22:00に始めると甲の表、下からは乙、翌日に開くと午前2時より前の分は1回取り直し、その後は取り直さない）、Android `import_day_test.dart`（頭打ち）。PC全試験・P’s CUBE、Flutter 458件、JS（メルヘン・P’s CUBEのブラウザ試験）、`smoke_frozen_capture`・`smoke_frozen_runtime` 成功。`database/bin` 再ビルド。**実サイト・実機では未確認**。
+- APK 0.5.25（P’s CUBEの同じ修正 `50df028` も含む）：通常版 `database-0.5.25-2026100408.apk`（`com.keyan.database_android`、92,821,361 bytes、SHA-256 `7F8E91A41E647EDC4DC0FA4B6B7CD03C51445C3DA1EC9A6363A0475602597602`）、クローン `database-pscube-clone-0.5.25-2026100409.apk`（`com.keyan.database_android.pscube`、92,821,385 bytes、SHA-256 `CEB9032F499D2C0B8A2BDEF481BE9BCD96994971832D0A3B168F77F9E397BBB1`）。aaptでID・版、apksignerで署名証明書が前回と同一（`4332fcb9…`）を確認。
+
 ## P’s CUBE：昼に取った機種を、夜の取り込みで「済み」として飛ばしていた（PC・Android）（Claude、2026-10-04）
 
 - 利用者「P’s CUBEのPC版で、1機種目は下から取り込んだけど次から上から動いた（日付指定なし）」「一番下からだからうみねこになる。その次はスーパーブラックジャックになるはず。取り込んでないから」「Android版も検討して」。

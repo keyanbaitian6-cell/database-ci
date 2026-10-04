@@ -1507,6 +1507,32 @@ def machine_progress(store, location, day):
     return result
 
 
+def machine_last_capture(store, location, day):
+    """{空白を除いた機種名: その日の行の一番新しい取り込み時刻（秒）}。時刻の分からない行は数えない。"""
+    result = {}
+    for r in store.rows(day, None, location):
+        try:
+            stamp = datetime.fromisoformat(r['captured_at']).timestamp() if r.get('captured_at') else None
+        except ValueError:
+            stamp = None
+        if stamp is not None:
+            key = re.sub(r'\s+', '', r['machine'])
+            result[key] = max(result.get(key, stamp), stamp)
+    return result
+
+
+def stale_capture_cutoff(day, since):
+    """[day] の機種の表を、これより前に取ったきりなら取り直す（昼に取った数値を夜の分として残さない）。
+
+    since：今回の取り込みを始めた時刻（取り込みの画面を開いた・自動取り込みをONにした時刻）。
+    その日の営業が終わった後（翌日の午前2時以降）の数値はもう変わらないので、そこで頭打ちにする。
+    P’s CUBE の `stale_cutoff`（pscube_import.py）と同じ考え方。"""
+    if since is None or not day:
+        return None
+    day_end = datetime.fromisoformat(f'{day}T00:00:00+09:00') + timedelta(days=1, hours=2)
+    return min(since.timestamp(), day_end.timestamp())
+
+
 def day_fully_graphed(store, day):
     rows = store.rows(day)
     return bool(rows) and all(graph_done(r) for r in rows)

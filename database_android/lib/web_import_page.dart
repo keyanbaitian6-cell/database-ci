@@ -313,6 +313,10 @@ class _WebImportPageState extends State<WebImportPage> {
   // 手動で取り込んでいるとき、いま済ませた機種。機種一覧へ戻ったあと、一覧の上から探し直さず
   // この機種の次から探すために一度だけ使う（自動取り込みは使わない）。
   String? _afterMachine;
+  // 今回の取り込みを始めた時刻。その日の機種の表をこれより前に取ったきりなら取り直す
+  // （昼に取った機種を、夜の取り込みで「済み」として飛ばさない。PC版と同じ）。
+  // 画面を開いたとき・自動取り込みをONにしたときに決める。
+  DateTime _freshSince = DateTime.now();
 
   bool _autoCurrent(int? token, int page) =>
       token == null || _auto.current(token, page);
@@ -351,6 +355,7 @@ class _WebImportPageState extends State<WebImportPage> {
         if (Platform.isAndroid) await _autoService.invokeMethod<void>('stop');
         return;
       }
+      _freshSince = DateTime.now();
       _auto.turnOn();
       setState(() => _autoStatus = 'ON・次の取り込みを待っています');
     } catch (error) {
@@ -1187,11 +1192,20 @@ class _WebImportPageState extends State<WebImportPage> {
           for (final item in machines) '${item['name'] ?? ''}',
         ], autoToken == null && !automatic ? _afterMachine : null);
         _afterMachine = null;
+        final cutoff = staleCaptureCutoff(day, _freshSince);
+        bool stale(Map<String, int>? status) =>
+            cutoff != null &&
+            status?['newest'] != null &&
+            status!['newest']! < cutoff;
         for (final (order, prefix) in passes) {
           // 先に、表を保存済みでグラフだけ残っている機種を再開する。
           for (final index in order) {
             final status = statuses[index];
-            if (status == null || status['done'] == status['total']) continue;
+            if (status == null ||
+                status['done'] == status['total'] ||
+                stale(status)) {
+              continue;
+            }
             final target = widget.onNext(
               store: store,
               day: day,
@@ -1236,7 +1250,8 @@ class _WebImportPageState extends State<WebImportPage> {
                   listed: listedCount,
                   saved: status['total'] ?? 0,
                 );
-            if (status != null && !changed) continue;
+            final old = status != null && stale(status);
+            if (status != null && !changed && !old) continue;
             final targetUrl = machines[index]['url'] as String?;
             if (targetUrl != null &&
                 _allowed(targetUrl) &&
@@ -1246,6 +1261,8 @@ class _WebImportPageState extends State<WebImportPage> {
                 machines[index],
                 changed
                     ? '$prefix$name は設置台数が変わっています。現在の表を取り込んでください。'
+                    : old
+                    ? '$prefix$name は前に取った表のままです。現在の表を取り込み直してください（数値が変わった台だけグラフも取り直します）。'
                     : '$prefix$name は未取込です。現在の表を取り込んでください。',
                 autoToken: autoToken,
                 toggleRevision: toggleRevision,

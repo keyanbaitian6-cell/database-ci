@@ -38,6 +38,24 @@ void main() {
     );
   });
 
+  test('取り込みを始めた時刻が基準。営業が終わった日（翌日の午前2時以降）で頭打ち', () {
+    expect(staleCaptureCutoff('2026-10-03', null), isNull);
+    expect(
+      staleCaptureCutoff(
+        '2026-10-03',
+        DateTime.parse('2026-10-03T22:00:00+09:00'),
+      ),
+      DateTime.parse('2026-10-03T22:00:00+09:00').millisecondsSinceEpoch,
+    );
+    expect(
+      staleCaptureCutoff(
+        '2026-10-03',
+        DateTime.parse('2026-10-05T10:00:00+09:00'),
+      ),
+      DateTime.parse('2026-10-04T02:00:00+09:00').millisecondsSinceEpoch,
+    );
+  });
+
   test('手動のときは、済ませた機種の次から探し、先が無いときだけ最初へ戻る', () {
     const names = ['甲機', '乙機', 'L無職転生　NM', '丁機'];
     // 印が無い・一覧に無い：最初から1回だけ。
