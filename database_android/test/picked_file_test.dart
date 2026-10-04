@@ -38,4 +38,33 @@ void main() {
     expect(await b.exists(), isTrue);
     expect(await stamp.exists(), isTrue);
   });
+
+  test('以前の版が残した一時ファイルだけを、日数に関係なく片付けの対象にする', () {
+    for (final name in [
+      'backup_2026-09-23T005639345106.json',
+      'backup_2026-09-21T132840439828.json',
+      'database-import-1789512998536.jpg',
+    ]) {
+      expect(isOldVersionLeftover(name), isTrue, reason: name);
+    }
+    for (final name in [
+      'database-backup-android-20261004-102306.json',
+      'backup.json',
+      'my-backup_2026-09-23T005639345106.json',
+      'database-import-abc.jpg',
+      'pscube-viewer.json',
+    ]) {
+      expect(isOldVersionLeftover(name), isFalse, reason: name);
+    }
+    expect(
+      isSharedTemporaryFile('database-backup-android-20261004-102306.json'),
+      isTrue,
+    );
+    expect(isSharedTemporaryFile('database-web-graph-1.png'), isTrue);
+    expect(isSharedTemporaryFile('database-2026-10-04.csv'), isTrue);
+    expect(
+      isSharedTemporaryFile('backup_2026-09-23T005639345106.json'),
+      isFalse,
+    );
+  });
 }

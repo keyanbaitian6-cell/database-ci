@@ -1,5 +1,11 @@
 # database AI共同作業メモ
 
+## Android：以前の版が残したキャッシュの一時ファイルも片付ける（未ビルド）（Claude、2026-10-05）
+
+- 保存領域の内訳（0.5.28）の結果：キャッシュ279.3MBのうち、WebViewは45.5MB（HTTP Cache：Code Cache 25.6MB・Cache_Data 19.9MB）。大半はキャッシュの直下のバックアップのJSON：`database-backup-android-…json`（共有の書き出し、1つ約40MB、3日で消す既存の規則の対象）と、**以前の版が書いた `backup_2026-09-2…T….json`（1つ4〜15MB、10個以上）・`database-import-<数字>.jpg`（369KB×数個）**。後の2つは名前が今の片付けの規則に合わず、ずっと残っていた（今のコードはこの名前で作らない）。データ168.5MBのうち `app_flutter/flutter_assets`（93.5MB、`kernel_blob.bin` 81.9MB）は開発用の版の名残と推測（配布用の版が使わないことは未確認のため、触っていない）。記録の `databases` は65.4MB。
+- 修正（利用者「1を進めて。ビルドはしなくていい。明日以降の修正の際にビルド」）：起動時の片付け（`AppController._cleanTemporaryFiles`）で、以前の版の名前（`picked_file.dart` の `isOldVersionLeftover`：`^backup_YYYY-MM-DDT<数字>.json$`・`^database-import-<数字>.(jpg|jpeg|png)$`）は日数に関係なく消す。今の名前（`isSharedTemporaryFile`）は従来どおり3日たってから。どちらもキャッシュの直下のファイルだけ。
+- 確認：`test/picked_file_test.dart` に名前の判定を追加、Flutter全463件成功、analyze error/warning 0。**APKは未ビルド**（次の修正のときに一緒に）。
+
 ## Android：保存領域の内訳（見るだけ）を追加／0.5.28（通常版のみ）（Claude、2026-10-05）
 
 - 経緯：0.5.27を入れて起動・バックアップの読み込みをしても、設定のキャッシュは287MBのまま変わらなかった（データ165MB）。前の記録の604.7MBは `dumpsys diskstats` の古い測定値だった（データ欄765.8MBはキャッシュ込み）。キャッシュの大半はバックアップの写し以外（取り込み画面のWebViewの一時データと推測、未確認）。利用者が「中身を確かめる」を選んだ。

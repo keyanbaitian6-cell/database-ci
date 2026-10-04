@@ -18,6 +18,7 @@ import 'import_service.dart';
 import 'import_spool.dart';
 import 'record_analysis.dart';
 import 'models.dart';
+import 'picked_file.dart';
 import 'ui_prefs.dart';
 import 'web_import_page.dart';
 import 'write_queue.dart';
@@ -558,7 +559,7 @@ class AppController extends ChangeNotifier {
   }, unlimited: true);
 
   /// 共有のために作った一時ファイル（バックアップ・CSV・グラフ画像）のうち、
-  /// 3日より前のものを消す。共有先のアプリが後から読むことがあるので、すぐには
+  /// 3日より前のものと、以前の版が残した一時ファイル（[isOldVersionLeftover]）を消す。共有先のアプリが後から読むことがあるので、すぐには
   /// 消さない。失敗しても動作には関係ない。
   Future<void> _cleanTemporaryFiles() async {
     // バックアップの読み込みでファイルを選んだときの写し（cache/file_picker）は、起動時にまとめて消す
@@ -577,11 +578,9 @@ class AppController extends ChangeNotifier {
       await for (final entity in dir.list()) {
         if (entity is! File) continue;
         final name = entity.uri.pathSegments.last;
-        final ours =
-            name.startsWith('database-backup-') ||
-            name.startsWith('database-web-graph-') ||
-            (name.startsWith('database-') && name.endsWith('.csv'));
-        if (ours && (await entity.lastModified()).isBefore(limit)) {
+        if (isOldVersionLeftover(name) ||
+            (isSharedTemporaryFile(name) &&
+                (await entity.lastModified()).isBefore(limit))) {
           await entity.delete();
         }
       }
