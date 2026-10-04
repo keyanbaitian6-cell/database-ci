@@ -1526,6 +1526,10 @@ class _Bridge:
                 name = normalize_machine_name(raw_machine.get('name'))
                 if url and name and not is_excluded_machine(store_path, name):
                     candidates.append((url, name))
+            # 「下から取り込む」なら、日付を確かめるために開く最初の機種も一覧の下から選ぶ
+            # （以前はここだけ向きを見ず、最初の1機種が必ず一覧の上になっていた。2026-10-04）。
+            if self._direction == 'bottom':
+                candidates.reverse()
             candidates.sort(key=lambda item: done_today(item[1]))   # 安定ソート：未済が先
             if candidates:
                 url, name = candidates[0]

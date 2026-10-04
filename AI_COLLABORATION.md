@@ -1,5 +1,11 @@
 # database AI共同作業メモ
 
+## メルヘンPC：「下から取り込む」の最初の1機種が上からになっていた（Claude、2026-10-04）
+
+- 利用者「下から取り込むボタンがPC版だと上から取り込みで動いている」。
+- 原因：取り込み日が「指定なし」で、機種一覧に日付が無いとき（開いたばかりの一覧）は、日付を確かめるためにまず1機種を開く（`next_unimported_machine` の `need_day`）。この候補だけ向きを見ずに一覧の上から選んでいた。2機種目以降（日付が分かったあと）は下からになる。Android（`web_import_page.dart`）はこの分岐の前に並びを逆にしているので正しい。P’s CUBE（PC）は機種一覧の保存時に `machines[-1]` を選ぶので正しい。
+- 修正：`browser_import.py` の `need_day` の候補も、`bottom` なら逆順にしてから「未済を先」に並べる。新規試験 `tests/test_meruhen_day.py::test_bottom_also_picks_the_first_machine_from_the_bottom_when_the_day_is_unknown`（修正前は失敗）。PC全試験成功、`smoke_frozen_capture` 成功、`database/bin` 再ビルド。
+
 ## PC版「結果を見る」のHTMLをFlip7風のデザインに（Claude、2026-10-04）
 
 - 利用者「（Flip7 Design System のmdを渡して）パソコン上でのみ適用。結果を見る際のデザインをこのmdを参考に作り上げて」。対象は、PC本体の「結果を見る」で開くHTML3種（`core.py` の `report`＝機種の結果、`summary_report`＝この日のまとめ、`history_report`＝過去の記録）。Android・閲覧ページ（iPhone）・PC本体のTk画面は変更なし。

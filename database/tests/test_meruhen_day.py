@@ -75,6 +75,14 @@ class DaySelectionTests(unittest.TestCase):
         self.bridge.set_target_day(None, 'top')
         self.assertEqual(self.ask()['machine'], '甲機', '日付がページに無くても、選んだ日で進む（日付の確認に別の機種を開かない）')
 
+    def test_bottom_also_picks_the_first_machine_from_the_bottom_when_the_day_is_unknown(self):
+        """指定なし・機種一覧に日付が無いとき（日付を確かめるために最初の機種を開く）も、下からなら一覧の下から。"""
+        self.assertEqual(self.ask()['machine'], '甲機')
+        self.assertEqual(self.ask()['reason'], 'need_day')
+        self.bridge.set_target_day(None, 'bottom')
+        first = self.ask()
+        self.assertEqual((first['machine'], first['reason']), ('丙機', 'need_day'))
+
     def test_resumes_the_chosen_day_after_the_site_default_moved_on(self):
         yesterday, today = recent_days()[1], recent_days()[0]
         graph = dict(baseline_x=1, baseline_y=200, peak_x=2, peak_y=100, trough_x=3, trough_y=250, end_x=4, end_y=150)
