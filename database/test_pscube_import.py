@@ -363,6 +363,48 @@ class PscubeImportTests(unittest.TestCase):
             self.store.import_page(broken, url)
         self.assertEqual(list(self.store.db.iterdump()), before)
 
+    def test_new_installation_skips_explicit_empty_days_and_keeps_old_machine_history(self):
+        old = self.machines[0]
+        new = self.machines[1]
+        previous_day = (date.fromisoformat(self.day) - timedelta(days=1)).isoformat()
+        self.store.import_page(self.page(self.index_url, [old, new]), self.index_url)
+        old_record = self.record(old, 1085, previous_day)
+        self.store.import_page(self.page(old['url'], [old], [old_record]), old['url'])
+        self.store.import_page(self.page(self.index_url, [new]), self.index_url)
+        current = self.record(new, 1085)
+        self.store.import_page(self.page(new['url'], [new], [current]), new['url'])
+        missing = [(date.fromisoformat(self.day) - timedelta(days=i)).isoformat() for i in range(1, 7)]
+        payload = self.page(current['detail_url'], [new], [{**current, 'net_medals': 125,
+            'graph': {'kind': 'daily', 'zero_y': 10, 'points': [[0, 10], [1, 6]]}}])
+        payload['missing_history_days'] = missing
+        before = list(self.store.db.iterdump())
+        for broken in (None, missing[:-1], missing + [missing[0]], [self.day, *missing[1:]],
+                       ['2020-01-01', *missing[1:]], [[previous_day], *missing[1:]]):
+            with self.assertRaises(ValueError):
+                self.store.import_page({**payload, 'missing_history_days': broken}, current['detail_url'])
+        without_marker = dict(payload)
+        without_marker.pop('missing_history_days')
+        with self.assertRaises(ValueError):
+            self.store.import_page(without_marker, current['detail_url'])
+        self.assertEqual(list(self.store.db.iterdump()), before)
+        result = self.store.import_page(payload, current['detail_url'])
+        self.assertEqual(result['saved'], 1)
+        self.assertIsNone(self.store.next_target(self.day)[0], '空の過去日を再取得し続けない')
+        exported = self.store.export_payload('backup')
+        self.assertEqual(len(exported['records']), 2)
+        saved_old = next(r for r in exported['records'] if r['machine'] == old['machine'])
+        self.assertEqual(saved_old, old_record)
+        saved_new = next(r for r in exported['records'] if r['machine'] == new['machine'])
+        self.assertEqual(saved_new['day'], self.day)
+        self.assertEqual(saved_new['net_medals'], 125)
+        self.assertEqual(saved_new['graph']['kind'], 'daily')
+        restored = PscubeStore(Path(self.tmp.name) / 'replacement.sqlite3')
+        self.addCleanup(restored.close)
+        restored.import_backup(exported)
+        self.assertEqual(len(restored.export_payload('backup')['records']), 2)
+        restored.import_page(self.page(self.index_url, [new]), self.index_url)
+        self.assertIsNone(restored.next_target(self.day)[0])
+
     def test_bad_graph_rejects_whole_page_and_keeps_existing_export(self):
         machine, record, _ = self.seed_rack()
         target = self.store.export_viewer(Path(self.tmp.name) / 'viewer.json')

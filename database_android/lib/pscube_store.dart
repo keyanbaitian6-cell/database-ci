@@ -360,7 +360,8 @@ class PscubeStore {
     }
     if (rackPage) {
       if (machines.length != 1 ||
-          records.length != 7 ||
+          records.isEmpty ||
+          records.length > 7 ||
           current.fragment.length != 8) {
         throw const FormatException('台別7日分が揃っていません。');
       }
@@ -385,7 +386,17 @@ class PscubeStore {
         for (var i = 0; i < 7; i++)
           anchor.subtract(Duration(days: i)).toIso8601String().substring(0, 10),
       };
-      if (records.any((r) => !expected.contains(r['day']))) {
+      // 共通JSが新台の「全空欄かつグラフ無し」の過去列を明示している場合だけ省略可。
+      final missing = data['missing_history_days'] ?? <dynamic>[];
+      final present = records.map((r) => r['day']).toSet();
+      if (missing is! List ||
+          missing.length > 6 ||
+          missing.any((d) => d is! String || !expected.contains(d)) ||
+          missing.toSet().length != missing.length ||
+          missing.contains(day) ||
+          missing.any(present.contains) ||
+          {...present, ...missing}.length != expected.length ||
+          present.any((d) => !expected.contains(d))) {
         throw const FormatException('連続した7日分の履歴ではありません。');
       }
     }
@@ -508,6 +519,8 @@ class PscubeStore {
           ? '機種一覧'
           : tablePage
           ? '全台一覧'
+          : records.length < 7
+          ? '台別履歴（${records.length}日分）'
           : '台別7日分',
       nextUrl: next.url,
     );

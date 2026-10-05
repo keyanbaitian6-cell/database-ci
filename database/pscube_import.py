@@ -499,7 +499,7 @@ class PscubeStore:
                 raise ValueError(f'表示は{len(data["records"])}台、設置台数は{old["expected_count"]}台です。全台を表示してから取り込んでください。')
             if any(_machine_key(r) != _machine_key(old) for r in data['records']):
                 raise ValueError('機種と台の情報が一致しません。')
-        if is_rack and (len(data['machines']) != 1 or len(data['records']) != 7):
+        if is_rack and (len(data['machines']) != 1 or not 1 <= len(data['records']) <= 7):
             raise ValueError('7日分の台別データが揃っていません。')
         day = data['records'][0]['day'] if data['records'] else self._state('last_day')
         if is_rack:
@@ -512,7 +512,13 @@ class PscubeStore:
             if parse_qs(actual.query).get('cd_dai') != [str(current['rack'])] or _machine_key(data['machines'][0]) != _machine_key(current):
                 raise ValueError('表示中の台番号・機種と一致しません。')
             expected = {(datetime.fromisoformat(day).date() - timedelta(days=i)).isoformat() for i in range(7)}
-            if {r['day'] for r in data['records']} != expected:
+            # 新台の全空欄の過去列は、共通JSが明示して返す。省略を0件の記録にしない。
+            missing = data.get('missing_history_days', [])
+            present = {r['day'] for r in data['records']}
+            if (not isinstance(missing, list) or len(missing) > 6 or
+                    any(not isinstance(d, str) for d in missing) or
+                    len(set(missing)) != len(missing) or day in missing or
+                    present.intersection(missing) or present.union(missing) != expected):
                 raise ValueError('連続した7日分の履歴ではありません。')
         if is_table and any(r['day'] != day for r in data['records']):
             raise ValueError('一覧内の日付が一致しません。')
@@ -559,7 +565,9 @@ class PscubeStore:
             target_day = expected_day or day
             next_url, remaining = self.next_target(target_day, direction, after, fresh_since.get(target_day))
         result = {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
-                  'kind': '機種一覧' if is_index else '全台一覧' if is_table else '台別7日分', 'fresh_since': fresh_since}
+                  'kind': '機種一覧' if is_index else '全台一覧' if is_table else
+                  f'台別履歴（{len(data["records"])}日分）' if len(data['records']) < 7 else '台別7日分',
+                  'fresh_since': fresh_since}
         if is_rack and isinstance(data.get('net_warning'), str):
             # 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
             result['net_warning'] = data['net_warning'][:200]

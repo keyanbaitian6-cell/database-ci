@@ -281,6 +281,106 @@ void main() {
     expect(await exported(), {...before, 'exported_at': anything});
   });
 
+  test('新台の全空欄の過去日だけを省略し、旧機種の同番号の履歴を維持する', () async {
+    final oldMachine = {
+      ...machine,
+      'machine': '旧機種',
+      'url': '${machine['url']}&nmk_kisyu=old',
+    };
+    final oldRecord = {...record('2026-09-30'), 'machine': '旧機種'};
+    await store.importPage(
+      page(PscubeStore.index, [oldMachine, machine]),
+      PscubeStore.index,
+    );
+    await store.importPage(
+      page(oldMachine['url'] as String, [oldMachine], [oldRecord]),
+      oldMachine['url'] as String,
+    );
+    await store.importPage(
+      page(PscubeStore.index, [machine]),
+      PscubeStore.index,
+    );
+    await store.importPage(
+      page(machine['url'] as String, [machine], [record()]),
+      machine['url'] as String,
+    );
+    final missing = [
+      for (var i = 1; i < 7; i++)
+        DateTime.utc(
+          2026,
+          10,
+          1,
+        ).subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+    ];
+    final detail = record()..['net_medals'] = 125;
+    (detail['graph'] as Map)['kind'] = 'daily';
+    final payload = jsonDecode(
+      page(record()['detail_url'] as String, [machine], [detail]),
+    ) as Map<String, dynamic>;
+    final before = await exported();
+    for (final invalid in <dynamic>[
+      null,
+      missing.sublist(1),
+      [...missing, missing.first],
+      [day, ...missing.skip(1)],
+      ['2020-01-01', ...missing.skip(1)],
+      [
+        [missing.first],
+        ...missing.skip(1),
+      ],
+    ]) {
+      await expectLater(
+        store.importPage(
+          jsonEncode({...payload, 'missing_history_days': invalid}),
+          record()['detail_url'] as String,
+        ),
+        throwsFormatException,
+      );
+    }
+    expect(await exported(), {...before, 'exported_at': anything});
+    final result = await store.importPage(
+      jsonEncode({...payload, 'missing_history_days': missing}),
+      record()['detail_url'] as String,
+    );
+    expect(result.saved, 1);
+    expect((await store.nextTarget(day)).url, isNull);
+    final after = await exported();
+    expect(after['records'], hasLength(2));
+    final oldSaved = (after['records'] as List).singleWhere(
+      (r) => r['machine'] == '旧機種',
+    );
+    expect(oldSaved['games'], oldRecord['games']);
+    expect(oldSaved['day'], '2026-09-30');
+    final newSaved = (after['records'] as List).singleWhere(
+      (r) => r['machine'] == machine['machine'],
+    );
+    expect(newSaved['day'], day);
+    expect(newSaved['net_medals'], 125);
+    expect(newSaved['graph']['kind'], 'daily');
+    final backup = await store.exportViewer(
+      path: '${dir.path}/replacement.json',
+    );
+    final restored = await PscubeStore.open(
+      path: '${dir.path}/replacement.sqlite3',
+      factory: databaseFactoryFfi,
+    );
+    try {
+      await restored.importBackup(await backup.readAsString());
+      await restored.importPage(
+        page(PscubeStore.index, [machine]),
+        PscubeStore.index,
+      );
+      final restoredExport = jsonDecode(
+        await (await restored.exportViewer(path: '${dir.path}/restored.json'))
+            .readAsString(),
+      );
+      expect(restoredExport['records'], hasLength(2));
+      expect((await restored.nextTarget(day)).url, isNull);
+    } finally {
+      await restored.close();
+    }
+  });
+
   test('並行取り込みと共有も保存順を守り、失敗後もキューが進む', () async {
     await seedRack();
     final newer = record()
