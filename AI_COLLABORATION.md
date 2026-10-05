@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 「同じページか」の判定をPC・Android・両サイトでそろえる／Android 0.5.30（Claude、2026-10-06）
+
+- 利用者：別タスクの報告（`2aac080`・`1af189a`）を受けて「まだ触れられてないものがあれば修正してビルドまで」。
+- P’s CUBE PC `pscube_import.py`：保存処理 `import_page` が WebView2 の今のURLとページの location.href を、#以降（一覧のスクロール位置）まで完全一致で比べていた（Androidの `d17debd` と同じ穴）。さらに WebView2 は日本語の機種名を元の文字で返す（`b6081df` の実測）。`same_page()` を追加し、Android `pscubeSamePage` と同じ規則にした（一覧は#以降を無視、台別 `nc-v06-001.php` は#以降も一致、%を戻して比べる）。Androidの `pscubeSamePage` も%を戻すようにした。
+- メルヘン Android `web_import_page.dart`：自動取り込みの判定（ページの location.href とWebViewの報告）、読み込み完了の確認、押しても移動しないときの30秒の確認が、URLを文字のまま比べていた。`capture_flow.dart` の `meruhenSamePageUrl`（PC `same_page_url` と同じ：%を戻す、#以降＝日付は比べる）に統一。
+- 試験：PC `test_pscube_import`（一覧の#・%の形の違いは保存、台別の日付違い・別機種は拒否）、Android `pscube_store_test`・`capture_flow_test` に追加。PC P’s CUBE 90件、Flutter全478件成功、analyze error/warning 0。
+- `database/bin` を再ビルド。`smoke_frozen_capture`・`smoke_frozen_runtime`（結果 `a/work/outputs/frozen-runtime-20261006-samepage.json`）成功。ZIPは作っていない。
+- APK：通常版 `0.5.30+2026100602`、P’s CUBEクローン `0.5.30+2026100603`（pubspecは2026100603）。署名SHA-256 `4332fcb9…a047` で既存と一致。`a/work/outputs/database-release-20261006/android/` に保存。**端末へのインストール・実サイトでの確認はしていない**（コミット時点）。
+
 ## 「下から取り込む」が途中で上からに変わる件（PC・Android、P’s CUBE・メルヘン）／メルヘンの「-」で取り込みが止まる件（Claude、2026-10-06）
 
 - 利用者：PC版P’s CUBEで「下から取り込む」を押すと、最初は一覧の下なのに、次のページから上の順に変わる。二度と起きないよう、開始操作から複数ページの遷移まで通す再発試験を。途中で「メルヘン版も調査して」。
