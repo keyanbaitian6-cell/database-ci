@@ -22,6 +22,8 @@ HEADERS = ['台番号','BB','RB','総回転数','合成確率','前日最終ス�
 # against the live site, not just a rendering quirk) -- that store's max_hold
 # is only ever filled in later, from the individual rack's graph page.
 HEADERS_NO_MAX_HOLD = HEADERS[:-1]
+# 値なしの表示（「-」とその全角・類似の記号）。
+DASHES = ('-', '－', '−', '‐', '—', '―')
 
 
 def check_url(url):
@@ -51,8 +53,12 @@ def parse_table(matrix, links, day, machine, source, updated, location='nagamach
         if len(cells) != expected_cols:
             raise ValueError('一覧の列数が一致しません。')
         int_indexes = (0,1,2,3,5,6) if has_max_hold else (0,1,2,3,5)
-        numbers = [int(cells[i].replace(',', '')) for i in int_indexes]
-        if any(x < 0 for x in numbers):
+        # 前日最終スタート・最大持玉は、サイトが「-」と表示することがある（新台の初日の前日最終スタートなど。
+        # 2026-10-06、L MHRｻﾝﾌﾞﾚｲｸXAで取り込みが止まった）。空欄として保存する（Androidと同じ）。台番号・BB・RB・
+        # 総回転数は従来どおり数字だけを受け付ける。
+        numbers = [None if i >= 5 and cells[i].strip() in DASHES else int(cells[i].replace(',', ''))
+                   for i in int_indexes]
+        if any(x is not None and x < 0 for x in numbers):
             raise ValueError('不正な負の数値があります。')
         if has_max_hold:
             rack, bb, rb, games, previous, maximum = numbers

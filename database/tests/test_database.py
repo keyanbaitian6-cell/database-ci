@@ -228,6 +228,20 @@ class ScoringTests(unittest.TestCase):
             parse_table([HEADERS_NO_MAX_HOLD, ['637', '7', '3', '1170', '1/117.0']], [url],
                         '2026-09-17', 'x', DEFAULT_URL, '', 'saiwaichou')
 
+    def test_dash_in_previous_start_or_max_hold_is_saved_as_empty(self):
+        # 2026-10-06：新台（L MHRｻﾝﾌﾞﾚｲｸXA）の一覧で前日最終スタートが「-」になり、int('-') で取り込みが止まった。
+        url = 'https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph/?rack_no=313&target_date=2026-10-05'
+        rows = parse_table([HEADERS, ['313', '29', '10', '4100', '1/99.9', '-', '1590']], [url],
+                           '2026-10-05', 'L MHRｻﾝﾌﾞﾚｲｸXA', DEFAULT_URL, '', 'saiwaichou')
+        self.assertEqual((rows[0]['games'], rows[0]['previous_start'], rows[0]['max_hold']), (4100, None, 1590))
+        rows = parse_table([HEADERS, ['313', '29', '10', '4100', '1/99.9', '－', '-']], [url],
+                           '2026-10-05', 'x', DEFAULT_URL, '', 'saiwaichou')
+        self.assertEqual((rows[0]['previous_start'], rows[0]['max_hold']), (None, None))
+        for cells in (['313', '-', '10', '4100', '1/99.9', '1', '2'], ['313', '29', '10', '-', '1/99.9', '1', '2'],
+                      ['313', '29', '10', '4100', '1/99.9', '', '2']):
+            with self.assertRaises(ValueError, msg='台番号・BB・RB・総回転数の「-」や空欄は従来どおり止める'):
+                parse_table([HEADERS, cells], [url], '2026-10-05', 'x', DEFAULT_URL, '', 'saiwaichou')
+
     def test_screenshot_header_detection(self):
         labels=['台番号','BB','RB','総回転数','合成確率','前日最終スタート','最大持玉']
         tokens=[dict(text=t,confidence=.99,x0=i*100,x1=i*100+60,y0=10,y1=30,
