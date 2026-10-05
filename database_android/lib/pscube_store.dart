@@ -25,6 +25,16 @@ int? pscubeStaleCutoff(String? day, String? freshSince) {
   return (since < dayEnd ? since : dayEnd) - pscubeStaleMargin.inMilliseconds;
 }
 
+/// 同じページか。一覧のページではサイトがスクロール位置を#以降へ書き込むので、#以降は比べない。
+/// 台別ページの#以降は履歴の日付なので、完全に一致させる（PC版の `identity` と同じ）。
+bool pscubeSamePage(Uri first, Uri second) {
+  if (first.path.endsWith('nc-v06-001.php') ||
+      second.path.endsWith('nc-v06-001.php')) {
+    return first == second;
+  }
+  return first.removeFragment() == second.removeFragment();
+}
+
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
   PscubeStore._(this.db);
@@ -289,7 +299,9 @@ class PscubeStore {
     }
     final current = Uri.tryParse(currentUrl ?? '');
     final reported = Uri.tryParse(data['source_url']?.toString() ?? '');
-    if (current == null || reported == null || current != reported) {
+    if (current == null ||
+        reported == null ||
+        !pscubeSamePage(current, reported)) {
       throw const FormatException('表示中のURLと読み取り結果が一致しません。');
     }
     final indexPage = current.path.endsWith('nc-v03-001.php');

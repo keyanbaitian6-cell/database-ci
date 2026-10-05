@@ -243,6 +243,50 @@ void main() {
     expect((await exported())['records'], isEmpty);
   });
 
+  test('一覧のスクロール位置（#以降）が変わっても同じページとして保存し、台別の日付は区別する', () async {
+    final list = Uri.parse(PscubeStore.index);
+    expect(
+      pscubeSamePage(list, list.replace(fragment: 'scroll=1200')),
+      isTrue,
+    );
+    expect(
+      pscubeSamePage(
+        list.replace(fragment: 'scroll=0'),
+        list.replace(fragment: 'scroll=1200'),
+      ),
+      isTrue,
+    );
+    final rack = Uri.parse(record()['detail_url']);
+    expect(pscubeSamePage(rack, rack), isTrue);
+    expect(pscubeSamePage(rack, rack.replace(fragment: '20260930')), isFalse);
+    expect(pscubeSamePage(rack, rack.removeFragment()), isFalse);
+    expect(
+      pscubeSamePage(list, Uri.parse(machine['url'] as String)),
+      isFalse,
+    );
+
+    // 読み取り後にサイトがスクロール位置を書き換えても、一覧を保存する。
+    await store.importPage(
+      page('${PscubeStore.index}#scroll=1200', [machine]),
+      PscubeStore.index,
+    );
+    expect(await store.installationCount(machine['url'] as String), 1);
+    // 台別ページの日付が違う結果は保存しない。
+    await store.importPage(
+      page(machine['url'], [machine], [record()]),
+      machine['url'],
+    );
+    final wrongDay = jsonDecode(await seedRack()) as Map<String, dynamic>;
+    wrongDay['source_url'] = (wrongDay['source_url'] as String).replaceAll(
+      '#20261001',
+      '#20260930',
+    );
+    await expectLater(
+      store.importPage(jsonEncode(wrongDay), record()['detail_url']),
+      throwsFormatException,
+    );
+  });
+
   test('台番号違い・連続していない7日・壊れたグラフを拒否する', () async {
     final payload = await seedRack();
     final before = await exported();

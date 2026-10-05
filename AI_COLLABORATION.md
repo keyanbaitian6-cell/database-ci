@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## P’s CUBE Android：「保存前にページが切り替わりました」で保存できない件（Claude、2026-10-06、未ビルド）
+
+- 利用者：接続中のAndroid（P’s CUBEクローン0.5.29）で「保存できませんでした：FormatException: 保存前にページが切り替わりました。」。画面は機種一覧ページ。
+- 原因：サイトは一覧ページでスクロール位置をURLの#以降へ書き込む。`pscube_import_page.dart` は読み取り開始前だけ#以降を無視する `_samePage` を使い、読み取り中・保存直前の確認と `PscubeStore.importPage` の `source_url` 照合はURLの完全一致だった。読み取り後に#以降が変わると誤って止まっていた（PC版の `identity` は以前から全確認で#以降を無視）。
+- 修正：`pscube_store.dart` に `pscubeSamePage` を追加（一覧は#以降を無視、台別 `nc-v06-001.php` の#以降＝履歴の日付は完全一致。PCの `identity` と同じ規則）。ページの全確認とStoreの照合をこれに統一。保存形式・採点は変更なし。
+- 確認：`pscube_store_test.dart` に「一覧の#以降が変わっても保存」「台別の日付違いは拒否」の試験を追加。`pscube_store_test`・`pscube_auto_test` 33件成功。対象3ファイルのanalyzeはerror/warning 0（以前からのinfo 2件）。**APKは未ビルド・実機未確認**。
+- 再発防止：URLの直接比較による同種の誤停止が繰り返されたため（メルヘンPC `b6081df` など）、直下 `AGENTS.md` に「同じページか」の判定ルールを追加。メルヘンAndroid `web_import_page.dart` にもURLの直接比較（389・575・1354行付近）が残るが、別タスクが同ファイルを編集中のため未変更。
+
 ## Android 通常版・P’s CUBEクローン 0.5.29（2026-10-06）
 
 - 正本mainの最新確認コミット `67e7f0f44a654447f4ecd71390e0884dd4c40134` からAndroid/PC対象ファイルを同期。直接 `git fetch origin` はPCのproxy接続拒否で失敗したが、GitHub APIでmainの先端と変更ファイルを確認した。

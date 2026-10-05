@@ -172,12 +172,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
 
   // This site writes scroll position to the hash on its overview pages.
   // A rack hash identifies the history day and must still match exactly.
-  bool _samePage(String first, String second) {
-    final a = Uri.parse(first);
-    final b = Uri.parse(second);
-    if (a.path.endsWith('nc-v06-001.php')) return a == b;
-    return a.replace(fragment: '') == b.replace(fragment: '');
-  }
+  bool _samePage(String first, String? second) =>
+      second != null && pscubeSamePage(Uri.parse(first), Uri.parse(second));
 
   Future<void> _initialize() async {
     try {
@@ -505,7 +501,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       for (var attempt = 0; attempt < 75; attempt++) {
         if (!mounted ||
             _page != page ||
-            await _web.currentUrl() != capturedUrl) {
+            !_samePage(capturedUrl, await _web.currentUrl())) {
           throw const FormatException('読み取り中にページが切り替わりました。');
         }
         final ready = await _web.runJavaScriptReturningResult(
@@ -528,7 +524,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       if (autoToken != null && !_auto.current(autoToken, page)) {
         throw const FormatException('自動取り込みを止めたため、保存しませんでした。');
       }
-      if (_page != page || await _web.currentUrl() != capturedUrl) {
+      if (_page != page ||
+          !_samePage(capturedUrl, await _web.currentUrl())) {
         throw const FormatException('保存前にページが切り替わりました。');
       }
       final result = await store.importPage(
