@@ -180,7 +180,10 @@ AUTO_CAPTURE_JS = r'''
     for (const button of [autoTop, autoBottom]) {
       button.disabled = autoEnabled || autoChanging;
       button.style.opacity = button.disabled ? '.5' : '1';
-      button.style.outline = autoEnabled && button === (state.direction === 'bottom' ? autoBottom : autoTop) ? '3px solid #087d59' : '';
+      // いまの向きを、自動取り込みのOFFの間も示す（手動の「次へ」もこの向きで次の機種を選ぶ）。
+      const chosen = button === (state.direction === 'bottom' ? autoBottom : autoTop);
+      button.style.outline = chosen ? '3px solid #087d59' : '';
+      button.setAttribute('aria-pressed', String(chosen));
     }
     autoStatus.textContent = state.message;
     captureBtn.disabled = autoEnabled;

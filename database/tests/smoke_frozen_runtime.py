@@ -18,6 +18,10 @@ from PyInstaller.archive.readers import CArchiveReader
 
 def check(output):
     output = Path(output).resolve()
+    # 結果の書き出し先。2026-10-05に誤って bin/database-pscube/database-pscube.exe を渡し、EXEを結果のJSONで
+    # 上書きしてしまった（P’s CUBEの凍結版が起動しなくなった）。.json 以外・bin の中は受け付けない。
+    if output.suffix.lower() != '.json' or (ROOT / 'bin') in output.parents:
+        raise SystemExit(f'結果の書き出し先は bin の外の .json にしてください：{output}')
     apps = {}
     for name, entry in [('database', 'app'), ('database-browser', 'browser_import'),
                         ('database-pscube', 'pscube_import')]:

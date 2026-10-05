@@ -721,7 +721,9 @@ class PscubeRandomCapture(AutoCapture):
         self._draw = draw
 
     def _schedule(self):
-        self._seconds = 15 + self._draw(100001) / 10000
+        # 0.0001秒刻みに丸める（15 + n/10000 は、11,730通りで 21.667099999… のような誤差が出て、
+        # 画面のスライダーの値と一致しなかった）。
+        self._seconds = round(15 + self._draw(100001) / 10000, 4)
         super()._schedule()
 
 
@@ -941,9 +943,37 @@ class AutoPilot:
                     self.auto.pause('すべて取り込みました（自動取り込みを停止しました）' if not day else
                                     f'{_short_day(day)}の分をすべて取り込みました（自動取り込みを停止しました）')
                 elif enabled:
-                    self.auto.pause(f'ON・{result.get("kind", "")}を保存・残り{result.get("remaining", "?")}件・次のページへ'
+                    self.auto.pause(f'ON・{result.get("kind", "")}を保存・残り{result.get("remaining", "?")}件・'
+                                    f'次のページへ（{DIRECTION_LABELS[self.direction]}）'
                                     + ('（差枚は未取得）' if result.get('net_warning') else ''))
         self.render()
+
+
+DIRECTION_LABELS = {'top': '上から', 'bottom': '下から'}
+
+
+def submit_capture(db_path, export_path, pilot, raw, current_url):
+    """取り込み画面で読み取った1ページを保存し、次に開くページを返す（`run_session` の保存の中身）。
+
+    向き（上から／下から）・取り込み日・今回の基準の時刻は `pilot` が窓を開いている間ずっと持つ。
+    ページごとに既定の向きへ戻さない：「下から取り込む」で始めたら、自動でも手動でも、どのページの
+    保存のあとも、未取得を下から選び続ける（2026-10-06、再発防止の試験 `test_pscube_direction.py`）。
+    """
+    with pilot._lock:
+        # 自動取り込みがOFFのとき（手動）は、一覧の最初からではなく、保存したページの次へ進む。
+        manual = not pilot.auto.state()['enabled']
+        direction, target_day, fresh_since = pilot.direction, pilot.target_day, dict(pilot.fresh_since)
+    db = PscubeStore(db_path)
+    try:
+        result = db.import_page(raw, current_url, expected_day=target_day, direction=direction,
+                                manual=manual, fresh_since=fresh_since)
+        pilot.fresh_since = result.pop('fresh_since')
+        result['direction'] = direction
+        result['backup'] = auto_backup(db, export_path)
+        result['source_url'] = current_url
+        return result
+    finally:
+        db.close()
 
 
 def overlay_script(capture_script, index_url):
@@ -1043,7 +1073,8 @@ def overlay_script(capture_script, index_url):
       window.pscubeCaptureFailed = error => { idle(String(error)); };
       window.pscubeCaptureComplete = result => {
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
-        idle(`${result.kind}を保存 · 残り${result.remaining}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
+        const way = result.direction === 'bottom' ? '下から' : result.direction === 'top' ? '上から' : '';
+        idle(`${result.kind}を保存 · 残り${result.remaining}${way ? '（' + way + '）' : ''}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
         capturedUrl = null;
         if (result.next_url) location.href = result.next_url;
       };
@@ -1111,7 +1142,10 @@ def overlay_script(capture_script, index_url):
         for (const b of [topButton, bottomButton]) {
           b.disabled = autoEnabled || autoChanging || isRoot;
           b.style.opacity = b.disabled ? '.5' : '1';
-          b.style.outline = !autoEnabled ? '' : (b === (state.direction === 'bottom' ? bottomButton : topButton) ? '3px solid #087d59' : '');
+          // いまの向きを、自動取り込みのOFFの間も示す（手動の「未取得を取り込む」もこの向きで次を選ぶ）。
+          const chosen = b === (state.direction === 'bottom' ? bottomButton : topButton);
+          b.style.outline = chosen ? '3px solid #087d59' : '';
+          b.setAttribute('aria-pressed', String(chosen));
         }
         if (!window.__pscubeBusy) button.disabled = autoEnabled && !isRoot;
         button.style.opacity = button.disabled ? '.5' : '1';
@@ -1209,20 +1243,7 @@ def run_session(db_path, export_path):
         def _submit_page(self, raw):
             if connection.failure:
                 raise ValueError(connection.failure['message'])
-            current = self._window.get_current_url()
-            db = PscubeStore(db_path)
-            try:
-                # 自動取り込みがOFFのとき（手動）は、一覧の最初からではなく、保存したページの次へ進む。
-                manual = not self.pilot.auto.state()['enabled']
-                result = db.import_page(raw, current, expected_day=self.pilot.target_day,
-                                        direction=self.pilot.direction, manual=manual,
-                                        fresh_since=self.pilot.fresh_since)
-                self.pilot.fresh_since = result.pop('fresh_since')
-                result['backup'] = auto_backup(db, export_path)
-                result['source_url'] = current
-                return result
-            finally:
-                db.close()
+            return submit_capture(db_path, export_path, self.pilot, raw, self._window.get_current_url())
 
         def retry_page(self):
             if not self._capture_lock.acquire(blocking=False):

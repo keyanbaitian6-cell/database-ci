@@ -118,6 +118,36 @@ class DaySelectionTests(unittest.TestCase):
         self.assertEqual(self.ask(day=day, after='丙機')['machine'], '甲機', '丙機の次（下から数えて）は乙機＝済みなので甲機')
         self.assertEqual(self.ask(day=day, after='不明な機種')['machine'], '丙機', '知らない機種名の印は無視して、これまでどおり')
 
+    def test_unfinished_machines_are_taken_in_list_order_in_both_directions(self):
+        """グラフが残る機種も、未取込の機種も、一覧の並び（選んだ向き）の順に取る（2026-10-06）。
+
+        以前は「グラフが残る機種」を一覧のどこにあっても先に選んでいたため、下から始めても、一覧の上に
+        取りかけの機種があると、下の機種の次にいきなり上へ飛んだ（P’s CUBEと同じ「下から→上から」の症状）。
+        """
+        day = '2026-10-03'
+        self.machines.append(dict(name='丁機', url=f'{HOST}/standlist_slot?kind_code=21&machine_name=丁機', count=3))
+        graph = dict(baseline_x=1, baseline_y=200, peak_x=2, peak_y=100, trough_x=3, trough_y=250, end_x=4, end_y=150)
+        detail = lambda r: f'{HOST}/standgraph/?rack_no={r}&target_date={day}'
+        db = Store(self.folder / 'test.db')
+        # 甲機（一覧の一番上）：表は保存済み、グラフは1台だけ。丁機（一番下）：済み。乙機・丙機：未取込。
+        db.save([dict(row(rack=r, machine='甲機', day=day), detail_url=detail(r),
+                      **({'graph_measurement': graph} if r == 1 else {})) for r in (1, 2, 3)])
+        db.save([dict(row(rack=r, machine='丁機', day=day), graph_measurement=graph, detail_url=detail(r))
+                 for r in (31, 32, 33)])
+        db.close()
+        self.bridge.set_target_day(None, 'bottom')
+        bottom = self.ask(day=day)
+        self.assertEqual((bottom['machine'], bottom['reason']), ('丙機', 'table'),
+                         '下から：丁機の次は丙機（上の甲機のグラフへ飛ばない）')
+        self.bridge.set_target_day(None, 'top')
+        top = self.ask(day=day)
+        self.assertEqual(top['reason'], 'graph')
+        self.assertIn('甲機', top['message'], '上から：一番上の甲機のグラフの続き')
+        self.assertIn('rack_no=2', top['url'])
+        # 手動（済ませた機種の印あり）でも同じ：下から、丁機の次は丙機。
+        self.bridge.set_target_day(None, 'bottom')
+        self.assertEqual(self.ask(day=day, after='丁機')['machine'], '丙機')
+
     def test_the_list_url_carries_the_finished_machine(self):
         from browser_import import machine_list_url
         url = machine_list_url('nagamachiminami', '2026-10-03', after='L無職転生　NM')

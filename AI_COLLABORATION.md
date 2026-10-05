@@ -1,5 +1,18 @@
 # database AI共同作業メモ
 
+## 「下から取り込む」が途中で上からに変わる件（PC・Android、P’s CUBE・メルヘン）／メルヘンの「-」で取り込みが止まる件（Claude、2026-10-06）
+
+- 利用者：PC版P’s CUBEで「下から取り込む」を押すと、最初は一覧の下なのに、次のページから上の順に変わる。二度と起きないよう、開始操作から複数ページの遷移まで通す再発試験を。途中で「メルヘン版も調査して」。
+- 前提の確認：作業ツリーにはCodexがファイルで同期した `4842aeb` 相当の未コミット変更があった（AI_COLLABORATION.mdの空白だけ違う）。`git stash`（消していない）→ `4842aeb` へ早送りしてから作業。利用者のPCは、デスクトップの `start.cmd` → **ソースの `app.py`** で動いている（凍結版EXEではない）。PCの `data/pscube.sqlite3` の最終更新は10/05 08:59で、記録は10/04まで（PCのP’s CUBEはそれ以降使われていない）。
+- **P’s CUBE（PC・Android）**：向きは窓（Androidは取り込み画面）を開いている間 `AutoPilot.direction`／`_direction` が持ち続け、保存のたびに `import_page(direction=…)`→`next_target` が「選んだ向きの並びで最初の未完了」を返す。最新ソースでは、合成データでも利用者データのコピー（読むだけ）でも、途中で上からに戻る経路は見つからなかった。10/04夜の同じ症状の原因は「昼に取った機種を済みとみなして飛ばす」で、`50df028`・`6e7a1e6` で修正済み。残っている見え方：機種一覧からは、基準の時刻を確かめるため、選んだ向きの端の機種（済みでも）を必ず開く。そのすぐ内側の機種も済んでいれば、次は一覧のずっと上になり、「上に飛んだ」ように見える（下から数えた未完了の先頭なので、順番としては正しい）。
+- P’s CUBE PCの変更：保存の処理を `run_session` の中から `submit_capture()` へ出し、試験から本物の経路を通せるようにした。結果に `direction` を付ける。カードの向きの枠（と `aria-pressed`）を、自動取り込みがOFFの間も表示（手動の「未取得を取り込む」もこの向き）。自動の状態表示・保存結果に「（下から）」を出す。15〜25秒の抽選を0.0001秒に丸める（`15+n/10000` は11,730通りで誤差が出て、凍結版の確認でスライダーの値と一致しなかった）。
+- **メルヘン（PC `next_unimported_machine`・Android `web_import_page.dart`）：原因を確認し修正**。次の機種を2回に分けて探し、1回目は「表を保存済みでグラフが残る機種」を一覧のどこにあっても先に選んでいた。下から始めても、一覧の上に取りかけの機種があると、下の機種の次にいきなり上へ飛ぶ（試験で再現：甲乙丙丁、甲＝グラフ1/3、丁＝済み、下から→甲のグラフへ）。修正：一覧の並び（選んだ向き）の順に1回だけ見て、グラフが残る・未取込・台数が増えた・古い表、のどれでも、並びで先の機種へ進む（Androidは判定を `import_day.dart` の `machineNextStep` に出した）。手動の「済ませた機種の次から」は従来どおり。メルヘンPCのカードも向きの枠をOFFの間も表示。
+- **メルヘンPC：「-」で取り込みが止まる（`2aac080`、先に配布）**。L MHRｻﾝﾌﾞﾚｲｸXA（幸町、10/05）の一覧の前日最終スタートが「-」で、`collector.parse_table` の `int('-')` が `invalid literal for int()` で止まった。前日最終スタート・最大持玉の「-」（全角・類似の記号も）は空欄で保存（Androidは元から空欄）。台番号・BB・RB・総回転数は従来どおり数字だけ。
+- 再発試験：新規 `database/test_pscube_direction.py`（10件）：開始ボタンと同じ `configure(True, 秒, 日付, 向き)` → `tick` で取り込み開始 → `submit_capture` → `finished` → 返った次のURLを開く、を最後まで。[A,B,C,D] 各2台で、上からA→B→C→D、下からD→C→B→A を毎ページ確かめる。当たり0回の台・今夜取り終えた機種を飛ばす、保存の失敗→OFF→「自動取り込み」ボタン（向きを送らない）で再開、日付指定、途中の表から開始、手動（下から選んでOFF／選ばない／途中から・最後で回る）。わざと「保存後に上からへ戻す」「向きを二重に反転」を入れると10件中7件が失敗することを確認。メルヘン `tests/test_meruhen_day.py`（両方向・手動）、Android `import_day_test.dart`（`machineNextStep`）、`test_pscube_auto_browser.mjs`（OFFでも下からに枠）。
+- 結果：PC `tests` 192件・P’s CUBE 74件成功、Flutter全476件成功、対象Dart analyze問題なし、`test_pscube_auto_browser.mjs` 成功。凍結版：`database/bin` を再ビルド（下記）。`smoke_frozen_capture`、`smoke_frozen_runtime` 成功。凍結版のP’s CUBEの中で「下から取り込む」→ 保存 → 次のURL を合成ページで最後まで進め、一覧→C→B→A を確認（`runtime_smoke._pscube_direction_walk`、結果 `a/work/outputs/frozen-runtime-direction-20261006.json`）。実サイトでの巡回はしていない。
+- **凍結版が壊れていた件（Claudeの誤り）**：10/05 00:25、`smoke_frozen_runtime.py` の結果の書き出し先に `bin/database-pscube/database-pscube.exe` を渡し、EXEを結果のJSON（4,551 bytes）で上書きしていた。利用者はソースで動かしているため実害は無かったはず。再ビルドで復旧し、`smoke_frozen_runtime.py` は bin の中・.json 以外の書き出し先を断るようにした。凍結版の確認が古い間隔（5〜8秒）のままだったのも15〜25秒へ更新。
+- 配布物：Windows ZIPは作っていない（利用者の指定がない限り作らない）。`database/bin`（database・database-browser・database-pscube）を最新ソースで作り直しただけ。`data`・`reports` には触れていない。APKは未ビルド（Androidのメルヘンの修正は次のビルドで入る。通常版・クローンの両方）。Web公開はしていない。
+
 ## P’s CUBE Android：「保存前にページが切り替わりました」で保存できない件（Claude、2026-10-06、未ビルド）
 
 - 利用者：接続中のAndroid（P’s CUBEクローン0.5.29）で「保存できませんでした：FormatException: 保存前にページが切り替わりました。」。画面は機種一覧ページ。

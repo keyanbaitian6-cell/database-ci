@@ -1198,13 +1198,36 @@ class _WebImportPageState extends State<WebImportPage> {
             status?['newest'] != null &&
             status!['newest']! < cutoff;
         for (final (order, prefix) in passes) {
-          // 先に、表を保存済みでグラフだけ残っている機種を再開する。
+          // 一覧の並び（選んだ向き）の順に1回だけ見る。グラフが残る機種も、未取込・台数変更・
+          // 古い表の機種も、並びで先にある方から（`machineNextStep`、PC版と同じ。2026-10-06）。
           for (final index in order) {
             final status = statuses[index];
-            if (status == null ||
-                status['done'] == status['total'] ||
-                stale(status)) {
-              continue;
+            final step = machineNextStep(
+              status,
+              listedCount: (machines[index]['count'] as num?)?.toInt(),
+              stale: status != null && stale(status),
+            );
+            if (step == null) continue;
+            if (step == 'table') {
+              final targetUrl = machines[index]['url'] as String?;
+              if (targetUrl == null ||
+                  !_allowed(targetUrl) ||
+                  !isTargetKindUrl(targetUrl)) {
+                continue;
+              }
+              final name = machines[index]['name'] as String? ?? 'この機種';
+              final changed = status != null && !stale(status);
+              moved = await _openMachineTable(
+                machines[index],
+                changed
+                    ? '$prefix$name は設置台数が変わっています。現在の表を取り込んでください。'
+                    : status != null
+                    ? '$prefix$name は前に取った表のままです。現在の表を取り込み直してください（数値が変わった台だけグラフも取り直します）。'
+                    : '$prefix$name は未取込です。現在の表を取り込んでください。',
+                autoToken: autoToken,
+                toggleRevision: toggleRevision,
+              );
+              return;
             }
             final target = widget.onNext(
               store: store,
@@ -1233,37 +1256,6 @@ class _WebImportPageState extends State<WebImportPage> {
               moved = await _openMachineTable(
                 machines[index],
                 '$prefix$name の一覧を更新して、未取得グラフを続けます。',
-                autoToken: autoToken,
-                toggleRevision: toggleRevision,
-              );
-              return;
-            }
-          }
-
-          // 新規の機種、または設置台数が変わった機種は、現在の表を保存し直す。
-          for (final index in order) {
-            final status = statuses[index];
-            final listedCount = (machines[index]['count'] as num?)?.toInt();
-            final changed =
-                status != null &&
-                listedCountNeedsReimport(
-                  listed: listedCount,
-                  saved: status['total'] ?? 0,
-                );
-            final old = status != null && stale(status);
-            if (status != null && !changed && !old) continue;
-            final targetUrl = machines[index]['url'] as String?;
-            if (targetUrl != null &&
-                _allowed(targetUrl) &&
-                isTargetKindUrl(targetUrl)) {
-              final name = machines[index]['name'] as String? ?? 'この機種';
-              moved = await _openMachineTable(
-                machines[index],
-                changed
-                    ? '$prefix$name は設置台数が変わっています。現在の表を取り込んでください。'
-                    : old
-                    ? '$prefix$name は前に取った表のままです。現在の表を取り込み直してください（数値が変わった台だけグラフも取り直します）。'
-                    : '$prefix$name は未取込です。現在の表を取り込んでください。',
                 autoToken: autoToken,
                 toggleRevision: toggleRevision,
               );

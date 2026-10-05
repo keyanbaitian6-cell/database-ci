@@ -211,6 +211,10 @@ assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById(
 await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 20, message: '停止中', revision: 20, target_day: '2026-09-30', direction: 'bottom', days: ['2026-10-02', '2026-10-01', '2026-09-30'] }));
 assert.deepEqual(await page.locator('#database-pscube-day option').allInnerTexts(), ['指定なし（サイトの表示どおり）', '10/2（金）　今の営業日', '10/1（木）', '9/30（水）']);
 assert.equal(await page.locator('#database-pscube-day').inputValue(), '2026-09-30');
+// OFFの間も、いまの向き（手動の取り込みもこの向き）に印が残る（2026-10-06）。
+assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('database-pscube-bottom')).outlineStyle), 'solid', 'OFFでも下からに印');
+assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('database-pscube-top')).outlineStyle), 'none');
+assert.equal(await page.locator('#database-pscube-bottom').getAttribute('aria-pressed'), 'true');
 await install(root, {});
 await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 20, message: '停止中', revision: 1, target_day: null, direction: 'top', days: ['2026-10-01'] }));
 assert.equal(await page.locator('#database-pscube-top').isDisabled(), true, '最初のページでは始められない');

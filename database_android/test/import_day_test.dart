@@ -78,4 +78,48 @@ void main() {
     expect(last[0].$1, isEmpty);
     expect(last[1].$1, [0, 1, 2, 3]);
   });
+
+  test('グラフが残る機種も未取込の機種も、一覧の並び（選んだ向き）の順に選ぶ', () {
+    // 2026-10-06：下から始めても、上に取りかけの機種があると、下の機種の次にいきなり上へ飛んでいた。
+    // 一覧 [甲, 乙, 丙, 丁]：甲＝表は保存済みでグラフ1/3、乙・丙＝未取込、丁＝済み。
+    final statuses = <Map<String, int>?>[
+      {'done': 1, 'total': 3},
+      null,
+      null,
+      {'done': 3, 'total': 3},
+    ];
+    int? firstOf(List<int> order) {
+      for (final i in order) {
+        if (machineNextStep(statuses[i], listedCount: 3, stale: false) !=
+            null) {
+          return i;
+        }
+      }
+      return null;
+    }
+
+    expect(firstOf([3, 2, 1, 0]), 2, reason: '下から：丁の次は丙（上の甲へ飛ばない）');
+    expect(firstOf([0, 1, 2, 3]), 0, reason: '上から：甲のグラフの続き');
+    expect(
+      machineNextStep(statuses[0], listedCount: 3, stale: false),
+      'graphs',
+    );
+    expect(machineNextStep(null, listedCount: 3, stale: false), 'table');
+    expect(machineNextStep(statuses[3], listedCount: 3, stale: false), isNull);
+    expect(
+      machineNextStep(statuses[3], listedCount: 4, stale: false),
+      'table',
+      reason: '台数が増えた',
+    );
+    expect(
+      machineNextStep(statuses[3], listedCount: 2, stale: false),
+      isNull,
+      reason: '減台は取り直さない',
+    );
+    expect(
+      machineNextStep(statuses[0], listedCount: 3, stale: true),
+      'table',
+      reason: '前に取った表のまま',
+    );
+  });
 }

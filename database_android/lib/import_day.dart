@@ -72,3 +72,25 @@ List<(List<int>, String)> machineSearchPasses(
   if (index < 0) return [(every, '')];
   return [(every.sublist(index + 1), ''), (every, '最後まで来たので、一覧の最初から残りを探しました。')];
 }
+
+/// 機種一覧の1機種について、次にすること（PC版の `next_unimported_machine` と同じ判定）。
+///
+/// 'graphs'：表は保存済みでグラフが残る、'table'：未取込・一覧の台数が増えた・前に取った表のまま
+/// （[stale]）、null：済み。機種一覧はこれを一覧の並び（選んだ向き）の順に1回だけ見て、最初に
+/// null でない機種へ進む（2026-10-06）。以前は「グラフが残る機種」を一覧のどこにあっても先に
+/// 選んでいたため、下から始めても、上に取りかけの機種があると、下の機種の次にいきなり上へ飛んだ。
+String? machineNextStep(
+  Map<String, int>? status, {
+  required int? listedCount,
+  required bool stale,
+}) {
+  if (status != null && status['done'] != status['total'] && !stale) {
+    return 'graphs';
+  }
+  if (status == null ||
+      stale ||
+      (listedCount != null && listedCount > (status['total'] ?? 0))) {
+    return 'table';
+  }
+  return null;
+}

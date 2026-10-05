@@ -1581,33 +1581,32 @@ class _Bridge:
                 return cutoff is not None and key in last_capture and last_capture[key] < cutoff
 
             def search(candidates, prefix=''):
+                # 一覧の並び（選んだ向き）の順に1回だけ見る：グラフが残る機種も、未取込・台数変更・
+                # 古い表の機種も、並びで先にある方から（2026-10-06）。以前は「グラフが残る機種」を一覧の
+                # どこにあっても先に選んでいたため、下から始めても、上に取りかけの機種があると、
+                # 下の機種の次にいきなり上へ飛んでいた。
                 for machine in candidates:
                     key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
                     done_total = progress.get(key)
-                    if done_total is None or done_total[0] >= done_total[1] or stale(key):
-                        continue
-                    step = _next_step(db, day, machine['name'], store_path)
-                    if step['kind'] == 'next' and listed_url(step.get('url')):
-                        return json.dumps({'url': step['url'], 'reason': 'graph',
-                                           'message': f"{prefix}未取得グラフが残る{machine['name']}へ移動します。{step['text']}"},
+                    old = done_total is not None and stale(key)
+                    if done_total is not None and done_total[0] < done_total[1] and not old:
+                        step = _next_step(db, day, machine['name'], store_path)
+                        if step['kind'] == 'next' and listed_url(step.get('url')):
+                            return json.dumps({'url': step['url'], 'reason': 'graph',
+                                               'message': f"{prefix}未取得グラフが残る{machine['name']}へ移動します。{step['text']}"},
+                                              ensure_ascii=False)
+                        # Old rows can lack detail_url.  Re-import this displayed table
+                        # so it records current per-rack links before resuming graphs.
+                        return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
+                                           'machine': machine['name'], 'reason': 'table', 'direct': direct,
+                                           'message': f"{prefix}{machine['name']}の一覧を更新して、未取得グラフを続けます。"},
                                           ensure_ascii=False)
-                    # Old rows can lack detail_url.  Re-import this displayed table
-                    # so it records current per-rack links before resuming graphs.
-                    return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
-                                       'machine': machine['name'], 'reason': 'table', 'direct': direct,
-                                       'message': f"{prefix}{machine['name']}の一覧を更新して、未取得グラフを続けます。"},
-                                      ensure_ascii=False)
-
-                for machine in candidates:
-                    key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
-                    done_total = progress.get(key)
                     # 一覧の台数が保存台数より「多い」ときだけ取り込み直しを案内する。
                     # 一覧は今の設置台数なので、減台後に前日分を取り込むと保存台数の方が
                     # 多くなる。取り込み直しても台は上書きされるだけで消えないため、
                     # 「少ない」を台数変更として扱うと同じ機種へ戻し続けてしまう。
                     changed = (done_total is not None and machine['count'] is not None and
                                machine['count'] > done_total[1])
-                    old = done_total is not None and stale(key)
                     if done_total is None or changed or old:
                         message = (f"{machine['name']}は設置台数が変わっています。現在の表を取り込んでください。"
                                    if changed else
