@@ -7,7 +7,7 @@
 - メルヘン Android `web_import_page.dart`：自動取り込みの判定（ページの location.href とWebViewの報告）、読み込み完了の確認、押しても移動しないときの30秒の確認が、URLを文字のまま比べていた。`capture_flow.dart` の `meruhenSamePageUrl`（PC `same_page_url` と同じ：%を戻す、#以降＝日付は比べる）に統一。
 - 試験：PC `test_pscube_import`（一覧の#・%の形の違いは保存、台別の日付違い・別機種は拒否）、Android `pscube_store_test`・`capture_flow_test` に追加。PC P’s CUBE 90件、Flutter全478件成功、analyze error/warning 0。
 - `database/bin` を再ビルド。`smoke_frozen_capture`・`smoke_frozen_runtime`（結果 `a/work/outputs/frozen-runtime-20261006-samepage.json`）成功。ZIPは作っていない。
-- APK：通常版 `0.5.30+2026100602`、P’s CUBEクローン `0.5.30+2026100603`（pubspecは2026100603）。署名SHA-256 `4332fcb9…a047` で既存と一致。`a/work/outputs/database-release-20261006/android/` に保存。**端末へのインストール・実サイトでの確認はしていない**（コミット時点）。
+- APK：通常版 `0.5.30+2026100602`、P’s CUBEクローン `0.5.30+2026100603`（pubspecは2026100603）。署名SHA-256 `4332fcb9…a047` で既存と一致。`a/work/outputs/database-release-20261006/android/` に保存。利用者が端末へ上書きインストールし、端末で通常版 0.5.30/2026100602・クローン 0.5.30/2026100603 を確認（2026-10-06）。実サイトでの取り込みの確認は未実施。
 
 ## 「下から取り込む」が途中で上からに変わる件（PC・Android、P’s CUBE・メルヘン）／メルヘンの「-」で取り込みが止まる件（Claude、2026-10-06）
 
