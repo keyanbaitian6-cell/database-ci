@@ -7,7 +7,7 @@
 - PC `PscubeRandomCapture`・Android `pscubeRandomAutoState`：待機設定ごとに15〜25秒（100マイクロ秒刻み100,001通り）を抽選。起動時OFF、今回の秒数を表示、固定間隔のスライダーは無効。`PSCUBE_AUTO_CAPTURE.md`も現行仕様へ更新。メルヘンの間隔は変更なし。通常・P’s CUBEクローンは同じAndroidコードを使用。
 - 検証：PC P’s CUBE取り込み・自動・同期・接続79件、Flutter自動・Store・日付指定・新しい入れ替え画面・既存ナビゲーション54件が成功。対象Dart analyze問題なし。`test_pscube_auto_browser.mjs`はPCカードの15〜25秒表示と360×300の操作確認に成功。`test_viewer_replacement_browser.mjs`は両viewerで同番号の別機種・番号移動の明示的な導線、320/393/768pxの横はみ出しなしを確認。画面の試験は合成データのみ。実機Safari・Androidの確認は未実施。
 - 以前止まった`test_pscube_browser.mjs`の末尾は、差枚を貼った後「日別の差枚」を開いて+14,118と取得台数1/8を確認するよう更新。移行・バックアップ・カテゴリ・Drive・差枚の保存表示を含む全体試験が成功。画面や保存値をこの試験のために変更していない。
-- Web：最新ソースのFlutter Webをビルドし、必須の`tool/stage_viewer.py`を通して記録seedを除外。新しいengineと一致する描画資産を含めた全成果物を公開リポジトリmain `44ede8fb780463077fe5a531ec894285a872e6b5`へ反映。公開先は従来の`/database-viewer/`と`/database-viewer/pscube/`。公開後の配信と操作は今回の作業で続けて確認する。
+- Web：最新ソースのFlutter Webをビルドし、必須の`tool/stage_viewer.py`を通して記録seedを除外。新しいengineと一致する描画資産を含めた全成果物を公開リポジトリmain `44ede8fb780463077fe5a531ec894285a872e6b5`へ反映。公開先は従来の`/database-viewer/`と`/database-viewer/pscube/`。GitHub Pagesの公開ジョブ成功。公開2入口のHTTP 200とindex・main.dart.js・bootstrap・CanvasKitのビルド一致、seed2経路の404を確認。公開URLでも両viewerの同番号の別機種・番号移動の導線と320/393/768px幅の試験が成功。
 - **Windows配布物・Android APKは未ビルド**。この環境にWindowsビルド環境・Android SDK・既存の署名鍵がない。pubspecの版は変更していない。インストール済みPC/Androidへ適用するには、元環境で最新mainから再ビルドする。APKは既存署名を継続してversionCodeを増やし、通常版・P’s CUBEクローン双方に共通修正を含める。既存アプリのアンインストールやデータ消去はしない。
 
 ## P’s CUBE：新台入れ替え後の空の過去履歴で取り込みが止まる件（Codex、2026-10-05）
