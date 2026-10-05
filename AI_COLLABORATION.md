@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## Android 通常版・P’s CUBEクローン 0.5.29（2026-10-06）
+
+- 正本mainの最新確認コミット `67e7f0f44a654447f4ecd71390e0884dd4c40134` からAndroid/PC対象ファイルを同期。直接 `git fetch origin` はPCのproxy接続拒否で失敗したが、GitHub APIでmainの先端と変更ファイルを確認した。
+- APKビルドに合わせ、`database_android/pubspec.yaml` を `0.5.29+2026100601` へ更新。通常版 `com.keyan.database_android` とP’s CUBEクローン `com.keyan.database_android.pscube` を同じversionCodeでreleaseビルド。
+- 署名 SHA-256 `4332fcb94ea909187733f9e8e3537d428f84d3248e39eeda2baf64387ee7a047`。PCのdebug keystoreと既存端末の通常版・クローン両APKで一致を照合。 `adb install -r` 後、端末の両packageが `0.5.29` / `2026100601`。アンインストール・データ消去はしていない。実機で取り込み操作は未確認。
+- 検証：PC `test_pscube_import` + `test_pscube_auto` 49件成功。Flutter `pscube_store_test.dart`・`pscube_auto_test.dart`・`viewer_replacement_test.dart` 42件成功。対象5 Dartファイルのanalyzeはerror/warning 0、info 2件（null-aware collectionの提案）。PCのブラウザ自動試験はローカルにPlaywrightがなく未実行。
+- Windows配布物は未ビルド。利用者が「下から取り込む」の初回後に上から再開するように見えると報告。方向選択から次ページまでのPC実操作を再現し、再発回帰テストを追加・通すまで更新物を配布しない。
+- APK成果物とハッシュのローカル一覧：`outputs/database-release-20261006/README.md`（Git外）。
+
 ## 入れ替え後の両Web閲覧導線／P’s CUBE待機をPC・Android共通15〜25秒へ（Codex、2026-10-05）
 
 - 利用者：新台入れ替えの取り込み修正をPC・Android両方に反映し、iPhoneブラウザ版2種類も必要なら見やすく編集して公開。追加指定：P’s CUBEの取り込み待機を15〜25秒のランダムにする。直前の取り込み修正（`f10cc8b`、下記）は既にPC・Android共通に反映済み。
