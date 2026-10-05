@@ -46,7 +46,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   // 起動時OFF・常駐通知。サイトのボタン・人間確認・同意には触れず、表示中のページを読む判定
   // （assets/pscube_auto_probe.js）が ready のときだけ「未取得を取り込む」と同じ処理を始める。
   static const _autoService = MethodChannel('database/auto_capture');
-  // 間隔はメルヘンより長い5〜60秒（初期7.1秒、0.1秒刻み。PC版と同じ）。
+  // 待機ごとに15〜25秒を抽選する（PC版と同じ）。
   final _auto = pscubeRandomAutoState();
   Timer? _autoTimer;
   String? _probe;
@@ -906,11 +906,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
               ),
               Row(
                 children: [
-                  const Text('5〜8秒ランダム', style: TextStyle(fontSize: 13)),
+                  const Text('15〜25秒ランダム', style: TextStyle(fontSize: 13)),
                   Expanded(
                     child: Slider(
-                      min: 5,
-                      max: 8,
+                      min: 15,
+                      max: 25,
                       value: _auto.interval.inMicroseconds / 1000000,
                       label:
                           '${(_auto.interval.inMicroseconds / 1000000).toStringAsFixed(4)}秒',

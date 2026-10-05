@@ -717,11 +717,11 @@ class PscubeRandomCapture(AutoCapture):
     """Draw a new 100-microsecond interval for each scheduled wait, inclusive."""
 
     def __init__(self, clock=time.monotonic, draw=secrets.randbelow):
-        super().__init__(clock=clock, minimum=5, maximum=8, default=6.5)
+        super().__init__(clock=clock, minimum=15, maximum=25, default=20)
         self._draw = draw
 
     def _schedule(self):
-        self._seconds = 5 + self._draw(30001) / 10000
+        self._seconds = 15 + self._draw(100001) / 10000
         super()._schedule()
 
 
@@ -735,7 +735,7 @@ class AutoPilot:
     """
     MAX_FAILURES = 3
     # P’s CUBEの間隔（秒）。サイトに止められないよう、メルヘン（0.1〜4.5秒）より長くする。
-    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 5, 8, 6.5
+    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 15, 25, 20
     # 対象のページなのにデータが出ない（人間確認の画面でもない）状態が、この回数・秒数続いたら
     # 止められたとみなして自動取り込みをOFFにする（放置しても叩き続けない。利用者の選択、2026-10-01）。
     BLOCK_CHECKS, BLOCK_SECONDS = 5, 60
@@ -993,11 +993,11 @@ def overlay_script(capture_script, index_url):
       label.style.cssText = 'font-size:12px;display:block;color:#33445a';
       const seconds = document.createElement('input');
       seconds.id = 'database-pscube-interval';
-      seconds.type = 'range'; seconds.min = '5'; seconds.max = '8'; seconds.step = '0.0001'; seconds.value = '6.5';
+      seconds.type = 'range'; seconds.min = '15'; seconds.max = '25'; seconds.step = '0.0001'; seconds.value = '20';
       seconds.disabled = true;
       seconds.style.width = '100%';
       const value = document.createElement('span');
-      value.textContent = '間隔：5〜8秒ランダム';
+      value.textContent = '間隔：15〜25秒ランダム';
       label.append(value, seconds);
       const status = document.createElement('div');
       status.id = 'database-pscube-auto-status';
@@ -1088,7 +1088,7 @@ def overlay_script(capture_script, index_url):
         auto.disabled = autoChanging;
         seconds.disabled = true;
         seconds.value = String(state.seconds);
-        value.textContent = '5〜8秒ランダム（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
+        value.textContent = '15〜25秒ランダム（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
         status.textContent = state.message;
         // 取り込み日の選択肢は、午前2時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
         const days = Array.isArray(state.days) ? state.days : [];

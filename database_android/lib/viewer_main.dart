@@ -770,11 +770,16 @@ class _ViewerHomeState extends State<ViewerHome> {
           DaySummaryCard(entries: _digest, onPick: _openRecord),
           const SizedBox(height: 18),
           Text(
-            '設置機種一覧　$machineCount機種'
+            'この日の機種一覧　$machineCount機種'
             '・${_digest.length}台',
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
+          const Text(
+            '選んだ日の取り込み済みデータです。入れ替え前の機種・台番号は、日付を戻して確認できます。',
+            style: TextStyle(fontSize: 12, color: AppColors.ash),
+          ),
+          const SizedBox(height: 8),
           // 1機種だけでも台番号から探せる。
           MachineSearchField(
             controller: _query,

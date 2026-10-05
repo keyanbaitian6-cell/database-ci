@@ -72,7 +72,7 @@ String _shortDay(String day) {
   return (capture: signature, message: 'ON・取り込み中（${probe['kind'] ?? 'ページ'}）');
 }
 
-/// 5〜8秒を100マイクロ秒刻みの30,001通りから待機ごとに抽選する。
+/// 15〜25秒を100マイクロ秒刻みの100,001通りから待機ごとに抽選する。
 AutoCaptureState pscubeRandomAutoState({
   Duration Function()? elapsed,
   int Function(int)? nextInt,
@@ -80,10 +80,10 @@ AutoCaptureState pscubeRandomAutoState({
   final draw = nextInt ?? Random.secure().nextInt;
   return AutoCaptureState(
     elapsed: elapsed,
-    minTenths: 50,
-    maxTenths: 80,
-    intervalTenths: 65,
-    selectInterval: () => Duration(microseconds: 5000000 + draw(30001) * 100),
+    minTenths: 150,
+    maxTenths: 250,
+    intervalTenths: 200,
+    selectInterval: () => Duration(microseconds: 15000000 + draw(100001) * 100),
   );
 }
 

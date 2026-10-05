@@ -162,7 +162,9 @@ class ViewerMachinePage extends StatefulWidget {
 
 class _ViewerMachinePageState extends State<ViewerMachinePage> {
   late String _day = widget.day;
+  late String _query = widget.query;
   bool _graph = false;
+  bool _hasDayRecords = false;
   String? _calculatedDay;
   List<(SlotRecord, ScoreResult)> _entries = [];
   Set<int> _candidateRacks = {};
@@ -202,8 +204,9 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
               : r.machine == widget.machine)
             r,
       ]..sort((a, b) => a.rack.compareTo(b.rack));
+      _hasDayRecords = rows.isNotEmpty;
       final grouped = [for (final r in rows) (r, scoreRecord(r, data.records))];
-      final search = RecordQuery(widget.query);
+      final search = RecordQuery(_query);
       _entries = !search.matchesMachine(widget.machine)
           ? [
               for (final e in grouped)
@@ -258,15 +261,25 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
               style: const TextStyle(color: AppColors.ash),
             ),
             const SizedBox(height: 12),
-            if (_entries.isEmpty)
+            if (_entries.isEmpty) ...[
               EmptyState(
                 icon: Icons.inbox_outlined,
-                title: 'この日の記録はありません',
-                body: variety
+                title: _hasDayRecords ? '検索条件に合う台がありません' : 'この日の記録はありません',
+                body: _hasDayRecords
+                    ? 'この日の機種の記録はあります。台番号が変わっている場合は、全台を表示して確認してください。'
+                    : variety
                     ? 'この日は1〜3台の機種（バラエティ）の記録がありません。別の日付を選んでください。'
-                    : 'この機種の記録がある別の日付を選んでください。',
-              )
-            else
+                    : 'この機種の記録がある別の日付を選んでください。入れ替え前や、まだ取り込んでいない日は表示されません。',
+              ),
+              if (_hasDayRecords)
+                OutlinedButton(
+                  onPressed: () => setState(() {
+                    _query = '';
+                    _calculatedDay = null;
+                  }),
+                  child: const Text('この機種の全台を表示'),
+                ),
+            ] else
               MachineSection(
                 machine: widget.machine,
                 entries: _entries,
@@ -309,6 +322,12 @@ class ViewerRecordPage extends StatefulWidget {
 class _ViewerRecordPageState extends State<ViewerRecordPage> {
   late String _day = widget.record.day;
 
+  void _changeDay(String? day) {
+    if (day == null || day == _day) return;
+    setState(() => _day = day);
+    widget.onDayChanged?.call(day);
+  }
+
   @override
   Widget build(BuildContext context) {
     final original = widget.record;
@@ -326,13 +345,36 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
       day: _day,
       event: widget.data.dateEventFor(original.store, _day)?.name,
       eventFor: (day) => widget.data.dateEventFor(original.store, day)?.name,
-      onChanged: (day) {
-        if (day == null || day == _day) return;
-        setState(() => _day = day);
-        widget.onDayChanged?.call(day);
-      },
+      onChanged: _changeDay,
     );
     if (record == null) {
+      final sameNumber = widget.data.records
+          .where(
+            (r) =>
+                r.store == original.store &&
+                r.day == _day &&
+                r.rack == original.rack &&
+                r.machine != original.machine,
+          )
+          .toList();
+      final otherNumbers = widget.data.records.any(
+        (r) =>
+            r.store == original.store &&
+            r.day == _day &&
+            r.machine == original.machine &&
+            r.rack != original.rack,
+      );
+      final recordedDays =
+          widget.data.records
+              .where(
+                (r) =>
+                    r.store == original.store &&
+                    r.machine == original.machine &&
+                    r.rack == original.rack,
+              )
+              .map((r) => r.day)
+              .toList()
+            ..sort((a, b) => b.compareTo(a));
       return Scaffold(
         appBar: AppBar(title: Text('${original.rack}番台'), bottom: bar),
         body: SafeArea(
@@ -343,8 +385,52 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
               const EmptyState(
                 icon: Icons.inbox_outlined,
                 title: 'この日の記録はありません',
-                body: '同じ店舗・機種・台番号の記録がありません。別の日付を選んでください。',
+                body: '同じ店舗・機種・台番号の記録がありません。入れ替えや番号の変更があっても、別の台の履歴は混ぜずに表示します。',
               ),
+              if (sameNumber.isNotEmpty) ...[
+                Text('この日の${original.rack}番台には、別の機種の記録があります。'),
+                const SizedBox(height: 8),
+                for (final other in sameNumber)
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => ViewerRecordPage(
+                          data: widget.data,
+                          record: other,
+                          onDayChanged: widget.onDayChanged,
+                        ),
+                      ),
+                    ),
+                    child: Text(
+                      'この日の「${displayMachineName(other.machine)}」を見る',
+                    ),
+                  ),
+              ],
+              if (otherNumbers) ...[
+                Text(
+                  'この日は「${displayMachineName(original.machine)}」に、別の台番号の記録があります。',
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ViewerMachinePage(
+                        data: widget.data,
+                        store: original.store,
+                        machine: original.machine,
+                        day: _day,
+                        onDayChanged: widget.onDayChanged,
+                      ),
+                    ),
+                  ),
+                  child: const Text('この日の機種一覧を見る'),
+                ),
+              ],
+              if (recordedDays.isNotEmpty)
+                OutlinedButton(
+                  onPressed: () => _changeDay(recordedDays.first),
+                  child: const Text('この台の最新の記録へ戻る'),
+                ),
             ],
           ),
         ),

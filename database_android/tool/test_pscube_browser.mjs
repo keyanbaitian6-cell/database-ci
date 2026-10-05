@@ -198,7 +198,10 @@ try {
     db.close();return value?.records?.some(r=>r.rack===1&&r.day==='2026-10-01'&&r.net_medals===14118);
   });
   await page.mouse.move(200,700); await page.mouse.wheel(0,350);
-  await page.getByText(/記録内の差枚合計 \+14,118枚（1\/8台）/).waitFor();
+  await page.getByRole('button',{name:'日別の差枚',exact:true}).scrollIntoViewIfNeeded();
+  await page.getByRole('button',{name:'日別の差枚',exact:true}).click();
+  await page.getByText('+14,118',{exact:true}).first().waitFor();
+  await page.getByText('1/8',{exact:true}).waitFor();
   const withNet=await readStored('database-pscube-viewer','state','data');
   assert.equal(withNet.records.find(r=>r.rack===1&&r.day==='2026-10-01').net_medals,14118);
   assert.equal(withNet.records.find(r=>r.rack===1&&r.day==='2026-10-01').my,500);

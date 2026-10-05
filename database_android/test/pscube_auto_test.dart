@@ -53,32 +53,32 @@ void main() {
     expect(stopped.message, contains('3回失敗'));
   });
 
-  test('ランダム間隔の30,001通りと端点・100マイクロ秒刻みを確認', () {
+  test('ランダム間隔の100,001通りと端点・100マイクロ秒刻みを確認', () {
     var now = Duration.zero;
     var choice = 0;
     final auto = pscubeRandomAutoState(
       elapsed: () => now,
       nextInt: (bound) {
-        expect(bound, 30001);
+        expect(bound, 100001);
         return choice++;
       },
     )..turnOn();
     final values = {auto.interval.inMicroseconds};
-    for (var i = 1; i <= 30000; i++) {
+    for (var i = 1; i <= 100000; i++) {
       auto.nextPage(i);
       values.add(auto.interval.inMicroseconds);
     }
-    expect(values.length, 30001);
-    expect(values.first, 5000000);
-    expect(values.last, 8000000);
+    expect(values.length, 100001);
+    expect(values.first, 15000000);
+    expect(values.last, 25000000);
     expect(values.every((v) => v % 100 == 0), isTrue);
-    now = const Duration(microseconds: 7999999);
+    now = const Duration(microseconds: 24999999);
     expect(auto.due(busy: false), isNull);
-    expect(choice, 30001, reason: '待機中の確認で再抽選しない');
+    expect(choice, 100001, reason: '待機中の確認で再抽選しない');
     choice = 0;
     now += const Duration(microseconds: 1);
     expect(auto.due(busy: false), isNotNull);
-    expect(auto.interval, const Duration(seconds: 5));
+    expect(auto.interval, const Duration(seconds: 15));
     auto.turnOff();
     now += const Duration(seconds: 100);
     expect(auto.due(busy: false), isNull);
@@ -87,10 +87,10 @@ void main() {
   test('保存中は開始せず、新しい待機を抽選する', () {
     var choice = 12345;
     final auto = pscubeRandomAutoState(nextInt: (_) => choice)..turnOn();
-    expect(auto.interval.inMicroseconds, 6234500);
-    choice = 30000;
+    expect(auto.interval.inMicroseconds, 16234500);
+    choice = 100000;
     expect(auto.due(busy: true), isNull);
-    expect(auto.interval, const Duration(seconds: 8));
+    expect(auto.interval, const Duration(seconds: 25));
   });
 
   test('起動時はOFF・間隔10秒（5〜60秒）。OFFやページ移動の後の古い判定は使わない', () {
