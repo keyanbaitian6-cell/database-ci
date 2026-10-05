@@ -2,6 +2,34 @@ import 'package:database_android/capture_flow.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('メルヘンの同じページ：日本語の機種名は%の形と元の文字の形を同じとみなし、別のページ・別の日は区別する', () {
+    const base =
+        'https://example.jp/standlist_slot?kind_code=21&machine_name=';
+    const decoded = '${base}L ｽﾏｽﾛ化物語 KH&target_date=2026-10-01';
+    final encoded =
+        '$base${Uri.encodeComponent('L ｽﾏｽﾛ化物語 KH')}&target_date=2026-10-01';
+    expect(meruhenSamePageUrl(decoded, encoded), isTrue);
+    expect(meruhenSamePageUrl(encoded, encoded), isTrue);
+    expect(
+      meruhenSamePageUrl(decoded, decoded.replaceAll('化物語', '北斗')),
+      isFalse,
+    );
+    expect(
+      meruhenSamePageUrl(decoded, decoded.replaceAll('10-01', '10-02')),
+      isFalse,
+    );
+    expect(
+      meruhenSamePageUrl(
+        '$decoded#database_day=2026-10-01',
+        '$decoded#database_day=2026-10-02',
+      ),
+      isFalse,
+    );
+    expect(meruhenSamePageUrl(null, decoded), isFalse);
+    expect(meruhenSamePageUrl(null, null), isTrue);
+    expect(meruhenSamePageUrl('%E0%A4%A', '%E0%A4%A'), isTrue);
+  });
+
   test('処理の中から処理を呼んでも、いちばん外が終わるまで処理中のまま', () async {
     var changes = 0;
     final flow = CaptureFlow(onChanged: () => changes++);

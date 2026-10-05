@@ -5,6 +5,22 @@ import 'dart:async';
 bool isNextMachineUrl(String url) =>
     url.contains('rack_info_kt') && url.contains('database_next_machine=1');
 
+/// メルヘンの同じページのURLか。ページの location.href とWebViewの報告では、日本語の
+/// 機種名が%の形と元の文字の形に分かれることがあるので、%を戻して比べる（PC版
+/// `same_page_url` と同じ規則）。#以降は取り込む日付を持つので比べる。
+bool meruhenSamePageUrl(Object? first, Object? second) {
+  if (first is! String || second is! String) return first == second;
+  String key(String url) {
+    try {
+      return Uri.decodeFull(url);
+    } catch (_) {
+      return url;
+    }
+  }
+
+  return key(first) == key(second);
+}
+
 /// 内部ブラウザの取り込み画面の状態。
 ///
 /// 以前は「読み込み中」「読み取り中」などの印を画面のあちこちで別々に立て

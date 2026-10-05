@@ -264,6 +264,22 @@ void main() {
       pscubeSamePage(list, Uri.parse(machine['url'] as String)),
       isFalse,
     );
+    // 機種名（日本語）が%の形でも元の文字の形でも同じページ。別の機種名は別のページ。
+    final named = '${machine['url']}&nmk_kisyu=L東京喰種';
+    expect(
+      pscubeSamePage(
+        Uri.parse(named),
+        Uri.parse('${Uri.encodeFull(named)}#scroll=40'),
+      ),
+      isTrue,
+    );
+    expect(
+      pscubeSamePage(
+        Uri.parse(named),
+        Uri.parse('${machine['url']}&nmk_kisyu=ﾏｲｼﾞｬｸﾞﾗｰV'),
+      ),
+      isFalse,
+    );
 
     // 読み取り後にサイトがスクロール位置を書き換えても、一覧を保存する。
     await store.importPage(

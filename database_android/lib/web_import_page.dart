@@ -386,7 +386,8 @@ class _WebImportPageState extends State<WebImportPage> {
         _autoMessage('ON・待機：${probe['reason'] ?? 'ページの準備待ち'}');
         return;
       }
-      if (probe['url'] != current || await _web.currentUrl() != current) {
+      if (!meruhenSamePageUrl(probe['url'], current) ||
+          !meruhenSamePageUrl(await _web.currentUrl(), current)) {
         _autoMessage('ON・ページ切り替え待ち');
         return;
       }
@@ -572,7 +573,7 @@ class _WebImportPageState extends State<WebImportPage> {
     if (!mounted) return;
     final page = _flow.page;
     try {
-      if (await _web.currentUrl() != url ||
+      if (!meruhenSamePageUrl(await _web.currentUrl(), url) ||
           !_samePage(page) ||
           !_flow.pageFinished(page)) {
         return;
@@ -1351,7 +1352,7 @@ class _WebImportPageState extends State<WebImportPage> {
       }
       if (!mounted || !_flow.isCurrent(starts)) return;
       final pending = _flow.takeAfterLoadNotice();
-      if (now != before) {
+      if (!meruhenSamePageUrl(now, before)) {
         try {
           await _waitForPage(starts);
           if (!_samePage(starts)) return;

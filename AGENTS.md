@@ -24,7 +24,7 @@ This directory is a local mirror of the ChatGPT project “LINE”.
 URLを文字列のまま `==` / `!=` で比べたせいで、「ページが切り替わりました」「表示中のURLと読み取り結果が一致しません」と誤って止まる不具合が繰り返し起きた。例：メルヘンPCの日本語機種名（`b6081df`、%エンコードの違い）、P’s CUBE Androidの一覧ページで#以降のスクロール位置が変わっただけで保存できない（2026-10-06）。
 
 - **表示中のページと取り込み開始時・読み取り結果のページを比べるときは、URLを直接比べない。** サイトごとの判定関数を1つだけ用意し、開始前・読み取り中・保存直前・保存処理（Store）のすべての確認でそれを使う。確認ごとに違う比べ方をしない。
-  - P’s CUBE：Android `pscubeSamePage`（`database_android/lib/pscube_store.dart`）、PC `identity`（`database/pscube_import.py` の取り込みカード）。一覧ページは#以降（サイトが書くスクロール位置）を無視し、台別ページ `nc-v06-001.php` の#以降（履歴の日付）は完全一致。
-  - メルヘン：%エンコードを戻してから比べる（PC `b6081df`）。
+  - P’s CUBE：Android `pscubeSamePage`（`database_android/lib/pscube_store.dart`）、PC `same_page`（`database/pscube_import.py`、保存処理）と `identity`（同ファイルの取り込みカード、location.href同士）。一覧ページは#以降（サイトが書くスクロール位置）を無視し、台別ページ `nc-v06-001.php` の#以降（履歴の日付）は完全一致。%を戻して比べる（WebView2は日本語の機種名を元の文字で返す）。
+  - メルヘン：%を戻してから比べる。#以降（取り込む日付）は比べる。Android `meruhenSamePageUrl`（`database_android/lib/capture_flow.dart`）、PC `same_page_url`（`database/browser_import.py`、`b6081df`）。
 - 判定を変えるときは **PC・Androidの両方** を同じ規則にそろえ、片方だけ直さない。
 - 「サイトがURLを書き換える（#・%エンコードなど）が、同じページ」の例と、「本当に別のページ・別の日」の例の両方をテストに入れる。

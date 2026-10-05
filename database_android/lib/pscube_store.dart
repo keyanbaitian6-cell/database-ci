@@ -26,13 +26,21 @@ int? pscubeStaleCutoff(String? day, String? freshSince) {
 }
 
 /// 同じページか。一覧のページではサイトがスクロール位置を#以降へ書き込むので、#以降は比べない。
-/// 台別ページの#以降は履歴の日付なので、完全に一致させる（PC版の `identity` と同じ）。
+/// 台別ページの#以降は履歴の日付なので、完全に一致させる。機種名（日本語）は%の形と元の文字の
+/// 形のどちらでも返ってきうるので、%を戻して比べる（PC版の `same_page` と同じ規則）。
 bool pscubeSamePage(Uri first, Uri second) {
-  if (first.path.endsWith('nc-v06-001.php') ||
-      second.path.endsWith('nc-v06-001.php')) {
-    return first == second;
+  String key(Uri uri) {
+    final text =
+        (uri.path.endsWith('nc-v06-001.php') ? uri : uri.removeFragment())
+            .toString();
+    try {
+      return Uri.decodeFull(text);
+    } catch (_) {
+      return text;
+    }
   }
-  return first.removeFragment() == second.removeFragment();
+
+  return key(first) == key(second);
 }
 
 /// P's CUBE records live apart from the Meruhen database and its store codes.

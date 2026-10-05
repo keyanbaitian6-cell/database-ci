@@ -6,7 +6,7 @@ from pathlib import Path
 
 from datetime import datetime
 
-from pscube_import import PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days
+from pscube_import import PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days, same_page
 
 
 class PscubeImportTests(unittest.TestCase):
@@ -349,6 +349,27 @@ class PscubeImportTests(unittest.TestCase):
         saved = json.loads(self.store.db.execute('SELECT payload FROM records ORDER BY rowid LIMIT 1').fetchone()[0])
         self.assertEqual(saved['games'], 1854)
         self.assertEqual(saved['graph']['kind'], 'daily')
+
+    def test_same_page_ignores_list_scroll_hash_and_url_encoding_but_not_rack_day(self):
+        from urllib.parse import quote
+        machine = self.machines[0]
+        encoded = machine['url'].replace(machine['machine'], quote(machine['machine']))
+        self.assertTrue(same_page(self.index_url + '#scroll=1200', self.index_url))
+        self.assertTrue(same_page(machine['url'], encoded + '#scroll=40'))
+        rack = self.record(machine, 1526)['detail_url']
+        self.assertTrue(same_page(rack, rack))
+        self.assertFalse(same_page(rack, rack.replace('#20261001', '#20260930')))
+        self.assertFalse(same_page(rack, rack.split('#')[0]))
+        self.assertFalse(same_page(machine['url'], self.machines[1]['url']))
+        self.assertFalse(same_page(self.index_url, None))
+
+        # 読み取り後にサイトがスクロール位置を書き換えても、WebView2が日本語を戻した形で返しても保存する。
+        self.store.import_page(self.page(self.index_url + '#scroll=1200', self.machines), self.index_url)
+        self.store.import_page(self.page(encoded, [machine], [self.record(machine, 1526)]), machine['url'])
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM records').fetchone()[0], 1)
+        # 本当に別の機種の結果は保存しない。
+        with self.assertRaisesRegex(ValueError, '読み取り結果が違います'):
+            self.store.import_page(self.page(self.machines[1]['url'], [machine], [self.record(machine, 1526)]), machine['url'])
 
     def test_nonconsecutive_days_and_wrong_rack_reject_before_writing(self):
         machine, record, payload = self.seed_rack()

@@ -19,7 +19,7 @@ import time
 from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from auto_capture import AutoCapture
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, retry_page, stop_navigation
@@ -140,6 +140,23 @@ def recent_business_days(now: datetime | None = None, count: int = 7) -> list[st
 def _short_day(day: str) -> str:
     parsed = date.fromisoformat(day)
     return f'{parsed.month}/{parsed.day}'
+
+
+def same_page(first, second) -> bool:
+    """同じページか（Android `pscubeSamePage` と同じ規則）。一覧のページはサイトがスクロール位置を
+    #以降へ書き込むので比べない。台別ページの#以降は履歴の日付なので完全に一致させる。
+    WebView2 の get_current_url は日本語の機種名を元の文字に戻し、location.href は%の形で返すので、
+    %を戻して比べる。"""
+    if not isinstance(first, str) or not isinstance(second, str):
+        return False
+
+    def key(raw):
+        parsed = urlparse(raw)
+        if not parsed.path.endswith('nc-v06-001.php'):
+            parsed = parsed._replace(fragment='')
+        return unquote(parsed.geturl(), errors='surrogateescape')
+
+    return key(first) == key(second)
 
 
 def site_url(raw: str, suffix: str | None = None):
@@ -467,8 +484,8 @@ class PscubeStore:
         if data.get('format') != FORMAT or data.get('version') != 1 or not isinstance(data.get('machines'), list) or not isinstance(data.get('records'), list):
             raise ValueError('P’s CUBEの取り込み形式ではありません。')
         actual = site_url(current_url)
-        reported = site_url(data.get('source_url'))
-        if (actual.scheme, actual.netloc, actual.path, actual.query, actual.fragment) != (reported.scheme, reported.netloc, reported.path, reported.query, reported.fragment):
+        site_url(data.get('source_url'))
+        if not same_page(current_url, data.get('source_url')):
             raise ValueError('表示中のページと読み取り結果が違います。')
         if len(data['machines']) > 10000 or len(data['records']) > 5000:
             raise ValueError('ページの件数が多すぎます。')
