@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import 'auto_capture_state.dart' show autoCaptureScreenNote;
 import 'browser_session.dart';
 import 'list_views.dart' show shortDayLabel;
 import 'pscube_auto.dart';
@@ -524,8 +525,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       if (autoToken != null && !_auto.current(autoToken, page)) {
         throw const FormatException('自動取り込みを止めたため、保存しませんでした。');
       }
-      if (_page != page ||
-          !_samePage(capturedUrl, await _web.currentUrl())) {
+      if (_page != page || !_samePage(capturedUrl, await _web.currentUrl())) {
         throw const FormatException('保存前にページが切り替わりました。');
       }
       final result = await store.importPage(
@@ -924,6 +924,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                 _autoStatus,
                 style: const TextStyle(fontSize: 12, color: AppColors.ash),
               ),
+              if (_auto.enabled)
+                const Text(
+                  autoCaptureScreenNote,
+                  style: TextStyle(fontSize: 12, color: AppColors.ash),
+                ),
             ],
           ),
         ),

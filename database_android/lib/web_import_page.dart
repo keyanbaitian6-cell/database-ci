@@ -1669,6 +1669,14 @@ class _WebImportPageState extends State<WebImportPage> {
                       ),
                     ),
                   ),
+                  if (_auto.enabled)
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        autoCaptureScreenNote,
+                        style: TextStyle(fontSize: 12, color: AppColors.ash),
+                      ),
+                    ),
                   const SizedBox(height: 4),
                   SizedBox(
                     width: double.infinity,

@@ -33,7 +33,7 @@ class AutoCaptureService : Service() {
         } else {
             Notification.Builder(this)
         }.setContentTitle("database 自動取り込み：ON")
-            .setContentText("確認画面は手動で操作してください。タップするとアプリを開きます。")
+            .setContentText("画面を消さずに暗くしています。アプリを前に出したままにしてください。確認画面は手動で操作してください。")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(open)
             .setOngoing(true)

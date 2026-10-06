@@ -1,3 +1,10 @@
+/// 自動取り込みがONの間に取り込み画面へ出す注意（メルヘン・P’s CUBE共通）。ONの間はアプリが画面を
+/// 消さずに暗くする（MainActivity.keepScreenOnDimmed）。画面が消える・ほかのアプリを前に出すと、
+/// アプリ内のブラウザがページの読み込みを終えず止まる（2026-10-06 実機で確認）。
+const autoCaptureScreenNote =
+    '自動取り込み中は画面を消さずに暗くしています。このアプリを前に出したままにしてください'
+    '（画面を消す・ほかのアプリを前に出すと、読み込みが止まります）。';
+
 /// Session-only admission for the optional browser auto-capture loop.
 /// No persisted ON state and no interaction with the site's controls.
 class AutoCaptureState {
