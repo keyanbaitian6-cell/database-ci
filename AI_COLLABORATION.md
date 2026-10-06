@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## Android 0.5.34：イベント名入りの通常版・P’s CUBEクローンAPKを作成（Codex、2026-10-06）
+
+- 利用者の依頼：「ビルドしておいてインストールコマンドの提示も」。正本 `database-main` のmainだけで作業。fetch・fast-forwardで `0b26106` と同期してから開始し、機能コードは変更していない（`f1575a1` のイベント名を含む）。
+- 通常版 `0.5.34+2026100610`（ソース `fa02d65acd1d2da7e05768b57c5d80abf3e17115`、`com.keyan.database_android`）、クローン `0.5.34+2026100611`（ソース `26f352ad95d8aa31977e52e7025df4a9340c9b1d`、`com.keyan.database_android.pscube`）。APKごとにpubspec.yamlのversionCodeを上げた。通常版ではクローン環境変数を削除し、クローン版だけ `DATABASE_ANDROID_CLONE=pscube` でビルド。
+- 各ビルド前に `bash database_android/tool/check_before_build.sh` を流し、両方とも **ALL PASSED**。各回：PC本体193件・P’s CUBE関連93件・Flutter484件成功、analyzeはエラー0・警告0・info18件。JS18本中17本成功、非公開アーカイブがない `test_pscube_capture.mjs` はSKIP（終了コード0）。実資料の読み取りは未確認。PythonはPCの既存Python3.14を `PYTHON` で指定し、旧g-pフォルダでは作業していない。
+- 配布物：`C:/Users/keyan/Documents/Codex/2026-09-24/a/work/database-main/database_android/build/releases/0.5.34/`。通常版 `database-0.5.34-2026100610.apk`（93,086,505 bytes、SHA-256 `86490609F2AD531351C7773474E7694B43DA1B8D60145CA0BA69292332EC252A`）、クローン `database-pscube-clone-0.5.34-2026100611.apk`（93,086,529 bytes、SHA-256 `926C6D57D627D797D5E605D7C2210B824879C699C1452B1E20E515394DE328F5`）。同フォルダのREADMEにインストールコマンド、checks-normal・checks-cloneに全24項目のログ、normal-verification.json・clone-verification.jsonに検証情報。
+- aaptでID・版番号、apksignerで署名検証。証明書SHA-256は両方とも `4332fcb94ea909187733f9e8e3537d428f84d3248e39eeda2baf64387ee7a047`。USB接続端末から読み取った既存0.5.33の通常版・クローン版と一致。既存の署名鍵を継続。
+- **本作業ではインストール未実施**（利用者へ `adb install -r` のコマンド提示）。データ消去・アンインストールはしていない。利用者はIPブロック解除をまだ確認していないと回答したため、P’s CUBE実サイトを開いていない。画面を消さず暗くする動きとAndroidでの実サイト取り込みは引き続き未確認。
+- APK・鍵・実データはGitに登録していない。Windows ZIP・database/binの再ビルド・閲覧ページの再公開は今回行っていない。ビルド前チェック内のWebビルドはローカルの画面試験用。
+
 ## P’s CUBEのイベント名（自由記入）／閲覧ページの差枚貼り付けを削除（Claude、2026-10-06夜）
 
 - 利用者：「P’s CUBEもイベント記入できるように。自由記入のみ、一度入力したものはプルダウンから選べるように」。入力はiPhone閲覧・Android・PCの3つ、バックアップで共有、末尾イベの印は「イベント名にまとめる」。「Android版は次回ビルド時に入れるだけでいい」「ブラウザ版は公開までしていい」。追加で「iPhoneブラウザ版のP’s CUBEの『差枚の元データを貼り付け』は消して」。「メルヘンで日別差枚一覧のイベント名が消えた不具合があったので気を付けて」（86eb7f8 の行の高さ。P’s CUBEでも56を試験で確認）。
