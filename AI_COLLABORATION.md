@@ -11,7 +11,7 @@
 - 再発防止（`74f9a70`）：`database_android/tool/check_before_build.sh`（PC全試験・Flutter全試験とanalyze・閲覧ページを作り直しての画面試験を含むJS全試験）。直下 `AGENTS.md` に「ALL PASSEDのときだけビルド」を追加。新規 `tool/test_pscube_rack_days.mjs` は修正前の読み取りで失敗することを確認。
 - 確認：`check_before_build.sh` 24項目 ALL PASSED。`smoke_pscube_net_capture.py`（実WebView2）成功。`database/bin` 再ビルド、`smoke_frozen_capture`・`smoke_frozen_runtime`（`a/work/outputs/frozen-runtime-20261006-dayfix.json`）成功。
 - APK：通常版 `0.5.31+2026100604`、クローン `0.5.31+2026100605`（署名 `4332fcb9…` 一致）。`a/work/outputs/database-release-20261006/android/`。端末へのインストール・アプリを通した実サイトの取り込みは未確認（記録時点）。
-- **iPhone閲覧ページは未公開**（`data.mjs` はWebアーカイブ読み込みにも使う。公開は利用者の確認待ち）。
+- iPhone閲覧ページ：利用者「公開して」。`flutter build web`（手元 Flutter 3.47.1 の一式）→ `stage_viewer.py` → 公開リポジトリ `ff44f48`（Pages成功）。公開 `pscube/data.mjs`・`main.dart.js`・`flutter_bootstrap.js` は手元と一致（改行を除き）、seed 404。公開物そのもので `test_viewer_replacement_browser`・`test_pscube_browser`・`test_viewer_built_drive`・`test_pscube_drive_browser` 成功。利用者は日付指定の取り込みをしていない（台別の日付ずれの記録は無い見込み）。
 
 ## 「同じページか」の判定をPC・Android・両サイトでそろえる／Android 0.5.30（Claude、2026-10-06）
 
