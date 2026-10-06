@@ -36,6 +36,14 @@ const meruhenAxisSteps = <int>[
   40000,
 ];
 
+/// 線が下がった分の合計（その日に使った枚数の目安）の、1回転あたりの上限。グラフの形と最大持玉だけでは
+/// 段階が決まらない台で、いちばん大きい段階を選ぶと、1回転に3枚しか入らないのに −8,944枚（1,634回転）
+/// のような値になっていた（2026-10-06、幸町 東京リベンジャーズ517・北斗637）。段階が1つに決まる3,755台
+/// （300回転以上）では1回転あたり中央値0.95・99.9%が1.71以下・最大1.93枚。これを超える段階は除き、
+/// 残りが無ければ最も小さい段階を使い、それも物理的な上限（3枚）を超えるときだけ決められない（null）。
+const meruhenPlausibleUsePerGame = 1.75;
+const meruhenMaxUsePerGame = 3.0;
+
 /// サイトのSVG（高さ400）のゼロ線と上端。
 const _zeroY = 200.5, _topY = 20.5;
 
@@ -53,6 +61,7 @@ double _rise(Iterable<double> values) {
 /// [curve] があれば線の全座標で上がり幅を測る（閲覧ページ・グラフを読み込んだ画面）。
 /// 無ければ4点（ゼロ線・山・谷・終点）から上がり幅の下限・上限を出し、最大持玉が
 /// その範囲に入る段階が1つだけのときに限って計算する（Androidの一覧）。
+/// [games]（その日の総回転数）があれば、線の全座標から、1回転あたりに使った枚数がありえない段階を除く。
 int? meruhenNetEstimate({
   required double baselineY,
   required double peakY,
@@ -63,6 +72,7 @@ int? meruhenNetEstimate({
   double? endX,
   List<List<double>>? curve,
   required int? maxHold,
+  int? games,
 }) {
   if ((baselineY - _zeroY).abs() > 0.01) return null; // 別の大きさのSVGは未確認
   if (maxHold == null || maxHold < 0 || maxHold > 100000) return null;
@@ -86,14 +96,31 @@ int? meruhenNetEstimate({
 
   int? chosen;
   if (curve != null && curve.length >= 2) {
-    final rise = _rise(curve.map((p) => baselineY - p[1]));
+    final values = [for (final p in curve) baselineY - p[1]];
+    final rise = _rise(values);
     if (rise <= 0) return null;
     // 点は間引かれているので、測った上がり幅は実際より小さい（比は1以上になる）。
-    // 比が1を下回らない最大の段階を選ぶ。
-    for (var i = 0; i < meruhenAxisSteps.length; i++) {
-      final unit = meruhenAxisSteps[i] / half;
-      if (fits(i) && maxHold / (rise * unit) >= 0.98)
-        chosen = meruhenAxisSteps[i];
+    // 比が1を下回らない段階のうち、1回転あたりの使用枚数がありえるものの最大を選ぶ。
+    final candidates = [
+      for (var i = 0; i < meruhenAxisSteps.length; i++)
+        if (fits(i) && maxHold / (rise * meruhenAxisSteps[i] / half) >= 0.98)
+          meruhenAxisSteps[i],
+    ];
+    var drops = 0.0;
+    for (var i = 1; i < values.length; i++) {
+      if (values[i] < values[i - 1]) drops += values[i - 1] - values[i];
+    }
+    bool within(int step, double perGame) =>
+        games == null || games <= 0 || drops * step / half <= perGame * games;
+    final plausible = [
+      for (final step in candidates)
+        if (within(step, meruhenPlausibleUsePerGame)) step,
+    ];
+    if (plausible.isNotEmpty) {
+      chosen = plausible.last;
+    } else if (candidates.isNotEmpty &&
+        within(candidates.first, meruhenMaxUsePerGame)) {
+      chosen = candidates.first;
     }
   } else {
     // 4点だけ：時刻順のゼロ・山・谷・終点で測った上がり幅が下限、山−谷（0を含む）が上限。

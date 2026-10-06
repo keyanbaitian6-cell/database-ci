@@ -335,6 +335,7 @@ class SlotRecord {
       endX: g.endX,
       curve: g.curve,
       maxHold: maxHold,
+      games: games,
     );
   }
 

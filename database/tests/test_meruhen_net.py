@@ -34,6 +34,24 @@ class MeruhenNetEstimateTests(unittest.TestCase):
         self.assertIsNone(meruhen_net_estimate(dict(baseline_y=150.5, peak_y=100, trough_y=160, end_y=120), 500))
         self.assertIsNone(meruhen_net_estimate(None, 500))
 
+    def test_steps_that_mean_impossible_medals_per_game_are_ruled_out(self):
+        # 実例（2026-10-06）：ほぼ下がり続けて上がりが数pxのグラフは、最大持玉だけでは段階が決まらず、
+        # 最大の段階を選んで1回転あたり5〜14枚使ったことになっていた（1回転に入るのは3枚まで）。
+        # 幸町517番台・10/04（1,634回転・最大持玉234）：−8,944 → 2,000枚の段階で −1,789（1回転1.14枚）
+        self.assertEqual(meruhen_net_estimate(measurement([0, 0, 0, -5, -17, -17, -18, -36, -40, -55, -75, -89, -87, -109, -106, -105, -116, -139, -156, -161, -161]), 234), -8944, '回転数が無ければ従来どおり')
+        self.assertEqual(meruhen_net_estimate(measurement([0, 0, 0, -5, -17, -17, -18, -36, -40, -55, -75, -89, -87, -109, -106, -105, -116, -139, -156, -161, -161]), 234, 1634), -1789)
+        # 幸町637番台・10/05（790回転・最大持玉293）：−10,733 → 1,000枚の段階で −894（1回転1.16枚）
+        self.assertEqual(meruhen_net_estimate(measurement([0, 0, 0, -4, -4, -13, -21, -21, -26, -26, -28, -73, -69, -70, -77, -77, -95, -95, -112, -145, -161, -161]), 293, 790), -894)
+        # 幸町513番台・10/05（1,228回転・最大持玉279）：4,000枚だと1回転1.94枚 → 2,000枚で −1,089
+        self.assertEqual(meruhen_net_estimate(measurement([0, 0, 0, -1, -24, -44, -41, -48, -48, -64, -81, -80, -72, -92, -98, -98, -98]), 279, 1228), -1089)
+        # 最小の段階でも1回転3枚を超える（長町南176番台・9/30、168回転で136px下落）は決められない。
+        self.assertIsNone(meruhen_net_estimate(measurement([0, 0, 0, -136, -133, -133]), 113, 168))
+        # 1.75枚を超えても3枚以内なら、最小の段階を使う（「—」にしない）。
+        self.assertEqual(meruhen_net_estimate(measurement([0, 0, 0, -136, -133, -133]), 113, 300), -739)
+        # 段階が1つに決まる従来の例は、回転数を渡しても変わらない。
+        self.assertEqual(meruhen_net_estimate(measurement([0, -63, 40, 147, 128]), 2376, 2000), 1422)
+        self.assertEqual(meruhen_net_estimate(measurement([0, 120, 40, -50]), 2900, 2500), -1111)
+
     def test_four_points_only_when_one_step_fits(self):
         known = dict(baseline_y=200.5, peak_y=200.5 - 147, trough_y=200.5 + 63, end_y=200.5 - 128,
                      peak_x=300, trough_x=100, end_x=356)
