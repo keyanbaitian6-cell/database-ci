@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## P’s CUBEのイベント名（自由記入）／閲覧ページの差枚貼り付けを削除（Claude、2026-10-06夜）
+
+- 利用者：「P’s CUBEもイベント記入できるように。自由記入のみ、一度入力したものはプルダウンから選べるように」。入力はiPhone閲覧・Android・PCの3つ、バックアップで共有、末尾イベの印は「イベント名にまとめる」。「Android版は次回ビルド時に入れるだけでいい」「ブラウザ版は公開までしていい」。追加で「iPhoneブラウザ版のP’s CUBEの『差枚の元データを貼り付け』は消して」。「メルヘンで日別差枚一覧のイベント名が消えた不具合があったので気を付けて」（86eb7f8 の行の高さ。P’s CUBEでも56を試験で確認）。
+- `f1575a1`：形式は `database/PSCUBE_SYNC.md` の `date_events`（{store, rate, day, name|null, updated_at}、新しい updated_at が勝つ、null は消した印、旧 `suffix_events` は「末尾イベ」に読み替え、書き出しは date_events のみ）。閲覧：メイン画面の「イベント：…（編集）」と末尾別画面（印のスイッチを置き換え）、共通部品 `lib/event_name_dialog.dart`。Android：P’s CUBE取り込み画面の日付指定の下に「◯/◯のイベント：…（編集）」（指定日、なしなら今の営業日）。PC：本体のイベント欄をP’s CUBEでも有効化（イベントなし・今までの名前・自由記載…）。PC・Androidは記録の state 表の date_events、PCのDrive用ファイルにも入る。候補は今イベントが付いている名前（新しい順）。
+- 確認：`check_before_build.sh` ALL PASSED（JS data/sync/browser、Dart store/suffix/daily net、PC import を追加・更新）。
+- **状態（記録時点）**：閲覧ページは `C:/Users/keyan/database-viewer` にステージ中（公開物での画面試験の途中、公開リポジトリへのcommit・pushは未完了の可能性）。次の担当は `git -C C:/Users/keyan/database-viewer status` で確認し、未pushなら公開物で `test_pscube_browser` などを流してから commit・push、Pagesと `main.dart.js` の一致・seed 404 を確認する。**Android APKは未ビルド**（次のビルドで 0.5.34、versionCode は 2026100609 より大きく、通常版・クローン両方、ビルド前に `check_before_build.sh`）。`database/bin` は未再ビルド（PCはソースで動くので開き直しで反映）。
+- 未確認：0.5.33（画面を消さずに暗くする）の実機での取り込み、P’s CUBEのIPブロック（21:40ごろ）解除。解除まではサイトを開かない。
+
 ## Android：画面オフで自動取り込みが「読み込み待ち」のまま止まる（Claude、2026-10-06、未ビルド）
 
 - 利用者：「P’s CUBEのバックグラウンド処理が不安。すぐ読み込みできませんでしたとかになる」（Android）。画面を消していたとき。
