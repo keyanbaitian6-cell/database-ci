@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readBinaryPlist, readWebArchive } from '../web/pscube/archive.mjs';
-import { emptyData, validateData, mergeData, progress, siteUrl, isExcludedMachine } from '../web/pscube/data.mjs';
+import { emptyData, validateData, mergeData, progress, siteUrl, isExcludedMachine, cleanEventName, dateEventNames } from '../web/pscube/data.mjs';
 import {netMedalsOfProbe, applyGraphProbe} from '../web/pscube/graph_probe.mjs';
 
 const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c1/cgi-bin/';
@@ -108,30 +108,47 @@ test('Okidoki machines (full- or half-width, either spelling) are excluded like 
 
 const mark = (enabled = true, updated_at = '2026-10-02T00:00:00Z', patch = {}) =>
   ({store:'c1',rate:'20',day:'2026-10-01',enabled,updated_at,...patch});
-test('optional suffix marks preserve old backups and validate scope, dates and removals', () => {
-  assert.equal(validateData(data()).suffix_events, undefined);
-  assert.deepEqual(validateData({...data(),suffix_events:[mark()]}).suffix_events, [mark()]);
+const named = (name = '周年', updated_at = '2026-10-02T00:00:00Z', patch = {}) =>
+  ({store:'c1',rate:'20',day:'2026-10-01',name,updated_at,...patch});
+test('date events: free names, validated scope and dates; old suffix marks become 末尾イベ', () => {
+  assert.equal(validateData(data()).date_events, undefined);
+  assert.deepEqual(validateData({...data(),date_events:[named(' 周年 ')]}).date_events, [named('周年')]);
+  assert.deepEqual(validateData({...data(),date_events:[named('')]}).date_events, [named(null)], '空はイベントなし');
+  // 以前の末尾イベの印は「末尾イベ」という名前（外した印はイベントなし）に読み替える。
+  assert.deepEqual(validateData({...data(),suffix_events:[mark()]}).date_events, [named('末尾イベ')]);
+  assert.deepEqual(validateData({...data(),suffix_events:[mark(false)]}).date_events, [named(null)]);
+  assert.equal(validateData({...data(),suffix_events:[mark()]}).suffix_events, undefined, '書き出しは新しい形だけ');
+  // 同じ日に古い印と新しいイベント名があれば、更新時刻が新しい方。
+  assert.deepEqual(validateData({...data(),suffix_events:[mark(true,'2026-10-05T00:00:00Z')],
+    date_events:[named('周年','2026-10-04T00:00:00Z')]}).date_events, [named('末尾イベ','2026-10-05T00:00:00Z')]);
   for (const bad of [{day:'2026-02-30'}, {rate:20}, {store:'nagamachiminami'},
-    {enabled:'true'}, {updated_at:'bad'}, {updated_at:'2026-10-02'}]) {
-    assert.throws(() => validateData({...data(),suffix_events:[mark(true,undefined,bad)]}));
+    {name:'x'.repeat(61)}, {name:'a\nb'}, {name:3}, {updated_at:'bad'}, {updated_at:'2026-10-02'}]) {
+    assert.throws(() => validateData({...data(),date_events:[{...named(),...bad}]}), JSON.stringify(bad));
   }
-  assert.throws(() => validateData({...data(),suffix_events:{}}));
-  assert.throws(() => validateData({...data(),suffix_events:[mark(),mark()]}));
+  assert.throws(() => validateData({...data(),suffix_events:[mark('true')]}));
+  assert.throws(() => validateData({...data(),date_events:{}}));
+  assert.throws(() => validateData({...data(),date_events:[named(),named('別')]}));
+  assert.equal(cleanEventName('  末尾イベ '), '末尾イベ');
+  assert.equal(cleanEventName(' '), null);
 });
-test('imports without marks preserve them; newer removals survive older marked backups', () => {
-  const marked = {...data(),suffix_events:[mark()]};
-  assert.deepEqual(mergeData(marked,data()).suffix_events,[mark()]);
-  const removed = {...data(),suffix_events:[mark(false,'2026-10-03T00:00:00Z')]};
-  assert.deepEqual(mergeData(removed,marked).suffix_events,removed.suffix_events);
-  assert.deepEqual(mergeData(marked,removed).suffix_events,removed.suffix_events);
-  const restored = {...data(),suffix_events:[mark(true,'2026-10-04T00:00:00Z')]};
-  assert.deepEqual(mergeData(removed,restored).suffix_events,restored.suffix_events);
+test('imports without events keep them; a newer removal survives an older named backup', () => {
+  const event = {...data(),date_events:[named()]};
+  assert.deepEqual(mergeData(event,data()).date_events,[named()]);
+  const removed = {...data(),date_events:[named(null,'2026-10-03T00:00:00Z')]};
+  assert.deepEqual(mergeData(removed,event).date_events,removed.date_events);
+  assert.deepEqual(mergeData(event,removed).date_events,removed.date_events);
+  const renamed = {...data(),date_events:[named('末尾イベ','2026-10-04T00:00:00Z')]};
+  assert.deepEqual(mergeData(removed,renamed).date_events,renamed.date_events);
   assert.deepEqual(mergeData(removed,removed),validateData(removed));
+  // 古い末尾イベの印のバックアップを読んでも、新しく付けた名前は戻らない。
+  assert.deepEqual(mergeData(renamed,{...data(),suffix_events:[mark()]}).date_events,renamed.date_events);
 });
-test('suffix marks are per store, rate and day and do not change records or scoring inputs', () => {
-  const marks=[mark(),mark(true,undefined,{rate:'5'}),mark(true,undefined,{store:'c2'}),mark(true,undefined,{day:'2026-09-30'})];
-  const merged=mergeData({...data(),suffix_events:marks},data());
-  assert.equal(merged.suffix_events.length,4);
+test('date events are per store, rate and day; the pull-down lists used names newest first', () => {
+  const events=[named('周年'),named('周年','2026-10-02T00:00:00Z',{rate:'5'}),named('末尾イベ','2026-10-03T00:00:00Z',{store:'c2'}),
+    named(null,'2026-10-04T00:00:00Z',{day:'2026-09-30'}),named('旧イベ','2026-09-01T00:00:00Z',{day:'2026-09-29'})];
+  const merged=mergeData({...data(),date_events:events},data());
+  assert.equal(merged.date_events.length,5);
   assert.deepEqual(merged.records,validateData(data()).records);
   assert.deepEqual(merged.machines,validateData(data()).machines);
+  assert.deepEqual(dateEventNames(merged.date_events),['末尾イベ','周年','旧イベ']);
 });

@@ -86,14 +86,17 @@ try {
   await accessibility();
   assert.equal(JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).records.length,56);
   await page.getByRole('button',{name:'末尾別データまとめ',exact:true}).click();
-  await page.getByRole('switch',{name:/末尾イベの印/}).click();
-  await page.getByRole('switch',{checked:true}).waitFor();
-  const marksBefore=(await readStored('database-pscube-viewer','state','data')).suffix_events;
-  assert.equal(marksBefore[0].enabled,true);
+  // 末尾イベは自由記入のイベント名の1つ（2026-10-06）。
+  await page.getByRole('button',{name:/イベント：なし/}).click();
+  await page.getByRole('textbox',{name:/イベント名（自由記入）/}).fill('末尾イベ');
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await page.getByRole('button',{name:/イベント：末尾イベ/}).waitFor();
+  const marksBefore=(await readStored('database-pscube-viewer','state','data')).date_events;
+  assert.equal(marksBefore[0].name,'末尾イベ');
   assert.equal((await readStored('database-pscube-viewer','state','data')).records.length,56);
   await page.reload();await accessibility();
   await page.getByRole('button',{name:'末尾別データまとめ',exact:true}).click();
-  await page.getByRole('switch',{checked:true}).waitFor();
+  await page.getByRole('button',{name:/イベント：末尾イベ/}).waitFor();
   const headline = page.getByRole('group',{name:/平均点の首位：/});
   await headline.waitFor();
   assert.ok((await headline.boundingBox()).y < 852, 'day winner is immediately visible');
@@ -110,6 +113,13 @@ try {
   await page.getByText('グラフ表示',{exact:true}).click();
   await page.screenshot({path:'/tmp/pscube-suffix-details.png'});
   await page.goto(origin+prefix+'pscube/');await accessibility();
+  // メイン画面にもイベント名のボタン。差枚の元データの貼り付けは無い（利用者の依頼で削除）。
+  await page.getByRole('button',{name:/イベント：末尾イベ（編集）/}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'差枚の元データを貼り付け'}).count(),0);
+  // 一度付けた名前はプルダウンから選べる。
+  await page.getByRole('button',{name:/イベント：末尾イベ（編集）/}).click();
+  await page.getByRole('button',{name:/今までのイベントから選ぶ/}).waitFor();
+  await page.getByRole('button',{name:'キャンセル',exact:true}).click();
 
   assert.equal(await page.getByText('準備版',{exact:true}).count(),0);
   await page.screenshot({path:process.env.PSCUBE_SCREENSHOT || '/tmp/pscube-shared-home.png'});
@@ -144,15 +154,16 @@ try {
   const backup=JSON.parse(await fs.readFile(await download.path(),'utf8'));
   assert.equal(backup.records.length,56);assert.equal(backup.records[0].max_hold,undefined);
   assert.ok(backup.records[0].my>0);
-  assert.deepEqual(backup.suffix_events,marksBefore,'mark survives a PC-style import and is included in browser backup');
+  assert.deepEqual(backup.date_events,marksBefore,'event survives a PC-style import and is included in browser backup');
+  assert.equal(backup.suffix_events,undefined);
   await page.evaluate(async oldBackup=>{
-    await window.databaseViewer.setSuffixEvent('pscube:c740601:20','2026-10-01',false);
+    await window.databaseViewer.setDateEvent('pscube:c740601:20','2026-10-01',null);
     await window.databaseViewer.save(JSON.stringify(oldBackup));
   },backup);
-  assert.equal((await readStored('database-pscube-viewer','state','data')).suffix_events[0].enabled,false,'old marked backup does not undo a removal');
+  assert.equal((await readStored('database-pscube-viewer','state','data')).date_events[0].name,null,'old named backup does not undo a removal');
   const recordsBefore=JSON.stringify((await readStored('database-pscube-viewer','state','data')).records);
   const refused=await page.evaluate(async()=>{
-    try {await window.databaseViewer.setSuffixEvent('pscube:c740601:5','2026-10-01',true);return false;} catch{return true;}
+    try {await window.databaseViewer.setDateEvent('pscube:c740601:5','2026-10-01','末尾イベ');return false;} catch{return true;}
   });
   assert.equal(refused,true);
   assert.equal(JSON.stringify((await readStored('database-pscube-viewer','state','data')).records),recordsBefore);
@@ -172,34 +183,43 @@ try {
   await page.getByText(/Googleドライブ/).first().waitFor();
   await page.getByText('Googleドライブの最新（56台）を読み込みました。').last().waitFor();
   assert.ok(driveRequests.some(url=>url.includes('file=pscube')));
-  assert.equal((await readStored('database-pscube-viewer','state','data')).suffix_events[0].enabled,false,'Drive update preserves removal');
+  assert.equal((await readStored('database-pscube-viewer','state','data')).date_events[0].name,null,'Drive update preserves removal');
   await page.evaluate(async incoming=>{
     await Promise.all([
-      window.databaseViewer.setSuffixEvent('pscube:c740601:20','2026-09-30',true),
+      window.databaseViewer.setDateEvent('pscube:c740601:20','2026-09-30','末尾イベ'),
       window.databaseViewer.save(JSON.stringify(incoming)),
-      window.databaseViewer.setSuffixEvent('pscube:c740601:20','2026-09-29',true),
+      window.databaseViewer.setDateEvent('pscube:c740601:20','2026-09-29','周年'),
     ]);
   },data);
   const afterConcurrent=await readStored('database-pscube-viewer','state','data');
   assert.equal(afterConcurrent.records.length,56);
-  assert.ok(afterConcurrent.suffix_events.some(e=>e.day==='2026-09-30'&&e.enabled));
-  assert.ok(afterConcurrent.suffix_events.some(e=>e.day==='2026-09-29'&&e.enabled));
-  assert.equal(afterConcurrent.suffix_events.find(e=>e.day==='2026-10-01').enabled,false);
+  assert.ok(afterConcurrent.date_events.some(e=>e.day==='2026-09-30'&&e.name==='末尾イベ'));
+  assert.ok(afterConcurrent.date_events.some(e=>e.day==='2026-09-29'&&e.name==='周年'));
+  assert.equal(afterConcurrent.date_events.find(e=>e.day==='2026-10-01').name,null);
   const probe={rack:1,day:'20261001',graph:{datas:{
     g:[{YMD_biz:20261001,xField:'out-1',yField:'value-1'}],
     p:[{'out-1':0,'value-1':7092},{'out-1':25,'value-1':21210}],
   }}};
-  await page.getByRole('button',{name:'差枚の元データを貼り付け',exact:true}).click();
-  await page.getByRole('textbox',{name:'グラフJSONを貼り付け'}).fill(JSON.stringify(probe));
-  await page.getByRole('button',{name:'取り込む',exact:true}).click();
+  // 差枚の元データは、ファイルとして読み込む（貼り付けの画面は削除した）。
+  const graphChooser=page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'バックアップを読み込む',exact:true}).click();
+  await(await graphChooser).setFiles({name:'pscube-graph.json',mimeType:'application/json',
+    buffer:Buffer.from(JSON.stringify(probe))});
   await page.waitForFunction(async()=>{
     const db=await new Promise((resolve,reject)=>{const q=indexedDB.open('database-pscube-viewer',1);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
     const value=await new Promise((resolve,reject)=>{const q=db.transaction('state').objectStore('state').get('data');q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
     db.close();return value?.records?.some(r=>r.rack===1&&r.day==='2026-10-01'&&r.net_medals===14118);
   });
+  // 読み込みのあとで画面が作り直されるので、ボタンが入れ替わり終わるのを待ってから押す。
+  await page.waitForTimeout(800);
   await page.mouse.move(200,700); await page.mouse.wheel(0,350);
-  await page.getByRole('button',{name:'日別の差枚',exact:true}).scrollIntoViewIfNeeded();
-  await page.getByRole('button',{name:'日別の差枚',exact:true}).click();
+  for (let attempt=0; ; attempt++) {
+    try {
+      await page.getByRole('button',{name:'日別の差枚',exact:true}).scrollIntoViewIfNeeded({timeout:3000});
+      await page.getByRole('button',{name:'日別の差枚',exact:true}).click({timeout:3000});
+      break;
+    } catch (error) { if (attempt >= 3) throw error; await page.waitForTimeout(500); }
+  }
   await page.getByText('+14,118',{exact:true}).first().waitFor();
   await page.getByText('1/8',{exact:true}).waitFor();
   const withNet=await readStored('database-pscube-viewer','state','data');

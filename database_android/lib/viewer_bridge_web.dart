@@ -24,9 +24,6 @@ external JSPromise<JSString?> _load();
 @JS('databaseViewer.exportBackup')
 external JSPromise<JSAny?> _exportBackup();
 
-@JS('databaseViewer.importGraph')
-external JSPromise<JSString?> _importGraph(JSString text);
-
 @JS('databaseViewer.setPscubeType')
 external JSPromise<JSString?> _setPscubeType(
   JSString scope,
@@ -63,9 +60,6 @@ void saveRemoteUrl(String? url) => _setRemote(url?.toJS);
 
 Future<void> exportPscubeBackup() async => await _exportBackup().toDart;
 
-Future<String?> importPscubeGraph(String text) async =>
-    (await _importGraph(text.toJS).toDart)?.toDart;
-
 Future<String?> setPscubeMachineType(
   String scope,
   String machine,
@@ -73,16 +67,17 @@ Future<String?> setPscubeMachineType(
 ) async =>
     (await _setPscubeType(scope.toJS, machine.toJS, type?.toJS).toDart)?.toDart;
 
-@JS('databaseViewer.setSuffixEvent')
-external JSPromise<JSString?> _setSuffixEvent(
+@JS('databaseViewer.setDateEvent')
+external JSPromise<JSString?> _setDateEvent(
   JSString scope,
   JSString day,
-  JSBoolean enabled,
+  JSString? name,
 );
 
-Future<String?> setPscubeSuffixEvent(
+/// P’s CUBEの日付のイベント名を閲覧ページの端末に保存する（null・空はイベントなし）。
+Future<String?> setPscubeDateEvent(
   String scope,
   String day,
-  bool enabled,
+  String? name,
 ) async =>
-    (await _setSuffixEvent(scope.toJS, day.toJS, enabled.toJS).toDart)?.toDart;
+    (await _setDateEvent(scope.toJS, day.toJS, name?.toJS).toDart)?.toDart;

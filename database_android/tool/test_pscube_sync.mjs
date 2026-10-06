@@ -106,13 +106,20 @@ test('time with the page hidden (iPhone app switch) does not count toward the ti
   } finally { delete globalThis.document; }
 });
 
-test('browser backup restores suffix marks and explicit removals; Drive without marks keeps local marks', async () => {
-  const marks=[{store:'c740601',rate:'20',day:'2026-10-01',enabled:true,updated_at:'2026-10-02T00:00:00Z'},
-    {store:'c740601',rate:'20',day:'2026-09-30',enabled:false,updated_at:'2026-10-02T00:00:01Z'}];
-  const local={...data(),suffix_events:marks};
-  assert.deepEqual(validateData(JSON.parse(JSON.stringify(buildBackup(local)))).suffix_events,marks);
+test('browser backup restores event names and explicit removals; Drive without events keeps local events', async () => {
+  const events=[{store:'c740601',rate:'20',day:'2026-10-01',name:'末尾イベ',updated_at:'2026-10-02T00:00:00Z'},
+    {store:'c740601',rate:'20',day:'2026-09-30',name:null,updated_at:'2026-10-02T00:00:01Z'}];
+  const local={...data(),date_events:events};
+  const backup=JSON.parse(JSON.stringify(buildBackup(local)));
+  assert.deepEqual(backup.date_events,events);
+  assert.equal(backup.suffix_events,undefined);
+  assert.deepEqual(validateData(backup).date_events,events);
   const remote=await fetchDrive(SCRIPT,null,{fetchImpl:respond({...data(),exported_at:'new'})});
-  assert.deepEqual(mergeData(local,remote.data).suffix_events,marks);
+  assert.deepEqual(mergeData(local,remote.data).date_events,events);
+  // PCのDrive用ファイルにある新しいイベント名は、端末の古い方より優先する。
+  const pcEvent={store:'c740601',rate:'20',day:'2026-10-01',name:'周年',updated_at:'2026-10-05T00:00:00Z'};
+  const fromPc=await fetchDrive(SCRIPT,null,{fetchImpl:respond({...data(),exported_at:'newer',date_events:[pcEvent]})});
+  assert.deepEqual(mergeData(local,fromPc.data).date_events.find(e=>e.day==='2026-10-01'),pcEvent);
 });
 
 // --- 2026-10-04：返事が固まるApps Scriptへの対策（出し直し）と、更新の目印だけの確認 ---

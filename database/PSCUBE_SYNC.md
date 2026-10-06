@@ -29,6 +29,16 @@ P’s CUBE用に移したもの。**メルヘンの記録・設定・ファイ�
 - `source`：`pc`／`android`／`browser`
 - `kind`：`backup`（全期間・復元に使える）／`viewer`（軽い。復元には使えない）
 - `rack_captures`：台別7日分を取り込み済みの印（`backup` のみ）
+- `date_events`：日付ごとのイベント名（自由記入、2026-10-06。`backup`・`viewer` とも）。
+  `{store, rate, day, name, updated_at}`。`name` は1〜60文字（前後の空白は除く、改行などの制御文字は不可）、
+  `null` は「イベントを消した」印で、古いバックアップを読んでも消したイベントが戻らないよう残す。
+  同じ店舗・貸玉・日付は `updated_at` が新しい方（同じなら読み込んだ方）を残す（PC `merge_date_events`・
+  Android `mergePscubeDateEvents`・閲覧 `mergeDateEvents`）。PC・Androidは記録のある貸玉それぞれに同じ名前を
+  付け、閲覧ページは表示中の店舗・貸玉に付ける。入力欄のプルダウンは、今イベントが付いている名前（新しく
+  使った順）。全部の日から消した名前は候補から外れる（打ち間違いが残らない）。
+  以前の閲覧ページの末尾イベの印 `suffix_events`（`enabled`）は「末尾イベ」という名前（外した印は `null`）に
+  読み替え、書き出しは `date_events` だけにする。保存場所：PC・Androidは記録の `state` 表の `date_events`、
+  閲覧ページは端末のIndexedDB。採点・候補には使わない（表示だけ）。
 
 ## 動き
 

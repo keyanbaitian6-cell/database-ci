@@ -118,6 +118,11 @@ void main() {
     expect(find.text('P’s CUBE（20スロ）　2026年10月のデータ'), findsOneWidget);
     expect(find.text('10/1（木）'), findsOneWidget);
     expect(find.text('華の日'), findsOneWidget);
+    // イベント名が日付の下で切れないよう、行は56（メルヘンで起きた件、86eb7f8）。P’s CUBEも同じ。
+    expect(
+      tester.widget<DataTable>(find.byType(DataTable)).dataRowMinHeight,
+      56,
+    );
     expect(find.text('10/2（金）'), findsOneWidget);
     expect(find.text('9/30（水）'), findsNothing, reason: '選んだ月だけ');
     expect(find.text('+50'), findsOneWidget);

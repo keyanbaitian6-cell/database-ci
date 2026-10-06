@@ -11,6 +11,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'auto_capture_state.dart' show autoCaptureScreenNote;
 import 'browser_session.dart';
+import 'event_name_dialog.dart';
 import 'list_views.dart' show shortDayLabel;
 import 'pscube_auto.dart';
 import 'pscube_connection.dart';
@@ -65,16 +66,26 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   // {日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は取り直す。
   // 画面を開いている間（手動の取り込みも）続き、自動取り込みをONにするたびに作り直す。
   final Map<String, String> _freshSince = {};
+  // イベント名（自由記入、2026-10-06）。日付指定の日、指定なしなら今の営業日の分を出して編集する。
+  String? _eventName;
+  String? _eventShownDay;
+  bool _eventLoading = false;
+
+  String get _eventDay => _targetDay ?? pscubeBusinessDay();
 
   @override
   void initState() {
     super.initState();
     _web = WebViewController();
     unawaited(_prepareBrowser());
-    _autoTimer = Timer.periodic(
-      const Duration(milliseconds: 100),
-      (_) => unawaited(_autoTick()),
-    );
+    _autoTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      // 表示中のイベント名の日が変わった（日付指定・その日の完了・午前2時）ら読み直す。
+      if (_store != null && _eventShownDay != _eventDay && !_eventLoading) {
+        _eventLoading = true;
+        unawaited(_loadEvent());
+      }
+      unawaited(_autoTick());
+    });
     unawaited(_initialize());
   }
 
@@ -206,6 +217,61 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     } catch (error) {
       if (mounted) setState(() => _status = '取り込みの準備ができません：$error');
     }
+  }
+
+  Future<void> _loadEvent() async {
+    final store = _store;
+    final day = _eventDay;
+    try {
+      final name = store == null ? null : await store.dateEventFor(day);
+      if (mounted) {
+        setState(() {
+          _eventName = name;
+          _eventShownDay = day;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _eventShownDay = day);
+    } finally {
+      _eventLoading = false;
+    }
+  }
+
+  /// その日のイベント名を付ける・変える・消す。記録はP’s CUBEのバックアップで共有する。
+  Future<void> _editEvent() async {
+    final store = _store;
+    if (store == null) return;
+    final day = _eventDay;
+    final List<String> names;
+    final String? current;
+    try {
+      names = await store.dateEventNames();
+      current = await store.dateEventFor(day);
+    } catch (error) {
+      if (mounted) setState(() => _status = 'イベント名を読めませんでした：$error');
+      return;
+    }
+    if (!mounted) return;
+    final name = await showEventNameDialog(
+      context,
+      title: '${shortDayLabel(day)} のイベント',
+      current: current,
+      names: names,
+    );
+    if (name == null || !mounted) return;
+    try {
+      await store.setDateEvent(day, name.isEmpty ? null : name);
+      if (mounted) {
+        setState(
+          () => _status = name.isEmpty
+              ? '${shortDayLabel(day)}のイベントを外しました。'
+              : '${shortDayLabel(day)}のイベントを「$name」にしました。',
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _status = 'イベント名を保存できませんでした：$error');
+    }
+    await _loadEvent();
   }
 
   @override
@@ -867,6 +933,17 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                             ? null
                             : value,
                       ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _store == null ? null : _editEvent,
+                  icon: const Icon(Icons.event_note_outlined, size: 18),
+                  label: Text(
+                    '${shortDayLabel(_eventDay)}のイベント：'
+                    '${_eventShownDay == _eventDay ? (_eventName ?? 'なし') : '…'}（編集）',
+                  ),
+                ),
               ),
               const SizedBox(height: 6),
               Row(

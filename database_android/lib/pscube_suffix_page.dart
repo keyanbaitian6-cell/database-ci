@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'event_name_dialog.dart';
+
 import 'machine_sections.dart';
 import 'list_views.dart' show dayWithWeekday;
 import 'models.dart';
@@ -18,14 +20,16 @@ class PscubeSuffixPage extends StatefulWidget {
     required this.day,
     this.onDayChanged,
     this.onDataChanged,
-    this.saveSuffixEvent,
+    this.saveDateEvent,
   });
   final ViewerData data;
   final String store, day;
   final ValueChanged<String>? onDayChanged;
   final ValueChanged<ViewerData>? onDataChanged;
-  final Future<String?> Function(String scope, String day, bool enabled)?
-  saveSuffixEvent;
+
+  /// イベント名の保存（試験用に差し替える。null は閲覧ページの端末に保存）。
+  final Future<String?> Function(String scope, String day, String? name)?
+  saveDateEvent;
   @override
   State<PscubeSuffixPage> createState() => _PscubeSuffixPageState();
 }
@@ -33,7 +37,7 @@ class PscubeSuffixPage extends StatefulWidget {
 class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
   late String _day = widget.day;
   late ViewerData _data = widget.data;
-  bool _savingMark = false;
+  bool _savingEvent = false;
   var _period = PscubeSuffixPeriod.day;
   var _type = PscubeSuffixType.all;
   final _scroll = ScrollController();
@@ -99,17 +103,25 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
     _calculate();
   }
 
-  Future<void> _setMark(bool enabled) async {
-    if (_savingMark) return;
+  /// その日のイベント名を付ける・変える・消す（自由記入、今までの名前はプルダウン）。
+  Future<void> _editEvent() async {
+    if (_savingEvent) return;
     final day = _day;
-    setState(() => _savingMark = true);
+    final name = await showEventNameDialog(
+      context,
+      title: '${dayWithWeekday(day)} のイベント',
+      current: _data.dateEventFor(widget.store, day)?.name,
+      names: _data.eventNames[widget.store] ?? const [],
+    );
+    if (name == null || !mounted) return;
+    setState(() => _savingEvent = true);
     try {
-      final text = await (widget.saveSuffixEvent ?? setPscubeSuffixEvent)(
+      final text = await (widget.saveDateEvent ?? setPscubeDateEvent)(
         widget.store,
         day,
-        enabled,
+        name.isEmpty ? null : name,
       );
-      if (text == null) throw StateError('印を保存できませんでした。');
+      if (text == null) throw StateError('イベント名を保存できませんでした。');
       final data = ViewerData.parse(text);
       widget.onDataChanged?.call(data);
       if (mounted) {
@@ -118,11 +130,10 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
       }
     } catch (error) {
       if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('末尾イベの印を保存できませんでした。\n$error')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('イベント名を保存できませんでした。\n$error')));
     } finally {
-      if (mounted) setState(() => _savingMark = false);
+      if (mounted) setState(() => _savingEvent = false);
     }
   }
 
@@ -315,12 +326,13 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                     dayWithWeekday(d.end),
                     style: const TextStyle(fontSize: 14),
                   ),
-                  if (_data.dateEventFor(widget.store, d.end) != null)
+                  if (_data.dateEventFor(widget.store, d.end)?.name
+                      case final event?)
                     Semantics(
-                      label: '末尾イベ',
-                      child: const ExcludeSemantics(
+                      label: event,
+                      child: ExcludeSemantics(
                         child: Chip(
-                          label: Text('末尾イベ'),
+                          label: Text(event),
                           visualDensity: VisualDensity.compact,
                         ),
                       ),
@@ -448,11 +460,18 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
             ),
             const SizedBox(height: 12),
             Card(
-              child: SwitchListTile(
-                title: const Text('末尾イベの印'),
-                subtitle: Text(_savingMark ? '保存中…' : '自分用の印。付ける・外すができます。'),
-                value: _data.dateEventFor(widget.store, _day) != null,
-                onChanged: _savingMark ? null : _setMark,
+              child: ListTile(
+                title: Text(
+                  'イベント：${_data.dateEventFor(widget.store, _day)?.name ?? 'なし'}',
+                ),
+                subtitle: Text(
+                  _savingEvent
+                      ? '保存中…'
+                      : '自由記入。一度付けた名前はプルダウンから選べます（「末尾イベ」も含む）。',
+                ),
+                trailing: const Icon(Icons.edit_outlined),
+                enabled: !_savingEvent,
+                onTap: _editEvent,
               ),
             ),
             const SizedBox(height: 12),

@@ -245,10 +245,7 @@ void main() {
 
   test('一覧のスクロール位置（#以降）が変わっても同じページとして保存し、台別の日付は区別する', () async {
     final list = Uri.parse(PscubeStore.index);
-    expect(
-      pscubeSamePage(list, list.replace(fragment: 'scroll=1200')),
-      isTrue,
-    );
+    expect(pscubeSamePage(list, list.replace(fragment: 'scroll=1200')), isTrue);
     expect(
       pscubeSamePage(
         list.replace(fragment: 'scroll=0'),
@@ -260,10 +257,7 @@ void main() {
     expect(pscubeSamePage(rack, rack), isTrue);
     expect(pscubeSamePage(rack, rack.replace(fragment: '20260930')), isFalse);
     expect(pscubeSamePage(rack, rack.removeFragment()), isFalse);
-    expect(
-      pscubeSamePage(list, Uri.parse(machine['url'] as String)),
-      isFalse,
-    );
+    expect(pscubeSamePage(list, Uri.parse(machine['url'] as String)), isFalse);
     // 機種名（日本語）が%の形でも元の文字の形でも同じページ。別の機種名は別のページ。
     final named = '${machine['url']}&nmk_kisyu=L東京喰種';
     expect(
@@ -743,6 +737,96 @@ void main() {
       expect(data['rack_captures'], hasLength(1));
     });
 
+    test('イベント名：全貸玉に付け、書き出し・読み込みで新しい方が勝ち、古い末尾イベの印も読める', () async {
+      await seedRack();
+      final at = DateTime.utc(2026, 10, 6, 12);
+      await store.setDateEvent(day, ' 周年 ', now: at);
+      expect(await store.dateEventFor(day), '周年');
+      await store.setDateEvent(
+        '2026-09-30',
+        '末尾イベ',
+        now: at.add(const Duration(minutes: 1)),
+      );
+      expect(await store.dateEventNames(), ['末尾イベ', '周年'], reason: '新しく使った順');
+      final data = await exported();
+      final events = data['date_events'] as List;
+      expect(events, hasLength(2), reason: '記録のある貸玉（20）ごとに1件');
+      expect(events.first, {
+        'store': 'c740601',
+        'rate': '20',
+        'day': day,
+        'name': '周年',
+        'updated_at': '2026-10-06T12:00:00.000Z',
+      });
+      expect(data['suffix_events'], isNull);
+      // 別の端末へ：イベント名も引き継ぐ。2回目は変化なし。
+      final second = await other();
+      addTearDown(second.close);
+      await second.importBackup(jsonEncode(data));
+      expect(await second.dateEventFor(day), '周年');
+      expect(await second.dateEventFor('2026-09-30'), '末尾イベ');
+      // こちらで消した（新しい）ものは、古いバックアップを読んでも戻らない。
+      await second.setDateEvent(
+        day,
+        null,
+        now: at.add(const Duration(hours: 1)),
+      );
+      await second.importBackup(jsonEncode(data));
+      expect(await second.dateEventFor(day), isNull);
+      expect(await second.dateEventNames(), ['末尾イベ'], reason: '消した名前は候補から外れる');
+      // 相手の新しい名前は取り込む。
+      await store.setDateEvent(
+        day,
+        '周年2',
+        now: at.add(const Duration(hours: 2)),
+      );
+      await second.importBackup(jsonEncode(await exported()));
+      expect(await second.dateEventFor(day), '周年2');
+      // 以前の閲覧ページの末尾イベの印（suffix_events）は「末尾イベ」として読む。
+      final legacy = await exported()
+        ..remove('date_events')
+        ..['suffix_events'] = [
+          {
+            'store': 'c740601',
+            'rate': '20',
+            'day': '2026-09-29',
+            'enabled': true,
+            'updated_at': '2026-10-02T00:00:00Z',
+          },
+        ];
+      await second.importBackup(jsonEncode(legacy));
+      expect(await second.dateEventFor('2026-09-29'), '末尾イベ');
+      // 長すぎる名前・改行は保存しない。記録が無ければ付けられない。
+      expect(store.setDateEvent(day, 'x' * 61), throwsFormatException);
+      expect(store.setDateEvent(day, 'a\nb'), throwsFormatException);
+      final empty = await PscubeStore.open(
+        path: '${dir.path}/empty.sqlite3',
+        factory: databaseFactoryFfi,
+      );
+      addTearDown(empty.close);
+      expect(empty.setDateEvent(day, '周年'), throwsFormatException);
+      // 形の違うイベント名を含むバックアップは、何も保存しない。
+      final broken = await exported()
+        ..['date_events'] = [
+          {
+            'store': 'c740601',
+            'rate': '20',
+            'day': day,
+            'name': 3,
+            'updated_at': 'bad',
+          },
+        ];
+      final before = await second.dateEvents();
+      await expectLater(
+        second.importBackup(jsonEncode(broken)),
+        throwsFormatException,
+      );
+      expect(
+        [for (final e in await second.dateEvents()) e.toJson()],
+        [for (final e in before) e.toJson()],
+      );
+    });
+
     test('別の端末へ往復でき、印も引き継がれる。2回目は変化なし', () async {
       await seedRack();
       final text = jsonEncode(await exported());
@@ -1015,7 +1099,11 @@ void main() {
     );
     expect(pscubeTableUrlForDay(table, null), table, reason: '指定なしは今までどおり');
     final rack = record('2026-10-05')['detail_url'] as String;
-    expect(pscubeTableUrlForDay(rack, '2026-10-05'), rack, reason: '台別ページは変えない');
+    expect(
+      pscubeTableUrlForDay(rack, '2026-10-05'),
+      rack,
+      reason: '台別ページは変えない',
+    );
     expect(
       pscubeTableUrlForDay(PscubeStore.index, '2026-10-05'),
       PscubeStore.index,
@@ -1029,31 +1117,31 @@ void main() {
     final six = [
       for (var i = 0; i < 6; i++)
         record(
-          DateTime.utc(
-            2026,
-            10,
-            1,
-          ).subtract(Duration(days: i)).toIso8601String().substring(0, 10),
-        )..['graph'] = {
-          'kind': 'daily',
-          'zero_y': 10,
-          'points': [
-            [0, 10],
-            [1, 8],
-          ],
-        },
+            DateTime.utc(
+              2026,
+              10,
+              1,
+            ).subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+          )
+          ..['graph'] = {
+            'kind': 'daily',
+            'zero_y': 10,
+            'points': [
+              [0, 10],
+              [1, 8],
+            ],
+          },
     ];
     String rackPage(List<Map<String, dynamic>> rows, [Object? latest]) =>
         jsonEncode({
           ...jsonDecode(
-                page(rackUrl, [
-                  {
-                    ...machine,
-                    'url': (machine['url'] as String).replaceAll('cd_ps=2&', ''),
-                  },
-                ], rows),
-              )
-              as Map<String, dynamic>,
+            page(rackUrl, [
+              {
+                ...machine,
+                'url': (machine['url'] as String).replaceAll('cd_ps=2&', ''),
+              },
+            ], rows),
+          ) as Map<String, dynamic>,
           if (latest != null) 'history_latest_day': latest,
         });
     await store.importPage(

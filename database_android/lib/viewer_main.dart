@@ -7,6 +7,7 @@ import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
 import 'daily_net_page.dart';
+import 'event_name_dialog.dart';
 import 'pscube_suffix_page.dart';
 import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
@@ -275,54 +276,6 @@ class _ViewerHomeState extends State<ViewerHome> {
     }
   }
 
-  Future<void> _pastePscubeGraph() async {
-    final field = TextEditingController();
-    final text = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('差枚の元データを取り込む'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('P’s CUBEで実行したショートカットの結果を貼り付けます。既にある台の記録に差枚を追加します。'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: field,
-              maxLines: 5,
-              decoration: const InputDecoration(labelText: 'グラフJSONを貼り付け'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('閉じる'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, field.text.trim()),
-            child: const Text('取り込む'),
-          ),
-        ],
-      ),
-    );
-    field.dispose();
-    if (text == null || text.isEmpty || !mounted) return;
-    try {
-      final updated = await importPscubeGraph(text);
-      if (updated == null) return;
-      await saveViewerData(updated);
-      if (!mounted) return;
-      setState(() {
-        _error = null;
-        _show(ViewerData.parse(updated));
-      });
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('差枚の元データを取り込みました。')));
-    } catch (error) {
-      if (mounted) setState(() => _error = '差枚の元データを取り込めませんでした。\n$error');
-    }
-  }
-
   Future<void> _editPscubeType() async {
     final records =
         _data?.records.where((r) => r.store == _store).toList() ?? [];
@@ -403,6 +356,32 @@ class _ViewerHomeState extends State<ViewerHome> {
       }
     } catch (error) {
       if (mounted) setState(() => _error = '機種タイプを保存できませんでした。\n$error');
+    }
+  }
+
+  /// P’s CUBEのその日のイベント名を付ける・変える・消す（自由記入、今までの名前はプルダウン）。
+  Future<void> _editPscubeEvent(String store, String day) async {
+    final data = _data;
+    if (data == null) return;
+    final name = await showEventNameDialog(
+      context,
+      title: '${dayWithWeekday(day)} のイベント',
+      current: data.dateEventFor(store, day)?.name,
+      names: data.eventNames[store] ?? const [],
+    );
+    if (name == null || !mounted) return;
+    try {
+      final text = await setPscubeDateEvent(
+        store,
+        day,
+        name.isEmpty ? null : name,
+      );
+      if (text != null && mounted) {
+        await saveViewerData(text);
+        setState(() => _show(ViewerData.parse(text)));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = 'イベント名を保存できませんでした。\n$error');
     }
   }
 
@@ -667,9 +646,11 @@ class _ViewerHomeState extends State<ViewerHome> {
         const SizedBox(height: 10),
         if (isPscubeStore(store) && day != null) ...[
           OutlinedButton.icon(
-            onPressed: _pastePscubeGraph,
-            icon: const Icon(Icons.content_paste),
-            label: const Text('差枚の元データを貼り付け'),
+            onPressed: () => _editPscubeEvent(store, day),
+            icon: const Icon(Icons.event_note_outlined),
+            label: Text(
+              'イベント：${data.dateEventFor(store, day)?.name ?? 'なし'}（編集）',
+            ),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(

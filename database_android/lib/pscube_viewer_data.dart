@@ -1,4 +1,149 @@
+import 'date_events.dart';
 import 'models.dart';
+
+/// P’s CUBEの日付ごとのイベント名1件（`web/pscube/data.mjs` の date_events と同じ形）。
+/// [name] が null の記録は「イベントを消した」印（表示しない）。
+class PscubeDateEvent {
+  const PscubeDateEvent({
+    required this.store,
+    required this.rate,
+    required this.day,
+    required this.name,
+    required this.updatedAt,
+  });
+
+  final String store, rate, day;
+  final String? name;
+  final String updatedAt;
+
+  /// 画面で使う形（店舗は `pscube:店:貸玉`）。
+  DateEvent get event =>
+      DateEvent(store: 'pscube:$store:$rate', day: day, name: name ?? '');
+
+  Map<String, Object?> toJson() => {
+    'store': store,
+    'rate': rate,
+    'day': day,
+    'name': name,
+    'updated_at': updatedAt,
+  };
+}
+
+/// イベント名を整える（`web/pscube/data.mjs` の cleanEventName と同じ）。空は null（イベントなし）。
+String? cleanPscubeEventName(String? name) {
+  if (name == null) return null;
+  final text = name.trim();
+  if (text.isEmpty) return null;
+  if (text.length > 60 || RegExp(r'[\u0000-\u001f\u007f]').hasMatch(text)) {
+    throw const FormatException('イベント名は1〜60文字で入力してください。');
+  }
+  return text;
+}
+
+/// 同じ店舗・貸玉・日付は、更新時刻が新しい方（同じなら [incoming] の方）を残す。
+List<PscubeDateEvent> mergePscubeDateEvents(
+  Iterable<PscubeDateEvent> stored,
+  Iterable<PscubeDateEvent> incoming,
+) {
+  final merged = {for (final e in stored) e.event.key: e};
+  for (final e in incoming) {
+    final previous = merged[e.event.key];
+    if (previous == null ||
+        !DateTime.parse(e.updatedAt)
+            .isBefore(DateTime.parse(previous.updatedAt))) {
+      merged[e.event.key] = e;
+    }
+  }
+  return merged.values.toList();
+}
+
+final _pscubeStoreCode = RegExp(r'^c\d+$');
+final _pscubeRate = RegExp(r'^\d+(?:\.\d+)?$');
+final _eventTime = RegExp(r'^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$');
+
+/// P’s CUBEのファイルの date_events を読む。以前の末尾イベの印（suffix_events）は
+/// 「末尾イベ」という名前に読み替える（外した印は null）。同じ店舗・貸玉・日付は更新時刻が
+/// 新しい方。形が違えば FormatException（`web/pscube/data.mjs` の validateDateEvents と同じ規則）。
+List<PscubeDateEvent> pscubeDateEvents(Map<dynamic, dynamic> data) {
+  List<PscubeDateEvent> read(
+    Object? list,
+    String what,
+    String? Function(Map<dynamic, dynamic>) nameOf,
+  ) {
+    if (list == null) return const [];
+    if (list is! List || list.length > 100000) {
+      throw FormatException('$whatが不正です。');
+    }
+    final seen = <String>{};
+    return [
+      for (final raw in list)
+        () {
+          if (raw is! Map ||
+              raw['store'] is! String ||
+              !_pscubeStoreCode.hasMatch(raw['store']) ||
+              raw['rate'] is! String ||
+              !_pscubeRate.hasMatch(raw['rate']) ||
+              raw['day'] is! String ||
+              !isValidRecordDay(raw['day']) ||
+              raw['updated_at'] is! String ||
+              !_eventTime.hasMatch(raw['updated_at']) ||
+              DateTime.tryParse(raw['updated_at']) == null) {
+            throw FormatException('$whatが不正です。');
+          }
+          final event = PscubeDateEvent(
+            store: raw['store'],
+            rate: raw['rate'],
+            day: raw['day'],
+            name: nameOf(raw),
+            updatedAt: raw['updated_at'],
+          );
+          if (!seen.add(event.event.key)) {
+            throw FormatException('$whatが重複しています。');
+          }
+          return event;
+        }(),
+    ];
+  }
+
+  final legacy = read(data['suffix_events'], '末尾イベの印', (raw) {
+    if (raw['enabled'] is! bool) {
+      throw const FormatException('末尾イベの印が不正です。');
+    }
+    return raw['enabled'] == true ? suffixEventName : null;
+  });
+  final named = read(data['date_events'], 'イベント名', (raw) {
+    final name = raw['name'];
+    if (name == null) return null;
+    if (name is! String) throw const FormatException('イベント名が不正です。');
+    return cleanPscubeEventName(name);
+  });
+  return mergePscubeDateEvents(legacy, named);
+}
+
+/// 以前の末尾イベの印を読み替えるイベント名。
+const suffixEventName = '末尾イベ';
+
+/// 店舗（`pscube:店:貸玉`）ごとの、今までに付けたイベント名（新しく使った順、重複なし）。
+Map<String, List<String>> pscubeEventNames(Iterable<PscubeDateEvent> events) {
+  final latest = <String, Map<String, DateTime>>{};
+  for (final e in events) {
+    final name = e.name;
+    if (name == null) continue;
+    final names = latest.putIfAbsent(e.event.store, () => {});
+    final time = DateTime.parse(e.updatedAt);
+    if (names[name] == null || time.isAfter(names[name]!)) names[name] = time;
+  }
+  return {
+    for (final entry in latest.entries)
+      entry.key:
+          (entry.value.entries.toList()..sort((a, b) {
+                final byTime = b.value.compareTo(a.value);
+                return byTime != 0 ? byTime : a.key.compareTo(b.key);
+              }))
+              .map((e) => e.key)
+              .toList(),
+  };
+}
 
 /// Convert at the input boundary so both data sites use the same viewer UI.
 /// MY stays in extra['my']; it is never written to Meruhen's max_hold field.

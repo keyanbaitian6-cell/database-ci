@@ -87,6 +87,56 @@ class PscubeImportTests(unittest.TestCase):
         fresh = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom')
         self.assertEqual(fresh['next_url'], self.machines[-1]['url'] + '#0;0;20261003;0;cd_dai;1;0;0')
 
+    def test_date_events_free_names_shared_by_backup_with_newest_winning(self):
+        # P’s CUBEのイベント名（自由記入、2026-10-06）。Android pscube_store_test と同じ規則。
+        from datetime import timezone
+        from pscube_import import validate_date_events
+        self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        at = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
+        self.store.set_date_event(self.day, ' 周年 ', now=at)
+        self.store.set_date_event('2026-09-30', '末尾イベ', now=at + timedelta(minutes=1))
+        self.assertEqual(self.store.date_event_for(self.day), '周年')
+        self.assertEqual(self.store.date_event_names(), ['末尾イベ', '周年'], '新しく使った順')
+        backup = self.store.export_payload('backup')
+        self.assertEqual(backup['date_events'][0], {'store': 'c740601', 'rate': '20', 'day': self.day, 'name': '周年',
+                                                    'updated_at': '2026-10-06T12:00:00.000Z'})
+        self.assertNotIn('suffix_events', backup)
+        self.assertEqual(self.store.export_payload('viewer')['date_events'], backup['date_events'],
+                         'iPhone向けの軽いファイルにも入る')
+        other = PscubeStore(Path(self.tmp.name) / 'other.sqlite3')
+        self.addCleanup(other.close)
+        self.assertEqual(other.import_backup(backup)['events'], 2)
+        self.assertEqual(other.date_event_for('2026-09-30'), '末尾イベ')
+        self.assertEqual(other.import_backup(backup)['events'], 0, '2回目は変化なし')
+        # 新しく消したものは、古いバックアップで戻らない。相手の新しい名前は取り込む。
+        other.set_date_event(self.day, None, now=at + timedelta(hours=1))
+        other.import_backup(backup)
+        self.assertIsNone(other.date_event_for(self.day))
+        self.assertEqual(other.date_event_names(), ['末尾イベ'])
+        self.store.set_date_event(self.day, '周年2', now=at + timedelta(hours=2))
+        other.import_backup(self.store.export_payload('backup'))
+        self.assertEqual(other.date_event_for(self.day), '周年2')
+        # 以前の閲覧ページの末尾イベの印は「末尾イベ」として読む。
+        legacy = {**self.store.export_payload('backup'), 'suffix_events': [
+            {'store': 'c740601', 'rate': '20', 'day': '2026-09-29', 'enabled': True, 'updated_at': '2026-10-02T00:00:00Z'}]}
+        legacy.pop('date_events')
+        other.import_backup(legacy)
+        self.assertEqual(other.date_event_for('2026-09-29'), '末尾イベ')
+        # 形の違うもの・長すぎる名前は保存しない。記録が無ければ付けられない。
+        before = other.date_events()
+        with self.assertRaises(ValueError):
+            other.import_backup({**backup, 'date_events': [{**backup['date_events'][0], 'name': 'x' * 61}]})
+        self.assertEqual(other.date_events(), before)
+        for bad in ({'day': '2026-02-30'}, {'rate': 20}, {'updated_at': 'bad'}, {'name': 'a\nb'}):
+            with self.assertRaises(ValueError, msg=bad):
+                validate_date_events([{**backup['date_events'][0], **bad}])
+        with self.assertRaises(ValueError):
+            self.store.set_date_event(self.day, 'x' * 61)
+        empty = PscubeStore(Path(self.tmp.name) / 'empty.sqlite3')
+        self.addCleanup(empty.close)
+        with self.assertRaises(ValueError):
+            empty.set_date_event(self.day, '周年')
+
     def test_table_url_for_day_opens_the_chosen_day_tab(self):
         # サイトは全台一覧の#以降（表示件数;位置;選んだ日付;…）で日付タブを選ぶ（2026-10-06 実サイトで確認）。
         table = self.machines[0]['url']

@@ -18,16 +18,14 @@ void saveRemoteUrl(String? url) {}
 
 Future<void> exportPscubeBackup() async {}
 
-Future<String?> importPscubeGraph(String text) async => null;
-
 Future<String?> setPscubeMachineType(
   String scope,
   String machine,
   String? type,
 ) async => null;
 
-Future<String?> setPscubeSuffixEvent(
+Future<String?> setPscubeDateEvent(
   String scope,
   String day,
-  bool enabled,
+  String? name,
 ) async => null;

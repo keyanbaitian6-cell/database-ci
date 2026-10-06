@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'models.dart' show timestampWithOffset;
+import 'pscube_viewer_data.dart';
 
 /// 時差つきの時刻文字列を比べられる数（ミリ秒）に。読めなければ null。
 int? _instant(Object? text) =>
@@ -431,7 +432,10 @@ class PscubeStore {
       final expected = {
         for (var i = 0; i < 7; i++)
           if (!latest.subtract(Duration(days: i)).isAfter(selected))
-            latest.subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+            latest
+                .subtract(Duration(days: i))
+                .toIso8601String()
+                .substring(0, 10),
       };
       // 共通JSが新台の「全空欄かつグラフ無し」の過去列を明示している場合だけ省略可。
       final missing = data['missing_history_days'] ?? <dynamic>[];
@@ -742,6 +746,7 @@ class PscubeStore {
       columns: ['key'],
       orderBy: 'rowid',
     )).map((r) => r['key'] as String).toList();
+    final events = await _dateEventsIn(db);
     final folder = path == null
         ? Directory((await getApplicationDocumentsDirectory()).path)
         : null;
@@ -757,6 +762,8 @@ class PscubeStore {
         'machines': machines,
         'records': records,
         'rack_captures': captures,
+        if (events.isNotEmpty)
+          'date_events': [for (final e in events) e.toJson()],
       }),
       flush: true,
     );
@@ -777,6 +784,97 @@ class PscubeStore {
       }
     }
     return saved;
+  }
+
+  /// 日付ごとのイベント名（消した印を含む）。state の date_events に JSON で持つ
+  /// （表を増やさない。PC版 `PscubeStore.date_events` と同じ形）。
+  Future<List<PscubeDateEvent>> dateEvents() =>
+      _serial(() => _dateEventsIn(db));
+
+  Future<List<PscubeDateEvent>> _dateEventsIn(DatabaseExecutor executor) async {
+    final rows = await executor.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: ['date_events'],
+    );
+    if (rows.isEmpty) return const [];
+    return pscubeDateEvents({
+      'date_events': jsonDecode(rows.first['value'] as String),
+    });
+  }
+
+  /// [day] のイベント名を付ける・変える・消す（null・空はイベントなし）。記録のある店舗・貸玉
+  /// それぞれに同じ名前を入れる（閲覧ページは店舗・貸玉ごとに持つ）。PC版 `set_date_event` と同じ。
+  Future<void> setDateEvent(String day, String? name, {DateTime? now}) =>
+      _serial(() async {
+        if (DateTime.tryParse('${day}T00:00:00Z') == null) {
+          throw const FormatException('日付が不正です。');
+        }
+        final cleaned = cleanPscubeEventName(name);
+        final scopes = <(String, String)>{
+          for (final row in await db.query('machines', columns: ['payload']))
+            () {
+              final m = _asMap(jsonDecode(row['payload'] as String));
+              return (m['store'] as String, m['rate'] as String);
+            }(),
+        };
+        if (scopes.isEmpty) {
+          throw const FormatException('先にP’s CUBEの記録を取り込んでください。');
+        }
+        final events = {
+          for (final e in await _dateEventsIn(db)) e.event.key: e,
+        };
+        final at = (now ?? DateTime.now()).toUtc();
+        for (final (store, rate) in scopes) {
+          final key = 'pscube:$store:$rate|$day';
+          final previous = events[key];
+          var time = at;
+          if (previous != null) {
+            final after = DateTime.parse(previous.updatedAt)
+                .toUtc()
+                .add(const Duration(milliseconds: 1));
+            if (after.isAfter(time)) time = after;
+          }
+          events[key] = PscubeDateEvent(
+            store: store,
+            rate: rate,
+            day: day,
+            name: cleaned,
+            updatedAt: time.toIso8601String(),
+          );
+        }
+        await db.insert('state', {
+          'key': 'date_events',
+          'value': jsonEncode([for (final e in events.values) e.toJson()]),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      });
+
+  /// [day] のイベント名（どれかの貸玉に付いていれば、その名前）。
+  Future<String?> dateEventFor(String day) async {
+    for (final e in await dateEvents()) {
+      if (e.day == day && e.name != null) return e.name;
+    }
+    return null;
+  }
+
+  /// 今までに付けたイベント名（新しく使った順、重複なし）。入力欄のプルダウンに使う。
+  Future<List<String>> dateEventNames() async {
+    final latest = <String, DateTime>{};
+    for (final e in await dateEvents()) {
+      final name = e.name;
+      if (name == null) continue;
+      final time = DateTime.parse(e.updatedAt);
+      if (latest[name] == null || time.isAfter(latest[name]!)) {
+        latest[name] = time;
+      }
+    }
+    return (latest.entries.toList()..sort((a, b) {
+          final byTime = b.value.compareTo(a.value);
+          return byTime != 0 ? byTime : a.key.compareTo(b.key);
+        }))
+        .map((e) => e.key)
+        .toList();
   }
 
   /// 最後にバックアップを書き出した時刻（共有を完了したときだけ [markBackedUp] で残す）。
@@ -861,7 +959,14 @@ class PscubeStore {
             _key(r, record: true),
       };
     }
+    final incomingEvents = pscubeDateEvents(decoded);
     // sqflite はトランザクション中の通常の問い合わせを待たせるので、先に全部読む。
+    final storedEvents = await _dateEventsIn(db);
+    final mergedEvents = mergePscubeDateEvents(storedEvents, incomingEvents);
+    final storedJson = {for (final e in storedEvents) jsonEncode(e.toJson())};
+    final changedEvents = mergedEvents
+        .where((e) => !storedJson.contains(jsonEncode(e.toJson())))
+        .length;
     final oldMachines = {
       for (final row in await db.query('machines'))
         row['key'] as String: _asMap(jsonDecode(row['payload'] as String)),
@@ -928,6 +1033,12 @@ class PscubeStore {
         batch.insert('state', {
           'key': 'last_day',
           'value': latest,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      if (changedEvents > 0) {
+        batch.insert('state', {
+          'key': 'date_events',
+          'value': jsonEncode([for (final e in mergedEvents) e.toJson()]),
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await batch.commit(noResult: true);

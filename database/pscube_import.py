@@ -17,7 +17,7 @@ import threading
 import unicodedata
 import time
 from contextlib import closing
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -361,6 +361,81 @@ def sync_folder(data_dir) -> Path | None:
     return Path(folder) if folder and Path(folder).is_dir() else None
 
 
+DATE_EVENT_MAX = 60
+SUFFIX_EVENT_NAME = '末尾イベ'
+_EVENT_TIME = re.compile(r'\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})')
+
+
+def _event_key(e: dict) -> str:
+    return _key(e['store'], e['rate'], e['day'])
+
+
+def _event_instant(text: str) -> float:
+    return datetime.fromisoformat(text.replace('Z', '+00:00')).timestamp()
+
+
+def clean_event_name(name):
+    """イベント名を整える（`web/pscube/data.mjs` の cleanEventName と同じ）。空は None（イベントなし）。"""
+    if name is None:
+        return None
+    if not isinstance(name, str):
+        raise ValueError('イベント名が不正です。')
+    text = name.strip()
+    if not text:
+        return None
+    if len(text) > DATE_EVENT_MAX or re.search(r'[\x00-\x1f\x7f]', text):
+        raise ValueError(f'イベント名は1〜{DATE_EVENT_MAX}文字で入力してください。')
+    return text
+
+
+def merge_date_events(stored, incoming):
+    """同じ店舗・貸玉・日付は、更新時刻が新しい方（同じなら後から来た方）を残す。"""
+    events = {_event_key(e): e for e in stored}
+    for e in incoming:
+        previous = events.get(_event_key(e))
+        if previous is None or _event_instant(e['updated_at']) >= _event_instant(previous['updated_at']):
+            events[_event_key(e)] = e
+    return list(events.values())
+
+
+def validate_date_events(raw, legacy_suffix=None):
+    """日付ごとのイベント名（自由記入、2026-10-06。`web/pscube/data.mjs` の validateDateEvents と同じ）。
+
+    {store, rate, day, name, updated_at}。name が None は「イベントを消した」印。以前の末尾イベの印
+    （suffix_events の enabled）は「末尾イベ」という名前（外した印は None）に読み替える。"""
+    def read(items, convert, what):
+        if items is None:
+            return []
+        if not isinstance(items, list) or len(items) > 100000:
+            raise ValueError(f'{what}が不正です。')
+        result = []
+        for e in items:
+            if not isinstance(e, dict) or not isinstance(e.get('store'), str) or not re.fullmatch(r'c\d+', e['store']) \
+                    or not isinstance(e.get('rate'), str) or not re.fullmatch(r'\d+(?:\.\d+)?', e['rate']) \
+                    or not isinstance(e.get('day'), str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', e['day']) \
+                    or not isinstance(e.get('updated_at'), str) or not _EVENT_TIME.fullmatch(e['updated_at']):
+                raise ValueError(f'{what}が不正です。')
+            try:
+                date.fromisoformat(e['day'])
+                _event_instant(e['updated_at'])
+            except ValueError:
+                raise ValueError(f'{what}が不正です。') from None
+            result.append({'store': e['store'], 'rate': e['rate'], 'day': e['day'], 'name': convert(e),
+                           'updated_at': e['updated_at']})
+        if len({_event_key(e) for e in result}) != len(result):
+            raise ValueError(f'{what}が重複しています。')
+        return result
+
+    def legacy_name(e):
+        if not isinstance(e.get('enabled'), bool):
+            raise ValueError('末尾イベの印が不正です。')
+        return SUFFIX_EVENT_NAME if e['enabled'] else None
+
+    legacy = read(legacy_suffix, legacy_name, '末尾イベの印')
+    named = read(raw, lambda e: clean_event_name(e.get('name')), 'イベント名')
+    return merge_date_events(legacy, named)
+
+
 def _write_json(path: Path, payload: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + '.tmp')
@@ -672,7 +747,54 @@ class PscubeStore:
                 data['records'] = [{**r, 'graph': thin_graph(r.get('graph'))} for r in records if r['day'] >= first]
         else:
             data['rack_captures'] = [row[0] for row in self.db.execute('SELECT key FROM rack_captures ORDER BY rowid')]
+        events = self.date_events()
+        if events:
+            data['date_events'] = events
         return data
+
+    def date_events(self) -> list[dict]:
+        """日付ごとのイベント名（消した印を含む）。state の date_events に JSON で持つ。"""
+        text = self._state('date_events')
+        return validate_date_events(json.loads(text)) if text else []
+
+    def set_date_event(self, day: str, name, now: datetime | None = None) -> list[dict]:
+        """[day] のイベント名を付ける・変える・消す（None・空はイベントなし）。店舗の全貸玉に付ける
+        （閲覧ページは店舗・貸玉ごとに持つので、記録のある貸玉それぞれに同じ名前を入れる）。"""
+        date.fromisoformat(day)
+        cleaned = clean_event_name(name)
+        scopes = sorted({(m['store'], m['rate']) for m in (json.loads(row[0])
+                         for row in self.db.execute('SELECT payload FROM machines'))})
+        if not scopes:
+            raise ValueError('先にP’s CUBEの記録を取り込んでください。')
+        events = {_event_key(e): e for e in self.date_events()}
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        for store, rate in scopes:
+            key = _key(store, rate, day)
+            previous = events.get(key)
+            at = now
+            if previous is not None:
+                at = max(at, datetime.fromtimestamp(_event_instant(previous['updated_at']), timezone.utc)
+                         + timedelta(milliseconds=1))
+            events[key] = {'store': store, 'rate': rate, 'day': day, 'name': cleaned,
+                           'updated_at': at.isoformat(timespec='milliseconds').replace('+00:00', 'Z')}
+        saved = validate_date_events(list(events.values()))
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                            ('date_events', json.dumps(saved, ensure_ascii=False)))
+        return saved
+
+    def date_event_for(self, day: str) -> str | None:
+        """[day] のイベント名（どれかの貸玉に付いていれば、その名前）。"""
+        names = [e['name'] for e in self.date_events() if e['day'] == day and e['name']]
+        return names[0] if names else None
+
+    def date_event_names(self) -> list[str]:
+        """今までに付けたイベント名（新しく使った順、重複なし）。入力欄の候補。"""
+        latest = {}
+        for e in self.date_events():
+            if e['name']:
+                latest[e['name']] = max(latest.get(e['name'], 0), _event_instant(e['updated_at']))
+        return [name for name, _ in sorted(latest.items(), key=lambda item: (-item[1], item[0]))]
 
     def days(self) -> list[str]:
         """記録がある営業日（新しい順）。PC本体の「結果を見る」の日付の選択肢。"""
@@ -722,8 +844,15 @@ class PscubeStore:
             # 印の無い古い書き出し：台別7日分のグラフがある日は取り込み済みとみなす。
             captures = [_record_key(r) for r in data['records'] if (r.get('graph') or {}).get('kind') == 'daily']
         wanted = set(captures)
-        summary = {'added': 0, 'updated': 0, 'unchanged': 0, 'kept_local': 0, 'machines': len(data['machines'])}
+        incoming_events = validate_date_events(data.get('date_events'), data.get('suffix_events'))
+        stored_events = self.date_events()
+        merged_events = merge_date_events(stored_events, incoming_events)
+        summary = {'added': 0, 'updated': 0, 'unchanged': 0, 'kept_local': 0, 'machines': len(data['machines']),
+                   'events': sum(1 for e in merged_events if e not in stored_events)}
         with self.db:
+            if summary['events']:
+                self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                                ('date_events', json.dumps(merged_events, ensure_ascii=False)))
             for m in data['machines']:
                 key = _machine_key(m)
                 previous = self._read('machines', key) or {}

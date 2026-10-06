@@ -40,59 +40,88 @@ SlotRecord row(
   },
 );
 void main() {
-  test(
-    'suffix marks become shared date labels and remain separate by day and rate',
-    () {
-      final raw = fixture();
-      raw['suffix_events'] = [
+  test('event names: old suffix marks read as 末尾イベ, free names, per day and rate, pull-down order', () {
+    final raw = fixture();
+    raw['suffix_events'] = [
+      {
+        'store': 'c740601',
+        'rate': '20',
+        'day': '2026-10-01',
+        'enabled': true,
+        'updated_at': '2026-10-02T00:00:00Z',
+      },
+      {
+        'store': 'c740601',
+        'rate': '20',
+        'day': '2026-09-30',
+        'enabled': false,
+        'updated_at': '2026-10-02T00:00:00Z',
+      },
+      {
+        'store': 'c740601',
+        'rate': '5',
+        'day': '2026-09-30',
+        'enabled': true,
+        'updated_at': '2026-10-02T00:00:00Z',
+      },
+    ];
+    raw['date_events'] = [
+      // 同じ日の古い印より新しいイベント名が勝つ。
+      {
+        'store': 'c740601',
+        'rate': '20',
+        'day': '2026-09-30',
+        'name': ' 周年 ',
+        'updated_at': '2026-10-03T00:00:00Z',
+      },
+      {
+        'store': 'c740601',
+        'rate': '20',
+        'day': '2026-09-29',
+        'name': null,
+        'updated_at': '2026-10-04T00:00:00Z',
+      },
+    ];
+    final data = ViewerData.parse(jsonEncode(raw));
+    expect(data.dateEventFor(store, '2026-10-01')?.name, '末尾イベ');
+    expect(data.dateEventFor(store, '2026-09-30')?.name, '周年');
+    expect(data.dateEventFor(store, '2026-09-29'), isNull);
+    expect(data.dateEventFor('pscube:c740601:5', '2026-09-30')?.name, '末尾イベ');
+    expect(data.eventNames[store], ['周年', '末尾イベ'], reason: '新しく使った順');
+    expect(data.records.length, 56);
+    for (final bad in [
+      {'day': '2026-02-30'},
+      {'name': 'x' * 61},
+      {'name': 'a\nb'},
+      {'updated_at': 'bad'},
+    ]) {
+      final broken = fixture();
+      broken['date_events'] = [
         {
           'store': 'c740601',
           'rate': '20',
           'day': '2026-10-01',
-          'enabled': true,
+          'name': '周年',
           'updated_at': '2026-10-02T00:00:00Z',
-        },
-        {
-          'store': 'c740601',
-          'rate': '20',
-          'day': '2026-09-30',
-          'enabled': false,
-          'updated_at': '2026-10-02T00:00:00Z',
-        },
-        {
-          'store': 'c740601',
-          'rate': '5',
-          'day': '2026-09-30',
-          'enabled': true,
-          'updated_at': '2026-10-02T00:00:00Z',
+          ...bad,
         },
       ];
-      final data = ViewerData.parse(jsonEncode(raw));
-      expect(data.dateEventFor(store, '2026-10-01')?.name, '末尾イベ');
-      expect(data.dateEventFor(store, '2026-09-30'), isNull);
-      expect(data.dateEventFor('pscube:c740601:5', '2026-09-30')?.name, '末尾イベ');
-      expect(data.records.length, 56);
-      final bad = fixture();
-      bad['suffix_events'] = [
-        {
-          'store': 'c740601',
-          'rate': '20',
-          'day': '2026-02-30',
-          'enabled': true,
-          'updated_at': '2026-10-02T00:00:00Z',
-        },
-      ];
-      expect(() => ViewerData.parse(jsonEncode(bad)), throwsFormatException);
-    },
-  );
+      expect(
+        () => ViewerData.parse(jsonEncode(broken)),
+        throwsFormatException,
+        reason: '$bad',
+      );
+    }
+  });
   testWidgets(
-    'manual mark updates the shared date bar and history; removal and save failure',
+    'free event names update the date bar and history; pull-down reuse, removal and save failure',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(393, 852));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final raw = fixture();
       ViewerData? updated;
-      bool fail = false;
+      var fail = false;
+      var clock = 0;
       await tester.pumpWidget(
         MaterialApp(
           theme: buildAppTheme(),
@@ -101,29 +130,36 @@ void main() {
             store: store,
             day: '2026-10-01',
             onDataChanged: (data) => updated = data,
-            saveSuffixEvent: (scope, day, enabled) async {
+            saveDateEvent: (scope, day, name) async {
               expect(scope, store);
               if (fail) throw StateError('保存失敗');
-              raw['suffix_events'] = [
+              final events = [
+                for (final e in (raw['date_events'] as List? ?? const []))
+                  if ((e as Map)['day'] != day) e,
                 {
                   'store': 'c740601',
                   'rate': '20',
                   'day': day,
-                  'enabled': enabled,
-                  'updated_at': '2026-10-02T00:00:00Z',
+                  'name': name,
+                  'updated_at': '2026-10-02T00:00:0${clock++}Z',
                 },
               ];
+              raw['date_events'] = events;
               return jsonEncode(raw);
             },
           ),
         ),
       );
       await tester.pumpAndSettle();
-      final toggle = find.byType(SwitchListTile);
-      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
-      await tester.tap(toggle);
+      expect(find.text('イベント：なし'), findsOneWidget);
+      await tester.tap(find.text('イベント：なし'));
       await tester.pumpAndSettle();
-      expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+      expect(find.text('今までのイベントから選ぶ'), findsNothing, reason: 'まだ名前が無い');
+      await tester.enterText(find.byType(TextField), '末尾イベ');
+      await tester.pump(); // 入力で保存ボタンが押せるようになる
+      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      await tester.pumpAndSettle();
+      expect(find.text('イベント：末尾イベ'), findsOneWidget);
       expect(
         tester.widget<ViewerDateBar>(find.byType(ViewerDateBar)).event,
         '末尾イベ',
@@ -137,18 +173,26 @@ void main() {
       expect(find.widgetWithText(Chip, '末尾イベ'), findsOneWidget);
       await tester.tap(find.widgetWithText(ListTile, '2026-10-01（木）'));
       await tester.pumpAndSettle();
-      await tester.tap(toggle);
+      // 一度付けた名前はプルダウンに出る。「イベントなしにする」で外す。
+      await tester.tap(find.text('イベント：末尾イベ'));
       await tester.pumpAndSettle();
-      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+      expect(find.text('今までのイベントから選ぶ'), findsOneWidget);
+      await tester.tap(find.text('イベントなしにする'));
+      await tester.pumpAndSettle();
+      expect(find.text('イベント：なし'), findsOneWidget);
       expect(
         tester.widget<ViewerDateBar>(find.byType(ViewerDateBar)).event,
         isNull,
       );
       fail = true;
-      await tester.tap(toggle);
+      await tester.tap(find.text('イベント：なし'));
       await tester.pumpAndSettle();
-      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
-      expect(find.textContaining('末尾イベの印を保存できませんでした'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '周年');
+      await tester.pump(); // 入力で保存ボタンが押せるようになる
+      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      await tester.pumpAndSettle();
+      expect(find.text('イベント：なし'), findsOneWidget);
+      expect(find.textContaining('イベント名を保存できませんでした'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -282,48 +326,45 @@ void main() {
       expect(zero.positivePercent, isNull);
     },
   );
-  test(
-    'calendar windows exclude future days, other stores/rates and invalid numbers',
-    () {
-      final all = [
-        row(11, '2026-09-24'),
-        row(11, '2026-09-25'),
-        row(11, '2026-10-01'),
-        row(11, '2026-10-02'),
-        row(21, '2026-10-01', scope: 'pscube:c740601:5'),
-        row(31, '2026-10-01', scope: 'pscube:c999999:20'),
-        row(41, '2026-10-01', games: 88888888),
-      ];
-      final week = summarizePscubeSuffixes(
-        all,
-        store: store,
-        day: '2026-10-01',
-        period: PscubeSuffixPeriod.week,
-      );
-      expect(week.start, '2026-09-25');
-      expect(week.records, 2);
-      expect(week.excludedInvalid, 1);
-      expect(week.racks, 1);
-      expect(week.days, 2);
-      final saved = summarizePscubeSuffixes(
-        all,
-        store: store,
-        day: '2026-10-01',
-        period: PscubeSuffixPeriod.saved,
-      );
-      expect(saved.records, 3);
-      final day = summarizePscubeSuffixes(all, store: store, day: '2026-10-01');
-      expect(day.records, 1);
-      final month = summarizePscubeSuffixes(
-        [row(10, '2026-09-01'), row(10, '2026-09-02')],
-        store: store,
-        day: '2026-10-01',
-        period: PscubeSuffixPeriod.month,
-      );
-      expect(month.start, '2026-09-02');
-      expect(month.records, 1);
-    },
-  );
+  test('calendar windows exclude future days, other stores/rates and invalid numbers', () {
+    final all = [
+      row(11, '2026-09-24'),
+      row(11, '2026-09-25'),
+      row(11, '2026-10-01'),
+      row(11, '2026-10-02'),
+      row(21, '2026-10-01', scope: 'pscube:c740601:5'),
+      row(31, '2026-10-01', scope: 'pscube:c999999:20'),
+      row(41, '2026-10-01', games: 88888888),
+    ];
+    final week = summarizePscubeSuffixes(
+      all,
+      store: store,
+      day: '2026-10-01',
+      period: PscubeSuffixPeriod.week,
+    );
+    expect(week.start, '2026-09-25');
+    expect(week.records, 2);
+    expect(week.excludedInvalid, 1);
+    expect(week.racks, 1);
+    expect(week.days, 2);
+    final saved = summarizePscubeSuffixes(
+      all,
+      store: store,
+      day: '2026-10-01',
+      period: PscubeSuffixPeriod.saved,
+    );
+    expect(saved.records, 3);
+    final day = summarizePscubeSuffixes(all, store: store, day: '2026-10-01');
+    expect(day.records, 1);
+    final month = summarizePscubeSuffixes(
+      [row(10, '2026-09-01'), row(10, '2026-09-02')],
+      store: store,
+      day: '2026-10-01',
+      period: PscubeSuffixPeriod.month,
+    );
+    expect(month.start, '2026-09-02');
+    expect(month.records, 1);
+  });
   test('type filter, MY averages and positive graph denominators', () {
     GraphMeasurement graph(double end) =>
         GraphMeasurement(baselineY: 100, peakY: 80, troughY: 110, endY: end);

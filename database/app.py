@@ -403,14 +403,19 @@ def main():
 
     def refresh_event(*_args):
         location, selected_day = current_location(), day.get()
-        if location == PSCUBE_KEY:
-            # イベントはメルヘンの記録だけ。P’s CUBEでは選べない。
-            event_combo['values'] = ['イベントなし']
-            event_name.set('イベントなし')
-            current_event_name.set('')
-            event_combo.configure(state='disabled')
-            return
         event_combo.configure(state='readonly')
+        if location == PSCUBE_KEY:
+            # P’s CUBEは自由記入だけ。一度付けた名前は選択肢に増えていく（2026-10-06）。
+            store = pscube_store()
+            try:
+                current = store.date_event_for(selected_day) if selected_day else None
+                names = store.date_event_names()
+            finally:
+                store.close()
+            event_combo['values'] = ['イベントなし', *names, '自由記載…']
+            event_name.set(current or 'イベントなし')
+            current_event_name.set(current or '')
+            return
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             events = db.date_events(location=location, day=selected_day)
@@ -426,7 +431,7 @@ def main():
 
     def on_event_change(_event=None):
         location, selected_day = current_location(), day.get()
-        if not location or not selected_day or location == PSCUBE_KEY:
+        if not location or not selected_day:
             return
         selected = event_name.get()
         if selected == '自由記載…':
@@ -440,6 +445,18 @@ def main():
                 messagebox.showwarning('イベント名', 'イベント名は1〜60文字で入力してください。', parent=root)
                 refresh_event()
                 return
+        if location == PSCUBE_KEY:
+            store = pscube_store()
+            try:
+                store.set_date_event(selected_day, None if selected == 'イベントなし' else selected)
+                # 閲覧ページ（Googleドライブ経由）とバックアップにも反映する。
+                pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
+            except ValueError as error:
+                messagebox.showwarning('イベント名', str(error), parent=root)
+            finally:
+                store.close()
+            refresh_event()
+            return
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             db.set_date_event(location, selected_day, None if selected == 'イベントなし' else selected)

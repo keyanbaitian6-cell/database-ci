@@ -13,6 +13,7 @@ class ViewerData {
   const ViewerData({
     required this.records,
     this.dateEvents = const {},
+    this.eventNames = const {},
     this.file,
     this.exportedAt,
     this.exportedAtText,
@@ -24,6 +25,10 @@ class ViewerData {
 
   final List<SlotRecord> records;
   final Map<String, DateEvent> dateEvents;
+
+  /// P’s CUBEの店舗（`pscube:店:貸玉`）ごとの、今までに付けたイベント名（新しく使った順）。
+  /// イベント名の入力欄のプルダウンに使う。
+  final Map<String, List<String>> eventNames;
   final String? file;
   final DateTime? exportedAt;
 
@@ -56,34 +61,16 @@ class ViewerData {
     }
     var skipped = 0;
     final pscube = decoded['format'] == 'pscube-viewer';
-    if (pscube && decoded['suffix_events'] != null) {
-      final marks = decoded['suffix_events'];
-      if (marks is! List || marks.length > 100000)
-        throw const FormatException('末尾イベの印が不正です。');
-      final seen = <String>{};
-      for (final raw in marks) {
-        if (raw is! Map ||
-            raw['store'] is! String ||
-            !RegExp(r'^c\d+$').hasMatch(raw['store']) ||
-            raw['rate'] is! String ||
-            !RegExp(r'^\d+(?:\.\d+)?$').hasMatch(raw['rate']) ||
-            raw['day'] is! String ||
-            !isValidRecordDay(raw['day']) ||
-            raw['enabled'] is! bool ||
-            raw['updated_at'] is! String ||
-            !RegExp(
-              r'^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$',
-            ).hasMatch(raw['updated_at']) ||
-            DateTime.tryParse(raw['updated_at']) == null)
-          throw const FormatException('末尾イベの印が不正です。');
-        final event = DateEvent(
-          store: 'pscube:${raw['store']}:${raw['rate']}',
-          day: raw['day'],
-          name: '末尾イベ',
-        );
-        if (!seen.add(event.key))
-          throw const FormatException('末尾イベの印が重複しています。');
-        if (raw['enabled'] == true) dateEvents[event.key] = event;
+    final eventNames = <String, List<String>>{};
+    if (pscube) {
+      final events = pscubeDateEvents(decoded);
+      for (final event in events) {
+        if (event.name != null) {
+          dateEvents[event.event.key] = event.event;
+        }
+      }
+      for (final entry in pscubeEventNames(events).entries) {
+        eventNames[entry.key] = entry.value;
       }
     }
     final incoming = pscube
@@ -112,17 +99,16 @@ class ViewerData {
     return ViewerData(
       records: records,
       dateEvents: dateEvents,
+      eventNames: eventNames,
       file: decoded['file'] as String?,
-      exportedAt: DateTime.tryParse(
-        header['exported_at'] as String? ?? '',
-      )?.toLocal(),
+      exportedAt: DateTime.tryParse(header['exported_at'] as String? ?? '')
+          ?.toLocal(),
       exportedAtText: header['exported_at'] is String
           ? header['exported_at'] as String
           : null,
       source: pscube ? 'pscube' : header['source'] as String?,
-      loadedAt: DateTime.tryParse(
-        decoded['loaded_at'] as String? ?? '',
-      )?.toLocal(),
+      loadedAt: DateTime.tryParse(decoded['loaded_at'] as String? ?? '')
+          ?.toLocal(),
       skipped: skipped,
       keptOlder: (decoded['kept_older'] as num?)?.toInt() ?? 0,
     );
