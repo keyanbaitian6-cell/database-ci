@@ -962,14 +962,18 @@ void main() {
       direction: 'bottom',
       freshSince: known,
     );
-    expect(bottom.nextUrl, second['url'], reason: '下からなら二つ目の機種から');
+    expect(
+      bottom.nextUrl,
+      '${second['url']}#0;0;20261003;0;cd_dai;1;0;0',
+      reason: '下からなら二つ目の機種から（全台一覧は取り込み日のタブで開く）',
+    );
     // 基準の時刻がまだ無い（今回まだ1ページも保存していない）ときは、決めた向きの最初の機種で確かめる。
     final unknown = await store.importPage(
       page(PscubeStore.index, [machine, second]),
       PscubeStore.index,
       expectedDay: yesterday,
     );
-    expect(unknown.nextUrl, machine['url']);
+    expect(unknown.nextUrl, '${machine['url']}#0;0;20261003;0;cd_dai;1;0;0');
     // 台別ページ：ハッシュの日が取り込み日と違えば保存しない。
     final history = [
       for (var i = 0; i < 7; i++)
@@ -993,5 +997,91 @@ void main() {
       throwsFormatException,
     );
     await store.importPage(rack, rackUrl, expectedDay: yesterday);
+  });
+
+  test('取り込み日を指定すると、全台一覧はその日の日付タブで開く（サイトは#以降の日付でタブを選ぶ）', () {
+    final table = machine['url'] as String;
+    expect(
+      pscubeTableUrlForDay(table, '2026-10-05'),
+      '$table#0;0;20261005;0;cd_dai;1;0;0',
+    );
+    expect(
+      pscubeTableUrlForDay(
+        '$table#2;600;20261006;0;cd_dai;1;0;332',
+        '2026-10-05',
+      ),
+      '$table#0;0;20261005;0;cd_dai;1;0;0',
+      reason: 'サイトが書いた前の状態は置き換える',
+    );
+    expect(pscubeTableUrlForDay(table, null), table, reason: '指定なしは今までどおり');
+    final rack = record('2026-10-05')['detail_url'] as String;
+    expect(pscubeTableUrlForDay(rack, '2026-10-05'), rack, reason: '台別ページは変えない');
+    expect(
+      pscubeTableUrlForDay(PscubeStore.index, '2026-10-05'),
+      PscubeStore.index,
+    );
+  });
+
+  test('台別ページの列はサイトの本日から並ぶ：選んだ日より新しい列は無く、7日の範囲は1列目の日付で確かめる', () async {
+    // サイトの本日は10/02、取り込み日は10/01。読み取りは10/02（営業中）の列を除き、10/01〜09/26の6日分を返す。
+    await seedRack();
+    final rackUrl = record()['detail_url'] as String;
+    final six = [
+      for (var i = 0; i < 6; i++)
+        record(
+          DateTime.utc(
+            2026,
+            10,
+            1,
+          ).subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+        )..['graph'] = {
+          'kind': 'daily',
+          'zero_y': 10,
+          'points': [
+            [0, 10],
+            [1, 8],
+          ],
+        },
+    ];
+    String rackPage(List<Map<String, dynamic>> rows, [Object? latest]) =>
+        jsonEncode({
+          ...jsonDecode(
+                page(rackUrl, [
+                  {
+                    ...machine,
+                    'url': (machine['url'] as String).replaceAll('cd_ps=2&', ''),
+                  },
+                ], rows),
+              )
+              as Map<String, dynamic>,
+          if (latest != null) 'history_latest_day': latest,
+        });
+    await store.importPage(
+      rackPage(six, '2026-10-02'),
+      rackUrl,
+      expectedDay: day,
+    );
+    final before = (await exported())['records'];
+    // 1列目の日付が無い古い形なら、従来どおり選んだ日から7日分が必要。
+    await expectLater(
+      store.importPage(rackPage(six), rackUrl),
+      throwsFormatException,
+    );
+    for (final latest in ['2026-09-30', '2026-10-08', '10/02', 20261002]) {
+      await expectLater(
+        store.importPage(rackPage(six, latest), rackUrl),
+        throwsFormatException,
+        reason: '1列目の日付が選んだ日より前・7日より先・形が違う：$latest',
+      );
+    }
+    // 選んだ日より新しい日（営業中の本日）の記録が混ざっていたら保存しない。
+    await expectLater(
+      store.importPage(
+        rackPage([record('2026-10-02'), ...six.take(5)], '2026-10-02'),
+        rackUrl,
+      ),
+      throwsFormatException,
+    );
+    expect((await exported())['records'], before);
   });
 }

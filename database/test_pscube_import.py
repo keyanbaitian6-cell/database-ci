@@ -6,7 +6,7 @@ from pathlib import Path
 
 from datetime import datetime
 
-from pscube_import import PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days, same_page
+from pscube_import import PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days, same_page, table_url_for_day
 
 
 class PscubeImportTests(unittest.TestCase):
@@ -80,12 +80,45 @@ class PscubeImportTests(unittest.TestCase):
         # 機種一覧を取り直しても、取り込み日とその日の基準の時刻が決まっていれば、最初の機種へ戻らず、昨日の未取得の先頭へ進む。
         known = {yesterday: '2026-10-01T12:00:00+09:00'}
         again = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, fresh_since=known)
-        self.assertEqual(again['next_url'], self.machines[1]['url'])
+        self.assertEqual(again['next_url'], self.machines[1]['url'] + '#0;0;20261003;0;cd_dai;1;0;0')
         bottom = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom', fresh_since=known)
-        self.assertEqual(bottom['next_url'], self.machines[1]['url'])
+        self.assertEqual(bottom['next_url'], self.machines[1]['url'] + '#0;0;20261003;0;cd_dai;1;0;0')
         # 基準の時刻がまだ無い（今回まだ1ページも保存していない）ときは、決めた向きの最初の機種で基準を確かめる。
         fresh = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom')
-        self.assertEqual(fresh['next_url'], self.machines[-1]['url'])
+        self.assertEqual(fresh['next_url'], self.machines[-1]['url'] + '#0;0;20261003;0;cd_dai;1;0;0')
+
+    def test_table_url_for_day_opens_the_chosen_day_tab(self):
+        # サイトは全台一覧の#以降（表示件数;位置;選んだ日付;…）で日付タブを選ぶ（2026-10-06 実サイトで確認）。
+        table = self.machines[0]['url']
+        self.assertEqual(table_url_for_day(table, '2026-10-05'), table + '#0;0;20261005;0;cd_dai;1;0;0')
+        self.assertEqual(table_url_for_day(table + '#2;600;20261006;0;cd_dai;1;0;332', '2026-10-05'),
+                         table + '#0;0;20261005;0;cd_dai;1;0;0')
+        self.assertEqual(table_url_for_day(table, None), table)
+        rack = self.record(self.machines[0], 1526)['detail_url']
+        self.assertEqual(table_url_for_day(rack, '2026-10-05'), rack)
+        self.assertEqual(table_url_for_day(self.index_url, '2026-10-05'), self.index_url)
+        self.assertIsNone(table_url_for_day(None, '2026-10-05'))
+
+    def test_rack_columns_start_at_the_site_today_and_newer_columns_are_left_out(self):
+        # サイトの本日は10/02、取り込み日は10/01。読み取りは10/02（営業中）の列を除いた6日分を返す。
+        machine, record, payload = self.seed_rack()
+        six = [self.record(machine, 1526, (date.fromisoformat(self.day) - timedelta(days=i)).isoformat()) for i in range(6)]
+        for row in six:
+            row['graph'] = {'kind': 'daily', 'zero_y': 10, 'points': [[0, 10], [1, 8]]}
+        rack = {**payload, 'records': six, 'history_latest_day': '2026-10-02'}
+        rack.pop('missing_history_days', None)
+        self.store.import_page(rack, record['detail_url'], expected_day=self.day)
+        before = list(self.store.db.iterdump())
+        old_shape = {key: value for key, value in rack.items() if key != 'history_latest_day'}
+        with self.assertRaisesRegex(ValueError, '連続した7日分'):
+            self.store.import_page(old_shape, record['detail_url'])
+        for latest in ('2026-09-30', '2026-10-08', '10/02', 20261002):
+            with self.assertRaises(ValueError, msg=latest):
+                self.store.import_page({**rack, 'history_latest_day': latest}, record['detail_url'])
+        with_today = {**rack, 'records': [self.record(machine, 1526, '2026-10-02')] + six[:5]}
+        with self.assertRaises(ValueError):
+            self.store.import_page(with_today, record['detail_url'])
+        self.assertEqual(list(self.store.db.iterdump()), before)
 
     def test_manual_import_continues_from_the_saved_page_instead_of_the_top_of_the_list(self):
         """手動のとき：飛ばした上の機種へ戻らず、保存したページの次（同じ機種の台→次の機種）へ。最後まで来たら最初へ回る。"""

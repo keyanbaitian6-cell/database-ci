@@ -159,6 +159,19 @@ def same_page(first, second) -> bool:
     return key(first) == key(second)
 
 
+def table_url_for_day(url, day):
+    """取り込み日を指定しているとき、機種の全台一覧をその日の日付タブで開くURL（Android
+    `pscubeTableUrlForDay` と同じ）。サイトは全台一覧の状態（表示件数;位置;選んだ日付;…）を#以降に持ち、
+    開いたときにその日付のタブを選ぶ（2026-10-06 実サイトで確認）。#以降が無いと「本日」のタブになり、
+    営業中は数値が動き続けるため、その日を取り込めなかった。"""
+    if not url or not day:
+        return url
+    parsed = urlparse(url)
+    if not parsed.path.endswith('nc-v05-011.php'):
+        return url
+    return parsed._replace(fragment=f'0;0;{day.replace("-", "")};0;cd_dai;1;0;0').geturl()
+
+
 def site_url(raw: str, suffix: str | None = None):
     if not isinstance(raw, str):
         raise ValueError('ページのURLがありません。')
@@ -528,7 +541,17 @@ class PscubeStore:
                 raise ValueError('台別7日分の内容が一致しません。')
             if parse_qs(actual.query).get('cd_dai') != [str(current['rack'])] or _machine_key(data['machines'][0]) != _machine_key(current):
                 raise ValueError('表示中の台番号・機種と一致しません。')
-            expected = {(datetime.fromisoformat(day).date() - timedelta(days=i)).isoformat() for i in range(7)}
+            # 台別ページの7列はサイトの「本日」（history_latest_day）から並び、選んだ日より新しい列は
+            # 読み取りで除いてある（2026-10-06）。その日が無い古い読み取り結果は、選んだ日を1列目とみなす。
+            selected = datetime.fromisoformat(day).date()
+            latest_text = data.get('history_latest_day', day)
+            if not isinstance(latest_text, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', latest_text):
+                raise ValueError('台別7日分の日付を確認できません。')
+            latest = date.fromisoformat(latest_text)
+            if not 0 <= (latest - selected).days <= 6:
+                raise ValueError('台別7日分の日付を確認できません。')
+            expected = {(latest - timedelta(days=i)).isoformat() for i in range(7)
+                        if latest - timedelta(days=i) <= selected}
             # 新台の全空欄の過去列は、共通JSが明示して返す。省略を0件の記録にしない。
             missing = data.get('missing_history_days', [])
             present = {r['day'] for r in data['records']}
@@ -581,6 +604,7 @@ class PscubeStore:
                 after = (_machine_key(current), current['rack'])
             target_day = expected_day or day
             next_url, remaining = self.next_target(target_day, direction, after, fresh_since.get(target_day))
+        next_url = table_url_for_day(next_url, expected_day)
         result = {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
                   'kind': '機種一覧' if is_index else '全台一覧' if is_table else
                   f'台別履歴（{len(data["records"])}日分）' if len(data['records']) < 7 else '台別7日分',
@@ -918,7 +942,8 @@ class AutoPilot:
             elif not probe.get('ready'):
                 self.auto.pause('ON・待機：' + str(probe.get('reason') or 'ページの準備待ち'), token)
             elif self.target_day and probe.get('day') and probe['day'] != self.target_day:
-                # 取り込み日と違う日のページ。サイトのボタンはアプリが押さない：全台一覧は日付タブを手で合わせてもらう。
+                # 取り込み日と違う日のページ。サイトのボタンはアプリが押さない。アプリが開く全台一覧は日付つき（table_url_for_day）
+                # なので、ここで待つのは利用者が自分で開いた全台一覧だけ。日付タブを手で合わせてもらう。
                 hint = ('全台一覧の日付タブを' if probe.get('kind') == '全台一覧' else 'このページを')
                 self.auto.pause(f'ON・待機：取り込み日は{_short_day(self.target_day)}ですが、表示中は{_short_day(probe["day"])}です。'
                                 f'{hint}{_short_day(self.target_day)}に合わせてください', token)

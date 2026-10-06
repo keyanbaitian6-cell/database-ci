@@ -43,6 +43,18 @@ bool pscubeSamePage(Uri first, Uri second) {
   return key(first) == key(second);
 }
 
+/// 取り込み日を指定しているとき、機種の全台一覧をその日の日付タブで開くURL。サイトは全台一覧の状態
+/// （表示件数;位置;選んだ日付;…）を#以降に持ち、開いたときにその日付のタブを選ぶ（2026-10-06 実サイトで
+/// 確認）。#以降が無いと「本日」のタブになり、営業中は数値が動き続けるため、その日を取り込めなかった。
+/// PC版 `table_url_for_day` と同じ。
+String pscubeTableUrlForDay(String url, String? day) {
+  final uri = Uri.parse(url);
+  if (day == null || !uri.path.endsWith('nc-v05-011.php')) return url;
+  return uri
+      .replace(fragment: '0;0;${day.replaceAll('-', '')};0;cd_dai;1;0;0')
+      .toString();
+}
+
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
   PscubeStore._(this.db);
@@ -401,10 +413,25 @@ class PscubeStore {
           _key(machines.single) != _key(today.single)) {
         throw const FormatException('表示中の台番号・機種と一致しません。');
       }
-      final anchor = DateTime.parse('${day}T00:00:00Z');
+      // 台別ページの7列はサイトの「本日」（history_latest_day）から並び、選んだ日より新しい列は
+      // 読み取りで除いてある（2026-10-06）。その日が無い古い読み取り結果は、選んだ日を1列目とみなす。
+      final selected = DateTime.parse('${day}T00:00:00Z');
+      final latestText = data['history_latest_day'];
+      final latest = latestText == null
+          ? selected
+          : latestText is String &&
+                RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(latestText)
+          ? DateTime.tryParse('${latestText}T00:00:00Z')
+          : null;
+      if (latest == null ||
+          latest.isBefore(selected) ||
+          latest.difference(selected).inDays > 6) {
+        throw const FormatException('台別7日分の日付を確認できません。');
+      }
       final expected = {
         for (var i = 0; i < 7; i++)
-          anchor.subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+          if (!latest.subtract(Duration(days: i)).isAfter(selected))
+            latest.subtract(Duration(days: i)).toIso8601String().substring(0, 10),
       };
       // 共通JSが新台の「全空欄かつグラフ無し」の過去列を明示している場合だけ省略可。
       final missing = data['missing_history_days'] ?? <dynamic>[];
@@ -542,7 +569,9 @@ class PscubeStore {
           : records.length < 7
           ? '台別履歴（${records.length}日分）'
           : '台別7日分',
-      nextUrl: next.url,
+      nextUrl: next.url == null
+          ? null
+          : pscubeTableUrlForDay(next.url!, expectedDay),
     );
   }
 

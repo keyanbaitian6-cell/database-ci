@@ -35,7 +35,8 @@ String _shortDay(String day) {
 }
 
 /// [targetDay]：取り込み日を指定しているとき。違う日のページは取り込まず待つ
-/// （サイトのボタンはアプリが押さない：全台一覧は日付タブを手で合わせてもらう）。
+/// （サイトのボタンはアプリが押さない。アプリが開く全台一覧は日付つきのURLで開く（`pscubeTableUrlForDay`）ので、
+/// ここで待つのは利用者が自分で開いた全台一覧だけ。日付タブを手で合わせてもらう）。
 ({String? capture, String message}) pscubeAutoDecision(
   Object? probe,
   Set<String> done,

@@ -32,7 +32,8 @@ def label(url):
     if 'nc-v03-001' in url:
         return '一覧'
     if 'nc-v05-011' in url:
-        return next(n for n in NAMES if table_url(n) == url) + '表'
+        # 取り込み日を指定しているときは、その日のタブで開く#以降が付く（table_url_for_day）。
+        return next(n for n in NAMES if table_url(n) == url.split('#')[0]) + '表'
     return url.split('cd_dai=')[1].split('#')[0]
 
 
@@ -132,8 +133,10 @@ class DirectionAcrossPagesTests(unittest.TestCase):
     def walk(self, start, step, limit=40):
         """保存のたびに返る次のURLを毎回記録し、最後（次が無い）まで進む。向きも毎回確かめる。"""
         visited, url = [], start
+        self.visited_urls = []
         for _ in range(limit):
             visited.append(label(url))
+            self.visited_urls.append(url)
             result = step(url)
             self.assertEqual(result['direction'], self.expected_direction, f'{label(url)}の保存後に向きが変わった')
             self.assertEqual(self.pilot.direction, self.expected_direction)
@@ -193,6 +196,11 @@ class DirectionAcrossPagesTests(unittest.TestCase):
         self.press_start('bottom', day=self.day)
         self.assertEqual(self.pilot.target_day, self.day)
         self.assertEqual(self.walk(INDEX, self.auto_step), ['一覧'] + order(NAMES, top_first=False))
+        tables = [url for url in self.visited_urls if 'nc-v05-011' in url]
+        self.assertEqual(len(tables), len(NAMES))
+        compact = self.day.replace('-', '')
+        self.assertTrue(all(url.endswith(f'#0;0;{compact};0;cd_dai;1;0;0') for url in tables),
+                        '全台一覧は取り込み日のタブで開く：' + ' '.join(tables))
 
     def test_bottom_from_a_table_page_in_the_middle(self):
         """一覧ではなくB機の表を開いた状態で「下から」：今のページを保存した後は、下の未取得（D）から。"""

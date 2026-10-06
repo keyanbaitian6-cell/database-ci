@@ -57,8 +57,8 @@ PAGES = {
                                      + '">機種データ</a><table><tr>' + ''.join(
         '<td class="column"><div>' + ''.join(f'<div>{v}</div>' for v in [f'{i}日前' if i else '本日', 3, 1, 0, '1/150', 600, 120, 20])
         + '</div></td>' for i in range(7)) + '</tr></table>' + ''.join(
-        f'<div id="svg{i}"><svg><path class="amcharts-graph-stroke" d="M0,10 L10,1 M0,0 L0,0"/>'
-        '<path class="amcharts-axis-zero-grid" d="M0,10 L10,10"/></svg></div>' for i in range(7)),
+        f'<ul id="CHART-{DAYS[6 - i]}"><li><div id="svg{i}"><svg><path class="amcharts-graph-stroke" d="M0,10 L10,1 M0,0 L0,0"/>'
+        '<path class="amcharts-axis-zero-grid" d="M0,10 L10,10"/></svg></div></li></ul>' for i in range(7)),
 }
 # Graph.src: day i (oldest first) goes from 1000 to 1000 + 100*i - 50; 2026-10-01 is the 1120 example (+14,118).
 GRAPH = {'datas': {'g': [{'YMD_biz': int(d), 'xField': f'out-{i}', 'yField': f'value-{i}'} for i, d in enumerate(DAYS)],

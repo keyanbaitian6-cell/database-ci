@@ -14,6 +14,11 @@ const graph = {datas:{
     {'out-2':10,'value-2':75}, {'out-2':20,'value-2':200},
   ],
 }};
+// 実ページと同じく、列 i のグラフ枠 svg{i} は CHART-yyyymmdd（サイトの「本日」から1日ずつ前）の中にある。
+const charts = (latest, inner = () => '') => Array.from({length:7}, (_, i) => {
+  const at = new Date(`${latest}T00:00:00Z`); at.setUTCDate(at.getUTCDate() - i);
+  return `<ul id="CHART-${at.toISOString().slice(0, 10).replaceAll('-', '')}"><li><div id="svg${i}">${inner(i)}</div></li></ul>`;
+}).join('');
 const columns = Array.from({length:7}, (_, i) =>
   `<td class="column"><div>${[
     i ? `${i}日前` : '本日', '3', '1', '0', '0', '600', '120', '0',
@@ -21,7 +26,7 @@ const columns = Array.from({length:7}, (_, i) =>
 const html = `<html><head><meta charset="utf-8"><title>P'sCUBE｜試験機種</title></head><body>
   <h1>SLOT</h1><h2>台番号 1120</h2>
   <a href="nc-v05-011.php?cd_ps=2&bai=20">全台一覧</a>
-  <table><tr>${columns}</tr></table></body></html>`;
+  <table><tr>${columns}</tr></table>${charts('2026-10-02')}</body></html>`;
 const url = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1120#20261002';
 const browser = await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_PATH || undefined, args:['--no-sandbox']});
 try {

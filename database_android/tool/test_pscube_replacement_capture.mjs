@@ -6,13 +6,18 @@ const script = readFileSync(new URL('../assets/pscube_capture.js', import.meta.u
 const url = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1085#20261005';
 const values = ['2', '1', '0', '1/61', '183', '192', '2'];
 const curve = '<svg><path class="amcharts-graph-stroke" d="M0,10 L10,5"/><path class="amcharts-axis-zero-grid" d="M0,10 L10,10"/></svg>';
+// 実ページと同じく、列 i のグラフ枠 svg{i} は CHART-yyyymmdd（サイトの「本日」から1日ずつ前）の中にある。
+const charts = (latest, inner = () => '') => Array.from({length:7}, (_, i) => {
+  const at = new Date(`${latest}T00:00:00Z`); at.setUTCDate(at.getUTCDate() - i);
+  return `<ul id="CHART-${at.toISOString().slice(0, 10).replaceAll('-', '')}"><li><div id="svg${i}">${inner(i)}</div></li></ul>`;
+}).join('');
 function html(rows, graphs = {}) {
   const columns = rows.map((row, i) => `<td class="column"><div>${[
     i ? `${i}日前` : '本日', ...row,
   ].map(v => `<div>${v}</div>`).join('')}</div></td>`).join('');
   return `<html><head><title>P'sCUBE｜新台試験機種</title></head><body>
     <h1>SLOT</h1><h2>台番号 1085</h2><a href="nc-v05-011.php?cd_ps=2&bai=20">全台一覧</a>
-    <table><tr>${columns}</tr></table>${rows.map((_, i) => `<div id="svg${i}">${graphs[i] ?? ''}</div>`).join('')}
+    <table><tr>${columns}</tr></table>${charts('2026-10-05', i => graphs[i] ?? '')}
     </body></html>`;
 }
 const blank = () => Array(7).fill('');
