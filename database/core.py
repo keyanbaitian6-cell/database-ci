@@ -1832,26 +1832,29 @@ def _rise(values):
     return rise
 
 
-def meruhen_net_estimate(measurement, max_hold, games=None):
-    """Estimated net medals for a Meruhen rack, or None when it cannot be determined.
+def meruhen_net_estimate_detail(measurement, max_hold, games=None):
+    """(estimated net medals or None, needs_check) for a Meruhen rack.
+
+    needs_check: axis steps that fit the shape and the max holding were ruled out by the medals used
+    per game, so the step was chosen again (the graph alone could not decide it). Shown with "※".
 
     games: the day's total games. With the full curve, it rules out axis steps that would mean
     more medals used per game than racks with a known step ever showed."""
     if not isinstance(measurement, dict) or max_hold is None or not 0 <= max_hold <= 100000:
-        return None
+        return None, False
     try:
         baseline = float(measurement['baseline_y'])
         peak = baseline - float(measurement['peak_y'])
         trough = baseline - float(measurement.get('trough_y', measurement['end_y']))
         end = baseline - float(measurement['end_y'])
     except (KeyError, TypeError, ValueError):
-        return None
+        return None, False
     if abs(baseline - _MERUHEN_ZERO_Y) > 0.01:
-        return None  # 高さ400以外のSVGは未確認
+        return None, False  # 高さ400以外のSVGは未確認
     half = _MERUHEN_ZERO_Y - _MERUHEN_TOP_Y
     amp = max(abs(peak), abs(trough), abs(end))
     if amp == 0:
-        return 0
+        return 0, False
 
     def fits(index):
         step = MERUHEN_AXIS_STEPS[index]
@@ -1860,12 +1863,13 @@ def meruhen_net_estimate(measurement, max_hold, games=None):
         return previous - unit / 2 < amp * unit <= step + unit / 2
 
     chosen = None
+    needs_check = False
     curve = measurement.get('curve')
     if isinstance(curve, list) and len(curve) >= 2:
         values = [baseline - float(point[1]) for point in curve]
         rise = _rise(values)
         if rise <= 0:
-            return None
+            return None, False
         candidates = [step for index, step in enumerate(MERUHEN_AXIS_STEPS)
                       if fits(index) and max_hold / (rise * step / half) >= 0.98]
         drops = sum(max(0.0, a - b) for a, b in zip(values, values[1:]))
@@ -1874,6 +1878,7 @@ def meruhen_net_estimate(measurement, max_hold, games=None):
             return not games or games <= 0 or drops * step / half <= per_game * games
 
         plausible = [step for step in candidates if within(step, MERUHEN_PLAUSIBLE_USE_PER_GAME)]
+        needs_check = len(plausible) != len(candidates)
         if plausible:
             chosen = plausible[-1]
         elif candidates and within(candidates[0], MERUHEN_MAX_USE_PER_GAME):
@@ -1893,9 +1898,18 @@ def meruhen_net_estimate(measurement, max_hold, games=None):
         if len(feasible) == 1:
             chosen = feasible[0]
     if chosen is None:
-        return None
+        return None, False
     value = end * chosen / half
-    return int(value + 0.5) if value >= 0 else -int(-value + 0.5)  # Dartの round と同じ（0から遠い側）
+    rounded = int(value + 0.5) if value >= 0 else -int(-value + 0.5)  # Dartの round と同じ（0から遠い側）
+    return rounded, needs_check
+
+
+def meruhen_net_estimate(measurement, max_hold, games=None):
+    """Estimated net medals for a Meruhen rack, or None when it cannot be determined.
+
+    games: the day's total games. With the full curve, it rules out axis steps that would mean
+    more medals used per game than racks with a known step ever showed."""
+    return meruhen_net_estimate_detail(measurement, max_hold, games)[0]
 
 
 def signed_medals(value):
@@ -2059,8 +2073,8 @@ def report(store, day, machine, folder, location='nagamachiminami'):
         svg = measurement_preview_html(r)
         total = s['total']
         max_hold_display = '—' if r.get('max_hold') is None else str(r['max_hold'])
-        net = meruhen_net_estimate(measurement, r.get('max_hold'), r.get('games'))
-        net_display = '—' if net is None or implausible_numbers(r) else signed_medals(net)
+        net, net_check = meruhen_net_estimate_detail(measurement, r.get('max_hold'), r.get('games'))
+        net_display = '—' if net is None or implausible_numbers(r) else signed_medals(net) + ('※' if net_check else '')
         setting_display = r.get('confirmed_setting') or '—'
         estimate = r['setting_estimate']
         estimate_display = candidate_label(estimate)
@@ -2229,7 +2243,7 @@ a.evidence:hover{{text-decoration:underline}}
 独自の結果評価です。出率・差枚・設定確率を表す点数ではありません。<br>
 比較：同店・同機種の過去30日、回転数が概ね半分〜2倍（最低500G）の台。当日・未来は比較に使いません。比較件数・日数・回転数が少ないほど中間へ補正します。<br>
 当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、暫定表示と欠測幅を示します。<br>
-「推定差枚」はグラフの形と最大持玉から縦軸の目盛りを割り出した計算で、確定値ではありません（誤差はおよそグラフ1目盛り分。決められない台は「—」）。<br>
+「推定差枚」はグラフの形と最大持玉から縦軸の目盛りを割り出した計算で、確定値ではありません（誤差はおよそグラフ1目盛り分。決められない台は「—」。「※」はグラフだけでは目盛りを決めきれず、回転数から選び直した要確認の値）。<br>
 「設定候補」は公開BB/RB確率との条件付き比較です。各設定を同じ重みと仮定したモデル内中央80%候補範囲で、確定設定・実際の設定確率・翌日の予測ではありません。<br>計算版：{VERSION}</div></header>
 <section class="kpis">
 <div class="kpi"><b>{len(results)}</b><span>台数</span></div>

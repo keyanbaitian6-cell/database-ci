@@ -44,6 +44,7 @@ SlotRecord meruhen(
   String day, {
   required int maxHold,
   required List<double> heights,
+  int games = 8000,
 }) {
   final curve = [
     for (final (i, h) in heights.indexed) [i * 10.0 + 0.5, 200.5 - h],
@@ -54,7 +55,7 @@ SlotRecord meruhen(
     day: day,
     rack: rack,
     machine: 'ハナハナ',
-    games: 8000,
+    games: games,
     bb: 30,
     rb: 30,
     maxHold: maxHold,
@@ -191,5 +192,62 @@ void main() {
     expect(find.text('+1,250'), findsNWidgets(2));
     expect(find.text('2/3'), findsOneWidget);
     expect(find.textContaining('推定差枚です'), findsOneWidget);
+  });
+
+  testWidgets('要確認（※）の推定差枚がある日は、取得台数の横に台数を出す', (tester) async {
+    final rows = [
+      meruhen(
+        615,
+        '2026-10-04',
+        maxHold: 2376,
+        heights: [0, -63, 40, 147, 128],
+      ),
+      // 幸町517番台・10/04の形：目盛りを回転数から選び直した台。
+      meruhen(
+        517,
+        '2026-10-04',
+        maxHold: 234,
+        heights: [
+          0,
+          0,
+          0,
+          -5,
+          -17,
+          -17,
+          -18,
+          -36,
+          -40,
+          -55,
+          -75,
+          -89,
+          -87,
+          -109,
+          -106,
+          -105,
+          -116,
+          -139,
+          -156,
+          -161,
+          -161,
+        ],
+        games: 1634,
+      ),
+    ];
+    final days = dailyNet(rows, 'nagamachiminami');
+    expect(
+      (days.single.total, days.single.captured, days.single.needsCheck),
+      (1422 - 1789, 2, 1),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DailyNetPage(
+          records: rows,
+          store: 'nagamachiminami',
+          day: '2026-10-04',
+        ),
+      ),
+    );
+    expect(find.text('2/2（※1）'), findsOneWidget);
+    expect(find.textContaining('要確認の台数'), findsOneWidget);
   });
 }

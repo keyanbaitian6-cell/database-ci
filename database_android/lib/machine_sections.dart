@@ -497,7 +497,7 @@ class MachineDataTable extends StatelessWidget {
                               hasImplausibleNumbers(entries[i].$1) ||
                                       entries[i].$1.netValue == null
                                   ? '—'
-                                  : signedMedals(entries[i].$1.netValue!),
+                                  : entries[i].$1.netText!,
                             ),
                             _setting(context, entries[i].$1),
                             _score(entries[i].$2),
@@ -580,6 +580,10 @@ class MachineDataTable extends StatelessWidget {
             pscube
                 ? '差枚は元グラフの取得済み${netValues.length}/${entries.length}台'
                 : '推定差枚はグラフと最大持玉からの計算（誤差あり・計算できた${netValues.length}/${entries.length}台）',
+            if (entries.any(
+              (e) => !hasImplausibleNumbers(e.$1) && e.$1.netNeedsCheck,
+            ))
+              '※＝グラフだけでは縦軸の目盛りを決めきれず、回転数から選び直した推定（要確認）',
             if (provisional > 0)
               provisional == entries.length
                   ? '点数はすべて暫定（少数データ・欠測を含む）'

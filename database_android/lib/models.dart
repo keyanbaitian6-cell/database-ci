@@ -322,10 +322,16 @@ class SlotRecord {
       isPscube ? (extra['net_medals'] as num?)?.toInt() : null;
 
   /// メルヘンの推定差枚（グラフと最大持玉から計算、`meruhen_net.dart`）。確定差枚ではない。
-  int? get estimatedNetMedals {
+  int? get estimatedNetMedals => _meruhenNet?.value;
+
+  /// 推定差枚に「※」（要確認）を付けるか。グラフだけでは縦軸の目盛りを決めきれず、
+  /// 1回転あたりの使用枚数で選び直した台（`meruhenNetEstimateDetail`）。
+  bool get netNeedsCheck => _meruhenNet?.needsCheck ?? false;
+
+  ({int? value, bool needsCheck})? get _meruhenNet {
     final g = graph;
     if (isPscube || g == null) return null;
-    return meruhenNetEstimate(
+    return meruhenNetEstimateDetail(
       baselineY: g.baselineY,
       peakY: g.peakY,
       troughY: g.troughY,
@@ -341,6 +347,11 @@ class SlotRecord {
 
   /// 画面に出す差枚：P’s CUBEは元グラフの確定差枚、メルヘンは推定差枚。
   int? get netValue => isPscube ? netMedals : estimatedNetMedals;
+
+  /// 画面に出す差枚の文字（符号つき）。要確認の推定差枚には「※」を付ける。
+  String? get netText => netValue == null
+      ? null
+      : '${signedMedals(netValue!)}${netNeedsCheck ? '※' : ''}';
 
   /// [netValue] の呼び方。メルヘンは推定であることを必ず添える。
   String get netLabel => isPscube ? '差枚' : '推定差枚';

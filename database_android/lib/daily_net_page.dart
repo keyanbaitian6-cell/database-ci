@@ -13,8 +13,12 @@ class DayNet {
     required this.total,
     required this.captured,
     required this.racks,
+    this.needsCheck = 0,
   });
   final String day;
+
+  /// 合計に入っている推定差枚のうち、要確認（※）の台数（[SlotRecord.netNeedsCheck]）。
+  final int needsCheck;
 
   /// 差枚がある台の合計。1台も無い日は null（0ではない）。
   final int? total;
@@ -48,6 +52,9 @@ List<DayNet> dailyNet(Iterable<SlotRecord> records, String store) {
           total: nets.isEmpty ? null : nets.reduce((a, b) => a + b),
           captured: nets.length,
           racks: byDay[day]!.length,
+          needsCheck: byDay[day]!
+              .where((r) => r.netValue != null && r.netNeedsCheck)
+              .length,
         );
       }(),
   ];
@@ -223,7 +230,12 @@ class _DailyNetPageState extends State<DailyNetPage> {
                             ),
                             DataCell(Text(medals(d.total))),
                             DataCell(Text(medals(d.average))),
-                            DataCell(Text('${d.captured}/${d.racks}')),
+                            DataCell(
+                              Text(
+                                '${d.captured}/${d.racks}'
+                                '${d.needsCheck > 0 ? '（※${d.needsCheck}）' : ''}',
+                              ),
+                            ),
                           ],
                         ),
                       DataRow(
@@ -263,6 +275,7 @@ class _DailyNetPageState extends State<DailyNetPage> {
                         'グラフ1目盛り分：通常±6枚、大きく動いた台は±10〜30枚）。'
                         '総差枚・平均差枚は計算できた台だけの合計・平均です（取得台数＝計算できた台／その日の記録の台）。'
                         'グラフの無い台・最大持玉の無い台・目盛りを決められない台は含まないため、店舗全体の総差枚ではありません。'
+                        '取得台数の（※N）は、グラフだけでは目盛りを決めきれず回転数から選び直した、要確認の台数です（合計には含みます）。'
                         '差枚の無い日は「—」（0ではありません）。最大持玉は差枚ではありません。'
                   : '総差枚・平均差枚は、台別ページで差枚の元データを取得できた台だけの合計・平均です'
                         '（取得台数＝取得できた台／その日の記録の台）。当たり0回の台・沖ドキ・未取得の台は含まないため、'

@@ -73,9 +73,37 @@ int? meruhenNetEstimate({
   List<List<double>>? curve,
   required int? maxHold,
   int? games,
+}) => meruhenNetEstimateDetail(
+  baselineY: baselineY,
+  peakY: peakY,
+  troughY: troughY,
+  endY: endY,
+  peakX: peakX,
+  troughX: troughX,
+  endX: endX,
+  curve: curve,
+  maxHold: maxHold,
+  games: games,
+).value;
+
+/// [meruhenNetEstimate] と同じ値に、要確認の印を添える。[needsCheck]：グラフの形と最大持玉で
+/// 合う目盛りのうち、1回転あたりの使用枚数が多すぎるものを外して選び直した（2026-10-06の補正が
+/// 効いた）。グラフだけでは目盛りを決めきれなかった台なので、画面では値に「※」を付ける。
+({int? value, bool needsCheck}) meruhenNetEstimateDetail({
+  required double baselineY,
+  required double peakY,
+  required double troughY,
+  required double endY,
+  double? peakX,
+  double? troughX,
+  double? endX,
+  List<List<double>>? curve,
+  required int? maxHold,
+  int? games,
 }) {
-  if ((baselineY - _zeroY).abs() > 0.01) return null; // 別の大きさのSVGは未確認
-  if (maxHold == null || maxHold < 0 || maxHold > 100000) return null;
+  const none = (value: null, needsCheck: false);
+  if ((baselineY - _zeroY).abs() > 0.01) return none; // 別の大きさのSVGは未確認
+  if (maxHold == null || maxHold < 0 || maxHold > 100000) return none;
   const half = _zeroY - _topY;
   final peak = baselineY - peakY, trough = baselineY - troughY;
   final end = baselineY - endY;
@@ -84,7 +112,7 @@ int? meruhenNetEstimate({
     trough.abs(),
     end.abs(),
   ].reduce((a, b) => a > b ? a : b);
-  if (amp == 0) return 0; // 一日中ゼロ線の上（未稼働など）
+  if (amp == 0) return (value: 0, needsCheck: false); // 一日中ゼロ線の上（未稼働など）
 
   bool fits(int index) {
     final range = meruhenAxisSteps[index];
@@ -95,10 +123,11 @@ int? meruhenNetEstimate({
   }
 
   int? chosen;
+  var needsCheck = false;
   if (curve != null && curve.length >= 2) {
     final values = [for (final p in curve) baselineY - p[1]];
     final rise = _rise(values);
-    if (rise <= 0) return null;
+    if (rise <= 0) return none;
     // 点は間引かれているので、測った上がり幅は実際より小さい（比は1以上になる）。
     // 比が1を下回らない段階のうち、1回転あたりの使用枚数がありえるものの最大を選ぶ。
     final candidates = [
@@ -116,6 +145,7 @@ int? meruhenNetEstimate({
       for (final step in candidates)
         if (within(step, meruhenPlausibleUsePerGame)) step,
     ];
+    needsCheck = plausible.length != candidates.length;
     if (plausible.isNotEmpty) {
       chosen = plausible.last;
     } else if (candidates.isNotEmpty &&
@@ -149,6 +179,6 @@ int? meruhenNetEstimate({
     }
     if (feasible.length == 1) chosen = feasible.single;
   }
-  if (chosen == null) return null;
-  return (end * chosen / half).round();
+  if (chosen == null) return none;
+  return (value: (end * chosen / half).round(), needsCheck: needsCheck);
 }

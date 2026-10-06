@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core import Store, meruhen_net_estimate, report
+from core import Store, meruhen_net_estimate, meruhen_net_estimate_detail, report
 
 
 def measurement(heights, with_curve=True, **extra):
@@ -52,6 +52,15 @@ class MeruhenNetEstimateTests(unittest.TestCase):
         self.assertEqual(meruhen_net_estimate(measurement([0, -63, 40, 147, 128]), 2376, 2000), 1422)
         self.assertEqual(meruhen_net_estimate(measurement([0, 120, 40, -50]), 2900, 2500), -1111)
 
+    def test_only_racks_whose_step_was_chosen_again_need_a_check(self):
+        # Android meruhen_net_test.dart「選び直した台だけ要確認（※）にする」と同じ例。
+        self.assertEqual(meruhen_net_estimate_detail(measurement([0, 0, 0, -5, -17, -17, -18, -36, -40, -55, -75, -89, -87, -109, -106, -105, -116, -139, -156, -161, -161]), 234, 1634), (-1789, True))
+        self.assertEqual(meruhen_net_estimate_detail(measurement([0, 0, 0, -5, -17, -17, -18, -36, -40, -55, -75, -89, -87, -109, -106, -105, -116, -139, -156, -161, -161]), 234), (-8944, False))
+        self.assertEqual(meruhen_net_estimate_detail(measurement([0, 0, 0, -136, -133, -133]), 113, 300), (-739, True))
+        self.assertEqual(meruhen_net_estimate_detail(measurement([0, 0, 0, -136, -133, -133]), 113, 168), (None, False))
+        self.assertEqual(meruhen_net_estimate_detail(measurement([0, -63, 40, 147, 128]), 2376, 8584), (1422, False))
+        self.assertEqual(meruhen_net_estimate_detail(measurement([0, 120, 40, -50]), 2900, 2500), (-1111, False))
+
     def test_four_points_only_when_one_step_fits(self):
         known = dict(baseline_y=200.5, peak_y=200.5 - 147, trough_y=200.5 + 63, end_y=200.5 - 128,
                      peak_x=300, trough_x=100, end_x=356)
@@ -70,12 +79,15 @@ class ResultPageTests(unittest.TestCase):
             db = Store(Path(folder) / 'test.db')
             base = dict(store='nagamachiminami', kind_code=21, day='2026-10-03', machine='テスト', games=8584, bb=32, rb=30)
             db.save([dict(base, rack=615, max_hold=2376, graph_measurement=measurement([0, -63, 40, 147, 128])),
-                     dict(base, rack=616, max_hold=2000)])
+                     dict(base, rack=616, max_hold=2000),
+                     dict(base, rack=517, games=1634, bb=2, rb=1, max_hold=234, graph_measurement=measurement([0, 0, 0, -5, -17, -17, -18, -36, -40, -55, -75, -89, -87, -109, -106, -105, -116, -139, -156, -161, -161]))])
             output, _results = report(db, '2026-10-03', 'テスト', Path(folder) / 'reports')
             text = output.read_text(encoding='utf-8')
             db.close()
         self.assertIn('<th>推定差枚</th>', text)
         self.assertIn('<td>+1,422</td>', text)
+        self.assertIn('<td>-1,789※</td>', text, '選び直した台には※')
+        self.assertIn('回転数から選び直した要確認の値', text)
         self.assertIn('確定値ではありません', text)
         self.assertIn('<th colspan="7">表示データ</th>', text)
 

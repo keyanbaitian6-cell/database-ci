@@ -41,6 +41,9 @@ class DaySummaryCard extends StatelessWidget {
         if (!hasImplausibleNumbers(e.$1) && e.$1.netValue != null)
           e.$1.netValue!,
     ];
+    final netChecks = entries
+        .where((e) => !hasImplausibleNumbers(e.$1) && e.$1.netNeedsCheck)
+        .length;
     final odd = suspiciousDuplicates(entries.map((e) => e.$1));
     final missingByMachine = <String, List<int>>{};
     for (final e in entries.where((e) => !e.$1.graphDone)) {
@@ -75,7 +78,8 @@ class DaySummaryCard extends StatelessWidget {
                           : '推定差枚を計算できる台がありません（0/${entries.length}台）')
                     : '記録内の${pscube ? '差枚' : '推定差枚'}合計 ${signedMedals(nets.reduce((a, b) => a + b))}枚'
                           '（${nets.length}/${entries.length}台）'
-                          '・平均 ${signedMedals((nets.reduce((a, b) => a + b) / nets.length).round())}枚',
+                          '・平均 ${signedMedals((nets.reduce((a, b) => a + b) / nets.length).round())}枚'
+                          '${netChecks > 0 ? '（※要確認$netChecks台を含む）' : ''}',
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -593,7 +597,7 @@ class RackStats extends StatelessWidget {
         Text(
           'BIG ${record.bb}　REG ${record.rb}　${record.outputLabel} ${record.outputValue ?? '—'}'
           '${record.isPscube ? '　AT/ART ${record.atArt}' : ''}'
-          '${record.netValue == null || hasImplausibleNumbers(record) ? '' : '　${record.netLabel} ${signedMedals(record.netValue!)}枚'}',
+          '${record.netValue == null || hasImplausibleNumbers(record) ? '' : '　${record.netLabel} ${record.netText}枚'}',
         ),
         Text(
           '観測量（設定判別の信頼度ではありません）：${reliabilityLabel(record.games)}'
