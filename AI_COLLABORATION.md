@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 閲覧サイトを0.5.34へ更新・公開URL確認済み（Codex、2026-10-06）
+
+- 利用者の依頼：「サイトの公開もお願い」。正本mainをfetch・fast-forwardし、ソース `754e60657f98a72389a643ccb38fc7be2ff1bd5c` から作成。作業場所はdatabase-main内のみ。公開用チェックアウトは `database_android/build/viewer-publish`（生成物、Git対象外）。
+- 作業開始時の公開コミットは `37873a60bd55757a34d8e51945c7d8db5cdc15ee`。イベント名などの機能は既に公開済みで、今回の公開差分は `version.json` の `0.5.33+2026100609` → `0.5.34+2026100611` のみ。機能コードの追加変更なし。
+- 公開前に `bash database_android/tool/check_before_build.sh` **ALL PASSED**。PC193+93件、Flutter484件成功、analyzeはエラー0・警告0・info18件。JS18本中17本成功、非公開アーカイブ不足で `test_pscube_capture.mjs` はSKIP（実資料の読み取りは未確認）。このスクリプトで作り直して画面試験したWebビルドを、そのまま公開に使用。
+- 必ず `tool/stage_viewer.py` を通し、記録の文字列90種で該当なし。ステージ52ファイルがテスト済みステージとSHA-256で全件一致し、seedファイルなし。公開リポジトリ `keyanbaitian6-cell/database-viewer` のmainへ `092170cda310e4e20e38ee0a9af3ed0f177fa302` をpush。GitHub Pagesは同コミットでbuilt、pages build and deploymentはsuccess。
+- 公開URL：`https://keyanbaitian6-cell.github.io/database-viewer/`・`https://keyanbaitian6-cell.github.io/database-viewer/pscube/`（両方200）。公開主要7ファイル（main.dart.js・flutter_bootstrap.js・version.json・index.html・pscube/index.html・pscube/data.mjs・pscube/viewer_bootstrap.mjs）は公開コミットとバイト一致し、検証済みステージともGitの改行正規化以外に差がない。公開version.jsonは0.5.34+2026100611。
+- `assets/assets/database_seed.json`・`assets/database_seed.json` は両方404。公開URLに対する `test_viewer_replacement_browser.mjs` はメルヘン・P’s CUBE両方成功（入れ替え履歴、番号変更、320/393/768pxで横はみ出しなし）。隔離ブラウザの模擬データを使用し、終了後ブラウザを閉じた。P’s CUBE実サイトは開いていない。
+- 証拠は `database_android/build/viewer-release-verification/`：checks（全24項目のログ）、staged-manifest.json、public-verification.json、public-http-status.json、public-browser.log。公開反映の確認は完了。P’s CUBEのIPブロック解除・Androidの画面維持実機確認は引き続き未確認。
+
 ## Android 0.5.34：イベント名入りの通常版・P’s CUBEクローンAPKを作成（Codex、2026-10-06）
 
 - 利用者の依頼：「ビルドしておいてインストールコマンドの提示も」。正本 `database-main` のmainだけで作業。fetch・fast-forwardで `0b26106` と同期してから開始し、機能コードは変更していない（`f1575a1` のイベント名を含む）。
