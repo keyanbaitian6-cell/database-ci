@@ -66,6 +66,15 @@ async function waitSeen(pattern){
   for(let i=0;i<60;i++){if(await seen(pattern))return;await page.waitForTimeout(250);}
   assert.fail(`not shown: ${pattern}`);
 }
+// 名前を入れて保存する。Flutterの入力欄は、まとめて流し込むより実際のキー入力の方が確実。
+async function enterName(name){
+  const box=page.getByRole('textbox',{name:/イベント名（自由記入）/});
+  await box.waitFor();await box.click();
+  await page.keyboard.type(name);
+  const save=page.getByRole('button',{name:'保存',exact:true});
+  for(let i=0;i<20&&await save.isDisabled();i++)await page.waitForTimeout(100);
+  await save.click();
+}
 async function storedEvents(){
   return JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).date_events;
 }
@@ -118,8 +127,7 @@ try {
 
   // 先の日に入れる：自由記入で保存すると、その時刻（前日まで）で端末に残る。
   await page.getByText('25',{exact:true}).first().click();
-  await page.getByRole('textbox',{name:/イベント名（自由記入）/}).fill('周年');
-  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await enterName('周年');
   await page.waitForTimeout(500);
   assert.ok(await seen(/^25\s*周年$/),'saved name is shown with no late mark');
   const saved=(await storedEvents()).find(e=>e.day==='2026-10-25');
@@ -130,8 +138,7 @@ try {
   await page.getByRole('switch',{name:/期間でまとめて入力/}).or(page.getByRole('checkbox',{name:/期間でまとめて入力/})).first().click();
   await page.getByText('21',{exact:true}).first().click();
   await page.getByText('22',{exact:true}).first().click();
-  await page.getByRole('textbox',{name:/イベント名（自由記入）/}).fill('半列');
-  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await enterName('半列');
   await page.waitForTimeout(500);
   const ranged=(await storedEvents()).filter(e=>e.day==='2026-10-21'||e.day==='2026-10-22');
   assert.deepEqual(ranged.map(e=>e.name),['半列','半列']);
