@@ -114,8 +114,128 @@ class ViewerData {
     );
   }
 
-  DateEvent? dateEventFor(String store, String day) =>
-      dateEvents['$store|$day'];
+  /// 画面に出すイベント（「イベントを消した」印は出さない）。
+  DateEvent? dateEventFor(String store, String day) {
+    final event = dateEvents['$store|$day'];
+    return event == null || event.removed ? null : event;
+  }
+
+  /// [other]（端末に覚えていた内容など）のイベントを、[text] に統合する
+  /// （`EVENT_CALENDAR.md`。入力時刻の新しい方が残り、消した印も同じ）。
+  /// [other] の時刻の無いイベントは、[text] の記録より前の日の分だけ引き継ぐ
+  /// （それ以降で [text] に無いものは、PC版で外したもの）。P’s CUBEは対象外。
+  static String withOtherEvents(
+    String? other,
+    String text, {
+    bool timedOnly = false,
+  }) {
+    Map<String, dynamic>? decode(String? value) {
+      if (value == null) return null;
+      try {
+        final decoded = jsonDecode(value);
+        return decoded is Map && decoded['format'] != 'pscube-viewer'
+            ? Map<String, dynamic>.from(decoded)
+            : null;
+      } on FormatException {
+        return null;
+      }
+    }
+
+    final from = decode(other);
+    final into = decode(text);
+    if (from == null || into == null) return text;
+    final days = [
+      if (into['records'] case final List records)
+        for (final item in records)
+          if (item is Map && item['day'] is String) item['day'] as String,
+    ];
+    final first = days.isEmpty
+        ? null
+        : days.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+    final kept = [
+      for (final event in _events(from).values)
+        if (event.updatedAt != null ||
+            (!timedOnly && (first == null || event.day.compareTo(first) < 0)))
+          event,
+    ];
+    final merged = mergeDateEvents(_events(into), kept);
+    if (merged.changed == 0) return text;
+    return jsonEncode({...into, 'date_events': _eventsJson(merged.events)});
+  }
+
+  /// [text] の [store] の [days] に同じイベント名を付ける（null・空は消す）。入力した時刻を
+  /// 残し、名前の変わらない日は前の時刻のまま。何も変わらなければ [text] をそのまま返す。
+  static String setEvents(
+    String text,
+    String store,
+    List<String> days,
+    String? name,
+    DateTime now,
+  ) {
+    final decoded = Map<String, dynamic>.from(jsonDecode(text) as Map);
+    final events = _events(decoded);
+    final trimmed = name?.trim() ?? '';
+    var changed = false;
+    for (final day in days) {
+      final old = events['$store|$day'];
+      if ((old == null || old.removed ? '' : old.name) == trimmed) continue;
+      events['$store|$day'] = DateEvent(
+        store: store,
+        day: day,
+        name: trimmed,
+        updatedAt: eventStamp(now, old?.updatedAt),
+      );
+      changed = true;
+    }
+    if (!changed) return text;
+    return jsonEncode({...decoded, 'date_events': _eventsJson(events)});
+  }
+
+  /// イベントだけのバックアップ（台の記録は空）。PC・Androidのバックアップ読み込みで取り込める。
+  static String eventsOnlyBackup(Iterable<DateEvent> events, DateTime now) =>
+      jsonEncode({
+        'format': 'database-backup',
+        'version': 1,
+        'source': 'browser',
+        'exported_at': _withOffset(now),
+        'date_events': _eventsJson({
+          for (final e in events)
+            if (storeNames.containsKey(e.store)) e.key: e,
+        }),
+        'records': <Object>[],
+      });
+
+  static String eventsBackupFileName(DateTime now) {
+    final t = now.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return 'database-backup-browser-events-${t.year}${two(t.month)}${two(t.day)}'
+        '-${two(t.hour)}${two(t.minute)}${two(t.second)}.json';
+  }
+
+  static Map<String, DateEvent> _events(Map<dynamic, dynamic> decoded) {
+    final events = <String, DateEvent>{};
+    final items = decoded['date_events'];
+    if (items is List) {
+      for (final item in items) {
+        final event = DateEvent.tryFromJson(item);
+        if (event != null) events[event.key] = event;
+      }
+    }
+    return events;
+  }
+
+  static List<Map<String, dynamic>> _eventsJson(
+    Map<String, DateEvent> events,
+  ) => [for (final key in events.keys.toList()..sort()) events[key]!.toJson()];
+
+  static String _withOffset(DateTime now) {
+    final local = now.toLocal();
+    final offset = local.timeZoneOffset;
+    final minutes = offset.inMinutes.abs();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${local.toIso8601String().substring(0, 19)}'
+        '${offset.isNegative ? '-' : '+'}${two(minutes ~/ 60)}:${two(minutes % 60)}';
+  }
 
   /// Driveから自動で読んだ内容 [incoming] と、端末に覚えていた内容 [stored] を
   /// 合わせる（どちらも閲覧ページのJSON）。
@@ -128,6 +248,24 @@ class ViewerData {
   ///
   /// 返す [text] を表示・保存に使う。[note] は利用者への知らせ（無ければ null）。
   static ({String text, String? note}) merge(String? stored, String incoming) {
+    final result = _mergeRecords(stored, incoming);
+    // 端末で入れたイベントとDriveのイベントは、どちらの内容を使うときも新しい方を残す。
+    // 端末の内容を残したときは、Driveからは時刻つきの入力だけを足す。
+    final keptStored = identical(result.text, stored);
+    return (
+      text: withOtherEvents(
+        keptStored ? incoming : stored,
+        result.text,
+        timedOnly: keptStored,
+      ),
+      note: result.note,
+    );
+  }
+
+  static ({String text, String? note}) _mergeRecords(
+    String? stored,
+    String incoming,
+  ) {
     Map<String, dynamic>? decode(String? text) {
       if (text == null) return null;
       try {

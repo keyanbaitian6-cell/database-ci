@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
 import pscube_import
+from event_calendar import open_event_calendar
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
@@ -345,10 +346,15 @@ def main():
     ttk.Label(identity, text='イベント').grid(row=0, column=2, sticky='w')
     event_name = tk.StringVar(value='イベントなし')
     current_event_name = tk.StringVar(value='')
-    event_combo = ttk.Combobox(identity, textvariable=event_name,
+    event_box = ttk.Frame(identity)
+    event_box.grid(row=1, column=2, sticky='w', padx=(0, 16))
+    event_combo = ttk.Combobox(event_box, textvariable=event_name,
                                values=['イベントなし', *DATE_EVENT_OPTIONS, '自由記載…'],
                                state='readonly', width=20)
-    event_combo.grid(row=1, column=2, sticky='w', padx=(0, 16))
+    event_combo.pack(side='left')
+    # 先の日にも入れられるカレンダー（メルヘン2店舗、EVENT_CALENDAR.md）。
+    ttk.Button(event_box, text='カレンダー', style='Link.TButton',
+               command=lambda: open_events_calendar()).pack(side='left', padx=(4, 0))
     ttk.Label(identity, text='機種名').grid(row=0, column=3, sticky='w')
     machine = tk.StringVar(value=settings.get('last_machine', MACHINE_DEFAULT))
     machine_combo = ttk.Combobox(identity, textvariable=machine, state='readonly', width=34)
@@ -465,6 +471,16 @@ def main():
         finally:
             db.close()
         refresh_event()
+
+    def open_events_calendar():
+        def changed(db):
+            auto_backup(db, DATA_DIR)
+            history_report(db, ROOT / 'reports')
+            root.after(0, refresh_event)
+
+        location = current_location()
+        open_event_calendar(root, ROOT / 'data' / 'database.sqlite3',
+                            location=location if location in STORE_NAMES else None, on_changed=changed)
 
     def refresh_machines(*_args):
         location = current_location()
@@ -743,7 +759,7 @@ def main():
         applied = len(plan['new']) + len(plan['graph_only']) + len(plan['link_only']) + plan.get('events_added', 0)
         summary = (f'新規{len(plan["new"])}件、グラフ追加{len(plan["graph_only"])}件、リンク補完{len(plan["link_only"])}件を取り込みました。'
                    f'既に同じ内容{len(plan["unchanged"])}件、要確認{len(plan["conflicts"])}件、'
-                   f'イベント追加{plan.get("events_added", 0)}件、イベント名不一致{plan.get("event_conflicts", 0)}件（既存名を維持）、'
+                   f'イベント反映{plan.get("events_added", 0)}件、イベント名不一致{plan.get("event_conflicts", 0)}件（入力時刻の無い同士は既存名を維持）、'
                    f'対象外{len(plan["skipped"])}件。')
         logbox.insert('end', f'バックアップを読み込みました：{summary}\n')
         logbox.see('end')

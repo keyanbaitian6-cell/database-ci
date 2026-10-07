@@ -13,6 +13,7 @@ import 'android_record_page.dart';
 import 'backup_service.dart';
 import 'data_checks.dart';
 import 'date_events.dart';
+import 'event_calendar_page.dart';
 import 'database_service.dart';
 import 'graph_preview.dart';
 import 'gradient_button.dart';
@@ -992,6 +993,26 @@ class _ResultsPageState extends State<ResultsPage> {
         ),
       );
 
+  /// 先の日にもイベントを入れられるカレンダー（EVENT_CALENDAR.md）。
+  void _openEventCalendar() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => ListenableBuilder(
+        listenable: widget.controller,
+        builder: (context, _) => EventCalendarPage(
+          stores: storeNames,
+          initialStore: store ?? storeNames.keys.first,
+          eventFor: widget.controller.dateEventFor,
+          namesFor: widget.controller.dateEventNamesFor,
+          onSave: (store, days, name) => widget.controller.setDateEventDays(
+            store: store,
+            days: days,
+            name: name,
+          ),
+        ),
+      ),
+    ),
+  );
+
   Future<void> _editDateEvent() async {
     final selectedStore = store;
     final selectedDay = day;
@@ -1292,6 +1313,11 @@ class _ResultsPageState extends State<ResultsPage> {
                           tooltip: 'イベントを編集',
                           onPressed: _editDateEvent,
                           icon: const Icon(Icons.event_note_outlined),
+                        ),
+                        IconButton(
+                          tooltip: 'イベントカレンダー',
+                          onPressed: _openEventCalendar,
+                          icon: const Icon(Icons.calendar_month_outlined),
                         ),
                       ],
                     ),

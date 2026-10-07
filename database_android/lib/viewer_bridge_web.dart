@@ -60,6 +60,12 @@ void saveRemoteUrl(String? url) => _setRemote(url?.toJS);
 
 Future<void> exportPscubeBackup() async => await _exportBackup().toDart;
 
+@JS('databaseViewer.download')
+external void _download(JSString name, JSString text);
+
+/// [text] を [name] のファイルとして保存する（iPhoneでは「ファイル」に保存できる）。
+void downloadText(String name, String text) => _download(name.toJS, text.toJS);
+
 Future<String?> setPscubeMachineType(
   String scope,
   String machine,

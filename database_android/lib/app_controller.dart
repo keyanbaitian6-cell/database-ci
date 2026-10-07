@@ -169,10 +169,19 @@ class AppController extends ChangeNotifier {
   Map<String, String> appState = {};
 
   /// 店舗・日付ごとのイベント名。台の採点や候補計算には使わない。
+  /// 「イベントを消した」印（[DateEvent.removed]）も、バックアップと統合のために含む。
   Map<String, DateEvent> dateEvents = {};
 
-  DateEvent? dateEventFor(String? store, String? day) =>
-      store == null || day == null ? null : dateEvents['$store|$day'];
+  DateEvent? dateEventFor(String? store, String? day) {
+    final event = store == null || day == null
+        ? null
+        : dateEvents['$store|$day'];
+    return event == null || event.removed ? null : event;
+  }
+
+  /// イベント入力のプルダウン（既定の候補と、今付いている名前）。
+  List<String> dateEventNamesFor(String store) =>
+      dateEventNames(dateEvents.values, store: store);
 
   List<DateEvent> _decodeDateEvents(String? text) {
     if (text == null) return [];
@@ -202,35 +211,49 @@ class AppController extends ChangeNotifier {
     required String store,
     required String day,
     required String? name,
+  }) => setDateEventDays(store: store, days: [day], name: name);
+
+  /// [days] に同じイベント名を付ける（null・空は消す）。入力した時刻を残し、名前が
+  /// 変わらない日は前の時刻のまま（前日までに入力した印を消さない）。
+  Future<void> setDateEventDays({
+    required String store,
+    required List<String> days,
+    required String? name,
+    DateTime? now,
   }) => _write(() async {
-    if (!storeNames.containsKey(store) || !isValidRecordDay(day)) {
+    if (!storeNames.containsKey(store) || !days.every(isValidRecordDay)) {
       throw ArgumentError('店舗または日付が不正です。');
     }
-    final cleaned = name?.trim();
-    if (cleaned != null && (cleaned.isEmpty || cleaned.length > 60)) {
-      throw ArgumentError('イベント名は1〜60文字で入力してください。');
+    final trimmed = name?.trim() ?? '';
+    if (trimmed.length > eventNameMax) {
+      throw ArgumentError('イベント名は1〜$eventNameMax文字で入力してください。');
     }
-    final key = '$store|$day';
-    final previous = dateEvents[key];
-    if (cleaned == null) {
-      dateEvents.remove(key);
-    } else {
-      dateEvents[key] = DateEvent(store: store, day: day, name: cleaned);
+    final previous = Map.of(dateEvents);
+    final at = now ?? DateTime.now();
+    var changed = 0;
+    for (final day in days) {
+      final old = dateEvents['$store|$day'];
+      if ((old == null || old.removed ? '' : old.name) == trimmed) continue;
+      dateEvents['$store|$day'] = DateEvent(
+        store: store,
+        day: day,
+        name: trimmed,
+        updatedAt: eventStamp(at, old?.updatedAt),
+      );
+      changed++;
     }
+    if (changed == 0) return;
     try {
       await _saveDateEvents();
     } on Object {
       // 保存できなければ画面の側も元に戻す。
-      if (previous == null) {
-        dateEvents.remove(key);
-      } else {
-        dateEvents[key] = previous;
-      }
+      dateEvents = previous;
       rethrow;
     }
-    message = cleaned == null
-        ? '$day のイベントを解除しました。'
-        : '$day に「$cleaned」を登録しました。';
+    final where = days.length == 1 ? days.single : '${days.first}〜${days.last}';
+    message = trimmed.isEmpty
+        ? '$where のイベントを解除しました。'
+        : '$where に「$trimmed」を登録しました。';
     notifyListeners();
   });
 
@@ -1135,15 +1158,13 @@ class AppController extends ChangeNotifier {
               latestCandidates[c.groupKey] = c;
             }
           }
-          for (final event in chunk.events) {
-            final existing = events[event.key];
-            if (existing == null) {
-              events[event.key] = event;
-              eventsAdded++;
-            } else if (existing.name != event.name) {
-              result.dateEventConflicts++;
-            }
-          }
+          // 入力時刻の新しい方が残る（EVENT_CALENDAR.md）。消した印も同じ。
+          final merged = mergeDateEvents(events, chunk.events);
+          events
+            ..clear()
+            ..addAll(merged.events);
+          eventsAdded += merged.changed;
+          result.dateEventConflicts += merged.conflicts;
         }
         await writer.apply(
           ChangeSet(

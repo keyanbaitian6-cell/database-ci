@@ -1,0 +1,449 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:database_android/date_events.dart';
+import 'package:database_android/event_calendar_page.dart';
+import 'package:database_android/main.dart';
+import 'package:database_android/models.dart';
+import 'package:database_android/viewer_data.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'support/real_database.dart';
+
+/// イベントカレンダー（EVENT_CALENDAR.md、2026-10-07）。PC `tests/test_event_calendar.py` と同じ規則。
+DateEvent ev(String name, [String? at, String day = '2026-10-10']) =>
+    DateEvent(store: 'nagamachiminami', day: day, name: name, updatedAt: at);
+
+void main() {
+  group('形式', () {
+    test('時刻の無い以前のイベント・時刻つき・消した印を読み書きする', () {
+      final legacy = DateEvent.tryFromJson({
+        'store': 'nagamachiminami',
+        'day': '2026-09-14',
+        'name': '4台構成',
+      })!;
+      expect((legacy.updatedAt, legacy.removed), (null, false));
+      expect(legacy.toJson().containsKey('updated_at'), isFalse);
+      final removed = DateEvent.tryFromJson({
+        'store': 'saiwaichou',
+        'day': '2026-10-10',
+        'name': null,
+        'updated_at': '2026-10-07T13:00:00.000Z',
+      })!;
+      expect(removed.removed, isTrue);
+      expect(removed.toJson()['name'], isNull);
+      expect(
+        DateEvent.tryFromJson({
+          'store': 'saiwaichou',
+          'day': '2026-10-10',
+          'name': null,
+        }),
+        isNull,
+        reason: '時刻の無い消した印は読まない',
+      );
+      expect(
+        DateEvent.tryFromJson({
+          'store': 'saiwaichou',
+          'day': '2026-10-10',
+          'name': '華の日',
+          'updated_at': '2026-10-07T22:00:00',
+        }),
+        isNull,
+        reason: '時差の無い時刻は読まない',
+      );
+    });
+
+    test('前日までに入力＝その日の02:00（日本時間）より前', () {
+      expect(ev('華の日', '2026-10-10T01:59:59+09:00').enteredInAdvance, isTrue);
+      expect(ev('華の日', '2026-10-09T16:59:59Z').enteredInAdvance, isTrue);
+      expect(ev('華の日', '2026-10-10T02:00:00+09:00').enteredInAdvance, isFalse);
+      expect(ev('華の日').enteredInAdvance, isFalse);
+    });
+
+    test('入力時刻は前の時刻より必ず後', () {
+      expect(
+        eventStamp(DateTime.utc(2026, 10, 7, 12), '2026-10-07T22:00:00+09:00'),
+        '2026-10-07T13:00:00.001Z',
+      );
+      expect(
+        eventStamp(DateTime.utc(2026, 10, 7, 14), null),
+        '2026-10-07T14:00:00.000Z',
+      );
+    });
+  });
+
+  group('統合（PC core.merge_date_events と同じ）', () {
+    Map<String, DateEvent> one(DateEvent e) => {e.key: e};
+    test('両方に時刻：新しい方、同じなら読み込んだ方', () {
+      var r = mergeDateEvents(one(ev('A', '2026-10-07T22:00:00+09:00')), [
+        ev('B', '2026-10-07T13:00:01Z'),
+      ]);
+      expect((r.events.values.single.name, r.changed), ('B', 1));
+      r = mergeDateEvents(one(ev('A', '2026-10-07T22:00:00+09:00')), [
+        ev('B', '2026-10-07T12:59:59Z'),
+      ]);
+      expect((r.events.values.single.name, r.changed), ('A', 0));
+      r = mergeDateEvents(one(ev('A', '2026-10-07T22:00:00+09:00')), [
+        ev('B', '2026-10-07T13:00:00Z'),
+      ]);
+      expect(r.events.values.single.name, 'B');
+    });
+    test('時刻のある方が、時刻の無い方に勝つ', () {
+      expect(
+        mergeDateEvents(one(ev('古い')), [
+          ev('新', '2026-10-07T22:00:00+09:00'),
+        ]).events.values.single.name,
+        '新',
+      );
+      expect(
+        mergeDateEvents(one(ev('新', '2026-10-07T22:00:00+09:00')), [
+          ev('古い'),
+        ]).events.values.single.name,
+        '新',
+      );
+    });
+    test('どちらも時刻なし：手元を残し不一致を数える', () {
+      final r = mergeDateEvents(one(ev('A')), [ev('B')]);
+      expect(
+        (r.events.values.single.name, r.changed, r.conflicts),
+        ('A', 0, 1),
+      );
+    });
+    test('消した印は古いバックアップで戻らない', () {
+      final r = mergeDateEvents(one(ev('', '2026-10-08T09:00:00+09:00')), [
+        ev('半列'),
+        ev('半列', '2026-10-07T22:00:00+09:00'),
+      ]);
+      expect((r.events.values.single.removed, r.changed), (true, 0));
+    });
+  });
+
+  group('Android：入力', () {
+    test('先の日・期間に入れる、同じ名前は時刻を変えない、消すと印が残り画面には出ない', () async {
+      final path = await newDatabasePath();
+      final db = realDatabase(path);
+      final c = AppController(database: db);
+      await c.initialize();
+      await c.setDateEventDays(
+        store: 'saiwaichou',
+        days: ['2026-12-30', '2026-12-31'],
+        name: ' 華の日 ',
+        now: DateTime.utc(2026, 10, 7, 13),
+      );
+      expect(c.dateEventFor('saiwaichou', '2026-12-31')!.name, '華の日');
+      expect(
+        c.dateEventFor('saiwaichou', '2026-12-31')!.updatedAt,
+        '2026-10-07T13:00:00.000Z',
+      );
+      await c.setDateEventDays(
+        store: 'saiwaichou',
+        days: ['2026-12-31'],
+        name: '華の日',
+        now: DateTime.utc(2026, 12, 31, 12),
+      );
+      expect(
+        c.dateEventFor('saiwaichou', '2026-12-31')!.updatedAt,
+        '2026-10-07T13:00:00.000Z',
+        reason: '前日までに入力した印を消さない',
+      );
+      await c.setDateEvent(store: 'saiwaichou', day: '2026-12-30', name: null);
+      expect(c.dateEventFor('saiwaichou', '2026-12-30'), isNull);
+      expect(c.dateEvents['saiwaichou|2026-12-30']!.removed, isTrue);
+      expect(c.dateEventNamesFor('saiwaichou').take(5), dateEventOptions);
+      // 開き直しても、時刻と消した印が残っている。
+      final again = AppController(database: db);
+      await again.initialize();
+      expect(again.dateEvents['saiwaichou|2026-12-30']!.removed, isTrue);
+      expect(
+        again.dateEventFor('saiwaichou', '2026-12-31')!.updatedAt,
+        '2026-10-07T13:00:00.000Z',
+      );
+      await db.close();
+    });
+
+    test('閲覧ページのイベントだけのファイルを取り込み、新しい方が残る', () async {
+      final db = realDatabase(await newDatabasePath());
+      final c = AppController(database: db);
+      await c.initialize();
+      await c.setDateEventDays(
+        store: 'saiwaichou',
+        days: ['2026-10-10'],
+        name: '仮',
+        now: DateTime.utc(2026, 10, 7, 11),
+      );
+      final dir = await Directory.systemTemp.createTemp('event_import');
+      final file = File('${dir.path}/database-backup-browser-events.json');
+      await file.writeAsString(
+        ViewerData.eventsOnlyBackup([
+          const DateEvent(
+            store: 'saiwaichou',
+            day: '2026-10-10',
+            name: '華の日',
+            updatedAt: '2026-10-07T13:10:00.000Z',
+          ),
+          ev('', '2026-10-07T13:10:00.000Z', '2026-09-15'),
+        ], DateTime.utc(2026, 10, 7, 13, 11)),
+      );
+      final result = await c.importBackup(file);
+      expect(result.dateEventsAdded, 2);
+      expect(c.dateEventFor('saiwaichou', '2026-10-10')!.name, '華の日');
+      expect(
+        c.dateEventFor('nagamachiminami', '2026-09-15'),
+        isNull,
+        reason: '時刻の無い初期のイベントは、時刻つきの消した印で消える',
+      );
+      await db.close();
+    });
+  });
+
+  group('閲覧ページ', () {
+    String data({List<Map<String, Object?>> events = const []}) => jsonEncode({
+      'header': {'format': 'database-backup', 'source': 'pc'},
+      'records': [
+        {
+          'store': 'nagamachiminami',
+          'day': '2026-10-05',
+          'machine': '北斗',
+          'rack': 1,
+          'games': 3000,
+          'bb': 10,
+          'rb': 5,
+        },
+      ],
+      'date_events': events,
+    });
+
+    test('入れる・消す：入力時刻を残し、消した印は画面に出さない', () {
+      final now = DateTime.utc(2026, 10, 7, 13);
+      final text = ViewerData.setEvents(
+        data(),
+        'nagamachiminami',
+        ['2026-10-20', '2026-10-21'],
+        '超探す楽しみ',
+        now,
+      );
+      final parsed = ViewerData.parse(text);
+      expect(
+        parsed.dateEventFor('nagamachiminami', '2026-10-20')!.updatedAt,
+        '2026-10-07T13:00:00.000Z',
+      );
+      expect(
+        identical(
+          ViewerData.setEvents(
+            text,
+            'nagamachiminami',
+            ['2026-10-20'],
+            '超探す楽しみ',
+            now,
+          ),
+          text,
+        ),
+        isTrue,
+        reason: '変わらなければ保存し直さない',
+      );
+      final removed = ViewerData.setEvents(
+        text,
+        'nagamachiminami',
+        ['2026-10-20'],
+        null,
+        now.add(const Duration(minutes: 1)),
+      );
+      final again = ViewerData.parse(removed);
+      expect(again.dateEventFor('nagamachiminami', '2026-10-20'), isNull);
+      expect(again.dateEvents['nagamachiminami|2026-10-20']!.removed, isTrue);
+    });
+
+    test('Driveの自動読み込み：端末で入れた新しいイベントを残し、PCの新しい入力も入る', () {
+      final stored = data(
+        events: [
+          {
+            'store': 'nagamachiminami',
+            'day': '2026-10-20',
+            'name': '端末で入力',
+            'updated_at': '2026-10-07T13:00:00.000Z',
+          },
+          {
+            'store': 'nagamachiminami',
+            'day': '2026-10-06',
+            'name': 'PCで外した古いイベント',
+          },
+        ],
+      );
+      final fresh = data(
+        events: [
+          {
+            'store': 'nagamachiminami',
+            'day': '2026-10-21',
+            'name': 'PCで入力',
+            'updated_at': '2026-10-07T12:00:00+09:00',
+          },
+        ],
+      );
+      final merged = ViewerData.parse(ViewerData.merge(stored, fresh).text);
+      expect(
+        merged.dateEventFor('nagamachiminami', '2026-10-20')!.name,
+        '端末で入力',
+      );
+      expect(
+        merged.dateEventFor('nagamachiminami', '2026-10-21')!.name,
+        'PCで入力',
+      );
+      expect(
+        merged.dateEventFor('nagamachiminami', '2026-10-06'),
+        isNull,
+        reason: '時刻の無いイベントは、Driveの対象期間ではDriveの内容に合わせる',
+      );
+    });
+
+    test('端末の内容の方が新しくて置き換えないときも、Driveの時刻つきの入力だけは入る', () {
+      String withHeader(String text, String at) {
+        final doc = Map<String, dynamic>.from(jsonDecode(text) as Map);
+        return jsonEncode({
+          ...doc,
+          'header': {'format': 'database-backup', 'exported_at': at},
+        });
+      }
+
+      final stored = withHeader(data(), '2026-10-07T23:00:00+09:00');
+      final fresh = withHeader(
+        data(
+          events: [
+            {
+              'store': 'nagamachiminami',
+              'day': '2026-10-22',
+              'name': 'PCで入力',
+              'updated_at': '2026-10-07T12:00:00+09:00',
+            },
+            {'store': 'nagamachiminami', 'day': '2026-09-01', 'name': '時刻なし'},
+          ],
+        ),
+        '2026-10-07T20:00:00+09:00',
+      );
+      final result = ViewerData.merge(stored, fresh);
+      expect(result.note, contains('置き換えていません'));
+      final merged = ViewerData.parse(result.text);
+      expect(
+        merged.dateEventFor('nagamachiminami', '2026-10-22')!.name,
+        'PCで入力',
+      );
+      expect(merged.dateEventFor('nagamachiminami', '2026-09-01'), isNull);
+    });
+
+    test('イベントだけの書き出し：台の記録は空、消した印と時刻つき', () {
+      final events = [
+        ev('周年', '2026-10-07T13:00:00.000Z', '2026-10-25'),
+        ev('', '2026-10-07T13:01:00.000Z', '2026-10-03'),
+      ];
+      final doc = jsonDecode(
+        ViewerData.eventsOnlyBackup(events, DateTime.utc(2026, 10, 7, 13, 5)),
+      ) as Map;
+      expect(doc['format'], 'database-backup');
+      expect(doc['records'], isEmpty);
+      expect(doc['exported_at'], matches(RegExp(r'[+-]\d{2}:\d{2}$')));
+      expect(doc['date_events'], [
+        {
+          'store': 'nagamachiminami',
+          'day': '2026-10-03',
+          'name': null,
+          'updated_at': '2026-10-07T13:01:00.000Z',
+        },
+        {
+          'store': 'nagamachiminami',
+          'day': '2026-10-25',
+          'name': '周年',
+          'updated_at': '2026-10-07T13:00:00.000Z',
+        },
+      ]);
+      expect(
+        ViewerData.eventsBackupFileName(DateTime(2026, 10, 7, 22, 5, 9)),
+        'database-backup-browser-events-20261007-220509.json',
+      );
+    });
+  });
+
+  group('カレンダー画面', () {
+    test('日曜始まりの週、期間の日、＊の付け方', () {
+      final weeks = monthWeeks(2026, 10);
+      expect(weeks.first.take(4), everyElement(isNull));
+      expect(weeks.first[4], DateTime.utc(2026, 10, 1));
+      expect(weeks.last.whereType<DateTime>().last, DateTime.utc(2026, 10, 31));
+      expect(monthWeeks(2026, 2).length, 4, reason: '2026年2月は日曜始まりで4週');
+      expect(eventRangeDays('2026-10-31', '2026-10-29'), [
+        '2026-10-29',
+        '2026-10-30',
+        '2026-10-31',
+      ]);
+      expect(eventCellLabel(ev('華の日', '2026-10-09T22:00:00+09:00')), '華の日');
+      expect(eventCellLabel(ev('華の日', '2026-10-10T12:00:00+09:00')), '華の日＊');
+      expect(eventCellLabel(ev('華の日')), '華の日＊');
+      expect(eventCellLabel(ev('', '2026-10-10T12:00:00+09:00')), '');
+    });
+
+    testWidgets('日を押して入れる・期間でまとめて入れる', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final events = <String, DateEvent>{};
+      final saved = <(String, List<String>, String?)>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) => EventCalendarPage(
+              stores: storeNames,
+              initialStore: 'saiwaichou',
+              today: DateTime(2026, 10, 7),
+              eventFor: (store, day) => events['$store|$day'],
+              namesFor: (_) => dateEventOptions,
+              onSave: (store, days, name) async {
+                saved.add((store, days, name));
+                setState(() {
+                  for (final day in days) {
+                    events['$store|$day'] = DateEvent(
+                      store: store,
+                      day: day,
+                      name: name ?? '',
+                      updatedAt: '2026-10-07T13:00:00.000Z',
+                    );
+                  }
+                });
+              },
+            ),
+          ),
+        ),
+      );
+      expect(find.text('2026年10月'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('event-day-2026-10-30')),
+      );
+      await tester.tap(find.byKey(const ValueKey('event-day-2026-10-30')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '華の日');
+      await tester.pump();
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect((saved.single.$1, saved.single.$3), ('saiwaichou', '華の日'));
+      expect(saved.single.$2, ['2026-10-30']);
+      expect(find.text('華の日'), findsWidgets);
+      await tester.ensureVisible(find.text('期間でまとめて入力'));
+      await tester.tap(find.text('期間でまとめて入力'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('event-day-2026-10-20')),
+      );
+      await tester.tap(find.byKey(const ValueKey('event-day-2026-10-20')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('event-day-2026-10-22')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '半列');
+      await tester.pump();
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(saved.last.$2, ['2026-10-20', '2026-10-21', '2026-10-22']);
+      await tester.ensureVisible(find.byTooltip('次の月'));
+      await tester.tap(find.byTooltip('次の月'));
+      await tester.pumpAndSettle();
+      expect(find.text('2026年11月'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+}

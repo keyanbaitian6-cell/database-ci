@@ -7,7 +7,7 @@ import math
 import re
 import shutil
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from setting_estimate import candidate_label, estimate_setting
@@ -150,6 +150,23 @@ def _timestamp(value):
     return parsed if parsed.tzinfo else parsed.astimezone()
 
 
+# イベントカレンダー（EVENT_CALENDAR.md、2026-10-07）：入力時刻つき・新しい方が上書き・消した印を残す。
+EVENT_JST = timezone(timedelta(hours=9))
+# 営業日は日本時間の午前2時で切り替わる（browser_import.BUSINESS_DAY_CUTOFF_HOUR と同じ）。
+EVENT_DAY_START_HOUR = 2
+
+
+def _event_time(value):
+    """An event's updated_at as an aware datetime; None if absent or unreadable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else None
+
+
 def _valid_date_event(event):
     if not isinstance(event, dict) or event.get('store') not in STORE_NAMES:
         return False
@@ -157,8 +174,61 @@ def _valid_date_event(event):
         date.fromisoformat(event.get('day', ''))
     except (TypeError, ValueError):
         return False
+    if 'updated_at' in event and _event_time(event['updated_at']) is None:
+        return False
     name = event.get('name')
+    if name is None:
+        # 「イベントを消した」印は、入力時刻のあるものだけ。
+        return 'updated_at' in event
     return isinstance(name, str) and 0 < len(name.strip()) <= 60
+
+
+def _clean_date_event(event):
+    cleaned = {'store': event['store'], 'day': event['day'],
+               'name': event['name'].strip() if isinstance(event.get('name'), str) else None}
+    if 'updated_at' in event:
+        cleaned['updated_at'] = event['updated_at']
+    return cleaned
+
+
+def merge_date_events(stored, incoming):
+    """Merge event lists by store/day (EVENT_CALENDAR.md).
+
+    Both timed: the newer wins (a tie goes to the incoming one). Only one timed:
+    the timed one wins. Neither timed: keep the stored one, counting a different
+    name as a conflict. Removal marks (name None) follow the same rule.
+    Returns (merged events, number changed, number of conflicts)."""
+    events = {(e['store'], e['day']): _clean_date_event(e) for e in stored}
+    changed = conflicts = 0
+    for raw in incoming:
+        event = _clean_date_event(raw)
+        key = (event['store'], event['day'])
+        old = events.get(key)
+        if old is None:
+            take = True
+        else:
+            new_at, old_at = _event_time(event.get('updated_at')), _event_time(old.get('updated_at'))
+            if new_at is not None and old_at is not None:
+                take = new_at >= old_at
+            elif new_at is not None or old_at is not None:
+                take = new_at is not None
+            else:
+                take = False
+                conflicts += old['name'] != event['name']
+        if take and old != event:
+            events[key] = event
+            changed += 1
+    return list(events.values()), changed, conflicts
+
+
+def date_event_in_advance(event):
+    """True when the event was entered before 02:00 JST of its day (the end of the
+    previous business day). Untimed events are never counted as entered in advance."""
+    at = _event_time(event.get('updated_at'))
+    if at is None:
+        return False
+    start = datetime.fromisoformat(event['day']).replace(hour=EVENT_DAY_START_HOUR, tzinfo=EVENT_JST)
+    return at < start
 
 
 class Store:
@@ -388,14 +458,22 @@ class Store:
         found = self.db.execute('SELECT value FROM app_state WHERE state_key=?', (key,)).fetchone()
         return found[0] if found else None
 
-    def date_events(self, location=None, day=None):
+    def date_events(self, location=None, day=None, include_removed=False):
+        """Events with a name. ``include_removed`` also returns the removal marks
+        (name None) that backups and merging need."""
         try:
             events = json.loads(self.state('date_events') or '[]')
         except (TypeError, ValueError):
             events = []
         return [event for event in events if _valid_date_event(event)
+                and (include_removed or event.get('name') is not None)
                 and (location is None or event['store'] == location)
                 and (day is None or event['day'] == day)]
+
+    def date_event_names(self, location=None):
+        """Default choices, then the names in use (newest day first) for the input lists."""
+        used = sorted(self.date_events(location=location), key=lambda e: e['day'], reverse=True)
+        return list(dict.fromkeys([*DATE_EVENT_OPTIONS, *(e['name'] for e in used)]))
 
     def set_date_events(self, events):
         with self.db:
@@ -409,21 +487,36 @@ class Store:
         valid = {}
         for event in events:
             if _valid_date_event(event):
-                valid[(event['store'], event['day'])] = {
-                    'store': event['store'], 'day': event['day'], 'name': event['name'].strip()}
+                valid[(event['store'], event['day'])] = _clean_date_event(event)
         return json.dumps(list(valid.values()), ensure_ascii=False)
 
-    def set_date_event(self, location, day, name):
-        events = {(event['store'], event['day']): event for event in self.date_events()}
-        key = (location, day)
-        if name is None or not name.strip():
-            events.pop(key, None)
-        else:
-            event = {'store': location, 'day': day, 'name': name.strip()}
+    def set_date_event(self, location, day, name, now=None):
+        self.set_date_event_days(location, [day], name, now)
+
+    def set_date_event_days(self, location, days, name, now=None):
+        """Give each day the same event name (None or blank removes it), stamped
+        with the entry time. Unchanged days keep their old time, so re-entering the
+        same name does not turn an event entered in advance into a late one."""
+        cleaned = name.strip() if isinstance(name, str) and name.strip() else None
+        events = {(e['store'], e['day']): e for e in self.date_events(include_removed=True)}
+        stamp = (now or datetime.now()).astimezone()
+        changed = False
+        for day in days:
+            previous = events.get((location, day))
+            if (previous.get('name') if previous else None) == cleaned:
+                continue
+            at = stamp
+            previous_at = _event_time(previous.get('updated_at')) if previous else None
+            if previous_at is not None and at <= previous_at:
+                at = previous_at + timedelta(milliseconds=1)
+            event = {'store': location, 'day': day, 'name': cleaned,
+                     'updated_at': at.isoformat(timespec='milliseconds')}
             if not _valid_date_event(event):
                 raise ValueError('イベント名、店舗、日付を確認してください。')
-            events[key] = event
-        self.set_date_events(events.values())
+            events[(location, day)] = event
+            changed = True
+        if changed:
+            self.set_date_events(events.values())
 
     def _log_observation(self, row, keep_days=OBSERVATION_KEEP_DAYS):
         """Append one "what was written when" line, and drop worn-out ones.
@@ -757,8 +850,9 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0]
     cutoff = ((date.fromisoformat(latest) - timedelta(days=days - 1)).isoformat()
               if latest else None)
-    date_events = [event for event in store.date_events()
-                   if cutoff and event['day'] >= cutoff and event['day'] <= latest]
+    # 先の日に入力したイベントも渡す（イベントカレンダー）。消した印も含める。
+    date_events = [event for event in store.date_events(include_removed=True)
+                   if cutoff and event['day'] >= cutoff]
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
                              source='pc-viewer', days=days, date_events=date_events), ensure_ascii=False)[:-1]
@@ -792,7 +886,7 @@ def export_backup(store, path, location=None, day=None):
     ``day`` narrows the export to one date (across every machine/store), for
     when a full-database export would be too many machines to review at once.
     """
-    events = store.date_events(location=location, day=day)
+    events = store.date_events(location=location, day=day, include_removed=True)
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
                              source='pc', date_events=events), ensure_ascii=False)[:-1]
@@ -1597,22 +1691,14 @@ def import_backup(store, path):
         raise ValueError(f'バックアップファイルを読み込めません。{exc}') from exc
     snapshots = payload.get('candidate_snapshots', [])
     plan = plan_backup_import(store, payload['records'])
-    plan['events_added'] = 0
-    plan['event_conflicts'] = 0
-    local_events = {(event['store'], event['day']): event for event in store.date_events()}
-    for event in payload.get('date_events', []):
-        key = (event['store'], event['day'])
-        existing = local_events.get(key)
-        if existing is None:
-            local_events[key] = event
-            plan['events_added'] += 1
-        elif existing['name'] != event['name']:
-            plan['event_conflicts'] += 1
+    # 入力時刻の新しい方が残る（EVENT_CALENDAR.md）。events_added は変わった件数。
+    merged_events, plan['events_added'], plan['event_conflicts'] = merge_date_events(
+        store.date_events(include_removed=True), payload.get('date_events', []))
     to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only']
     # イベント名・台・翌日候補の記録を1回で書く（途中で失敗したら何も残さない）。
     with store.db:
         if plan['events_added']:
-            store._write_date_events(store._date_events_payload(local_events.values()))
+            store._write_date_events(store._date_events_payload(merged_events))
         if to_save:
             store._save_rows(to_save, log_candidates=False)
         if snapshots:

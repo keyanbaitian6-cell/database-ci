@@ -18,6 +18,8 @@ void saveRemoteUrl(String? url) {}
 
 Future<void> exportPscubeBackup() async {}
 
+void downloadText(String name, String text) {}
+
 Future<String?> setPscubeMachineType(
   String scope,
   String machine,

@@ -7,6 +7,8 @@ import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
 import 'daily_net_page.dart';
+import 'date_events.dart';
+import 'event_calendar_page.dart';
 import 'event_name_dialog.dart';
 import 'pscube_suffix_page.dart';
 import 'scoring.dart';
@@ -251,7 +253,11 @@ class _ViewerHomeState extends State<ViewerHome> {
       _loading = true;
     });
     try {
-      final text = await pickBackup();
+      final picked = await pickBackup();
+      // 端末で入れたイベント（イベントカレンダー）は、新しく読んだ内容に統合して残す。
+      final text = picked == null
+          ? null
+          : ViewerData.withOtherEvents(await loadViewerData(), picked);
       if (text != null) {
         final data = ViewerData.parse(text);
         await saveViewerData(text);
@@ -357,6 +363,63 @@ class _ViewerHomeState extends State<ViewerHome> {
     } catch (error) {
       if (mounted) setState(() => _error = '機種タイプを保存できませんでした。\n$error');
     }
+  }
+
+  /// メルヘンのイベントカレンダー（先の日にも入れられる、EVENT_CALENDAR.md）。
+  /// 入れたイベントは端末に保存し、書き出したファイルでPC・Androidへ渡す。
+  void _openEventCalendar(String store) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => EventCalendarPage(
+        stores: storeNames,
+        initialStore: store,
+        eventFor: (store, day) => _data?.dateEventFor(store, day),
+        namesFor: (store) =>
+            dateEventNames(_data?.dateEvents.values ?? const [], store: store),
+        onSave: _saveMeruhenEvents,
+        actions: [
+          IconButton(
+            tooltip: 'イベントを書き出す',
+            onPressed: _exportMeruhenEvents,
+            icon: const Icon(Icons.file_download_outlined),
+          ),
+        ],
+        note:
+            'ここで入れたイベントはこの端末に保存されます。PC・Androidへ渡すときは、右上の'
+            '「イベントを書き出す」で作ったファイルを「ファイル」でGoogleドライブの database共有 に'
+            '保存し、PCの「同期フォルダの最新を読み込む」（Androidは「バックアップを読み込む」）で'
+            '取り込みます。PCで入れたイベントは、Googleドライブの自動読み込みで届きます。'
+            '同じ日は、あとから入れた方が残ります。',
+      ),
+    ),
+  );
+
+  Future<void> _saveMeruhenEvents(
+    String store,
+    List<String> days,
+    String? name,
+  ) async {
+    final stored = await loadViewerData();
+    if (stored == null) throw StateError('先にバックアップを読み込んでください。');
+    final text = ViewerData.setEvents(
+      stored,
+      store,
+      days,
+      name,
+      DateTime.now(),
+    );
+    if (identical(text, stored)) return;
+    await saveViewerData(text);
+    if (mounted) setState(() => _show(ViewerData.parse(text)));
+  }
+
+  void _exportMeruhenEvents() {
+    final data = _data;
+    if (data == null) return;
+    final now = DateTime.now();
+    downloadText(
+      ViewerData.eventsBackupFileName(now),
+      ViewerData.eventsOnlyBackup(data.dateEvents.values, now),
+    );
   }
 
   /// P’s CUBEのその日のイベント名を付ける・変える・消す（自由記入、今までの名前はプルダウン）。
@@ -677,6 +740,14 @@ class _ViewerHomeState extends State<ViewerHome> {
             day,
             '日別の差枚',
             eventFor: (changed) => data.dateEventFor(store, changed)?.name,
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (!isPscubeStore(store)) ...[
+          OutlinedButton.icon(
+            onPressed: () => _openEventCalendar(store),
+            icon: const Icon(Icons.calendar_month_outlined),
+            label: const Text('イベントカレンダー'),
           ),
           const SizedBox(height: 8),
         ],
