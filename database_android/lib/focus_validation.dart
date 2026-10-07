@@ -10,6 +10,12 @@ const focusValidationFrom = '2026-09-30';
 const focusValidationThrough = '2026-10-29';
 const focusValidationFinalOn = '2026-10-31';
 
+/// The prediction day D ends at 02:00 JST on D+1, the business-day rule the
+/// user fixed for imports (`businessDayCutoffHour`, `browser_import.py`).
+/// Changed from 00:00 on 2026-10-07 at the user's direction; 00:00 stays as a
+/// sensitivity check that is never used for adoption.
+const focusCutoffHour = 2;
+
 /// Ties on the unrounded recent index go to the rack with more games on the
 /// prediction day (user decision 2026-10-07, fixed before any result of the
 /// period was viewed), then the production order: days, latest day, rack.
@@ -51,23 +57,30 @@ class FocusValidationGroup {
 }
 
 /// Keep the baseline population even when all the primary/focus picks are
-/// excluded. Cutoffs are before D+1 midnight JST; missing labels stay null.
-List<FocusValidationGroup> buildFocusValidation(List<SlotRecord> full) {
+/// excluded. Cutoffs are before D+1 [cutoffHour]:00 JST; missing labels stay
+/// null. A [from]/[through] other than the fixed period is a retrospective
+/// reference only (those days were seen when the method was chosen).
+List<FocusValidationGroup> buildFocusValidation(
+  List<SlotRecord> full, {
+  int cutoffHour = focusCutoffHour,
+  String from = focusValidationFrom,
+  String through = focusValidationThrough,
+}) {
   if (scoringVersion != referenceScoringVersion ||
       nextDayMethodVersion != '2026-09-30') {
     throw StateError('固定期間の採点・候補方式の版が違います');
   }
-  final baseline = runBacktest(full, cutoffFor: predictionCutoff);
+  DateTime cutoff(String day) => predictionCutoff(day, hour: cutoffHour);
+  final baseline = runBacktest(full, cutoffFor: cutoff);
   final available = <String, List<SlotRecord>>{};
   final result = <FocusValidationGroup>[];
   for (final g in baseline.groups) {
-    if (g.day.compareTo(focusValidationFrom) < 0 ||
-        g.day.compareTo(focusValidationThrough) > 0) {
+    if (g.day.compareTo(from) < 0 || g.day.compareTo(through) > 0) {
       continue;
     }
     final source = available.putIfAbsent(
       g.day,
-      () => availableRecords(full, g.day, cutoff: predictionCutoff(g.day)),
+      () => availableRecords(full, g.day, cutoff: cutoff(g.day)),
     );
     final history = machineHistory(source, g.store, g.machine);
     final rows = {

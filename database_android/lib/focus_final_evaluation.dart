@@ -419,15 +419,18 @@ Map<String, Object?> focusRecordQuality(
 /// 固定期間の店舗・予測日ごとの進捗（翌日の点数そのものは出さない）。
 Map<String, Object?> focusProgress(
   List<FocusValidationGroup> groups,
-  List<SlotRecord> full,
-) {
+  List<SlotRecord> full, {
+  String from = focusValidationFrom,
+  String through = focusValidationThrough,
+}) {
   final keys = {for (final r in full) r.key};
   final recordDays = <String, Set<String>>{};
   final beforeCutoff = <String, Set<String>>{};
   for (final r in full) {
     recordDays.putIfAbsent(r.store, () => {}).add(r.day);
     final at = readJst(r.capturedAt);
-    if (at != null && at.isBefore(predictionCutoff(r.day))) {
+    if (at != null &&
+        at.isBefore(predictionCutoff(r.day, hour: focusCutoffHour))) {
       beforeCutoff.putIfAbsent(r.store, () => {}).add(r.day);
     }
   }
@@ -435,11 +438,7 @@ Map<String, Object?> focusProgress(
   for (final store in storeNames.keys) {
     final days = <String, Object?>{};
     var evaluableDays = 0;
-    for (
-      var day = focusValidationFrom;
-      day.compareTo(focusValidationThrough) <= 0;
-      day = shiftDay(day, 1)
-    ) {
+    for (var day = from; day.compareTo(through) <= 0; day = shiftDay(day, 1)) {
       final dayGroups = [
         for (final g in groups)
           if (g.baseline.store == store && g.baseline.day == day) g,
@@ -509,18 +508,21 @@ Map<String, Object?> focusProgress(
       if (g.baseline.members.any((m) => m.nextScore != null)) g.baseline.day,
   };
   return {
-    'fixed_period': [focusValidationFrom, focusValidationThrough],
+    'period': [from, through],
     'prediction_days_with_labeled_groups': allDays.length,
     'by_store': result,
   };
 }
 
 /// 保存済みの候補（画面に出た★の記録）の店舗・日ごとの件数。
-Map<String, Object?> focusSnapshotProgress(List<CandidateSnapshot> snapshots) {
+Map<String, Object?> focusSnapshotProgress(
+  List<CandidateSnapshot> snapshots, {
+  String from = focusValidationFrom,
+  String through = focusValidationThrough,
+}) {
   final result = <String, Map<String, Map<String, int>>>{};
   for (final s in snapshots) {
-    if (s.day.compareTo(focusValidationFrom) < 0 ||
-        s.day.compareTo(focusValidationThrough) > 0) {
+    if (s.day.compareTo(from) < 0 || s.day.compareTo(through) > 0) {
       continue;
     }
     final at = readJst(s.takenAt);
@@ -532,7 +534,8 @@ Map<String, Object?> focusSnapshotProgress(List<CandidateSnapshot> snapshots) {
         );
     if (s.method != nextDayMethodVersion) {
       row['other_method'] = row['other_method']! + 1;
-    } else if (at != null && at.isBefore(predictionCutoff(s.day))) {
+    } else if (at != null &&
+        at.isBefore(predictionCutoff(s.day, hour: focusCutoffHour))) {
       row['before_cutoff'] = row['before_cutoff']! + 1;
     } else {
       row['after_cutoff'] = row['after_cutoff']! + 1;
