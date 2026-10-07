@@ -35,6 +35,15 @@ class FocusTest(unittest.TestCase):
         self.assertLess(next_day_sort_key(item(8, 4, '2026-09-10')), next_day_sort_key(item(1, 4, '2026-09-09')))
         self.assertLess(next_day_sort_key(item(8, 4, '2026-09-10', 55.002)), next_day_sort_key(item(1, 4, '2026-09-10', 55.001)))
 
+    def test_ties_prefer_more_games_on_the_day_first(self):
+        def item(rack, games, n=4, last='2026-09-10'):
+            return dict(row=dict(rack=rack, games=games), days=n, latest_used=last, raw_index=55)
+        # 回転数が多い台は、使った日数・最新の使用日・台番号より先に上へ。
+        self.assertLess(next_day_sort_key(item(8, 6000, n=3, last='2026-09-09')), next_day_sort_key(item(1, 5000)))
+        self.assertLess(next_day_sort_key(item(1, 5000)), next_day_sort_key(item(8, 5000)))
+        # 指数が違えば回転数は見ない。
+        self.assertLess(next_day_sort_key(dict(item(8, 1000), raw_index=55.1)), next_day_sort_key(item(1, 9000)))
+
     def test_today_unused_and_future_is_ignored(self):
         base = rows()
         target = next(r for r in base if r['day'] == '2026-09-10' and r['rack'] == 1)

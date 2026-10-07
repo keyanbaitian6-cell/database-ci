@@ -1254,7 +1254,7 @@ def signed_index(index):
 # 2026-09-29：1〜3台の機種を店ごとに「バラエティ」にまとめ、店ごとの狙い方で5台選ぶ
 # （variety_next_day_candidates）。4台以上の機種の選び方は変えていない
 # （NEXT_DAY_CANDIDATES_VALIDATION_20260929.md の「9. バラエティ」）。
-NEXT_DAY_METHOD_VERSION = '2026-09-30'
+NEXT_DAY_METHOD_VERSION = '2026-10-07'
 
 # バラエティ：その日その店で1〜3台の機種（利用者の指定、2026-09-29）。今の選び方は
 # 同じ機種の台どうしで比べ、1機種で4台以上判定できる必要があるので、これらの機種は
@@ -1334,7 +1334,8 @@ def next_day_focus(evidence, today_score):
 
 
 def next_day_sort_key(item):
-    return (-round(item['raw_index'], 9), -item['days'],
+    # 同じ指数なら、その日の回転数が多い台を上（利用者、2026-10-07）。Android `compareNextDayEvidence` と同じ。
+    return (-round(item['raw_index'], 9), -int(item['row'].get('games') or 0), -item['days'],
             -date.fromisoformat(item['latest_used']).toordinal(), int(item['row']['rack']))
 
 

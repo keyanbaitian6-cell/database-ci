@@ -81,6 +81,34 @@ void main() {
       expect(candidateIsFocus(c, all), isFalse);
     }
   });
+  test('同じ生指数なら、その日の回転数が多い台を使用日数・最新使用日・台番より先に上へ', () {
+    NextDayEvidence e(int rack, int games, int days, String last, double raw) =>
+        NextDayEvidence(rec(10, rack, games: games), [
+          for (var i = 0; i < days; i++)
+            NextDayContribution(last, 4000, 8, .8, 20),
+        ], raw);
+    expect(
+      compareNextDayEvidence(
+        e(8, 6000, 3, '2026-09-09', 55),
+        e(1, 5000, 4, '2026-09-10', 55),
+      ),
+      lessThan(0),
+    );
+    expect(
+      compareNextDayEvidence(
+        e(1, 5000, 4, '2026-09-10', 55),
+        e(8, 5000, 4, '2026-09-10', 55),
+      ),
+      lessThan(0),
+    );
+    expect(
+      compareNextDayEvidence(
+        e(8, 1000, 4, '2026-09-10', 55.1),
+        e(1, 9000, 4, '2026-09-10', 55),
+      ),
+      lessThan(0),
+    );
+  });
   test('同じ生指数では使用日数、最新使用日、台番の順に決める', () {
     NextDayEvidence e(int rack, int days, String last, double raw) =>
         NextDayEvidence(rec(10, rack), [

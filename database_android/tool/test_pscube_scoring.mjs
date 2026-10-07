@@ -131,6 +131,11 @@ test('ties: more used days, then the newer latest day, then the smaller rack num
   assert.ok(compareEvidence(e(9, 5, '2026-10-01'), e(1, 5, '2026-09-30')) < 0);
   assert.ok(compareEvidence(e(1, 5, '2026-10-01'), e(2, 5, '2026-10-01')) < 0);
   assert.ok(compareEvidence(e(2, 5, '2026-10-01'), e(1, 5, '2026-10-01')) > 0);
+  // 同じ指数なら、その日の回転数が多い台が先（使った日数・最新の使用日・台番号より前）。
+  const g = (rack, games, usedDays = 5, latestUsed = '2026-10-01') => ({ record: { rack, games }, usedDays, latestUsed, rawIndex: 55 });
+  assert.ok(compareEvidence(g(9, 6000, 4, '2026-09-01'), g(1, 5000)) < 0);
+  assert.ok(compareEvidence(g(1, 5000), g(2, 5000)) < 0);
+  assert.ok(compareEvidence({ ...g(9, 1000), rawIndex: 55.1 }, g(1, 9000)) < 0);
   // 小数9桁で丸めてから比べる：差が10億分の1未満なら同点として台番号で決める。
   assert.ok(compareEvidence(e(2, 1, 'a', 55.0000000004), e(1, 1, 'a', 55.0000000001)) > 0);
 });

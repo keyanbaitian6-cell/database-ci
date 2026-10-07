@@ -67,7 +67,7 @@ List<FocusValidationGroup> buildFocusValidation(
   String through = focusValidationThrough,
 }) {
   if (scoringVersion != referenceScoringVersion ||
-      nextDayMethodVersion != '2026-09-30') {
+      nextDayMethodVersion != '2026-10-07') {
     throw StateError('固定期間の採点・候補方式の版が違います');
   }
   DateTime cutoff(String day) => predictionCutoff(day, hour: cutoffHour);

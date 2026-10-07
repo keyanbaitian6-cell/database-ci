@@ -86,7 +86,7 @@ String capturedNote(SlotRecord record) {
 /// 2026-09-29：1〜3台の機種を店ごとに「バラエティ」にまとめ、店ごとの狙い方で
 /// 5台選ぶ（[varietyNextDayCandidates]）。4台以上の機種の選び方は変えていない。
 /// PC版 `core.NEXT_DAY_METHOD_VERSION` と同じ値。
-const nextDayMethodVersion = '2026-09-30';
+const nextDayMethodVersion = '2026-10-07';
 
 /// バラエティ：その日その店で1〜3台の機種（利用者の指定、2026-09-29）。
 /// 今の選び方は同じ機種の台どうしで比べ、1機種で4台以上判定できる必要が
@@ -467,11 +467,15 @@ String _regularCandidateDetailExplained(
 }
 
 /// Identical nine-decimal comparison on PC and Dart; never rank the displayed
-/// one-decimal value. Days/latest date are evidence-based deterministic ties.
+/// one-decimal value. Ties: more games on the day (user, 2026-10-07), then
+/// evidence days, latest day and rack. Same rule as PC `next_day_sort_key`
+/// and P's CUBE `compareEvidence`.
 int compareNextDayEvidence(NextDayEvidence a, NextDayEvidence b) {
   final byIndex = double.parse(b.rawIndex!.toStringAsFixed(9))
       .compareTo(double.parse(a.rawIndex!.toStringAsFixed(9)));
   if (byIndex != 0) return byIndex;
+  final byGames = b.record.games.compareTo(a.record.games);
+  if (byGames != 0) return byGames;
   final byDays = b.usedDays.compareTo(a.usedDays);
   if (byDays != 0) return byDays;
   final byLatest = b.latestUsed.compareTo(a.latestUsed);
