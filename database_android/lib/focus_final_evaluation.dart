@@ -550,7 +550,7 @@ Map<String, Object?> focusSnapshotProgress(List<CandidateSnapshot> snapshots) {
 /// 選び方の性質：当日の点数が高い台をどれだけ選んでいるか（翌日の結果は使わない）。
 Map<String, Object?> focusSelectionProfile(List<FocusValidationGroup> groups) {
   Map<String, Object?> profile(Set<int> Function(FocusValidationGroup) pick) {
-    var picked = 0, inTopToday = 0, high = 0, withScore = 0;
+    var picked = 0, inTopToday = 0, high = 0, withScore = 0, inCurrent = 0;
     var expectedTop = 0.0;
     final percentiles = <double>[];
     var eligible = 0, eligibleHigh = 0;
@@ -569,6 +569,7 @@ Map<String, Object?> focusSelectionProfile(List<FocusValidationGroup> groups) {
         }
         if (!picks.contains(m.rack)) continue;
         picked++;
+        if (m.current) inCurrent++;
         expectedTop += members.isEmpty ? 0 : top / members.length;
         if (m.previousScore) inTopToday++;
         if (m.todayScore == null) continue;
@@ -579,6 +580,7 @@ Map<String, Object?> focusSelectionProfile(List<FocusValidationGroup> groups) {
     }
     return {
       'picked': picked,
+      'share_also_current_star': _r(_rate(inCurrent, picked)),
       'share_in_today_top_k': _r(_rate(inTopToday, picked)),
       'random_expectation_in_today_top_k': _r(
         picked == 0 ? null : expectedTop / picked,
