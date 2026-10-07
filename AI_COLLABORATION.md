@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## イベントカレンダーの反映：main取り込み・APK 0.5.35・閲覧ページ公開・PC再ビルド・実機確認（Claude、2026-10-07）
+
+- 利用者：「まだしていないことをおわらせて」。PR #3（`event-calendar`）をmainへ早送り（`16b86a2`、GitHubでMERGED）。
+- **APK**：通常版 `0.5.35+2026100701`（ソース `2e7a1de`、SHA-256 `49b4c8d5…423a`、93,168,513 bytes）、P’s CUBEクローン `0.5.35+2026100702`（ソース `2675ad9`、`DATABASE_ANDROID_CLONE=pscube`、SHA-256 `71dd3174…500b`、93,168,537 bytes）。各ビルド前に `check_before_build.sh` **ALL PASSED**（25項目：PC 210件・P’s CUBE関連93件・Flutter 512件・analyzeエラー警告0/info18・JS19本中18本成功、`test_pscube_capture.mjs` は非公開アーカイブ無しでSKIP）。aaptでID・版、apksignerで証明書 `4332fcb9…a047`（従来と同じ）。置き場所・ログ・インストールコマンドはGit外 `database_android/build/releases/0.5.35/`。
+- **実機**：USB接続のRFGL146LVVW。事前に両アプリのサービス（自動取り込み）が動いていないことを確認してから `adb install -r` で両方更新（データ保持）。`dumpsys package` で0.5.35/2026100701・2026100702を確認。通常版を起動し、既存の記録（幸町10/03・147機種533台）が表示され、店舗欄の横に「イベントカレンダー」。開くと10月表示、9月に戻すと幸町9/30に「華の日＊」（時刻不明なので＊）。見るだけで、イベントの入力・保存はしていない。画面と画面の部品情報はGit外 `database_android/build/device-event-calendar/`。クローン版は起動確認していない。
+- **閲覧ページ**：確認スクリプトで画面試験したWebビルドを `tool/stage_viewer.py` で公開用チェックアウトへ。52ファイルが試験済みステージと全件SHA-256一致、seedなし。`keyanbaitian6-cell/database-viewer` に `ca83f7a` をpush、Pages built。公開URLの `version.json`（0.5.35+2026100702）・`main.dart.js`・`index.html`・`pscube/scoring.mjs` が試験済みと一致、seed 2つとも404、トップ・pscubeとも200。公開URLで `test_viewer_event_calendar_browser`（公開URL対応を追加）・`test_viewer_replacement_browser`（メルヘン・P’s CUBE）が成功（隔離ブラウザ・模擬データ、対象サイトにはアクセスしていない）。今日の★の同点（回転数優先）のP’s CUBE閲覧分もこの公開で入った。
+- **PC版**：PC版が起動していないこと（exe・pythonとも）を確認してから `database/build_windows.ps1 -BuildTag event-calendar-20261007` で `database/bin` の3EXEを再ビルド。`smoke_frozen_runtime.py`（`a/work/outputs/frozen-runtime-20261007-event-calendar.json`）・`smoke_frozen_capture.py` 成功、`database.exe` に `event_calendar` が入っていることを確認。
+- 実データ（10/07のバックアップの複製）のイベント23件は新しいPCの規則で全件有効、同じ内容どうしの統合で変化0・不一致0。
+- **未確認**：iPhone実機での閲覧ページの操作、実際のGoogleドライブを通した受け渡し（閲覧ページの書き出し→database共有→PCの読み込み、PCの自動バックアップ→閲覧ページの自動読み込み）、クローン版アプリでの表示。実データを変えないため、AIからはイベントを入れていない。
+
 ## イベントカレンダー（PC・Android・閲覧ページ、メルヘン2店舗）（Claude、2026-10-07）
 
 - 利用者：「前日までにわかるから、カレンダーみたいなの用意しといて事前に入れておくとかするか」「PC版にカレンダーを入れて事前に入れられるようにするってこと」「全部にいれて、公開までしてね。とりあえず全部に差分を上書きしていくスタイルにして」「android版、ブラウザ版の差枚一覧開いたときにイベント表示されない不具合はないかも確認ちゃんとしてね」。仕様は `EVENT_CALENDAR.md`。

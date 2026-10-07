@@ -25,6 +25,8 @@ const server = http.createServer(async (req,res) => {
 });
 await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
 const origin='http://127.0.0.1:'+server.address().port;
+// VIEWER_PUBLIC_ORIGIN を渡すと、公開URL（例 https://keyanbaitian6-cell.github.io）で試す。
+const baseUrl=process.env.VIEWER_PUBLIC_ORIGIN || origin;
 
 const records=[];
 for(const day of ['2026-10-01','2026-10-02','2026-10-03','2026-10-04','2026-10-05'])
@@ -50,7 +52,7 @@ const errors=[];
 page.on('pageerror',e=>{errors.push(e.message);console.error('pageerror',e.message);});
 
 async function home(){
-  await page.goto(origin+prefix);
+  await page.goto(baseUrl+prefix);
   await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
   const placeholder=page.locator('flt-semantics-placeholder');
   if(await placeholder.count())await placeholder.evaluate(e=>e.click());
@@ -96,7 +98,7 @@ async function back(){
 }
 
 try {
-  await page.goto(origin+'/setup');
+  await page.goto(process.env.VIEWER_PUBLIC_ORIGIN ? baseUrl+prefix+'README.md' : origin+'/setup');
   await page.evaluate(async data=>{
     const db=await new Promise((resolve,reject)=>{const q=indexedDB.open('database-viewer',1);q.onupgradeneeded=()=>q.result.createObjectStore('kv');q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
     await new Promise((resolve,reject)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put(JSON.stringify(data),'data');tx.objectStore('kv').put('meruhen','active_source');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
