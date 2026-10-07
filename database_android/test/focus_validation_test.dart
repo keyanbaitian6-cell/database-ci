@@ -22,7 +22,11 @@ void main() {
       m(4, 87.9),
     ], 2);
     expect(
-      focusPrimaryPicks(group, {1: 60, 2: 59, 3: 58, 4: 57}).map((m) => m.rack),
+      focusPrimaryPicks(
+        group,
+        {1: 60, 2: 59, 3: 58, 4: 57},
+        {1: 1000, 2: 1000, 3: 1000, 4: 1000},
+      ).map((m) => m.rack),
       [3, 4],
     );
   });
@@ -31,7 +35,10 @@ void main() {
       m(1, 88),
       m(2, 90),
     ], 1);
-    expect(focusPrimaryPicks(group, {1: 60, 2: 59}), isEmpty);
+    expect(
+      focusPrimaryPicks(group, {1: 60, 2: 59}, {1: 1000, 2: 1000}),
+      isEmpty,
+    );
     expect(group.count, 1);
   });
   test('未来検証の期間と最終評価日を固定する', () {

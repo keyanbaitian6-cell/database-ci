@@ -10,14 +10,20 @@ const focusValidationFrom = '2026-09-30';
 const focusValidationThrough = '2026-10-29';
 const focusValidationFinalOn = '2026-10-31';
 
+/// Ties on the unrounded recent index go to the rack with more games on the
+/// prediction day (user decision 2026-10-07, fixed before any result of the
+/// period was viewed), then the production order: days, latest day, rack.
 List<BacktestMember> focusPrimaryPicks(
   BacktestGroup group,
   Map<int, double> recentIndices,
+  Map<int, int> todayGames,
 ) {
   final sorted = [...group.members]
     ..sort((a, b) {
       final byIndex = recentIndices[b.rack]!.compareTo(recentIndices[a.rack]!);
       if (byIndex != 0) return byIndex;
+      final byGames = todayGames[b.rack]!.compareTo(todayGames[a.rack]!);
+      if (byGames != 0) return byGames;
       final byDays = b.days.compareTo(a.days);
       if (byDays != 0) return byDays;
       final byLatest = b.latestUsed.compareTo(a.latestUsed);
@@ -36,10 +42,12 @@ class FocusValidationGroup {
     this.focus,
     this.longTrend,
     this.recentIndices,
+    this.todayGames,
   );
   final BacktestGroup baseline;
   final Set<int> primary, focus, longTrend;
   final Map<int, double> recentIndices;
+  final Map<int, int> todayGames;
 }
 
 /// Keep the baseline population even when all the primary/focus picks are
@@ -67,10 +75,12 @@ List<FocusValidationGroup> buildFocusValidation(List<SlotRecord> full) {
         if (r.day == g.day) r.rack: r,
     };
     final recent = <int, double>{};
+    final games = <int, int>{};
     final focus = <int>{}, longTrend = <int>{};
     for (final m in g.members) {
       final row = rows[m.rack]!;
       recent[m.rack] = recentReferenceIndex(row, history).index!;
+      games[m.rack] = row.games;
       if (!m.current) continue;
       (qualifiesForNextDayFocus(nextDayEvidence(row, history), m.todayScore)
               ? focus
@@ -80,10 +90,11 @@ List<FocusValidationGroup> buildFocusValidation(List<SlotRecord> full) {
     result.add(
       FocusValidationGroup(
         g,
-        {for (final m in focusPrimaryPicks(g, recent)) m.rack},
+        {for (final m in focusPrimaryPicks(g, recent, games)) m.rack},
         focus,
         longTrend,
         recent,
+        games,
       ),
     );
   }
