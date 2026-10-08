@@ -9,6 +9,7 @@
 - **アクセスの記録**（利用者「誰がアクセスしたかわかるように私だけで把握することって可能？」→「リンクを「himawari」で一個だけ作ってみてね。記録していることは伝えなくていいよ。デプロイはやり直すよ」）：リンクの `u=` の呼び名を最初の読み込みにだけ付け、読むだけのスクリプトが `console.log` に書く（「実行数」で持ち主だけが見られる）。試験：スクリプト4件、ページの計算5件、画面試験に呼び名の送り方を追加。
 - **公開**（利用者の了承後）：公開リポジトリ `keyanbaitian6-cell/database-share` を新しく作り、`tool/stage_share_viewer.py` で4ファイルを置いて `c66f692` をpush、GitHub Pagesを有効化（main・/）。Pages built、公開URL `https://keyanbaitian6-cell.github.io/database-share/` の4ファイルが手元と一致、200。公開したページで画面試験（スクリプトへの通信は偽の返事。本物のスクリプトは呼んでいないので記録は残していない）成功。
 - 渡すリンク（himawari）は利用者にだけ伝えた（デプロイIDを含むので、ここには書かない）。
+- `check_before_build.sh` **ALL PASSED**（30項目。新しい `test_share_viewer`・`test_share_viewer_browser`・`test_viewer_drive_script_readonly` を含む）。
 - 未実施：利用者による読むだけのスクリプトの貼り直し・新バージョンでのデプロイ（記録が入るまでは、ページは動くが記録は残らない）と、実際のリンクでの確認。
 
 ## 閲覧専用の共有用スクリプト（お試し）（Claude、2026-10-09）
