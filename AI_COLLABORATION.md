@@ -7,6 +7,10 @@
 - PC：`event_calendar.day_summary`・`open_day_summary`、各店の `day_records`（メルヘンは必要な値だけSQLiteで取り出し推定差枚、P’s CUBEは貸玉が複数なら機種名に貸玉）。TOP10の行をダブルクリックすると `app.open_from_calendar` が「結果を見る」の店舗・日付・機種を選び、`open_result` で結果を開く。
 - 確認：実データの複製（幸町・P’s CUBEの10/04）でPCのまとめの窓を開いて画面確認（533台・295台、0.05〜0.07秒）。試験：PC 2件（Flutterと同じ例で同じ順位・平均）、Flutter 2件（数え方・画面の流れ）、閲覧ページの画面試験2本（P’s CUBEの日を押してまとめ→戻る、メルヘンの記録のある日はまとめからイベント編集）。
 - 画面試験の不安定さを直した：入力欄に焦点が移る前に打つと最初の文字が落ちていた（「末尾イベ」→「尾イベ」）。焦点を待ってから打ち、入力値も確かめる（2本とも）。日付のマスは日付と差枚がまとまったラベルで押す。
+- `check_before_build.sh` **ALL PASSED**（27項目：PC 221件・P’s CUBE関連93件・Flutter 522件・analyzeエラー警告0/info18・JS21本、`test_pscube_capture.mjs` は非公開の保存先が無いのでSKIP）。前の節（各日の差枚・P’s CUBEのカレンダー）の分もここで公開・ビルド。
+- **閲覧ページ**（利用者「ブラウザ版公開までしてもらって構いません」）：試験済みのWebビルドを `tool/stage_viewer.py` で公開用チェックアウトへ（53ファイルが全件SHA-256一致、seedなし）。`keyanbaitian6-cell/database-viewer` に `162777f` をpush、Pages built。公開URLの `index.html`・`main.dart.js`・`shared_events.mjs`・`pscube/viewer_bridge.mjs`・`version.json` が試験済みと一致、seed 2つとも404、トップ・pscubeとも200。公開URLで `test_viewer_event_calendar_browser` は4回中3回成功（1回目は読み込み待ちのクリックの時間切れ。続く3回は成功）。
+- **PC版**：PC版のEXEは起動していないことを確認（ソースの `app.py`・`pscube_import.py` は利用者が起動中。動いている窓は古いコードのままで、開き直すと新しいカレンダーになる）。`build_windows.ps1 -BuildTag day-summary-20261009` で `database/bin` 3EXEを再ビルド、`smoke_frozen_runtime`（`a/work/outputs/frozen-runtime-20261009-day-summary.json`）・`smoke_frozen_capture` 成功。
+- **未実施**：Android APK（差枚の表示・P’s CUBEのカレンダーの分。0.5.36の予定）。利用者の指示待ち。
 
 ## カレンダーの各日に総差枚・P’s CUBEのカレンダー（iPhone・Android）（Claude、2026-10-08）
 
