@@ -20,6 +20,8 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
+// SHARE_PUBLIC_URL（例 https://keyanbaitian6-cell.github.io/database-share/index.html）を渡すと、公開したページで試す。
+const pageUrl = process.env.SHARE_PUBLIC_URL || `${origin}/share/index.html`;
 
 // 今月（日本時間）の1日・2日に台を置く（ページは今月から開く）。
 const now = new Date(Date.now() + 9 * 3600000);
@@ -63,9 +65,9 @@ try {
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     // 利用者自身の閲覧ページの保存（同じ github.io で開いたとき）を置いておき、触れないことを確かめる。
-    await page.goto(`${origin}/share/index.html`);
+    await page.goto(pageUrl);
     await page.evaluate(() => localStorage.setItem('database-viewer-remote', 'mine'));
-    await page.goto(`${origin}/share/index.html#s=${id}&u=himawari`);
+    await page.goto(`${pageUrl}#s=${id}&u=himawari`);
     await page.waitForSelector('.grid');
     assert.equal(new URL(page.url()).hash, '', 'リンクのIDと呼び名はアドレス欄から消す');
     const storage = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
@@ -106,7 +108,7 @@ try {
     const overflow = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 0, `横にはみ出す（${width}px、${overflow}px）`);
     // 2回目はリンクなしでも開ける（覚えたIDと店）。
-    await page.goto(`${origin}/share/index.html`);
+    await page.goto(pageUrl);
     await page.waitForSelector('.grid');
     assert.equal(await page.locator('.anchor[aria-pressed="true"]').innerText(), '幸町');
     assert.ok(urls.slice(4).includes('?u=himawari'), 'リンクなしで開き直しても、覚えた呼び名で記録する');
@@ -119,7 +121,7 @@ try {
   await context.route('https://script.google.com/**', route => route.fulfill({status: 200, contentType: 'application/json',
     headers: {'access-control-allow-origin': '*'}, body: JSON.stringify(responses[new URL(route.request().url()).searchParams.get('file') ?? ''] ?? {})}));
   const page = await context.newPage();
-  await page.goto(`${origin}/share/index.html`);
+  await page.goto(pageUrl);
   await page.getByRole('textbox', {name: '受け取ったリンク'}).fill('https://example.com/');
   await page.getByRole('button', {name: '開く'}).click();
   await page.getByText('リンクの形が違います').waitFor();
