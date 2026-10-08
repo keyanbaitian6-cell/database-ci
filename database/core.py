@@ -221,6 +221,32 @@ def merge_date_events(stored, incoming):
     return list(events.values()), changed, conflicts
 
 
+# 共有カレンダー（EVENT_CALENDAR.md、2026-10-08）：閲覧ページで入れたイベントをApps Scriptが
+# 同期フォルダに書くファイル。PCは届いたものを取り込む（書き換えない）。
+SHARED_EVENTS_NAME = 'database-events-shared.json'
+
+
+def pull_shared_events(store, folder):
+    """Merge the shared events file in the sync ``folder`` into ``store``.
+
+    Only timed events are taken; an unreadable or invalid file is ignored (the
+    events stay in the file for the next try). Returns the number changed."""
+    path = Path(folder) / SHARED_EVENTS_NAME if folder else None
+    if path is None or not path.is_file():
+        return 0
+    try:
+        events = json.loads(path.read_text(encoding='utf-8-sig')).get('events')
+    except (OSError, ValueError, AttributeError):
+        return 0
+    if not isinstance(events, list):
+        return 0
+    timed = [e for e in events if _valid_date_event(e) and 'updated_at' in e]
+    merged, changed, _conflicts = merge_date_events(store.date_events(include_removed=True), timed)
+    if changed:
+        store.set_date_events(merged)
+    return changed
+
+
 def date_event_in_advance(event):
     """True when the event was entered before 02:00 JST of its day (the end of the
     previous business day). Untimed events are never counted as entered in advance."""

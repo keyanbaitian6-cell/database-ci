@@ -20,6 +20,14 @@ Future<void> exportPscubeBackup() async {}
 
 void downloadText(String name, String text) {}
 
+Future<String> fetchSharedEvents(String url, String file) async => '';
+
+Future<String> postSharedEvents(String url, String text) async => '';
+
+Future<String> pscubeTimedEvents() async => '[]';
+
+Future<String?> mergePscubeSharedEvents(String text) async => null;
+
 Future<String?> setPscubeMachineType(
   String scope,
   String machine,

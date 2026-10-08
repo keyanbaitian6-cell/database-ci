@@ -362,6 +362,100 @@ void main() {
     });
   });
 
+  group('共有カレンダー（2026-10-08）', () {
+    final stored = jsonEncode({
+      'header': {
+        'format': 'database-backup',
+        'exported_at': '2026-10-08T09:00:00+09:00',
+      },
+      'records': [
+        {
+          'store': 'nagamachiminami',
+          'day': '2026-10-05',
+          'machine': '北斗',
+          'rack': 1,
+          'games': 3000,
+          'bb': 10,
+          'rb': 5,
+        },
+      ],
+      'date_events': [
+        {
+          'store': 'nagamachiminami',
+          'day': '2026-10-20',
+          'name': '端末の新しい入力',
+          'updated_at': '2026-10-08T05:00:00.000Z',
+        },
+      ],
+    });
+
+    test('共有ファイルの時刻つきイベントだけを足し、新しい方が残る', () {
+      final shared = jsonEncode({
+        'format': 'database-events',
+        'version': 1,
+        'kind': 'meruhen',
+        'events': [
+          {
+            'store': 'nagamachiminami',
+            'day': '2026-10-20',
+            'name': '古い共有',
+            'updated_at': '2026-10-08T04:00:00.000Z',
+          },
+          {
+            'store': 'saiwaichou',
+            'day': '2026-10-21',
+            'name': 'ほかの端末',
+            'updated_at': '2026-10-08T04:00:00.000Z',
+          },
+        ],
+      });
+      final merged = ViewerData.parse(
+        ViewerData.withSharedEvents(stored, shared)!,
+      );
+      expect(
+        merged.dateEventFor('nagamachiminami', '2026-10-20')!.name,
+        '端末の新しい入力',
+      );
+      expect(merged.dateEventFor('saiwaichou', '2026-10-21')!.name, 'ほかの端末');
+      expect(ViewerData.withSharedEvents(stored, '{broken'), isNull);
+      expect(
+        ViewerData.withSharedEvents(stored, jsonEncode({'error': '見つかりません'})),
+        isNull,
+        reason: '古いスクリプト・ファイル無しの返事では何も変えない',
+      );
+      expect(
+        ViewerData.withSharedEvents(
+          stored,
+          jsonEncode({'format': 'database-events', 'events': []}),
+        ),
+        isNull,
+      );
+    });
+
+    test('送る中身：入力時刻つきだけ、合言葉は入れない', () {
+      final body = jsonDecode(
+        ViewerData.sharedEventsBody([
+          ev('周年', '2026-10-08T05:00:00.000Z', '2026-10-25'),
+          ev('時刻なし', null, '2026-09-14'),
+          ev('', '2026-10-08T05:01:00.000Z', '2026-10-03'),
+        ]),
+      ) as Map;
+      expect(body.keys.toSet(), {'file', 'events'});
+      expect(body['file'], 'events');
+      expect(
+        [for (final e in body['events'] as List) e['day']],
+        ['2026-10-03', '2026-10-25'],
+      );
+    });
+
+    test('スクリプトの返事を知らせにする', () {
+      expect(ViewerData.sharedResult('{"ok":true,"changed":1}').ok, isTrue);
+      final error = ViewerData.sharedResult('{"error":"イベントの形式が不正です。"}');
+      expect((error.ok, error.message), (false, 'イベントの形式が不正です。'));
+      expect(ViewerData.sharedResult('<html>').message, contains('更新したか確認'));
+    });
+  });
+
   group('カレンダー画面', () {
     test('日曜始まりの週、期間の日、＊の付け方', () {
       final weeks = monthWeeks(2026, 10);

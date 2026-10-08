@@ -60,6 +60,34 @@ void saveRemoteUrl(String? url) => _setRemote(url?.toJS);
 
 Future<void> exportPscubeBackup() async => await _exportBackup().toDart;
 
+@JS('databaseViewer.fetchShared')
+external JSPromise<JSString> _fetchShared(JSString url, JSString file);
+
+@JS('databaseViewer.postShared')
+external JSPromise<JSString> _postShared(JSString url, JSString text);
+
+@JS('databaseViewer.pscubeEvents')
+external JSPromise<JSString> _pscubeEvents();
+
+@JS('databaseViewer.mergePscubeShared')
+external JSPromise<JSString?> _mergePscubeShared(JSString text);
+
+/// 共有カレンダー（EVENT_CALENDAR.md）：共有ファイル（[file] は events・pscube-events）を読む。
+Future<String> fetchSharedEvents(String url, String file) async =>
+    (await _fetchShared(url.toJS, file.toJS).toDart).toDart;
+
+/// イベントをスクリプトへ送り、返事の文字を返す。
+Future<String> postSharedEvents(String url, String text) async =>
+    (await _postShared(url.toJS, text.toJS).toDart).toDart;
+
+/// P’s CUBEの端末のイベント（JSON）。
+Future<String> pscubeTimedEvents() async =>
+    (await _pscubeEvents().toDart).toDart;
+
+/// P’s CUBEの共有ファイルを端末に足す。変わらなければ null。
+Future<String?> mergePscubeSharedEvents(String text) async =>
+    (await _mergePscubeShared(text.toJS).toDart)?.toDart;
+
 @JS('databaseViewer.download')
 external void _download(JSString name, JSString text);
 

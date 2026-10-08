@@ -163,6 +163,53 @@ class ViewerData {
     return jsonEncode({...into, 'date_events': _eventsJson(merged.events)});
   }
 
+  /// 共有カレンダーのファイル [shared]（`{format: database-events, events}`）の入力時刻つきイベントを、
+  /// 端末の内容 [stored] に足す（新しい方が残る）。変わらなければ・読めなければ null。
+  static String? withSharedEvents(String stored, String shared) {
+    Object? doc;
+    try {
+      doc = jsonDecode(shared);
+    } on FormatException {
+      return null;
+    }
+    if (doc is! Map ||
+        doc['format'] != 'database-events' ||
+        doc['events'] is! List) {
+      return null;
+    }
+    final merged = withOtherEvents(
+      jsonEncode({'date_events': doc['events']}),
+      stored,
+      timedOnly: true,
+    );
+    return identical(merged, stored) ? null : merged;
+  }
+
+  /// スクリプトへ送る中身：その端末の入力時刻つきイベント（メルヘン）。
+  static String sharedEventsBody(Iterable<DateEvent> events) => jsonEncode({
+    'file': 'events',
+    'events': _eventsJson({
+      for (final e in events)
+        if (e.updatedAt != null && storeNames.containsKey(e.store)) e.key: e,
+    }),
+  });
+
+  /// スクリプトの返事を、利用者への知らせにする。送れたら ok が true。
+  static ({bool ok, String message}) sharedResult(String response) {
+    try {
+      final doc = jsonDecode(response);
+      if (doc is Map && doc['ok'] == true) {
+        return (ok: true, message: 'イベントを共有カレンダーに送りました。');
+      }
+      if (doc is Map && doc['error'] is String) {
+        return (ok: false, message: doc['error'] as String);
+      }
+    } on FormatException {
+      // 下の知らせ
+    }
+    return (ok: false, message: 'スクリプトの返事が読めません（スクリプトを新しい版に更新したか確認してください）。');
+  }
+
   /// [text] の [store] の [days] に同じイベント名を付ける（null・空は消す）。入力した時刻を
   /// 残し、名前の変わらない日は前の時刻のまま。何も変わらなければ [text] をそのまま返す。
   static String setEvents(

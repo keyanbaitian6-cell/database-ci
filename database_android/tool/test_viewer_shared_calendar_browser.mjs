@@ -1,0 +1,147 @@
+// Build viewer_main.dart and stage_viewer.py before this browser test.
+// 共有カレンダー（EVENT_CALENDAR.md、2026-10-08）：閲覧ページがApps Scriptの共有ファイルを読んで取り込み、
+// 保存したイベントをPOSTで送る（合言葉なし）。スクリプトへの通信は試験の中で偽の返事に差し替える。
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const root = process.env.VIEWER_WEB_ROOT || fileURLToPath(new URL('../build/web/', import.meta.url));
+const prefix = '/database-viewer/';
+const server = http.createServer(async (req,res) => {
+  let url = new URL(req.url,'http://localhost').pathname;
+  if (url === '/setup') { res.setHeader('content-type','text/html');res.end('<!doctype html><body>setup</body>');return; }
+  if (!url.startsWith(prefix)) { res.writeHead(404).end();return; }
+  url = url.slice(prefix.length);
+  const local = path.resolve(root, (!url || url.endsWith('/')) ? url+'index.html' : url);
+  if (!local.startsWith(path.resolve(root)+path.sep)) { res.writeHead(403).end();return; }
+  try {
+    const body=await fs.readFile(local),ext=path.extname(local);
+    res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.json':'application/json',
+      '.wasm':'application/wasm','.html':'text/html','.css':'text/css','.png':'image/png'})[ext] || 'application/octet-stream');
+    res.end(body);
+  } catch { res.writeHead(404).end(); }
+});
+await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+const origin='http://127.0.0.1:'+server.address().port;
+const script='https://script.google.com/macros/s/TEST_SHARED/exec';
+
+const meruhenRecords=[];
+for(const day of ['2026-10-04','2026-10-05'])
+  for(let rack=1;rack<=4;rack++)meruhenRecords.push({store:'nagamachiminami',day,machine:'北斗',rack,games:3000,bb:10,rb:5,max_hold:2000});
+const meruhen={header:{format:'database-backup',version:1,source:'pc',exported_at:'2026-10-05T23:00:00+09:00'},
+  records:meruhenRecords,date_events:[]};
+const base='https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
+const pscubeRecords=[];
+for(const day of ['2026-10-04','2026-10-05'])
+  for(let rack=1;rack<=4;rack++)pscubeRecords.push({store:'c740601',rate:'20',machine:'マイジャグラーV',rack,day,
+    bb:rack*2,rb:rack,games:3000,my:rack*500,at_art:0,observed_at:'2026-10-05T23:00:00+09:00',
+    detail_url:base+'nc-v06-001.php?cd_dai='+rack+'#'+day.replaceAll('-',''),
+    graph:{kind:'daily',zero_y:100,points:[[0,100],[10,20],[20,40]]}});
+const pscube={format:'pscube-viewer',version:1,machines:[{store:'c740601',rate:'20',machine:'マイジャグラーV',
+  machine_type:'normal',expected_count:4,url:base+'nc-v05-011.php?cd_ps=2&bai=20'}],records:pscubeRecords};
+
+const shared={
+  events:{format:'database-events',version:1,kind:'meruhen',events:[
+    {store:'nagamachiminami',day:'2026-10-24',name:'ほかの端末で入力',updated_at:'2026-10-08T03:00:00.000Z'}]},
+  'pscube-events':{format:'database-events',version:1,kind:'pscube',events:[
+    {store:'c740601',rate:'20',day:'2026-10-26',name:'共有のP’s CUBE',updated_at:'2026-10-08T03:00:00.000Z'}]},
+};
+const posts=[];
+
+const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || undefined,args:['--no-sandbox']});
+const context=await browser.newContext({viewport:{width:393,height:852}});
+const page=await context.newPage();
+const errors=[];
+page.on('pageerror',e=>{errors.push(e.message);console.error('pageerror',e.message);});
+await context.route('https://script.google.com/**',route=>{
+  const request=route.request(), url=new URL(request.url());
+  const headers={'access-control-allow-origin':'*'};
+  if(request.method()==='POST'){
+    posts.push(JSON.parse(request.postData()));
+    return route.fulfill({status:200,contentType:'application/json',headers,body:JSON.stringify({ok:true,events:1,changed:1})});
+  }
+  const file=url.searchParams.get('file');
+  if(file && shared[file]) return route.fulfill({status:200,contentType:'application/json',headers,body:JSON.stringify(shared[file])});
+  // 閲覧用ファイルの読み込みは、この試験では使わない（見つからない返事）。
+  return route.fulfill({status:200,contentType:'application/json',headers,body:JSON.stringify({error:'この試験では閲覧用ファイルを返しません。'})});
+});
+
+async function open(pathname){
+  await page.goto(origin+prefix+pathname);
+  await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
+  const placeholder=page.locator('flt-semantics-placeholder');
+  if(await placeholder.count())await placeholder.evaluate(e=>e.click());
+  await page.getByText('database 閲覧',{exact:true}).waitFor({timeout:60000});
+}
+async function labels(){
+  return page.evaluate(()=>[...document.querySelectorAll('flt-semantics')].map(e=>e.getAttribute('aria-label')||e.textContent||''));
+}
+async function waitFor(check,what){
+  for(let i=0;i<80;i++){if(await check())return;await page.waitForTimeout(250);}
+  assert.fail('timed out: '+what);
+}
+async function stored(name,store){
+  return page.evaluate(async ({name,store})=>{
+    const db=await new Promise((resolve,reject)=>{const q=indexedDB.open(name,1);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    const value=await new Promise((resolve,reject)=>{const q=db.transaction(store).objectStore(store).get('data');q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    db.close();return value;
+  },{name,store});
+}
+async function enterName(name){
+  const box=page.getByRole('textbox',{name:/イベント名（自由記入）/});
+  await box.waitFor();await box.click();
+  await page.keyboard.type(name);
+  const save=page.getByRole('button',{name:'保存',exact:true});
+  for(let i=0;i<20&&await save.isDisabled();i++)await page.waitForTimeout(100);
+  await save.click();
+}
+
+try {
+  await page.goto(origin+'/setup');
+  await page.evaluate(async ({meruhen,pscube,script})=>{
+    localStorage.setItem('database-viewer-remote',script);
+    for(const [name,store,entries] of [
+      ['database-viewer','kv',[['data',JSON.stringify(meruhen)],['active_source','meruhen']]],
+      ['database-pscube-viewer','state',[['data',pscube],['meta',{exported_at:'2026-10-05T23:00:00+09:00'}]]],
+    ]){
+      const db=await new Promise((resolve,reject)=>{const q=indexedDB.open(name,1);q.onupgradeneeded=()=>q.result.createObjectStore(store);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+      await new Promise((resolve,reject)=>{const tx=db.transaction(store,'readwrite');for(const [key,value] of entries)tx.objectStore(store).put(value,key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
+    }
+  },{meruhen,pscube,script});
+
+  // メルヘン：開くと共有ファイルのイベントを取り込み、端末に保存する。
+  await open('');
+  await waitFor(async()=>JSON.parse(await stored('database-viewer','kv')).date_events.some(e=>e.day==='2026-10-24'),'shared meruhen event stored');
+  await page.getByRole('button',{name:'イベントカレンダー',exact:true}).click();
+  const now=new Date();
+  for(let i=(now.getFullYear()*12+now.getMonth())-(2026*12+9);i>0;i--)await page.getByRole('button',{name:'前の月',exact:true}).click();
+  await waitFor(async()=>(await labels()).some(l=>/^24\s*ほかの端末で入力＊?$/.test(l)),'shared event in calendar');
+
+  // 保存すると、端末の入力時刻つきイベントを合言葉なしでPOSTする。
+  await page.getByText('27',{exact:true}).first().click();
+  await enterName('iPhoneで入力');
+  await waitFor(async()=>posts.length>0,'meruhen POST');
+  assert.equal(posts[0].file,'events');
+  assert.equal('key' in posts[0],false,'no passphrase');
+  const days=posts[0].events.map(e=>e.day);
+  assert.ok(days.includes('2026-10-27') && days.includes('2026-10-24'));
+  assert.ok(posts[0].events.every(e=>typeof e.updated_at==='string'));
+  await waitFor(async()=>(await labels()).some(l=>/共有カレンダーに送りました/.test(l)),'sent notice');
+
+  // P’s CUBE：その日のイベントを保存すると pscube-events で送り、共有ファイルの分も取り込む。
+  await open('pscube/');
+  await waitFor(async()=>((await stored('database-pscube-viewer','state')).date_events||[]).some(e=>e.day==='2026-10-26'),'shared pscube event stored');
+  await page.getByRole('button',{name:/イベント：なし（編集）/}).click();
+  await enterName('末尾イベ');
+  await waitFor(async()=>posts.some(p=>p.file==='pscube-events'),'pscube POST');
+  const pscubePost=posts.find(p=>p.file==='pscube-events');
+  assert.ok(pscubePost.events.some(e=>e.name==='末尾イベ' && e.rate==='20'));
+  assert.ok(pscubePost.events.some(e=>e.day==='2026-10-26'));
+  assert.deepEqual(errors,[]);
+  console.log('PASS: shared calendar pull (meruhen, pscube), POST without passphrase on save');
+} finally {
+  await browser.close();
+  await new Promise(resolve=>server.close(resolve));
+}

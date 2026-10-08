@@ -388,6 +388,11 @@ def clean_event_name(name):
     return text
 
 
+# 共有カレンダー（EVENT_CALENDAR.md、2026-10-08）：閲覧ページで入れたP’s CUBEのイベントを
+# Apps Scriptが同期フォルダに書くファイル。PCは届いたものを取り込む。
+SHARED_EVENTS_NAME = 'pscube-events-shared.json'
+
+
 def merge_date_events(stored, incoming):
     """同じ店舗・貸玉・日付は、更新時刻が新しい方（同じなら後から来た方）を残す。"""
     events = {_event_key(e): e for e in stored}
@@ -795,6 +800,26 @@ class PscubeStore:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('date_events', json.dumps(saved, ensure_ascii=False)))
         return saved
+
+    def pull_shared_events(self, folder) -> int:
+        """同期フォルダの共有ファイル（[SHARED_EVENTS_NAME]）のイベントを取り込む（新しい方が残る）。
+        読めない・形式が違うファイルは何もしない。変わった件数を返す。"""
+        path = Path(folder) / SHARED_EVENTS_NAME if folder else None
+        if path is None or not path.is_file():
+            return 0
+        try:
+            incoming = validate_date_events(json.loads(path.read_text(encoding='utf-8-sig')).get('events'))
+        except (OSError, ValueError, AttributeError):
+            return 0
+        stored = self.date_events()
+        before = {_event_key(e): e for e in stored}
+        merged = validate_date_events(merge_date_events(stored, incoming))
+        changed = sum(1 for e in merged if before.get(_event_key(e)) != e)
+        if changed:
+            with self.db:
+                self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                                ('date_events', json.dumps(merged, ensure_ascii=False)))
+        return changed
 
     def date_event_entries(self) -> dict[str, dict]:
         """日付ごとの今のイベント（名前のあるもの）。貸玉ごとに入っているので、いちばん新しい入力を代表にする。

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import 'answer_check.dart';
@@ -184,7 +186,70 @@ class _ViewerHomeState extends State<ViewerHome> {
     } catch (error) {
       _error = 'Googleドライブから読めませんでした（前に読み込んだ内容を表示しています）。\n$error';
     }
+    // 共有カレンダー：Driveの中身が変わっていなくても、ほかの端末で入れたイベントは取り込む。
+    await _pullShared(url);
     if (mounted) setState(() => _syncing = false);
+  }
+
+  /// 共有カレンダー（EVENT_CALENDAR.md）：ほかの端末で入れたイベントを取り込む。共有ファイルが
+  /// 無い・古いスクリプト・通信の失敗では何もしない（次に読むときにまた試す）。
+  Future<void> _pullShared(String url) async {
+    final data = _data;
+    if (data == null) return;
+    try {
+      if (data.source == 'pscube') {
+        final text = await mergePscubeSharedEvents(
+          await fetchSharedEvents(url, 'pscube-events'),
+        );
+        if (text != null && mounted) {
+          setState(() => _show(ViewerData.parse(text)));
+        }
+        return;
+      }
+      final stored = await loadViewerData();
+      if (stored == null) return;
+      final merged = ViewerData.withSharedEvents(
+        stored,
+        await fetchSharedEvents(url, 'events'),
+      );
+      if (merged == null) return;
+      await saveViewerData(merged);
+      if (mounted) setState(() => _show(ViewerData.parse(merged)));
+    } on Object {
+      // 表示中の内容はそのまま。
+    }
+  }
+
+  /// 共有カレンダーへ、この端末の入力時刻つきイベントを全部送る（前に送れなかった分も届く）。
+  Future<void> _pushShared({required bool pscube}) async {
+    final url = _remote;
+    final data = _data;
+    const saved = 'イベントはこの端末に保存しました。';
+    if (url == null || data == null) {
+      _say('$saved ほかの端末と共有するには、Googleドライブの自動読み込みを設定してください。');
+      return;
+    }
+    try {
+      final body = pscube
+          ? jsonEncode({
+              'file': 'pscube-events',
+              'events': jsonDecode(await pscubeTimedEvents()),
+            })
+          : ViewerData.sharedEventsBody(data.dateEvents.values);
+      final result = ViewerData.sharedResult(await postSharedEvents(url, body));
+      _say(
+        result.ok
+            ? result.message
+            : '$saved 共有には送れませんでした（次に保存するときにまた送ります）：${result.message}',
+      );
+    } catch (error) {
+      _say('$saved 共有には送れませんでした（次に保存するときにまた送ります）：$error');
+    }
+  }
+
+  void _say(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   Future<void> _editRemote() async {
@@ -384,11 +449,11 @@ class _ViewerHomeState extends State<ViewerHome> {
           ),
         ],
         note:
-            'ここで入れたイベントはこの端末に保存されます。PC・Androidへ渡すときは、右上の'
-            '「イベントを書き出す」で作ったファイルを「ファイル」でGoogleドライブの database共有 に'
-            '保存し、PCの「同期フォルダの最新を読み込む」（Androidは「バックアップを読み込む」）で'
-            '取り込みます。PCで入れたイベントは、Googleドライブの自動読み込みで届きます。'
-            '同じ日は、あとから入れた方が残ります。',
+            'ここで入れたイベントは、この端末に保存し、Googleドライブの自動読み込みを設定していれば'
+            '共有カレンダーにも送ります（PCは次に開いたときなどに取り込み、Androidへは'
+            'PCのバックアップで届きます）。PCで入れたイベントは、Googleドライブの自動読み込みで届きます。'
+            '同じ日は、あとから入れた方が残ります。送れないときは、右上の「イベントを書き出す」で'
+            '作ったファイルをGoogleドライブの database共有 に保存しても渡せます。',
       ),
     ),
   );
@@ -410,6 +475,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     if (identical(text, stored)) return;
     await saveViewerData(text);
     if (mounted) setState(() => _show(ViewerData.parse(text)));
+    await _pushShared(pscube: false);
   }
 
   void _exportMeruhenEvents() {
@@ -445,7 +511,9 @@ class _ViewerHomeState extends State<ViewerHome> {
       }
     } catch (error) {
       if (mounted) setState(() => _error = 'イベント名を保存できませんでした。\n$error');
+      return;
     }
+    await _pushShared(pscube: true);
   }
 
   void _openRecord(

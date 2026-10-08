@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 共有カレンダー：どの端末で入れたイベントも全部に届く（Claude、2026-10-08）
+
+- 利用者：「iPhoneブラウザ版で編集→何もアップロード作業はないからほかのには反映されないのでは？」→「カレンダーを共有にしちゃおう。スクリプト更新するよ」「合言葉いらないかな。めんどくさくなるだけだよ」。仕様は `EVENT_CALENDAR.md` の「共有カレンダー（2026-10-08）」。
+- Apps Script（`tool/viewer_drive_script.gs`）に `doPost` を追加。閲覧ページから送られたイベント（`file` は events／pscube-events）を形式確認（店舗・日付・入力時刻・名前60字以内・制御文字なし・最大5000件、P’s CUBEは貸玉も）してから、閲覧用ファイルと同じフォルダの `database-events-shared.json`／`pscube-events-shared.json` に統合して保存（同じ日は入力時刻の新しい方、消した印も残す。`LockService` で同時の送信を順番に）。`doGet ?file=events|pscube-events` で読める（まだ無いときは空の一覧）。合言葉なし（利用者判断）。URLを人に教えないことはスクリプト冒頭に書いた。
+- 閲覧ページ（メルヘン・P’s CUBE）：Driveの自動読み込みのたびに共有ファイルを読んで取り込み、イベントを保存するたびに入力時刻つきのイベントを全部送る（送れなかった分も次に届く）。送れたか・送れなかったか（端末には保存済み）を下に表示。共通の通信は `web/shared_events.mjs`（P’s CUBEのページは `pscube/viewer_bridge.mjs` から使う）。
+- PC：「カレンダー」を開くとき・Driveの再読み込みのときに、同期フォルダの共有ファイルを取り込む（`core.pull_shared_events`、P’s CUBEは `PscubeStore.pull_shared_events`。入力時刻の無いもの・形の合わないものは捨てる。読めないファイルは無視）。Androidへは従来どおりPCのバックアップで届く（APKは変更なし）。
+- 試験を追加：`tool/test_viewer_drive_script.mjs`（スクリプトを偽のDriveで動かす、3件）・`tool/test_viewer_shared_calendar_browser.mjs`（作り直した閲覧ページで、共有ファイルの取り込み・保存時のPOST・合言葉を送らないこと、メルヘンとP’s CUBE）・`tests/test_event_calendar.py` に6件（P’s CUBEのカレンダー3件・共有ファイルの取り込み3件、計22件）・`test/event_calendar_test.dart` に3件（計18件）。
+- `check_before_build.sh` **ALL PASSED**（PC 216件・P’s CUBE関連93件・Flutter 515件・analyzeエラー警告0/info18・JS21本、`test_pscube_capture.mjs` は非公開の保存先が無いのでSKIP）。
+- 本物のスクリプト・Driveでの確認は、利用者がスクリプトを新しい版で公開してから（未確認）。
+
 ## PC版：P’s CUBEのイベントカレンダー（Claude、2026-10-08）
 
 - 利用者：「PC版でのカレンダーとても使いやすかったですがP'sCUBE版も欲しいです」。仕様は `EVENT_CALENDAR.md` の「P’s CUBE」。

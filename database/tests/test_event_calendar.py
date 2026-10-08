@@ -224,5 +224,54 @@ class PscubeCalendarTests(unittest.TestCase):
         self.assertEqual(cell_text(date(2026, 10, 30), entries['2026-10-30']), '30\n末尾イベ')
 
 
+
+class SharedCalendarTests(unittest.TestCase):
+    """共有カレンダー（2026-10-08）：同期フォルダの共有ファイルを取り込む。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.folder = Path(self.tmp.name)
+        self.db = Store(self.folder / 'database.sqlite3')
+        self.addCleanup(self.db.close)
+
+    def write(self, name, events):
+        (self.folder / name).write_text(json.dumps(dict(format='database-events', version=1, events=events),
+                                                   ensure_ascii=False), encoding='utf-8')
+
+    def test_newer_shared_entries_come_in_and_older_ones_do_not(self):
+        from core import SHARED_EVENTS_NAME, pull_shared_events
+        self.assertEqual(pull_shared_events(self.db, self.folder), 0, 'no file yet')
+        self.db.set_date_event('saiwaichou', '2026-10-20', 'PCで入力', now=at('2026-10-08T12:00:00+09:00'))
+        self.write(SHARED_EVENTS_NAME, [
+            dict(store='saiwaichou', day='2026-10-20', name='古い', updated_at='2026-10-08T02:00:00.000Z'),
+            dict(store='saiwaichou', day='2026-10-21', name='iPhoneで入力', updated_at='2026-10-08T04:00:00.000Z'),
+            dict(store='nagamachiminami', day='2026-09-14', name=None, updated_at='2026-10-08T04:00:00.000Z'),
+            dict(store='nagamachiminami', day='2026-10-22', name='時刻なしは取らない'),
+        ])
+        self.assertEqual(pull_shared_events(self.db, self.folder), 2)
+        self.assertEqual(self.db.date_events(location='saiwaichou', day='2026-10-20')[0]['name'], 'PCで入力')
+        self.assertEqual(self.db.date_events(location='saiwaichou', day='2026-10-21')[0]['name'], 'iPhoneで入力')
+        self.assertEqual(self.db.date_events(location='nagamachiminami', day='2026-09-14'), [])
+        self.assertEqual(self.db.date_events(location='nagamachiminami', day='2026-10-22'), [])
+        self.assertEqual(pull_shared_events(self.db, self.folder), 0, 'nothing new the second time')
+
+    def test_a_broken_shared_file_is_ignored(self):
+        from core import SHARED_EVENTS_NAME, pull_shared_events
+        (self.folder / SHARED_EVENTS_NAME).write_text('{broken', encoding='utf-8')
+        self.assertEqual(pull_shared_events(self.db, self.folder), 0)
+        self.assertEqual(pull_shared_events(self.db, None), 0)
+
+    def test_pscube_shared_entries_come_in(self):
+        from pscube_import import SHARED_EVENTS_NAME, PscubeStore
+        store = PscubeStore(self.folder / 'pscube.sqlite3')
+        self.addCleanup(store.close)
+        self.write(SHARED_EVENTS_NAME, [dict(store='c740601', rate='20', day='2026-10-25', name='周年',
+                                             updated_at='2026-10-08T04:00:00.000Z')])
+        self.assertEqual(store.pull_shared_events(self.folder), 1)
+        self.assertEqual(store.date_event_for('2026-10-25'), '周年')
+        self.assertEqual(store.pull_shared_events(self.folder), 0)
+
+
 if __name__ == '__main__':
     unittest.main()

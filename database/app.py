@@ -14,7 +14,7 @@ from event_calendar import PscubeEvents, open_event_calendar
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
-                  summary_report, undo_last_save)
+                  summary_report, undo_last_save, pull_shared_events)
 
 def runtime_root():
     """Keep user data beside the project when running a packaged Windows app."""
@@ -330,6 +330,7 @@ def main():
 
     ttk.Label(tab_results, text='見たい台を選ぶ', style='H2.TLabel').pack(anchor='w')
     ttk.Label(tab_results, text='保存済みの店舗・日付・機種だけ選べます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 10))
+    startup_notes = []
     identity = ttk.Frame(tab_results)
     identity.pack(fill='x')
     ttk.Label(identity, text='店舗').grid(row=0, column=0, sticky='w')
@@ -407,9 +408,43 @@ def main():
             day.set(days[0] if days else '')
         refresh_event()
 
+    def tell(text):
+        # 起動直後はまだ記録欄が無いので、できてから出す。
+        try:
+            logbox.insert('end', text)
+            logbox.see('end')
+        except NameError:
+            startup_notes.append(text)
+
+    def pull_shared_events_now():
+        """閲覧ページで入れたイベント（共有カレンダー、同期フォルダの共有ファイル）を取り込む。"""
+        folder = load_settings(DATA_DIR).get('sync_dir')
+        if not folder:
+            return
+        location = current_location()
+        try:
+            if location == PSCUBE_KEY:
+                store = pscube_store()
+                try:
+                    changed = store.pull_shared_events(folder)
+                finally:
+                    store.close()
+            else:
+                db = Store(ROOT / 'data' / 'database.sqlite3')
+                try:
+                    changed = pull_shared_events(db, folder)
+                finally:
+                    db.close()
+        except Exception as exc:  # 取り込めなくても画面は動かす（次の切り替えでまた試す）
+            tell(f'共有カレンダーのイベントを取り込めませんでした：{exc}\n')
+            return
+        if changed:
+            tell(f'共有カレンダーのイベントを{changed}件取り込みました。\n')
+
     def refresh_event(*_args):
         location, selected_day = current_location(), day.get()
         event_combo.configure(state='readonly')
+        pull_shared_events_now()
         if location == PSCUBE_KEY:
             # P’s CUBEは自由記入だけ。一度付けた名前は選択肢に増えていく（2026-10-06）。
             store = pscube_store()
@@ -483,6 +518,7 @@ def main():
             pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
             root.after(0, refresh_event)
 
+        pull_shared_events_now()
         location = current_location()
         if location == PSCUBE_KEY:
             open_event_calendar(root, DATA_DIR / 'pscube.sqlite3',
@@ -611,6 +647,8 @@ def main():
                      highlightthickness=2, highlightbackground=F7['line'], highlightcolor=F7['teal_l'],
                      background=F7['cream'], foreground=F7['ink'], padx=10, pady=8)
     logbox.pack(fill='x', pady=(4, 0))
+    for note in startup_notes:
+        logbox.insert('end', note)
 
     def open_browser_import():
         try:
