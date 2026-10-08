@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'daily_net_page.dart' show DayNet;
 import 'date_events.dart';
 import 'event_name_dialog.dart';
 import 'list_views.dart';
+import 'models.dart' show signedMedals;
 import 'shared_widgets.dart';
 import 'theme.dart';
 
@@ -42,8 +44,14 @@ String eventCellLabel(DateEvent? event) => event == null || event.removed
     ? ''
     : '${event.name}${event.enteredInAdvance ? '' : eventLateMark}';
 
-/// イベントカレンダー（メルヘン2店舗。Android版・閲覧ページ共通、`EVENT_CALENDAR.md`）。
+/// カレンダーの1日に出す差枚（その日の総差枚）。メルヘンはほぼ毎日、要確認（※）の推定差枚の台を
+/// 含むので、マスには※を付けない（下の説明に書く、PC `event_calendar.net_text` と同じ）。
+String? dayNetCellLabel(DayNet? net) =>
+    net?.total == null ? null : signedMedals(net!.total!);
+
+/// イベントカレンダー（メルヘン2店舗・P’s CUBE。Android版・閲覧ページ共通、`EVENT_CALENDAR.md`）。
 /// 先の日にもイベント名を入れられる。保存は [onSave]（名前 null は消す）。
+/// [netFor] があれば、各日にその店の総差枚も出す（2026-10-08 利用者指定）。
 class EventCalendarPage extends StatefulWidget {
   const EventCalendarPage({
     super.key,
@@ -55,6 +63,8 @@ class EventCalendarPage extends StatefulWidget {
     this.actions = const [],
     this.note,
     this.today,
+    this.netFor,
+    this.netNote,
   });
 
   final Map<String, String> stores;
@@ -68,6 +78,12 @@ class EventCalendarPage extends StatefulWidget {
   /// 画面の下に出す補足（閲覧ページの書き出しの案内など）。
   final String? note;
   final DateTime? today;
+
+  /// その店・その日の差枚（[dailyNet] の1日分）。記録の無い日は null。
+  final DayNet? Function(String store, String day)? netFor;
+
+  /// 差枚の説明（メルヘンは推定であることなど）。[netFor] があるときに出す。
+  final String? netNote;
 
   @override
   State<EventCalendarPage> createState() => _EventCalendarPageState();
@@ -135,6 +151,8 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
     if (date == null) return const SizedBox.shrink();
     final day = _iso(date);
     final label = eventCellLabel(widget.eventFor(_store, day));
+    final net = widget.netFor?.call(_store, day);
+    final netLabel = dayNetCellLabel(net);
     final today =
         date.year == _today.year &&
         date.month == _today.month &&
@@ -150,7 +168,9 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
           borderRadius: BorderRadius.circular(6),
           onTap: () => _tap(day),
           child: Container(
-            constraints: const BoxConstraints(minHeight: 58),
+            constraints: BoxConstraints(
+              minHeight: widget.netFor == null ? 58 : 70,
+            ),
             padding: const EdgeInsets.fromLTRB(4, 3, 4, 3),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(6),
@@ -181,6 +201,28 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 10, height: 1.2),
                   ),
+                if (netLabel != null) ...[
+                  const Spacer(),
+                  // 狭い画面でも桁が切れないよう、入りきらないときだけ縮める。
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      netLabel,
+                      key: ValueKey('event-net-$day'),
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: net!.total! > 0
+                            ? AppColors.linkBlue
+                            : net.total! < 0
+                            ? const Color(0xFFC62828)
+                            : AppColors.ash,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -278,6 +320,8 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
               ),
             ),
           const SizedBox(height: 12),
+          if (widget.netFor != null && widget.netNote != null)
+            Notice(text: widget.netNote!),
           const Notice(text: eventLateNote),
           if (widget.note != null) Notice(text: widget.note!),
         ],

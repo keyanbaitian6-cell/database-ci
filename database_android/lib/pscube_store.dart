@@ -850,6 +850,87 @@ class PscubeStore {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       });
 
+  /// イベントカレンダー（2026-10-08）：[days]（先の日も可）に同じ名前を付ける・消す。記録のある
+  /// 店舗・貸玉それぞれに入れる。名前の変わらない日は時刻を変えず、何も無い日の「イベントなし」で
+  /// 消した印を作らない（PC版 `set_date_event_days` と同じ）。
+  Future<void> setDateEventDays(
+    List<String> days,
+    String? name, {
+    DateTime? now,
+  }) => _serial(() async {
+    if (days.isEmpty ||
+        days.length > 62 ||
+        days.any((d) => DateTime.tryParse('${d}T00:00:00Z') == null)) {
+      throw const FormatException('日付が不正です。');
+    }
+    final cleaned = cleanPscubeEventName(name);
+    final scopes = <(String, String)>{
+      for (final row in await db.query('machines', columns: ['payload']))
+        () {
+          final m = _asMap(jsonDecode(row['payload'] as String));
+          return (m['store'] as String, m['rate'] as String);
+        }(),
+    };
+    if (scopes.isEmpty) {
+      throw const FormatException('先にP’s CUBEの記録を取り込んでください。');
+    }
+    final events = {for (final e in await _dateEventsIn(db)) e.event.key: e};
+    final at = (now ?? DateTime.now()).toUtc();
+    var changed = false;
+    for (final day in days) {
+      for (final (store, rate) in scopes) {
+        final key = 'pscube:$store:$rate|$day';
+        final previous = events[key];
+        if (previous == null ? cleaned == null : previous.name == cleaned) {
+          continue;
+        }
+        var time = at;
+        if (previous != null) {
+          final after = DateTime.parse(
+            previous.updatedAt,
+          ).toUtc().add(const Duration(milliseconds: 1));
+          if (after.isAfter(time)) time = after;
+        }
+        events[key] = PscubeDateEvent(
+          store: store,
+          rate: rate,
+          day: day,
+          name: cleaned,
+          updatedAt: time.toIso8601String(),
+        );
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await db.insert('state', {
+      'key': 'date_events',
+      'value': jsonEncode([for (final e in events.values) e.toJson()]),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  });
+
+  /// イベントカレンダーに出す記録とイベント（閲覧ページと同じ `pscube-viewer` の形。ファイルには書かない）。
+  Future<Map<String, Object?>> calendarData() => _serial(() async {
+    final machines = (await db.query(
+      'machines',
+      columns: ['payload'],
+      orderBy: 'rowid',
+    )).map((r) => jsonDecode(r['payload'] as String)).toList();
+    final records = (await db.query(
+      'records',
+      columns: ['payload'],
+      orderBy: 'rowid',
+    )).map((r) => jsonDecode(r['payload'] as String)).toList();
+    final events = await _dateEventsIn(db);
+    return {
+      'format': 'pscube-viewer',
+      'version': 1,
+      'machines': machines,
+      'records': records,
+      if (events.isNotEmpty)
+        'date_events': [for (final e in events) e.toJson()],
+    };
+  });
+
   /// [day] のイベント名（どれかの貸玉に付いていれば、その名前）。
   Future<String?> dateEventFor(String day) async {
     for (final e in await dateEvents()) {

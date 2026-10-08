@@ -16,9 +16,13 @@ class PscubeDateEvent {
   final String? name;
   final String updatedAt;
 
-  /// 画面で使う形（店舗は `pscube:店:貸玉`）。
-  DateEvent get event =>
-      DateEvent(store: 'pscube:$store:$rate', day: day, name: name ?? '');
+  /// 画面で使う形（店舗は `pscube:店:貸玉`）。入力時刻はカレンダーの＊（前日までに入力したか）に使う。
+  DateEvent get event => DateEvent(
+    store: 'pscube:$store:$rate',
+    day: day,
+    name: name ?? '',
+    updatedAt: updatedAt,
+  );
 
   Map<String, Object?> toJson() => {
     'store': store,

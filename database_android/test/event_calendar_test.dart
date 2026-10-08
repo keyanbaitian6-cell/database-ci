@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:database_android/daily_net_page.dart';
 import 'package:database_android/date_events.dart';
 import 'package:database_android/event_calendar_page.dart';
 import 'package:database_android/main.dart';
 import 'package:database_android/models.dart';
+import 'package:database_android/pscube_viewer_data.dart';
+import 'package:database_android/theme.dart';
 import 'package:database_android/viewer_data.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -539,5 +542,138 @@ void main() {
       expect(find.text('2026年11月'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+  });
+
+  group('カレンダーの差枚（2026-10-08）', () {
+    const base =
+        'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
+    Map<String, Object?> rec(String day, int rack, int? net, {int games = 3000}) => {
+      'store': 'c740601',
+      'rate': '20',
+      'machine': 'マイジャグラーV',
+      'rack': rack,
+      'day': day,
+      'bb': 10,
+      'rb': 5,
+      'games': games,
+      'my': 1000,
+      'at_art': 0,
+      'net_medals': ?net,
+      'observed_at': '2026-10-05T23:00:00+09:00',
+      'detail_url': '${base}nc-v06-001.php?cd_dai=$rack#${day.replaceAll('-', '')}',
+    };
+    Map<String, Object?> doc(List<Map<String, Object?>> records) => {
+      'format': 'pscube-viewer',
+      'version': 1,
+      'machines': [
+        {
+          'store': 'c740601',
+          'rate': '20',
+          'machine': 'マイジャグラーV',
+          'machine_type': 'normal',
+          'expected_count': 4,
+          'url': '${base}nc-v05-011.php?cd_ps=2&bai=20',
+        },
+      ],
+      'records': records,
+      'date_events': [
+        {
+          'store': 'c740601',
+          'rate': '20',
+          'day': '2026-10-06',
+          'name': '業火の極',
+          'updated_at': '2026-10-05T12:00:00.000Z',
+        },
+      ],
+    };
+    const scope = 'pscube:c740601:20';
+
+    test('その日の総差枚：差枚のある台だけ足し、無い台・数値異常の台は数えない', () {
+      final records = pscubeViewerRecords(
+        doc([
+          rec('2026-10-04', 1, 1200),
+          rec('2026-10-04', 2, -300),
+          rec('2026-10-04', 3, null),
+          rec('2026-10-04', 4, 99999, games: 88888888),
+          rec('2026-10-05', 1, null),
+        ]),
+      );
+      final lookup = dailyNetLookup(records);
+      final day = lookup(scope, '2026-10-04')!;
+      expect((day.total, day.captured, day.racks), (900, 2, 3));
+      expect(dayNetCellLabel(day), '+900');
+      expect(lookup(scope, '2026-10-05')!.total, isNull, reason: '差枚が1台も無い日は0にしない');
+      expect(dayNetCellLabel(lookup(scope, '2026-10-05')), isNull);
+      expect(lookup(scope, '2026-10-20'), isNull, reason: '記録の無い日');
+      expect(lookup('nagamachiminami', '2026-10-04'), isNull, reason: '別の店は混ぜない');
+      expect(
+        dayNetCellLabel(
+          const DayNet(day: 'x', total: -1500, captured: 2, racks: 2, needsCheck: 1),
+        ),
+        '-1,500',
+        reason: 'マスには※を付けない',
+      );
+      expect(dailyNetNote('saiwaichou'), contains('推定'));
+      expect(dailyNetNote(scope), isNot(contains('推定')));
+    });
+
+    test('P’s CUBEのイベントは入力時刻を持ち、前日までの入力は＊が付かない', () {
+      final events = pscubeDateEvents(doc(const []));
+      final event = events.single.event;
+      expect((event.store, event.updatedAt), (scope, '2026-10-05T12:00:00.000Z'));
+      expect(eventCellLabel(event), '業火の極');
+    });
+
+    for (final width in [320.0, 393.0]) {
+      testWidgets('マスに差枚を出す（プラスは青・マイナスは赤、${width.toInt()}px）', (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final nets = {
+          '2026-10-04': const DayNet(
+            day: '2026-10-04',
+            total: 138200,
+            captured: 20,
+            racks: 20,
+            needsCheck: 1,
+          ),
+          '2026-10-05': const DayNet(
+            day: '2026-10-05',
+            total: -4300,
+            captured: 20,
+            racks: 20,
+          ),
+        };
+        await tester.pumpWidget(
+          MaterialApp(
+            home: EventCalendarPage(
+              stores: storeNames,
+              initialStore: 'nagamachiminami',
+              today: DateTime(2026, 10, 8),
+              eventFor: (store, day) => day == '2026-10-04'
+                  ? ev('半列', '2026-10-03T12:00:00+09:00', '2026-10-04')
+                  : null,
+              namesFor: (_) => const [],
+              onSave: (_, _, _) async {},
+              netFor: (store, day) => store == 'nagamachiminami' ? nets[day] : null,
+              netNote: dailyNetNote('nagamachiminami'),
+            ),
+          ),
+        );
+        final plus = tester.widget<Text>(
+          find.byKey(const ValueKey('event-net-2026-10-04')),
+        );
+        expect(plus.data, '+138,200');
+        expect(plus.style!.color, AppColors.linkBlue);
+        final minus = tester.widget<Text>(
+          find.byKey(const ValueKey('event-net-2026-10-05')),
+        );
+        expect(minus.data, '-4,300');
+        expect(minus.style!.color, const Color(0xFFC62828));
+        expect(find.byKey(const ValueKey('event-net-2026-10-06')), findsNothing);
+        expect(find.text('半列'), findsOneWidget);
+        expect(find.textContaining('推定'), findsWidgets);
+        expect(tester.takeException(), isNull, reason: '狭い画面でもはみ出さない');
+      });
+    }
   });
 }

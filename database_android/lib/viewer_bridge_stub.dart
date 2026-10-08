@@ -39,3 +39,9 @@ Future<String?> setPscubeDateEvent(
   String day,
   String? name,
 ) async => null;
+
+Future<String?> setPscubeDateEventDays(
+  String scope,
+  List<String> days,
+  String? name,
+) async => null;

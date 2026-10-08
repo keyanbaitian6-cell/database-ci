@@ -275,3 +275,73 @@ class SharedCalendarTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def measurement(heights):
+    """tests/test_meruhen_net.py と同じ形のグラフ（ゼロ線 200.5、高さはゼロ線からの差）。"""
+    curve = [[i * 10.0 + 0.5, 200.5 - h] for i, h in enumerate(heights)]
+    ys = [y for _, y in curve]
+    return dict(baseline_y=200.5, peak_y=min(ys), trough_y=max(ys), end_y=curve[-1][1], curve=curve)
+
+
+class CalendarNetTests(unittest.TestCase):
+    """カレンダーの各日の総差枚（2026-10-08）。Android・閲覧ページの dailyNet と同じ数え方。"""
+
+    def test_meruhen_adds_estimated_nets_and_skips_unknown_broken_and_placeholder_racks(self):
+        from event_calendar import meruhen_day_nets, net_color, net_text, MINUS_COLOR, PLUS_COLOR
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db = Store(Path(tmp.name) / 'database.sqlite3')
+        self.addCleanup(db.close)
+
+        def put(store, day, rack, payload):
+            db.db.execute('INSERT INTO days(store, day, machine, rack, payload) VALUES(?,?,?,?,?)',
+                          (store, day, 'm', rack, payload if isinstance(payload, str) else json.dumps(payload)))
+        row = dict(games=3000, bb=10, rb=5)
+        put('saiwaichou', '2026-10-04', 1, dict(row, max_hold=2376, graph_measurement=measurement([0, -63, 40, 147, 128])))
+        put('saiwaichou', '2026-10-04', 2, dict(row, max_hold=2900, graph_measurement=measurement([0, 120, 40, -50])))
+        put('saiwaichou', '2026-10-04', 3, dict(row, max_hold=500))                     # グラフなし：数えない
+        put('saiwaichou', '2026-10-04', 4, dict(row, games=88888888, max_hold=2376,
+                                                 graph_measurement=measurement([0, -63, 40, 147, 128])))  # 整備中の値
+        put('saiwaichou', '2026-10-04', 5, '{broken')                                 # 読めない行
+        put('nagamachiminami', '2026-10-04', 1, dict(row, max_hold=2376, graph_measurement=measurement([0, 10])))
+        put('saiwaichou', '2026-11-01', 1, dict(row, max_hold=2376, graph_measurement=measurement([0, -63, 40, 147, 128])))
+        put('saiwaichou', '2026-10-05', 1, dict(row, max_hold=500))
+        db.db.commit()
+        nets = meruhen_day_nets(db, 'saiwaichou', '2026-10-01', '2026-10-31')
+        self.assertEqual(sorted(nets), ['2026-10-04', '2026-10-05'])
+        self.assertEqual((nets['2026-10-04']['total'], nets['2026-10-04']['captured']), (1422 - 1111, 2))
+        self.assertEqual(net_text(nets['2026-10-04']), '+311')
+        self.assertEqual(net_color(nets['2026-10-04']), PLUS_COLOR)
+        self.assertIsNone(nets['2026-10-05']['total'], '差枚が1台も無い日は0にしない')
+        self.assertEqual(net_text(nets['2026-10-05']), '')
+        self.assertEqual(net_text({'total': -1500, 'needs_check': 1}), '-1,500', 'マスには※を付けない')
+        self.assertEqual(net_color({'total': -1500}), MINUS_COLOR)
+
+    def test_pscube_uses_the_site_net_and_keeps_rates_apart(self):
+        from event_calendar import net_text, pscube_day_nets
+
+        def rec(day, rate, net, **extra):
+            return dict(dict(day=day, rate=rate, games=3000, bb=10, rb=5, my=1000, net_medals=net), **extra)
+        records = [rec('2026-10-04', '20', 1200), rec('2026-10-04', '20', -300), rec('2026-10-04', '20', None),
+                   rec('2026-10-04', '20', 5000, my=88888888), rec('2026-09-30', '20', 100)]
+        nets = pscube_day_nets(records, '2026-10-01', '2026-10-31')
+        self.assertEqual((nets['2026-10-04']['total'], nets['2026-10-04']['captured']), (900, 2))
+        self.assertNotIn('2026-09-30', nets)
+        both = pscube_day_nets(records + [rec('2026-10-04', '5', -40)], '2026-10-01', '2026-10-31')
+        self.assertEqual(net_text(both['2026-10-04']).splitlines(), ['20スロ +900', '5スロ -40'])
+
+    def test_the_pscube_backend_reads_nets_from_the_records(self):
+        from event_calendar import PscubeEvents
+        from pscube_import import PscubeStore
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / 'pscube.sqlite3'
+        store = PscubeStore(path)
+        store.db.execute('INSERT INTO records(key, payload) VALUES(?, ?)',
+                         ('k', json.dumps(dict(store='c740601', rate='20', day='2026-10-04', games=3000, bb=10, rb=5,
+                                               my=1000, net_medals=-250))))
+        store.db.commit()
+        store.close()
+        nets = PscubeEvents(path).nets('pscube', '2026-10-01', '2026-10-31')
+        self.assertEqual(nets['2026-10-04']['total'], -250)

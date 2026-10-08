@@ -718,6 +718,47 @@ void main() {
       factory: databaseFactoryFfi,
     );
 
+    test('イベントカレンダー：先の日・期間に全貸玉で付け、同じ名前は時刻を変えず、何も無い日に消した印を作らない', () async {
+      await seedRack();
+      final at = DateTime.utc(2026, 10, 8, 12);
+      await store.setDateEventDays(['2026-10-20', '2026-10-21'], ' 華の日 ', now: at);
+      expect(await store.dateEventFor('2026-10-20'), '華の日', reason: '記録の無い先の日にも入る');
+      expect(await store.dateEventFor('2026-10-21'), '華の日');
+      await store.setDateEventDays(
+        ['2026-10-20', '2026-10-22'],
+        '華の日',
+        now: at.add(const Duration(hours: 1)),
+      );
+      await store.setDateEventDays(
+        ['2026-10-25'],
+        null,
+        now: at.add(const Duration(hours: 1)),
+      );
+      final events = {
+        for (final e in (await exported())['date_events'] as List)
+          (e as Map)['day']: e,
+      };
+      expect(events['2026-10-20']!['updated_at'], '2026-10-08T12:00:00.000Z', reason: '同じ名前は時刻そのまま');
+      expect(events['2026-10-22']!['updated_at'], '2026-10-08T13:00:00.000Z');
+      expect(events.containsKey('2026-10-25'), isFalse, reason: '何も無い日の「イベントなし」は印を作らない');
+      // カレンダーの元データ：閲覧ページと同じ形（記録とイベント）。
+      final data = await store.calendarData();
+      expect(data['format'], 'pscube-viewer');
+      expect(data['records'], (await exported())['records']);
+      expect((data['date_events'] as List).length, 3);
+      expect(store.setDateEventDays(const [], '華の日'), throwsFormatException);
+      expect(
+        store.setDateEventDays(List.filled(63, '2026-10-20'), '華の日'),
+        throwsFormatException,
+      );
+      final empty = await PscubeStore.open(
+        path: '${dir.path}/empty-days.sqlite3',
+        factory: databaseFactoryFfi,
+      );
+      addTearDown(empty.close);
+      expect(empty.setDateEventDays(['2026-10-20'], '華の日'), throwsFormatException);
+    });
+
     test('ファイル名はメルヘンと重ならず、書き出しには種別・出どころ・時刻・取り込み済みの印が付く', () async {
       expect(
         PscubeStore.backupFileName(DateTime(2026, 10, 1, 9, 5, 7)),

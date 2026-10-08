@@ -12,6 +12,7 @@ import 'app_controller.dart';
 import 'android_record_page.dart';
 import 'backup_service.dart';
 import 'data_checks.dart';
+import 'daily_net_page.dart';
 import 'date_events.dart';
 import 'event_calendar_page.dart';
 import 'database_service.dart';
@@ -993,6 +994,18 @@ class _ResultsPageState extends State<ResultsPage> {
         ),
       );
 
+  /// カレンダーの差枚（その店・その日の総差枚）。記録が変わったときだけ数え直す。
+  List<SlotRecord>? _netRecords;
+  DayNet? Function(String store, String day)? _netLookup;
+  DayNet? _netFor(String store, String day) {
+    final records = widget.controller.records;
+    if (!identical(records, _netRecords)) {
+      _netRecords = records;
+      _netLookup = dailyNetLookup(records);
+    }
+    return _netLookup!(store, day);
+  }
+
   /// 先の日にもイベントを入れられるカレンダー（EVENT_CALENDAR.md）。
   void _openEventCalendar() => Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -1008,6 +1021,8 @@ class _ResultsPageState extends State<ResultsPage> {
             days: days,
             name: name,
           ),
+          netFor: _netFor,
+          netNote: dailyNetNote(storeNames.keys.first),
         ),
       ),
     ),

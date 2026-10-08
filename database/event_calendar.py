@@ -2,19 +2,25 @@
 
 先の日にもイベント名を入れられる。入力した時刻を残し（core.Store.set_date_event_days）、
 前日までに入力していないイベントは名前の後ろに「＊」を付ける。Android・閲覧ページと同じ作り。
+各日にはその店の総差枚も出す（2026-10-08 利用者指定。メルヘンは推定差枚）。
 """
 import calendar
 from datetime import date, timedelta
+import json
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core import STORE_NAMES, Store, date_event_in_advance
+from core import (STORE_NAMES, Store, date_event_in_advance, implausible_numbers, meruhen_net_estimate_detail,
+                  signed_medals)
 
 WEEKDAYS = '日月火水木金土'
 # 「期間でまとめて入力」で一度に付けられる日数。
 RANGE_MAX_DAYS = 62
 LATE_MARK = '＊'
 LATE_NOTE = '＊＝前日までに入力した記録がありません（当日以降の入力・時刻不明）。予想の材料には使いません。'
+PLUS_COLOR, MINUS_COLOR, ZERO_COLOR = '#0066CC', '#C62828', '#707070'
+DAY_BG, HOVER_BG, PICKED_BG = '#FFFFFF', '#EEF4FB', '#F2C14E'
+DAY_BORDER, TODAY_BORDER = '#D2D2D7', '#0071E3'
 
 
 def month_weeks(year, month):
@@ -41,6 +47,70 @@ def cell_text(day, event):
     mark = '' if date_event_in_advance(event) else LATE_MARK
     name = event['name'] if len(event['name']) <= 8 else event['name'][:7] + '…'
     return f'{day.day}\n{name}{mark}'
+
+
+def net_text(net):
+    """その日の総差枚の文字。差枚が1台も無い日は ''（0にしない）。メルヘンはほぼ毎日、要確認（※）の
+    推定差枚の台を含むので、マスには※を付けない（下の説明に書く）。
+    P’s CUBEで貸玉が複数ある日は、貸玉ごとに1行。"""
+    if not net:
+        return ''
+    if 'by_rate' in net:
+        return '\n'.join(f'{rate}スロ {text}' for rate, part in net['by_rate'].items() if (text := net_text(part)))
+    if net['total'] is None:
+        return ''
+    return signed_medals(net['total'])
+
+
+def net_color(net):
+    total = (net or {}).get('total')
+    return ZERO_COLOR if not total else PLUS_COLOR if total > 0 else MINUS_COLOR
+
+
+def _add_net(totals, day, net, needs_check=False):
+    entry = totals.setdefault(day, {'total': None, 'captured': 0, 'needs_check': 0})
+    if net is None:
+        return
+    entry['total'] = (entry['total'] or 0) + net
+    entry['captured'] += 1
+    entry['needs_check'] += bool(needs_check)
+
+
+def meruhen_day_nets(db, location, first, last):
+    """メルヘンの日ごとの総差枚（推定差枚。Android・閲覧ページの dailyNet と同じ：数値異常の台は数えず、
+    推定できない台は足さない）。グラフ画像は読まない（必要な値だけSQLiteで取り出す）。"""
+    totals = {}
+    query = ("SELECT day, json_extract(payload,'$.games'), json_extract(payload,'$.bb'), json_extract(payload,'$.rb'),"
+             " json_extract(payload,'$.max_hold'), json_extract(payload,'$.graph_measurement') FROM days"
+             " WHERE store=? AND day BETWEEN ? AND ? AND json_valid(payload)")
+    for day, games, bb, rb, max_hold, measurement in db.db.execute(query, (location, first, last)):
+        if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
+            continue
+        try:
+            measurement = json.loads(measurement) if measurement else None
+        except ValueError:
+            measurement = None
+        net, needs_check = meruhen_net_estimate_detail(measurement, max_hold, games)
+        _add_net(totals, day, net, needs_check)
+    return totals
+
+
+def pscube_day_nets(records, first, last):
+    """P’s CUBEの日ごとの総差枚（元グラフの確定差枚）。貸玉ごとに数え、貸玉が1つならその合計、
+    複数あれば {'by_rate': {貸玉: 合計}}（別の貸玉は混ぜない）。数値異常の台は数えない。"""
+    by_rate = {}
+    for r in records:
+        if not first <= r['day'] <= last:
+            continue
+        if ((r.get('games') or 0) > 20000 or (r.get('bb') or 0) > 500 or (r.get('rb') or 0) > 500
+                or (r.get('my') or 0) > 100000):
+            continue
+        _add_net(by_rate.setdefault(r['rate'], {}), r['day'], r.get('net_medals'))
+    if len(by_rate) <= 1:
+        return next(iter(by_rate.values()), {})
+    days = {day for totals in by_rate.values() for day in totals}
+    return {day: {'by_rate': {rate: totals[day] for rate, totals in sorted(by_rate.items()) if day in totals}}
+            for day in days}
 
 
 def ask_event_name(parent, title, current, names):
@@ -98,6 +168,15 @@ class MeruhenEvents:
         finally:
             db.close()
 
+    net_note = '差枚＝その日の総差枚（推定。グラフと最大持玉から計算できた台の合計で、確定値ではありません。要確認の台も含みます）。'
+
+    def nets(self, location, first, last):
+        db = Store(self.db_path)
+        try:
+            return meruhen_day_nets(db, location, first, last)
+        finally:
+            db.close()
+
     def save(self, location, days, name):
         db = Store(self.db_path)
         try:
@@ -124,6 +203,17 @@ class PscubeEvents:
         finally:
             store.close()
 
+    net_note = '差枚＝その日の総差枚（元グラフの差枚がわかった台の合計）。'
+
+    def nets(self, _location, first, last):
+        import pscube_import
+        store = pscube_import.PscubeStore(self.db_path)
+        try:
+            records = [json.loads(row[0]) for row in store.db.execute('SELECT payload FROM records')]
+        finally:
+            store.close()
+        return pscube_day_nets(records, first, last)
+
     def save(self, _location, days, name):
         import pscube_import
         store = pscube_import.PscubeStore(self.db_path)
@@ -144,23 +234,21 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
     window.title(events.title)
     window.transient(root)
     window.minsize(760, 560)
-    style = ttk.Style(window)
-    style.configure('Day.TButton', padding=(4, 4), font=('Yu Gothic UI', 9))
-    style.configure('Today.TButton', padding=(4, 4), font=('Yu Gothic UI', 9, 'bold'))
-    style.configure('Picked.TButton', padding=(4, 4), font=('Yu Gothic UI', 9, 'bold'), background='#F2C14E')
     labels = list(events.stores.values())
     store_name = tk.StringVar(value=events.stores.get(location) or labels[0])
     month = [date(today.year, today.month, 1)]
     picking = tk.BooleanVar(value=False)
     picked = [None]
     status = tk.StringVar(value='')
+    net_cache = {}
 
     body = ttk.Frame(window, padding=20)
     body.pack(fill='both', expand=True)
     ttk.Label(body, text=events.title, style='H2.TLabel').pack(anchor='w')
     ttk.Label(body, style='Sub.TLabel', wraplength=700, text=(
         '日を押すとイベント名を入れられます。先の日にも入れられ、入力した時刻を残します。'
-        'Android・閲覧ページとはバックアップで受け渡し、新しく入れた方が残ります。')).pack(anchor='w', pady=(0, 10))
+        '閲覧ページで入れたイベントは共有カレンダーから、Androidとはバックアップで受け渡し、'
+        '新しく入れた方が残ります。')).pack(anchor='w', pady=(0, 10))
     bar = ttk.Frame(body)
     bar.pack(fill='x', pady=(0, 8))
     ttk.Combobox(bar, textvariable=store_name, values=labels, state='readonly', width=28).pack(side='left')
@@ -173,6 +261,7 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
     grid = ttk.Frame(body)
     grid.pack(fill='both', expand=True)
     ttk.Label(body, textvariable=status, style='Sub.TLabel').pack(anchor='w', pady=(6, 0))
+    ttk.Label(body, text=events.net_note, style='Sub.TLabel', wraplength=700).pack(anchor='w')
     ttk.Label(body, text=LATE_NOTE, style='Sub.TLabel', wraplength=700).pack(anchor='w')
 
     def current_location():
@@ -229,18 +318,57 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
         first = month[0]
         month_label.configure(text=f'{first.year}年{first.month}月')
         entries, _names = events_for(current_location())
+        nets = month_nets()
         for column, name in enumerate(WEEKDAYS):
             ttk.Label(grid, text=name, style='H3.TLabel', anchor='center').grid(row=0, column=column, sticky='ew')
             grid.columnconfigure(column, weight=1, uniform='day')
         for row, week in enumerate(month_weeks(first.year, first.month), start=1):
             grid.rowconfigure(row, weight=1, uniform='week')
             for column, day in enumerate(week):
-                if day is None:
-                    continue
-                style_name = ('Picked.TButton' if day == picked[0] else
-                              'Today.TButton' if day == today else 'Day.TButton')
-                ttk.Button(grid, text=cell_text(day, entries.get(day.isoformat())), style=style_name,
-                           command=lambda d=day: on_day(d)).grid(row=row, column=column, sticky='nsew', padx=1, pady=1)
+                if day is not None:
+                    day_cell(day, entries.get(day.isoformat()), nets.get(day.isoformat())).grid(
+                        row=row, column=column, sticky='nsew', padx=1, pady=1)
+
+    def month_nets():
+        """表示中の店・月の総差枚。月・店ごとに1回だけ数える（イベントを入れても差枚は変わらない）。"""
+        first = month[0]
+        key = (current_location(), first)
+        if key not in net_cache:
+            last = shift_month(first, 1) - timedelta(days=1)
+            try:
+                net_cache[key] = events.nets(key[0], first.isoformat(), last.isoformat())
+            except Exception as error:  # 差枚が読めなくてもイベントの入力は続けられる
+                status.set(f'差枚を読めませんでした：{error}')
+                net_cache[key] = {}
+        return net_cache[key]
+
+    def day_cell(day, event, net):
+        """1日のマス：日付・イベント名（＊）・総差枚（プラスは青、マイナスは赤）。押すとイベントを入れる。"""
+        is_picked, is_today = day == picked[0], day == today
+        background = PICKED_BG if is_picked else DAY_BG
+        frame = tk.Frame(grid, bg=background, cursor='hand2', highlightthickness=2 if is_today else 1,
+                         highlightbackground=TODAY_BORDER if is_today else DAY_BORDER)
+        number, _, name = cell_text(day, event).partition('\n')
+        bold = ('Yu Gothic UI', 9, 'bold')
+        parts = [tk.Label(frame, text=number, bg=background, anchor='w',
+                          font=bold if is_today or is_picked else ('Yu Gothic UI', 9))]
+        if name:
+            parts.append(tk.Label(frame, text=name, bg=background, anchor='w', font=('Yu Gothic UI', 9)))
+        if text := net_text(net):
+            parts.append(tk.Label(frame, text=text, bg=background, anchor='w', justify='left', font=bold,
+                                  fg=net_color(net)))
+        for part in parts:
+            part.pack(fill='x', padx=4, pady=(2, 0))
+
+        def paint(color):
+            for widget in (frame, *parts):
+                widget.configure(bg=color)
+        for widget in (frame, *parts):
+            widget.bind('<Button-1>', lambda _e, d=day: on_day(d))
+            if not is_picked:
+                widget.bind('<Enter>', lambda _e: paint(HOVER_BG))
+                widget.bind('<Leave>', lambda _e: paint(DAY_BG))
+        return frame
 
     store_name.trace_add('write', render)
     render()

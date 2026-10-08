@@ -60,6 +60,22 @@ List<DayNet> dailyNet(Iterable<SlotRecord> records, String store) {
   ];
 }
 
+/// 店舗ごとの日別の差枚を、店舗ごとに1回だけ数えて引けるようにする（カレンダーのマスごとに数え直さない）。
+DayNet? Function(String store, String day) dailyNetLookup(
+  Iterable<SlotRecord> records,
+) {
+  final cache = <String, Map<String, DayNet>>{};
+  return (store, day) => (cache[store] ??= {
+    for (final d in dailyNet(records, store)) d.day: d,
+  })[day];
+}
+
+/// 差枚の説明（カレンダーの下）。メルヘンは推定であることを必ず添える。
+String dailyNetNote(String store) => isPscubeStore(store)
+    ? '差枚＝その日の総差枚（元グラフの差枚がわかった台の合計）。'
+    : '差枚＝その日の総差枚（推定。グラフと最大持玉から計算できた台の合計で、確定値ではありません。'
+          '要確認の台も含みます）。';
+
 /// 月（`2026-10`）ごとの日別の差枚。日付をタップすると、その日を選んでホームへ戻る。
 /// P’s CUBEとメルヘンで同じ画面。メルヘンは推定差枚であることを見出しと注記で示す。
 class DailyNetPage extends StatefulWidget {

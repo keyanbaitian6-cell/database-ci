@@ -36,7 +36,7 @@ const base='https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
 const pscubeRecords=[];
 for(const day of ['2026-10-04','2026-10-05'])
   for(let rack=1;rack<=4;rack++)pscubeRecords.push({store:'c740601',rate:'20',machine:'マイジャグラーV',rack,day,
-    bb:rack*2,rb:rack,games:3000,my:rack*500,at_art:0,observed_at:'2026-10-05T23:00:00+09:00',
+    bb:rack*2,rb:rack,games:3000,my:rack*500,at_art:0,net_medals:rack*100-150,observed_at:'2026-10-05T23:00:00+09:00',
     detail_url:base+'nc-v06-001.php?cd_dai='+rack+'#'+day.replaceAll('-',''),
     graph:{kind:'daily',zero_y:100,points:[[0,100],[10,20],[20,40]]}});
 const pscube={format:'pscube-viewer',version:1,machines:[{store:'c740601',rate:'20',machine:'マイジャグラーV',
@@ -139,8 +139,25 @@ try {
   const pscubePost=posts.find(p=>p.file==='pscube-events');
   assert.ok(pscubePost.events.some(e=>e.name==='末尾イベ' && e.rate==='20'));
   assert.ok(pscubePost.events.some(e=>e.day==='2026-10-26'));
+
+  // P’s CUBEのイベントカレンダー（2026-10-08）：各日に総差枚（4台で -50+50+150+250 = +400）、先の日にも入れて送る。
+  await page.getByRole('button',{name:'イベントカレンダー',exact:true}).click();
+  for(let i=(now.getFullYear()*12+now.getMonth())-(2026*12+9);i>0;i--)await page.getByRole('button',{name:'前の月',exact:true}).click();
+  await waitFor(async()=>(await labels()).some(l=>/^4\s*\+400$/.test(l)),'pscube daily net in calendar');
+  await waitFor(async()=>(await labels()).some(l=>/^5\s*末尾イベ＊\s*\+400$/.test(l)),'event and net in one day');
+  await waitFor(async()=>(await labels()).some(l=>/^26\s*共有のP’s CUBE/.test(l)),'shared pscube event in calendar');
+  await waitFor(async()=>(await labels()).some(l=>/元グラフの差枚がわかった台の合計/.test(l)),'net note');
+  const before=posts.length;
+  await page.getByText('28',{exact:true}).first().click();
+  await enterName('先の日イベ');
+  await waitFor(async()=>posts.length>before,'pscube calendar POST');
+  const future=posts.at(-1);
+  assert.equal(future.file,'pscube-events');
+  assert.ok(future.events.some(e=>e.day==='2026-10-28' && e.name==='先の日イベ' && e.rate==='20'),'記録の無い先の日にも入る');
+  const saved=(await stored('database-pscube-viewer','state')).date_events;
+  assert.ok(saved.some(e=>e.day==='2026-10-28' && e.name==='先の日イベ'));
   assert.deepEqual(errors,[]);
-  console.log('PASS: shared calendar pull (meruhen, pscube), POST without passphrase on save');
+  console.log('PASS: shared calendar pull (meruhen, pscube), POST without passphrase on save, pscube calendar with daily net');
 } finally {
   await browser.close();
   await new Promise(resolve=>server.close(resolve));

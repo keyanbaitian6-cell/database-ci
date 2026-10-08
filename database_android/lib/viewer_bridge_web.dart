@@ -115,3 +115,21 @@ Future<String?> setPscubeDateEvent(
   String? name,
 ) async =>
     (await _setDateEvent(scope.toJS, day.toJS, name?.toJS).toDart)?.toDart;
+
+@JS('databaseViewer.setDateEventDays')
+external JSPromise<JSString?> _setDateEventDays(
+  JSString scope,
+  JSArray<JSString> days,
+  JSString? name,
+);
+
+/// P’s CUBEのイベントカレンダー：先の日・期間にも同じ名前を付ける（null・空はイベントなし）。
+Future<String?> setPscubeDateEventDays(
+  String scope,
+  List<String> days,
+  String? name,
+) async => (await _setDateEventDays(
+  scope.toJS,
+  [for (final d in days) d.toJS].toJS,
+  name?.toJS,
+).toDart)?.toDart;

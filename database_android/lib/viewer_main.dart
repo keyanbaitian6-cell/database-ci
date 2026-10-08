@@ -441,6 +441,8 @@ class _ViewerHomeState extends State<ViewerHome> {
         namesFor: (store) =>
             dateEventNames(_data?.dateEvents.values ?? const [], store: store),
         onSave: _saveMeruhenEvents,
+        netFor: _netFor,
+        netNote: dailyNetNote(store),
         actions: [
           IconButton(
             tooltip: 'イベントを書き出す',
@@ -457,6 +459,53 @@ class _ViewerHomeState extends State<ViewerHome> {
       ),
     ),
   );
+
+  /// P’s CUBEのイベントカレンダー（2026-10-08、メルヘンと同じ画面）。店舗・貸玉ごと。
+  void _openPscubeCalendar(String store) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => EventCalendarPage(
+        stores: {
+          for (final e in viewerStoreNames(_data?.records ?? const []).entries)
+            if (isPscubeStore(e.key)) e.key: e.value,
+        },
+        initialStore: store,
+        eventFor: (store, day) => _data?.dateEventFor(store, day),
+        namesFor: (store) => _data?.eventNames[store] ?? const [],
+        onSave: _savePscubeEvents,
+        netFor: _netFor,
+        netNote: dailyNetNote(store),
+        note:
+            'ここで入れたイベントは、この端末に保存し、Googleドライブの自動読み込みを設定していれば'
+            '共有カレンダーにも送ります（PCは「カレンダー」を開いたときなどに取り込みます）。'
+            '同じ日は、あとから入れた方が残ります。',
+      ),
+    ),
+  );
+
+  Future<void> _savePscubeEvents(
+    String store,
+    List<String> days,
+    String? name,
+  ) async {
+    final text = await setPscubeDateEventDays(store, days, name);
+    if (text == null) return;
+    await saveViewerData(text);
+    if (mounted) setState(() => _show(ViewerData.parse(text)));
+    await _pushShared(pscube: true);
+  }
+
+  /// カレンダーの差枚（その店・その日の総差枚）。読み込んだデータが変わったときだけ数え直す。
+  ViewerData? _netData;
+  DayNet? Function(String store, String day)? _netLookup;
+  DayNet? _netFor(String store, String day) {
+    final data = _data;
+    if (data == null) return null;
+    if (!identical(data, _netData)) {
+      _netData = data;
+      _netLookup = dailyNetLookup(data.records);
+    }
+    return _netLookup!(store, day);
+  }
 
   Future<void> _saveMeruhenEvents(
     String store,
@@ -775,6 +824,14 @@ class _ViewerHomeState extends State<ViewerHome> {
           stores: viewerStoreNames(all),
         ),
         const SizedBox(height: 10),
+        if (isPscubeStore(store)) ...[
+          OutlinedButton.icon(
+            onPressed: () => _openPscubeCalendar(store),
+            icon: const Icon(Icons.calendar_month_outlined),
+            label: const Text('イベントカレンダー'),
+          ),
+          const SizedBox(height: 8),
+        ],
         if (isPscubeStore(store) && day != null) ...[
           OutlinedButton.icon(
             onPressed: () => _editPscubeEvent(store, day),

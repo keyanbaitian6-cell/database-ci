@@ -11,12 +11,17 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'auto_capture_state.dart' show autoCaptureScreenNote;
 import 'browser_session.dart';
+import 'daily_net_page.dart' show dailyNetLookup, dailyNetNote;
+import 'date_events.dart' show DateEvent;
+import 'event_calendar_page.dart';
 import 'event_name_dialog.dart';
 import 'list_views.dart' show shortDayLabel;
+import 'models.dart' show isPscubeStore, viewerStoreNames;
 import 'pscube_auto.dart';
 import 'pscube_connection.dart';
 import 'pscube_list_wait.dart';
 import 'pscube_store.dart';
+import 'pscube_viewer_data.dart' show pscubeDateEvents, pscubeViewerRecords;
 import 'theme.dart';
 import 'picked_file.dart';
 
@@ -235,6 +240,67 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     } finally {
       _eventLoading = false;
     }
+  }
+
+  /// イベントカレンダー（2026-10-08、メルヘンと同じ画面）。先の日にも入れられ、各日に総差枚を出す。
+  /// 入れたイベントは記録のある店舗・貸玉すべてに付く（[PscubeStore.setDateEventDays]）。
+  Future<void> _openCalendar() async {
+    final store = _store;
+    if (store == null) return;
+    final Map<String, Object?> data;
+    try {
+      data = await store.calendarData();
+    } catch (error) {
+      if (mounted) setState(() => _status = 'カレンダーを開けませんでした：$error');
+      return;
+    }
+    final records = pscubeViewerRecords(data);
+    final stores = {
+      for (final e in viewerStoreNames(records).entries)
+        if (isPscubeStore(e.key)) e.key: e.value,
+    };
+    if (stores.isEmpty) {
+      if (mounted) setState(() => _status = '先にP’s CUBEの記録を取り込んでください。');
+      return;
+    }
+    final events = <String, DateEvent>{};
+    var names = <String>[];
+    Future<void> reload() async {
+      final latest = await store.calendarData();
+      events
+        ..clear()
+        ..addAll({
+          for (final e in pscubeDateEvents(latest)) e.event.key: e.event,
+        });
+      names = await store.dateEventNames();
+    }
+
+    try {
+      await reload();
+    } catch (error) {
+      if (mounted) setState(() => _status = 'イベント名を読めませんでした：$error');
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EventCalendarPage(
+          stores: stores,
+          initialStore: stores.keys.first,
+          eventFor: (scope, day) => events['$scope|$day'],
+          namesFor: (_) => names,
+          onSave: (_, days, name) async {
+            await store.setDateEventDays(days, name);
+            await reload();
+          },
+          netFor: dailyNetLookup(records),
+          netNote: dailyNetNote(stores.keys.first),
+          note: 'ここで入れたイベントは、記録のある貸玉すべてに付きます。PC・閲覧ページへは'
+              'P’s CUBEのバックアップで届きます。同じ日は、あとから入れた方が残ります。',
+        ),
+      ),
+    );
+    await _loadEvent();
   }
 
   /// その日のイベント名を付ける・変える・消す。記録はP’s CUBEのバックアップで共有する。
@@ -943,6 +1009,14 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                     '${shortDayLabel(_eventDay)}のイベント：'
                     '${_eventShownDay == _eventDay ? (_eventName ?? 'なし') : '…'}（編集）',
                   ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _store == null ? null : _openCalendar,
+                  icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                  label: const Text('イベントカレンダー'),
                 ),
               ),
               const SizedBox(height: 6),
