@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
 import pscube_import
-from event_calendar import open_event_calendar
+from event_calendar import PscubeEvents, open_event_calendar
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
@@ -478,7 +478,16 @@ def main():
             history_report(db, ROOT / 'reports')
             root.after(0, refresh_event)
 
+        def pscube_changed(store):
+            # 閲覧ページ（Googleドライブ経由）とバックアップにも反映する（イベント欄と同じ）。
+            pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
+            root.after(0, refresh_event)
+
         location = current_location()
+        if location == PSCUBE_KEY:
+            open_event_calendar(root, DATA_DIR / 'pscube.sqlite3',
+                                events=PscubeEvents(DATA_DIR / 'pscube.sqlite3', pscube_changed, PSCUBE_LABEL))
+            return
         open_event_calendar(root, ROOT / 'data' / 'database.sqlite3',
                             location=location if location in STORE_NAMES else None, on_changed=changed)
 

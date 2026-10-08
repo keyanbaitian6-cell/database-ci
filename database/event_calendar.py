@@ -1,4 +1,4 @@
-"""イベントカレンダー（PC版・メルヘン2店舗、2026-10-07）。仕様は ../EVENT_CALENDAR.md。
+"""イベントカレンダー（PC版、メルヘン2店舗 2026-10-07・P’s CUBE 2026-10-08）。仕様は ../EVENT_CALENDAR.md。
 
 先の日にもイベント名を入れられる。入力した時刻を残し（core.Store.set_date_event_days）、
 前日までに入力していないイベントは名前の後ろに「＊」を付ける。Android・閲覧ページと同じ作り。
@@ -83,20 +83,73 @@ def ask_event_name(parent, title, current, names):
     return result[0]
 
 
-def open_event_calendar(root, db_path, location=None, on_changed=None, today=None):
-    """Open the calendar window. ``on_changed(db)`` runs after each save
-    (automatic backup, report) while the database is still open."""
+class MeruhenEvents:
+    """メルヘン2店舗のイベント（database.sqlite3）。"""
+    title = 'イベントカレンダー'
+
+    def __init__(self, db_path, on_changed=None):
+        self.db_path, self.on_changed = db_path, on_changed
+        self.stores = dict(STORE_NAMES)
+
+    def load(self, location):
+        db = Store(self.db_path)
+        try:
+            return {e['day']: e for e in db.date_events(location=location)}, db.date_event_names(location)
+        finally:
+            db.close()
+
+    def save(self, location, days, name):
+        db = Store(self.db_path)
+        try:
+            db.set_date_event_days(location, days, name or None)
+            if self.on_changed:
+                self.on_changed(db)
+        finally:
+            db.close()
+
+
+class PscubeEvents:
+    """P’s CUBEのイベント（pscube.sqlite3）。店舗の全貸玉に同じ名前を付ける（PscubeStore.set_date_event_days）。"""
+    title = 'イベントカレンダー（P’s CUBE）'
+
+    def __init__(self, db_path, on_changed=None, label='P’s CUBE'):
+        self.db_path, self.on_changed = db_path, on_changed
+        self.stores = {'pscube': label}
+
+    def load(self, _location):
+        import pscube_import
+        store = pscube_import.PscubeStore(self.db_path)
+        try:
+            return store.date_event_entries(), store.date_event_names()
+        finally:
+            store.close()
+
+    def save(self, _location, days, name):
+        import pscube_import
+        store = pscube_import.PscubeStore(self.db_path)
+        try:
+            store.set_date_event_days(days, name or None)
+            if self.on_changed:
+                self.on_changed(store)
+        finally:
+            store.close()
+
+
+def open_event_calendar(root, db_path, location=None, on_changed=None, today=None, events=None):
+    """Open the calendar window. ``events`` is MeruhenEvents (default) or PscubeEvents.
+    ``on_changed(db)`` runs after each save (automatic backup, report) while the database is still open."""
     today = today or date.today()
+    events = events or MeruhenEvents(db_path, on_changed)
     window = tk.Toplevel(root)
-    window.title('イベントカレンダー')
+    window.title(events.title)
     window.transient(root)
     window.minsize(760, 560)
     style = ttk.Style(window)
     style.configure('Day.TButton', padding=(4, 4), font=('Yu Gothic UI', 9))
     style.configure('Today.TButton', padding=(4, 4), font=('Yu Gothic UI', 9, 'bold'))
     style.configure('Picked.TButton', padding=(4, 4), font=('Yu Gothic UI', 9, 'bold'), background='#F2C14E')
-    labels = list(STORE_NAMES.values())
-    store_name = tk.StringVar(value=STORE_NAMES.get(location) or labels[0])
+    labels = list(events.stores.values())
+    store_name = tk.StringVar(value=events.stores.get(location) or labels[0])
     month = [date(today.year, today.month, 1)]
     picking = tk.BooleanVar(value=False)
     picked = [None]
@@ -104,7 +157,7 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
 
     body = ttk.Frame(window, padding=20)
     body.pack(fill='both', expand=True)
-    ttk.Label(body, text='イベントカレンダー', style='H2.TLabel').pack(anchor='w')
+    ttk.Label(body, text=events.title, style='H2.TLabel').pack(anchor='w')
     ttk.Label(body, style='Sub.TLabel', wraplength=700, text=(
         '日を押すとイベント名を入れられます。先の日にも入れられ、入力した時刻を残します。'
         'Android・閲覧ページとはバックアップで受け渡し、新しく入れた方が残ります。')).pack(anchor='w', pady=(0, 10))
@@ -123,15 +176,10 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
     ttk.Label(body, text=LATE_NOTE, style='Sub.TLabel', wraplength=700).pack(anchor='w')
 
     def current_location():
-        return next(key for key, label in STORE_NAMES.items() if label == store_name.get())
+        return next(key for key, label in events.stores.items() if label == store_name.get())
 
     def events_for(location):
-        db = Store(db_path)
-        try:
-            return ({e['day']: e for e in db.date_events(location=location)},
-                    db.date_event_names(location))
-        finally:
-            db.close()
+        return events.load(location)
 
     def reset_pick():
         picked[0] = None
@@ -143,19 +191,13 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
         render()
 
     def save(days, name):
-        db = Store(db_path)
         try:
-            db.set_date_event_days(current_location(), days, name or None)
-            if on_changed:
-                on_changed(db)
+            events.save(current_location(), days, name or None)
         except ValueError as error:
             messagebox.showwarning('イベント名', str(error), parent=window)
-        finally:
-            db.close()
 
     def on_day(day):
-        location = current_location()
-        events, names = events_for(location)
+        entries, names = events_for(current_location())
         if picking.get():
             if picked[0] is None:
                 picked[0] = day
@@ -174,7 +216,7 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             picking.set(False)
             reset_pick()
             return
-        current = events.get(day.isoformat())
+        current = entries.get(day.isoformat())
         name = ask_event_name(window, f'{day.month}/{day.day}（{WEEKDAYS[(day.weekday() + 1) % 7]}）のイベント',
                               current['name'] if current else None, names)
         if name is not None:
@@ -186,7 +228,7 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             child.destroy()
         first = month[0]
         month_label.configure(text=f'{first.year}年{first.month}月')
-        events, _names = events_for(current_location())
+        entries, _names = events_for(current_location())
         for column, name in enumerate(WEEKDAYS):
             ttk.Label(grid, text=name, style='H3.TLabel', anchor='center').grid(row=0, column=column, sticky='ew')
             grid.columnconfigure(column, weight=1, uniform='day')
@@ -197,7 +239,7 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
                     continue
                 style_name = ('Picked.TButton' if day == picked[0] else
                               'Today.TButton' if day == today else 'Day.TButton')
-                ttk.Button(grid, text=cell_text(day, events.get(day.isoformat())), style=style_name,
+                ttk.Button(grid, text=cell_text(day, entries.get(day.isoformat())), style=style_name,
                            command=lambda d=day: on_day(d)).grid(row=row, column=column, sticky='nsew', padx=1, pady=1)
 
     store_name.trace_add('write', render)

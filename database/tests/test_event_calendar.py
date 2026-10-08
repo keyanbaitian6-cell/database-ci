@@ -179,5 +179,50 @@ class CalendarHelperTests(unittest.TestCase):
         self.assertEqual(cell_text(day, dict(store='saiwaichou', day='2026-10-10', name='華の日')), '10\n華の日' + LATE_MARK)
 
 
+
+class PscubeCalendarTests(unittest.TestCase):
+    """P’s CUBEのイベントカレンダー（2026-10-08）。店舗の全貸玉に同じ名前を付ける。"""
+
+    def setUp(self):
+        from pscube_import import PscubeStore, ROOT_URL
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'pscube.sqlite3'
+        self.store = PscubeStore(self.path)
+        self.addCleanup(self.store.close)
+        url = ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'
+        machines = [{'store': 'c740601', 'rate': rate, 'machine': name, 'expected_count': 1,
+                     'url': ROOT_URL + f'cgi-bin/nc-v05-011.php?cd_ps=2&bai={rate}&nmk_kisyu={name}'}
+                    for name, rate in (('L東京喰種', '20'), ('ﾏｲｼﾞｬｸﾞﾗｰV', '20'), ('ﾏｲｼﾞｬｸﾞﾗｰV', '5'))]
+        self.store.import_page({'format': 'pscube-viewer', 'version': 1, 'source_url': url,
+                                'machines': machines, 'records': []}, url)
+
+    def test_future_days_and_a_range_get_every_rate(self):
+        self.store.set_date_event_days(['2026-10-20', '2026-10-21'], '周年', now=at('2026-10-08T12:00:00+09:00'))
+        events = [e for e in self.store.date_events() if e['day'] == '2026-10-21']
+        self.assertEqual(sorted(e['rate'] for e in events), ['20', '5'])
+        self.assertEqual({e['updated_at'] for e in events}, {'2026-10-08T03:00:00.000Z'})
+        self.assertEqual(self.store.date_event_entries()['2026-10-20']['name'], '周年')
+
+    def test_same_name_keeps_the_time_and_removing_nothing_leaves_no_mark(self):
+        self.store.set_date_event('2026-10-20', '周年', now=at('2026-10-08T12:00:00+09:00'))
+        self.store.set_date_event('2026-10-20', '周年', now=at('2026-10-20T12:00:00+09:00'))
+        entry = self.store.date_event_entries()['2026-10-20']
+        self.assertTrue(date_event_in_advance(dict(entry, store='saiwaichou')))
+        self.store.set_date_event('2026-10-25', None)
+        self.assertEqual([e for e in self.store.date_events() if e['day'] == '2026-10-25'], [])
+        self.store.set_date_event('2026-10-20', None, now=at('2026-10-21T12:00:00+09:00'))
+        self.assertNotIn('2026-10-20', self.store.date_event_entries())
+
+    def test_the_calendar_backend_saves_and_runs_the_backup_hook(self):
+        from event_calendar import PscubeEvents
+        called = []
+        events = PscubeEvents(self.path, lambda store: called.append(store.date_event_for('2026-10-30')))
+        events.save('pscube', ['2026-10-30'], '末尾イベ')
+        entries, names = events.load('pscube')
+        self.assertEqual((entries['2026-10-30']['name'], names, called), ('末尾イベ', ['末尾イベ'], ['末尾イベ']))
+        self.assertEqual(cell_text(date(2026, 10, 30), entries['2026-10-30']), '30\n末尾イベ')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -760,7 +760,14 @@ class PscubeStore:
     def set_date_event(self, day: str, name, now: datetime | None = None) -> list[dict]:
         """[day] のイベント名を付ける・変える・消す（None・空はイベントなし）。店舗の全貸玉に付ける
         （閲覧ページは店舗・貸玉ごとに持つので、記録のある貸玉それぞれに同じ名前を入れる）。"""
-        date.fromisoformat(day)
+        return self.set_date_event_days([day], name, now)
+
+    def set_date_event_days(self, days, name, now: datetime | None = None) -> list[dict]:
+        """[days] に同じイベント名を付ける（イベントカレンダー、EVENT_CALENDAR.md）。記録の無い先の日にも
+        付けられる。名前が変わらない日は前の時刻のまま（前日までに入力した印を消さない）、何も無い日を
+        「イベントなし」にしても消した印は作らない。"""
+        for day in days:
+            date.fromisoformat(day)
         cleaned = clean_event_name(name)
         scopes = sorted({(m['store'], m['rate']) for m in (json.loads(row[0])
                          for row in self.db.execute('SELECT payload FROM machines'))})
@@ -768,20 +775,36 @@ class PscubeStore:
             raise ValueError('先にP’s CUBEの記録を取り込んでください。')
         events = {_event_key(e): e for e in self.date_events()}
         now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        for store, rate in scopes:
-            key = _key(store, rate, day)
-            previous = events.get(key)
-            at = now
-            if previous is not None:
-                at = max(at, datetime.fromtimestamp(_event_instant(previous['updated_at']), timezone.utc)
-                         + timedelta(milliseconds=1))
-            events[key] = {'store': store, 'rate': rate, 'day': day, 'name': cleaned,
-                           'updated_at': at.isoformat(timespec='milliseconds').replace('+00:00', 'Z')}
+        changed = False
+        for day in days:
+            for store, rate in scopes:
+                key = _key(store, rate, day)
+                previous = events.get(key)
+                if (previous['name'] if previous else None) == cleaned:
+                    continue
+                at = now
+                if previous is not None:
+                    at = max(at, datetime.fromtimestamp(_event_instant(previous['updated_at']), timezone.utc)
+                             + timedelta(milliseconds=1))
+                events[key] = {'store': store, 'rate': rate, 'day': day, 'name': cleaned,
+                               'updated_at': at.isoformat(timespec='milliseconds').replace('+00:00', 'Z')}
+                changed = True
         saved = validate_date_events(list(events.values()))
-        with self.db:
-            self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
-                            ('date_events', json.dumps(saved, ensure_ascii=False)))
+        if changed:
+            with self.db:
+                self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                                ('date_events', json.dumps(saved, ensure_ascii=False)))
         return saved
+
+    def date_event_entries(self) -> dict[str, dict]:
+        """日付ごとの今のイベント（名前のあるもの）。貸玉ごとに入っているので、いちばん新しい入力を代表にする。
+        カレンダーの表示と「前日までに入力」の印に使う。"""
+        entries = {}
+        for e in self.date_events():
+            if e['name'] and (e['day'] not in entries or
+                              _event_instant(e['updated_at']) > _event_instant(entries[e['day']]['updated_at'])):
+                entries[e['day']] = e
+        return entries
 
     def date_event_for(self, day: str) -> str | None:
         """[day] のイベント名（どれかの貸玉に付いていれば、その名前）。"""

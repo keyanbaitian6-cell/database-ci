@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## PC版：P’s CUBEのイベントカレンダー（Claude、2026-10-08）
+
+- 利用者：「PC版でのカレンダーとても使いやすかったですがP'sCUBE版も欲しいです」。仕様は `EVENT_CALENDAR.md` の「P’s CUBE」。
+- P’s CUBEのイベントは元から入力時刻つき・新しい方が残る・消した印ありなので、形式・統合の規則は変えていない。`PscubeStore.set_date_event_days`（期間でまとめて、全貸玉に同じ名前、名前の変わらない日は時刻を変えない、何も無い日の「イベントなし」で印を作らない。`set_date_event` はこれを呼ぶ）と `date_event_entries`（日付ごとの代表）を追加。
+- PC `event_calendar.py` を、扱うイベントを差し替えられる形（`MeruhenEvents`・`PscubeEvents`）に。画面・操作・＊の付け方は共通。本体で店舗をP’s CUBEにして「カレンダー」を押すとP’s CUBE用が開き、保存のたびにP’s CUBEの自動バックアップ（閲覧用ファイルを含む）を書く。
+- 確認：P’s CUBEの記録の複製で窓を開いて画面を確認（10/2「スロセレ＊」・10/6「業火の極＊」・10/7「神威の極＊」、今日10/8が太字）。本物のDBは開いていない。`tests/test_event_calendar.py` に3件追加（19件）。`check_before_build.sh` **ALL PASSED**（PC 213件・P’s CUBE関連93件・Flutter 512件・analyzeエラー警告0/info18・JS19本中18本、`test_pscube_capture.mjs` はSKIP）。PC版が起動していないことを確かめてから `database/bin` 3EXEを再ビルド（`-BuildTag pscube-calendar-20261008`）、`smoke_frozen_runtime`（`a/work/outputs/frozen-runtime-20261008-pscube-calendar.json`）・`smoke_frozen_capture` 成功、同梱の `event_calendar`・`pscube_import` がソースと一致。
+- Android・閲覧ページのP’s CUBEにはカレンダーを入れていない（従来どおりその日の「イベント：…（編集）」）。APK・閲覧ページは変更なし。
+
 ## イベントカレンダーの反映：main取り込み・APK 0.5.35・閲覧ページ公開・PC再ビルド・実機確認（Claude、2026-10-07）
 
 - 利用者：「まだしていないことをおわらせて」。PR #3（`event-calendar`）をmainへ早送り（`16b86a2`、GitHubでMERGED）。
