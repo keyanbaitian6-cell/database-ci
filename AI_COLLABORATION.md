@@ -11,7 +11,9 @@
 - **閲覧ページ**：確認スクリプトで試験したWebビルドを `tool/stage_viewer.py` で公開用チェックアウトへ。53ファイルが試験済みステージと全件SHA-256一致、seedなし。`keyanbaitian6-cell/database-viewer` に `6f4fe96` をpush、Pages built。公開URLの `index.html`・`main.dart.js`・`shared_events.mjs`・`pscube/viewer_bridge.mjs`・`version.json` が試験済みと一致、seed 2つとも404、トップ・pscubeとも200。公開URLで `test_viewer_event_calendar_browser` 成功（隔離ブラウザ・模擬データ）。版は0.5.35のまま（APKは作っていない）。
 - **PC版**：PC版が起動していないことを確かめてから `database/build_windows.ps1 -Python <python> -BuildTag shared-calendar-20261008` で `database/bin` 3EXEを再ビルド（既定の `.runtime` は無いので `-Python` を指定）。`tests/smoke_frozen_runtime.py`（`a/work/outputs/frozen-runtime-20261008-shared-calendar.json`、同梱のモジュールがソースと一致）・`tests/smoke_frozen_capture.py bin/database-browser/database-browser.exe` 成功。
 - **スクリプト更新（2026-10-08 23:05、利用者）**：最初はコードを保存したがデプロイのバージョンを上げておらず、古い版が動いていた（`?file=events` に「指定できないファイルです。」）。「新バージョン」で公開し直した後に、読むだけの確認：`?file=events`・`?file=pscube-events` が空の一覧を返す、`?check=1` で閲覧用ファイルも従来どおり。POSTは書き込まれない不正な入力だけで確認（知らないファイル名→「指定できないファイルです。」、形の悪いイベント→「イベントの形式が不正です。」）。curlで `-X POST` のままリダイレクトをたどると411になるが、ブラウザの動きとは関係ない。
-- **未確認**：実際のイベントの送信と受け渡し（iPhoneで保存→共有ファイル→PCのカレンダー）。AIからは実データになるイベントを書き込んでいない。
+- **書き込みの許可**：コードは新しい版になったが、POSTが「DriveApp.Folder.createFile を呼び出す権限がありません（auth/drive）」で失敗。プロジェクトのOAuthスコープは `auth/drive` だったが、付与済みの許可が読むだけのまま残っていた（エディタで実行しても許可画面が出ず、再デプロイでも直らない）。利用者がGoogleアカウントの接続を削除→エディタで許可し直し→版8でデプロイし直して解決。手順をスクリプト冒頭に追記。
+- **これまでのイベントを共有カレンダーへ**（利用者「今まで登録したイベントは登録されてないの？反映させてほしい」）：PCのDBを読み取り専用で開き、メルヘン29件（入力時刻つき5件）・P’s CUBE 3件（全件時刻つき）をPOST。入力時刻の無い24件は送った時刻（2026-10-08 23時台）を付けた（共有カレンダーは時刻つきしか受け付けない）。どれも10/06以前の日なので、＊（前日までに入力したか不明）の表示は変わらない。読み戻して、送った全件の名前・時刻が一致（29件・3件）。同期フォルダにも両ファイルが届いたことを確認。PCのDBはAIからは書き換えていない（PCで「カレンダー」を開くと取り込み、時刻の無かった24件に送った時刻が付く）。
+- **未確認**：iPhoneで保存→共有ファイル→PCのカレンダーの受け渡し。
 
 ## PC版：P’s CUBEのイベントカレンダー（Claude、2026-10-08）
 
