@@ -72,10 +72,17 @@ async function waitSeen(pattern){
 async function enterName(name){
   const box=page.getByRole('textbox',{name:/イベント名（自由記入）/});
   await box.waitFor();await box.click();
+  // 入力欄に入力の焦点が移ってから打つ（早すぎると最初の文字が落ちる。例：「末尾イベ」→「尾イベ」）。
+  for(let i=0;i<40&&!(await page.evaluate(()=>['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)));i++)await page.waitForTimeout(50);
   await page.keyboard.type(name);
+  for(let i=0;i<40&&(await box.inputValue().catch(()=>name))!==name;i++)await page.waitForTimeout(50);
   const save=page.getByRole('button',{name:'保存',exact:true});
   for(let i=0;i<20&&await save.isDisabled();i++)await page.waitForTimeout(100);
   await save.click();
+}
+async function waitFor(check,what){
+  for(let i=0;i<80;i++){if(await check())return;await page.waitForTimeout(250);}
+  assert.fail('timed out: '+what);
 }
 async function storedEvents(){
   return JSON.parse(await page.evaluate(()=>window.databaseViewer.load())).date_events;
@@ -146,8 +153,13 @@ try {
   assert.deepEqual(ranged.map(e=>e.name),['半列','半列']);
 
   // 消す：10/03 の「半列」をイベントなしにすると、日別の差枚からも消え、消した印が残る。
+  // 記録のある日は、押すとその日のまとめ（TOP10・強かった機種5選、2026-10-09）が開き、そこから編集する。
   await page.getByText(/^3\s*半列＊$/).first().click();
+  await page.getByRole('button',{name:'イベントを編集',exact:true}).waitFor({timeout:20000});
+  await waitFor(async()=>(await page.getByText(/強かった機種5選/).count())>0,'day summary');
+  await page.getByRole('button',{name:'イベントを編集',exact:true}).click();
   await page.getByRole('button',{name:'イベントなしにする',exact:true}).click();
+  await page.getByRole('button',{name:'Back'}).or(page.getByRole('button',{name:'戻る'})).first().click();
   await page.waitForTimeout(500);
   const removed=(await storedEvents()).find(e=>e.day==='2026-10-03');
   assert.equal(removed.name,null);

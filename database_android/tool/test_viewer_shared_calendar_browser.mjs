@@ -89,10 +89,23 @@ async function stored(name,store){
     db.close();return value;
   },{name,store});
 }
+// ラベルがちょうど合うマス（日付と差枚がまとまった1つの部品）の真ん中を押す。
+async function clickLabel(pattern){
+  const box=await page.evaluate(source=>{
+    const re=new RegExp(source);
+    const el=[...document.querySelectorAll('flt-semantics')].find(e=>re.test(e.getAttribute('aria-label')||e.textContent||''));
+    if(!el)return null;const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};
+  },pattern.source);
+  assert.ok(box,'no element for '+pattern);
+  await page.mouse.click(box.x,box.y);
+}
 async function enterName(name){
   const box=page.getByRole('textbox',{name:/イベント名（自由記入）/});
   await box.waitFor();await box.click();
+  // 入力欄に入力の焦点が移ってから打つ（早すぎると最初の文字が落ちる。例：「末尾イベ」→「尾イベ」）。
+  for(let i=0;i<40&&!(await page.evaluate(()=>['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)));i++)await page.waitForTimeout(50);
   await page.keyboard.type(name);
+  for(let i=0;i<40&&(await box.inputValue().catch(()=>name))!==name;i++)await page.waitForTimeout(50);
   const save=page.getByRole('button',{name:'保存',exact:true});
   for(let i=0;i<20&&await save.isDisabled();i++)await page.waitForTimeout(100);
   await save.click();
@@ -147,6 +160,13 @@ try {
   await waitFor(async()=>(await labels()).some(l=>/^5\s*末尾イベ＊\s*\+400$/.test(l)),'event and net in one day');
   await waitFor(async()=>(await labels()).some(l=>/^26\s*共有のP’s CUBE/.test(l)),'shared pscube event in calendar');
   await waitFor(async()=>(await labels()).some(l=>/元グラフの差枚がわかった台の合計/.test(l)),'net note');
+  // 記録のある日を押すと、その日のTOP10（差枚の多い順）と強かった機種5選（2026-10-09）。
+  await clickLabel(/^4\s*\+400$/);
+  await waitFor(async()=>(await labels()).some(l=>/TOP10（差枚の多い順）/.test(l)),'day summary');
+  await waitFor(async()=>(await labels()).some(l=>/^1\s*4番\s*マイジャグラーV/.test(l)),'top rack');
+  await waitFor(async()=>(await labels()).some(l=>/強かった機種5選/.test(l)),'strong machines');
+  await page.getByRole('button',{name:/^(Back|戻る)$/}).click();
+  await waitFor(async()=>(await labels()).some(l=>/^4\s*\+400$/.test(l)),'back to calendar');
   const before=posts.length;
   await page.getByText('28',{exact:true}).first().click();
   await enterName('先の日イベ');

@@ -7,6 +7,7 @@
 import calendar
 from datetime import date, timedelta
 import json
+import math
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -21,6 +22,8 @@ LATE_NOTE = '＊＝前日までに入力した記録がありません（当日�
 PLUS_COLOR, MINUS_COLOR, ZERO_COLOR = '#0066CC', '#C62828', '#707070'
 DAY_BG, HOVER_BG, PICKED_BG = '#FFFFFF', '#EEF4FB', '#F2C14E'
 DAY_BORDER, TODAY_BORDER = '#D2D2D7', '#0071E3'
+# 「強かった機種」に入れる最小の台数（1台だけの機種は、たまたまに左右されるため入れない）。
+STRONG_MACHINE_MIN_RACKS = 2
 
 
 def month_weeks(year, month):
@@ -113,6 +116,110 @@ def pscube_day_nets(records, first, last):
             for day in days}
 
 
+def event_label(event):
+    """イベント名（前日までに入力していなければ＊）。無い日は ''。"""
+    if event is None:
+        return ''
+    return event['name'] + ('' if date_event_in_advance(event) else LATE_MARK)
+
+
+def day_summary(rows):
+    """日付を押したときのまとめ（2026-10-09 利用者指定。Android・閲覧ページの calendarDaySummary と同じ）。
+    TOP10＝差枚の多い順（同じ差枚は回転数の多い方、次に台番号の小さい方。差枚の無い台は入れない）。
+    強かった機種5選＝1台あたりの平均回転数の多い順（STRONG_MACHINE_MIN_RACKS台以上の機種。同じなら台数の多い方）。"""
+    top = sorted((r for r in rows if r['net'] is not None), key=lambda r: (-r['net'], -r['games'], r['rack']))[:10]
+    by_machine = {}
+    for r in rows:
+        by_machine.setdefault(r['machine'], []).append(r)
+    machines = [{'machine': name, 'racks': len(items),
+                 'average': math.floor(sum(r['games'] for r in items) / len(items) + 0.5)}
+                for name, items in by_machine.items() if len(items) >= STRONG_MACHINE_MIN_RACKS]
+    machines.sort(key=lambda m: (-m['average'], -m['racks'], m['machine']))
+    return top, machines[:5]
+
+
+def open_day_summary(parent, title, store_label, rows, net_label, event_text, on_edit, on_open=None):
+    """その日・その店のTOP10と強かった機種5選の窓。on_edit(この窓) はイベント名を入れ直し、新しい表示を返す
+    （やめたら None）。
+    on_open(row) があれば、TOP10の行をダブルクリック（Enter）で結果を開く。"""
+    top, machines = day_summary(rows)
+    window = tk.Toplevel(parent)
+    window.title(f'{title} {store_label}')
+    window.transient(parent)
+    body = ttk.Frame(window, padding=20)
+    body.pack(fill='both', expand=True)
+    ttk.Label(body, text=title, style='H2.TLabel').pack(anchor='w')
+    ttk.Label(body, text=store_label, style='Sub.TLabel').pack(anchor='w')
+    line = ttk.Frame(body)
+    line.pack(fill='x', pady=(8, 4))
+    event_var = tk.StringVar(value=f'イベント：{event_text or "なし"}')
+    ttk.Label(line, textvariable=event_var).pack(side='left')
+
+    def edit():
+        text = on_edit(window)
+        if text is not None:
+            event_var.set(f'イベント：{text or "なし"}')
+    ttk.Button(line, text='イベントを編集', command=edit).pack(side='left', padx=(12, 0))
+    nets = [r['net'] for r in rows if r['net'] is not None]
+    if nets:
+        total = tk.Frame(body)
+        total.pack(anchor='w')
+        ttk.Label(total, text=f'総{net_label} ').pack(side='left')
+        tk.Label(total, text=signed_medals(sum(nets)), font=('Yu Gothic UI', 10, 'bold'),
+                 fg=net_color({'total': sum(nets)})).pack(side='left')
+        ttk.Label(total, text=f'（{net_label}がわかった台 {len(nets)}/{len(rows)}台）').pack(side='left')
+
+    ttk.Label(body, text=f'TOP10（{net_label}の多い順）', style='H3.TLabel').pack(anchor='w', pady=(12, 2))
+    columns = ('rank', 'rack', 'machine', 'games', 'bb', 'rb', 'net')
+    table = ttk.Treeview(body, columns=columns, show='headings', height=max(1, len(top)), selectmode='browse')
+    for key, label, width, anchor in (('rank', '順位', 44, 'e'), ('rack', '台番', 56, 'e'), ('machine', '機種', 260, 'w'),
+                                      ('games', '回転数', 76, 'e'), ('bb', 'BB', 44, 'e'), ('rb', 'RB', 44, 'e'),
+                                      ('net', net_label, 90, 'e')):
+        table.heading(key, text=label)
+        table.column(key, width=width, anchor=anchor, stretch=key == 'machine')
+    table.tag_configure('plus', foreground=PLUS_COLOR)
+    table.tag_configure('minus', foreground=MINUS_COLOR)
+    for i, r in enumerate(top):
+        table.insert('', 'end', iid=str(i), tags=('plus' if r['net'] > 0 else 'minus' if r['net'] < 0 else (),),
+                     values=(i + 1, r['rack'], r['machine'], f"{r['games']:,}", r['bb'], r['rb'],
+                             signed_medals(r['net']) + ('※' if r['needs_check'] else '')))
+    if top:
+        table.pack(fill='x')
+    else:
+        ttk.Label(body, text='この日は差枚がわかる台がありません。', style='Sub.TLabel').pack(anchor='w')
+    if on_open and top:
+        def open_selected(_event=None):
+            selected = table.selection()
+            if selected:
+                on_open(top[int(selected[0])])
+        table.bind('<Double-1>', open_selected)
+        table.bind('<Return>', open_selected)
+        ttk.Label(body, text='行をダブルクリックすると、結果を見るでその日・その機種を選んで結果を開きます。',
+                  style='Sub.TLabel').pack(anchor='w')
+    if net_label == '推定差枚':
+        ttk.Label(body, text='推定差枚はグラフと最大持玉からの計算で、確定値ではありません（※は要確認）。',
+                  style='Sub.TLabel').pack(anchor='w')
+
+    ttk.Label(body, text='強かった機種5選（1台あたりの平均回転数）', style='H3.TLabel').pack(anchor='w', pady=(14, 2))
+    strong = ttk.Treeview(body, columns=('rank', 'machine', 'average', 'racks'), show='headings',
+                          height=max(1, len(machines)), selectmode='none')
+    for key, label, width, anchor in (('rank', '順位', 44, 'e'), ('machine', '機種', 330, 'w'),
+                                      ('average', '平均回転数', 100, 'e'), ('racks', '台数', 60, 'e')):
+        strong.heading(key, text=label)
+        strong.column(key, width=width, anchor=anchor, stretch=key == 'machine')
+    for i, m in enumerate(machines):
+        strong.insert('', 'end', values=(i + 1, m['machine'], f"{m['average']:,}", m['racks']))
+    if machines:
+        strong.pack(fill='x')
+    else:
+        ttk.Label(body, text=f'{STRONG_MACHINE_MIN_RACKS}台以上ある機種がありません。', style='Sub.TLabel').pack(anchor='w')
+    ttk.Label(body, text=f'{STRONG_MACHINE_MIN_RACKS}台以上ある機種から。数値異常の台は数えていません。',
+              style='Sub.TLabel').pack(anchor='w')
+    ttk.Button(body, text='閉じる', command=window.destroy).pack(anchor='e', pady=(14, 0))
+    window.bind('<Escape>', lambda _e: window.destroy())
+    return window
+
+
 def ask_event_name(parent, title, current, names):
     """Free text with the past names as a drop-down. '' removes, None cancels."""
     dialog = tk.Toplevel(parent)
@@ -177,6 +284,32 @@ class MeruhenEvents:
         finally:
             db.close()
 
+    net_label = '推定差枚'
+
+    def day_records(self, location, day):
+        """その日・その店の台（数値異常の台は除く）。差枚は推定差枚（決められない台は None）。"""
+        db = Store(self.db_path)
+        try:
+            rows = db.db.execute(
+                "SELECT rack, machine, json_extract(payload,'$.games'), json_extract(payload,'$.bb'),"
+                " json_extract(payload,'$.rb'), json_extract(payload,'$.max_hold'),"
+                " json_extract(payload,'$.graph_measurement') FROM days"
+                " WHERE store=? AND day=? AND json_valid(payload)", (location, day)).fetchall()
+        finally:
+            db.close()
+        result = []
+        for rack, machine, games, bb, rb, max_hold, measurement in rows:
+            if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
+                continue
+            try:
+                measurement = json.loads(measurement) if measurement else None
+            except ValueError:
+                measurement = None
+            net, needs_check = meruhen_net_estimate_detail(measurement, max_hold, games)
+            result.append({'rack': rack, 'machine': machine, 'games': games or 0, 'bb': bb, 'rb': rb,
+                           'net': net, 'needs_check': bool(needs_check)})
+        return result
+
     def save(self, location, days, name):
         db = Store(self.db_path)
         try:
@@ -214,6 +347,25 @@ class PscubeEvents:
             store.close()
         return pscube_day_nets(records, first, last)
 
+    net_label = '差枚'
+
+    def day_records(self, _location, day):
+        """その日の台（数値異常の台は除く）。貸玉が複数ある日は、機種名の前に貸玉を付けて分ける。"""
+        import pscube_import
+        store = pscube_import.PscubeStore(self.db_path)
+        try:
+            records = [r for r in (json.loads(row[0]) for row in store.db.execute('SELECT payload FROM records'))
+                       if r.get('day') == day]
+        finally:
+            store.close()
+        rates = {r['rate'] for r in records}
+        return [{'rack': r['rack'], 'machine': (f"{r['rate']}スロ " if len(rates) > 1 else '') + r['machine'],
+                 'games': r.get('games') or 0, 'bb': r.get('bb'), 'rb': r.get('rb'),
+                 'net': r.get('net_medals'), 'needs_check': False}
+                for r in records
+                if not ((r.get('games') or 0) > 20000 or (r.get('bb') or 0) > 500 or (r.get('rb') or 0) > 500
+                        or (r.get('my') or 0) > 100000)]
+
     def save(self, _location, days, name):
         import pscube_import
         store = pscube_import.PscubeStore(self.db_path)
@@ -225,9 +377,11 @@ class PscubeEvents:
             store.close()
 
 
-def open_event_calendar(root, db_path, location=None, on_changed=None, today=None, events=None):
+def open_event_calendar(root, db_path, location=None, on_changed=None, today=None, events=None, on_open_record=None):
     """Open the calendar window. ``events`` is MeruhenEvents (default) or PscubeEvents.
-    ``on_changed(db)`` runs after each save (automatic backup, report) while the database is still open."""
+    ``on_changed(db)`` runs after each save (automatic backup, report) while the database is still open.
+    日付を押すと、記録のある日はその日のまとめ（TOP10・強かった機種5選）、無い日はイベント名の入力。
+    ``on_open_record(location, day, row)`` があれば、まとめのTOP10の行から結果を開ける。"""
     today = today or date.today()
     events = events or MeruhenEvents(db_path, on_changed)
     window = tk.Toplevel(root)
@@ -305,12 +459,34 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             picking.set(False)
             reset_pick()
             return
+        location = current_location()
+        title = f'{day.month}/{day.day}（{WEEKDAYS[(day.weekday() + 1) % 7]}）'
+        try:
+            rows = events.day_records(location, day.isoformat())
+        except Exception as error:  # 台が読めなくてもイベントは入れられる
+            status.set(f'その日の台を読めませんでした：{error}')
+            rows = []
+        if not rows:
+            edit_one(window, location, day, title)
+            render()
+            return
+        open_day_summary(
+            window, title, events.stores[location], rows, events.net_label,
+            event_label(entries.get(day.isoformat())),
+            lambda parent: edit_one(parent, location, day, title),
+            None if on_open_record is None else lambda row: on_open_record(location, day.isoformat(), row))
+
+    def edit_one(parent, location, day, title):
+        """1日のイベント名を入れる・変える・消す。カレンダーを描き直し、新しい表示（＊つき）を返す。"""
+        entries, names = events.load(location)
         current = entries.get(day.isoformat())
-        name = ask_event_name(window, f'{day.month}/{day.day}（{WEEKDAYS[(day.weekday() + 1) % 7]}）のイベント',
-                              current['name'] if current else None, names)
-        if name is not None:
-            save([day.isoformat()], name)
+        name = ask_event_name(parent, f'{title}のイベント', current['name'] if current else None, names)
+        if name is None:
+            return None
+        save([day.isoformat()], name)
         render()
+        entries, _names = events.load(location)
+        return event_label(entries.get(day.isoformat()))
 
     def render(*_args):
         for child in grid.winfo_children():

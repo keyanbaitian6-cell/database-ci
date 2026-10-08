@@ -345,3 +345,51 @@ class CalendarNetTests(unittest.TestCase):
         store.close()
         nets = PscubeEvents(path).nets('pscube', '2026-10-01', '2026-10-31')
         self.assertEqual(nets['2026-10-04']['total'], -250)
+
+
+class DaySummaryTests(unittest.TestCase):
+    """日付を押したときのTOP10・強かった機種5選（2026-10-09）。Flutter calendarDaySummary の試験と同じ例。"""
+
+    def rows(self):
+        racks = [('機種A', 1, 1200, 3000), ('機種A', 2, -300, 4000), ('機種A', 3, None, 5000), ('機種A', 4, 800, 2000),
+                 ('機種A', 5, 800, 2500), ('機種B', 11, 50, 9000), ('機種B', 12, 60, 8000), ('機種C', 21, 9999, 12000)]
+        racks += [('機種A', i, -i, 1000) for i in range(30, 40)]
+        return [dict(machine=m, rack=rack, net=net, games=games, bb=10, rb=5, needs_check=False)
+                for m, rack, net, games in racks]
+
+    def test_top_ten_by_net_and_five_machines_by_average_games(self):
+        from event_calendar import day_summary
+        top, machines = day_summary(self.rows())
+        self.assertEqual([r['rack'] for r in top[:5]], [21, 1, 5, 4, 12], '同じ差枚は回転数の多い方')
+        self.assertEqual(len(top), 10)
+        self.assertNotIn(3, [r['rack'] for r in top], '差枚の無い台は入れない')
+        self.assertEqual([(m['machine'], m['racks'], m['average']) for m in machines],
+                         [('機種B', 2, 8500), ('機種A', 15, 1767)], '1台だけの機種は入れない')
+
+    def test_backends_return_the_racks_of_the_day_without_placeholder_numbers(self):
+        from event_calendar import MeruhenEvents, PscubeEvents
+        from pscube_import import PscubeStore
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db = Store(Path(tmp.name) / 'database.sqlite3')
+        for rack, payload in ((1, dict(games=3000, bb=10, rb=5, max_hold=2376, graph_measurement=measurement([0, -63, 40, 147, 128]))),
+                              (2, dict(games=88888888, bb=10, rb=5, max_hold=500)),
+                              (3, dict(games=1000, bb=1, rb=1, max_hold=100))):
+            db.db.execute('INSERT INTO days(store, day, machine, rack, payload) VALUES(?,?,?,?,?)',
+                          ('saiwaichou', '2026-10-04', '北斗', rack, json.dumps(payload)))
+        db.db.commit()
+        db.close()
+        rows = MeruhenEvents(Path(tmp.name) / 'database.sqlite3').day_records('saiwaichou', '2026-10-04')
+        self.assertEqual([(r['rack'], r['net']) for r in rows], [(1, 1422), (3, None)])
+        self.assertEqual(MeruhenEvents(Path(tmp.name) / 'database.sqlite3').day_records('saiwaichou', '2026-10-05'), [])
+        path = Path(tmp.name) / 'pscube.sqlite3'
+        store = PscubeStore(path)
+        for key, rate, net in (('a', '20', 300), ('b', '5', -40)):
+            store.db.execute('INSERT INTO records(key, payload) VALUES(?, ?)', (key, json.dumps(dict(
+                store='c740601', rate=rate, day='2026-10-04', machine='ジャグラー', rack=1, games=3000, bb=10, rb=5,
+                my=1000, net_medals=net))))
+        store.db.commit()
+        store.close()
+        rows = PscubeEvents(path).day_records('pscube', '2026-10-04')
+        self.assertEqual(sorted((r['machine'], r['net']) for r in rows), [('20スロ ジャグラー', 300), ('5スロ ジャグラー', -40)],
+                         '貸玉が複数ある日は機種名に貸玉を付けて分ける')

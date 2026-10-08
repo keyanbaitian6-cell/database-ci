@@ -443,6 +443,8 @@ class _ViewerHomeState extends State<ViewerHome> {
         onSave: _saveMeruhenEvents,
         netFor: _netFor,
         netNote: dailyNetNote(store),
+        recordsFor: _recordsFor,
+        onOpenRecord: (record) => _openRecord(record, null),
         actions: [
           IconButton(
             tooltip: 'イベントを書き出す',
@@ -474,6 +476,8 @@ class _ViewerHomeState extends State<ViewerHome> {
         onSave: _savePscubeEvents,
         netFor: _netFor,
         netNote: dailyNetNote(store),
+        recordsFor: _recordsFor,
+        onOpenRecord: (record) => _openRecord(record, null),
         note:
             'ここで入れたイベントは、この端末に保存し、Googleドライブの自動読み込みを設定していれば'
             '共有カレンダーにも送ります（PCは「カレンダー」を開いたときなどに取り込みます）。'
@@ -494,17 +498,34 @@ class _ViewerHomeState extends State<ViewerHome> {
     await _pushShared(pscube: true);
   }
 
-  /// カレンダーの差枚（その店・その日の総差枚）。読み込んだデータが変わったときだけ数え直す。
+  /// カレンダーの差枚（その店・その日の総差枚）と、日付を押したときのその日の台。
+  /// 読み込んだデータが変わったときだけ数え直す。
   ViewerData? _netData;
   DayNet? Function(String store, String day)? _netLookup;
+  Map<String, List<SlotRecord>> _dayRecords = const {};
+  void _indexCalendar(ViewerData data) {
+    if (identical(data, _netData)) return;
+    _netData = data;
+    _netLookup = dailyNetLookup(data.records);
+    final byDay = <String, List<SlotRecord>>{};
+    for (final r in data.records) {
+      (byDay['${r.store}|${r.day}'] ??= []).add(r);
+    }
+    _dayRecords = byDay;
+  }
+
   DayNet? _netFor(String store, String day) {
     final data = _data;
     if (data == null) return null;
-    if (!identical(data, _netData)) {
-      _netData = data;
-      _netLookup = dailyNetLookup(data.records);
-    }
+    _indexCalendar(data);
     return _netLookup!(store, day);
+  }
+
+  List<SlotRecord> _recordsFor(String store, String day) {
+    final data = _data;
+    if (data == null) return const [];
+    _indexCalendar(data);
+    return _dayRecords['$store|$day'] ?? const [];
   }
 
   Future<void> _saveMeruhenEvents(

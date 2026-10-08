@@ -522,10 +522,27 @@ def main():
         location = current_location()
         if location == PSCUBE_KEY:
             open_event_calendar(root, DATA_DIR / 'pscube.sqlite3',
-                                events=PscubeEvents(DATA_DIR / 'pscube.sqlite3', pscube_changed, PSCUBE_LABEL))
+                                events=PscubeEvents(DATA_DIR / 'pscube.sqlite3', pscube_changed, PSCUBE_LABEL),
+                                on_open_record=open_from_calendar)
             return
         open_event_calendar(root, ROOT / 'data' / 'database.sqlite3',
-                            location=location if location in STORE_NAMES else None, on_changed=changed)
+                            location=location if location in STORE_NAMES else None, on_changed=changed,
+                            on_open_record=open_from_calendar)
+
+    def open_from_calendar(location, target_day, row):
+        """カレンダーの日のまとめ（TOP10）の台から：結果を見るでその日・その機種を選び、結果を開く。"""
+        store_name.set(PSCUBE_LABEL if location == PSCUBE_KEY else STORE_NAMES[location])
+        refresh_days()
+        if target_day in day_combo.cget('values'):
+            day.set(target_day)
+        refresh_event()
+        refresh_machines()
+        if row['machine'] in machine_combo.cget('values'):
+            machine.set(row['machine'])
+        remember_selection()
+        notebook.select(tab_results)
+        tell(f'カレンダーから {target_day}・{row["machine"]}（{row["rack"]}番台）を選びました。\n')
+        open_result()
 
     def refresh_machines(*_args):
         location = current_location()

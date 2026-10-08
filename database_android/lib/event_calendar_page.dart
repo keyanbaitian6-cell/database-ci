@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'calendar_day_page.dart';
 import 'daily_net_page.dart' show DayNet;
 import 'date_events.dart';
 import 'event_name_dialog.dart';
 import 'list_views.dart';
-import 'models.dart' show signedMedals;
+import 'models.dart' show SlotRecord, signedMedals;
 import 'shared_widgets.dart';
 import 'theme.dart';
 
@@ -65,6 +66,8 @@ class EventCalendarPage extends StatefulWidget {
     this.today,
     this.netFor,
     this.netNote,
+    this.recordsFor,
+    this.onOpenRecord,
   });
 
   final Map<String, String> stores;
@@ -85,6 +88,13 @@ class EventCalendarPage extends StatefulWidget {
   /// 差枚の説明（メルヘンは推定であることなど）。[netFor] があるときに出す。
   final String? netNote;
 
+  /// その店・その日の台の記録。あれば日付を押すと、その日のTOP10・強かった機種5選
+  /// （[CalendarDayPage]、2026-10-09）を開く。記録の無い日は今までどおりイベント名の入力。
+  final List<SlotRecord> Function(String store, String day)? recordsFor;
+
+  /// まとめの台を押したとき（台の詳細）。
+  final void Function(SlotRecord record)? onOpenRecord;
+
   @override
   State<EventCalendarPage> createState() => _EventCalendarPageState();
 }
@@ -102,9 +112,9 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
   void _move(int months) =>
       setState(() => _month = DateTime.utc(_month.year, _month.month + months));
 
-  Future<void> _save(List<String> days, String? name) async {
+  Future<void> _save(List<String> days, String? name, {String? store}) async {
     try {
-      await widget.onSave(_store, days, name);
+      await widget.onSave(store ?? _store, days, name);
       if (mounted) setState(() => _error = null);
     } catch (error) {
       if (mounted) setState(() => _error = 'イベント名を保存できませんでした。\n$error');
@@ -136,15 +146,38 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
       await _save(days, name.isEmpty ? null : name);
       return;
     }
-    final current = widget.eventFor(_store, day);
+    final records = widget.recordsFor?.call(_store, day) ?? const [];
+    if (records.isNotEmpty) {
+      final store = _store;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CalendarDayPage(
+            store: store,
+            day: day,
+            records: records,
+            eventFor: () => widget.eventFor(store, day),
+            onEditEvent: () => _editOne(store, day),
+            onOpenRecord: widget.onOpenRecord,
+          ),
+        ),
+      );
+      if (mounted) setState(() {});
+      return;
+    }
+    await _editOne(_store, day);
+  }
+
+  /// 1日のイベント名を入れる・変える・消す。
+  Future<void> _editOne(String store, String day) async {
+    final current = widget.eventFor(store, day);
     final name = await showEventNameDialog(
       context,
       title: '${dayWithWeekday(day)} のイベント',
       current: current == null || current.removed ? null : current.name,
-      names: widget.namesFor(_store),
+      names: widget.namesFor(store),
     );
     if (name == null || !mounted) return;
-    await _save([day], name.isEmpty ? null : name);
+    await _save([day], name.isEmpty ? null : name, store: store);
   }
 
   Widget _cell(DateTime? date) {

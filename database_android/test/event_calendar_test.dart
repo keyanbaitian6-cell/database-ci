@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:database_android/calendar_day_page.dart';
 import 'package:database_android/daily_net_page.dart';
 import 'package:database_android/date_events.dart';
 import 'package:database_android/event_calendar_page.dart';
@@ -675,5 +676,141 @@ void main() {
         expect(tester.takeException(), isNull, reason: '狭い画面でもはみ出さない');
       });
     }
+  });
+
+  group('日付を押したときのTOP10・強かった機種5選（2026-10-09）', () {
+    const base =
+        'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
+    const scope = 'pscube:c740601:20';
+    const day = '2026-10-04';
+    // 機種Aは5台、機種Bは2台、機種Cは1台（5選に入らない）。
+    final racks = <(String, int, int?, int)>[
+      ('機種A', 1, 1200, 3000),
+      ('機種A', 2, -300, 4000),
+      ('機種A', 3, null, 5000),
+      ('機種A', 4, 800, 2000),
+      ('機種A', 5, 800, 2500),
+      ('機種B', 11, 50, 9000),
+      ('機種B', 12, 60, 8000),
+      ('機種C', 21, 9999, 12000),
+      ('機種B', 13, 70000, 88888888),
+    ];
+    for (var i = 30; i < 40; i++) {
+      racks.add(('機種A', i, -i, 1000));
+    }
+    List<SlotRecord> records() => pscubeViewerRecords({
+      'format': 'pscube-viewer',
+      'version': 1,
+      'machines': [
+        for (final m in ['機種A', '機種B', '機種C'])
+          {
+            'store': 'c740601',
+            'rate': '20',
+            'machine': m,
+            'machine_type': 'normal',
+            'expected_count': 20,
+            'url': '${base}nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=$m',
+          },
+      ],
+      'records': [
+        for (final (machine, rack, net, games) in racks)
+          {
+            'store': 'c740601',
+            'rate': '20',
+            'machine': machine,
+            'rack': rack,
+            'day': day,
+            'bb': 10,
+            'rb': 5,
+            'games': games,
+            'my': 1000,
+            'at_art': 0,
+            'net_medals': ?net,
+            'observed_at': '2026-10-05T23:00:00+09:00',
+            'detail_url': '${base}nc-v06-001.php?cd_dai=$rack#20261004',
+          },
+      ],
+    });
+
+    test('TOP10は差枚の多い順（同じ差枚は回転数の多い方）、5選は2台以上の機種の平均回転数', () {
+      final summary = calendarDaySummary(records());
+      expect(summary.top.map((r) => r.rack).take(5), [21, 1, 5, 4, 12]);
+      expect(summary.top.length, 10);
+      expect(summary.top.any((r) => r.rack == 13), isFalse, reason: '数値異常の台は入れない');
+      expect(summary.top.any((r) => r.rack == 3), isFalse, reason: '差枚の無い台は入れない');
+      expect(
+        summary.machines.map((m) => (m.machine, m.racks, m.average)),
+        [('機種B', 2, 8500), ('機種A', 15, 1767)],
+        reason: '1台だけの機種Cは入れない、数値異常の台は数えない',
+      );
+    });
+
+    testWidgets('記録のある日はまとめを開き、そこからイベント編集・台の詳細へ。先の日は入力', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final all = records();
+      final events = <String, DateEvent>{};
+      final opened = <int>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) => EventCalendarPage(
+              stores: const {scope: 'P’s CUBE（20スロ）'},
+              initialStore: scope,
+              today: DateTime(2026, 10, 9),
+              eventFor: (store, d) => events['$store|$d'],
+              namesFor: (_) => const [],
+              onSave: (store, days, name) async => setState(() {
+                for (final d in days) {
+                  events['$store|$d'] = DateEvent(
+                    store: store,
+                    day: d,
+                    name: name ?? '',
+                    updatedAt: '2026-10-03T12:00:00.000Z',
+                  );
+                }
+              }),
+              netFor: dailyNetLookup(all),
+              recordsFor: (store, d) => [
+                for (final r in all)
+                  if (r.store == store && r.day == d) r,
+              ],
+              onOpenRecord: (r) => opened.add(r.rack),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('event-day-$day')));
+      await tester.pumpAndSettle();
+      expect(find.text('TOP10（差枚の多い順）'), findsOneWidget);
+      expect(find.text('21番　機種C'), findsOneWidget);
+      expect(find.text('イベント：なし'), findsOneWidget);
+      await tester.tap(find.text('イベントを編集'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '華の日');
+      await tester.pump();
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(find.text('イベント：華の日'), findsOneWidget, reason: '編集した名前がすぐ出る');
+      await tester.tap(find.byKey(const ValueKey('calendar-top-21')));
+      await tester.pump();
+      expect(opened, [21]);
+      await tester.scrollUntilVisible(
+        find.text('8,500G（2台）'),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(find.text('強かった機種5選（1台あたりの平均回転数）'), findsOneWidget);
+      expect(find.text('1,767G（15台）'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('華の日'), findsOneWidget, reason: 'カレンダーにも出る');
+      // 記録の無い先の日は、今までどおりイベント名の入力。
+      await tester.ensureVisible(find.byKey(const ValueKey('event-day-2026-10-30')));
+      await tester.tap(find.byKey(const ValueKey('event-day-2026-10-30')));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }
