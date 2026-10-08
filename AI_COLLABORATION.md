@@ -5,7 +5,7 @@
 - 利用者：「店舗切り替え真ん中にあって、切り替えられることはわかるんだけど少しわかりづらいかな。どこを選択してるかすぐわかるように、可視化させて。枠をつけるとかかな。選択してるところは色つけるとか」「終わったらそのまま公開してね」。
 - `share_viewer/`：店舗の切り替えを、枠（#d6d6d6）で囲んだ帯（#f5f5f7）に並べ、選んでいる店だけ青（#0071e3）で塗って白文字に。上に「店舗を選ぶ」。P-STATIONの貸玉が1つなら切り替えは「P-STATION」だけ（見出しは「P-STATION（20スロ）」）。
 - 試験：画面試験に、選んだ店が青く塗られ、ほかは塗られないことを追加。手元の実データでiPhone幅の見た目を確認。`check_before_build.sh` **ALL PASSED**（30項目）。
-- 公開：`tool/stage_share_viewer.py` で `keyanbaitian6-cell/database-share` へ（下のコミット）。
+- 公開：`tool/stage_share_viewer.py` で `keyanbaitian6-cell/database-share` に `8eadc9e`（ソース `7653a1a`）をpush、Pages built。公開の4ファイルが手元と一致、公開URLで画面試験（スクリプトは偽の返事）成功。
 
 ## 閲覧専用の共有ページ（お試し、Apple風デザイン）（Claude、2026-10-09）
 
