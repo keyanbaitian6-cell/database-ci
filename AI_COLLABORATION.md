@@ -10,7 +10,8 @@
 - `check_before_build.sh` **ALL PASSED**（PC 216件・P’s CUBE関連93件・Flutter 515件・analyzeエラー警告0/info18・JS21本、`test_pscube_capture.mjs` は非公開の保存先が無いのでSKIP）。
 - **閲覧ページ**：確認スクリプトで試験したWebビルドを `tool/stage_viewer.py` で公開用チェックアウトへ。53ファイルが試験済みステージと全件SHA-256一致、seedなし。`keyanbaitian6-cell/database-viewer` に `6f4fe96` をpush、Pages built。公開URLの `index.html`・`main.dart.js`・`shared_events.mjs`・`pscube/viewer_bridge.mjs`・`version.json` が試験済みと一致、seed 2つとも404、トップ・pscubeとも200。公開URLで `test_viewer_event_calendar_browser` 成功（隔離ブラウザ・模擬データ）。版は0.5.35のまま（APKは作っていない）。
 - **PC版**：PC版が起動していないことを確かめてから `database/build_windows.ps1 -Python <python> -BuildTag shared-calendar-20261008` で `database/bin` 3EXEを再ビルド（既定の `.runtime` は無いので `-Python` を指定）。`tests/smoke_frozen_runtime.py`（`a/work/outputs/frozen-runtime-20261008-shared-calendar.json`、同梱のモジュールがソースと一致）・`tests/smoke_frozen_capture.py bin/database-browser/database-browser.exe` 成功。
-- **未確認**：本物のスクリプト・Driveを通した受け渡し（利用者がスクリプトを新しい版で公開してから）、iPhone実機での送信。
+- **スクリプト更新（2026-10-08 23:05、利用者）**：最初はコードを保存したがデプロイのバージョンを上げておらず、古い版が動いていた（`?file=events` に「指定できないファイルです。」）。「新バージョン」で公開し直した後に、読むだけの確認：`?file=events`・`?file=pscube-events` が空の一覧を返す、`?check=1` で閲覧用ファイルも従来どおり。POSTは書き込まれない不正な入力だけで確認（知らないファイル名→「指定できないファイルです。」、形の悪いイベント→「イベントの形式が不正です。」）。curlで `-X POST` のままリダイレクトをたどると411になるが、ブラウザの動きとは関係ない。
+- **未確認**：実際のイベントの送信と受け渡し（iPhoneで保存→共有ファイル→PCのカレンダー）。AIからは実データになるイベントを書き込んでいない。
 
 ## PC版：P’s CUBEのイベントカレンダー（Claude、2026-10-08）
 
