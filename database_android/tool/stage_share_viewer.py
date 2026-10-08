@@ -1,0 +1,59 @@
+"""Stage the read-only share page (share_viewer/, trial 2026-10-09) into its own public repository clone.
+
+Usage (from database_android/):
+    python tool/stage_share_viewer.py <folder of the share page clone>
+
+自分用の閲覧ページ（database-viewer、tool/stage_viewer.py）とは別のリポジトリに置く。ページにはスクリプトの
+URL・ID も記録も入れない（IDは渡すリンクの # の後ろだけ）。入っていたら公開しない。
+"""
+import re
+import shutil
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parents[1]
+SOURCE = HERE.parent / 'share_viewer'
+FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs'}
+SCRIPT_ID = re.compile(rb'AKfyc[A-Za-z0-9_-]{20,}|/macros/s/[A-Za-z0-9_-]{20,}')
+
+README = """# database カレンダー（閲覧専用）
+
+イベントカレンダー（各日のイベント・総差枚、日付を押すとTOP10と強かった機種5選）を見るだけのページです。
+
+- このリポジトリには、ページのファイルだけが入っています。記録のデータや接続先は入っていません。
+- 記録は、受け取ったリンクの接続先（読むだけのGoogle Apps Script）から、開いた端末のブラウザが直接読みます。
+- 何も書き込みません。端末には接続先と選んだ店舗だけを覚えます。
+"""
+
+
+def main(target):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from stage_viewer import record_probes
+
+    target = Path(target)
+    present = {p.name for p in SOURCE.iterdir() if p.is_file()}
+    if present != FILES:
+        sys.exit(f'share_viewer のファイルを確認してください: {sorted(present)}')
+    probes = record_probes()
+    for name in sorted(FILES):
+        data = (SOURCE / name).read_bytes()
+        if SCRIPT_ID.search(data):
+            sys.exit(f'{name} にスクリプトのURL・IDらしい文字列があります。公開しません。')
+        if any(p.encode() in data for p in probes):
+            sys.exit(f'{name} に記録らしい文字列があります。公開しません。')
+    target.mkdir(parents=True, exist_ok=True)
+    for entry in target.iterdir():
+        if entry.name == '.git':
+            continue
+        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+    for name in sorted(FILES):
+        shutil.copyfile(SOURCE / name, target / name)
+    (target / '.nojekyll').write_text('', encoding='utf-8')
+    (target / 'README.md').write_text(README, encoding='utf-8')
+    print(f'OK: {target} に閲覧専用ページを用意しました（{len(FILES)}ファイル、記録の文字列 {len(probes)} 種・スクリプトのIDで確認、該当なし）。')
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
+    main(sys.argv[1])
