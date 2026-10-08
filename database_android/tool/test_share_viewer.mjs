@@ -5,7 +5,7 @@ import test from 'node:test';
 import {meruhenNetDetail} from '../../share_viewer/net.mjs';
 import {
   compactSigned, dayNet, daySummary, displayMachineName, enteredInAdvance, eventLabel, indexRecords,
-  meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel,
+  meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel, viewerNameFrom,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -108,4 +108,9 @@ test('表示：半角カナだけ全角に、10万枚以上は「万」、日曜
   assert.equal(scriptIdFrom(id), id);
   assert.equal(scriptIdFrom('https://example.com/#s=short'), null);
   assert.equal(scriptIdFrom('<script>'), null);
+  assert.equal(scriptIdFrom(`https://x/#s=${id}&u=himawari`), id);
+  assert.equal(viewerNameFrom(`https://x/#s=${id}&u=himawari`), 'himawari');
+  assert.equal(viewerNameFrom(`#u=himawari&s=${id}`), 'himawari');
+  assert.equal(viewerNameFrom(`#s=${id}&u=<b>`), null);
+  assert.equal(viewerNameFrom(`#s=${id}`), null);
 });

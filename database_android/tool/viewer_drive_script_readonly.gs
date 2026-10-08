@@ -20,6 +20,11 @@
 // 「デプロイを管理」でデプロイをアーカイブする（自分用のURLはそのまま使える）。
 // 自分用のスクリプトのURLは、今までどおり人に渡さない（そちらはイベントを書き込める）。
 //
+// アクセスの記録（2026-10-09）：閲覧専用ページ（share_viewer/）は、最初の読み込み（メルヘンの閲覧用ファイル）にだけ
+// 渡したリンクの呼び名（u=、英数字と - _ だけ）を付ける。このスクリプトはそれを console.log に書くので、
+// このプロジェクトの「実行数」で、いつ・どのリンクで開かれたかを見られる（持ち主だけ。Driveには何も書かない）。
+// 呼び名の無い読み込み（自分用の閲覧ページに貼った場合など）は「名前なし」。
+//
 // 返す中身は自分用スクリプトの doGet と同じ（閲覧ページはどちらでも同じように読める）。
 // 自分用の doGet を変えたときは、こちらも合わせる（tool/test_viewer_drive_script_readonly.mjs で確かめる）。
 
@@ -31,6 +36,7 @@ const EVENT_FILES = {
 
 function doGet(e) {
   const key = (e && e.parameter && e.parameter.file) || '';
+  if (key === '' && !(e && e.parameter && e.parameter.check)) logAccess(e && e.parameter && e.parameter.u);
   if (Object.prototype.hasOwnProperty.call(EVENT_FILES, key)) {
     const spec = EVENT_FILES[key];
     const file = latestFile(spec.name);
@@ -56,6 +62,11 @@ function doGet(e) {
 // 閲覧専用：イベントの書き込みは受け付けない（何も読まず、何も書かない）。
 function doPost(_e) {
   return respond(JSON.stringify({ error: 'このURLは閲覧専用です。イベントは共有されません（この端末の中にだけ残ります）。' }));
+}
+
+function logAccess(raw) {
+  const name = typeof raw === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(raw) ? raw : '名前なし';
+  console.log('閲覧：' + name);
 }
 
 function eventDocument(kind, events) {

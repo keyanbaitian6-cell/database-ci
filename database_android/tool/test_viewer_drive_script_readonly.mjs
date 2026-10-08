@@ -10,6 +10,7 @@ const load = (name) => fs.readFile(new URL('./' + name, import.meta.url), 'utf8'
 function drive(source) {
   const files = [];
   const writes = [];
+  const logs = [];
   let clock = 1000;
   const shared = {name: 'database共有', createFile: (name) => { writes.push(['create', name]); }};
   function makeFile(name, text) {
@@ -46,12 +47,13 @@ function drive(source) {
     LockService: {getScriptLock: () => ({waitLock() {}, releaseLock() {}})},
     ContentService: {MimeType: {JSON: 'json'}, createTextOutput: (body) => ({body, setMimeType() { return this; }})},
     JSON, Date, Object, Array, isNaN,
+    console: {log: (...args) => logs.push(args.join(' '))},
   };
   vm.createContext(context);
   vm.runInContext(source, context);
   const get = (parameter) => context.doGet({parameter}).body;
   const post = (body) => JSON.parse(context.doPost({postData: {contents: JSON.stringify(body)}}).body);
-  return {get, post, writes};
+  return {get, post, writes, logs};
 }
 
 test('自分用スクリプトと同じ中身を返す（記録・P’s CUBE・共有カレンダー・更新の目印・断る名前）', async () => {
@@ -79,4 +81,16 @@ test('書き込み・ロックの部品を使っていない（読むだけの�
   for (const word of ['setContent', 'createFile', 'LockService', 'PropertiesService', 'setTrashed', 'removeFile']) {
     assert.ok(!code.includes(word), word);
   }
+});
+
+test('アクセスの記録：最初の読み込み（u=付き）だけ「実行数」に書き、呼び名の形が違えば「名前なし」。返す中身は変わらない', async () => {
+  const d = drive(await load('viewer_drive_script_readonly.gs'));
+  const plain = d.get({});
+  assert.equal(d.get({u: 'himawari'}), plain);
+  d.get({file: 'pscube', u: 'himawari'});
+  d.get({file: 'events'});
+  d.get({check: '1', u: 'himawari'});
+  d.get({u: '<script>'});
+  assert.deepEqual(d.logs, ['閲覧：名前なし', '閲覧：himawari', '閲覧：名前なし']);
+  assert.deepEqual(d.writes, []);
 });

@@ -50,9 +50,11 @@ try {
   for (const width of [320, 393, 1280]) {
     const context = await browser.newContext({viewport: {width, height: 860}});
     const methods = [];
+    const urls = [];
     await context.route('https://script.google.com/**', route => {
       const request = route.request();
       methods.push(request.method());
+      urls.push(new URL(request.url()).search);
       const file = new URL(request.url()).searchParams.get('file') ?? '';
       route.fulfill({status: 200, contentType: 'application/json', headers: {'access-control-allow-origin': '*'},
         body: JSON.stringify(responses[file] ?? {error: 'no'})});
@@ -63,11 +65,12 @@ try {
     // 利用者自身の閲覧ページの保存（同じ github.io で開いたとき）を置いておき、触れないことを確かめる。
     await page.goto(`${origin}/share/index.html`);
     await page.evaluate(() => localStorage.setItem('database-viewer-remote', 'mine'));
-    await page.goto(`${origin}/share/index.html#s=${id}`);
+    await page.goto(`${origin}/share/index.html#s=${id}&u=himawari`);
     await page.waitForSelector('.grid');
-    assert.equal(new URL(page.url()).hash, '', 'リンクのIDはアドレス欄から消す');
+    assert.equal(new URL(page.url()).hash, '', 'リンクのIDと呼び名はアドレス欄から消す');
     const storage = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
-    assert.deepEqual(storage, {'database-viewer-remote': 'mine', 'database-share-script-id': id});
+    assert.deepEqual(storage, {'database-viewer-remote': 'mine', 'database-share-script-id': id, 'database-share-name': 'himawari'});
+    assert.deepEqual(urls.slice().sort(), ['?file=events', '?file=pscube', '?file=pscube-events', '?u=himawari'], '呼び名は最初の読み込みにだけ付ける');
     // 長町南：1日は +1422-1111 = +311、イベント（HTMLとして解釈しない）。
     const cell = page.locator(`[data-open="${d1}"]`);
     assert.match(await cell.innerText(), /半列<b>/);
@@ -106,6 +109,7 @@ try {
     await page.goto(`${origin}/share/index.html`);
     await page.waitForSelector('.grid');
     assert.equal(await page.locator('.anchor[aria-pressed="true"]').innerText(), '幸町');
+    assert.ok(urls.slice(4).includes('?u=himawari'), 'リンクなしで開き直しても、覚えた呼び名で記録する');
     assert.deepEqual([...new Set(methods)], ['GET'], '読むだけ（POSTしない）');
     assert.deepEqual(errors, []);
     await context.close();

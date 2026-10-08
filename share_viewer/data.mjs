@@ -167,3 +167,9 @@ export function scriptIdFrom(text) {
   const id = match ? match[1] : value;
   return /^[A-Za-z0-9_-]{20,120}$/.test(id) ? id : null;
 }
+
+/** リンクの # の後ろの u=（渡した相手の呼び名、英数字と - _ だけ）。無ければ null。 */
+export function viewerNameFrom(text) {
+  const match = /#(?:.*&)?u=([A-Za-z0-9_-]{1,40})(?:&|$)/.exec(String(text ?? ''));
+  return match ? match[1] : null;
+}

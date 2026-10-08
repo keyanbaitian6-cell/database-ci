@@ -5,18 +5,21 @@
 // （database-viewer の保存名）とは別の名前を使う。スクリプトのIDはページに書かず、渡すリンクの # の後ろに付ける。
 import {
   MERUHEN_STORES, compactSigned, dayNet, daySummary, displayMachineName, eventLabel, indexRecords,
-  meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel,
+  meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel, viewerNameFrom,
 } from './data.mjs';
 
 const ID_KEY = 'database-share-script-id';
 const STORE_KEY = 'database-share-store';
+// 渡したリンクの呼び名（# の u=）。最初の読み込みにだけ付けて送り、スクリプトが「実行数」に記録する。
+const NAME_KEY = 'database-share-name';
+const NAME = /^[A-Za-z0-9_-]{1,40}$/;
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 const RETRY_MS = [1500, 4000];
 const TIMEOUT_MS = 30000;
 
 const app = document.getElementById('app');
 const reload = document.getElementById('reload');
-const state = {id: null, model: null, store: null, year: 0, month: 0, loading: false};
+const state = {id: null, name: null, model: null, store: null, year: 0, month: 0, loading: false};
 
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const tone = (n) => (n > 0 ? 'plus' : n < 0 ? 'minus' : 'zero');
@@ -57,7 +60,7 @@ async function load() {
   }
   const base = `https://script.google.com/macros/s/${state.id}/exec`;
   const [meruhen, pscube, events, pscubeEvents] = await Promise.allSettled(
-    ['', '?file=pscube', '?file=events', '?file=pscube-events'].map(q => getJson(base + q)));
+    [state.name ? `?u=${state.name}` : '', '?file=pscube', '?file=events', '?file=pscube-events'].map(q => getJson(base + q)));
   state.loading = false;
   reload.disabled = false;
   const doc = (r) => (r.status === 'fulfilled' && r.value && !r.value.error ? r.value : null);
@@ -203,6 +206,12 @@ function showSetup(message) {
   });
 }
 
+function rememberName(fromLink) {
+  if (fromLink) store.set(NAME_KEY, fromLink);
+  const name = fromLink ?? store.get(NAME_KEY);
+  state.name = name && NAME.test(name) ? name : null;
+}
+
 function connect(id) {
   state.id = id;
   store.set(ID_KEY, id);
@@ -232,7 +241,8 @@ function start() {
   const today = todayJst();
   state.year = today.y;
   state.month = today.m;
-  // リンクの # の後ろの s=（スクリプトのID）を覚え、アドレス欄からは消す（ほかへ貼ったときに広がらないように）。
+  // リンクの # の後ろの s=（スクリプトのID）と u=（呼び名）を覚え、アドレス欄からは消す（ほかへ貼ったときに広がらないように）。
+  rememberName(viewerNameFrom(location.hash));
   const fromHash = scriptIdFrom(location.hash);
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   const id = fromHash ?? scriptIdFrom(store.get(ID_KEY));
@@ -241,6 +251,7 @@ function start() {
   // 開いたままのタブでリンクを開き直したとき（# の後ろだけ変わる）も読み込む。
   window.addEventListener('hashchange', () => {
     const next = scriptIdFrom(location.hash);
+    rememberName(viewerNameFrom(location.hash));
     if (location.hash) history.replaceState(null, '', location.pathname + location.search);
     if (next) connect(next);
   });
