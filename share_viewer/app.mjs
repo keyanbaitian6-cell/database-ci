@@ -52,7 +52,9 @@ async function getJson(url) {
 async function load() {
   state.loading = true;
   reload.disabled = true;
-  if (!state.model) app.innerHTML = '<p class="status">Googleドライブから読み込んでいます…</p>';
+  if (!state.model) {
+    app.innerHTML = '<p class="status">Googleドライブから読み込んでいます…<br>最初の読み込みは、1分ほどかかることがあります。</p>';
+  }
   const base = `https://script.google.com/macros/s/${state.id}/exec`;
   const [meruhen, pscube, events, pscubeEvents] = await Promise.allSettled(
     ['', '?file=pscube', '?file=events', '?file=pscube-events'].map(q => getJson(base + q)));
