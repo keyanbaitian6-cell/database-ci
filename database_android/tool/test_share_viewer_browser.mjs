@@ -90,7 +90,14 @@ try {
     await page.waitForSelector('.sheet', {state: 'detached'});
     // P-STATION（データはP’s CUBE）：元グラフの差枚、共有のイベント。表記は P-STATION だけ。
     assert.equal(await page.getByText(/P’s CUBE/).count(), 0);
-    await page.getByRole('button', {name: 'P-STATION（20スロ）'}).click();
+    // 選んでいる店は青で塗る（どこを選んでいるか分かる）。
+    const pressed = page.locator('.anchor[aria-pressed="true"]');
+    assert.equal(await pressed.innerText(), '長町南');
+    assert.equal(await pressed.evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(0, 113, 227)');
+    assert.equal(await page.locator('.anchor[aria-pressed="false"]').first().evaluate(e => getComputedStyle(e).backgroundColor), 'rgba(0, 0, 0, 0)');
+    await page.getByRole('button', {name: 'P-STATION', exact: true}).click();
+    assert.equal(await pressed.innerText(), 'P-STATION');
+    assert.match(await page.locator('.kicker').innerText(), /P-STATION（20スロ）/);
     const p2 = page.locator(`[data-open="${d2}"]`);
     assert.match(await p2.innerText(), /末尾イベ/);
     assert.match(await p2.innerText(), /\+3,121/);
