@@ -8,7 +8,9 @@
 - PC：「カレンダー」を開くとき・Driveの再読み込みのときに、同期フォルダの共有ファイルを取り込む（`core.pull_shared_events`、P’s CUBEは `PscubeStore.pull_shared_events`。入力時刻の無いもの・形の合わないものは捨てる。読めないファイルは無視）。Androidへは従来どおりPCのバックアップで届く（APKは変更なし）。
 - 試験を追加：`tool/test_viewer_drive_script.mjs`（スクリプトを偽のDriveで動かす、3件）・`tool/test_viewer_shared_calendar_browser.mjs`（作り直した閲覧ページで、共有ファイルの取り込み・保存時のPOST・合言葉を送らないこと、メルヘンとP’s CUBE）・`tests/test_event_calendar.py` に6件（P’s CUBEのカレンダー3件・共有ファイルの取り込み3件、計22件）・`test/event_calendar_test.dart` に3件（計18件）。
 - `check_before_build.sh` **ALL PASSED**（PC 216件・P’s CUBE関連93件・Flutter 515件・analyzeエラー警告0/info18・JS21本、`test_pscube_capture.mjs` は非公開の保存先が無いのでSKIP）。
-- 本物のスクリプト・Driveでの確認は、利用者がスクリプトを新しい版で公開してから（未確認）。
+- **閲覧ページ**：確認スクリプトで試験したWebビルドを `tool/stage_viewer.py` で公開用チェックアウトへ。53ファイルが試験済みステージと全件SHA-256一致、seedなし。`keyanbaitian6-cell/database-viewer` に `6f4fe96` をpush、Pages built。公開URLの `index.html`・`main.dart.js`・`shared_events.mjs`・`pscube/viewer_bridge.mjs`・`version.json` が試験済みと一致、seed 2つとも404、トップ・pscubeとも200。公開URLで `test_viewer_event_calendar_browser` 成功（隔離ブラウザ・模擬データ）。版は0.5.35のまま（APKは作っていない）。
+- **PC版**：PC版が起動していないことを確かめてから `database/build_windows.ps1 -Python <python> -BuildTag shared-calendar-20261008` で `database/bin` 3EXEを再ビルド（既定の `.runtime` は無いので `-Python` を指定）。`tests/smoke_frozen_runtime.py`（`a/work/outputs/frozen-runtime-20261008-shared-calendar.json`、同梱のモジュールがソースと一致）・`tests/smoke_frozen_capture.py bin/database-browser/database-browser.exe` 成功。
+- **未確認**：本物のスクリプト・Driveを通した受け渡し（利用者がスクリプトを新しい版で公開してから）、iPhone実機での送信。
 
 ## PC版：P’s CUBEのイベントカレンダー（Claude、2026-10-08）
 
