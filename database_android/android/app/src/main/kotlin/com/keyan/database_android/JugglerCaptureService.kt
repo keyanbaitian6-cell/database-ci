@@ -50,8 +50,8 @@ class JugglerCaptureService : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: return
         when (pkg) {
             TARGET -> showButton()
-            // 自分の知らせ・通知の引き出しなどでは消さない。
-            packageName, "com.android.systemui" -> Unit
+            // 通知の引き出しなどでは消さない。databaseアプリ自身が前に来たら消す（読み取りの画面に重ならないように）。
+            "com.android.systemui" -> Unit
             else -> hideButton()
         }
     }

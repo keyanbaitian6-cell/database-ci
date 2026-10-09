@@ -85,16 +85,23 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     try {
       final now = DateTime.now();
       for (final path in _captures) {
-        final text = await recognizer.processImage(
-          InputImage.fromFilePath(path),
-        );
-        final lines = [
-          for (final block in text.blocks)
-            for (final line in block.lines)
-              JoTextLine(line.text, top: line.boundingBox.top.round()),
-        ];
-        final screen = await compute(_parse, (path, lines, now));
         final name = path.split(RegExp(r'[\\/]')).last;
+        // 1枚読めなくても、ほかの画面は読み続ける。
+        final List<JoTextLine> lines;
+        try {
+          final text = await recognizer.processImage(
+            InputImage.fromFilePath(path),
+          );
+          lines = [
+            for (final block in text.blocks)
+              for (final line in block.lines)
+                JoTextLine(line.text, top: line.boundingBox.top.round()),
+          ];
+        } catch (error) {
+          _problems.add('$name：文字（店名・日付）を読めませんでした：$error');
+          continue;
+        }
+        final screen = await compute(_parse, (path, lines, now));
         if (screen.problem != null) {
           _problems.add('$name：${screen.problem}');
         } else if (screen.header.store == null || screen.header.day == null) {
