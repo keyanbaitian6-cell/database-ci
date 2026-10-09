@@ -40,6 +40,7 @@
 - 実機（2026-10-10）：利用者が0.5.36+2026101005で読み取り直し、10/9は551台を作れた。7・8日も取り込み済み。
 - **ブラウザ版に差枚が出ない**（利用者「差枚データも取り込めてるのに、ブラウザ版とかに差枚データが飛んでないみたい」）：確かめた順に、PCのDB（読み取り専用）に10/7〜9の幸町が545・543・551台、うち `jo_net` 541・539・540台、`jo_created` 全台。PCの閲覧用ファイル `data/database-viewer.json`（2:34書き出し、同期フォルダへ複製）にも10/7〜9の `jo_net` が入っている。**原因は公開中のページが古いこと**：database-viewer は `162777f`（10/9 0:51、ソース `6468038`）、database-share は `8eadc9e`（10/9 7:16）で、`jo_net` を差枚に使う変更（`b4b5efa`、10/9 23:34）より前。**AIの見落とし**：閲覧ページの表示に関わる変更（`SlotRecord.netValue`・`share_viewer/data.mjs`）を入れたのに、公開し直していなかった。
 - 公開：直前の `check_before_build.sh` ALL PASSED（`815c826`、閲覧ページのビルド・画面試験を含む）と同じソースの `build/web` を `tool/stage_viewer.py` で `build/viewer-publish` へ（変わったのは `main.dart.js`・`version.json`、記録の文字90件で確認・該当なし）、`keyanbaitian6-cell/database-viewer` に `4e0e931` をpush。`tool/stage_share_viewer.py` で `build/share-publish` へ（`data.mjs`）、`keyanbaitian6-cell/database-share` に `373573d` をpush。Pages は両方 built。公開URLの `main.dart.js`・`version.json`（0.5.36+2026101005）・`index.html`、共有ページの4ファイルが手元と一致、seed 2つとも404。iPhoneでの表示は利用者が確認（古いページが残っていれば開き直す）。
+- 利用者がiPhoneで確認（2026-10-10）：「反映されました」。ジャグラーオンラインで作った10/7〜9の台の差枚がブラウザ版に出た。
 - 再発防止：閲覧ページ・共有ページに出る値（`models.dart` の差枚・`share_viewer/`）を変えたら、その作業の中で公開まで行うか、「未公開」と報告に書く。
 
 ## ジャグラーオンライン（アプリ）の画面から取り込めるかの検討（Claude、2026-10-09、検討のみ）
