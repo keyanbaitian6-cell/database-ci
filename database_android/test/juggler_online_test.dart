@@ -565,11 +565,51 @@ void main() {
       expect(plan.skipped[5001], contains('5スロ'));
     });
 
-    test('機種名は空白・記号・全角英数字の違いを見ずに比べる', () {
-      expect(joMachineMatches('ネオアイムジャグラーEX', 'Sネオアイムジャグラー EX−KK'), isTrue);
-      expect(joMachineMatches('ネオアイムジャグラーＥＸ', 'Sネオアイムジャグラー EX-KK'), isTrue);
-      expect(joMachineMatches('マイジャグラーV', 'Sネオアイムジャグラー EX−KK'), isFalse);
-      expect(joMachineMatches('', 'Sネオアイムジャグラー EX−KK'), isFalse);
+    test('機種名はメルヘンの略称・型番と、ジャグラーオンラインの書き方の違いを見ずに比べる', () {
+      // 2026-10-10 の全機種表示で、「スマスロ」と「L」、型番、長音と「－」の違いで、ほとんどの台が作られなかった。
+      for (final (jo, meruhen) in [
+        ('ネオアイムジャグラーEX', 'SネオアイムジャグラーEX−KK'),
+        ('ネオアイムジャグラーＥＸ', 'Sネオアイムジャグラー EX-KK'),
+        ('マイジャグラーV', 'SマイジャグラーVKD'),
+        ('スマスロ ミリオンゴッド－神々の軌跡－', 'L／ミリオンゴッド／CX'),
+        ('スマスロモンキーターンV', 'Lモンキーターン5CE'),
+        ('L青春ブタ野郎はバニーガール先輩の夢を見ない', 'L青春ブタ野郎L1'),
+        ('ハナハナホウオウ～天翔～－30', 'Sハナハナホウオウ〜天翔〜EX−30'),
+        ('ドラゴンハナハナ～閃光～－30', 'Sドラゴンハナハナ〜閃光〜SP−30'),
+        ('スマスロ 甲鉄城のカバネリ 海門決戦', 'L 甲鉄城のカバネリ 海門決戦 XX'),
+        ('L戦国乙女5 業火を穿つ宿焔の双刃', 'L戦国乙女5L8'),
+        ('Lパチスロ からくりサーカス2', 'Lからくりサーカス2jG'),
+        ('戦姫絶唱シンフォギア 勇気の歌', 'S戦姫絶唱ｼﾝﾌｫｷﾞｱ 勇気の歌NAT G'),
+      ]) {
+        expect(joMachineMatches(jo, meruhen), isTrue, reason: '$jo ／ $meruhen');
+      }
+      expect(joMachineMatches('マイジャグラーV', 'SネオアイムジャグラーEX−KK'), isFalse);
+      expect(joMachineMatches('スマスロ北斗の拳', 'L戦国乙女5L8'), isFalse);
+      expect(joMachineMatches('', 'SネオアイムジャグラーEX−KK'), isFalse);
+    });
+
+    test('名前が似ていなくても、機種の台が前の日もすべて同じ1つの機種なら作る（台番号は変わらない）', () {
+      final day = JoDay('saiwaichou', '2026-10-07')
+        ..racks.addAll({
+          1: {'bb': 1, 'rb': 1, 'total': 100},
+          2: {'bb': 1, 'rb': 1, 'total': 100},
+          3: {'bb': 1, 'rb': 1, 'total': 100},
+          4: {'bb': 1, 'rb': 1, 'total': 100},
+        })
+        ..rackMachines.addAll({
+          1: 'まるで違う名前',
+          2: 'まるで違う名前',
+          3: '入れ替えた機種',
+          4: '入れ替えた機種',
+        });
+      final plan = planJoSave(day, [
+        meruhen('2026-10-06', 1, machine: 'L／略称A／CX'),
+        meruhen('2026-10-06', 2, machine: 'L／略称A／CX'),
+        meruhen('2026-10-06', 3, machine: 'L／略称B／CX'),
+        meruhen('2026-10-06', 4, machine: 'L／略称C／CX'),
+      ]);
+      expect(plan.create.keys.toSet(), {1, 2});
+      expect(plan.skipped[3], contains('機種が違う'), reason: '前の日は別々の機種で、名前も似ていない');
     });
 
     test('作った台：数値はジャグラーオンライン、機種名は前の日、グラフ無し。取り消しで消える', () async {

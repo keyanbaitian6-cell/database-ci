@@ -329,6 +329,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
             Text(
               '読めた台 ${racks.length}台（メルヘンで取り込み済み $inDb台）。'
               '${toCreate == 0 ? '' : 'メルヘンに無い$toCreate台は、前の日の同じ台番号の機種名で作ります（グラフ・最大持玉は無し）。'}'
+              '${_skipSummary(plan)}'
               '?＝読めなかった、⚠＝画面ごとに値が違った（足さない。撮り直すと直ります）、—＝その画面を撮っていない',
               style: const TextStyle(fontSize: 12, color: AppColors.ash),
             ),
@@ -432,6 +433,18 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     ];
     return diffs.isEmpty ? 'あり' : 'あり（メルヘン：${diffs.join(' ')}）';
   }
+}
+
+/// 足さない・作らない台の理由ごとの台数（「作らない：前の日に無い 12台、機種が違う 3台」）。
+String _skipSummary(JoSavePlan plan) {
+  if (plan.skipped.isEmpty) return '';
+  final counts = <String, int>{};
+  for (final reason in plan.skipped.values) {
+    final key = reason.split('（').first.replaceAll('ので', '・');
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return '足さない・作らない台：'
+      '${counts.entries.map((e) => '${e.key} ${e.value}台').join('、')}。';
 }
 
 /// 撮った画面のファイル名（jo-20261010-001530-123.png）から「10/10 00:15:30に撮った画面」。

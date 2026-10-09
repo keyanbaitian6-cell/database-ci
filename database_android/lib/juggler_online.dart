@@ -13,6 +13,7 @@ import 'package:image/image.dart' as imglib;
 
 import 'juggler_digit_templates.dart';
 import 'models.dart';
+import 'setting_estimate.dart' show foldHalfWidthKana;
 
 /// お手本を作った端末の画面の横幅（px）。違う大きさの画面は読まない。
 const joScreenWidth = 1080;
@@ -663,6 +664,16 @@ JoSavePlan planJoSave(JoDay day, Iterable<SlotRecord> records) {
       previous[r.rack] = r;
     }
   }
+  // 台の並びでの確かめ：ジャグラーオンラインの1つの機種の台が、前の日もすべてメルヘンの同じ1つの機種なら、
+  // 名前の書き方が違っても同じ機種とする（利用者「6日から台番号は入れ替えなどで変わってないから」）。
+  final referencesOf = <String, Set<String>>{};
+  for (final rack in day.racks.keys) {
+    final machine = day.rackMachines[rack] ?? day.machine;
+    final reference = previous[rack];
+    if (machine != null && reference != null) {
+      referencesOf.putIfAbsent(machine, () => {}).add(reference.machine);
+    }
+  }
   for (final MapEntry(key: rack, value: values) in joSaveValues(day).entries) {
     // メルヘンの記録は20円スロットだけ。ほかの貸玉の台は足さない・作らない。
     final rate = day.rackRates[rack];
@@ -679,8 +690,10 @@ JoSavePlan planJoSave(JoDay day, Iterable<SlotRecord> records) {
     if (reference == null) {
       skipped[rack] = '前の日に同じ台番号の台が無いので作らない';
     } else if (machine != null &&
+        referencesOf[machine]?.length != 1 &&
         !joMachineMatches(machine, reference.machine)) {
-      skipped[rack] = '機種が違うので作らない（${reference.day}：${reference.machine}）';
+      skipped[rack] =
+          '機種が違うので作らない（${reference.day}：${reference.machine}、ジャグラーオンライン：$machine）';
     } else if (values['bb'] == null ||
         values['rb'] == null ||
         values['total'] == null) {
@@ -692,13 +705,41 @@ JoSavePlan planJoSave(JoDay day, Iterable<SlotRecord> records) {
   return JoSavePlan(add, create, skipped);
 }
 
-/// ジャグラーオンラインの機種名（例「ネオアイムジャグラーEX」）が、メルヘンの機種名
-/// （例「Sネオアイムジャグラー EX−KK」）に含まれるか。空白・記号・全角英数字の違いは見ない。
-bool joMachineMatches(String juggler, String meruhen) {
-  String fold(String s) => String.fromCharCodes([
-    for (final c in s.runes)
+/// 機種名を比べるための形：半角カナ・全角英数をそろえ、頭の「L」「S」「LB」「★」「スマスロ」「パチスロ」など、
+/// 記号・空白・長音（ジャグラーオンラインの「－」とメルヘンの「ー」が入れ替わって読まれるため）を除く。
+/// [meruhen] ならメルヘンの末尾の型番（「CX」「jG」「EX−KK」など、英数字6文字まで）も除く。
+String joMachineKey(String name, {bool meruhen = false}) {
+  final kana = foldHalfWidthKana(name);
+  var text = String.fromCharCodes([
+    for (final c in kana.runes)
       if (c >= 0xFF01 && c <= 0xFF5E) c - 0xFEE0 else c,
-  ]).toUpperCase().replaceAll(RegExp(r'[\s\-−‐_・.+]'), '');
-  final j = fold(juggler), m = fold(meruhen);
-  return j.isNotEmpty && m.contains(j);
+  ]).toUpperCase().replaceAll(RegExp(r'[^0-9A-Z぀-ヺヽ-ヿ一-鿿Ⅰ-ⅿ々★]'), '');
+  final prefix = RegExp(r'^(★|LB|SB|L|S|スマスロ|パチスロ|スロット)');
+  for (
+    var m = prefix.firstMatch(text);
+    m != null;
+    m = prefix.firstMatch(text)
+  ) {
+    text = text.substring(m.end);
+  }
+  if (meruhen) {
+    final trimmed = text.replaceFirst(RegExp(r'[0-9A-Z]{1,6}$'), '');
+    if (trimmed.length >= 2) text = trimmed;
+  }
+  return text;
+}
+
+/// ジャグラーオンラインの機種名とメルヘンの機種名が同じ機種らしいか。メルヘンは略称と型番の
+/// 独自の書き方（例「L／ミリオンゴッド／CX」「Lモンキーターン5CE」）なので、そろえた形の片方が
+/// もう片方に含まれるか、メルヘンの形の2文字の並びの8割以上がジャグラーオンラインの形にあれば同じとする。
+bool joMachineMatches(String juggler, String meruhen) {
+  final j = joMachineKey(juggler), m = joMachineKey(meruhen, meruhen: true);
+  if (j.isEmpty || m.isEmpty) return false;
+  if (j.contains(m) || m.contains(j)) return true;
+  if (m.length < 3) return false;
+  var hit = 0;
+  for (var i = 0; i + 1 < m.length; i++) {
+    if (j.contains(m.substring(i, i + 2))) hit++;
+  }
+  return hit / (m.length - 1) >= 0.8;
 }
