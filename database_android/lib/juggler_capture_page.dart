@@ -36,6 +36,9 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
   final _problems = <String>[];
   final _saved = <String>{};
 
+  /// 店舗・営業日ごとの、読み取りに使った画面のファイル。保存できたら消す（利用者「正常に取り込んだら勝手にけして」）。
+  final _sources = <String, List<String>>{};
+
   @override
   void initState() {
     super.initState();
@@ -81,11 +84,10 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
       _saved.clear();
     });
     final recognizer = TextRecognizer(script: TextRecognitionScript.japanese);
-    final screens = <JoScreen>[];
+    final read = <(String, List<JoTextLine>, JoScreen)>[];
     try {
       final now = DateTime.now();
       for (final path in _captures) {
-        final name = _captureLabel(path);
         // 1枚読めなくても、ほかの画面は読み続ける。
         final List<JoTextLine> lines;
         try {
@@ -98,10 +100,21 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
                 JoTextLine(line.text, top: line.boundingBox.top.round()),
           ];
         } catch (error) {
-          _problems.add('$name：文字（店名・日付）を読めませんでした：$error');
+          _problems.add('${_captureLabel(path)}：文字（店名・日付）を読めませんでした：$error');
           continue;
         }
-        final screen = await compute(_parse, (path, lines, now));
+        read.add((path, lines, await compute(_parse, (path, lines, now))));
+      }
+      // 連続で撮った画面は、スクロールで画面の外に出た店名・機種名を同じ組の画面から補う。
+      final filled = fillJoGroupHeaders([
+        for (final (path, _, screen) in read) (joCaptureGroup(path), screen),
+      ]);
+      final screens = <JoScreen>[];
+      _sources.clear();
+      for (var i = 0; i < read.length; i++) {
+        final (path, lines, _) = read[i];
+        final screen = filled[i];
+        final name = _captureLabel(path);
         if (screen.problem != null) {
           _problems.add('$name：${screen.problem}');
         } else if (screen.header.store == null || screen.header.day == null) {
@@ -110,17 +123,23 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
             if (screen.header.store == null) '店舗',
             if (screen.header.day == null) '日付',
           ].join('と');
-          final read = lines
+          final text = lines
               .map((l) => l.text.trim())
               .where((t) => t.isNotEmpty)
               .take(8)
               .join('／');
           _problems.add(
             '$name：$missingを読めませんでした。この画面は撮り直してください'
-            '（メルヘンの幸町・長町南の「データ一覧」だけ読めます）。読めた文字：$read',
+            '（メルヘンの幸町・長町南の「データ一覧」だけ読めます）。読めた文字：$text',
           );
         } else {
           screens.add(screen);
+          _sources
+              .putIfAbsent(
+                '${screen.header.store}|${screen.header.day}',
+                () => [],
+              )
+              .add(path);
         }
       }
       if (mounted) setState(() => _days = mergeJoScreens(screens));
@@ -141,11 +160,23 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
         racks: plan.add,
         create: plan.create,
       );
+      // 保存できたら、その日の画面は消す（読めなかった画面は撮り直しの目安に残す）。
+      final key = '${day.store}|${day.day}';
+      final saved = result.updated + result.created > 0;
+      final used = saved
+          ? (_sources.remove(key) ?? const <String>[])
+          : const <String>[];
+      var deleted = 0;
+      if (used.isNotEmpty) {
+        deleted = await _channel.invokeMethod<int>('delete', used) ?? 0;
+      }
+      await _refresh();
       if (!mounted) return;
-      setState(() => _saved.add('${day.store}|${day.day}'));
+      setState(() => _saved.add(key));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
+            '${deleted == 0 ? '' : '撮った画面$deleted枚を消しました。'}'
             '${result.updated}台に足しました。'
             '${result.created == 0 ? '' : '${result.created}台を作りました（グラフ無し）。'}'
             '${result.missing.isEmpty ? '' : '取り込んでいない台（${result.missing.join('・')}番）は足していません。'}',
@@ -163,6 +194,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     setState(() {
       _days = const [];
       _problems.clear();
+      _sources.clear();
     });
     await _refresh();
   }
@@ -177,9 +209,10 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
           if (_error != null) Notice(text: _error!),
           const Notice(
             text:
-                'お試し（最長2週間）。ジャグラーオンラインの「データ一覧」で、画面の端に出る「取込」ボタンを押して画面を撮り、'
-                '右へスクロールした画面（差枚）でももう一度押します。下の台も、スクロールして同じように撮ります。'
-                'ここで読み取って確認し、メルヘンで取り込み済みの同じ日・同じ台に差枚などを足します（差枚はこちらを優先）。',
+                'お試し（最長2週間）。ジャグラーオンラインの「データ一覧」で「取込」ボタンを1回押すと、表のいちばん上から'
+                '下まで（BB〜総回転数のページ）と、差枚のページを自動でスクロールしながら撮ります（止めるときはホームに戻る）。'
+                'ここで読み取って確認し、メルヘンの同じ日・同じ台に差枚などを足します（差枚はこちらを優先）。'
+                'メルヘンで取り込めなかった台は、前の日の同じ台番号の機種名で作ります。保存できた日の画面は自動で消します。',
           ),
           Card(
             child: ListTile(
@@ -196,6 +229,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
                     : 'オンにするには、端末の設定の「ユーザー補助（アクセシビリティ）」で'
                           '「database ジャグラーオンライン取込」を選んでオンにします。'
                           'ボタンはジャグラーオンラインを表示している間だけ出ます（指でずらせる、長押しでこのアプリ）。'
+                          '自動でスクロールするため、更新後は一度このサービスをオフにしてからオンにし直す必要があることがあります。'
                           '出ないときは、一度ホーム画面に戻ってからジャグラーオンラインを開き直してください。',
               ),
               trailing: _enabled == true

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="juggler_capture_label">database ジャグラーオンライン取込</string>
-    <string name="juggler_capture_description">ジャグラーオンラインを表示している間だけ「取込」ボタンを出し、押したときにその画面を撮ってdatabaseアプリの中に置きます。読み取りと保存はdatabaseアプリの画面で行います。ほかのアプリの画面は撮りません。</string>
+    <string name="juggler_capture_description">ジャグラーオンラインを表示している間だけ「取込」ボタンを出し、押したときに「データ一覧」の表を自動でスクロールしながら撮ってdatabaseアプリの中に置きます。読み取りと保存はdatabaseアプリの画面で行います。ほかのアプリの画面は撮りません。</string>
 </resources>

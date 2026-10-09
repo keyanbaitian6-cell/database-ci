@@ -28,10 +28,23 @@ test('キーボードが出ても消さない（when より前に抜ける）', 
 });
 
 test('ジャグラーオンラインで出し、通知の引き出しでは消さない', () => {
-  assert.ok(branches.some(l => /^TARGET\s*->\s*showButton\(\)/.test(l)));
+  // 撮影中（auto）はボタンを出さない。
+  assert.ok(branches.some(l => /^TARGET\s*->\s*(if \(auto == null\) )?showButton\(\)/.test(l)));
   assert.ok(branches.some(l => /"com\.android\.systemui"\s*->\s*Unit/.test(l)));
   // else（ほかのアプリ）より前に、自分のパッケージの分かれ道があること。
   const ownIndex = branches.findIndex(l => /packageName\s*->/.test(l));
   const elseIndex = branches.findIndex(l => /^else\s*->/.test(l));
   assert.ok(ownIndex >= 0 && elseIndex > ownIndex);
+});
+
+test('自動で撮るためのスワイプを許可している（設定ファイル）', async () => {
+  const xml = await fs.readFile(new URL('../android/app/src/main/res/xml/juggler_capture_service.xml', import.meta.url), 'utf8');
+  assert.match(xml, /android:canPerformGestures="true"/);
+  assert.match(xml, /android:canTakeScreenshot="true"/);
+  assert.match(xml, /android:canRetrieveWindowContent="false"/, '画面の文字は読まない');
+});
+
+test('撮影中にほかのアプリへ移ったら止める・撮った画面に組を付ける', () => {
+  assert.match(source, /private fun hideButton\(\) \{\s*auto\?\.cancelled = true/);
+  assert.match(source, /jo-\$stamp-g\$\{run\.group\}\.png/);
 });

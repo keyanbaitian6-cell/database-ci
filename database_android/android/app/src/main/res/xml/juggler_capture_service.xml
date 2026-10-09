@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ジャグラーオンラインの画面に「取込」ボタンを出し、押したときだけ画面を撮る（JUGGLER_ONLINE.md）。 -->
+<!-- ジャグラーオンラインの画面に「取込」ボタンを出し、押したときだけ、表を自動でスクロールしながら画面を撮る（JUGGLER_ONLINE.md）。 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/juggler_capture_description"
     android:accessibilityEventTypes="typeWindowStateChanged"
@@ -7,4 +7,5 @@
     android:accessibilityFlags="flagDefault"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="false"
-    android:canTakeScreenshot="true" />
+    android:canTakeScreenshot="true"
+    android:canPerformGestures="true" />

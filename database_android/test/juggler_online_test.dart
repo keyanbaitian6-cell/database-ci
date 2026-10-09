@@ -63,7 +63,39 @@ void _drawNumber(
 }
 
 /// 合成の画面。[rows] は（台番号, 列名→値）。上の「ON」スイッチ（中までピンク）と、下で切れた枠も描く。
-imglib.Image _screen(List<(int, Map<String, int>)> rows, {bool right = false}) {
+/// ページの印「«」「»」（実物と同じく細い線の山形2つ）。
+void _chevrons(imglib.Image image, imglib.Color color, {required bool left}) {
+  for (final x in left ? [24, 46] : [1012, 1034]) {
+    final (tip, base) = left ? (x, x + 16) : (x + 16, x);
+    imglib.drawLine(
+      image,
+      x1: base,
+      y1: 1424,
+      x2: tip,
+      y2: 1445,
+      color: color,
+      thickness: 6,
+    );
+    imglib.drawLine(
+      image,
+      x1: tip,
+      y1: 1445,
+      x2: base,
+      y2: 1466,
+      color: color,
+      thickness: 6,
+    );
+  }
+}
+
+/// [arrows]：ページの印（'first'＝「»」だけ、'middle'＝両方、'last'＝「«」だけ）。
+/// [scrollTopAt]：右下の「^」ボタン（灰色の丸）を描く縦の中心。
+imglib.Image _screen(
+  List<(int, Map<String, int>)> rows, {
+  bool right = false,
+  String? arrows,
+  int? scrollTopAt,
+}) {
   final image = imglib.Image(width: joScreenWidth, height: 2340);
   imglib.fill(image, color: imglib.ColorRgb8(40, 40, 40));
   imglib.fillRect(
@@ -92,6 +124,22 @@ imglib.Image _screen(List<(int, Map<String, int>)> rows, {bool right = false}) {
       final (x0, x1) = columns[entry.key]!;
       _drawNumber(image, entry.value, x0, x1, (top + bottom) ~/ 2, _white);
     }
+  }
+  final gray = imglib.ColorRgb8(0x79, 0x79, 0x79);
+  if (arrows == 'middle' || arrows == 'last') {
+    _chevrons(image, left: true, gray);
+  }
+  if (arrows == 'middle' || arrows == 'first') {
+    _chevrons(image, left: false, gray);
+  }
+  if (scrollTopAt != null) {
+    imglib.fillCircle(
+      image,
+      x: 992,
+      y: scrollTopAt,
+      radius: 57,
+      color: imglib.ColorRgb8(0x7d, 0x7d, 0x7d),
+    );
   }
   // 下のメニューで切れた枠（上の線だけ）。
   final cut = 988 + rows.length * 100;
@@ -167,6 +215,57 @@ void main() {
       (781, {'net': -36}),
     ];
 
+    test('ページの印で左右を決め、真ん中のページ（確率など）は読まない', () {
+      final now = DateTime(2026, 10, 9);
+      expect(
+        parseJoScreen(_screen(left, arrows: 'first'), _lines, now).side,
+        'left',
+      );
+      expect(
+        parseJoScreen(
+          _screen(right, right: true, arrows: 'last'),
+          _lines,
+          now,
+        ).side,
+        'right',
+      );
+      // 真ん中のページは総回転数の列にも数字があるが、1ページ目と取り違えない。
+      final middle = parseJoScreen(
+        _screen(left, arrows: 'middle'),
+        _lines,
+        now,
+      );
+      expect(middle.problem, contains('真ん中のページ'));
+      expect(middle.racks, isEmpty);
+    });
+
+    test('「^」ボタンに隠れた総回転数は読まない（ほかのマスは読む）', () {
+      final screen = parseJoScreen(
+        _screen(left, arrows: 'first', scrollTopAt: 1117),
+        _lines,
+        DateTime(2026, 10, 9),
+      );
+      final r780 = screen.racks.firstWhere((r) => r.rack == 780);
+      expect(r780.values.containsKey('total'), isFalse);
+      expect(r780.unreadable, contains('total'));
+      expect(r780.values['start'], 213);
+      // ページの印や区切り線のような1行だけの灰色は「^」ボタンにしない（実機の画面で取り違えた）。
+      final thin = _screen(left, arrows: 'first');
+      imglib.drawLine(
+        thin,
+        x1: 930,
+        y1: 1117,
+        x2: 1070,
+        y2: 1117,
+        color: imglib.ColorRgb8(0x79, 0x79, 0x79),
+      );
+      expect(joScrollTopButton(thin), isNull);
+      expect(
+        screen.racks.firstWhere((r) => r.rack == 779).values['total'],
+        4957,
+      );
+    });
+
     test('左の画面：台番号とBB〜総回転数（1桁・0も）。ONスイッチと切れた枠は台にしない', () {
       final screen = parseJoScreen(
         _screen(left),
@@ -235,6 +334,45 @@ void main() {
       expect(save[781]!.containsKey('net'), isFalse);
       expect(save[781]!['total'], days.single.racks[781]!['total']);
       expect(save[779], days.single.racks[779]);
+    });
+
+    test('連続で撮った画面は、画面の外に出た店名・機種名を同じ組・同じ日の画面から補う', () {
+      JoScreen screen(String? store, String day, {String? machine}) => JoScreen(
+        header: JoHeader(
+          store: store,
+          day: day,
+          machine: machine,
+          rate: machine == null ? null : '20',
+        ),
+        side: 'left',
+        racks: [JoRack(790)],
+      );
+      final filled = fillJoGroupHeaders([
+        (
+          '20261010003000',
+          screen('saiwaichou', '2026-10-07', machine: 'ネオアイムジャグラーEX'),
+        ),
+        ('20261010003000', screen(null, '2026-10-07')),
+        ('20261010003000', screen(null, '2026-10-08')),
+        (null, screen(null, '2026-10-07')),
+        ('20261010004000', screen(null, '2026-10-07')),
+      ]);
+      expect(
+        (
+          filled[1].header.store,
+          filled[1].header.machine,
+          filled[1].header.rate,
+        ),
+        ('saiwaichou', 'ネオアイムジャグラーEX', '20'),
+      );
+      expect(filled[2].header.store, isNull, reason: '違う日には補わない');
+      expect(filled[3].header.store, isNull, reason: '組の無い（1枚ずつ撮った）画面には補わない');
+      expect(filled[4].header.store, isNull, reason: '別の組からは補わない');
+      expect(
+        joCaptureGroup('/x/jo-20261010-003001-123-g20261010003000.png'),
+        '20261010003000',
+      );
+      expect(joCaptureGroup('/x/jo-20261010-003001-123.png'), isNull);
     });
 
     test('⚠の項目しか無い台は保存に回さない', () {

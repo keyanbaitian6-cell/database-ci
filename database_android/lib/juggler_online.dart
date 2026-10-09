@@ -76,6 +76,60 @@ class JoScreen {
 }
 
 bool _white(imglib.Pixel p) => (p.r + p.g + p.b) / 3 > 150;
+
+/// 横のページの印「«」「»」と、右下の「^」（いちばん上へ）ボタンの灰色（0x79〜0x7e）。
+bool _uiGray(imglib.Pixel p) =>
+    p.r >= 0x68 &&
+    p.r <= 0x90 &&
+    (p.r - p.g).abs() < 8 &&
+    (p.r - p.b).abs() < 8;
+
+/// 横のページの印（画面の左右の端、表の上下の位置に関係なく同じ高さ）。表は横に3ページ：
+/// 1ページ目（BB〜総回転数）は「»」だけ、2ページ目（確率など）は両方、3ページ目（差枚）は「«」だけ。
+({bool left, bool right}) joPageArrows(imglib.Image image) {
+  final y0 = (image.height * 0.58).round(), y1 = (image.height * 0.66).round();
+  int count(int x0, int x1) {
+    var n = 0;
+    for (var y = y0; y < y1 && y < image.height; y += 2) {
+      for (var x = x0; x < x1 && x < image.width; x += 2) {
+        if (_uiGray(image.getPixel(x, y))) n++;
+      }
+    }
+    return n;
+  }
+
+  return (
+    left: count(0, 86) >= 25,
+    right: count(image.width - 80, image.width) >= 25,
+  );
+}
+
+/// 右下の「^」（いちばん上へ）ボタンが重なっている縦の範囲。表をスクロールすると出て、総回転数の
+/// 列の数字を隠す（2026-10-10 に実機で確認）。無ければ null。
+(int, int)? joScrollTopButton(imglib.Image image) {
+  // 丸いボタンは横に広く（1行に40点以上）、縦にも続く（高さ約115px）。ページの印「»」や
+  // 区切り線の1行だけのものは数えない（2026-10-10、実機の画面で印の1行をボタンと取り違えた）。
+  (int, int)? best;
+  int? start;
+  for (var y = 0; y <= image.height; y++) {
+    var n = 0;
+    if (y < image.height) {
+      for (var x = 900; x < image.width; x++) {
+        if (_uiGray(image.getPixel(x, y))) n++;
+      }
+    }
+    if (n >= 40) {
+      start ??= y;
+    } else if (start != null) {
+      if (y - start >= 40 && (best == null || y - start > best.$2 - best.$1)) {
+        best = (start, y - 1);
+      }
+      start = null;
+    }
+  }
+  return best;
+}
+
 bool _pink(imglib.Pixel p) => p.r > 180 && p.g < 120;
 
 /// 2値の形（[width]×[height]、行ごと）を、[joGlyphWidth]×[joGlyphHeight] の面積の平均に縮める。
@@ -320,23 +374,40 @@ JoScreen parseJoScreen(
       problem: '台番号の表が見つかりません。「データ一覧」の画面で取り込んでください。',
     );
   }
-  // 総回転数の列に数字があれば左の画面、無ければ右（差枚）の画面。
-  final (tx0, tx1) = joLeftColumns['total']!;
-  var leftRows = 0;
-  for (final (top, bottom) in boxes) {
-    final center = (top + bottom) ~/ 2;
-    if (cellGlyphs(
-      image,
-      tx0,
-      tx1,
-      center - 36,
-      center + 36,
-      _white,
-    ).isNotEmpty) {
-      leftRows++;
-    }
+  // 何ページ目かは「«」「»」の印で決める。2ページ目（確率など）は総回転数の列にも数字があり、
+  // 1ページ目と取り違えると総回転数・スタートを誤って読むので読まない（2026-10-10）。
+  final arrows = joPageArrows(image);
+  if (arrows.left && arrows.right) {
+    return JoScreen(
+      header: header,
+      side: null,
+      racks: const [],
+      problem: '真ん中のページ（確率など）なので読みません。左端（BB〜総回転数）と右端（差枚）のページを撮ってください。',
+    );
   }
-  final side = leftRows > 0 ? 'left' : 'right';
+  final String side;
+  if (arrows.right != arrows.left) {
+    side = arrows.right ? 'left' : 'right';
+  } else {
+    // 印が無いとき：総回転数の列に数字があれば左の画面、無ければ右（差枚）の画面。
+    final (tx0, tx1) = joLeftColumns['total']!;
+    var leftRows = 0;
+    for (final (top, bottom) in boxes) {
+      final center = (top + bottom) ~/ 2;
+      if (cellGlyphs(
+        image,
+        tx0,
+        tx1,
+        center - 36,
+        center + 36,
+        _white,
+      ).isNotEmpty) {
+        leftRows++;
+      }
+    }
+    side = leftRows > 0 ? 'left' : 'right';
+  }
+  final scrollTop = joScrollTopButton(image);
   final columns = side == 'left' ? joLeftColumns : joRightColumns;
   final racks = <JoRack>[];
   final (rx0, rx1) = joRackColumn;
@@ -355,6 +426,14 @@ JoScreen parseJoScreen(
     final center = (top + bottom) ~/ 2;
     for (final entry in columns.entries) {
       final (x0, x1) = entry.value;
+      // 「^」ボタンに隠れたマスは読まない（同じ台は、ほかの画面で隠れずに写る）。
+      if (scrollTop != null &&
+          x1 > 900 &&
+          center + 36 >= scrollTop.$1 &&
+          center - 36 <= scrollTop.$2) {
+        rack.unreadable.add(entry.key);
+        continue;
+      }
       final value = readCell(
         image,
         x0,
@@ -373,6 +452,51 @@ JoScreen parseJoScreen(
     racks.add(rack);
   }
   return JoScreen(header: header, side: side, racks: racks);
+}
+
+/// 「取込」ボタンの連続撮影の組（ファイル名の `-g<組>`）。1回押して撮った画面は同じ組。
+String? joCaptureGroup(String path) =>
+    RegExp(r'-g(\d+)\.png$').firstMatch(path)?.group(1);
+
+/// 連続で撮った画面の見出しを補う。表をスクロールすると店名・機種名が画面の外に出る（日付は残る）ため、
+/// 同じ組・同じ日の画面で読めた店名・機種名・貸玉を使う。組の中で店名が割れていたら補わない。
+List<JoScreen> fillJoGroupHeaders(List<(String?, JoScreen)> screens) {
+  final stores = <String, Set<String>>{};
+  final machines = <String, (String, String?)>{};
+  for (final (group, screen) in screens) {
+    final h = screen.header;
+    if (group == null || h.day == null) continue;
+    final key = '$group|${h.day}';
+    if (h.store != null) stores.putIfAbsent(key, () => {}).add(h.store!);
+    if (h.machine != null) {
+      machines.putIfAbsent(key, () => (h.machine!, h.rate));
+    }
+  }
+  return [
+    for (final (group, screen) in screens)
+      if (group == null || screen.header.day == null)
+        screen
+      else
+        () {
+          final h = screen.header, key = '$group|${h.day}';
+          final store =
+              h.store ??
+              (stores[key]?.length == 1 ? stores[key]!.single : null);
+          final machine = h.machine ?? machines[key]?.$1;
+          final rate = h.machine == null ? machines[key]?.$2 : h.rate;
+          return JoScreen(
+            header: JoHeader(
+              store: store,
+              day: h.day,
+              machine: machine,
+              rate: rate,
+            ),
+            side: screen.side,
+            racks: screen.racks,
+            problem: screen.problem,
+          );
+        }(),
+  ];
 }
 
 /// 複数の画面を、店舗・営業日・台番号でまとめる。同じ台の同じ項目が画面ごとに違えば [conflicts] に入れる。
