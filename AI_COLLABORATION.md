@@ -9,7 +9,9 @@
 - 確かめ：お手本づくりに使っていない 10/06 の右の画面（差枚11台、マイナス含む）をアプリと同じ読み取り（`tool/juggler_read.dart`）で全部正しく読めた。試験：Flutter 7件（`test/juggler_online_test.dart`、合成の画面）、PC 3件、閲覧専用ページ1件。`check_before_build.sh` **ALL PASSED**（30項目：PC 224件・P’s CUBE関連93件・Flutter 529件・analyzeエラー警告0/info18）。端末の画面（実データ）はGitに入れていない。
 - **APK 0.5.36**：通常版 `0.5.36+2026100901`（ソース `38bfe12`、SHA-256 `cb4f033c…83a2`、93,924,905 bytes、取込ボタン enabled=true）、P’s CUBEクローン `0.5.36+2026100902`（ソース `eec1e9a`、`DATABASE_ANDROID_CLONE=pscube`、SHA-256 `53e0457b…7854`、93,924,929 bytes、取込ボタン enabled=false）。各ビルド前に `check_before_build.sh` **ALL PASSED**。aapt2で版・アプリID、apksignerで証明書 `4332fcb9…a047`（従来と同じ）。置き場所とインストールコマンドはGit外 `database_android/build/releases/0.5.36/`。カレンダーの各日の差枚・P’s CUBEのカレンダー（10/08〜09の変更）もこの版でAndroidに入る。
 - 実機（2026-10-09）：利用者が通常版0.5.36を入れ（`dumpsys` で 0.5.36/2026100901）、取込ボタンのアクセシビリティをオン（`enabled_accessibility_services` に JugglerCaptureService）。ジャグラーオンラインの「ホール情報」の上に「取込 0枚」ボタンが出ることをスクリーンショットで確認。
-- 未確認：撮影・読み取り・保存（利用者が「データ一覧」で試す）。
+- **実機で見つかった不具合**（利用者「エラーみえますか？よみとれなかったらしい」）：撮影は2枚成功したが、「読み取る」で ML Kit が `NullPointerException ... getClass()`。ログに `Could not instantiate com.google.mlkit.vision.common.internal.VisionCommonRegistrar ... NoSuchMethodException <init>`：R8 が ML Kit の部品の引数なしコンストラクタを消していた（配布版では以前からのスクリーンショット取り込みの文字読み取りも同じ理由で失敗していたはず）。`proguard-rules.pro` に ML Kit を残す決まりを追加し、再発を捕まえる `tool/test_android_release_rules.mjs` を追加。mapping.txt で `VisionCommonRegistrar` の `void <init>()` が残ることを確認。あわせて、取込ボタンがdatabaseアプリの上にも出ていたのを消すように（systemui以外のアプリが前に来たら消す）、1枚読めなくても他の画面は読み続けるように。
+- **APK 0.5.36+2026100903**（通常版、ソース `b4781b9`、SHA-256 `2f5c8036…859b`、94,023,209 bytes、証明書は従来と同じ）。ビルド前に `check_before_build.sh` **ALL PASSED**（31項目）。インストールは利用者。
+- 未確認：直した版での読み取り・保存。P’s CUBEクローンの作り直し（同じ ML Kit の不具合があるため）。
 
 ## ジャグラーオンライン（アプリ）の画面から取り込めるかの検討（Claude、2026-10-09、検討のみ）
 
