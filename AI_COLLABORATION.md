@@ -7,7 +7,8 @@
 - **Android**：アクセシビリティのサービス `JugglerCaptureService.kt`（ジャグラーオンラインが前にある間だけ丸い「取込」ボタン。押すと takeScreenshot で撮ってアプリの中へ。通常版だけ）、`MainActivity` に `database/juggler` チャンネル、`lib/juggler_online.dart`（数字のお手本との照合・ピンクの枠で行・左右の見分け・見出しは ML Kit）、`lib/juggler_digit_templates.dart`（`tool/juggler_templates.dart` で端末の画面から作った形だけ）、`lib/juggler_capture_page.dart`（読み取り→確認→取り込み済みの台に足す）、`AppController.attachJugglerOnline`（`jo_net` などを extra に足すだけ。台は作らない、数値は変えない、取り消し可）。`SlotRecord.netValue` は `jo_net` を推定差枚より優先。
 - **PC**：`core.rack_net`（カレンダー・結果表で `jo_net` を優先）、バックアップの読み込みに `jo_only`（数値が同じでも `jo_net` が新しければ取り込む）、`VIEWER_KEYS` に `jo_net`。閲覧専用ページ（`share_viewer/data.mjs`）も優先。
 - 確かめ：お手本づくりに使っていない 10/06 の右の画面（差枚11台、マイナス含む）をアプリと同じ読み取り（`tool/juggler_read.dart`）で全部正しく読めた。試験：Flutter 7件（`test/juggler_online_test.dart`、合成の画面）、PC 3件、閲覧専用ページ1件。`check_before_build.sh` **ALL PASSED**（30項目：PC 224件・P’s CUBE関連93件・Flutter 529件・analyzeエラー警告0/info18）。端末の画面（実データ）はGitに入れていない。
-- 未確認：実機でのボタン・撮影・読み取り・保存（APKを入れてから利用者が試す）。
+- **APK 0.5.36**：通常版 `0.5.36+2026100901`（ソース `38bfe12`、SHA-256 `cb4f033c…83a2`、93,924,905 bytes、取込ボタン enabled=true）、P’s CUBEクローン `0.5.36+2026100902`（ソース `eec1e9a`、`DATABASE_ANDROID_CLONE=pscube`、SHA-256 `53e0457b…7854`、93,924,929 bytes、取込ボタン enabled=false）。各ビルド前に `check_before_build.sh` **ALL PASSED**。aapt2で版・アプリID、apksignerで証明書 `4332fcb9…a047`（従来と同じ）。置き場所とインストールコマンドはGit外 `database_android/build/releases/0.5.36/`。カレンダーの各日の差枚・P’s CUBEのカレンダー（10/08〜09の変更）もこの版でAndroidに入る。
+- 未確認：実機でのボタン・撮影・読み取り・保存（APKを入れてから利用者が試す。インストールは利用者が行う）。
 
 ## ジャグラーオンライン（アプリ）の画面から取り込めるかの検討（Claude、2026-10-09、検討のみ）
 
