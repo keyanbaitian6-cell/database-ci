@@ -402,3 +402,16 @@ List<JoDay> mergeJoScreens(Iterable<JoScreen> screens) {
   return days.values.toList()
     ..sort((a, b) => '${a.store}${a.day}'.compareTo('${b.store}${b.day}'));
 }
+
+/// 保存する値：画面ごとに値が違った項目（⚠）は、どちらが正しいか分からないので足さない。
+/// 足す項目が1つも残らない台は入れない。
+Map<int, Map<String, int>> joSaveValues(JoDay day) => {
+  for (final entry in day.racks.entries)
+    if ({
+          for (final field in entry.value.entries)
+            if (!(day.conflicts[entry.key]?.contains(field.key) ?? false))
+              field.key: field.value,
+        }
+        case final values when values.isNotEmpty)
+      entry.key: values,
+};

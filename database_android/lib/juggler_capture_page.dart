@@ -124,7 +124,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
       final result = await widget.controller.attachJugglerOnline(
         store: day.store,
         day: day.day,
-        racks: day.racks,
+        racks: joSaveValues(day),
       );
       if (!mounted) return;
       setState(() => _saved.add('${day.store}|${day.day}'));
@@ -179,7 +179,8 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
                     ? 'この端末のAndroidでは画面を撮れません（Android 11以降）。'
                     : 'オンにするには、端末の設定の「ユーザー補助（アクセシビリティ）」で'
                           '「database ジャグラーオンライン取込」を選んでオンにします。'
-                          'ボタンはジャグラーオンラインを表示している間だけ出ます（指でずらせる、長押しでこのアプリ）。',
+                          'ボタンはジャグラーオンラインを表示している間だけ出ます（指でずらせる、長押しでこのアプリ）。'
+                          '出ないときは、一度ホーム画面に戻ってからジャグラーオンラインを開き直してください。',
               ),
               trailing: _enabled == true
                   ? const Icon(Icons.check_circle, color: AppColors.appleBlue)
@@ -236,7 +237,9 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     }
 
     final racks = day.racks.keys.toList()..sort();
-    final inDb = racks.where((r) => recordOf(r) != null).length;
+    final inDb = joSaveValues(day).keys
+        .where((r) => recordOf(r) != null)
+        .length;
     final saved = _saved.contains('${day.store}|${day.day}');
     String cell(int rack, String field) {
       final value = day.racks[rack]![field];
@@ -262,7 +265,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
               Text('ジャグラーオンライン：${displayMachineName(day.machine!)}'),
             Text(
               '読めた台 ${racks.length}台（メルヘンで取り込み済み $inDb台）。'
-              '?＝読めなかった、⚠＝画面ごとに値が違った、—＝その画面を撮っていない',
+              '?＝読めなかった、⚠＝画面ごとに値が違った（足さない。撮り直すと直ります）、—＝その画面を撮っていない',
               style: const TextStyle(fontSize: 12, color: AppColors.ash),
             ),
             SingleChildScrollView(

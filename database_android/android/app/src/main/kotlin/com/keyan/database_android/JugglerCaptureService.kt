@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
@@ -48,9 +49,18 @@ class JugglerCaptureService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
+        val cls = event.className?.toString() ?: ""
+        // 出し消しの原因を追えるよう、前に来たアプリと画面の種類の名前だけを残す（画面の文字は読まない）。
+        Log.d("JugglerCapture", "window $pkg $cls")
+        // キーボードは、ジャグラーオンラインの上に出ても前のアプリは変わらないので消さない。
+        if (cls.startsWith("android.inputmethodservice.")) return
         when (pkg) {
             TARGET -> showButton()
-            // 通知の引き出しなどでは消さない。databaseアプリ自身が前に来たら消す（読み取りの画面に重ならないように）。
+            // databaseの画面（MainActivity）が前に来たときだけ消す（読み取りの画面に重ならないように）。
+            // このボタン自身や知らせ（Toast）も同じパッケージ名で届くので、パッケージ名だけで消すと、
+            // 出した直後に自分で消してしまう（2026-10-10、0.5.36+2026100903 でボタンが出なくなった）。
+            packageName -> if (cls == MainActivity::class.java.name) hideButton()
+            // 通知の引き出しなどでは消さない。
             "com.android.systemui" -> Unit
             else -> hideButton()
         }
