@@ -375,6 +375,56 @@ void main() {
       expect(joCaptureGroup('/x/jo-20261010-003001-123.png'), isNull);
     });
 
+    test('全機種表示：台の機種は、枠より上のいちばん近い見出し（「20スロ」と機種名が別の行でも）', () {
+      final lines = [
+        ..._lines,
+        const JoTextLine('20スロ ネオアイムジャグラーEX', top: 900),
+        const JoTextLine('20スロ', top: 1060),
+        const JoTextLine('マイジャグラーV', top: 1064),
+      ];
+      expect(joSectionHeaders(lines).map((h) => (h.$2, h.$3)), [
+        ('ネオアイムジャグラーEX', '20'),
+        ('ネオアイムジャグラーEX', '20'),
+        ('マイジャグラーV', '20'),
+      ]);
+      final screen = parseJoScreen(
+        _screen(left, arrows: 'first'),
+        lines,
+        DateTime(2026, 10, 9),
+      );
+      expect(
+        {for (final r in screen.racks) r.rack: r.machine},
+        {779: 'ネオアイムジャグラーEX', 780: 'マイジャグラーV', 781: 'マイジャグラーV'},
+      );
+    });
+
+    test('全機種表示：見出しが画面の外の台は前の画面から、差枚のページの台は1ページ目から機種を補う', () {
+      JoScreen screen(String side, List<JoRack> racks) => JoScreen(
+        header: const JoHeader(store: 'saiwaichou', day: '2026-10-09'),
+        side: side,
+        racks: racks,
+      );
+      final first = screen('left', [
+        JoRack(412, machine: 'ミリオンゴッド', rate: '20'),
+        JoRack(421, machine: '沖ドキ', rate: '20'),
+      ]);
+      final second = screen('left', [JoRack(428), JoRack(429)]);
+      final other = screen('left', [JoRack(430)]);
+      final net = screen('right', [JoRack(412), JoRack(429), JoRack(999)]);
+      fillJoRackMachines([
+        ('g1', first),
+        ('g1', second),
+        ('g2', other),
+        ('g1', net),
+      ]);
+      expect(second.racks.map((r) => r.machine), ['沖ドキ', '沖ドキ']);
+      expect(other.racks.single.machine, isNull, reason: '別の組からは補わない');
+      expect(net.racks.map((r) => r.machine), ['ミリオンゴッド', '沖ドキ', null]);
+      final day = mergeJoScreens([first, second, net]).single;
+      expect(day.rackMachines[429], '沖ドキ');
+      expect(day.rackRates[412], '20');
+    });
+
     test('⚠の項目しか無い台は保存に回さない', () {
       final day = JoDay('saiwaichou', '2026-10-06')
         ..racks[790] = {'net': 526}
@@ -486,6 +536,29 @@ void main() {
       expect(plan.skipped[782], contains('機種が違う'));
       expect(plan.skipped[783], contains('読めていない'));
       expect(plan.skipped[784], contains('読めていない'), reason: '⚠の総回転数では作らない');
+    });
+
+    test('全機種表示：台ごとの機種で比べ、20スロ以外の台は足さない・作らない', () {
+      final day = JoDay('saiwaichou', '2026-10-07')
+        ..machine = 'ネオアイムジャグラーEX'
+        ..racks.addAll({
+          779: {'bb': 1, 'rb': 1, 'total': 100},
+          780: {'bb': 1, 'rb': 1, 'total': 100},
+          5001: {'bb': 1, 'rb': 1, 'total': 100},
+        })
+        ..rackMachines.addAll({
+          779: 'ネオアイムジャグラーEX',
+          780: 'マイジャグラーV',
+          5001: 'ネオアイムジャグラーEX',
+        })
+        ..rackRates.addAll({779: '20', 780: '20', 5001: '5'});
+      final plan = planJoSave(day, [
+        meruhen('2026-10-06', 779),
+        meruhen('2026-10-06', 780, machine: 'SマイジャグラーV KK'),
+        meruhen('2026-10-06', 5001),
+      ]);
+      expect(plan.create.keys.toSet(), {779, 780}, reason: '780は台の見出しの機種で比べる');
+      expect(plan.skipped[5001], contains('5スロ'));
     });
 
     test('機種名は空白・記号・全角英数字の違いを見ずに比べる', () {

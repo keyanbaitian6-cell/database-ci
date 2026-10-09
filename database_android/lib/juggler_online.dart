@@ -51,8 +51,11 @@ class JoHeader {
 
 /// 読み取った1台（その画面に出ていた項目だけ。読めなかったマスは null で、[unreadable] に入る）。
 class JoRack {
-  JoRack(this.rack);
+  JoRack(this.rack, {this.machine, this.rate});
   final int rack;
+
+  /// その台の機種名と貸玉（すぐ上の「20スロ 機種名」の見出しから。全機種表示では台ごとに違う）。
+  String? machine, rate;
   final values = <String, int>{};
   final unreadable = <String>{};
 }
@@ -347,6 +350,31 @@ JoHeader parseJoHeader(List<JoTextLine> lines, DateTime now) {
   return JoHeader(store: store, day: day, machine: machine, rate: rate);
 }
 
+/// 画面の中の機種の見出し（「20スロ ネオアイムジャグラーEX」）の位置。上から順。
+/// 文字読み取りが「20スロ」と機種名を別の行に分けたときは、同じ高さの行をつなぐ。
+List<(int, String, String)> joSectionHeaders(List<JoTextLine> lines) {
+  final result = <(int, String, String)>[];
+  for (final line in lines) {
+    final text = line.text.replaceAll(' ', '').replaceAll('　', '');
+    final m = RegExp(r'^(\d+(?:\.\d+)?)スロ(.*)$').firstMatch(text);
+    if (m == null) continue;
+    var machine = m.group(2)!;
+    if (machine.isEmpty) {
+      final beside = lines.where(
+        (l) =>
+            !identical(l, line) &&
+            (l.top - line.top).abs() <= 30 &&
+            !RegExp(r'^\d+(?:\.\d+)?スロ').hasMatch(l.text.trim()),
+      );
+      if (beside.isEmpty) continue;
+      machine = beside.first.text.replaceAll(' ', '').replaceAll('　', '');
+    }
+    if (machine.isEmpty) continue;
+    result.add((line.top, machine, m.group(1)!));
+  }
+  return result..sort((a, b) => a.$1.compareTo(b.$1));
+}
+
 /// 1枚の画面を読む。[lines] はその画面の ML Kit の結果。
 JoScreen parseJoScreen(
   imglib.Image image,
@@ -410,6 +438,7 @@ JoScreen parseJoScreen(
   final scrollTop = joScrollTopButton(image);
   final columns = side == 'left' ? joLeftColumns : joRightColumns;
   final racks = <JoRack>[];
+  final sections = joSectionHeaders(lines);
   final (rx0, rx1) = joRackColumn;
   for (final (top, bottom) in boxes) {
     final rackValue = readCell(
@@ -422,7 +451,12 @@ JoScreen parseJoScreen(
       digits,
     );
     if (rackValue is! int || rackValue <= 0) continue;
-    final rack = JoRack(rackValue);
+    // 機種は、枠より上にある見出しのうちいちばん近いもの（無ければ前の画面から補う、fillJoRackMachines）。
+    (int, String, String)? section;
+    for (final h in sections) {
+      if (h.$1 < top) section = h;
+    }
+    final rack = JoRack(rackValue, machine: section?.$2, rate: section?.$3);
     final center = (top + bottom) ~/ 2;
     for (final entry in columns.entries) {
       final (x0, x1) = entry.value;
@@ -499,12 +533,51 @@ List<JoScreen> fillJoGroupHeaders(List<(String?, JoScreen)> screens) {
   ];
 }
 
+/// 見出しが画面の外に出ている台の機種名・貸玉を補う（[screens] は撮った順）。1ページ目（左）の画面は
+/// 上から下へ撮るので、前の画面の最後の見出しを引き継ぐ。差枚のページ（右）の台は、同じ組・同じ日の
+/// 1ページ目で決まった機種を台番号で引く。組の無い（1枚ずつ撮った）画面は、その画面の見出しだけ。
+void fillJoRackMachines(List<(String?, JoScreen)> screens) {
+  final byRack = <String, (String, String?)>{};
+  final carry = <String, (String, String?)>{};
+  for (final (group, screen) in screens) {
+    final day = screen.header.day;
+    if (group == null || day == null || screen.side != 'left') continue;
+    final key = '$group|$day';
+    for (final rack in screen.racks) {
+      final last = carry[key];
+      if (rack.machine == null && last != null) {
+        rack.machine = last.$1;
+        rack.rate = last.$2;
+      }
+      if (rack.machine != null) {
+        carry[key] = (rack.machine!, rack.rate);
+        byRack['$key|${rack.rack}'] = (rack.machine!, rack.rate);
+      }
+    }
+  }
+  for (final (group, screen) in screens) {
+    final day = screen.header.day;
+    if (group == null || day == null || screen.side != 'right') continue;
+    for (final rack in screen.racks) {
+      final known = byRack['$group|$day|${rack.rack}'];
+      if (known != null) {
+        rack.machine = known.$1;
+        rack.rate = known.$2;
+      }
+    }
+  }
+}
+
 /// 複数の画面を、店舗・営業日・台番号でまとめる。同じ台の同じ項目が画面ごとに違えば [conflicts] に入れる。
 class JoDay {
   JoDay(this.store, this.day);
   final String store, day;
   String? machine;
   final racks = <int, Map<String, int>>{};
+
+  /// 台ごとの機種名・貸玉（全機種表示）。
+  final rackMachines = <int, String>{};
+  final rackRates = <int, String>{};
   final conflicts = <int, Set<String>>{};
   final unreadable = <int, Set<String>>{};
 }
@@ -518,6 +591,12 @@ List<JoDay> mergeJoScreens(Iterable<JoScreen> screens) {
     merged.machine ??= screen.header.machine;
     for (final rack in screen.racks) {
       final values = merged.racks.putIfAbsent(rack.rack, () => {});
+      if (rack.machine != null) {
+        merged.rackMachines.putIfAbsent(rack.rack, () => rack.machine!);
+      }
+      if (rack.rate != null) {
+        merged.rackRates.putIfAbsent(rack.rack, () => rack.rate!);
+      }
       for (final entry in rack.values.entries) {
         final old = values[entry.key];
         if (old != null && old != entry.value) {
@@ -571,27 +650,36 @@ JoSavePlan planJoSave(JoDay day, Iterable<SlotRecord> records) {
   final add = <int, Map<String, int>>{};
   final create = <int, ({SlotRecord reference, Map<String, int> values})>{};
   final skipped = <int, String>{};
-  final mine = [
-    for (final r in records)
-      if (!r.isPscube && r.store == day.store) r,
-  ];
+  // 台番号ごとに、その日にあるか・いちばん近い前の日の台（全機種で数百台あるので先にまとめる）。
+  final today = <int>{};
+  final previous = <int, SlotRecord>{};
+  for (final r in records) {
+    if (r.isPscube || r.store != day.store) continue;
+    if (r.day == day.day) {
+      today.add(r.rack);
+    } else if (r.day.compareTo(day.day) < 0 &&
+        (previous[r.rack] == null ||
+            r.day.compareTo(previous[r.rack]!.day) > 0)) {
+      previous[r.rack] = r;
+    }
+  }
   for (final MapEntry(key: rack, value: values) in joSaveValues(day).entries) {
-    if (mine.any((r) => r.day == day.day && r.rack == rack)) {
+    // メルヘンの記録は20円スロットだけ。ほかの貸玉の台は足さない・作らない。
+    final rate = day.rackRates[rack];
+    if (rate != null && rate != '20') {
+      skipped[rack] = '$rateスロなので足さない';
+      continue;
+    }
+    if (today.contains(rack)) {
       add[rack] = values;
       continue;
     }
-    SlotRecord? reference;
-    for (final r in mine) {
-      if (r.rack == rack &&
-          r.day.compareTo(day.day) < 0 &&
-          (reference == null || r.day.compareTo(reference.day) > 0)) {
-        reference = r;
-      }
-    }
+    final reference = previous[rack];
+    final machine = day.rackMachines[rack] ?? day.machine;
     if (reference == null) {
       skipped[rack] = '前の日に同じ台番号の台が無いので作らない';
-    } else if (day.machine != null &&
-        !joMachineMatches(day.machine!, reference.machine)) {
+    } else if (machine != null &&
+        !joMachineMatches(machine, reference.machine)) {
       skipped[rack] = '機種が違うので作らない（${reference.day}：${reference.machine}）';
     } else if (values['bb'] == null ||
         values['rb'] == null ||

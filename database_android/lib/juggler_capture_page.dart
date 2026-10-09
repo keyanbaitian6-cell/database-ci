@@ -31,6 +31,9 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
   int _sdk = 0;
   List<String> _captures = const [];
   bool _reading = false;
+
+  /// 読み取りの進み具合（全機種表示では数百枚になる）。
+  int _done = 0;
   String? _error;
   List<JoDay> _days = const [];
   final _problems = <String>[];
@@ -88,6 +91,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     try {
       final now = DateTime.now();
       for (final path in _captures) {
+        if (mounted) setState(() => _done = read.length + _problems.length);
         // 1枚読めなくても、ほかの画面は読み続ける。
         final List<JoTextLine> lines;
         try {
@@ -108,6 +112,11 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
       // 連続で撮った画面は、スクロールで画面の外に出た店名・機種名を同じ組の画面から補う。
       final filled = fillJoGroupHeaders([
         for (final (path, _, screen) in read) (joCaptureGroup(path), screen),
+      ]);
+      // 全機種表示：見出しが画面の外に出た台の機種名を、前の画面・1ページ目から補う。
+      fillJoRackMachines([
+        for (var i = 0; i < read.length; i++)
+          (joCaptureGroup(read[i].$1), filled[i]),
       ]);
       final screens = <JoScreen>[];
       _sources.clear();
@@ -253,7 +262,9 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
                 child: FilledButton.icon(
                   onPressed: _captures.isEmpty || _reading ? null : _read,
                   icon: const Icon(Icons.document_scanner_outlined),
-                  label: Text(_reading ? '読み取り中…' : '読み取る'),
+                  label: Text(
+                    _reading ? '読み取り中 $_done/${_captures.length}枚' : '読み取る',
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -287,6 +298,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     }
 
     final racks = day.racks.keys.toList()..sort();
+    final machines = day.rackMachines.values.toSet();
     final plan = planJoSave(day, records);
     final inDb = plan.add.length, toCreate = plan.create.length;
     final saved = _saved.contains('${day.store}|${day.day}');
@@ -310,7 +322,9 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
               '${storeDisplayName(day.store)}　${dayWithWeekday(day.day)}',
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
             ),
-            if (day.machine != null)
+            if (machines.length > 1)
+              Text('ジャグラーオンライン：全機種表示（${machines.length}機種）')
+            else if (day.machine != null)
               Text('ジャグラーオンライン：${displayMachineName(day.machine!)}'),
             Text(
               '読めた台 ${racks.length}台（メルヘンで取り込み済み $inDb台）。'
@@ -326,20 +340,33 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
                 headingRowHeight: 36,
                 dataRowMinHeight: 32,
                 dataRowMaxHeight: 40,
-                columns: const [
-                  DataColumn(label: Text('台')),
-                  DataColumn(label: Text('BB'), numeric: true),
-                  DataColumn(label: Text('RB'), numeric: true),
-                  DataColumn(label: Text('スタート'), numeric: true),
-                  DataColumn(label: Text('総回転'), numeric: true),
-                  DataColumn(label: Text('差枚'), numeric: true),
-                  DataColumn(label: Text('メルヘン')),
+                columns: [
+                  const DataColumn(label: Text('台')),
+                  if (machines.length > 1) const DataColumn(label: Text('機種')),
+                  const DataColumn(label: Text('BB'), numeric: true),
+                  const DataColumn(label: Text('RB'), numeric: true),
+                  const DataColumn(label: Text('スタート'), numeric: true),
+                  const DataColumn(label: Text('総回転'), numeric: true),
+                  const DataColumn(label: Text('差枚'), numeric: true),
+                  const DataColumn(label: Text('メルヘン')),
                 ],
                 rows: [
                   for (final rack in racks)
                     DataRow(
                       cells: [
                         DataCell(Text('$rack')),
+                        if (machines.length > 1)
+                          DataCell(
+                            SizedBox(
+                              width: 120,
+                              child: Text(
+                                displayMachineName(
+                                  day.rackMachines[rack] ?? '—',
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
                         DataCell(Text(cell(rack, 'bb'))),
                         DataCell(Text(cell(rack, 'rb'))),
                         DataCell(Text(cell(rack, 'start'))),

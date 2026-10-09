@@ -46,8 +46,9 @@ class JugglerCaptureService : AccessibilityService() {
         // 位置は画面の割合（お手本を作った端末は横1080×縦2340）。2026-10-10 に実機で確かめた：表は見出しごと
         // スクロールし、ゆっくり550px動かすと勢いで約790px進む（見えている表は約1340px）。横は3ページで、
         // 1ページ目（BB〜総回転数）は印「»」だけ、2ページ目（確率など）は両方、3ページ目（差枚）は「«」だけ。
-        const val MAX_SHOTS_PER_PAGE = 40
-        const val MAX_STEPS = 600
+        // 「全機種表示」では全機種が1つの表に並ぶ（数百台）ので、1ページあたりの枚数の上限は多めにする。
+        const val MAX_SHOTS_PER_PAGE = 150
+        const val MAX_STEPS = 3000
     }
 
     private val handler = Handler(Looper.getMainLooper())
