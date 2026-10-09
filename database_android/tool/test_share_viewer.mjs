@@ -1,5 +1,6 @@
 // 閲覧専用の共有ページ（share_viewer/、お試し 2026-10-09）の数え方。推定差枚は database/tests/test_meruhen_net.py、
-// TOP10・強かった機種5選は test/event_calendar_test.dart・tests/test_event_calendar.py と同じ例で、同じ答えになること。
+// 並べ方は test/event_calendar_test.dart・tests/test_event_calendar.py と同じ例で、同じ答えになること。
+// このページだけ、差枚は50位まで・強かった機種は10位まで出す（利用者指定 2026-10-10。自分用のカレンダーはTOP10・5選のまま）。
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {meruhenNetDetail} from '../../share_viewer/net.mjs';
@@ -50,9 +51,19 @@ test('TOP10は差枚の多い順（同じ差枚は回転数の多い方）、5�
   const rows = racks.map(([machine, rack, n, games]) => ({machine, rack, net: n, games}));
   const {top, machines} = daySummary(rows);
   assert.deepEqual(top.slice(0, 5).map(r => r.rack), [21, 1, 5, 4, 12]);
-  assert.equal(top.length, 10);
+  assert.equal(top.length, 17, '差枚のある台は50位まで全部');
   assert.ok(!top.some(r => r.rack === 3), '差枚の無い台は入れない');
   assert.deepEqual(machines.map(m => [m.machine, m.racks, m.average]), [['機種B', 2, 8500], ['機種A', 15, 1767]]);
+});
+
+test('差枚は50位まで、強かった機種は10位まで', () => {
+  const rows = [];
+  for (let i = 0; i < 60; i++) rows.push({machine: `機種${i % 12}`, rack: i + 1, net: i * 10, games: 1000 + i});
+  const {top, machines} = daySummary(rows);
+  assert.equal(top.length, 50);
+  assert.deepEqual([top[0].rack, top[49].rack], [60, 11]);
+  assert.equal(machines.length, 10);
+  assert.deepEqual(machines.map(m => m.machine).slice(0, 2), ['機種11', '機種10']);
 });
 
 test('台の読み込み：数値異常の台は数えず、差枚の無い日は0にしない。P’s CUBEは貸玉ごと・沖ドキは外す', () => {
