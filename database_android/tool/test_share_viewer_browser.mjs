@@ -7,7 +7,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const root = fileURLToPath(new URL('../../share_viewer/', import.meta.url));
+// SHARE_WEB_ROOT（check_before_build.sh が渡す）があれば、公開するステージ（版 ?v= 付き）を試す。
+const root = process.env.SHARE_WEB_ROOT || fileURLToPath(new URL('../../share_viewer/', import.meta.url));
 const server = http.createServer(async (req, res) => {
   const name = new URL(req.url, 'http://x').pathname.replace(/^\/share\//, '') || 'index.html';
   const local = path.resolve(root, name);
@@ -67,6 +68,8 @@ try {
     });
     const page = await context.newPage();
     const errors = [];
+    const modules = [];
+    page.on('request', r => { if (/\.mjs(\?|$)/.test(r.url())) modules.push(new URL(r.url()).pathname + new URL(r.url()).search); });
     page.on('pageerror', e => errors.push(e.message));
     // 利用者自身の閲覧ページの保存（同じ github.io で開いたとき）を置いておき、触れないことを確かめる。
     await page.goto(pageUrl);
@@ -173,6 +176,13 @@ try {
     assert.ok(urls.slice(4).includes('?u=himawari'), 'リンクなしで開き直しても、覚えた呼び名で記録する');
     assert.deepEqual([...new Set(methods)], ['GET'], '読むだけ（POSTしない）');
     assert.deepEqual(errors, []);
+    if (process.env.SHARE_WEB_ROOT || process.env.SHARE_PUBLIC_URL) {
+      // 公開するページは、読むファイルすべてに同じ版を付ける（古い版を覚えた端末でも新しい版を読む）。
+      const names = [...new Set(modules)].map(m => /\/(\w+\.mjs)\?v=([0-9a-f]{12})$/.exec(m));
+      assert.ok(names.length === 3 && names.every(Boolean), `版の付いていない読み込み：${modules}`);
+      assert.deepEqual(names.map(n => n[1]).sort(), ['app.mjs', 'data.mjs', 'net.mjs']);
+      assert.equal(new Set(names.map(n => n[2])).size, 1);
+    }
     await context.close();
   }
   // リンク無し：貼り付けの画面。形の違うものは断り、正しいリンクで開く。

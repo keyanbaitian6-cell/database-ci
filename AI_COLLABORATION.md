@@ -10,6 +10,7 @@
 - 試験：`tool/test_share_viewer.mjs` に50位・10機種の上限、`tool/test_share_viewer_browser.mjs` に折りたたみ・台一覧・台のデータ・戻る・P-STATIONのMY・ボタンの帯が白いこと（320/393/1280px）。
 - `check_before_build.sh` **ALL PASSED**（32項目：PC 227件・P’s CUBE関連93件・Flutter 543件・analyzeエラー警告0/info18・閲覧専用ページ6件＋画面試験1件ほか全JS）。ソース `0ca1e4a`。
 - **公開**：`tool/stage_share_viewer.py` で database-share `a83a1e9`。GitHub Pagesのビルド完了後、公開中の4ファイルが手元と一致し、公開ページに対して画面試験（`SHARE_PUBLIC_URL`）も PASS。自分用の閲覧ページ（database-viewer）は変更が無いので公開し直していない。
+- **iPhoneで古い画面のまま**（利用者「強かった機種5選がゲーム数ランキング10に切り替わってない」「差枚ランキングも10個しか見れない」）：公開中のページは新しい版（`Last-Modified` 10/10 07:03 JST、`app.mjs` に「強かった機種10選」）だった。GitHub Pagesは `Cache-Control: max-age=600` で、iPhoneのブラウザが前の版の `app.mjs`・`data.mjs` を覚えたまま使っていたと考えられる（「最新を読む」はデータだけを読み直す）。`tool/stage_share_viewer.py` が公開のたびに、読むファイルの参照（`index.html`→`app.mjs`→`data.mjs`→`net.mjs`）へ中身から作った版 `?v=` を付けるようにした（参照が1か所でなければ公開しない）。`check_before_build.sh` で同じステージを作り（`share-stage`）、画面試験はそのステージで流して、3ファイルとも同じ版付きで読むことを確かめる（版が無いと失敗することも確認）。
 
 ## ジャグラーオンラインの取り込み（お試し、最長2週間）（Claude、2026-10-09）
 

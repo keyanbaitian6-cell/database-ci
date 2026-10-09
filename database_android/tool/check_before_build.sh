@@ -39,6 +39,9 @@ run flutter-analyze flutter analyze --no-fatal-infos
 run viewer-build bash -c 'MSYS_NO_PATHCONV=1 flutter build web -t lib/viewer_main.dart --release --base-href /database-viewer/'
 run viewer-stage "$PYTHON" tool/stage_viewer.py "$WORK/viewer"
 export VIEWER_WEB_ROOT="$WORK/viewer/"
+# 閲覧専用の共有ページも、公開するのと同じステージ（読むファイルに版 ?v= を付けたもの）で画面試験する。
+run share-stage "$PYTHON" tool/stage_share_viewer.py "$WORK/share"
+export SHARE_WEB_ROOT="$WORK/share/"
 for test in tool/test_*.mjs; do
   run "$(basename "$test" .mjs)" "$NODE" --test "$test"
 done
