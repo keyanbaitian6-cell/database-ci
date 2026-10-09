@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## ジャグラーオンラインの取り込み（お試し、最長2週間）（Claude、2026-10-09）
+
+- 利用者：「取り込むボタンを作ってみよう。差枚はこっちを優先。これは最長でも2週間だけのお試しだから」「利用規約は問題ないです」。仕様は `JUGGLER_ONLINE.md`。
+- **推定差枚の答え合わせ**：幸町10/06のネオアイムジャグラーEX 11台で、ジャグラーオンラインの差枚と database の推定差枚の違いは平均9枚・最大56枚（11台とも推定できていた。PCのDBは読み取り専用で開いた）。
+- **Android**：アクセシビリティのサービス `JugglerCaptureService.kt`（ジャグラーオンラインが前にある間だけ丸い「取込」ボタン。押すと takeScreenshot で撮ってアプリの中へ。通常版だけ）、`MainActivity` に `database/juggler` チャンネル、`lib/juggler_online.dart`（数字のお手本との照合・ピンクの枠で行・左右の見分け・見出しは ML Kit）、`lib/juggler_digit_templates.dart`（`tool/juggler_templates.dart` で端末の画面から作った形だけ）、`lib/juggler_capture_page.dart`（読み取り→確認→取り込み済みの台に足す）、`AppController.attachJugglerOnline`（`jo_net` などを extra に足すだけ。台は作らない、数値は変えない、取り消し可）。`SlotRecord.netValue` は `jo_net` を推定差枚より優先。
+- **PC**：`core.rack_net`（カレンダー・結果表で `jo_net` を優先）、バックアップの読み込みに `jo_only`（数値が同じでも `jo_net` が新しければ取り込む）、`VIEWER_KEYS` に `jo_net`。閲覧専用ページ（`share_viewer/data.mjs`）も優先。
+- 確かめ：お手本づくりに使っていない 10/06 の右の画面（差枚11台、マイナス含む）をアプリと同じ読み取り（`tool/juggler_read.dart`）で全部正しく読めた。試験：Flutter 7件（`test/juggler_online_test.dart`、合成の画面）、PC 3件、閲覧専用ページ1件。`check_before_build.sh` **ALL PASSED**（30項目：PC 224件・P’s CUBE関連93件・Flutter 529件・analyzeエラー警告0/info18）。端末の画面（実データ）はGitに入れていない。
+- 未確認：実機でのボタン・撮影・読み取り・保存（APKを入れてから利用者が試す）。
+
 ## ジャグラーオンライン（アプリ）の画面から取り込めるかの検討（Claude、2026-10-09、検討のみ）
 
 - 利用者：「今android接続してジャグラーオンラインというデータサイトを表示しています。今開いている台のデータをdatabaseのように取り込むボタンを作成することが可能かどうか検討してください。アクセシビリティのアプリとして開発すればアプリ起動中にもそのボタンを表示させられるかと思います。当たり回数、スタート回数、右までスクロールすれば差枚まで表示可能です」。

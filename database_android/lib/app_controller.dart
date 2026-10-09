@@ -1011,6 +1011,63 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       });
 
+  /// ジャグラーオンラインの画面から読んだ値を、取り込み済みの台（同じ店舗・営業日・台番号）に足す
+  /// （お試し、`JUGGLER_ONLINE.md`）。台の数値・グラフは変えず、`jo_net`（差枚、推定差枚より優先）などを
+  /// 添えるだけ。取り込んでいない台は作らない。戻り値は（足した台数、DBに無かった台番号）。
+  Future<({int updated, List<int> missing})> attachJugglerOnline({
+    required String store,
+    required String day,
+    required Map<int, Map<String, int>> racks,
+    DateTime? now,
+  }) => _write(() async {
+    final at = timestampWithOffset(now ?? DateTime.now());
+    final targets = <String, Map<String, int>>{};
+    final missing = <int>[];
+    for (final entry in racks.entries) {
+      final matches = [
+        for (final r in _records)
+          if (r.store == store && r.day == day && r.rack == entry.key) r.key,
+      ];
+      if (matches.isEmpty) {
+        missing.add(entry.key);
+      } else {
+        for (final key in matches) {
+          targets[key] = entry.value;
+        }
+      }
+    }
+    if (targets.isEmpty) {
+      message = 'この日の取り込み済みの台がありません。先にメルヘンで取り込んでください。';
+      notifyListeners();
+      return (updated: 0, missing: missing..sort());
+    }
+    // 画面が持っている台は古いことがある。DBの今の内容に足し、グラフなどを巻き戻さない。
+    final before = await database.loadByKeys(targets.keys.toList());
+    final upserts = <SlotRecord>[];
+    for (final entry in targets.entries) {
+      final current = before[entry.key];
+      if (current == null) continue;
+      final values = entry.value;
+      upserts.add(
+        current.copyWith(
+          extra: {
+            ...current.extra,
+            for (final field in const ['net', 'bb', 'rb', 'art', 'start', 'total'])
+              if (values[field] != null)
+                field == 'total' ? 'jo_games' : 'jo_$field': values[field],
+            'jo_captured_at': at,
+          },
+        ),
+      );
+    }
+    await _commit(upserts: upserts);
+    _rememberUndo('ジャグラーオンラインの取り込み', upserts, before);
+    message = 'ジャグラーオンラインの値を${upserts.length}台に足しました。'
+        '${missing.isEmpty ? '' : '取り込んでいない台（${missing.length}台）は足していません。'}';
+    notifyListeners();
+    return (updated: upserts.length, missing: missing..sort());
+  });
+
   Future<File> exportCsv({String? store, String? day}) => csvExporter.create(
     records
         .where(

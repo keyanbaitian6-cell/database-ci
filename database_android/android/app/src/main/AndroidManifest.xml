@@ -11,6 +11,20 @@
             android:exported="false"
             android:stopWithTask="true"
             android:foregroundServiceType="dataSync" />
+        <!-- ジャグラーオンラインの画面を撮る「取込」ボタン（お試し、JUGGLER_ONLINE.md）。P’s CUBEのクローンでは使わない。 -->
+        <service
+            android:name="com.keyan.database_android.JugglerCaptureService"
+            android:enabled="${jugglerCaptureEnabled}"
+            android:exported="true"
+            android:label="@string/juggler_capture_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/juggler_capture_service" />
+        </service>
         <activity
             android:name="com.keyan.database_android.MainActivity"
             android:exported="true"

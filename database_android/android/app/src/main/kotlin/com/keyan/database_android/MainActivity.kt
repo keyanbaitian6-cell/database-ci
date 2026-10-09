@@ -2,7 +2,9 @@ package com.keyan.database_android
 
 import android.content.Intent
 import android.net.Uri
+import android.content.ComponentName
 import android.os.Build
+import android.provider.Settings
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -46,6 +48,37 @@ class MainActivity : FlutterActivity() {
                         startActivity(Intent(Intent.ACTION_VIEW, uri))
                         result.success(null)
                     }
+                }
+                else -> result.notImplemented()
+            }
+        }
+        // ジャグラーオンラインの取込（お試し、JUGGLER_ONLINE.md）：撮った画面の一覧・削除・設定画面を開く。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "database/juggler").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "status" -> {
+                    val component = ComponentName(this, JugglerCaptureService::class.java).flattenToString()
+                    val enabled = (Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "")
+                        .split(':').any { it.equals(component, ignoreCase = true) }
+                    result.success(mapOf(
+                        "enabled" to enabled,
+                        "sdk" to Build.VERSION.SDK_INT,
+                        "captures" to JugglerCaptureService.captures(this).map { it.absolutePath },
+                    ))
+                }
+                "openSettings" -> {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    result.success(null)
+                }
+                "delete" -> {
+                    val folder = JugglerCaptureService.folder(this).canonicalFile
+                    val paths = (call.arguments as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                    var deleted = 0
+                    for (path in paths) {
+                        val file = java.io.File(path).canonicalFile
+                        // 撮った画面のフォルダの中だけ消す。
+                        if (file.parentFile == folder && file.name.endsWith(".png") && file.delete()) deleted++
+                    }
+                    result.success(deleted)
                 }
                 else -> result.notImplemented()
             }

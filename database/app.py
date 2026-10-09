@@ -820,8 +820,10 @@ def main():
             db.close()
         refresh_days()
         refresh_machines()
-        applied = len(plan['new']) + len(plan['graph_only']) + len(plan['link_only']) + plan.get('events_added', 0)
-        summary = (f'新規{len(plan["new"])}件、グラフ追加{len(plan["graph_only"])}件、リンク補完{len(plan["link_only"])}件を取り込みました。'
+        applied = (len(plan['new']) + len(plan['graph_only']) + len(plan['link_only']) + len(plan.get('jo_only', []))
+                   + plan.get('events_added', 0))
+        summary = (f'新規{len(plan["new"])}件、グラフ追加{len(plan["graph_only"])}件、リンク補完{len(plan["link_only"])}件、'
+                   f'ジャグラーオンラインの差枚{len(plan.get("jo_only", []))}件を取り込みました。'
                    f'既に同じ内容{len(plan["unchanged"])}件、要確認{len(plan["conflicts"])}件、'
                    f'イベント反映{plan.get("events_added", 0)}件、イベント名不一致{plan.get("event_conflicts", 0)}件（入力時刻の無い同士は既存名を維持）、'
                    f'対象外{len(plan["skipped"])}件。')

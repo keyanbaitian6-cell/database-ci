@@ -30,6 +30,8 @@ android {
     defaultConfig {
         applicationId = databaseApplicationId
         manifestPlaceholders["databaseAppLabel"] = databaseAppLabel
+        // ジャグラーオンラインの取込ボタン（お試し、JUGGLER_ONLINE.md）は通常版だけ。
+        manifestPlaceholders["jugglerCaptureEnabled"] = (databaseClone == "original").toString()
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

@@ -65,6 +65,9 @@ test('台の読み込み：数値異常の台は数えず、差枚の無い日�
   const byDay = indexRecords(m);
   assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-04')), {total: 1422, captured: 1, racks: 1});
   assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-05')), {total: null, captured: 0, racks: 1});
+  const jo = meruhenRecords({records: [{store: 'saiwaichou', day: '2026-10-06', machine: '北斗', rack: 7, games: 3000, bb: 10, rb: 5,
+    max_hold: 2376, graph_measurement: measurement([0, -63, 40, 147, 128]), jo_net: -280}]});
+  assert.deepEqual([jo[0].net, jo[0].estimated], [-280, false], 'ジャグラーオンラインの差枚を優先');
   const p = pscubeRecords({format: 'pscube-viewer', records: [
     {store: 'c740601', rate: '20', day: '2026-10-04', machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 1, games: 3000, bb: 10, rb: 5, my: 1000, net_medals: 300},
     {store: 'c740601', rate: '5', day: '2026-10-04', machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 1, games: 3000, bb: 10, rb: 5, my: 1000, net_medals: -40},

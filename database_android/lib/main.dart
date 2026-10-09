@@ -18,6 +18,7 @@ import 'event_calendar_page.dart';
 import 'database_service.dart';
 import 'graph_preview.dart';
 import 'gradient_button.dart';
+import 'juggler_capture_page.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
@@ -1695,6 +1696,27 @@ class ImportPage extends StatelessWidget {
                 const Text(
                   '機種一覧・機種別の表・個別台グラフで「この画面を取り込む」を押してください。',
                   style: TextStyle(fontSize: 12),
+                ),
+                const Divider(height: 28),
+                // ジャグラーオンライン（お試し、2026-10-09から最長2週間。JUGGLER_ONLINE.md）。
+                const Text(
+                  'ジャグラーオンライン（お試し）',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                const Text('アプリの画面を撮って読み、取り込み済みの台に差枚を足します（差枚はこちらを優先）。'),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => JugglerCapturePage(controller: controller),
+                      ),
+                    ),
+                    icon: const Icon(Icons.document_scanner_outlined),
+                    label: const Text('ジャグラーオンラインの取り込み'),
+                  ),
                 ),
               ],
             ),

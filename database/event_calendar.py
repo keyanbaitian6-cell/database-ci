@@ -11,8 +11,7 @@ import math
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core import (STORE_NAMES, Store, date_event_in_advance, implausible_numbers, meruhen_net_estimate_detail,
-                  signed_medals)
+from core import STORE_NAMES, Store, date_event_in_advance, implausible_numbers, rack_net, signed_medals
 
 WEEKDAYS = '日月火水木金土'
 # 「期間でまとめて入力」で一度に付けられる日数。
@@ -84,16 +83,19 @@ def meruhen_day_nets(db, location, first, last):
     推定できない台は足さない）。グラフ画像は読まない（必要な値だけSQLiteで取り出す）。"""
     totals = {}
     query = ("SELECT day, json_extract(payload,'$.games'), json_extract(payload,'$.bb'), json_extract(payload,'$.rb'),"
-             " json_extract(payload,'$.max_hold'), json_extract(payload,'$.graph_measurement') FROM days"
+             " json_extract(payload,'$.max_hold'), json_extract(payload,'$.graph_measurement'),"
+             " json_extract(payload,'$.jo_net') FROM days"
              " WHERE store=? AND day BETWEEN ? AND ? AND json_valid(payload)")
-    for day, games, bb, rb, max_hold, measurement in db.db.execute(query, (location, first, last)):
+    for day, games, bb, rb, max_hold, measurement, jo_net in db.db.execute(query, (location, first, last)):
         if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
             continue
         try:
             measurement = json.loads(measurement) if measurement else None
         except ValueError:
             measurement = None
-        net, needs_check = meruhen_net_estimate_detail(measurement, max_hold, games)
+        # ジャグラーオンラインの差枚があれば優先（お試し、JUGGLER_ONLINE.md）。
+        net, needs_check, _site = rack_net({'jo_net': jo_net, 'graph_measurement': measurement,
+                                            'max_hold': max_hold, 'games': games})
         _add_net(totals, day, net, needs_check)
     return totals
 
@@ -293,19 +295,20 @@ class MeruhenEvents:
             rows = db.db.execute(
                 "SELECT rack, machine, json_extract(payload,'$.games'), json_extract(payload,'$.bb'),"
                 " json_extract(payload,'$.rb'), json_extract(payload,'$.max_hold'),"
-                " json_extract(payload,'$.graph_measurement') FROM days"
+                " json_extract(payload,'$.graph_measurement'), json_extract(payload,'$.jo_net') FROM days"
                 " WHERE store=? AND day=? AND json_valid(payload)", (location, day)).fetchall()
         finally:
             db.close()
         result = []
-        for rack, machine, games, bb, rb, max_hold, measurement in rows:
+        for rack, machine, games, bb, rb, max_hold, measurement, jo_net in rows:
             if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
                 continue
             try:
                 measurement = json.loads(measurement) if measurement else None
             except ValueError:
                 measurement = None
-            net, needs_check = meruhen_net_estimate_detail(measurement, max_hold, games)
+            net, needs_check, _site = rack_net({'jo_net': jo_net, 'graph_measurement': measurement,
+                                                'max_hold': max_hold, 'games': games})
             result.append({'rack': rack, 'machine': machine, 'games': games or 0, 'bb': bb, 'rb': rb,
                            'net': net, 'needs_check': bool(needs_check)})
         return result

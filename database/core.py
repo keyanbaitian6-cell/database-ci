@@ -35,7 +35,9 @@ COMPLETE_HOLD = 19000
 VIEWER_FILE_NAME = 'database-viewer.json'
 VIEWER_DAYS = 60
 VIEWER_KEYS = ('store', 'kind_code', 'day', 'machine', 'rack', 'games', 'bb', 'rb', 'max_hold',
-               'graph_measurement', 'captured_at', 'confirmed_setting')
+               'graph_measurement', 'captured_at', 'confirmed_setting',
+               # ジャグラーオンラインの差枚（お試し、JUGGLER_ONLINE.md）。閲覧ページは推定差枚より優先する。
+               'jo_net')
 STORE_NAMES = {
     'nagamachiminami': 'メルヘンワールド長町南店',
     'saiwaichou': 'スーパーメルヘンワールド幸町',
@@ -983,7 +985,7 @@ def plan_backup_import(store, records):
     """
     existing = {(r['store'], r['day'], r['machine'], int(r['rack'])): r for r in store.rows()}
     new, graph_only, unchanged, conflicts, skipped = [], [], [], [], []
-    link_only, setting_only = [], []
+    link_only, setting_only, jo_only = [], [], []
     seen = {}
     for record in records:
         if not _valid_backup_record(record):
@@ -1019,11 +1021,36 @@ def plan_backup_import(store, records):
             link_only.append(record)
         elif record.get('confirmed_setting') and not local.get('confirmed_setting'):
             setting_only.append(record)
+        elif juggler_online_newer(record, local):
+            # 数値は同じで、Androidで足したジャグラーオンラインの差枚など（jo_…）だけが新しい（JUGGLER_ONLINE.md）。
+            jo_only.append(record)
         else:
             unchanged.append(record)
     return dict(new=new, graph_only=graph_only, unchanged=unchanged,
                conflicts=conflicts, skipped=skipped, link_only=link_only,
-               setting_only=setting_only)
+               setting_only=setting_only, jo_only=jo_only)
+
+
+def juggler_online_newer(record, local):
+    """取り込む台のジャグラーオンラインの値（jo_net など）が、手元より新しいか（取り込んだ時刻で比べる）。"""
+    if not isinstance(record.get('jo_net'), int):
+        return False
+    if not isinstance(local.get('jo_net'), int):
+        return True
+    theirs, ours = record.get('jo_captured_at'), local.get('jo_captured_at')
+    try:
+        return bool(theirs) and (not ours or _timestamp(theirs) > _timestamp(ours))
+    except ValueError:
+        return False
+
+
+def rack_net(row):
+    """画面に出す差枚：ジャグラーオンラインの差枚（jo_net、お試し JUGGLER_ONLINE.md）があればそれ、
+    無ければグラフと最大持玉からの推定差枚。戻り値は（差枚、要確認、ジャグラーオンラインか）。"""
+    if isinstance(row.get('jo_net'), int) and not isinstance(row.get('jo_net'), bool):
+        return row['jo_net'], False, True
+    net, needs_check = meruhen_net_estimate_detail(row.get('graph_measurement'), row.get('max_hold'), row.get('games'))
+    return net, needs_check, False
 
 
 SETTINGS_NAME = 'settings.json'
@@ -1720,7 +1747,7 @@ def import_backup(store, path):
     # 入力時刻の新しい方が残る（EVENT_CALENDAR.md）。events_added は変わった件数。
     merged_events, plan['events_added'], plan['event_conflicts'] = merge_date_events(
         store.date_events(include_removed=True), payload.get('date_events', []))
-    to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only']
+    to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only'] + plan['jo_only']
     # イベント名・台・翌日候補の記録を1回で書く（途中で失敗したら何も残さない）。
     with store.db:
         if plan['events_added']:
@@ -2186,7 +2213,7 @@ def report(store, day, machine, folder, location='nagamachiminami'):
         svg = measurement_preview_html(r)
         total = s['total']
         max_hold_display = '—' if r.get('max_hold') is None else str(r['max_hold'])
-        net, net_check = meruhen_net_estimate_detail(measurement, r.get('max_hold'), r.get('games'))
+        net, net_check, _from_site = rack_net(r)
         net_display = '—' if net is None or implausible_numbers(r) else signed_medals(net) + ('※' if net_check else '')
         setting_display = r.get('confirmed_setting') or '—'
         estimate = r['setting_estimate']
