@@ -24,8 +24,9 @@ int _drawDigit(
   final t = joDigitTemplates.firstWhere((t) => t.digit == digit);
   for (var j = 0; j < joGlyphHeight; j++) {
     for (var i = 0; i < joGlyphWidth; i++) {
-      if (t.pixels[j * joGlyphWidth + i] >= 0.5)
+      if (t.pixels[j * joGlyphWidth + i] >= 0.5) {
         image.setPixel(x + i, y + j, color);
+      }
     }
   }
   return x + joGlyphWidth + 4;
@@ -115,6 +116,22 @@ const _lines = [
 
 void main() {
   group('見出し', () {
+    test('文字読み取りの読み違い：「幸町」が崩れても「スーパーメルヘン」で幸町、かっこが落ちても曜日で日付', () {
+      final h = parseJoHeader(const [
+        JoTextLine('スーパーメルヘンワールド辛叮店'),
+        JoTextLine('データ更新：10/9'),
+        JoTextLine('23:30'),
+        JoTextLine('2日前 10/7水)'),
+      ], DateTime(2026, 10, 10));
+      expect((h.store, h.day), ('saiwaichou', '2026-10-07'));
+      // かっこも曜日も無い日付・時刻だけの行は日付にしない。
+      final none = parseJoHeader(const [
+        JoTextLine('10/9 23:30'),
+        JoTextLine('メルヘンワールド長町南店'),
+      ], DateTime(2026, 10, 10));
+      expect((none.store, none.day), ('nagamachiminami', null));
+    });
+
     test('店舗・営業日・機種・貸玉。データ更新の日時は日付にしない', () {
       final h = parseJoHeader(_lines, DateTime(2026, 10, 9, 23));
       expect(
@@ -255,7 +272,8 @@ void main() {
         now: DateTime.utc(2026, 10, 9, 15),
       );
       expect(result.updated, 1);
-      expect(result.missing, [781], reason: '取り込んでいない台は作らない');
+      expect(result.missing, [781], reason: '作る計画に無い台は作らない');
+      expect(result.created, 0);
       final saved = (await db.loadAll()).firstWhere((r) => r.rack == 779);
       expect(
         (saved.games, saved.bb, saved.rb),
@@ -278,6 +296,105 @@ void main() {
         (await db.loadAll()).firstWhere((r) => r.rack == 779).extra['jo_net'],
         isNull,
       );
+      await db.close();
+    });
+
+    SlotRecord meruhen(
+      String day,
+      int rack, {
+      String machine = 'Sネオアイムジャグラー EX−KK',
+    }) => SlotRecord(
+      store: 'saiwaichou',
+      day: day,
+      machine: machine,
+      rack: rack,
+      games: 4000,
+      bb: 10,
+      rb: 10,
+      maxHold: 1000,
+    );
+
+    test('メルヘンで取り込めなかった台は、前の日の同じ台番号の機種名で作る計画にする', () {
+      final day = JoDay('saiwaichou', '2026-10-07')
+        ..machine = 'ネオアイムジャグラーEX'
+        ..racks.addAll({
+          779: {'bb': 1, 'rb': 1, 'total': 100, 'net': 5},
+          780: {'bb': 2, 'rb': 3, 'total': 200, 'net': -40},
+          781: {'bb': 1, 'rb': 1, 'total': 100},
+          782: {'bb': 1, 'rb': 1, 'total': 100},
+          783: {'net': 10},
+          784: {'bb': 1, 'rb': 1, 'total': 300, 'net': 7},
+        })
+        ..conflicts[784] = {'total'};
+      final records = [
+        meruhen('2026-10-07', 779),
+        meruhen('2026-10-05', 780, machine: 'SマイジャグラーV KK'),
+        meruhen('2026-10-06', 780),
+        meruhen('2026-10-08', 781),
+        meruhen('2026-10-06', 782, machine: 'SマイジャグラーV KK'),
+        meruhen('2026-10-06', 783),
+        meruhen('2026-10-06', 784),
+      ];
+      final plan = planJoSave(day, records);
+      expect(plan.add.keys, [779], reason: '取り込み済みの台には足す');
+      expect(plan.create.keys, [780]);
+      expect(
+        plan.create[780]!.reference.day,
+        '2026-10-06',
+        reason: 'いちばん近い前の日の台',
+      );
+      expect(plan.skipped.keys.toSet(), {781, 782, 783, 784});
+      expect(plan.skipped[781], contains('前の日'), reason: '後の日の台は使わない');
+      expect(plan.skipped[782], contains('機種が違う'));
+      expect(plan.skipped[783], contains('読めていない'));
+      expect(plan.skipped[784], contains('読めていない'), reason: '⚠の総回転数では作らない');
+    });
+
+    test('機種名は空白・記号・全角英数字の違いを見ずに比べる', () {
+      expect(joMachineMatches('ネオアイムジャグラーEX', 'Sネオアイムジャグラー EX−KK'), isTrue);
+      expect(joMachineMatches('ネオアイムジャグラーＥＸ', 'Sネオアイムジャグラー EX-KK'), isTrue);
+      expect(joMachineMatches('マイジャグラーV', 'Sネオアイムジャグラー EX−KK'), isFalse);
+      expect(joMachineMatches('', 'Sネオアイムジャグラー EX−KK'), isFalse);
+    });
+
+    test('作った台：数値はジャグラーオンライン、機種名は前の日、グラフ無し。取り消しで消える', () async {
+      final path = await newDatabasePath();
+      final db = realDatabase(path);
+      await db.applyChanges(ChangeSet(upserts: [meruhen('2026-10-06', 780)]));
+      final c = AppController(database: db);
+      await c.initialize();
+      final day = JoDay('saiwaichou', '2026-10-07')
+        ..machine = 'ネオアイムジャグラーEX'
+        ..racks[780] = {
+          'bb': 11,
+          'rb': 7,
+          'start': 579,
+          'total': 3299,
+          'net': -844,
+        }
+        ..racks[790] = {'bb': 1, 'rb': 1, 'total': 10};
+      final plan = planJoSave(day, c.records);
+      final result = await c.attachJugglerOnline(
+        store: day.store,
+        day: day.day,
+        racks: plan.add,
+        create: plan.create,
+        now: DateTime.utc(2026, 10, 9, 15),
+      );
+      expect((result.updated, result.created), (0, 1));
+      expect(result.missing, isEmpty, reason: '作れない台は計画の時点で外している');
+      final made = (await db.loadAll()).firstWhere(
+        (r) => r.day == '2026-10-07' && r.rack == 780,
+      );
+      expect(made.machine, 'Sネオアイムジャグラー EX−KK');
+      expect((made.games, made.bb, made.rb), (3299, 11, 7));
+      expect((made.maxHold, made.graph), (null, null));
+      expect(made.extra['jo_created'], isTrue);
+      expect(made.firstCapturedAt, isA<String>());
+      expect((made.netValue, made.netLabel), (-844, '差枚'));
+      expect(made.toJson()['kind_code'], 21, reason: 'PCのバックアップの読み込みで受け付ける形');
+      await c.undoLastSave();
+      expect((await db.loadAll()).where((r) => r.day == '2026-10-07'), isEmpty);
       await db.close();
     });
 

@@ -85,7 +85,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     try {
       final now = DateTime.now();
       for (final path in _captures) {
-        final name = path.split(RegExp(r'[\\/]')).last;
+        final name = _captureLabel(path);
         // 1枚読めなくても、ほかの画面は読み続ける。
         final List<JoTextLine> lines;
         try {
@@ -105,7 +105,20 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
         if (screen.problem != null) {
           _problems.add('$name：${screen.problem}');
         } else if (screen.header.store == null || screen.header.day == null) {
-          _problems.add('$name：店舗か日付を読めませんでした（メルヘンの幸町・長町南の「データ一覧」だけ読めます）。');
+          // どの画面か・何と読んだかが分かるように（撮り直しと、読み取りの直しのため）。
+          final missing = [
+            if (screen.header.store == null) '店舗',
+            if (screen.header.day == null) '日付',
+          ].join('と');
+          final read = lines
+              .map((l) => l.text.trim())
+              .where((t) => t.isNotEmpty)
+              .take(8)
+              .join('／');
+          _problems.add(
+            '$name：$missingを読めませんでした。この画面は撮り直してください'
+            '（メルヘンの幸町・長町南の「データ一覧」だけ読めます）。読めた文字：$read',
+          );
         } else {
           screens.add(screen);
         }
@@ -121,10 +134,12 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
 
   Future<void> _save(JoDay day) async {
     try {
+      final plan = planJoSave(day, widget.controller.records);
       final result = await widget.controller.attachJugglerOnline(
         store: day.store,
         day: day.day,
-        racks: joSaveValues(day),
+        racks: plan.add,
+        create: plan.create,
       );
       if (!mounted) return;
       setState(() => _saved.add('${day.store}|${day.day}'));
@@ -132,6 +147,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
         SnackBar(
           content: Text(
             '${result.updated}台に足しました。'
+            '${result.created == 0 ? '' : '${result.created}台を作りました（グラフ無し）。'}'
             '${result.missing.isEmpty ? '' : '取り込んでいない台（${result.missing.join('・')}番）は足していません。'}',
           ),
         ),
@@ -237,9 +253,8 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     }
 
     final racks = day.racks.keys.toList()..sort();
-    final inDb = joSaveValues(day).keys
-        .where((r) => recordOf(r) != null)
-        .length;
+    final plan = planJoSave(day, records);
+    final inDb = plan.add.length, toCreate = plan.create.length;
     final saved = _saved.contains('${day.store}|${day.day}');
     String cell(int rack, String field) {
       final value = day.racks[rack]![field];
@@ -265,6 +280,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
               Text('ジャグラーオンライン：${displayMachineName(day.machine!)}'),
             Text(
               '読めた台 ${racks.length}台（メルヘンで取り込み済み $inDb台）。'
+              '${toCreate == 0 ? '' : 'メルヘンに無い$toCreate台は、前の日の同じ台番号の機種名で作ります（グラフ・最大持玉は無し）。'}'
               '?＝読めなかった、⚠＝画面ごとに値が違った（足さない。撮り直すと直ります）、—＝その画面を撮っていない',
               style: const TextStyle(fontSize: 12, color: AppColors.ash),
             ),
@@ -296,7 +312,14 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
                         DataCell(Text(cell(rack, 'total'))),
                         DataCell(Text(cell(rack, 'net'))),
                         DataCell(
-                          Text(_dbText(recordOf(rack), day.racks[rack]!)),
+                          Text(
+                            _dbText(
+                              recordOf(rack),
+                              day.racks[rack]!,
+                              plan,
+                              rack,
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -307,8 +330,17 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: inDb == 0 || saved ? null : () => _save(day),
-                child: Text(saved ? '保存しました' : '取り込み済みの$inDb台に足す'),
+                onPressed: inDb + toCreate == 0 || saved
+                    ? null
+                    : () => _save(day),
+                child: Text(
+                  saved
+                      ? '保存しました'
+                      : [
+                          if (inDb > 0) '取り込み済みの$inDb台に足す',
+                          if (toCreate > 0) '$toCreate台を作る',
+                        ].join('・').ifEmpty('足せる台がありません'),
+                ),
               ),
             ),
           ],
@@ -318,8 +350,19 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
   }
 
   /// メルヘンの記録との違い（BB・RB・総回転数）。足すのは差枚などで、メルヘンの数値は変えない。
-  String _dbText(SlotRecord? record, Map<String, int> values) {
-    if (record == null) return 'なし（足さない）';
+  String _dbText(
+    SlotRecord? record,
+    Map<String, int> values,
+    JoSavePlan plan,
+    int rack,
+  ) {
+    if (record == null) {
+      final create = plan.create[rack];
+      if (create != null) {
+        return 'なし→作る（${create.reference.day.substring(5).replaceAll('-', '/')}の機種名）';
+      }
+      return 'なし（${plan.skipped[rack] ?? '足さない'}）';
+    }
     final diffs = [
       if (values['bb'] != null && values['bb'] != record.bb) 'BB${record.bb}',
       if (values['rb'] != null && values['rb'] != record.rb) 'RB${record.rb}',
@@ -328,6 +371,20 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     ];
     return diffs.isEmpty ? 'あり' : 'あり（メルヘン：${diffs.join(' ')}）';
   }
+}
+
+/// 撮った画面のファイル名（jo-20261010-001530-123.png）から「10/10 00:15:30に撮った画面」。
+String _captureLabel(String path) {
+  final file = path.split(RegExp(r'[\\/]')).last;
+  final m = RegExp(r'jo-\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})')
+      .firstMatch(file);
+  if (m == null) return file;
+  return '${int.parse(m.group(1)!)}/${int.parse(m.group(2)!)} '
+      '${m.group(3)}:${m.group(4)}:${m.group(5)}に撮った画面';
+}
+
+extension on String {
+  String ifEmpty(String other) => isEmpty ? other : this;
 }
 
 JoScreen _parse((String, List<JoTextLine>, DateTime) input) {

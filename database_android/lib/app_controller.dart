@@ -1013,14 +1013,25 @@ class AppController extends ChangeNotifier {
 
   /// ジャグラーオンラインの画面から読んだ値を、取り込み済みの台（同じ店舗・営業日・台番号）に足す
   /// （お試し、`JUGGLER_ONLINE.md`）。台の数値・グラフは変えず、`jo_net`（差枚、推定差枚より優先）などを
-  /// 添えるだけ。取り込んでいない台は作らない。戻り値は（足した台数、DBに無かった台番号）。
-  Future<({int updated, List<int> missing})> attachJugglerOnline({
+  /// 添えるだけ。[create]（`planJoSave` が選んだ、メルヘンで取り込めなかった台）は、前の日の同じ台番号の
+  /// 機種名で、ジャグラーオンラインのBB・RB・総回転数の台として作る（グラフ・最大持玉は無い）。
+  /// それ以外の取り込んでいない台は作らない。戻り値は（足した台数、作った台数、どちらもしなかった台番号）。
+  Future<({int updated, int created, List<int> missing})> attachJugglerOnline({
     required String store,
     required String day,
     required Map<int, Map<String, int>> racks,
+    Map<int, ({SlotRecord reference, Map<String, int> values})> create =
+        const {},
     DateTime? now,
   }) => _write(() async {
-    final at = timestampWithOffset(now ?? DateTime.now());
+    final time = now ?? DateTime.now();
+    final at = timestampWithOffset(time);
+    Map<String, Object?> joExtra(Map<String, int> values) => {
+      for (final field in const ['net', 'bb', 'rb', 'art', 'start', 'total'])
+        if (values[field] != null)
+          field == 'total' ? 'jo_games' : 'jo_$field': values[field],
+      'jo_captured_at': at,
+    };
     final targets = <String, Map<String, int>>{};
     final missing = <int>[];
     for (final entry in racks.entries) {
@@ -1029,43 +1040,88 @@ class AppController extends ChangeNotifier {
           if (r.store == store && r.day == day && r.rack == entry.key) r.key,
       ];
       if (matches.isEmpty) {
-        missing.add(entry.key);
+        if (!create.containsKey(entry.key)) missing.add(entry.key);
       } else {
         for (final key in matches) {
           targets[key] = entry.value;
         }
       }
     }
-    if (targets.isEmpty) {
+    final created = <SlotRecord>[];
+    if (create.isNotEmpty) {
+      _checkDay(day);
+      for (final MapEntry(key: rack, value: plan) in create.entries) {
+        final values = plan.values;
+        if (plan.reference.store != store ||
+            plan.reference.rack != rack ||
+            values['bb'] == null ||
+            values['rb'] == null ||
+            values['total'] == null) {
+          throw ArgumentError('$rack番台を作る内容が正しくありません。保存しませんでした。');
+        }
+        created.add(
+          SlotRecord(
+            store: store,
+            day: day,
+            machine: plan.reference.machine,
+            rack: rack,
+            games: values['total']!,
+            bb: values['bb']!,
+            rb: values['rb']!,
+            capturedAt: time.toIso8601String(),
+            firstCapturedAt: at,
+            // メルヘンではなくジャグラーオンラインの数字で作った台の印。
+            extra: {...joExtra(values), 'jo_created': true},
+          ),
+        );
+      }
+    }
+    if (targets.isEmpty && created.isEmpty) {
       message = 'この日の取り込み済みの台がありません。先にメルヘンで取り込んでください。';
       notifyListeners();
-      return (updated: 0, missing: missing..sort());
+      return (updated: 0, created: 0, missing: missing..sort());
     }
     // 画面が持っている台は古いことがある。DBの今の内容に足し、グラフなどを巻き戻さない。
-    final before = await database.loadByKeys(targets.keys.toList());
+    final before = await database.loadByKeys([
+      ...targets.keys,
+      for (final r in created) r.key,
+    ]);
     final upserts = <SlotRecord>[];
     for (final entry in targets.entries) {
       final current = before[entry.key];
       if (current == null) continue;
-      final values = entry.value;
       upserts.add(
-        current.copyWith(
-          extra: {
-            ...current.extra,
-            for (final field in const ['net', 'bb', 'rb', 'art', 'start', 'total'])
-              if (values[field] != null)
-                field == 'total' ? 'jo_games' : 'jo_$field': values[field],
-            'jo_captured_at': at,
-          },
-        ),
+        current.copyWith(extra: {...current.extra, ...joExtra(entry.value)}),
       );
     }
-    await _commit(upserts: upserts);
+    // 作る台が、読み込みのあとにほかの保存で入っていたら、作らずに足すだけにする。
+    final made = <SlotRecord>[];
+    for (final r in created) {
+      final current = before[r.key];
+      if (current == null) {
+        upserts.add(r);
+        made.add(r);
+      } else {
+        upserts.add(
+          current.copyWith(
+            extra: {...current.extra, ...joExtra(create[r.rack]!.values)},
+          ),
+        );
+      }
+    }
+    // 作った台は、表を取り込んだときと同じく翌日候補の記録に回す。
+    await _commit(upserts: upserts, changed: made);
     _rememberUndo('ジャグラーオンラインの取り込み', upserts, before);
-    message = 'ジャグラーオンラインの値を${upserts.length}台に足しました。'
+    message =
+        'ジャグラーオンラインの値を${upserts.length - made.length}台に足しました。'
+        '${made.isEmpty ? '' : '${made.length}台を作りました（グラフ無し）。'}'
         '${missing.isEmpty ? '' : '取り込んでいない台（${missing.length}台）は足していません。'}';
     notifyListeners();
-    return (updated: upserts.length, missing: missing..sort());
+    return (
+      updated: upserts.length - made.length,
+      created: made.length,
+      missing: missing..sort(),
+    );
   });
 
   Future<File> exportCsv({String? store, String? day}) => csvExporter.create(

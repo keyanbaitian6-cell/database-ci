@@ -12,6 +12,7 @@ import 'dart:math' as math;
 import 'package:image/image.dart' as imglib;
 
 import 'juggler_digit_templates.dart';
+import 'models.dart';
 
 /// お手本を作った端末の画面の横幅（px）。違う大きさの画面は読まない。
 const joScreenWidth = 1080;
@@ -251,7 +252,11 @@ List<(int, int)> findRackBoxes(imglib.Image image) {
   return boxes;
 }
 
-final _dayPattern = RegExp(r'(\d{1,2})\s*[/／]\s*(\d{1,2})\s*[（(]');
+// 「10/6(火)」。文字読み取りがかっこを落としても、曜日が続けば日付とする（2026-10-10、幸町の画面で
+// 店舗か日付を読めない画面があった）。「データ更新：10/9 23:30」は呼ぶ側で除く。
+final _dayPattern = RegExp(
+  r'(\d{1,2})\s*[/／]\s*(\d{1,2})\s*(?:[（(]|[日月火水木金土])',
+);
 
 /// 見出しを読む：店舗（幸町・長町南）、営業日（「本日 10/9(金)」「3日前 10/6(火)」。年は [now] から）、
 /// 機種名と貸玉（「20スロ ネオアイムジャグラーEX」）。「データ更新：10/9 23:00」は日付にしない。
@@ -260,7 +265,11 @@ JoHeader parseJoHeader(List<JoTextLine> lines, DateTime now) {
   for (final line in lines) {
     final text = line.text.replaceAll(' ', '').replaceAll('　', '');
     if (store == null) {
-      if (text.contains('幸町')) store = 'saiwaichou';
+      // 「スーパーメルヘンワールド幸町店」「メルヘンワールド長町南店」。「幸町」を読み違えても、
+      // 「スーパーメルヘン」は幸町だけ。
+      if (text.contains('幸町') || text.contains('スーパーメルヘン')) {
+        store = 'saiwaichou';
+      }
       if (text.contains('長町南')) store = 'nagamachiminami';
     }
     if (day == null && !text.contains('更新')) {
@@ -415,3 +424,69 @@ Map<int, Map<String, int>> joSaveValues(JoDay day) => {
         case final values when values.isNotEmpty)
       entry.key: values,
 };
+
+/// 保存の計画：取り込み済みの台に足す値と、新しく作る台（利用者 2026-10-10「7,8,9はデータサイトが死んでて
+/// 取り込めなかったんだけど追加してくれるかな？ 6日から台番号は入れ替えなどで変わってないから」）。
+class JoSavePlan {
+  JoSavePlan(this.add, this.create, this.skipped);
+
+  /// 取り込み済みの台（台番号 → 足す値）。
+  final Map<int, Map<String, int>> add;
+
+  /// 新しく作る台（台番号 → 前の日の同じ台番号の記録と、作る値）。
+  final Map<int, ({SlotRecord reference, Map<String, int> values})> create;
+
+  /// 足さない・作らない台と、その理由。
+  final Map<int, String> skipped;
+}
+
+/// メルヘンで取り込めなかった台は、**前の日の同じ台番号** の機種名を引き継いで、ジャグラーオンラインの
+/// BB・RB・総回転数で作る（グラフ・最大持玉は無い）。作るのは、前の日にその台があり、機種名が
+/// ジャグラーオンラインの機種名と合い、BB・RB・総回転数が読めている台だけ。
+JoSavePlan planJoSave(JoDay day, Iterable<SlotRecord> records) {
+  final add = <int, Map<String, int>>{};
+  final create = <int, ({SlotRecord reference, Map<String, int> values})>{};
+  final skipped = <int, String>{};
+  final mine = [
+    for (final r in records)
+      if (!r.isPscube && r.store == day.store) r,
+  ];
+  for (final MapEntry(key: rack, value: values) in joSaveValues(day).entries) {
+    if (mine.any((r) => r.day == day.day && r.rack == rack)) {
+      add[rack] = values;
+      continue;
+    }
+    SlotRecord? reference;
+    for (final r in mine) {
+      if (r.rack == rack &&
+          r.day.compareTo(day.day) < 0 &&
+          (reference == null || r.day.compareTo(reference.day) > 0)) {
+        reference = r;
+      }
+    }
+    if (reference == null) {
+      skipped[rack] = '前の日に同じ台番号の台が無いので作らない';
+    } else if (day.machine != null &&
+        !joMachineMatches(day.machine!, reference.machine)) {
+      skipped[rack] = '機種が違うので作らない（${reference.day}：${reference.machine}）';
+    } else if (values['bb'] == null ||
+        values['rb'] == null ||
+        values['total'] == null) {
+      skipped[rack] = 'BB・RB・総回転数が読めていないので作らない';
+    } else {
+      create[rack] = (reference: reference, values: values);
+    }
+  }
+  return JoSavePlan(add, create, skipped);
+}
+
+/// ジャグラーオンラインの機種名（例「ネオアイムジャグラーEX」）が、メルヘンの機種名
+/// （例「Sネオアイムジャグラー EX−KK」）に含まれるか。空白・記号・全角英数字の違いは見ない。
+bool joMachineMatches(String juggler, String meruhen) {
+  String fold(String s) => String.fromCharCodes([
+    for (final c in s.runes)
+      if (c >= 0xFF01 && c <= 0xFF5E) c - 0xFEE0 else c,
+  ]).toUpperCase().replaceAll(RegExp(r'[\s\-−‐_・.+]'), '');
+  final j = fold(juggler), m = fold(meruhen);
+  return j.isNotEmpty && m.contains(j);
+}

@@ -44,6 +44,19 @@ class JugglerOnlineTests(unittest.TestCase):
         self.write([record(779, jo_net=1380, jo_captured_at='2026-10-10T08:00:00+09:00')])
         self.assertEqual(len(plan_backup_import(self.db, [record(779, jo_net=1380, jo_captured_at='2026-10-10T08:00:00+09:00')])['jo_only']), 1)
 
+    def test_a_rack_made_on_android_from_juggler_online_comes_in_as_new(self):
+        # メルヘンで取り込めなかった日の台を、Androidがジャグラーオンラインの数字で作った（グラフ・最大持玉は無い）。
+        made = dict(store='saiwaichou', kind_code=21, day='2026-10-07', machine='Sネオアイムジャグラー EX−KK',
+                    rack=780, games=3299, bb=11, rb=7, jo_net=-844, jo_games=3299, jo_created=True,
+                    jo_captured_at='2026-10-10T00:30:00+09:00', first_captured_at='2026-10-10T00:30:00+09:00')
+        self.write([made])
+        plan = import_backup(self.db, self.path)
+        self.assertEqual(len(plan['new']), 1)
+        row = next(r for r in self.db.rows(store='saiwaichou', day='2026-10-07'))
+        self.assertEqual((row['games'], row['bb'], row['rb'], row.get('max_hold')), (3299, 11, 7, None))
+        self.assertEqual((row['jo_net'], row['jo_created']), (-844, True))
+        self.assertEqual(rack_net(row), (-844, False, True))
+
     def test_the_juggler_online_net_is_preferred_over_the_estimate(self):
         self.assertEqual(rack_net({'jo_net': -280, 'graph_measurement': None, 'max_hold': 10, 'games': 100}), (-280, False, True))
         self.assertEqual(rack_net({'graph_measurement': None, 'max_hold': 10, 'games': 100}), (None, False, False))
