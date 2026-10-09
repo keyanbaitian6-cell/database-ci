@@ -8,6 +8,8 @@
 - 見た目の確認（393px、偽のデータのスクリーンショット）で、下へ送ると表が「閉じる」ボタンの後ろに透けて重なっていた（前からの問題、50台に増えて目立つ）のを、ボタンの帯を白で塗って直した。データ欄の奇数個目は横幅いっぱいに。
 - 自分用のカレンダー（Android・PC・database-viewer）は変えていない（TOP10・5選のまま）。仕様は `EVENT_CALENDAR.md`「閲覧専用の共有ページ」。
 - 試験：`tool/test_share_viewer.mjs` に50位・10機種の上限、`tool/test_share_viewer_browser.mjs` に折りたたみ・台一覧・台のデータ・戻る・P-STATIONのMY・ボタンの帯が白いこと（320/393/1280px）。
+- `check_before_build.sh` **ALL PASSED**（32項目：PC 227件・P’s CUBE関連93件・Flutter 543件・analyzeエラー警告0/info18・閲覧専用ページ6件＋画面試験1件ほか全JS）。ソース `0ca1e4a`。
+- **公開**：`tool/stage_share_viewer.py` で database-share `a83a1e9`。GitHub Pagesのビルド完了後、公開中の4ファイルが手元と一致し、公開ページに対して画面試験（`SHARE_PUBLIC_URL`）も PASS。自分用の閲覧ページ（database-viewer）は変更が無いので公開し直していない。
 
 ## ジャグラーオンラインの取り込み（お試し、最長2週間）（Claude、2026-10-09）
 
