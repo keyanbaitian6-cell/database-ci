@@ -1,9 +1,12 @@
 // ジャグラーオンラインの取り込み（お試し、JUGGLER_ONLINE.md）。端末の画面は実データなので使わず、
 // 数字のお手本の形で描いた合成の画面で、読み取り・左右の見分け・まとめ・保存・差枚の優先を確かめる。
+import 'dart:convert';
+
 import 'package:database_android/app_controller.dart';
 import 'package:database_android/database_service.dart';
 import 'package:database_android/juggler_digit_templates.dart';
 import 'package:database_android/juggler_online.dart';
+import 'package:database_android/viewer_data.dart';
 import 'package:database_android/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as imglib;
@@ -607,6 +610,37 @@ void main() {
       await c.undoLastSave();
       expect((await db.loadAll()).where((r) => r.day == '2026-10-07'), isEmpty);
       await db.close();
+    });
+
+    test('作った台はPCの閲覧用ファイルを通ってiPhoneの閲覧ページでも「差枚」として読める', () {
+      // PC core.export_viewer が書く形（VIEWER_KEYS の項目だけ。グラフ・最大持玉は無い）。
+      final text = jsonEncode({
+        'format': 'database-backup',
+        'version': 1,
+        'source': 'pc-viewer',
+        'records': [
+          {
+            'store': 'saiwaichou',
+            'kind_code': 21,
+            'day': '2026-10-07',
+            'machine': 'Sネオアイムジャグラー EX−KK',
+            'rack': 780,
+            'games': 3299,
+            'bb': 11,
+            'rb': 7,
+            'captured_at': '2026-10-10T01:00:00',
+            'jo_net': -844,
+          },
+        ],
+      });
+      final data = ViewerData.parse(text);
+      expect(data.skipped, 0);
+      final r = data.records.single;
+      expect(
+        (r.games, r.bb, r.rb, r.graph, r.maxHold),
+        (3299, 11, 7, null, null),
+      );
+      expect((r.netValue, r.netLabel, r.netNeedsCheck), (-844, '差枚', false));
     });
 
     test('P’s CUBEの台は jo_net を見ない（元グラフの差枚のまま）', () {
