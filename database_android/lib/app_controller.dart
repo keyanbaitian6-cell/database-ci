@@ -818,7 +818,9 @@ class AppController extends ChangeNotifier {
             previous?.firstCapturedAt ??
             (previous == null ? timestampWithOffset(now) : null),
         confirmedSetting: old[key]?.confirmedSetting,
-        extra: previous?.extra ?? const {},
+        // ジャグラーオンラインの数字で作った台（JUGGLER_ONLINE.md）をサイトの表で取り込み直したら、
+        // 作った台の印は外す（数値はサイトのもの。差枚 jo_net などは残す）。
+        extra: {...?previous?.extra}..remove('jo_created'),
       );
     }).toList();
     // 数値が変わってグラフが外れる台は、前の内容（グラフ込み）をゴミ箱に残す。

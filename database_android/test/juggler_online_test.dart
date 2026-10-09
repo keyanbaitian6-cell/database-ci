@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:database_android/app_controller.dart';
 import 'package:database_android/database_service.dart';
+import 'package:database_android/import_service.dart';
 import 'package:database_android/juggler_digit_templates.dart';
 import 'package:database_android/juggler_online.dart';
 import 'package:database_android/viewer_data.dart';
@@ -609,6 +610,40 @@ void main() {
       expect(made.toJson()['kind_code'], 21, reason: 'PCのバックアップの読み込みで受け付ける形');
       await c.undoLastSave();
       expect((await db.loadAll()).where((r) => r.day == '2026-10-07'), isEmpty);
+      await db.close();
+    });
+
+    test('作った台をあとでサイトの表から取り込み直したら、作った台の印を外す（差枚は残す）', () async {
+      final path = await newDatabasePath();
+      final db = realDatabase(path);
+      await db.applyChanges(ChangeSet(upserts: [meruhen('2026-10-06', 780)]));
+      final c = AppController(database: db);
+      await c.initialize();
+      final day = JoDay('saiwaichou', '2026-10-07')
+        ..machine = 'ネオアイムジャグラーEX'
+        ..racks[780] = {'bb': 11, 'rb': 7, 'total': 3299, 'net': -844};
+      final plan = planJoSave(day, c.records);
+      await c.attachJugglerOnline(
+        store: day.store,
+        day: day.day,
+        racks: plan.add,
+        create: plan.create,
+      );
+      await c.saveTable('saiwaichou', '2026-10-07', 'Sネオアイムジャグラー EX−KK', [
+        EditableRow(
+          rack: 780,
+          games: 3290,
+          bb: 11,
+          rb: 7,
+          detailUrl: 'https://example.com/780',
+        ),
+      ]);
+      final saved = (await db.loadAll()).firstWhere(
+        (r) => r.day == '2026-10-07',
+      );
+      expect(saved.games, 3290, reason: 'サイトの表の数値');
+      expect(saved.extra.containsKey('jo_created'), isFalse);
+      expect(saved.extra['jo_net'], -844);
       await db.close();
     });
 

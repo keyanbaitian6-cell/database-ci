@@ -57,6 +57,32 @@ class JugglerOnlineTests(unittest.TestCase):
         self.assertEqual((row['jo_net'], row['jo_created']), (-844, True))
         self.assertEqual(rack_net(row), (-844, False, True))
 
+    def made(self, rack=780, **extra):
+        return dict(store='saiwaichou', kind_code=21, day='2026-10-07', machine='Sネオアイムジャグラー EX−KK',
+                    rack=rack, games=3299, bb=11, rb=7, jo_net=-844, jo_created=True,
+                    jo_captured_at='2026-10-10T00:30:00+09:00', **extra)
+
+    def test_made_racks_are_counted_apart_from_missing_graphs(self):
+        # サイトが落ちていた日の台はサイトから取り直せないので、「グラフ未取得」（取り込み直しの案内）に出さない。
+        from core import missing_graphs, summary_report
+        self.db.save([self.made(780), dict(self.made(781), jo_created=None, jo_net=None)])
+        self.assertEqual(missing_graphs(self.db, '2026-10-07', 'saiwaichou'), [('Sネオアイムジャグラー EX−KK', [781], 1)])
+        text = summary_report(self.db, Path(self.tmp.name), '2026-10-07').read_text(encoding='utf-8')
+        self.assertIn('ジャグラーオンラインの数字で作った台1台（グラフ無し）', text)
+        self.assertIn('グラフ未取得1台', text)
+
+    def test_recapturing_from_the_site_clears_the_made_mark(self):
+        self.db.save([self.made(780)])
+        # サイトの行ではない保存（設定情報など）では外さない。
+        self.db.save([dict(self.made(780), jo_created=None, jo_net=None)])
+        self.assertTrue(next(r for r in self.db.rows(store='saiwaichou', day='2026-10-07'))['jo_created'])
+        self.db.save([dict(store='saiwaichou', kind_code=21, day='2026-10-07', machine='Sネオアイムジャグラー EX−KK',
+                           rack=780, games=3290, bb=11, rb=7, source_url='https://example.com/list',
+                           detail_url='https://example.com/780')])
+        row = next(r for r in self.db.rows(store='saiwaichou', day='2026-10-07'))
+        self.assertNotIn('jo_created', row)
+        self.assertEqual((row['games'], row['jo_net']), (3290, -844))
+
     def test_the_juggler_online_net_is_preferred_over_the_estimate(self):
         self.assertEqual(rack_net({'jo_net': -280, 'graph_measurement': None, 'max_hold': 10, 'games': 100}), (-280, False, True))
         self.assertEqual(rack_net({'graph_measurement': None, 'max_hold': 10, 'games': 100}), (None, False, False))

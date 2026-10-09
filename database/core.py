@@ -380,6 +380,10 @@ class Store:
                 merged.pop('graph', None)
                 merged.pop('graph_measurement', None)
             merged.update({k: v for k, v in row.items() if v is not None})
+            # ジャグラーオンラインの数字で作った台（jo_created、JUGGLER_ONLINE.md）を、あとでサイトの表から
+            # 取り込み直したら、作った台の印は外す（数値はサイトのもの。差枚 jo_net などは残す）。
+            if merged.get('jo_created') and not row.get('jo_created') and (row.get('source_url') or row.get('detail_url')):
+                merged.pop('jo_created', None)
             # First save time never moves on a re-capture (same as Android's
             # first_captured_at). A row saved before this existed stays unknown.
             firsts = [v for v in (json.loads(old[0]).get('first_captured_at') if old else None,
@@ -1285,6 +1289,11 @@ def graph_not_needed(row):
     実データの0回550台で、終点がプラスだったのは24Gの1台だけ）。表を取り込み
     直して当たりが付けば、また取る対象に戻る。Android版 `graphNotNeeded`。"""
     return not has_graph(row) and no_hits(row)
+
+
+def juggler_online_made(row):
+    """メルヘンのサイトが落ちていた日に、Androidがジャグラーオンラインの数字で作った台（グラフは取れない）。"""
+    return row.get('jo_created') is True and not has_graph(row)
 
 
 def graph_done(row):
@@ -2538,7 +2547,9 @@ def missing_graphs(store, day, location):
     """
     found = []
     for machine in store.machines_for(location, day):
-        rows = [r for r in store.rows(day, machine, location) if not graph_done(r)]
+        # ジャグラーオンラインの数字で作った台は、サイトから取り直せないのでここに出さない（まとめで別に数える）。
+        rows = [r for r in store.rows(day, machine, location)
+                if not graph_done(r) and not juggler_online_made(r)]
         if rows:
             racks = sorted(int(r['rack']) for r in rows)
             found.append((machine, racks, sum(1 for r in rows if not r.get('detail_url'))))
@@ -2567,7 +2578,8 @@ def summary_report(store, folder, day, top=5):
         scored.sort(key=lambda item: item[1]['score']['total'], reverse=True)
         provisional = sum(1 for _m, r in scored if r['score']['provisional'])
         pending = len(entries) - len(scored)
-        no_graph = sum(1 for _m, r in entries if not graph_done(r))
+        made = sum(1 for _m, r in entries if juggler_online_made(r))
+        no_graph = sum(1 for _m, r in entries if not graph_done(r)) - made
         skipped = sum(1 for _m, r in entries if graph_not_needed(r))
         def detail(machine, r):
             sc = r['score']
@@ -2669,7 +2681,8 @@ def summary_report(store, folder, day, top=5):
             f'<section><h2>{html.escape(label)}</h2>'
             f'<p class="sub">{len(entries)}台 ／ 実績点表示{len(scored)}台（うち暫定{provisional}台）'
             f' ／ 保留{pending}台 ／ グラフ未取得{no_graph}台'
-            + (f'（大当たり0回でグラフ省略{skipped}台は除く）' if skipped else '') + '</p>'
+            + (f'（大当たり0回でグラフ省略{skipped}台は除く）' if skipped else '')
+            + (f' ／ ジャグラーオンラインの数字で作った台{made}台（グラフ無し）' if made else '') + '</p>'
             f'<div class="card"><table><tbody>{rows}</tbody></table></div>{missing_html}{odd_html}</section>')
     if not sections:
         raise ValueError(f'{day}の保存データがありません。')
