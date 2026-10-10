@@ -11,6 +11,10 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PYTHON=${PYTHON:-'C:\Users\keyan\.codex\.chatgpt-projects\g-p-6a9e28549ca0819184c877c6b3b3749e\database\.runtime\Scripts\python.exe'}
+# 試験の中で `python` を呼ぶもの（メルヘン・P’s CUBEの画面試験など）も同じPythonを使う。PATHの先頭が
+# Windowsストアの入口（WindowsApps\python）だと「Python」とだけ返して4件が失敗した（2026-10-10）。
+PATH="$(dirname "$(cygpath -u "$PYTHON")"):$PATH"
+export PATH
 NODE=${NODE:-'C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'}
 export PLAYWRIGHT_MODULE=${PLAYWRIGHT_MODULE:-'file:///C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'}
 WORK="$ROOT/database_android/build/check_before_build"

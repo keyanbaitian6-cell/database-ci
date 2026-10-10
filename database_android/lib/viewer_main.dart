@@ -17,6 +17,7 @@ import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
+import 'variety_idle.dart';
 import 'viewer_bridge.dart';
 import 'viewer_data.dart';
 import 'viewer_pages.dart';
@@ -943,6 +944,24 @@ class _ViewerHomeState extends State<ViewerHome> {
             ),
             icon: const Icon(Icons.science_outlined),
             label: const Text('新規予測（試験中の別の選び方）'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => VarietyIdlePage(
+                  records: all,
+                  store: store,
+                  day: day,
+                  onOpen: (record) => _openRecord(record, null),
+                  onDayChanged: (changed) => setState(() => _day = changed),
+                  eventFor: (changed) =>
+                      data.dateEventFor(store, changed)?.name,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.hourglass_empty),
+            label: const Text('バラエティの回っていない台（1週間以上1000G未満）'),
           ),
         ],
         const SizedBox(height: 14),
