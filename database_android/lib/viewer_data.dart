@@ -1,3 +1,5 @@
+import 'excluded_machines.dart';
+
 import 'dart:convert';
 
 import 'date_events.dart';
@@ -82,6 +84,8 @@ class ViewerData {
         skipped++;
         continue;
       }
+      // 対象外の機種（稼働停止の台など）は、古い閲覧用ファイルに残っていても出さない。
+      if (isHiddenMachine(record.store, record.machine)) continue;
       final current = merged[record.key];
       merged[record.key] = current == null
           ? record

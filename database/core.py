@@ -7,6 +7,7 @@ import math
 import re
 import shutil
 import sqlite3
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -38,6 +39,44 @@ VIEWER_KEYS = ('store', 'kind_code', 'day', 'machine', 'rack', 'games', 'bb', 'r
                'graph_measurement', 'captured_at', 'confirmed_setting',
                # ジャグラーオンラインの差枚（お試し、JUGGLER_ONLINE.md）。閲覧ページは推定差枚より優先する。
                'jo_net')
+# 取り込みの対象外の機種。次の機種の候補にせず、印は「対象外」にし、表・グラフも保存しない。
+# 長町南店はジャグラーシリーズ、幸町店はブラックボードを公開していない。
+# （幸町のジャグラー、長町南のスーパーブラックジャック等は対象のまま）
+# 沖ドキ（サイトの表記は「沖ドキ」「オキドキ」の両方）は、両店とも利用者の指定で対象外（2026-09-29）。
+# 幸町の聖闘士星矢 海皇覚醒（1279番台の1台だけ）は、ずっと稼働停止のため利用者の指定で対象外
+# （2026-10-11「取り込まない、表示しないようにしてほしい」）。
+_OKIDOKI_WORDS = ('沖ドキ', 'オキドキ')
+EXCLUDED_MACHINE_WORDS = {'nagamachiminami': ('ジャグラー', *_OKIDOKI_WORDS),
+                          'saiwaichou': ('ブラックボード', '聖闘士星矢海皇覚醒', *_OKIDOKI_WORDS)}
+EXCLUDED_MACHINE_NOTES = {'nagamachiminami': '長町南店のジャグラーと沖ドキ',
+                          'saiwaichou': '幸町店のブラックボード・聖闘士星矢 海皇覚醒（稼働停止）と沖ドキ'}
+
+
+# 表示しない機種（取り込みの対象外のうち、以前に保存した記録も出さないもの）。保存せず、保存済みの記録も
+# 消さずに読み出し（Store.rows・raw_payloads・閲覧用ファイル・カレンダー）から外す。沖ドキなど、対象外にする
+# 前に取り込んだ記録は今までどおり出す（利用者が外すよう頼んだのは1279番台だけ）。
+HIDDEN_MACHINE_WORDS = {'saiwaichou': ('聖闘士星矢海皇覚醒',)}
+
+
+def _machine_text(name):
+    return ''.join(unicodedata.normalize('NFKC', str(name or '')).split())
+
+
+def is_hidden_machine(location, name):
+    """表示しない機種か（[HIDDEN_MACHINE_WORDS]）。"""
+    text = _machine_text(name)
+    return any(word in text for word in HIDDEN_MACHINE_WORDS.get(location, ()))
+
+
+def is_excluded_machine(location, name):
+    """取り込みの対象外の機種か。長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」「沖ﾄﾞｷ」）
+    ため、NFKCで全角へそろえてから判定する（「ｼﾞｬｸﾞﾗｰ」も「ジャグラー」として扱う）。
+    空白は無視する（「聖闘士星矢 海皇覚醒」も「聖闘士星矢海皇覚醒」として扱う）。"""
+    words = EXCLUDED_MACHINE_WORDS.get(location, ())
+    text = _machine_text(name)
+    return any(word in text for word in words)
+
+
 STORE_NAMES = {
     'nagamachiminami': 'メルヘンワールド長町南店',
     'saiwaichou': 'スーパーメルヘンワールド幸町',
@@ -365,6 +404,8 @@ class Store:
             row = dict(row, machine=normalize_machine_name(row.get('machine')))
             if row.get('kind_code') != 21 or row.get('store') not in STORE_NAMES:
                 raise ValueError('対象は長町南店・幸町店の1000円46枚スロットのみです。')
+            if is_hidden_machine(row['store'], row['machine']):
+                continue
             date.fromisoformat(row['day'])
             key = (row['store'], row['day'], row['machine'], int(row['rack']))
             old = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?', key).fetchone()
@@ -677,7 +718,10 @@ class Store:
         # 読めない行（壊れたJSON）は飛ばす。1件のために画面も採点も止めない
         # （行は消さずに残し、書き出しには unreadable_record として入る）。
         result = []
-        for (payload,) in self.db.execute(query + ' ORDER BY day,store,rack', values):
+        for (row_store, row_machine, payload) in self.db.execute(
+                query.replace('SELECT payload', 'SELECT store, machine, payload') + ' ORDER BY day,store,rack', values):
+            if is_hidden_machine(row_store, row_machine):
+                continue
             try:
                 result.append(json.loads(payload))
             except ValueError:
@@ -697,7 +741,9 @@ class Store:
         if day:
             query += ' AND day=?'
             values.append(day)
-        return [x[0] for x in self.db.execute(query + ' ORDER BY day,store,rack', values)]
+        return [payload for (row_store, row_machine, payload) in self.db.execute(
+            query.replace('SELECT payload', 'SELECT store, machine, payload') + ' ORDER BY day,store,rack', values)
+            if not is_hidden_machine(row_store, row_machine)]
 
     def days_for(self, store=None):
         """Distinct saved days, most recent first (for a date picker).
@@ -714,7 +760,7 @@ class Store:
     def machines_for(self, store, day):
         """Distinct saved machine names for one store and day (for a machine picker)."""
         query = 'SELECT DISTINCT machine FROM days WHERE store=? AND day=? ORDER BY machine'
-        return [row[0] for row in self.db.execute(query, (store, day))]
+        return [row[0] for row in self.db.execute(query, (store, day)) if not is_hidden_machine(store, row[0])]
 
     def _machine_rows(self, machine, store):
         """All saved rows of one machine at one store, decoded once and reused.
@@ -893,8 +939,10 @@ def export_viewer(store, path, days=VIEWER_DAYS):
         out.write(f'{header}, "records": [')
         if latest:
             cutoff = (date.fromisoformat(latest) - timedelta(days=days - 1)).isoformat()
-            for (payload,) in store.db.execute(
-                    'SELECT payload FROM days WHERE day >= ? ORDER BY day,store,rack', (cutoff,)):
+            for (row_store, row_machine, payload) in store.db.execute(
+                    'SELECT store, machine, payload FROM days WHERE day >= ? ORDER BY day,store,rack', (cutoff,)):
+                if is_hidden_machine(row_store, row_machine):
+                    continue  # 対象外の機種（稼働停止の台など）は閲覧用にも出さない
                 # 閲覧ページが使う項目だけ（台ページのURL・取り込み元などは省く）。
                 try:
                     row = {k: v for k, v in json.loads(payload).items() if k in VIEWER_KEYS}
@@ -939,7 +987,10 @@ def export_backup(store, path, location=None, day=None):
     # その行だけ unreadable_record に包む（Android版と同じ。取り込みでは対象外）。
     with path.open('w', encoding='utf-8') as out:
         out.write(f'{header}, "records": [')
-        for (payload,) in store.db.execute(query + ' ORDER BY day,store,rack', values):
+        for (row_store, row_machine, payload) in store.db.execute(
+                query.replace('SELECT payload', 'SELECT store, machine, payload') + ' ORDER BY day,store,rack', values):
+            if is_hidden_machine(row_store, row_machine):
+                continue
             try:
                 json.loads(payload)
                 line = payload
@@ -997,6 +1048,8 @@ def plan_backup_import(store, records):
             continue
         # Compare with one spelling, or a '+'-spelled copy is added as a new rack.
         record = dict(record, machine=normalize_machine_name(record['machine']))
+        if is_hidden_machine(record['store'], record['machine']):
+            continue
         key = (record['store'], record['day'], record['machine'], int(record['rack']))
         if key in seen:
             if seen[key] != record:

@@ -151,7 +151,10 @@ class AppController extends ChangeNotifier {
   List<SlotRecord> get records => _records;
   List<SlotRecord> _records = const [];
   set records(List<SlotRecord> value) {
-    _records = List.unmodifiable(value);
+    // 対象外の機種（稼働停止の台など）は、以前に保存した記録が残っていても画面に出さない。
+    _records = List.unmodifiable(
+      value.where((r) => !isHiddenMachine(r.store, r.machine)),
+    );
     _revision++;
     _dayViews.clear();
   }

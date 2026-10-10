@@ -27,7 +27,8 @@ from auto_capture import AUTO_CAPTURE_JS, AutoCapture
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page, retry_target
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
-from core import (STORE_NAMES, Store, normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
+from core import (EXCLUDED_MACHINE_NOTES, EXCLUDED_MACHINE_WORDS, STORE_NAMES, Store, is_excluded_machine,
+                  normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
                   graph_done, machine_last_capture, machine_progress, no_hits, stale_capture_cutoff, progress_text, remember_for_undo, undo_last_save)
 
 BROWSER_URLS = {
@@ -902,17 +903,6 @@ def _find_next_ungraphed(store, day, machine, location, current_rack=None):
     return target, len(pending), len(rows)
 
 
-# 取り込みの対象外の機種。次の機種の候補にせず、印は「対象外」にし、表・グラフも保存しない。
-# 長町南店はジャグラーシリーズ、幸町店はブラックボードを公開していない。
-# （幸町のジャグラー、長町南のスーパーブラックジャック等は対象のまま）
-# 沖ドキ（サイトの表記は「沖ドキ」「オキドキ」の両方）は、両店とも利用者の指定で対象外（2026-09-29）。
-_OKIDOKI_WORDS = ('沖ドキ', 'オキドキ')
-EXCLUDED_MACHINE_WORDS = {'nagamachiminami': ('ジャグラー', *_OKIDOKI_WORDS),
-                          'saiwaichou': ('ブラックボード', *_OKIDOKI_WORDS)}
-EXCLUDED_MACHINE_NOTES = {'nagamachiminami': '長町南店のジャグラーと沖ドキ',
-                          'saiwaichou': '幸町店のブラックボードと沖ドキ'}
-
-
 def is_list_header(name):
     """機種一覧の見出し行（「機種名 台数 通常順 ピックアップ順」）か。
     実サイトでは見出し行も機種の行と同じ tr.teram2-link-block で描画されており、
@@ -955,14 +945,6 @@ def with_target_date(url, day):
     else:
         base += ('&' if '?' in base else '?') + f'target_date={day}'
     return base + hash_ + fragment
-
-
-def is_excluded_machine(location, name):
-    """取り込みの対象外の機種か。長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」「沖ﾄﾞｷ」）
-    ため、NFKCで全角へそろえてから判定する（「ｼﾞｬｸﾞﾗｰ」も「ジャグラー」として扱う）。"""
-    words = EXCLUDED_MACHINE_WORDS.get(location, ())
-    text = unicodedata.normalize('NFKC', str(name or ''))
-    return any(word in text for word in words)
 
 
 def machine_list_url(location, day, after=None):

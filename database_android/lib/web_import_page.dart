@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 
+export 'excluded_machines.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +13,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'capture_flow.dart';
+import 'excluded_machines.dart';
 import 'browser_session.dart';
 import 'auto_capture_state.dart';
 import 'page_readiness.dart';
@@ -87,28 +90,6 @@ bool canSaveWithoutReview(WebTableExtraction extraction) =>
     isValidRecordDay(extraction.day) &&
     (extraction.machine ?? '').trim().isNotEmpty;
 
-/// 取り込みの対象外の機種か。次の機種の候補にせず、印は「対象外」にし、
-/// 表・グラフも保存しない。
-///
-/// 長町南店はジャグラーシリーズ、幸町店はブラックボードを公開していない
-/// （幸町のジャグラー、長町南のスーパーブラックジャック等は対象のまま）。
-/// 沖ドキ（サイトの表記は「沖ドキ」「オキドキ」の両方）は、両店とも利用者の
-/// 指定で対象外（2026-09-29）。
-/// 長町南は機種名が半角カナのこともある（例「ｶﾊﾞﾈﾘ」「沖ﾄﾞｷ」）ので、半角の表記も
-/// 見る（PC版は NFKC で全角にそろえてから同じ判定をしている）。
-const excludedMachineWords = <String, List<String>>{
-  'nagamachiminami': ['ジャグラー', 'ｼﾞｬｸﾞﾗｰ', ..._okidokiWords],
-  'saiwaichou': ['ブラックボード', 'ﾌﾞﾗｯｸﾎﾞｰﾄﾞ', ..._okidokiWords],
-};
-
-const _okidokiWords = ['沖ドキ', '沖ﾄﾞｷ', 'オキドキ', 'ｵｷﾄﾞｷ'];
-
-/// 「対象外」の案内で使う呼び方。
-const excludedMachineNotes = <String, String>{
-  'nagamachiminami': '長町南店のジャグラーと沖ドキ',
-  'saiwaichou': '幸町店のブラックボードと沖ドキ',
-};
-
 /// 埋め込みの YouTube 動画か。取り込みでは動画を再生しないため、内部ブラウザでは
 /// 表示しない（通信量と画面の場所を取らないように）。判定は [_hideYouTubeScript]
 /// の JS と同じ規則。
@@ -142,12 +123,6 @@ const businessDayCutoffHour = 2;
 bool isListHeaderName(String? name) {
   final text = (name ?? '').replaceAll(RegExp(r'\s+'), '');
   return text.startsWith('機種名') && text.contains('台数');
-}
-
-bool isExcludedMachine(String? store, String? name) {
-  final words = excludedMachineWords[store] ?? const <String>[];
-  final text = name ?? '';
-  return words.any(text.contains);
 }
 
 /// 1000円46枚スロット（kind_code=21）の対象になりうるURLか。

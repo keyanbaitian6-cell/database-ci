@@ -7,6 +7,7 @@ import {meruhenNetDetail} from '../../share_viewer/net.mjs';
 import {
   compactSigned, dayNet, daySummary, displayMachineName, enteredInAdvance, eventLabel, indexRecords,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel, viewerNameFrom,
+  calendarDays, idleVarietyRacks, isHiddenMachine, storeDays,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -127,4 +128,59 @@ test('表示：半角カナだけ全角に、10万枚以上は「万」、日曜
   assert.equal(viewerNameFrom(`#u=himawari&s=${id}`), 'himawari');
   assert.equal(viewerNameFrom(`#s=${id}&u=<b>`), null);
   assert.equal(viewerNameFrom(`#s=${id}`), null);
+});
+
+// バラエティの回っていない台：閲覧ページ（test/variety_idle_test.dart）と同じ例で同じ答え。
+const day = (n) => `2026-10-${String(n).padStart(2, '0')}`;
+function idleSample() {
+  const rows = [];
+  const rec = (n, machine, rack, games) => rows.push({store: 'nagamachiminami', day: day(n), machine, rack, games, bb: 1, rb: 1});
+  for (let n = 1; n <= 10; n++) {
+    for (let rack = 1; rack <= 4; rack++) rec(n, '主力', rack, 300);
+    rec(n, 'A', 10, n === 1 ? 2500 : 400 + n);
+    rec(n, 'B', 20, n <= 3 ? 1000 : 999);
+    rec(n, 'B', 21, n === 4 ? 1500 : 200);
+    if (n !== 5) rec(n, 'C', 30, 100);
+    rec(n, n >= 8 ? 'D' : 'E', 40, 50);
+  }
+  return indexRecords(rows);
+}
+const picks = (byDay, d, opts) => idleVarietyRacks(byDay, 'nagamachiminami', day(d), opts).map(r => [r.latest.machine, r.latest.rack, r.span]);
+
+test('回っていない台：バラエティで、選んだ日から前へ毎日1000G未満が7日以上（閲覧ページと同じ例）', () => {
+  const byDay = idleSample();
+  assert.deepEqual(picks(byDay, 10), [['A', 10, 9], ['B', 20, 7]]);
+  const a = idleVarietyRacks(byDay, 'nagamachiminami', day(10))[0];
+  assert.deepEqual([a.from, a.maxGames, a.days[0].day], [day(2), 410, day(10)]);
+  assert.deepEqual(picks(byDay, 9), [['A', 10, 8]]);
+  assert.deepEqual(picks(byDay, 7), [['E', 40, 7]], '入れ替え前のEは7日目の時点で7日');
+  assert.deepEqual(picks(byDay, 6), []);
+  assert.deepEqual(picks(byDay, 10, {gamesLimit: 500}), [['A', 10, 9]]);
+  assert.deepEqual(picks(byDay, 10, {minDays: 3}).map(x => [x[1], x[2]]), [[10, 9], [20, 7], [21, 6], [30, 5], [40, 3]]);
+  assert.deepEqual(picks(byDay, 10, {minDays: 3, gamesLimit: 3000}).map(x => [x[1], x[2]]), [[10, 10], [20, 10], [21, 10], [30, 5], [40, 3]]);
+  assert.deepEqual(storeDays(byDay, 'nagamachiminami').slice(0, 2), [day(10), day(9)]);
+});
+
+test('回っていない台：期間はカレンダーの日数（記録の無い日は飛ばして期間に含める）', () => {
+  const rows = [];
+  for (const n of [1, 2, 3, 8, 9, 10]) {
+    for (let rack = 1; rack <= 4; rack++) rows.push({store: 'saiwaichou', day: day(n), machine: '主力', rack, games: 300, bb: 1, rb: 1});
+    rows.push({store: 'saiwaichou', day: day(n), machine: 'X', rack: 50, games: 200, bb: 1, rb: 1});
+  }
+  const byDay = indexRecords(rows);
+  const [x] = idleVarietyRacks(byDay, 'saiwaichou', day(10));
+  assert.deepEqual([x.span, x.days.length, x.from], [10, 6, day(1)]);
+  assert.deepEqual(idleVarietyRacks(byDay, 'saiwaichou', day(10), {minDays: 14}), []);
+  assert.equal(calendarDays('2026-09-28', '2026-10-04'), 7);
+});
+
+test('幸町の聖闘士星矢 海皇覚醒（1279番台、稼働停止）は表示しない。沖ドキなど以前の記録は出す', () => {
+  assert.ok(isHiddenMachine('saiwaichou', 'L 聖闘士星矢 海皇覚醒 ED'));
+  assert.ok(!isHiddenMachine('nagamachiminami', 'L聖闘士星矢海皇覚醒ED'));
+  assert.ok(!isHiddenMachine('saiwaichou', 'L／オキドキデュオ2／FR'));
+  const m = meruhenRecords({records: [
+    {store: 'saiwaichou', day: '2026-10-09', machine: 'L聖闘士星矢海皇覚醒ED', rack: 1279, games: 0, bb: 0, rb: 0, jo_net: 0},
+    {store: 'saiwaichou', day: '2026-10-09', machine: 'L／オキドキデュオ2／FR', rack: 900, games: 3000, bb: 10, rb: 5, jo_net: 120},
+  ]});
+  assert.deepEqual(m.map(r => r.rack), [900]);
 });

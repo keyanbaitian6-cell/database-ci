@@ -11,7 +11,7 @@ import math
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core import STORE_NAMES, Store, date_event_in_advance, implausible_numbers, rack_net, signed_medals
+from core import STORE_NAMES, Store, date_event_in_advance, implausible_numbers, is_hidden_machine, rack_net, signed_medals
 
 WEEKDAYS = '日月火水木金土'
 # 「期間でまとめて入力」で一度に付けられる日数。
@@ -82,11 +82,13 @@ def meruhen_day_nets(db, location, first, last):
     """メルヘンの日ごとの総差枚（推定差枚。Android・閲覧ページの dailyNet と同じ：数値異常の台は数えず、
     推定できない台は足さない）。グラフ画像は読まない（必要な値だけSQLiteで取り出す）。"""
     totals = {}
-    query = ("SELECT day, json_extract(payload,'$.games'), json_extract(payload,'$.bb'), json_extract(payload,'$.rb'),"
+    query = ("SELECT day, machine, json_extract(payload,'$.games'), json_extract(payload,'$.bb'), json_extract(payload,'$.rb'),"
              " json_extract(payload,'$.max_hold'), json_extract(payload,'$.graph_measurement'),"
              " json_extract(payload,'$.jo_net') FROM days"
              " WHERE store=? AND day BETWEEN ? AND ? AND json_valid(payload)")
-    for day, games, bb, rb, max_hold, measurement, jo_net in db.db.execute(query, (location, first, last)):
+    for day, machine, games, bb, rb, max_hold, measurement, jo_net in db.db.execute(query, (location, first, last)):
+        if is_hidden_machine(location, machine):
+            continue
         if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
             continue
         try:
@@ -301,6 +303,8 @@ class MeruhenEvents:
             db.close()
         result = []
         for rack, machine, games, bb, rb, max_hold, measurement, jo_net in rows:
+            if is_hidden_machine(location, machine):
+                continue
             if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
                 continue
             try:
