@@ -1,5 +1,17 @@
 # database AI共同作業メモ
 
+## 1279番台（聖闘士星矢）を取り込まない・表示しない、共有ページに「回っていない台」、APK・PC再ビルド（Claude、2026-10-11）
+
+- 利用者：「1279番台の聖闘士星矢ってずっと稼働停止なので取り込まない、表示しないようにしてほしいな」「android版の修正もお願いしますね。あと、このバラエティ回っていない台っていうページ…共有で見るほうにも作ってもらいたい。ほぼ仕様同じでOK」「作業終わったらビルド、クローンの方も両方インストールコマンド表示までやっておいてください。あと、公開までおねがいしますね」。
+- **取り込まない**：幸町の「聖闘士星矢海皇覚醒」（1279番台の1台だけの機種）を、対象外の機種（`EXCLUDED_MACHINE_WORDS`、沖ドキなどと同じ扱い）に追加。PC は一覧を `core.py` へ移し（`browser_import` はそこから読む）、Android は `lib/excluded_machines.dart` へ移した（`web_import_page.dart` は再エクスポート）。空白は無視して比べる。
+- **表示しない**：取り込み済みの記録は消さずに、読み出しから外す（`HIDDEN_MACHINE_WORDS` / `is_hidden_machine`・`isHiddenMachine`、PC・Android・閲覧ページ・共有ページで同じ）。PC：`Store.rows`・`raw_payloads`・`machines_for`・閲覧用ファイル・バックアップの書き出し・カレンダーの集計・保存（`_save_rows`）・バックアップの読み込み（Androidのバックアップに残っていても新規にしない）。Android：`AppController.records`。閲覧ページ：`ViewerData.parse`。共有ページ：`meruhenRecords`。
+- **AIの判断（確かめた結果）**：最初は「対象外の機種」をすべて表示から外す作りにしたが、PCのDB（読み取り専用）を数えると、対象外にする前に取り込んだ沖ドキ（幸町のオキドキデュオ2 247件、長町南の沖ドキGOLD 144件・オキドキデュオ2 8件）があり、今まで表示されていた。利用者が外すよう頼んだのは1279番台だけなので、「取り込まない」（対象外の機種すべて）と「表示しない」（聖闘士星矢だけ）を分けた。1279番台の記録は19件。
+- **共有ページの「バラエティの回っていない台」**：カレンダーの上のボタンからシートで開く。数え方・選択肢は閲覧ページと同じ（日付・期間3〜14日以上・ゲーム数500〜3,000G未満、期間はカレンダーの日数、期間・ゲーム数は端末に覚える）。台を押すとその台のデータ。日のシートとシートの仕組み（`openSheet`）を共通にした。狭い画面では日付を1行目に、期間・ゲーム数を2行目に並べる。仕様は `EVENT_CALENDAR.md`。
+- 試験：PC `tests/test_excluded_machines.py`（5件。保存しない、記録は残す、読み出し・閲覧用ファイル・バックアップ・カレンダー・機種の選択肢に出さない、沖ドキの以前の記録は出す）、Android `test/excluded_machines_test.dart`（3件）、共有ページ `tool/test_share_viewer.mjs`（閲覧ページと同じ例、1279を出さない）と `tool/test_share_viewer_idle_browser.mjs`（320/393px）。`check_before_build.sh` **ALL PASSED**（35項目：PC 232件・P’s CUBE関連93件・Flutter 555件・analyzeエラー警告0/info18・全JS）を通常版・クローンのビルド前に各1回。
+- **APK**：通常版 `0.5.36+2026101101`（ソース `66a0e76`、SHA-256 `4a058853…f8d0`、94,056,049 bytes、取込ボタン enabled=true）、P’s CUBEクローン `0.5.36+2026101102`（ソース `2ea05ad`、`DATABASE_ANDROID_CLONE=pscube`、SHA-256 `a975c8f4…e6e8`、94,056,073 bytes、enabled=false、表示名「database P’s CUBE」）。aapt2で版・ID、apksignerで証明書 `4332fcb9…a047`（従来と同じ）、mapping.txtでML Kitの部品が残ることを確認。置き場所・インストールコマンドはGit外 `database_android/build/releases/0.5.36/`。クローンにはML Kitの修正（10/09以降）もこの版で入る。
+- **PC**：EXEが起動していないことを確認（利用者はソースの `app.py`・`pscube_import.py` を起動中＝開き直すと新しいコード）。`build_windows.ps1 -BuildTag hide-1279-20261011` で `database/bin` 3EXEを再ビルド、`smoke_frozen_runtime`（`a/work/outputs/frozen-runtime-20261011-hide-1279.json`）・`smoke_frozen_capture` PASS。
+- **公開**：database-viewer `549ff7a`、database-share `c8ccd7d`（いずれもソース `2ea05ad`）。Pagesのビルド完了後、公開中のファイルが手元と一致、記録（seed）は404、公開した共有ページに対して画面試験2本 PASS。
+
 ## 台の画面「この台の推移」：日付を押すとその日へ、列の並び、「暫定」をやめる（Claude、2026-10-11）
 
 - 利用者：「各台においてこの台の推移っていう項目があると思うけど、日付のところクリックしたらその日のデータに飛ぶようにしてください。日付、採点、総回転数、差枚、確率となるようにしてください。日付と採点のところの間隔が空いてるし、そこを詰めればいいかな？あと暫定って文字は今後使わなくてもいいです。（採点に関する表示すべて)」「作業終わったら公開してくださいね。エラーないかの最終確認も忘れずに」。
