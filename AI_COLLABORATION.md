@@ -11,6 +11,7 @@
 - **APK**：通常版 `0.5.36+2026101101`（ソース `66a0e76`、SHA-256 `4a058853…f8d0`、94,056,049 bytes、取込ボタン enabled=true）、P’s CUBEクローン `0.5.36+2026101102`（ソース `2ea05ad`、`DATABASE_ANDROID_CLONE=pscube`、SHA-256 `a975c8f4…e6e8`、94,056,073 bytes、enabled=false、表示名「database P’s CUBE」）。aapt2で版・ID、apksignerで証明書 `4332fcb9…a047`（従来と同じ）、mapping.txtでML Kitの部品が残ることを確認。置き場所・インストールコマンドはGit外 `database_android/build/releases/0.5.36/`。クローンにはML Kitの修正（10/09以降）もこの版で入る。
 - **PC**：EXEが起動していないことを確認（利用者はソースの `app.py`・`pscube_import.py` を起動中＝開き直すと新しいコード）。`build_windows.ps1 -BuildTag hide-1279-20261011` で `database/bin` 3EXEを再ビルド、`smoke_frozen_runtime`（`a/work/outputs/frozen-runtime-20261011-hide-1279.json`）・`smoke_frozen_capture` PASS。
 - **公開**：database-viewer `549ff7a`、database-share `c8ccd7d`（いずれもソース `2ea05ad`）。Pagesのビルド完了後、公開中のファイルが手元と一致、記録（seed）は404、公開した共有ページに対して画面試験2本 PASS。
+- **実機**（2026-10-11）：利用者が両方インストール（「両方インストールOK」）。`dumpsys` で通常版 0.5.36/2026101101、クローン 0.5.36/2026101102 を確認。最初に渡したインストールコマンドはPowerShellの書き方（先頭の `&`）で、利用者のコマンドプロンプトでは「& の使い方が誤っています」になった。以後はコマンドプロンプトの書き方で渡す。
 
 ## 台の画面「この台の推移」：日付を押すとその日へ、列の並び、「暫定」をやめる（Claude、2026-10-11）
 
