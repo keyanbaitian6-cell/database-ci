@@ -45,3 +45,10 @@ Future<String?> setPscubeDateEventDays(
   List<String> days,
   String? name,
 ) async => null;
+
+/// 画面の選択（例：回っていない台の期間）。テストでは覚えるだけ。
+final _settings = <String, String>{};
+
+String? loadViewerSetting(String key) => _settings[key];
+
+void saveViewerSetting(String key, String value) => _settings[key] = value;

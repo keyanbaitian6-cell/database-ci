@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/theme.dart';
 import 'package:database_android/variety_idle.dart';
+import 'package:database_android/viewer_bridge.dart';
 
 /// 2026-10-01 から数えて [n] 日目（1始まり）。
 String day(int n) => '2026-10-${n.toString().padLeft(2, '0')}';
@@ -77,6 +78,8 @@ void main() {
   testWidgets('一覧を出し、台を押すとその台を開く。日付を変えると数え直す', (tester) async {
     await tester.binding.setSurfaceSize(const Size(393, 852));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    saveViewerSetting(idleDaysKey, '$idleDefaultDays');
+    saveViewerSetting(idleGamesKey, '$idleDefaultGames');
     SlotRecord? opened;
     String? changed;
     await tester.pumpWidget(
@@ -94,7 +97,7 @@ void main() {
     expect(find.text('2台'), findsOneWidget);
     expect(find.text('10番　A'), findsOneWidget);
     expect(
-      find.textContaining('9日連続 1000G未満（10/2（金）〜）・最多410G'),
+      find.textContaining('9日間 1,000G未満（10/2（金）〜）・最多410G'),
       findsOneWidget,
     );
     expect(find.text('20番　B'), findsOneWidget);
@@ -113,5 +116,91 @@ void main() {
     await tester.tap(find.byTooltip('前の記録日'));
     await tester.pumpAndSettle();
     expect(find.text('当てはまる台はありません'), findsOneWidget);
+  });
+
+  test('期間はカレンダーの日数：記録の無い日（サイトが落ちていた日）は飛ばして期間に含める', () {
+    // 4〜7日は店舗の記録が無い。記録のある6日（1〜3日・8〜10日）はどれも1000G未満。
+    final all = [
+      for (final n in [1, 2, 3, 8, 9, 10]) ...[
+        for (var rack = 1; rack <= 4; rack++) rec(n, '主力', rack, 300),
+        rec(n, 'X', 50, 200),
+      ],
+    ];
+    final idle = idleVarietyRacks(all, 'nagamachiminami', day(10)).single;
+    expect((idle.spanDays, idle.days.length, idle.from), (10, 6, day(1)));
+    expect(
+      idleVarietyRacks(all, 'nagamachiminami', day(10), minDays: 14),
+      isEmpty,
+    );
+    expect(calendarDays('2026-09-28', '2026-10-04'), 7, reason: '月をまたいでも数える');
+  });
+
+  test('期間・ゲーム数を変えて選び直せる', () {
+    final all = sample();
+    List<(int, int)> pick({int minDays = 7, int gamesLimit = 1000}) => [
+      for (final r in idleVarietyRacks(
+        all,
+        'nagamachiminami',
+        day(10),
+        minDays: minDays,
+        gamesLimit: gamesLimit,
+      ))
+        (r.latest.rack, r.spanDays),
+    ];
+    expect(pick(gamesLimit: 500), [(10, 9)], reason: 'B20は999Gなので500G未満ではない');
+    expect(pick(minDays: 3), [(10, 9), (20, 7), (21, 6), (30, 5), (40, 3)]);
+    expect(pick(minDays: 3, gamesLimit: 3000), [
+      (10, 10),
+      (20, 10),
+      (21, 10),
+      (30, 5),
+      (40, 3),
+    ], reason: '3000G未満なら1日目の2500G・1500Gの日も含む。同じ期間は台番号の順');
+  });
+
+  testWidgets('期間・ゲーム数のプルダウンで選び直し、選んだ値を覚える', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(393, 852));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    saveViewerSetting(idleDaysKey, '$idleDefaultDays');
+    saveViewerSetting(idleGamesKey, '$idleDefaultGames');
+    Widget page() => MaterialApp(
+      theme: buildAppTheme(),
+      home: VarietyIdlePage(
+        records: sample(),
+        store: 'nagamachiminami',
+        day: day(10),
+        onOpen: (_) {},
+      ),
+    );
+    await tester.pumpWidget(page());
+    expect(find.text('7日以上'), findsOneWidget);
+    expect(find.text('1,000G未満'), findsOneWidget);
+    expect(find.text('2台'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('variety-idle-期間')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3日以上').last);
+    await tester.pumpAndSettle();
+    expect(find.text('5台'), findsOneWidget);
+    expect(loadViewerSetting(idleDaysKey), '3');
+    await tester.tap(find.byKey(const ValueKey('variety-idle-ゲーム数')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('500G未満').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('4台'),
+      findsOneWidget,
+      reason: 'A（9日間）・B21（200G、6日間）・C（5日間）・D（3日間）。B20は999Gなので出ない',
+    );
+    expect(find.textContaining('9日間 500G未満'), findsOneWidget);
+    expect(loadViewerSetting(idleGamesKey), '500');
+    // 開き直しても覚えた値のまま。壊れた値は既定値に戻す。
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(page());
+    expect(find.text('3日以上'), findsOneWidget);
+    expect(find.text('500G未満'), findsOneWidget);
+    saveViewerSetting(idleDaysKey, '99');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(page());
+    expect(find.text('7日以上'), findsOneWidget);
   });
 }

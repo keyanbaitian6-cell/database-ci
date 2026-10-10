@@ -133,3 +133,26 @@ Future<String?> setPscubeDateEventDays(
   [for (final d in days) d.toJS].toJS,
   name?.toJS,
 ).toDart)?.toDart;
+
+// 画面の選択（例：回っていない台の期間・ゲーム数）を端末に覚える。メルヘン・P’s CUBEの
+// どちらのページでも使えるよう、橋渡し（databaseViewer）を通さず localStorage を直接使う。
+// 覚えられない（プライベートブラウズなど）ときは、覚えずに既定の値で動く。
+@JS('localStorage.getItem')
+external JSString? _settingGet(JSString key);
+
+@JS('localStorage.setItem')
+external void _settingSet(JSString key, JSString value);
+
+String? loadViewerSetting(String key) {
+  try {
+    return _settingGet(key.toJS)?.toDart;
+  } catch (_) {
+    return null;
+  }
+}
+
+void saveViewerSetting(String key, String value) {
+  try {
+    _settingSet(key.toJS, value.toJS);
+  } catch (_) {}
+}

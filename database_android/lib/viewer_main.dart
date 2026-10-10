@@ -961,7 +961,7 @@ class _ViewerHomeState extends State<ViewerHome> {
               ),
             ),
             icon: const Icon(Icons.hourglass_empty),
-            label: const Text('バラエティの回っていない台（1週間以上1000G未満）'),
+            label: const Text('バラエティの回っていない台（期間・ゲーム数を選べる）'),
           ),
         ],
         const SizedBox(height: 14),
