@@ -1897,7 +1897,7 @@ def score(row, reference, provisional_reference=None):
                         min(s['reference_days'], hold_days) < SHRINK_DAYS)
     s['status'] = 'provisional' if s['provisional'] else 'reference'
     if s['provisional']:
-        s['reasons'].append('少数データ・欠測を含む暫定評価')
+        s['reasons'].append('少数データ・欠測を含む評価')
     if s['positive'] == 0 and not skipped:
         s['reasons'].append('グラフ終点がゼロ線以下')
     s['reasons'].append(f"比較{s['reference_count']}件/{s['reference_days']}日・持玉比較{s['hold_reference_count']}件・観測{row['games']}G")
@@ -2231,8 +2231,6 @@ def report(store, day, machine, folder, location='nagamachiminami'):
                  net_display, setting_display, estimate_display]
         cells += [fmt(s[k]) for k in ('max_hold','hits','positive','retention')]
         total_text = fmt(total)
-        if total is not None and s['provisional']:
-            total_text = '暫定 ' + total_text
         comparison = f'{s["reference_count"]}件/{s["reference_days"]}日・持玉{s["hold_reference_count"]}件'
         image_name = (measurement or {}).get('source_image') or r.get('source_image')
         source_url = (measurement or {}).get('source_url') or r.get('source_url')
@@ -2391,7 +2389,7 @@ a.evidence:hover{{text-decoration:underline}}
 <header><div class="f7-brand">{FLIP7_FAN}<h1>database 結果</h1></div><div class="sub">{html.escape(STORE_NAMES[location])} ｜ {html.escape(machine)} ｜ {day}{event_label} ｜ 1000円46枚 {source_html}<br>
 独自の結果評価です。出率・差枚・設定確率を表す点数ではありません。<br>
 比較：同店・同機種の過去30日、回転数が概ね半分〜2倍（最低500G）の台。当日・未来は比較に使いません。比較件数・日数・回転数が少ないほど中間へ補正します。<br>
-当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、暫定表示と欠測幅を示します。<br>
+当たり頻度60点、最大持玉20点、終点10点、維持10点。回転数は加点しません。欠けた項目は中立点で補完し、欠測幅を示します。<br>
 「推定差枚」はグラフの形と最大持玉から縦軸の目盛りを割り出した計算で、確定値ではありません（誤差はおよそグラフ1目盛り分。決められない台は「—」。「※」はグラフだけでは目盛りを決めきれず、回転数から選び直した要確認の値）。<br>
 「設定候補」は公開BB/RB確率との条件付き比較です。各設定を同じ重みと仮定したモデル内中央80%候補範囲で、確定設定・実際の設定確率・翌日の予測ではありません。<br>計算版：{VERSION}</div></header>
 <section class="kpis">
@@ -2457,8 +2455,8 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
         row_html = []
         for r in rows:
             s = r['score']
-            status = '参考' if s['status'] == 'reference' else '暫定' if s['status'] == 'provisional' else '保留'
-            badge = s['status']
+            status = '保留' if s['status'] == 'pending' else '参考'
+            badge = 'pending' if s['status'] == 'pending' else 'reference'
             total = '—' if s['total'] is None else f'{s["total"]:.1f}'
             comparison = f'{s["reference_count"]}件/{s["reference_days"]}日・持玉{s["hold_reference_count"]}件'
             measurement = r.get('graph_measurement') or {}
@@ -2489,7 +2487,7 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
             f'<span class="store">{html.escape(STORE_NAMES[location])}</span>'
             f'<span class="machine">{html.escape(machine)}</span>'
             f'<span class="summary">{" ｜ ".join(summary_bits)}</span></summary>'
-            f'<div class="status-row"><span>参考 {official}台</span><span>暫定 {provisional}台</span><span>保留 {pending}台</span></div>'
+            f'<div class="status-row"><span>参考 {official + provisional}台</span><span>保留 {pending}台</span></div>'
             '<div class="table-wrap"><table><thead><tr><th>台番号</th><th>表示G</th><th>設定情報（手入力）</th><th>設定候補（BB/RB）</th><th>合計 /100</th>'
             '<th>状態</th><th>比較（件数/日数）</th><th>確認画像</th><th>補完・注意の理由</th></tr></thead><tbody>'
             + ''.join(row_html) + '</tbody></table></div></details></article>')
@@ -2576,7 +2574,6 @@ def summary_report(store, folder, day, top=5):
             continue
         scored = [(m, r) for m, r in entries if r['score']['total'] is not None]
         scored.sort(key=lambda item: item[1]['score']['total'], reverse=True)
-        provisional = sum(1 for _m, r in scored if r['score']['provisional'])
         pending = len(entries) - len(scored)
         made = sum(1 for _m, r in entries if juggler_online_made(r))
         no_graph = sum(1 for _m, r in entries if not graph_done(r)) - made
@@ -2586,7 +2583,7 @@ def summary_report(store, folder, day, top=5):
             hits = r['bb'] + r['rb']
             rate = f'1/{r["games"] / hits:.1f}' if hits else '—'
             total = sc['total']
-            total_text = ('暫定 ' if sc['provisional'] else '') + f'{total:.1f}'
+            total_text = f'{total:.1f}'
             tier_name = 'high' if total >= 80 else 'mid' if total >= 60 else 'low'
             hold = '—' if r.get('max_hold') is None else str(r['max_hold'])
             parts = ''.join(
@@ -2623,7 +2620,7 @@ def summary_report(store, folder, day, top=5):
                 average = f'（平均 {sum(totals) / len(totals):.1f}点）' if totals else ''
                 lines = ''.join(
                     f'<tr><td>{t["day"]}</td><td class="num">{"—" if t["total"] is None else format(t["total"], ".1f")}'
-                    f'{"（暫定）" if t["provisional"] and t["total"] is not None else ""}</td>'
+                    '</td>'
                     f'<td class="num">{t["games"]}G</td>'
                     f'<td class="num">{"1/" + format(t["rate"], ".1f") if t["rate"] else "—"}</td></tr>'
                     for t in trend)
@@ -2653,7 +2650,7 @@ def summary_report(store, folder, day, top=5):
             f'onclick="showDetail(this)"><td class="rank">{i}</td><td>{html.escape(m)}</td><td class="num">{r["rack"]}番台</td>'
             f'<td class="num">{r["games"]}G</td>'
             f'<td class="num"><span class="badge {"high" if r["score"]["total"] >= 80 else "mid" if r["score"]["total"] >= 60 else "low"}">'
-            f'{"暫定 " if r["score"]["provisional"] else ""}{r["score"]["total"]:.1f}</span></td></tr>'
+            f'{r["score"]["total"]:.1f}</span></td></tr>'
             for i, (m, r) in enumerate(scored[:top], 1))
         if not rows:
             rows = '<tr><td colspan="5" class="none">合計点が確定した台はまだありません。</td></tr>'
@@ -2679,7 +2676,7 @@ def summary_report(store, folder, day, top=5):
             missing_html = '<p class="sub">この日の一覧にある台は、すべてグラフ取り込み済みです。</p>'
         sections.append(
             f'<section><h2>{html.escape(label)}</h2>'
-            f'<p class="sub">{len(entries)}台 ／ 実績点表示{len(scored)}台（うち暫定{provisional}台）'
+            f'<p class="sub">{len(entries)}台 ／ 実績点表示{len(scored)}台'
             f' ／ 保留{pending}台 ／ グラフ未取得{no_graph}台'
             + (f'（大当たり0回でグラフ省略{skipped}台は除く）' if skipped else '')
             + (f' ／ ジャグラーオンラインの数字で作った台{made}台（グラフ無し）' if made else '') + '</p>'

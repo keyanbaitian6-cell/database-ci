@@ -85,6 +85,9 @@ class _AndroidRecordPageState extends State<AndroidRecordPage> {
             score: entry.$2,
             allRecords: controller.records,
             dateNavigation: bar,
+            onOpenDay: (day) {
+              if (day != _day) setState(() => _day = day);
+            },
           );
         },
       );

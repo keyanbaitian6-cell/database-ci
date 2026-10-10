@@ -17,17 +17,7 @@ class CsvExportService {
         return machine != 0 ? machine : a.rack.compareTo(b.rack);
       });
     final lines = <List<String>>[
-      [
-        '日付',
-        '機種名',
-        '台番号',
-        '採点結果',
-        'G数',
-        '最大持ち球',
-        'B',
-        'R',
-        '設定情報',
-      ],
+      ['日付', '機種名', '台番号', '採点結果', 'G数', '最大持ち球', 'B', 'R', '設定情報'],
     ];
     for (final record in rows) {
       final score = scoreRecord(record, records);
@@ -35,7 +25,7 @@ class CsvExportService {
         record.day,
         record.machine,
         '${record.rack}',
-        _scoreResult(score.total, score.provisional),
+        _scoreResult(score.total),
         '${record.games}',
         '${record.maxHold ?? ''}',
         '${record.bb}',
@@ -66,9 +56,9 @@ class CsvExportService {
 
   static String _point(double? value) => value?.toStringAsFixed(1) ?? '';
 
-  static String _scoreResult(double? total, bool provisional) {
+  static String _scoreResult(double? total) {
     if (total == null) return '保留';
-    return '${provisional ? '暫定' : '参考'} ${_point(total)}点';
+    return '${_point(total)}点';
   }
 
   String _escape(String value) => '"${value.replaceAll('"', '""')}"';

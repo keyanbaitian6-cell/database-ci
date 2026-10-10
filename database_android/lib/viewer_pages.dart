@@ -443,6 +443,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
       allRecords: widget.data.records,
       dateNavigation: bar,
       scrollTopButton: true,
+      onOpenDay: _changeDay,
     );
   }
 }

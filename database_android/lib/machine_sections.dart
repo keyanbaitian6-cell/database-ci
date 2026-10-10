@@ -388,11 +388,6 @@ class MachineDataTable extends StatelessWidget {
         if (!hasImplausibleNumbers(e.$1) && e.$1.netValue != null)
           e.$1.netValue!,
     ];
-    // 暫定点は、記録が少ないうちはほぼ全台に付く。各行には書かず、
-    // 表の上に1回だけ断る。
-    final provisional = entries
-        .where((e) => e.$2.total != null && e.$2.provisional)
-        .length;
     Color? stripe(int i) => i.isOdd ? _stripe : Colors.white;
 
     Widget row(int i, List<Widget> cells) {
@@ -584,10 +579,6 @@ class MachineDataTable extends StatelessWidget {
               (e) => !hasImplausibleNumbers(e.$1) && e.$1.netNeedsCheck,
             ))
               '※＝グラフだけでは縦軸の目盛りを決めきれず、回転数から選び直した推定（要確認）',
-            if (provisional > 0)
-              provisional == entries.length
-                  ? '点数はすべて暫定（少数データ・欠測を含む）'
-                  : '$provisional台の点数は暫定（少数データ・欠測を含む）',
             if (candidateRacks.isNotEmpty || longTrendRacks.isNotEmpty)
               '★＝$referenceCandidateLegend',
           ].join('・'),

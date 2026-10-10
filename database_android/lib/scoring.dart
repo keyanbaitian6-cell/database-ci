@@ -59,9 +59,10 @@ List<SlotRecord> comparisonPool(SlotRecord row, List<SlotRecord> all) {
   // 日付は必ず 'YYYY-MM-DD' なので、文字列の大小がそのまま日付の前後になる。
   // 比較のたびに日付を解析すると、台数の二乗だけ解析が走って重くなる
   // （PC版 core.py の comparison_pool も同じ文字列比較）。
-  final first = DateTime.parse(
-    row.day,
-  ).subtract(const Duration(days: 30)).toIso8601String().substring(0, 10);
+  final first = DateTime.parse(row.day)
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
   final target = max(500, row.games);
   final lowest = max(500, target / 2);
   final highest = target * 2;
@@ -205,7 +206,7 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
       row.games < shrinkGames ||
       min(hitRefs.length, holdRefs.length) < minimumReferenceRows ||
       min(days, holdDays) < shrinkDays;
-  if (provisional) reasons.add('少数データ・欠測を含む暫定評価');
+  if (provisional) reasons.add('少数データ・欠測を含む評価');
   if (positive == 0 && graph != null) reasons.add('グラフ終点がゼロ線以下');
   reasons.add(
     '比較${hitRefs.length}件/$days日・持玉比較${holdRefs.length}件・観測${row.games}G',
@@ -313,7 +314,7 @@ ScoreResult _scorePscube(SlotRecord row, List<SlotRecord> all) {
       row.games < shrinkGames ||
       refs.length < minimumReferenceRows ||
       days < shrinkDays;
-  if (provisional) reasons.add('少数データ・欠測を含む暫定評価');
+  if (provisional) reasons.add('少数データ・欠測を含む評価');
   reasons.add('比較${refs.length}件/$days日・観測${row.games}G');
   if (missing > 0)
     reasons.add(

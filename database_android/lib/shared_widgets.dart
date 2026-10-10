@@ -32,7 +32,6 @@ class DaySummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scored = entries.where((e) => e.$2.total != null).toList()
       ..sort((a, b) => b.$2.total!.compareTo(a.$2.total!));
-    final provisional = scored.where((e) => e.$2.provisional).length;
     final noGraph = entries.where((e) => !e.$1.graphDone).length;
     final skipped = entries.where((e) => e.$1.graphNotNeeded).length;
     final pscube = entries.firstOrNull?.$1.isPscube == true;
@@ -64,7 +63,7 @@ class DaySummaryCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${entries.length}台　合計点確定${scored.length}台（暫定$provisional台）'
+              '${entries.length}台　採点${scored.length}台'
               '　保留${entries.length - scored.length}台　グラフ未取得$noGraph台'
               '${skipped > 0 ? '（大当たり0回でグラフ省略$skipped台は除く）' : ''}',
               style: const TextStyle(color: AppColors.ash, fontSize: 13),
@@ -164,8 +163,7 @@ class DaySummaryCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       ScorePill(
-                        text:
-                            '${e.$2.provisional ? '暫定 ' : ''}${e.$2.total!.toStringAsFixed(1)}',
+                        text: e.$2.total!.toStringAsFixed(1),
                         tier: scoreTier(e.$2.total),
                       ),
                     ],
@@ -316,11 +314,15 @@ class SavedGraphPage extends StatefulWidget {
     this.allRecords,
     this.dateNavigation,
     this.scrollTopButton = false,
+    this.onOpenDay,
   });
   final SlotRecord record;
   final ScoreResult? score;
   final List<SlotRecord>? allRecords;
   final PreferredSizeWidget? dateNavigation;
+
+  /// 「この台の推移」の日付を押したとき、その日へ移る（無ければ日付は押せない）。
+  final ValueChanged<String>? onOpenDay;
 
   /// 右下に「一番上へ」ボタン（[ScrollTopButton]）を出す（閲覧ページ用）。
   final bool scrollTopButton;
@@ -373,7 +375,11 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
                 if (allRecords != null)
                   SlumpStrip(record: record, all: allRecords),
                 if (allRecords != null)
-                  RackTrend(record: record, all: allRecords),
+                  RackTrend(
+                    record: record,
+                    all: allRecords,
+                    onOpenDay: widget.onOpenDay,
+                  ),
               ],
             )
           : _SavedGraphBody(
@@ -383,17 +389,44 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
               allRecords: allRecords,
               controller: controller,
               bottom: bottom,
+              onOpenDay: widget.onOpenDay,
             ),
     );
   }
 }
 
-/// Recent days of this rack (same machine): score, games and hit rate, so a
+/// Recent days of this rack (same machine): score, games, net and hit rate, so a
 /// rack's habits are visible without opening each day.
+///
+/// 列は 日付・採点・総回転数・差枚・確率（利用者指定 2026-10-11）。[onOpenDay] があれば、
+/// 日付を押すとその日の記録へ移る（同じ店舗・機種・台番号）。
 class RackTrend extends StatelessWidget {
-  const RackTrend({super.key, required this.record, required this.all});
+  const RackTrend({
+    super.key,
+    required this.record,
+    required this.all,
+    this.onOpenDay,
+  });
   final SlotRecord record;
   final List<SlotRecord> all;
+  final ValueChanged<String>? onOpenDay;
+
+  static String _count(int value) =>
+      value > 0 ? signedMedals(value).substring(1) : '$value';
+
+  static Color _netColor(int value) => value > 0
+      ? AppColors.linkBlue
+      : value < 0
+      ? const Color(0xFFC62828)
+      : AppColors.ash;
+
+  /// 1行。列幅は割合で決め、日付と採点の間を空けすぎない（狭い画面でも収まる）。
+  static Widget _row(List<Widget> cells) => Row(
+    children: [
+      for (final (i, cell) in cells.indexed)
+        Expanded(flex: const [5, 3, 4, 4, 4][i], child: cell),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -428,42 +461,85 @@ class RackTrend extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
+              _row([
+                for (final (i, label) in const [
+                  '日付',
+                  '採点',
+                  '総回転数',
+                  '差枚',
+                  '確率',
+                ].indexed)
+                  Text(
+                    label,
+                    textAlign: i == 0 ? TextAlign.left : TextAlign.right,
+                    style: const TextStyle(fontSize: 11, color: AppColors.ash),
+                  ),
+              ]),
+              const Divider(height: 10),
               for (final (r, s) in trend)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(r.day)),
-                      SizedBox(
-                        width: 84,
-                        child: Text(
-                          s.total == null
-                              ? '—'
-                              : '${s.provisional ? '暫定 ' : ''}${s.total!.toStringAsFixed(1)}',
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: r.day == record.day
-                                ? AppColors.linkBlue
-                                : null,
+                  child: _row([
+                    r.day == record.day || onOpenDay == null
+                        ? Text(
+                            shortDayLabel(r.day),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: r.day == record.day
+                                  ? FontWeight.w700
+                                  : null,
+                            ),
+                          )
+                        : InkWell(
+                            key: ValueKey('rack-trend-${r.day}'),
+                            onTap: () => onOpenDay!(r.day),
+                            child: Text(
+                              shortDayLabel(r.day),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: AppColors.linkBlue,
+                                decoration: TextDecoration.underline,
+                                decorationColor: AppColors.linkBlue,
+                              ),
+                            ),
                           ),
-                        ),
+                    Text(
+                      s.total == null ? '—' : s.total!.toStringAsFixed(1),
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: r.day == record.day ? AppColors.linkBlue : null,
                       ),
-                      SizedBox(
-                        width: 70,
-                        child: Text('${r.games}G', textAlign: TextAlign.right),
-                      ),
-                      SizedBox(
-                        width: 72,
-                        child: Text(
-                          r.bb + r.rb > 0
-                              ? '1/${(r.games / (r.bb + r.rb)).toStringAsFixed(1)}'
-                              : '—',
-                          textAlign: TextAlign.right,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                    Text(
+                      '${_count(r.games)}G',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    hasImplausibleNumbers(r) || r.netValue == null
+                        ? const Text(
+                            '—',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(fontSize: 13),
+                          )
+                        : Text(
+                            r.netText!,
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _netColor(r.netValue!),
+                            ),
+                          ),
+                    Text(
+                      r.bb + r.rb > 0
+                          ? '1/${(r.games / (r.bb + r.rb)).toStringAsFixed(1)}'
+                          : '—',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ]),
                 ),
               const SizedBox(height: 8),
               Text(
@@ -567,9 +643,7 @@ class RackStats extends StatelessWidget {
           Row(
             children: [
               ScorePill(
-                text: total == null
-                    ? '保留'
-                    : '${score!.provisional ? '暫定 ' : ''}${total.toStringAsFixed(1)}',
+                text: total == null ? '保留' : total.toStringAsFixed(1),
                 tier: scoreTier(total),
               ),
               const SizedBox(width: 10),
@@ -673,12 +747,14 @@ class _SavedGraphBody extends StatelessWidget {
     this.score,
     this.allRecords,
     this.controller,
+    this.onOpenDay,
   });
   final SlotRecord record;
   final GraphMeasurement graph;
   final ScoreResult? score;
   final List<SlotRecord>? allRecords;
   final ScrollController? controller;
+  final ValueChanged<String>? onOpenDay;
 
   /// リストの下の余白。
   final double bottom;
@@ -777,7 +853,8 @@ class _SavedGraphBody extends StatelessWidget {
           ),
         ),
         if (allRecords != null) SlumpStrip(record: record, all: allRecords!),
-        if (allRecords != null) RackTrend(record: record, all: allRecords!),
+        if (allRecords != null)
+          RackTrend(record: record, all: allRecords!, onOpenDay: onOpenDay),
       ],
     );
   }

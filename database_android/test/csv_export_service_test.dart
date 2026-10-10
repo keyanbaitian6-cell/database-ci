@@ -34,7 +34,7 @@ void main() {
     expect(lines[1][0], '2026-09-22');
     expect(lines[1][1], 'テスト機種');
     expect(lines[1][2], '1217');
-    expect(lines[1][3], startsWith('暫定 '));
+    expect(lines[1][3], matches(RegExp(r'^\d+\.\d点$')), reason: '「暫定」「参考」は付けない');
     expect(lines[1].sublist(4), ['2408', '2111', '11', '6', '5以上']);
   });
 }

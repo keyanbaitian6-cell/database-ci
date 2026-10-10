@@ -36,9 +36,11 @@ typedef AnswerCheckDay = ({
   List<AnswerCheckHit> hits,
 });
 
-String _dayBefore(String day) => DateTime.parse(
-  day,
-).subtract(const Duration(days: 1)).toIso8601String().substring(0, 10);
+String _dayBefore(String day) =>
+    DateTime.parse(day)
+        .subtract(const Duration(days: 1))
+        .toIso8601String()
+        .substring(0, 10);
 
 /// [store] で、前の日（暦の前日）と両方に記録がある日。新しい順。
 List<String> answerCheckDays(List<SlotRecord> all, String store) {
@@ -366,8 +368,7 @@ class _DayCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       ScorePill(
-                        text:
-                            '${hit.score.provisional ? '暫定 ' : ''}${hit.score.total!.toStringAsFixed(1)}',
+                        text: hit.score.total!.toStringAsFixed(1),
                         tier: scoreTier(hit.score.total),
                       ),
                       const Icon(Icons.chevron_right, color: AppColors.mist),

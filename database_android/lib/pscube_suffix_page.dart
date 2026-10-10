@@ -190,7 +190,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
           style: const TextStyle(fontSize: 12),
         ),
         Text(
-          '${_positive(s)}\n採点 ${s.scored}/${s.records}件（暫定${s.provisional}件）・${s.racks}台',
+          '${_positive(s)}\n採点 ${s.scored}/${s.records}件・${s.racks}台',
           style: const TextStyle(fontSize: 12, color: AppColors.ash),
         ),
       ],
@@ -500,7 +500,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
               ),
               const SizedBox(height: 8),
               const Text(
-                '平均点は既存の採点を集計した結果です。採点件数・暫定件数とあわせて比較してください。',
+                '平均点は既存の採点を集計した結果です。採点件数とあわせて比較してください。',
                 style: TextStyle(fontSize: 12, color: AppColors.ash),
               ),
               const SizedBox(height: 16),
@@ -542,7 +542,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
               const SizedBox(height: 12),
               const Notice(
                 text:
-                    '平均G・平均MYは1記録（台×日）あたり。平均点は採点できた記録のみ（暫定を含む）。'
+                    '平均G・平均MYは1記録（台×日）あたり。平均点は採点できた記録のみ。'
                     '同点は表示と同じ小数1桁で判定。プラス終点は取得済みグラフのうち終点がゼロ線より上の割合（1ピクセル以内はゼロ扱い）。'
                     'MYは差枚ではありません。全機種では機種構成の影響を含むため、機種タイプと内訳も確認できます。',
               ),

@@ -110,7 +110,7 @@ class ScoringTests(unittest.TestCase):
             text = output.read_text(encoding='utf-8')
             self.assertIn('2026年9月13日', text)
             self.assertIn('別機種', text)
-            self.assertIn('暫定', text)
+            self.assertNotIn('暫定', text, '採点の表示に「暫定」は使わない（2026-10-11 利用者）')
             self.assertIn('date-filter', text)
             self.assertIn('store-filter', text)
             self.assertIn('補完・注意の理由', text)
