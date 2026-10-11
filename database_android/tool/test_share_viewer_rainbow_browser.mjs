@@ -85,18 +85,34 @@ try {
     await sheet.getByRole('button', {name: '50番台の🌈 外す'}).waitFor();
     assert.match(await text(), /この日の🌈 2台/);
     await page.locator('.toast').waitFor();
+    // 日付送り（2026-10-12）：上に固定した帯の「前の日」で、下まで送ったままでも日を変えられる（位置はそのまま）。
+    assert.equal(await page.locator('.sheet-head .head-title').innerText(), 'バラエティ🌈一覧');
+    await sheet.evaluate(e => { e.scrollTop = e.scrollHeight; });
+    const scrolled = await sheet.evaluate(e => e.scrollTop);
+    await page.getByRole('button', {name: '前の日'}).click();
+    assert.equal(await page.locator('select[data-sheet-day]').inputValue(), '2026-10-09');
+    assert.ok(await page.getByRole('button', {name: '前の日'}).isDisabled(), 'いちばん古い日');
+    assert.equal(await sheet.evaluate(e => e.scrollTop), scrolled, 'スクロール位置はそのまま');
+    assert.ok(await page.locator('.sheet-head').isVisible());
+    await page.getByRole('button', {name: '次の日'}).click();
+    assert.equal(await page.locator('select[data-sheet-day]').inputValue(), '2026-10-10');
     // 前の日を選ぶと、並びは最新のまま、その日の機種名を付ける。
-    await page.locator('select[data-variety="day"]').selectOption('2026-10-09');
+    await page.locator('select[data-sheet-day]').selectOption('2026-10-09');
     assert.match(await text(), /60番 新バラエティ（この日：旧バラエティ）/);
     assert.match(await text(), /50番🌈/);
     // 並べ方：最終🌈の古い順（一度も無い60が先）。
-    await page.locator('select[data-variety="day"]').selectOption('2026-10-10');
+    await page.locator('select[data-sheet-day]').selectOption('2026-10-10');
     await page.locator('select[data-variety="sort"]').selectOption('最終🌈の古い順');
     const racks = await sheet.locator('.rack').allInnerTexts();
     assert.equal(racks[0], '60番');
     // 行を押すと台のデータ。そこからも外せる。
     await sheet.locator('button.row', {hasText: '50番'}).click();
     assert.equal(await page.locator('#sheet-title').innerText(), '50番台 🌈');
+    // 台のデータも日付送りで同じ台の前の日へ（10/9：300G）。
+    await page.getByRole('button', {name: '前の日'}).click();
+    assert.match((await sheet.innerText()).replace(/\s+/g, ' '), /回転数 300G/);
+    await page.getByRole('button', {name: '次の日'}).click();
+    assert.match((await sheet.innerText()).replace(/\s+/g, ' '), /回転数 5,000G/);
     await sheet.getByRole('button', {name: '50番台の🌈 外す'}).click();
     for (let i = 0; i < 40 && posts.length < 2; i++) await page.waitForTimeout(100);
     assert.equal(posts[1].marks.find(m => m.rack === 50).on, false);

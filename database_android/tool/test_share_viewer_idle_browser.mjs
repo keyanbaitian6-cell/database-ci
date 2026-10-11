@@ -65,7 +65,7 @@ try {
     await open();
     const sheet = page.locator('.sheet');
     // 既定：最新の日（10/8）・7日以上・1,000G未満 → ハナハナ・ジャグラー（10/1〜10/8 の8日間、記録のある日6日）。
-    assert.equal(await page.locator('select[data-idle="day"]').inputValue(), '2026-10-08');
+    assert.equal(await page.locator('select[data-sheet-day]').inputValue(), '2026-10-08');
     assert.equal(await page.locator('select[data-idle="minDays"]').inputValue(), '7');
     assert.equal(await page.locator('select[data-idle="games"]').inputValue(), '1000');
     assert.match(await sheet.innerText(), /2台/);
@@ -84,7 +84,7 @@ try {
     await page.getByRole('button', {name: '‹ 戻る'}).click();
     assert.equal(await page.locator('select[data-idle="games"]').inputValue(), '500');
     // 日付を戻すと数え直す（10/3 では10/1〜10/3 の3日間なので、7日以上には当たらない）。
-    await page.locator('select[data-idle="day"]').selectOption('2026-10-03');
+    await page.locator('select[data-sheet-day]').selectOption('2026-10-03');
     assert.match(await sheet.innerText(), /当てはまる台はありません/);
     await page.locator('select[data-idle="minDays"]').selectOption('3');
     assert.match(await sheet.innerText(), /3日間 500G未満（10\/1〜）/);
@@ -95,7 +95,7 @@ try {
     await page.reload();
     await page.waitForSelector('.grid');
     await open();
-    assert.deepEqual(await Promise.all(['day', 'minDays', 'games'].map(k => page.locator(`select[data-idle="${k}"]`).inputValue())),
+    assert.deepEqual(await Promise.all(['day', 'minDays', 'games'].map(k => page.locator(k === 'day' ? 'select[data-sheet-day]' : `select[data-idle="${k}"]`).inputValue())),
       ['2026-10-08', '3', '500']);
     await page.getByRole('button', {name: '閉じる'}).click();
     assert.deepEqual([...new Set(methods)], ['GET'], '読むだけ（POSTしない）');
