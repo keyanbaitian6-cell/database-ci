@@ -170,10 +170,10 @@ try {
   const before=posts.length;
   await page.getByText('28',{exact:true}).first().click();
   await enterName('先の日イベ');
-  await waitFor(async()=>posts.length>before,'pscube calendar POST');
-  const future=posts.at(-1);
-  assert.equal(future.file,'pscube-events');
-  assert.ok(future.events.some(e=>e.day==='2026-10-28' && e.name==='先の日イベ' && e.rate==='20'),'記録の無い先の日にも入る');
+  // 前の操作の送信が後から届くことがあるので、最後の1件ではなく、保存後に届いた送信から探す（2026-10-11、たまに失敗した）。
+  const isFuture=p=>p.file==='pscube-events' && p.events.some(e=>e.day==='2026-10-28' && e.name==='先の日イベ' && e.rate==='20');
+  await waitFor(async()=>posts.slice(before).some(isFuture),'pscube calendar POST');
+  assert.ok(posts.slice(before).some(isFuture),'記録の無い先の日にも入る');
   const saved=(await stored('database-pscube-viewer','state')).date_events;
   assert.ok(saved.some(e=>e.day==='2026-10-28' && e.name==='先の日イベ'));
   assert.deepEqual(errors,[]);
