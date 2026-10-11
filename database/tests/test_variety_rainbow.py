@@ -113,5 +113,17 @@ class VarietyRainbowTests(unittest.TestCase):
         self.assertIn(50, [r['rack'] for r in variety_rows(self.path, STORE, '2026-10-10')], '長町南：1〜3台のまま')
 
 
+    def test_a_partly_captured_latest_day_does_not_shrink_the_lineup(self):
+        """自己点検（2026-10-12）：長町南の10/10はサイトが落ちていて一部しか取れず、最新の日の並びだと5台になった。
+        ふだんの台数の8割以上がある最新の日から並べる。"""
+        from variety_rainbow import lineup_day
+        db = Store(self.path)
+        db.save([row(50, 'ハナハナ', '2026-10-11')])   # 1台だけ取れた日
+        db.close()
+        self.assertEqual(lineup_day(self.path, STORE), '2026-10-10')
+        self.assertEqual([r['rack'] for r in variety_rows(self.path, STORE, '2026-10-11')], [50, 51, 60, 61],
+                         '並びは記録のそろった10/10、数値は選んだ10/11')
+
+
 if __name__ == '__main__':
     unittest.main()

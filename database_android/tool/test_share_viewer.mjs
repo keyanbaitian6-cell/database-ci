@@ -11,6 +11,7 @@ import {
   lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
   VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows,
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
+  lineupDay,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -258,4 +259,15 @@ test('バラエティ🌈：幸町は1台だけの機種（2026-10-12）・ロ�
   const rows = varietyRainbowRows(byDay, 'saiwaichou', '2026-10-10');
   assert.deepEqual(byLongestGap(rows, '2026-10-10').map(x => x.rack), [1201, 1202], '空きの長い台（6日）が上');
   assert.deepEqual(byLongestGap([...rows, {rack: 7, last: null}], '2026-10-10').map(x => x.rack), [7, 1201, 1202], '一度も無い台がいちばん上');
+});
+
+test('バラエティ🌈の並べる台は、記録のそろった最新の日（一部しか取れていない日は使わない、2026-10-12）', () => {
+  const rec = (day, rack) => ({store: 'nagamachiminami', day, machine: `機種${rack}`, rack, games: 3000, bb: 10, rb: 5});
+  const records = meruhenRecords({records: [
+    ...[1, 2, 3, 4, 5].map(r => rec('2026-10-09', r)), ...[1, 2, 3, 4].map(r => rec('2026-10-10', r)), rec('2026-10-11', 1)]});
+  const byDay = indexRecords(records);
+  assert.equal(lineupDay(byDay, 'nagamachiminami'), '2026-10-10', '4/5台＝8割はそろっている、1台の日は使わない');
+  assert.deepEqual(varietyRainbowRows(byDay, 'nagamachiminami', '2026-10-11').map(x => [x.rack, !!x.record]),
+    [[1, true], [2, false], [3, false], [4, false]]);
+  assert.equal(lineupDay(byDay, 'saiwaichou'), null);
 });

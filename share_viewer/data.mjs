@@ -364,7 +364,7 @@ function rainbowHistory(byDay, store, day) {
  * 最終🌈（last、その日以前）と30日の🌈の日数（count）。台番号の順。
  */
 export function varietyRainbowRows(byDay, store, day) {
-  const latest = storeDays(byDay, store)[0];
+  const latest = lineupDay(byDay, store);
   if (!latest) return [];
   const lineup = byDay.get(`${store}|${latest}`) ?? [];
   const counts = new Map();
@@ -420,6 +420,18 @@ export function byLongestGap(rows, day) {
     return n == null ? Infinity : n;
   };
   return [...rows].sort((a, b) => gap(b) - gap(a) || a.rack - b.rack);
+}
+
+/**
+ * バラエティ🌈の並べる台を取る日：新しい日から見て、その店のふだんの台数（直近14日でいちばん多い日）の8割以上の記録がある日
+ * （2026-10-12、サイトが落ちていて一部しか取れていない日の並びにしない）。PC版 variety_rainbow.lineup_day と同じ。
+ */
+export function lineupDay(byDay, store) {
+  const days = storeDays(byDay, store).slice(0, 14);
+  if (!days.length) return null;
+  const counts = days.map(d => (byDay.get(`${store}|${d}`) ?? []).length);
+  const usual = Math.max(...counts);
+  return days[counts.findIndex(n => n >= usual * 0.8)];
 }
 
 /** 並べ方（PCと同じ）。 */

@@ -42,19 +42,38 @@ def variety_lineup(rows, max_racks=VARIETY_MAX_RACKS):
     return [r for r in rows if counts[r['machine']] <= max_racks]
 
 
+# 並べる台を取る日：新しい日から見て、その店のふだんの台数（直近14日でいちばん多い日）の8割以上の記録がある日
+# （2026-10-12 自己点検：長町南の10/10はサイトが落ちていて37台しか取れておらず、最新の日の並びだと5台になった）。
+LINEUP_LOOKBACK_DAYS = 14
+LINEUP_MIN_SHARE = 0.8
+
+
+def lineup_day(db_path, location):
+    """バラエティ🌈の並べる台を取る日（記録がそろっている最新の日）。記録が無ければ None。共有ページの lineupDay と同じ。"""
+    db = Store(db_path)
+    try:
+        days = db.days_for(location)[:LINEUP_LOOKBACK_DAYS]
+        counts = {day: len(MeruhenEvents(db_path).day_records(location, day)) for day in days}
+    finally:
+        db.close()
+    if not counts:
+        return None
+    usual = max(counts.values())
+    return next(day for day in days if counts[day] >= usual * LINEUP_MIN_SHARE)
+
+
 def variety_rows(db_path, location, day, latest=None):
-    """バラエティの台の一覧。並べる台と機種名は、その店の最新の取り込み日 [latest] のバラエティから取る
+    """バラエティの台の一覧。並べる台と機種名は、その店の記録がそろっている最新の日 [latest]（lineup_day）のバラエティから取る
     （2026-10-11 利用者「機種一覧名はとりあえず最新の機種一覧からとって表示させておけばいい。入れ替えとかで
     変わったらその都度書き換えて」＝入れ替えは新しい日を取り込めば自動で変わる）。
     数値・🌈・最終🌈は選んだ日 [day] の、同じ台番号の記録（無ければ数値は None、🌈は付けられない）。
     その日は別の機種だった台は `day_machine` にその日の機種名。直近30日（day を含む）の🌈回数 `rainbow_count`。
     表示しない機種・数値異常の台は入れない。"""
     events = MeruhenEvents(db_path)
+    if latest is None:
+        latest = lineup_day(db_path, location) or day
     db = Store(db_path)
     try:
-        if latest is None:
-            days = db.days_for(location)
-            latest = days[0] if days else day
         since = (date.fromisoformat(day) - timedelta(days=RAINBOW_COUNT_DAYS - 1)).isoformat()
         found = db.rainbow_counts(location, since, day)
         previous = db.last_rainbow_days(location, day)
@@ -81,7 +100,7 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
     """「バラエティ🌈」のタブの中身。on_changed(db) は付け外しのあと（少し待ってまとめて）呼ぶ
     （バックアップ・閲覧用ファイル・結果の作り直し）。表示を描き直す関数を返す（タブを開いたとき用）。"""
     ttk.Label(parent, text=f'バラエティの{RAINBOW_MARK}', style='H2.TLabel').pack(anchor='w')
-    ttk.Label(parent, text=f'最新の取り込み日の、幸町は1台だけの機種・長町南は1〜{VARIETY_MAX_RACKS}台の機種の台（入れ替えは、新しい日を取り込むと自動で変わります）。'
+    ttk.Label(parent, text=f'記録のそろった最新の日（ふだんの8割以上の台を取り込んだ日）の、幸町は1台だけの機種・長町南は1〜{VARIETY_MAX_RACKS}台の機種の台（入れ替えは、新しい日を取り込むと自動で変わります）。'
                            f'数値と{RAINBOW_MARK}は選んだ日のもの。{RAINBOW_MARK}の列を押すと、確定が出た台の印を付け外しします'
                            f'（もう一度押すと外れます）。最終{RAINBOW_MARK}＝その台番号に最後に付いた日、'
                            f'{RAINBOW_COUNT_DAYS}日＝その日までの{RAINBOW_COUNT_DAYS}日の{RAINBOW_MARK}の回数。',
@@ -152,8 +171,7 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
         if where is None or not day_var.get():
             state['rows'] = []
         else:
-            days = day_combo['values']
-            state['rows'] = variety_rows(db_path, where, day_var.get(), days[0] if days else None)
+            state['rows'] = variety_rows(db_path, where, day_var.get())
         show()
 
     def refresh_days(*_args):

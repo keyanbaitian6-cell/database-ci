@@ -80,7 +80,7 @@ try {
 
     // 表（初めは表）：幸町は1台だけの機種の 1201・1202・1203。ハナハナ（2台）・主力は出さない。
     assert.equal(await page.locator('.sheet-head .head-title').innerText(), 'バラエティ🌈一覧');
-    assert.match(await text(), /スーパーメルヘンワールド幸町・最新の記録の日に1台だけの機種の台（入れ替えは自動で変わります）。3台・10月10日（土）の🌈 1台/);
+    assert.match(await text(), /スーパーメルヘンワールド幸町・記録のそろった最新の日に1台だけの機種の台（入れ替えは自動で変わります）。3台・10月10日（土）の🌈 1台/);
     assert.deepEqual(await sheet.locator('.rotation .who .num').allInnerTexts(), ['1201', '1202', '1203']);
     assert.ok(await cell(1201, '10/9', 'を外す').isVisible(), '10/9に付いている（PC）');
     assert.ok(await cell(1202, '10/10', 'を外す').isVisible(), 'ほかの端末の🌈');

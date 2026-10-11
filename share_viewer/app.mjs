@@ -595,7 +595,7 @@ function openVariety() {
       <h2 id="sheet-title" class="sr-only">バラエティ${RAINBOW}一覧</h2>
       <div class="segmented" role="group" aria-label="見せ方">${Object.entries(VARIETY_MODES).map(([key, label]) =>
         `<button type="button" class="pill ${view.mode === key ? 'pill-blue' : 'pill-outline'}" data-variety-mode="${key}" aria-pressed="${view.mode === key}">${label}</button>`).join('')}</div>
-      <p class="caption">${esc(storeLabel(state.store))}・最新の記録の日に${kinds}の台（入れ替えは自動で変わります）。${rows.length}台・${dateLabel(view.day)}の${RAINBOW} ${marked}台。</p>`;
+      <p class="caption">${esc(storeLabel(state.store))}・記録のそろった最新の日に${kinds}の台（入れ替えは自動で変わります）。${rows.length}台・${dateLabel(view.day)}の${RAINBOW} ${marked}台。</p>`;
   };
   const gridView = (view, rows) => {
     const window = windowDays(view.day);
