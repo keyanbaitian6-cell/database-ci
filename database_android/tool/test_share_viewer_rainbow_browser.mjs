@@ -21,7 +21,8 @@ const server = http.createServer(async (req, res) => {
   } catch { res.writeHead(404).end(); }
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
-const pageUrl = `http://127.0.0.1:${server.address().port}/share/index.html`;
+// SHARE_PUBLIC_URL があれば、公開した共有ページに対して試す（公開後の確認）。
+const pageUrl = process.env.SHARE_PUBLIC_URL || `http://127.0.0.1:${server.address().port}/share/index.html`;
 
 const records = [];
 for (const day of ['2026-10-09', '2026-10-10']) {
