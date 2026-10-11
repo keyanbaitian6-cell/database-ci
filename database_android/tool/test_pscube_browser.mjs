@@ -177,6 +177,9 @@ try {
   assert.equal((await readStored('database-pscube-viewer','state','data')).records.length,56);
   await page.evaluate(()=>window.databaseViewer.setRemote('https://script.google.com/macros/s/test/exec'));
   const driveResponse=page.waitForResponse(response=>response.url().includes('script.google.com'));
+  // 再読み込みの途中で失敗したとき、待っているこの約束が「ブラウザが閉じた」で先に落ち、本当の原因が出なくなる
+  // （2026-10-12、check_before_build で1回だけ起きた）。ここで受け止めておき、下の await で結果を確かめる。
+  driveResponse.catch(()=>{});
   await page.reload();await accessibility();
   await driveResponse;
   await page.waitForFunction(()=>document.querySelector('flt-semantics')!=null);
