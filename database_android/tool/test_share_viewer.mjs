@@ -9,6 +9,7 @@ import {
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel, viewerNameFrom,
   calendarDays, idleVarietyRacks, isHiddenMachine, storeDays,
   lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
+  VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -203,4 +204,36 @@ test('確定が出た台の印🌈（PCで付ける）と最終🌈：閲覧ペ�
   assert.equal(lastRainbowText(null, '2026-10-10'), 'なし');
   assert.equal(storeHasRainbow(byDay, 'nagamachiminami'), true);
   assert.equal(storeHasRainbow(byDay, 'saiwaichou'), false, '🌈の無い店では最終🌈の欄を出さない');
+});
+
+test('共有ページから付ける🌈：新しい方が残る・バラエティ🌈の一覧（PCのバラエティ🌈と同じ例）', () => {
+  const rec = (day, rack, machine, extra = {}) => ({store: 'saiwaichou', day, machine, rack, games: 3000, bb: 10, rb: 5, ...extra});
+  const records = meruhenRecords({records: [
+    ...['2026-10-09', '2026-10-10'].flatMap(day => [1, 2, 3, 4].map(r => rec(day, r, '主力'))),
+    rec('2026-10-09', 50, 'ハナハナ', {rainbow: true, rainbow_at: '2026-10-09T23:00:00.123456+09:00'}), rec('2026-10-09', 51, 'ハナハナ'),
+    rec('2026-10-09', 60, '旧バラエティ'),
+    rec('2026-10-10', 50, 'ハナハナ', {games: 5000}), rec('2026-10-10', 51, 'ハナハナ', {games: 800}),
+    rec('2026-10-10', 60, '新バラエティ'), rec('2026-10-10', 61, '新バラエティ'),
+  ]});
+  assert.ok(Number.isFinite(isoTime('2026-10-09T23:00:00.123456+09:00')), '小数6桁の時刻も読める（iPhoneのSafari）');
+  const byDay = indexRecords(records);
+  // PCで付けた時刻（10/9 23:00 JST）より古い印は負け、新しい印は勝つ。記録の無い台の印は何もしない。
+  assert.equal(applyRainbowMarks(byDay, [
+    {store: 'saiwaichou', day: '2026-10-09', rack: 50, on: false, updated_at: '2026-10-09T13:00:00.000Z'},
+    {store: 'saiwaichou', day: '2026-10-10', rack: 51, on: true, updated_at: '2026-10-11T01:00:00.000Z'},
+    {store: 'saiwaichou', day: '2026-10-10', rack: 999, on: true, updated_at: '2026-10-11T01:00:00.000Z'},
+    {store: 'pscube:c1:20', day: '2026-10-10', rack: 1, on: true, updated_at: '2026-10-11T01:00:00.000Z'},
+  ]), 1);
+  const rows = varietyRainbowRows(byDay, 'saiwaichou', '2026-10-10');
+  assert.deepEqual(rows.map(x => [x.rack, x.machine]), [[50, 'ハナハナ'], [51, 'ハナハナ'], [60, '新バラエティ'], [61, '新バラエティ']]);
+  assert.deepEqual([rows[0].last, rows[0].count, rows[1].record.rainbow, rows[1].count], ['2026-10-09', 1, true, 1]);
+  const older = varietyRainbowRows(byDay, 'saiwaichou', '2026-10-09');
+  assert.deepEqual(older.map(x => [x.rack, x.dayMachine, x.record ? x.record.games : null]),
+    [[50, null, 3000], [51, null, 3000], [60, '旧バラエティ', 3000], [61, null, null]], '一覧は最新の並び、数値は選んだ日');
+  assert.deepEqual([...rows].sort(VARIETY_SORTS['最終🌈の古い順']).map(x => x.rack), [60, 61, 50, 51]);
+  // 付け外しの時刻は、台の時刻・前の印より必ず後。印の足し合わせは新しい方。
+  assert.equal(markTime(Date.parse('2026-10-09T00:00:00Z'), '2026-10-09T23:00:00.123456+09:00'), '2026-10-09T14:00:00.124Z');
+  const merged = mergeMarks([{store: 'saiwaichou', day: '2026-10-10', rack: 51, on: true, updated_at: '2026-10-11T02:00:00.000Z'}],
+    [{store: 'saiwaichou', day: '2026-10-10', rack: 51, on: false, updated_at: '2026-10-11T01:00:00.000Z'}, {store: 'bad'}]);
+  assert.deepEqual(merged.map(m => m.on), [true]);
 });
