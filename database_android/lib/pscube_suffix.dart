@@ -3,6 +3,13 @@ import 'scoring.dart';
 
 const pscubeSuffixes = [0, 1, 2, 3, 5, 6, 7, 8];
 
+/// ゾロ目（台番号の下2桁が00・11・22・33・55・66・77・88、2026-10-11 利用者指定）の集計の印。
+/// 末尾とは別の項目として順位・表に並べる。ゾロ目の台は末尾の集計にも入る（例：1111番台は末尾1とゾロ目）。
+const pscubeZorome = 100;
+const pscubeZoromeEndings = [0, 11, 22, 33, 55, 66, 77, 88];
+bool isPscubeZorome(int rack) =>
+    rack >= 10 && pscubeZoromeEndings.contains(rack % 100);
+
 enum PscubeSuffixPeriod {
   day('選択日', 1),
   week('過去7日', 7),
@@ -29,6 +36,13 @@ class PscubeSuffixSummary {
     : entries = List.unmodifiable(entries);
   final int suffix;
   final List<(SlotRecord, ScoreResult)> entries;
+  bool get isZorome => suffix == pscubeZorome;
+
+  /// 画面の呼び方（「末尾1」「ゾロ目」）。
+  String get label => isZorome ? 'ゾロ目' : '末尾$suffix';
+
+  /// 日別の首位の内訳で使う短い呼び方（「1」「ゾロ目」）。
+  String get shortLabel => isZorome ? 'ゾロ目' : '$suffix';
   int get records => entries.length;
   int get racks => entries.map((e) => e.$1.rack).toSet().length;
   int get days => entries.map((e) => e.$1.day).toSet().length;
@@ -75,8 +89,12 @@ class PscubeSuffixReport {
   final int excludedInvalid, excludedSuffix;
   final String? start;
   final String end;
-  int get records => summaries.fold(0, (n, s) => n + s.records);
-  int get racks => summaries.fold(0, (n, s) => n + s.racks);
+
+  /// 合計は末尾の分だけ（ゾロ目の台は末尾にも入っているので、足すと二重になる）。
+  int get records =>
+      summaries.where((s) => !s.isZorome).fold(0, (n, s) => n + s.records);
+  int get racks =>
+      summaries.where((s) => !s.isZorome).fold(0, (n, s) => n + s.racks);
   int get days =>
       summaries.expand((s) => s.entries.map((e) => e.$1.day)).toSet().length;
 
@@ -137,6 +155,7 @@ PscubeSuffixReport summarizePscubeSuffixes(
   final grouped = {
     for (final suffix in pscubeSuffixes) suffix: <(SlotRecord, ScoreResult)>[],
   };
+  final zorome = <(SlotRecord, ScoreResult)>[];
   var invalid = 0, otherSuffix = 0;
   for (final r in all) {
     if (!r.isPscube ||
@@ -163,9 +182,11 @@ PscubeSuffixReport summarizePscubeSuffixes(
       otherSuffix++;
       continue;
     }
-    entries.add((r, scoreRecord(r, all)));
+    final entry = (r, scoreRecord(r, all));
+    entries.add(entry);
+    if (isPscubeZorome(r.rack)) zorome.add(entry);
   }
-  for (final entries in grouped.values) {
+  for (final entries in [...grouped.values, zorome]) {
     entries.sort((a, b) {
       final byDay = b.$1.day.compareTo(a.$1.day);
       return byDay != 0 ? byDay : a.$1.rack.compareTo(b.$1.rack);
@@ -175,6 +196,7 @@ PscubeSuffixReport summarizePscubeSuffixes(
     summaries: [
       for (final suffix in pscubeSuffixes)
         PscubeSuffixSummary(suffix, grouped[suffix]!),
+      PscubeSuffixSummary(pscubeZorome, zorome),
     ],
     excludedInvalid: invalid,
     excludedSuffix: otherSuffix,

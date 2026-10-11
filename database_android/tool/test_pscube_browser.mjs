@@ -106,7 +106,7 @@ try {
   assert.ok((await page.getByRole('button',{name:/2026-10-01.*末尾イベ/s}).count())>0);
   await page.screenshot({path:'/tmp/pscube-suffix-history.png'});
   await page.mouse.wheel(0,-400); await page.waitForTimeout(300);
-  await page.getByRole('button',{name:'8末尾すべての順位・内訳を見る',exact:true}).click();
+  await page.getByRole('button',{name:'8末尾・ゾロ目すべての順位・内訳を見る',exact:true}).click();
   await page.mouse.move(200,700); await page.mouse.wheel(0,900); await page.waitForTimeout(300);
   await page.getByRole('button',{name:'末尾1',exact:true}).click();
   await page.getByText('末尾1の内訳',{exact:true}).waitFor();

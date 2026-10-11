@@ -311,7 +311,19 @@ void main() {
         day: '2026-10-02',
         period: PscubeSuffixPeriod.week,
       );
-      expect(report.summaries.map((s) => s.suffix), [0, 1, 2, 3, 5, 6, 7, 8]);
+      expect(report.summaries.map((s) => s.suffix), [
+        0,
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        pscubeZorome,
+      ]);
+      expect(report.summaries.last.label, 'ゾロ目');
+      expect(report.summaries.last.records, 0, reason: '10・20番台はゾロ目ではない');
       final zero = report.summaries.first;
       expect(zero.records, 3);
       expect(zero.racks, 2);
@@ -326,6 +338,40 @@ void main() {
       expect(zero.positivePercent, isNull);
     },
   );
+  test('zorome: last two digits 00/11/22/33/55/66/77/88, also counted in its suffix, not double-counted in totals', () {
+    // 2026-10-11 利用者「ゾロ目っていう項目も追加してほしい。00 11 22 33 55 66 77 88」。
+    for (final rack in [100, 111, 1122, 33, 1155, 266, 1077, 1188]) {
+      expect(isPscubeZorome(rack), isTrue, reason: '$rack');
+    }
+    for (final rack in [0, 5, 10, 101, 1112, 1144, 1199, 1121, 1000 + 12]) {
+      expect(isPscubeZorome(rack), isFalse, reason: '$rack');
+    }
+    final report = summarizePscubeSuffixes(
+      [
+        row(1111, '2026-10-01', games: 3000, my: 3000),
+        row(1100, '2026-10-01', games: 3000, my: 3000),
+        row(1101, '2026-10-01'),
+        row(1144, '2026-10-01'),
+      ],
+      store: store,
+      day: '2026-10-01',
+    );
+    final zorome = report.summaries.singleWhere((s) => s.isZorome);
+    expect(zorome.entries.map((e) => e.$1.rack), [1100, 1111]);
+    expect(zorome.label, 'ゾロ目');
+    expect(zorome.shortLabel, 'ゾロ目');
+    expect(zorome.averageMy, 3000);
+    // ゾロ目の台は末尾の集計にも入る（1111番台は末尾1、1100番台は末尾0）。
+    expect(report.summaries[1].entries.map((e) => e.$1.rack), [1101, 1111]);
+    expect(report.summaries[0].entries.map((e) => e.$1.rack), [1100]);
+    // 合計は二重に数えない。44は指定外の末尾。
+    expect(report.records, 3);
+    expect(report.racks, 3);
+    expect(report.excludedSuffix, 1);
+    expect(report.ranked.map((s) => s.label), contains('ゾロ目'));
+    expect(report.daily.single.summaries.last.isZorome, isTrue);
+    expect(report.daily.single.records, 3);
+  });
   test('calendar windows exclude future days, other stores/rates and invalid numbers', () {
     final all = [
       row(11, '2026-09-24'),
@@ -461,6 +507,10 @@ void main() {
           findsOneWidget,
         );
       }
+      expect(
+        find.descendant(of: find.byType(DataTable), matching: find.text('ゾロ目')),
+        findsOneWidget,
+      );
       expect(find.text('末尾4'), findsNothing);
       expect(find.text('末尾9'), findsNothing);
       await tester.ensureVisible(

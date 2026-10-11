@@ -171,7 +171,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
             TextButton(
               onPressed: () => _open(s),
               child: Text(
-                '末尾${s.suffix}',
+                s.label,
                 style: const TextStyle(
                   fontSize: 19,
                   fontWeight: FontWeight.w700,
@@ -215,7 +215,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
               Text(report.records == 0 ? '対象の記録がありません' : '採点なし（500G以下など）')
             else ...[
               Text(
-                '平均点の首位：${report.leaders.map((s) => '末尾${s.suffix}').join('・')}'
+                '平均点の首位：${report.leaders.map((s) => s.label).join('・')}'
                 '${report.leaders.length > 1 ? '（同点）' : ''}',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
@@ -263,7 +263,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                         (s) => s.averageScore == null,
                       ))
                         ListTile(
-                          title: Text('末尾${s.suffix}'),
+                          title: Text(s.label),
                           subtitle: Text(
                             s.records == 0 ? '記録なし' : '採点なし・${s.records}件',
                           ),
@@ -273,7 +273,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                   ),
                 ),
               ),
-              child: const Text('8末尾すべての順位・内訳を見る'),
+              child: const Text('8末尾・ゾロ目すべての順位・内訳を見る'),
             ),
           ],
         ),
@@ -342,10 +342,10 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
               subtitle: Text(
                 d.leaders.isEmpty
                     ? '採点なし'
-                    : '${d.leaders.map((s) => '末尾${s.suffix}').join('・')}'
+                    : '${d.leaders.map((s) => s.label).join('・')}'
                           '${d.leaders.length > 1 ? '（同点）' : ''}\n'
                           '平均 ${_average(d.leaders.first.averageScore)}点・採点 '
-                          '${d.leaders.map((s) => '${s.suffix}：${s.scored}/${s.records}件').join('／')}',
+                          '${d.leaders.map((s) => '${s.shortLabel}：${s.scored}/${s.records}件').join('／')}',
                 style: const TextStyle(fontSize: 12),
               ),
               trailing: const Icon(Icons.chevron_right),
@@ -394,7 +394,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                     DataCell(
                       TextButton(
                         onPressed: s.records == 0 ? null : () => _open(s),
-                        child: Text('末尾${s.suffix}'),
+                        child: Text(s.label),
                       ),
                     ),
                     DataCell(Text('${s.racks}')),
@@ -423,7 +423,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
         for (final s in report.summaries.where((s) => s.records > 0))
           ListTile(
             onTap: () => _open(s),
-            title: Text('末尾${s.suffix}の内訳'),
+            title: Text('${s.label}の内訳'),
             subtitle: Text(
               '${s.racks}台・${s.days}日・${s.records}件／BB ${s.bb}・RB ${s.rb}・AT/ART ${s.atArt}',
             ),
@@ -534,6 +534,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                 text:
                     '${report.start ?? '保存開始'}〜${report.end}：記録${report.days}日・'
                     '${report.racks}台・${report.records}件（台×日）。末尾0・1・2・3・5・6・7・8を集計。'
+                    'ゾロ目（下2桁が00・11・22・33・55・66・77・88）は末尾とは別に並べる（末尾の集計にも入る）。'
                     '${report.excludedInvalid > 0 ? '数値異常${report.excludedInvalid}件は対象外。' : ''}'
                     '${report.excludedSuffix > 0 ? '指定外の末尾${report.excludedSuffix}件は対象外。' : ''}',
               ),
@@ -582,7 +583,7 @@ class _PscubeSuffixDetailsState extends State<_PscubeSuffixDetails> {
     final days = summary.entries.map((e) => e.$1.day).toSet().toList()
       ..sort((a, b) => b.compareTo(a));
     return Scaffold(
-      appBar: AppBar(title: Text('末尾${summary.suffix}の内訳')),
+      appBar: AppBar(title: Text('${summary.label}の内訳')),
       floatingActionButton: ScrollTopButton(controller: _scroll),
       body: SafeArea(
         child: ListView(
