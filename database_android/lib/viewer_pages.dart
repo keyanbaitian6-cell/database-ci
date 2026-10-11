@@ -305,6 +305,11 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
 }
 
 /// 同じ店舗・機種・台番号を保って日付を変える。別機種へ入れ替わった日は混ぜない。
+/// 閲覧ページで🌈を付け外しする（RAINBOW.md「iPhoneから付ける」）。閲覧ページの画面（ViewerHome）が設定する。
+/// 端末の内容に保存して共有ファイルへ送り、新しい内容を返す（できなければ null）。null の間（Android版・
+/// P’s CUBE）は台の画面に🌈のボタンを出さない。
+Future<ViewerData?> Function(SlotRecord record, bool on)? viewerRainbowEditor;
+
 class ViewerRecordPage extends StatefulWidget {
   const ViewerRecordPage({
     super.key,
@@ -321,6 +326,21 @@ class ViewerRecordPage extends StatefulWidget {
 
 class _ViewerRecordPageState extends State<ViewerRecordPage> {
   late String _day = widget.record.day;
+  // 🌈を付け外ししたら、新しい内容で表示し直す。
+  late ViewerData _data = widget.data;
+  bool _savingRainbow = false;
+
+  Future<void> _setRainbow(SlotRecord record, bool on) async {
+    final editor = viewerRainbowEditor;
+    if (editor == null || _savingRainbow) return;
+    setState(() => _savingRainbow = true);
+    try {
+      final next = await editor(record, on);
+      if (next != null && mounted) setState(() => _data = next);
+    } finally {
+      if (mounted) setState(() => _savingRainbow = false);
+    }
+  }
 
   void _changeDay(String? day) {
     if (day == null || day == _day) return;
@@ -331,7 +351,8 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
   @override
   Widget build(BuildContext context) {
     final original = widget.record;
-    final record = widget.data.records
+    final data = _data;
+    final record = data.records
         .where(
           (r) =>
               r.store == original.store &&
@@ -341,10 +362,10 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
         )
         .firstOrNull;
     final bar = ViewerDateBar(
-      days: viewerDays(widget.data.records, original.store),
+      days: viewerDays(data.records, original.store),
       day: _day,
-      event: widget.data.dateEventFor(original.store, _day)?.name,
-      eventFor: (day) => widget.data.dateEventFor(original.store, day)?.name,
+      event: data.dateEventFor(original.store, _day)?.name,
+      eventFor: (day) => data.dateEventFor(original.store, day)?.name,
       onChanged: _changeDay,
     );
     if (record == null) {
@@ -439,11 +460,17 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
     return SavedGraphPage(
       key: ValueKey(record.key),
       record: record,
-      score: scoreRecord(record, widget.data.records),
-      allRecords: widget.data.records,
+      score: scoreRecord(record, data.records),
+      allRecords: data.records,
       dateNavigation: bar,
       scrollTopButton: true,
       onOpenDay: _changeDay,
+      onRainbow:
+          viewerRainbowEditor == null ||
+              !storeNames.containsKey(record.store) ||
+              _savingRainbow
+          ? null
+          : (on) => _setRainbow(record, on),
     );
   }
 }

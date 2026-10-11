@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'date_events.dart';
 import 'models.dart';
 import 'pscube_viewer_data.dart';
+import 'rainbow_marks.dart';
 
 /// 閲覧ページで読んだバックアップ（画像を除いた軽い形）。
 ///
@@ -91,15 +92,22 @@ class ViewerData {
           ? record
           : mergeSameRack(current, record);
     }
-    final records = merged.values.toList()
-      ..sort((a, b) {
-        final day = b.day.compareTo(a.day);
-        if (day != 0) return day;
-        final store = a.store.compareTo(b.store);
-        if (store != 0) return store;
-        final machine = a.machine.compareTo(b.machine);
-        return machine != 0 ? machine : a.rack.compareTo(b.rack);
-      });
+    // 閲覧ページで付け外しした🌈（RAINBOW.md）は、記録の rainbow_at より新しいものだけ表示に使う。
+    final records =
+        (pscube
+              ? merged.values.toList()
+              : applyRainbowMarks(
+                  merged.values.toList(),
+                  rainbowMarksOf(decoded),
+                ))
+          ..sort((a, b) {
+            final day = b.day.compareTo(a.day);
+            if (day != 0) return day;
+            final store = a.store.compareTo(b.store);
+            if (store != 0) return store;
+            final machine = a.machine.compareTo(b.machine);
+            return machine != 0 ? machine : a.rack.compareTo(b.rack);
+          });
     return ViewerData(
       records: records,
       dateEvents: dateEvents,
@@ -304,10 +312,14 @@ class ViewerData {
     // 端末の内容を残したときは、Driveからは時刻つきの入力だけを足す。
     final keptStored = identical(result.text, stored);
     return (
-      text: withOtherEvents(
-        keptStored ? incoming : stored,
-        result.text,
-        timedOnly: keptStored,
+      // 閲覧ページで付け外しした🌈（端末だけが持つ）は、Driveの内容に置き換えても残す。
+      text: keepRainbowMarks(
+        stored,
+        withOtherEvents(
+          keptStored ? incoming : stored,
+          result.text,
+          timedOnly: keptStored,
+        ),
       ),
       note: result.note,
     );

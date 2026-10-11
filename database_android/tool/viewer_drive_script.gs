@@ -25,6 +25,11 @@
 // 足し込む（入力時刻の新しい方が残る）。PC版は同期フォルダに届いたこのファイルを読んで取り込む。
 // 合言葉は付けない（利用者の選択、2026-10-08）。URLを知っている人はイベントを書き込める（台の記録は
 // 書き換えられない。形式と件数は検査する）。URLは人に教えない。
+//
+// 確定が出た台の印🌈（2026-10-11、RAINBOW.md「iPhoneから付ける」）：閲覧ページの台の画面で付け外しした🌈を、
+// 同じフォルダの database-rainbow-shared.json に足し込む（店舗・日付・台番号ごとに、付け外しした時刻の
+// 新しい方が残る）。?file=rainbow で読む。PC版は同期フォルダに届いたこのファイルを読んで記録に取り込む。
+// この部分を足したら、「デプロイを管理」→ 編集 →「新バージョン」で更新する（URLは変わらない）。
 
 // 返すファイルは、名前（file=）で決まる許可リストの中からだけ選ぶ。
 //   （指定なし）  → database-viewer.json   … メルヘンの閲覧ページ
@@ -39,9 +44,16 @@ const EVENT_FILES = {
   'pscube-events': { name: 'pscube-events-shared.json', kind: 'pscube', beside: 'pscube-viewer-drive.json' },
 };
 const EVENT_MAX = 5000;
+// 🌈のファイル（?file=rainbow で読む、POSTで足し込む）。
+const RAINBOW_FILE = { name: 'database-rainbow-shared.json', beside: 'database-viewer.json' };
+const RAINBOW_MAX = 5000;
 
 function doGet(e) {
   const key = (e && e.parameter && e.parameter.file) || '';
+  if (key === 'rainbow') {
+    const file = latestFile(RAINBOW_FILE.name);
+    return respond(file ? file.getBlob().getDataAsString('UTF-8') : JSON.stringify(rainbowDocument([])));
+  }
   if (Object.prototype.hasOwnProperty.call(EVENT_FILES, key)) {
     const spec = EVENT_FILES[key];
     const file = latestFile(spec.name);
@@ -81,6 +93,7 @@ function doPost(e) {
     return respond(JSON.stringify({ error: '送られてきた内容が読めません。' }));
   }
   if (!body || typeof body !== 'object') return respond(JSON.stringify({ error: '送られてきた内容が読めません。' }));
+  if (body.file === 'rainbow') return postRainbow(body.marks);
   const spec = Object.prototype.hasOwnProperty.call(EVENT_FILES, body.file) ? EVENT_FILES[body.file] : null;
   if (!spec) return respond(JSON.stringify({ error: '指定できないファイルです。' }));
   const incoming = validEvents(body.events, spec.kind === 'pscube');
@@ -106,6 +119,67 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// 閲覧ページからの🌈の書き込み：{file: 'rainbow', marks: [{store, day, rack, on, updated_at}]}。
+function postRainbow(marks) {
+  const incoming = validMarks(marks);
+  if (!incoming) return respond(JSON.stringify({ error: '🌈の形式が不正です。' }));
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const file = latestFile(RAINBOW_FILE.name);
+    let current = [];
+    if (file) {
+      try {
+        current = validMarks(JSON.parse(file.getBlob().getDataAsString('UTF-8')).marks) || [];
+      } catch (_) {
+        current = [];
+      }
+    }
+    const marksByKey = {};
+    for (const m of current) marksByKey[markKey(m)] = m;
+    let changed = 0;
+    for (const m of incoming) {
+      const old = marksByKey[markKey(m)];
+      if (old && Date.parse(m.updated_at) < Date.parse(old.updated_at)) continue;
+      if (old && old.on === m.on && old.updated_at === m.updated_at) continue;
+      marksByKey[markKey(m)] = m;
+      changed++;
+    }
+    const merged = Object.keys(marksByKey).sort().map(k => marksByKey[k]);
+    if (changed === 0 && file) return respond(JSON.stringify({ ok: true, marks: merged.length, changed: 0 }));
+    const text = JSON.stringify(rainbowDocument(merged));
+    if (file) file.setContent(text);
+    else folderBeside(RAINBOW_FILE.beside).createFile(RAINBOW_FILE.name, text, 'application/json');
+    return respond(JSON.stringify({ ok: true, marks: merged.length, changed: changed }));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function rainbowDocument(marks) {
+  return { format: 'database-rainbow', version: 1, updated_at: new Date().toISOString(), marks: marks };
+}
+
+function markKey(m) {
+  return m.store + '|' + m.day + '|' + ('00000' + m.rack).slice(-5);
+}
+
+// 付け外しした時刻のある🌈だけを受け付ける。1つでも不正なら null。
+function validMarks(marks) {
+  if (!Array.isArray(marks) || marks.length > RAINBOW_MAX) return null;
+  const result = [];
+  for (const m of marks) {
+    if (!m || typeof m !== 'object') return null;
+    if (typeof m.store !== 'string' || !/^[a-z0-9]{1,40}$/.test(m.store)) return null;
+    if (typeof m.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(m.day)) return null;
+    if (typeof m.rack !== 'number' || !Number.isInteger(m.rack) || m.rack < 1 || m.rack > 99999) return null;
+    if (typeof m.on !== 'boolean') return null;
+    if (typeof m.updated_at !== 'string' || !EVENT_TIME.test(m.updated_at) || isNaN(Date.parse(m.updated_at))) return null;
+    result.push({ store: m.store, day: m.day, rack: m.rack, on: m.on, updated_at: m.updated_at });
+  }
+  return result;
 }
 
 function eventDocument(kind, events) {

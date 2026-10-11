@@ -13,6 +13,7 @@ import 'date_events.dart';
 import 'event_calendar_page.dart';
 import 'event_name_dialog.dart';
 import 'pscube_suffix_page.dart';
+import 'rainbow_marks.dart';
 import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
@@ -96,6 +97,8 @@ class _ViewerHomeState extends State<ViewerHome> {
   @override
   void initState() {
     super.initState();
+    // 台の画面の🌈のボタン（RAINBOW.md「iPhoneから付ける」）。
+    viewerRainbowEditor = _editRainbow;
     if (widget.initialData case final data?) {
       _show(data);
       _loading = false;
@@ -106,6 +109,7 @@ class _ViewerHomeState extends State<ViewerHome> {
 
   @override
   void dispose() {
+    if (viewerRainbowEditor == _editRainbow) viewerRainbowEditor = null;
     _query.dispose();
     _scroll.dispose();
     super.dispose();
@@ -209,16 +213,73 @@ class _ViewerHomeState extends State<ViewerHome> {
       }
       final stored = await loadViewerData();
       if (stored == null) return;
-      final merged = ViewerData.withSharedEvents(
-        stored,
-        await fetchSharedEvents(url, 'events'),
-      );
-      if (merged == null) return;
-      await saveViewerData(merged);
-      if (mounted) setState(() => _show(ViewerData.parse(merged)));
+      var text = stored;
+      try {
+        text =
+            ViewerData.withSharedEvents(
+              text,
+              await fetchSharedEvents(url, 'events'),
+            ) ??
+            text;
+      } on Object {
+        // イベントが読めなくても🌈は読む。
+      }
+      // ほかの端末（別のiPhoneなど）で付け外しした🌈。PCが取り込む前でも表示に入れる。
+      try {
+        text =
+            withSharedRainbow(text, await fetchSharedEvents(url, 'rainbow')) ??
+            text;
+      } on Object {
+        // 古いスクリプト（🌈を足す前）・通信の失敗では何もしない。
+      }
+      if (identical(text, stored)) return;
+      await saveViewerData(text);
+      if (mounted) setState(() => _show(ViewerData.parse(text)));
     } on Object {
       // 表示中の内容はそのまま。
     }
+  }
+
+  /// 台の画面の🌈のボタン（RAINBOW.md「iPhoneから付ける」）：端末に保存してすぐ表示に入れ、
+  /// 共有ファイルへ送る（PCは開いたとき・カレンダーやバラエティ🌈のタブを開いたときに取り込む）。
+  Future<ViewerData?> _editRainbow(SlotRecord record, bool on) async {
+    final data = _data;
+    if (data == null || data.source == 'pscube') return null;
+    String? stored;
+    try {
+      stored = await loadViewerData();
+    } on Object {
+      stored = null;
+    }
+    if (stored == null) {
+      _say('$rainbowMarkを保存できませんでした（読み込んだ内容がありません。読み込み直してください）。');
+      return null;
+    }
+    final text = setRainbowMark(stored, record, on, DateTime.now());
+    await saveViewerData(text);
+    final next = ViewerData.parse(text);
+    if (mounted) setState(() => _show(next));
+    final done = on
+        ? '${record.rack}番台に$rainbowMarkを付けました。'
+        : '${record.rack}番台の$rainbowMarkを外しました。';
+    final url = _remote;
+    if (url == null) {
+      _say('$done（この端末だけ。PCへ届けるには、Googleドライブの自動読み込みを設定してください）');
+      return next;
+    }
+    try {
+      final result = rainbowSendResult(
+        await postSharedEvents(url, sharedRainbowBody(text)),
+      );
+      _say(
+        result.ok
+            ? '$done PCへ送りました（PCで開いたときに取り込みます）。'
+            : '$done PCへは送れませんでした（次に付け外しするときにまた送ります）：${result.message}',
+      );
+    } catch (error) {
+      _say('$done PCへは送れませんでした（次に付け外しするときにまた送ります）：$error');
+    }
+    return next;
   }
 
   /// 共有カレンダーへ、この端末の入力時刻つきイベントを全部送る（前に送れなかった分も届く）。

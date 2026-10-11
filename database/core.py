@@ -38,7 +38,7 @@ VIEWER_DAYS = 60
 VIEWER_KEYS = ('store', 'kind_code', 'day', 'machine', 'rack', 'games', 'bb', 'rb', 'max_hold',
                'graph_measurement', 'captured_at', 'confirmed_setting',
                # 確定が出た台の印🌈（PCで付ける。RAINBOW.md）
-               'rainbow',
+               'rainbow', 'rainbow_at',
                # ジャグラーオンラインの差枚（お試し、JUGGLER_ONLINE.md）。閲覧ページは推定差枚より優先する。
                'jo_net')
 # 取り込みの対象外の機種。次の機種の候補にせず、印は「対象外」にし、表・グラフも保存しない。
@@ -287,6 +287,55 @@ def pull_shared_events(store, folder):
     merged, changed, _conflicts = merge_date_events(store.date_events(include_removed=True), timed)
     if changed:
         store.set_date_events(merged)
+    return changed
+
+
+# iPhoneの閲覧ページで付け外しした🌈（RAINBOW.md「iPhoneから付ける」、2026-10-11）。Apps Script が同期フォルダに書く。
+SHARED_RAINBOW_NAME = 'database-rainbow-shared.json'
+
+
+def _valid_rainbow_mark(mark):
+    try:
+        return (isinstance(mark, dict) and mark.get('store') in STORE_NAMES
+                and date.fromisoformat(mark.get('day', '')).isoformat() == mark['day']
+                and type(mark.get('rack')) is int and 0 < mark['rack'] < 100000
+                and isinstance(mark.get('on'), bool) and isinstance(mark.get('updated_at'), str)
+                and _timestamp(mark['updated_at']) is not None)
+    except (TypeError, ValueError):
+        return False
+
+
+def pull_shared_rainbow(store, folder):
+    """同期フォルダの共有ファイル（iPhoneで付け外しした🌈）を記録に取り込む。付け外しした時刻が、その台の
+    rainbow_at（PCで付け外しした時刻・前に取り込んだ時刻）より新しいものだけ。その日の記録がまだ無い台は飛ばす
+    （ファイルに残るので、表を取り込んだあとの次の取り込みで入る）。読めない・形の違うファイルは無視。
+    変わった台の数を返す。"""
+    path = Path(folder) / SHARED_RAINBOW_NAME if folder else None
+    if path is None or not path.is_file():
+        return 0
+    try:
+        marks = json.loads(path.read_text(encoding='utf-8-sig')).get('marks')
+    except (OSError, ValueError, AttributeError):
+        return 0
+    if not isinstance(marks, list):
+        return 0
+    changed = 0
+    for mark in marks:
+        if not _valid_rainbow_mark(mark):
+            continue
+        rows = store.db.execute(
+            "SELECT machine, json_extract(payload, '$.rainbow'), json_extract(payload, '$.rainbow_at') FROM days"
+            " WHERE store=? AND day=? AND rack=? AND json_valid(payload)",
+            (mark['store'], mark['day'], mark['rack'])).fetchall()
+        rows = [r for r in rows if not is_hidden_machine(mark['store'], r[0])]
+        if not rows:
+            continue
+        newer = all(not at or _timestamp(mark['updated_at']) > _timestamp(at) for _m, _on, at in rows)
+        if not newer:
+            continue
+        if any((on == 1) != mark['on'] for _m, on, _at in rows) or any(at != mark['updated_at'] for *_x, at in rows):
+            store.set_rainbow(mark['store'], mark['day'], mark['rack'], mark['on'], at=mark['updated_at'])
+            changed += 1
     return changed
 
 
@@ -677,11 +726,13 @@ class Store:
         self._machine_cache = {}
         return cursor.rowcount
 
-    def set_rainbow(self, store, day, rack, on):
+    def set_rainbow(self, store, day, rack, on, at=None):
         """確定が出た台の印🌈を付ける（on=True）・外す（False）。採点には使わない（RAINBOW.md）。
 
         店舗・日・台番号で決める（その日のその台は1機種）。保存されていない台には付けられない。
-        記録の payload に ``rainbow: true`` を持つので、表を取り込み直しても・バックアップを読み込んでも残る。"""
+        記録の payload に ``rainbow: true`` を持つので、表を取り込み直しても・バックアップを読み込んでも残る。
+        付け外しした時刻を ``rainbow_at`` に残す（外しても残す）。iPhoneの閲覧ページで付け外しした分
+        （pull_shared_rainbow）と、時刻の新しい方を残すため。at はその時刻（省略は今）。"""
         if store not in STORE_NAMES:
             raise ValueError('対象店舗が不正です。')
         date.fromisoformat(day)
@@ -692,6 +743,7 @@ class Store:
         found = [(machine, payload) for machine, payload in found if not is_hidden_machine(store, machine)]
         if not found:
             raise ValueError(f'{rack}番台は{day}の記録がありません。先に表を取り込んでください。')
+        at = at or datetime.now().astimezone().isoformat()
         with self.db:
             for machine, raw in found:
                 payload = json.loads(raw)
@@ -699,6 +751,7 @@ class Store:
                     payload['rainbow'] = True
                 else:
                     payload.pop('rainbow', None)
+                payload['rainbow_at'] = at
                 self.db.execute('UPDATE days SET payload=? WHERE store=? AND day=? AND machine=? AND rack=?',
                                 (json.dumps(payload, ensure_ascii=False), store, day, machine, int(rack)))
                 self._log_observation(payload)

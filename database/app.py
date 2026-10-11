@@ -15,7 +15,7 @@ from variety_rainbow import build_variety_tab
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
-                  summary_report, undo_last_save, pull_shared_events)
+                  summary_report, undo_last_save, pull_shared_events, pull_shared_rainbow)
 
 def runtime_root():
     """Keep user data beside the project when running a packaged Windows app."""
@@ -338,8 +338,11 @@ def main():
         history_report(db, ROOT / 'reports')
     refresh_variety = build_variety_tab(tab_variety, DATA_DIR / 'database.sqlite3', variety_changed)
     # タブを開いたときに読み直す（取り込みで新しい日・入れ替えが入っていれば一覧が変わる）。
-    notebook.bind('<<NotebookTabChanged>>',
-                  lambda _e: refresh_variety() if notebook.select() == str(tab_variety) else None, add='+')
+    def open_variety(_event=None):
+        if notebook.select() == str(tab_variety):
+            pull_shared_rainbow_now()   # iPhoneで付けた🌈も入れてから読み直す
+            refresh_variety()
+    notebook.bind('<<NotebookTabChanged>>', open_variety, add='+')
 
     ttk.Label(tab_results, text='見たい台を選ぶ', style='H2.TLabel').pack(anchor='w')
     ttk.Label(tab_results, text='保存済みの店舗・日付・機種だけ選べます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 10))
@@ -453,6 +456,29 @@ def main():
             return
         if changed:
             tell(f'共有カレンダーのイベントを{changed}件取り込みました。\n')
+        if location != PSCUBE_KEY:
+            pull_shared_rainbow_now()
+
+    def pull_shared_rainbow_now():
+        """iPhoneの閲覧ページで付け外しした🌈（同期フォルダの共有ファイル、RAINBOW.md）を取り込む。
+        変わったら閲覧用ファイル・バックアップ・結果を作り直す（共有ページにも届くように）。"""
+        folder = load_settings(DATA_DIR).get('sync_dir')
+        if not folder:
+            return 0
+        db = Store(ROOT / 'data' / 'database.sqlite3')
+        try:
+            changed = pull_shared_rainbow(db, folder)
+            if changed:
+                auto_backup(db, DATA_DIR)
+                history_report(db, ROOT / 'reports')
+        except Exception as exc:  # noqa: BLE001 - 取り込めなくても画面は動かす（次にまた試す）
+            tell(f'iPhoneで付けた🌈を取り込めませんでした：{exc}\n')
+            return 0
+        finally:
+            db.close()
+        if changed:
+            tell(f'iPhoneで付け外しした🌈を{changed}台取り込みました。\n')
+        return changed
 
     def refresh_event(*_args):
         location, selected_day = current_location(), day.get()

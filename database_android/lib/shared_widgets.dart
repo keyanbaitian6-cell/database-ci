@@ -315,9 +315,14 @@ class SavedGraphPage extends StatefulWidget {
     this.dateNavigation,
     this.scrollTopButton = false,
     this.onOpenDay,
+    this.onRainbow,
   });
   final SlotRecord record;
   final ScoreResult? score;
+
+  /// 確定が出た台の印🌈を付ける（true）・外す（false）。あれば題の右に🌈のボタンを出す
+  /// （閲覧ページだけ。Android版では付けない。RAINBOW.md「iPhoneから付ける」）。
+  final ValueChanged<bool>? onRainbow;
   final List<SlotRecord>? allRecords;
   final PreferredSizeWidget? dateNavigation;
 
@@ -356,6 +361,23 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
       appBar: AppBar(
         title: Text('${record.rack}番台${record.rainbow ? ' $rainbowMark' : ''}'),
         bottom: widget.dateNavigation,
+        actions: [
+          if (widget.onRainbow case final onRainbow?)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: record.rainbow
+                  ? FilledButton.tonal(
+                      key: const ValueKey('rainbow-toggle'),
+                      onPressed: () => onRainbow(false),
+                      child: const Text('$rainbowMark 外す'),
+                    )
+                  : OutlinedButton(
+                      key: const ValueKey('rainbow-toggle'),
+                      onPressed: () => onRainbow(true),
+                      child: const Text('$rainbowMark 付ける'),
+                    ),
+            ),
+        ],
       ),
       floatingActionButton: widget.scrollTopButton
           ? ScrollTopButton(controller: _scroll)

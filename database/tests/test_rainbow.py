@@ -110,5 +110,40 @@ class RainbowTests(unittest.TestCase):
         self.assertIn('先に表を取り込んで', bad['message'])
 
 
+    def test_marks_from_the_phone_are_pulled_and_the_newer_change_wins(self):
+        """iPhoneの閲覧ページで付け外しした🌈（RAINBOW.md「iPhoneから付ける」）を同期フォルダから取り込む。"""
+        from core import SHARED_RAINBOW_NAME, pull_shared_rainbow
+        folder = self.folder / 'sync'
+        folder.mkdir()
+        write = lambda marks: (folder / SHARED_RAINBOW_NAME).write_text(
+            json.dumps({'format': 'database-rainbow', 'version': 1, 'marks': marks}), encoding='utf-8')
+        mark = lambda rack, on, at, **extra: dict(store='nagamachiminami', day='2026-10-10', rack=rack, on=on,
+                                                  updated_at=at, **extra)
+        self.assertEqual(pull_shared_rainbow(self.db, folder), 0, 'ファイルが無ければ何もしない')
+        write([mark(660, True, '2026-10-11T13:00:00.000Z'), mark(999, True, '2026-10-11T13:00:00.000Z'),
+               mark(661, True, 'bad'), {'store': 'other'}])
+        self.assertEqual(pull_shared_rainbow(self.db, folder), 1, '記録の無い台・形の違う印は飛ばす')
+        self.assertIs(self.payload(660)['rainbow'], True)
+        self.assertEqual(self.payload(660)['rainbow_at'], '2026-10-11T13:00:00.000Z')
+        self.assertEqual(pull_shared_rainbow(self.db, folder), 0, '同じ印は2回取り込まない')
+        # PCで後から外した → iPhoneの古い印では付け直さない。
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 660, False, at='2026-10-11T23:00:00+09:00')
+        self.assertEqual(pull_shared_rainbow(self.db, folder), 0)
+        self.assertNotIn('rainbow', self.payload(660))
+        # iPhoneでさらに後から付けた → 付く。
+        write([mark(660, True, '2026-10-11T15:00:00.000Z')])
+        self.assertEqual(pull_shared_rainbow(self.db, folder), 1)
+        self.assertIs(self.payload(660)['rainbow'], True)
+        (folder / SHARED_RAINBOW_NAME).write_text('{broken', encoding='utf-8')
+        self.assertEqual(pull_shared_rainbow(self.db, folder), 0, '読めないファイルは無視')
+
+    def test_pc_changes_keep_their_time(self):
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 661, True)
+        at = self.payload(661)['rainbow_at']
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 661, False)
+        self.assertNotIn('rainbow', self.payload(661))
+        self.assertGreaterEqual(self.payload(661)['rainbow_at'], at, '外しても時刻は残す（iPhoneの古い印に負けない）')
+
+
 if __name__ == '__main__':
     unittest.main()

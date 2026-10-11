@@ -107,3 +107,35 @@ test('今までの閲覧用ファイルの読み出しは残り、許可して�
   assert.equal(d.get('').constructor, Object);
   assert.match(JSON.stringify(d.get('nothing')), /指定できない/);
 });
+
+// 確定が出た台の印🌈（2026-10-11、RAINBOW.md「iPhoneから付ける」）：閲覧ページで付け外しした🌈を足し込む。
+const mark = (rack, on, at, extra = {}) => ({store: 'saiwaichou', day: '2026-10-10', rack, on, updated_at: at, ...extra});
+
+test('🌈：閲覧用ファイルと同じフォルダに作り、台ごとに付け外しした時刻の新しい方を残す', () => {
+  const d = drive();
+  assert.deepEqual(d.get('rainbow').marks, [], '無いときは空');
+  let r = d.post({file: 'rainbow', marks: [mark(660, true, '2026-10-11T12:00:00.000Z'), mark(1201, true, '2026-10-11T12:01:00.000Z')]});
+  assert.deepEqual([r.ok, r.changed], [true, 2]);
+  const file = d.files.find(f => f.name === 'database-rainbow-shared.json');
+  assert.equal(file.parent, d.shared);
+  r = d.post({file: 'rainbow', marks: [mark(660, false, '2026-10-11T11:00:00.000Z'), mark(1201, false, '2026-10-11T22:00:00+09:00')]});
+  assert.equal(r.changed, 1, '古い付け外しは負ける');
+  const doc = d.get('rainbow');
+  assert.equal(doc.format, 'database-rainbow');
+  assert.deepEqual(doc.marks.map(m => [m.rack, m.on]), [[660, true], [1201, false]]);
+  assert.equal(d.post({file: 'rainbow', marks: doc.marks}).changed, 0, '同じものは書き直さない');
+  // イベントのファイルは別のまま。
+  assert.deepEqual(d.get('events').events, []);
+});
+
+test('🌈：形式の検査（時刻なし・台番号・on・店舗）は丸ごと受け付けない', () => {
+  const d = drive();
+  for (const marks of [
+    [mark(660, true, undefined)], [mark(660, 'yes', '2026-10-11T12:00:00Z')], [mark(0, true, '2026-10-11T12:00:00Z')],
+    [mark(1.5, true, '2026-10-11T12:00:00Z')], [mark(660, true, '2026-10-11T12:00:00Z', {store: '../x'})],
+    [mark(660, true, '2026-10-11T12:00:00Z', {day: '20261010'})], 'not a list',
+  ]) {
+    assert.match(d.post({file: 'rainbow', marks}).error, /形式が不正/);
+  }
+  assert.equal(d.files.some(f => f.name === 'database-rainbow-shared.json'), false);
+});
