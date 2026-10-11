@@ -11,6 +11,7 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
 import pscube_import
 from event_calendar import PscubeEvents, open_event_calendar
+from variety_rainbow import build_variety_tab
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
@@ -324,9 +325,21 @@ def main():
     tab_home = ttk.Frame(notebook, padding=22)
     tab_results = ttk.Frame(notebook, padding=22)
     tab_sync = ttk.Frame(notebook, padding=22)
+    # バラエティの🌈（確定が出た台の印、RAINBOW.md「バラエティのタブ」、2026-10-11）。
+    tab_variety = ttk.Frame(notebook, padding=22)
     notebook.add(tab_home, text='  取り込み  ')
     notebook.add(tab_results, text='  結果を見る  ')
+    notebook.add(tab_variety, text='  バラエティ🌈  ')
     notebook.add(tab_sync, text='  バックアップ・同期  ')
+
+    def variety_changed(db):
+        # 🌈を付け外ししたあと（少し待ってまとめて）、閲覧用ファイル・バックアップ・結果を作り直す。
+        auto_backup(db, DATA_DIR)
+        history_report(db, ROOT / 'reports')
+    refresh_variety = build_variety_tab(tab_variety, DATA_DIR / 'database.sqlite3', variety_changed)
+    # タブを開いたときに読み直す（取り込みで新しい日・入れ替えが入っていれば一覧が変わる）。
+    notebook.bind('<<NotebookTabChanged>>',
+                  lambda _e: refresh_variety() if notebook.select() == str(tab_variety) else None, add='+')
 
     ttk.Label(tab_results, text='見たい台を選ぶ', style='H2.TLabel').pack(anchor='w')
     ttk.Label(tab_results, text='保存済みの店舗・日付・機種だけ選べます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 10))

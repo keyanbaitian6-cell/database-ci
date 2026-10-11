@@ -712,6 +712,17 @@ class Store:
             " AND json_extract(payload, '$.rainbow') = 1", (store, day)).fetchall()
         return sorted({int(rack) for machine, rack in rows if not is_hidden_machine(store, machine)})
 
+    def rainbow_counts(self, store, first, last):
+        """台番号ごとの、first〜last（両端を含む）に🌈が付いた日数（{台番号: 日数}）。バラエティのタブで使う。"""
+        rows = self.db.execute(
+            "SELECT rack, machine, day FROM days WHERE store=? AND day>=? AND day<=? AND json_valid(payload)"
+            " AND json_extract(payload, '$.rainbow') = 1", (store, first, last)).fetchall()
+        days = {}
+        for rack, machine, day in rows:
+            if not is_hidden_machine(store, machine):
+                days.setdefault(int(rack), set()).add(day)
+        return {rack: len(found) for rack, found in days.items()}
+
     def last_rainbow_days(self, store, before):
         """台番号ごとの、before より前で最後に🌈が付いた日（{台番号: 日}）。最終🌈の欄に使う（RAINBOW.md）。
         台番号で見る（機種が入れ替わっても同じ台番号なら続けて数える）。"""
