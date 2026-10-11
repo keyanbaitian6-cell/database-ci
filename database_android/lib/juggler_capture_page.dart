@@ -38,6 +38,7 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
   List<JoDay> _days = const [];
   final _problems = <String>[];
   final _saved = <String>{};
+  bool _saving = false;
 
   /// 店舗・営業日ごとの、読み取りに使った画面のファイル。保存できたら消す（利用者「正常に取り込んだら勝手にけして」）。
   final _sources = <String, List<String>>{};
@@ -197,6 +198,31 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     }
   }
 
+  /// 保存できる日（まだ保存していない・足す台か作る台がある日）。
+  List<JoDay> _savableDays() {
+    final records = widget.controller.records;
+    return [
+      for (final day in _days)
+        if (!_saved.contains('${day.store}|${day.day}') &&
+            _hasWork(planJoSave(day, records)))
+          day,
+    ];
+  }
+
+  /// 「読み取る」の隣の保存ボタン：読み取った日をまとめて保存する（1日ずつ順に）。
+  Future<void> _saveAll() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      for (final day in _savableDays()) {
+        await _save(day);
+        if (!mounted) return;
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _deleteAll() async {
     await _channel.invokeMethod<int>('delete', _captures);
     if (!mounted) return;
@@ -256,23 +282,21 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _captures.isEmpty || _reading ? null : _read,
-                  icon: const Icon(Icons.document_scanner_outlined),
-                  label: Text(
-                    _reading ? '読み取り中 $_done/${_captures.length}枚' : '読み取る',
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _captures.isEmpty || _reading ? null : _deleteAll,
-                child: const Text('撮った画面を消す'),
-              ),
-            ],
+          JoReadSaveButtons(
+            readLabel: _reading ? '読み取り中 $_done/${_captures.length}枚' : '読み取る',
+            onRead: _captures.isEmpty || _reading || _saving ? null : _read,
+            saveLabel: joSaveButtonLabel(
+              days: _days.length,
+              savable: _savableDays().length,
+              saved: _saved.length,
+              saving: _saving,
+            ),
+            onSave: _reading || _saving || _savableDays().isEmpty
+                ? null
+                : _saveAll,
+            onDeleteAll: _captures.isEmpty || _reading || _saving
+                ? null
+                : _deleteAll,
           ),
           if (_reading)
             const Padding(
@@ -389,20 +413,14 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
               ),
             ),
             const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: inDb + toCreate == 0 || saved
-                    ? null
-                    : () => _save(day),
-                child: Text(
-                  saved
-                      ? '保存しました'
-                      : [
-                          if (inDb > 0) '取り込み済みの$inDb台に足す',
-                          if (toCreate > 0) '$toCreate台を作る',
-                        ].join('・').ifEmpty('足せる台がありません'),
-                ),
+            // 保存のボタンは画面の上（「読み取る」の隣）。ここには保存すると何をするかだけ出す。
+            Text(
+              saved
+                  ? '保存しました'
+                  : '保存すると：${[if (inDb > 0) '取り込み済みの$inDb台に足す', if (toCreate > 0) '$toCreate台を作る'].join('・').ifEmpty('足せる台がありません')}',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: saved ? AppColors.appleBlue : null,
               ),
             ),
           ],
@@ -433,6 +451,80 @@ class _JugglerCapturePageState extends State<JugglerCapturePage>
     ];
     return diffs.isEmpty ? 'あり' : 'あり（メルヘン：${diffs.join(' ')}）';
   }
+}
+
+bool _hasWork(JoSavePlan plan) => plan.add.isNotEmpty || plan.create.isNotEmpty;
+
+/// 「読み取る」と「保存」を横に並べる（利用者 2026-10-11「読み取ったあとの保存ボタンを読み取ると
+/// 並べて配置してほしい」）。以前の保存ボタンは、日ごとの表（数十〜数百台）のいちばん下にあった。
+/// 「撮った画面を消す」はその下の行。null のボタンは押せない。
+class JoReadSaveButtons extends StatelessWidget {
+  const JoReadSaveButtons({
+    super.key,
+    required this.readLabel,
+    required this.onRead,
+    required this.saveLabel,
+    required this.onSave,
+    required this.onDeleteAll,
+  });
+  final String readLabel, saveLabel;
+  final VoidCallback? onRead, onSave, onDeleteAll;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: FilledButton.icon(
+              key: const ValueKey('jo-read'),
+              onPressed: onRead,
+              icon: const Icon(Icons.document_scanner_outlined),
+              label: Text(readLabel),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: FilledButton.icon(
+              key: const ValueKey('jo-save'),
+              onPressed: onSave,
+              icon: const Icon(Icons.save_outlined),
+              label: Text(saveLabel),
+            ),
+          ),
+        ],
+      ),
+      // 保存できた日の画面は自動で消すので、手で消すボタンは小さく（利用者 2026-10-11）。
+      Align(
+        alignment: Alignment.centerRight,
+        child: TextButton(
+          key: const ValueKey('jo-delete'),
+          onPressed: onDeleteAll,
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            textStyle: const TextStyle(fontSize: 12),
+          ),
+          child: const Text('撮った画面を消す'),
+        ),
+      ),
+    ],
+  );
+}
+
+/// 保存ボタンの文字。[days]：読み取った日の数、[savable]：まだ保存していない・足せる台がある日の数、
+/// [saved]：保存した日の数。
+String joSaveButtonLabel({
+  required int days,
+  required int savable,
+  required int saved,
+  required bool saving,
+}) {
+  if (saving) return '保存中…';
+  if (days == 0) return '保存';
+  if (savable == 0) return saved > 0 ? '保存しました' : '足せる台なし';
+  return savable == 1 ? '保存' : '保存（$savable日分）';
 }
 
 /// 足さない・作らない台の理由ごとの台数（「作らない：前の日に無い 12台、機種が違う 3台」）。
