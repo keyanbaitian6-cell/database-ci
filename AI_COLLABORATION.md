@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## メルヘン「台情報なし」の機種を飛ばす（PC・Android）、ジャグラーの保存ボタン、APK・PC再ビルド、古いAPKの片付け（Claude、2026-10-11）
+
+- 利用者：「その仕様に両方作り替えてビルドまでお願いします」（前の項の提案）、途中で「ジャグラーオンラインからのデータ読み取ったあとの保存ボタンを読み取ると並べて配置してほしい」「この消すボタンはもっと小さくてもいいよ」「古いapk見つけたらけしてね」「今のうちに消してていいよ」。
+- **メルヘン**：機種の表のページ（URLに機種名と日付）で、サイトが「該当する台情報が見つかりませんでした／ありません」を出し台の表が読めないときは、保存せず、その日はこの機種を飛ばして機種一覧へ戻り次の機種へ（自動・手動とも）。飛ばした機種は画面を開いている間だけ覚える（開き直せば再挑戦）。日付の分からないページは飛ばさない。PC `browser_import.py`（`NO_RACKS_PATTERN`・`skip_machine_without_racks`・`_no_racks`・カードの `noRacksShown`）・`auto_capture.py`、Android `web_import_page.dart`（表の読み取りの `no_racks`・`_skipMachineWithoutRacks`・`_noRacks`、自動の確認は表が無くても準備済み）・`import_day.dart`（`noRacksKey`・`noRacksNotice`・`meruhenMachineListUrl`）。仕様は `database/IMPORT_DAY_AND_DIRECTION.md`。試験：`tests/test_meruhen_no_racks.py`（6件）、`test/meruhen_no_racks_test.dart`（2件）、`tool/test_meruhen_no_racks_browser.mjs`（PCのカード）、`tool/test_meruhen_no_racks_android.mjs`（Androidの埋め込みJS）。実サイトでの動きは利用者の次の取り込みで確認。
+- **ジャグラーオンライン**：「保存」を「読み取る」の右隣に（読み取った日をまとめて保存、2日以上は「保存（N日分）」）。日ごとの表の下のボタンは「保存すると：…」の文に。「撮った画面を消す」は下の行に小さく。`JoReadSaveButtons`・`joSaveButtonLabel`、試験 `test/juggler_buttons_test.dart`、仕様 `JUGGLER_ONLINE.md`。
+- **確認**：`check_before_build.sh` **ALL PASSED**（37項目：PC 238件・P’s CUBE関連93件・Flutter 560件・analyzeエラー警告0/info18・全JS）をクローン・通常版のビルド前に各1回。
+- **APK**：P’s CUBEクローン `0.5.36+2026101104`（ソース `ea33f3a`、SHA-256 `6083918f…34da`、94,138,065 bytes、enabled=false、表示名「database P’s CUBE」）、通常版 `0.5.36+2026101105`（ソース `b0a7016`、SHA-256 `1c3243fc…f24a`、94,138,037 bytes、enabled=true）。署名証明書 `4332fcb9…a047`（従来と同じ）。ジャグラーの変更より前に作った通常版 2026101103 は使わずに消した。
+- **PC**：`build_windows.ps1 -BuildTag no-racks-20261011` で `database/bin` 3EXEを再ビルド（EXEは起動していないことを確認。利用者はソースの `app.py` で取り込み中＝開き直すと新しいコード）。`smoke_frozen_runtime`（`a/work/outputs/frozen-runtime-20261011-no-racks.json`）・`smoke_frozen_capture` PASS。
+- **古いAPK**：`a/work/outputs` の0.5.10〜0.5.33と控え、`database-claude-review` のビルド出力、0.5.36の2026101005・2026100902・2026101101・2026101102の計43本（約3.6GB）を**ごみ箱へ移した**（完全には消していない）。残したのは今回の2本とビルドの作業用出力だけ。
+- 🌈マーク（確定が出た台）の検討は次の項。
+
 ## メルヘン取り込み中「該当する台情報が見つかりませんでした」で止まる件の確認（Claude、2026-10-11、調べただけ・コード変更なし）
 
 - 利用者：「今取り込み中なんだけど、操作確認できる？さっきからこうやって機種一覧読み込めなくなってるのかエラーでてる」。
