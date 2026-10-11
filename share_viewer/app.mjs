@@ -10,7 +10,8 @@ import {
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel, TOP_RACKS_OPEN, viewerNameFrom,
   IDLE_DAY_CHOICES, IDLE_DEFAULT_DAYS, IDLE_DEFAULT_GAMES, IDLE_GAMES_CHOICES, idleVarietyRacks, storeDays,
   RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
-  RAINBOW_COUNT_DAYS, VARIETY_SORTS, applyRainbowMarks, markTime, mergeMarks, varietyRainbowRows,
+  RAINBOW_COUNT_DAYS, applyRainbowMarks, markTime, mergeMarks, varietyRainbowRows,
+  ROTATION_DAYS, byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
 } from './data.mjs';
 
 const ID_KEY = 'database-share-script-id';
@@ -20,7 +21,7 @@ const NAME_KEY = 'database-share-name';
 const NAME = /^[A-Za-z0-9_-]{1,40}$/;
 // この端末で付け外しした🌈（送れなかった分も次に送る）と、バラエティ🌈の並べ方。
 const MARKS_KEY = 'database-share-rainbow';
-const VARIETY_SORT_KEY = 'database-share-variety-sort';
+const VARIETY_MODE_KEY = 'database-share-variety-mode';
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 const RETRY_MS = [1500, 4000];
 const TIMEOUT_MS = 30000;
@@ -197,7 +198,7 @@ function rackView({rack: r}) {
       <p class="store">${esc(storeLabel(r.store))}　${dateLabel(r.day)}</p>
       <h2 id="sheet-title">${r.rack}番台${r.rainbow ? ` ${RAINBOW}` : ''}</h2>
       <p class="event-line">${esc(displayMachineName(r.machine))}</p>
-      ${rainbowButton(r, 'large')}
+      ${rainbowButton(r, 'mark-large')}
       ${storeHasRainbow(state.model.byDay, r.store)
         ? `<p class="event-line last-rainbow">最終${RAINBOW}：${lastRainbowText(lastRainbowDay(state.model.byDay, r.store, r.rack, r.day), r.day)}</p>` : ''}
       <p class="total"><span class="label">${name}</span>
@@ -253,7 +254,7 @@ function titleOfView(view) {
  * 上に固定した帯に、戻る・見出し・閉じると、日付送り（前の日・日付・次の日）。日を変えてもスクロール位置はそのまま。
  * 「戻る」（Esc）で前の画面へ、開いていた折りたたみ・スクロール位置のまま戻る。
  */
-function openSheet({first, body, onRow, onChange}) {
+function openSheet({first, body, onRow, onChange, onAction}) {
   const views = [first];
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -329,7 +330,15 @@ function openSheet({first, body, onRow, onChange}) {
       render();
       return;
     }
-    const row = e.target.closest('button.row');
+    // 画面の中の切り替え（例：バラエティ🌈の表・空き順）。描き直す。
+    const action = e.target.closest('[data-variety-mode]');
+    if (action && onAction) {
+      view.scroll = 0;
+      onAction(action, view);
+      render();
+      return;
+    }
+    const row = e.target.closest('button.row, button.row-link');
     if (row) onRow(row, push, view);
   });
   backdrop.addEventListener('change', (e) => {
@@ -510,7 +519,7 @@ function localMarks() {
 }
 
 /** 🌈を付ける・外すボタン（メルヘンの台だけ）。押すと toggleRainbow。 */
-function rainbowButton(r, size = 'small') {
+function rainbowButton(r, size = 'mark-small') {
   if (!Object.hasOwn(MERUHEN_STORES, r.store)) return '';
   const label = r.rainbow ? `${RAINBOW} 外す` : `${RAINBOW} 付ける`;
   return `<button type="button" class="pill ${r.rainbow ? 'pill-blue' : 'pill-outline'} mark-btn ${size}" `
@@ -558,51 +567,75 @@ async function toggleRainbow(key) {
   }
 }
 
-const VARIETY_SORT_NAMES = Object.keys(VARIETY_SORTS);
+// 見せ方（2026-10-12 利用者「AとBを切り替え」）：grid＝ローテーション表、gap＝空き順。
+const VARIETY_MODES = {grid: '表', gap: '空き順'};
 
 /**
- * バラエティ🌈（2026-10-11 利用者「共有の方にも店舗別のバラエティ一覧つけて同じようにしたい」）。PCのバラエティ🌈の
- * タブと同じ：並べる台と機種名はその店の最新の記録の日のバラエティ、数値と🌈は選んだ日。右の🌈を押すと付け外し、
- * 行を押すとその台のデータ。
+ * バラエティ🌈（2026-10-11 利用者「共有の方にも店舗別のバラエティ一覧つけて同じようにしたい」、2026-10-12「何かこうしてみると
+ * 見づらいので見やすい方法を」→「AとBを切り替え」）。並べる台と機種名はその店の最新の記録の日のバラエティ（幸町は1台だけの機種、
+ * ほかは1〜3台）。上の帯の日付が「選んだ日」。
+ *   表（ローテーション表）：台を縦、選んだ日までの7日を横。🌈の日のマスに色。マスを押すとその日の🌈を付け外し。右端＝最後の🌈から何日。
+ *   空き順：最後の🌈から長い台が上。右の🌈で選んだ日の付け外し。
+ * 台番号（行の左）を押すと、その台の選んだ日のデータ。
  */
 function openVariety() {
   const days = storeDays(state.model.byDay, state.store);
   if (!days.length) return;
-  const savedSort = store.get(VARIETY_SORT_KEY);
-  const first = {kind: 'variety', day: days[0], sort: VARIETY_SORT_NAMES.includes(savedSort) ? savedSort : '台番順'};
-  const varietyView = (view) => {
-    const rows = varietyRainbowRows(state.model.byDay, state.store, view.day).sort(VARIETY_SORTS[view.sort]);
-    view.rows = rows;
-    const machines = new Set(rows.map(x => x.machine)).size;
+  const savedMode = store.get(VARIETY_MODE_KEY);
+  const first = {kind: 'variety', day: days[0], mode: Object.hasOwn(VARIETY_MODES, savedMode) ? savedMode : 'grid'};
+  const gapText = (x, day) => {
+    const n = daysSinceRainbow(x.last, day);
+    return n == null ? 'なし' : n === 0 ? '当日' : `${n}日`;
+  };
+  const header = (view, rows) => {
     const marked = rows.filter(x => x.record?.rainbow).length;
+    const kinds = rainbowVarietyMax(state.store) === 1 ? '1台だけの機種' : `1〜${rainbowVarietyMax(state.store)}台の機種`;
+    // 見出しは上に固定した帯（バラエティ🌈一覧）だけにする（大きな見出しを重ねると見づらいため。2026-10-12）。
     return `
-      <p class="store">${esc(storeLabel(state.store))}</p>
-      <h2 id="sheet-title" class="long">バラエティ${RAINBOW}一覧</h2>
-      <div class="choices one">
-        <label><span>並べ方</span><select data-variety="sort">${options(VARIETY_SORT_NAMES, view.sort, s => s)}</select></label>
-      </div>
-      <p class="caption">最新の記録の日に1〜3台の機種の台です（入れ替えは自動で変わります）。数値と${RAINBOW}は選んだ日のもの。右の${RAINBOW}を押すと付け外し、行を押すとその台のデータ。最終${RAINBOW}＝その台番号に最後に付いた日、${RAINBOW_COUNT_DAYS}日＝その日までの${RAINBOW_COUNT_DAYS}日の${RAINBOW}の日数。</p>
-      ${rows.length ? `<h3 class="num">${rows.length}台（${machines}機種）・この日の${RAINBOW} ${marked}台</h3>
-      <ol class="list">${rows.map((x, i) => {
-        const r = x.record;
-        const numbers = r ? `${count(r.games)}G・${r.net != null ? `${r.estimated ? '推定' : ''}${signed(r.net)}${r.needsCheck ? '※' : ''}` : '差枚—'}` : 'この日の記録なし';
-        const machine = esc(displayMachineName(x.machine)) + (x.dayMachine ? `（この日：${esc(displayMachineName(x.dayMachine))}）` : '');
+      <h2 id="sheet-title" class="sr-only">バラエティ${RAINBOW}一覧</h2>
+      <div class="segmented" role="group" aria-label="見せ方">${Object.entries(VARIETY_MODES).map(([key, label]) =>
+        `<button type="button" class="pill ${view.mode === key ? 'pill-blue' : 'pill-outline'}" data-variety-mode="${key}" aria-pressed="${view.mode === key}">${label}</button>`).join('')}</div>
+      <p class="caption">${esc(storeLabel(state.store))}・最新の記録の日に${kinds}の台（入れ替えは自動で変わります）。${rows.length}台・${dateLabel(view.day)}の${RAINBOW} ${marked}台。</p>`;
+  };
+  const gridView = (view, rows) => {
+    const window = windowDays(view.day);
+    const head = window.map(d => `<span class="d num${d === view.day ? ' today' : ''}">${Number(d.slice(8))}</span>`).join('');
+    return `<p class="caption">マスを押すとその日の${RAINBOW}を付け外し（記録の無い日は押せません）。右端＝最後の${RAINBOW}から何日。台番号を押すとその台のデータ。</p>
+      <div class="rotation" role="table" aria-label="ローテーション表">
+        <div class="r head" role="row"><span class="who">台</span>${head}<span class="gap">空き</span></div>
+        ${rows.map((x, i) => `<div class="r" role="row">
+          <button type="button" class="who row-link" data-variety-rack="${i}"${x.record ? '' : ' disabled'}><span class="num">${x.rack}</span><span class="m">${esc(displayMachineName(x.machine))}</span></button>
+          ${rackDays(state.model.byDay, state.store, x.rack, window).map((r, k) => (r
+            ? `<button type="button" class="c${r.rainbow ? ' on' : ''}${window[k] === view.day ? ' today' : ''}" data-rainbow="${esc(`${r.store}|${r.day}|${r.rack}`)}" aria-pressed="${r.rainbow}" aria-label="${x.rack}番台 ${shortDate(window[k])}の${RAINBOW}${r.rainbow ? 'を外す' : 'を付ける'}">${r.rainbow ? RAINBOW : ''}</button>`
+            : `<span class="c none" aria-label="${x.rack}番台 ${shortDate(window[k])} 記録なし">·</span>`)).join('')}
+          <span class="gap num">${gapText(x, view.day)}</span></div>`).join('')}
+      </div>`;
+  };
+  const gapView = (view, rows) => `<p class="caption">最後の${RAINBOW}から長い台が上（一度も無い台がいちばん上）。右の${RAINBOW}で${shortDate(view.day)}の付け外し。行を押すとその台のデータ。</p>
+      <ol class="list">${byLongestGap(rows, view.day).map(x => {
+        const r = x.record, i = rows.indexOf(x);
         return `<li class="with-mark">${r ? `<button type="button" class="row" data-variety-rack="${i}">` : '<div class="row">'}
-          <span class="main"><span class="rack num">${x.rack}番${r?.rainbow ? RAINBOW : ''}</span><span class="machine" style="display:block">${machine}</span>
-          <span class="detail num">${numbers}・最終${RAINBOW} ${lastRainbowText(x.last, view.day)}・${RAINBOW_COUNT_DAYS}日 ${x.count}</span></span>
+          <span class="main"><span class="rack num">${x.rack}番${r?.rainbow ? RAINBOW : ''}</span><span class="machine" style="display:block">${esc(displayMachineName(x.machine))}</span></span>
+          <span class="right"><span class="value num big-gap" style="display:block">${gapText(x, view.day)}</span><span class="small num">最後の${RAINBOW}${x.last ? ` ${shortDate(x.last)}` : ''}</span></span>
           ${r ? '<span class="chev" aria-hidden="true">›</span></button>' : '</div>'}${r ? rainbowButton(r) : ''}</li>`;
-      }).join('')}</ol>` : '<p class="note">この店はバラエティの台の記録がありません。</p>'}`;
+      }).join('')}</ol>`;
+  const varietyView = (view) => {
+    const rows = varietyRainbowRows(state.model.byDay, state.store, view.day);
+    view.rows = rows;
+    if (!rows.length) return `${header(view, rows)}<p class="note">この店はバラエティの台の記録がありません。</p>`;
+    return header(view, rows) + (view.mode === 'gap' ? gapView(view, rows) : gridView(view, rows));
   };
   openSheet({
     first,
     body: (view) => (view.kind === 'variety' ? varietyView(view) : rackView(view)),
     onRow: (row, push, view) => {
-      if (row.dataset.varietyRack != null) push({kind: 'rack', rack: view.rows[Number(row.dataset.varietyRack)].record});
+      const x = row.dataset.varietyRack != null ? view.rows[Number(row.dataset.varietyRack)] : null;
+      if (x?.record) push({kind: 'rack', rack: x.record});
     },
-    onChange: (select, view) => {
-      if (select.dataset.variety === 'sort') {
-        view.sort = select.value;
-        store.set(VARIETY_SORT_KEY, view.sort);
+    onAction: (button, view) => {
+      if (button.dataset.varietyMode) {
+        view.mode = button.dataset.varietyMode;
+        store.set(VARIETY_MODE_KEY, view.mode);
       }
     },
   });

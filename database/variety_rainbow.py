@@ -13,6 +13,16 @@ from core import RAINBOW_MARK, STORE_NAMES, VARIETY_MAX_RACKS, Store, signed_med
 from event_calendar import (MINUS_COLOR, PLUS_COLOR, RAINBOW_BG, MeruhenEvents, last_rainbow_text,
                             rainbow_cell)
 
+# 🌈の一覧で「バラエティ」とする台数（2026-10-12 利用者「幸町のバラエティは1台機種限定にして欲しい」）。幸町は1台だけの機種、
+# ほかの店は1〜3台（core.VARIETY_MAX_RACKS）。回っていない台・翌日候補の「バラエティ」は1〜3台のまま。共有ページ
+# share_viewer/data.mjs の RAINBOW_VARIETY_MAX_RACKS と同じ。
+RAINBOW_VARIETY_MAX_RACKS = {'saiwaichou': 1}
+
+
+def rainbow_variety_max(location):
+    return RAINBOW_VARIETY_MAX_RACKS.get(location, VARIETY_MAX_RACKS)
+
+
 # 🌈回数を数える日数（その日を含めて30日）。
 RAINBOW_COUNT_DAYS = 30
 SORTS = {
@@ -24,12 +34,12 @@ SORTS = {
 SAVE_DELAY_MS = 4000
 
 
-def variety_lineup(rows):
-    """その日の台のうち、バラエティ（その日に1〜VARIETY_MAX_RACKS台の機種）の台。"""
+def variety_lineup(rows, max_racks=VARIETY_MAX_RACKS):
+    """その日の台のうち、バラエティ（その日に1〜max_racks台の機種）の台。"""
     counts = {}
     for r in rows:
         counts[r['machine']] = counts.get(r['machine'], 0) + 1
-    return [r for r in rows if counts[r['machine']] <= VARIETY_MAX_RACKS]
+    return [r for r in rows if counts[r['machine']] <= max_racks]
 
 
 def variety_rows(db_path, location, day, latest=None):
@@ -50,7 +60,7 @@ def variety_rows(db_path, location, day, latest=None):
         previous = db.last_rainbow_days(location, day)
     finally:
         db.close()
-    lineup = variety_lineup(events.day_records(location, latest))
+    lineup = variety_lineup(events.day_records(location, latest), rainbow_variety_max(location))
     on_day = {int(r['rack']): r for r in (events.day_records(location, day) if day != latest else lineup)}
     rows = []
     for current in lineup:
@@ -71,7 +81,7 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
     """「バラエティ🌈」のタブの中身。on_changed(db) は付け外しのあと（少し待ってまとめて）呼ぶ
     （バックアップ・閲覧用ファイル・結果の作り直し）。表示を描き直す関数を返す（タブを開いたとき用）。"""
     ttk.Label(parent, text=f'バラエティの{RAINBOW_MARK}', style='H2.TLabel').pack(anchor='w')
-    ttk.Label(parent, text=f'最新の取り込み日に1〜{VARIETY_MAX_RACKS}台の機種の台（入れ替えは、新しい日を取り込むと自動で変わります）。'
+    ttk.Label(parent, text=f'最新の取り込み日の、幸町は1台だけの機種・長町南は1〜{VARIETY_MAX_RACKS}台の機種の台（入れ替えは、新しい日を取り込むと自動で変わります）。'
                            f'数値と{RAINBOW_MARK}は選んだ日のもの。{RAINBOW_MARK}の列を押すと、確定が出た台の印を付け外しします'
                            f'（もう一度押すと外れます）。最終{RAINBOW_MARK}＝その台番号に最後に付いた日、'
                            f'{RAINBOW_COUNT_DAYS}日＝その日までの{RAINBOW_COUNT_DAYS}日の{RAINBOW_MARK}の回数。',

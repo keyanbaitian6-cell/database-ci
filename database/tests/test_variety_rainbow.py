@@ -96,5 +96,22 @@ class VarietyRainbowTests(unittest.TestCase):
         self.assertEqual(table.item(first, 'values')[0], '🌈')
 
 
+    def test_saiwaichou_uses_one_rack_machines_only(self):
+        """幸町のバラエティ🌈は1台だけの機種（2026-10-12 利用者「幸町のバラエティは1台機種限定にして欲しい」）。長町南は1〜3台。"""
+        from variety_rainbow import rainbow_variety_max
+        db = Store(self.path)
+        rows = []
+        for store in ('saiwaichou', 'nagamachiminami'):
+            rows += [dict(row(rack, '主力', '2026-10-10'), store=store) for rack in (1, 2, 3, 4)]
+            rows += [dict(row(rack, 'ハナハナ', '2026-10-10'), store=store) for rack in (50, 51)]
+            rows.append(dict(row(1201, '無職転生', '2026-10-10'), store=store))
+        db.save(rows)
+        db.close()
+        self.assertEqual((rainbow_variety_max('saiwaichou'), rainbow_variety_max('nagamachiminami')), (1, 3))
+        self.assertEqual([r['rack'] for r in variety_rows(self.path, 'saiwaichou', '2026-10-10')], [1201],
+                         '幸町：2台のハナハナは入れない')
+        self.assertIn(50, [r['rack'] for r in variety_rows(self.path, STORE, '2026-10-10')], '長町南：1〜3台のまま')
+
+
 if __name__ == '__main__':
     unittest.main()
