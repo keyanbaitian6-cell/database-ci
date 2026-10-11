@@ -148,9 +148,10 @@ try {
   await waitFor(async()=>((await stored('database-pscube-viewer','state')).date_events||[]).some(e=>e.day==='2026-10-26'),'shared pscube event stored');
   await page.getByRole('button',{name:/イベント：なし（編集）/}).click();
   await enterName('末尾イベ');
-  await waitFor(async()=>posts.some(p=>p.file==='pscube-events'),'pscube POST');
-  const pscubePost=posts.find(p=>p.file==='pscube-events');
-  assert.ok(pscubePost.events.some(e=>e.name==='末尾イベ' && e.rate==='20'));
+  // 送信が届く順は決まっていないので、最初の1件ではなく「末尾イベ」を含む送信を探す（2026-10-11、たまに失敗した）。
+  const isSuffix=p=>p.file==='pscube-events' && p.events.some(e=>e.name==='末尾イベ' && e.rate==='20');
+  await waitFor(async()=>posts.some(isSuffix),'pscube POST');
+  const pscubePost=posts.find(isSuffix);
   assert.ok(pscubePost.events.some(e=>e.day==='2026-10-26'));
 
   // P’s CUBEのイベントカレンダー（2026-10-08）：各日に総差枚（4台で -50+50+150+250 = +400）、先の日にも入れて送る。
