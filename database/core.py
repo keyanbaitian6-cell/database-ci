@@ -471,7 +471,13 @@ class Store:
             if changed and not row.get('graph'):
                 merged.pop('graph', None)
                 merged.pop('graph_measurement', None)
+            rainbow = _newer_rainbow(merged, row)
             merged.update({k: v for k, v in row.items() if v is not None})
+            # 🌈は付け外しした時刻（rainbow_at）の新しい方を残す（RAINBOW.md）。PCで外したあとに、🌈の付いた
+            # 古いバックアップ（グラフ追加など）を読み込んでも付き直らない。
+            merged.pop('rainbow', None)
+            merged.pop('rainbow_at', None)
+            merged.update(rainbow)
             # ジャグラーオンラインの数字で作った台（jo_created、JUGGLER_ONLINE.md）を、あとでサイトの表から
             # 取り込み直したら、作った台の印は外す（数値はサイトのもの。差枚 jo_net などは残す）。
             if merged.get('jo_created') and not row.get('jo_created') and (row.get('source_url') or row.get('detail_url')):
@@ -1122,6 +1128,28 @@ def export_backup(store, path, location=None, day=None):
 RAINBOW_MARK = '🌈'
 
 
+def _newer_rainbow(local, incoming):
+    """保存済みの台 [local] と、保存する台 [incoming] の🌈のうち、付け外しした時刻（rainbow_at）の新しい方の
+    {'rainbow': True?, 'rainbow_at': ...}（どちらにも無ければ空）。時刻の無い🌈（古い記録）は、時刻のある方に負ける。
+    同じ時刻なら保存する方。"""
+    def state(row):
+        return {k: row[k] for k in ('rainbow', 'rainbow_at') if row.get(k) is not None}
+
+    def at(row):
+        try:
+            return _timestamp(row['rainbow_at']) if row.get('rainbow_at') else None
+        except (TypeError, ValueError):
+            return None
+    mine, theirs = at(local), at(incoming)
+    if theirs is None and mine is None:
+        return state(incoming) or state(local)
+    if theirs is None:
+        return state(local)
+    if mine is None or theirs >= mine:
+        return state(incoming)
+    return state(local)
+
+
 def rack_mark(row):
     """台番号の横に付ける印（確定が出た台は「 🌈」）。PCの結果・まとめ・カレンダーで使う。"""
     return f' {RAINBOW_MARK}' if row.get('rainbow') is True else ''
@@ -1199,8 +1227,8 @@ def plan_backup_import(store, records):
             link_only.append(record)
         elif record.get('confirmed_setting') and not local.get('confirmed_setting'):
             setting_only.append(record)
-        elif record.get('rainbow') is True and not local.get('rainbow'):
-            # 数値は同じで、別のPCなどで付けた🌈だけが新しい（RAINBOW.md）。
+        elif _newer_rainbow(local, record) != _newer_rainbow(local, {}):
+            # 数値は同じで、別の端末などで付け外しした🌈だけが新しい（RAINBOW.md。付け外しした時刻で比べる）。
             setting_only.append(record)
         elif juggler_online_newer(record, local):
             # 数値は同じで、Androidで足したジャグラーオンラインの差枚など（jo_…）だけが新しい（JUGGLER_ONLINE.md）。

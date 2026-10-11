@@ -145,5 +145,32 @@ class RainbowTests(unittest.TestCase):
         self.assertGreaterEqual(self.payload(661)['rainbow_at'], at, '外しても時刻は残す（iPhoneの古い印に負けない）')
 
 
+    def test_an_older_backup_does_not_bring_back_a_removed_mark(self):
+        """自己点検で見つけたずれ（2026-10-11）：PCで外した🌈が、🌈の付いた古いバックアップ（グラフ追加など）を
+        読み込むと付き直っていた。付け外しした時刻の新しい方を残す。"""
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 660, True, at='2026-10-11T12:00:00+09:00')
+        old = self.payload(660)
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 660, False, at='2026-10-11T13:00:00+09:00')
+        backup = self.folder / 'old.json'
+        record = dict(old, graph_measurement=dict(baseline_y=200.5, peak_y=100, trough_y=210, end_y=150))
+        backup.write_text(json.dumps({'format': 'database-backup', 'version': 1, 'records': [record]}), encoding='utf-8')
+        plan = import_backup(self.db, backup)
+        self.assertEqual(len(plan['graph_only']), 1, 'グラフは足す')
+        self.assertIn('graph_measurement', self.payload(660))
+        self.assertNotIn('rainbow', self.payload(660), '外した🌈は付き直らない')
+        self.assertEqual(self.payload(660)['rainbow_at'], '2026-10-11T13:00:00+09:00')
+        # ほかの端末で後から外した（🌈なし・時刻が新しい）バックアップは、外す方を取り込む。
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 661, True, at='2026-10-11T12:00:00+09:00')
+        removed = dict(self.payload(661), rainbow_at='2026-10-11T14:00:00+09:00')
+        removed.pop('rainbow')
+        backup.write_text(json.dumps({'format': 'database-backup', 'version': 1, 'records': [removed]}), encoding='utf-8')
+        self.assertEqual(len(import_backup(self.db, backup)['setting_only']), 1)
+        self.assertNotIn('rainbow', self.payload(661))
+        # 表の取り込み直し（🌈の項目なし）では、どちらも変わらない。
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 661, True)
+        self.db.save([dict(row(661), games=3600)])
+        self.assertIs(self.payload(661)['rainbow'], True)
+
+
 if __name__ == '__main__':
     unittest.main()
