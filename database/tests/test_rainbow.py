@@ -89,9 +89,10 @@ class RainbowTests(unittest.TestCase):
         rows = {r['rack']: r for r in events.day_records('nagamachiminami', '2026-10-10')}
         self.assertTrue(rows[661]['rainbow'])
         self.assertEqual(last_rainbow_text(rows[661]), '当日')
-        changed = []
-        MeruhenEvents(self.folder / 'database.sqlite3', changed.append).notify()
-        self.assertEqual(len(changed), 1, '窓を閉じたときに1回だけバックアップ・閲覧用ファイルを作り直す')
+        # 押したときは記録への保存だけ：観測の記録（observations）には書かない（2026-10-12、押すたびに遅かった）。
+        before = self.db.db.execute('SELECT COUNT(*) FROM observations').fetchone()[0]
+        self.db.set_rainbow('nagamachiminami', '2026-10-10', 660, True)
+        self.assertEqual(self.db.db.execute('SELECT COUNT(*) FROM observations').fetchone()[0], before)
 
     def test_capture_card_api(self):
         from browser_import import _Bridge

@@ -332,14 +332,44 @@ def main():
     notebook.add(tab_variety, text='  バラエティ🌈  ')
     notebook.add(tab_sync, text='  バックアップ・同期  ')
 
-    def variety_changed(db):
-        # 🌈を付け外ししたあと（少し待ってまとめて）、閲覧用ファイル・バックアップ・結果を作り直す。
-        auto_backup(db, DATA_DIR)
-        history_report(db, ROOT / 'reports')
-    refresh_variety = build_variety_tab(tab_variety, DATA_DIR / 'database.sqlite3', variety_changed)
-    # タブを開いたときに読み直す（取り込みで新しい日・入れ替えが入っていれば一覧が変わる）。
+    # 🌈：押したときは記録への保存だけ（速い）。閲覧・共有ページ用のファイルとバックアップの作り直し（5秒ほど）は、
+    # まとめて1回（2026-10-12 利用者「一個押すたびに保存処理をしているようで数秒かかってしまう。…まとめてつけてから
+    # 保存処理してほしい」）：バラエティ🌈の「閲覧・共有ページに反映」ボタン、バラエティ🌈のタブを離れるとき、
+    # カレンダーを閉じるとき、PC版を閉じるとき。「過去の記録」の作り直し（10秒ほど）は🌈のときはしない。
+    rainbow_pending = [0]
+    pending_text = tk.StringVar(value='反映済み')
+
+    def show_pending():
+        pending_text.set(f'閲覧・共有ページに反映（{rainbow_pending[0]}件）' if rainbow_pending[0] else '反映済み')
+
+    def mark_rainbow():
+        rainbow_pending[0] += 1
+        show_pending()
+
+    def flush_rainbow():
+        if not rainbow_pending[0]:
+            return
+        pending_text.set('反映中…')
+        root.update_idletasks()
+        db = Store(DATA_DIR / 'database.sqlite3')
+        try:
+            auto_backup(db, DATA_DIR)
+        finally:
+            db.close()
+        tell(f'🌈の付け外し{rainbow_pending[0]}件を、閲覧ページ・共有ページ用のファイルとバックアップに反映しました。\n')
+        rainbow_pending[0] = 0
+        show_pending()
+    refresh_variety = build_variety_tab(tab_variety, DATA_DIR / 'database.sqlite3', mark_rainbow,
+                                        on_flush=flush_rainbow, pending=pending_text)
+    # タブを開いたときに読み直す（取り込みで新しい日・入れ替えが入っていれば一覧が変わる）。離れるときは🌈をまとめて反映。
+    current_tab = [None]
+
     def open_variety(_event=None):
-        if notebook.select() == str(tab_variety):
+        selected = notebook.select()
+        if current_tab[0] == str(tab_variety) and selected != str(tab_variety):
+            flush_rainbow()
+        current_tab[0] = selected
+        if selected == str(tab_variety):
             pull_shared_rainbow_now()   # iPhoneで付けた🌈も入れてから読み直す
             refresh_variety()
     notebook.bind('<<NotebookTabChanged>>', open_variety, add='+')
@@ -566,7 +596,7 @@ def main():
             return
         open_event_calendar(root, ROOT / 'data' / 'database.sqlite3',
                             location=location if location in STORE_NAMES else None, on_changed=changed,
-                            on_open_record=open_from_calendar)
+                            on_open_record=open_from_calendar, on_rainbow=mark_rainbow, on_closed=flush_rainbow)
 
     def open_from_calendar(location, target_day, row):
         """カレンダーの日のまとめ（TOP10）の台から：結果を見るでその日・その機種を選び、結果を開く。"""
@@ -1313,7 +1343,13 @@ def main():
     ttk.Button(results_buttons, text='直前の保存を取り消す', command=undo_last).pack(side='left')
 
     root.after(400, auto_sync_on_start)
-    root.protocol('WM_DELETE_WINDOW', root.destroy)
+    def close_app():
+        try:
+            flush_rainbow()   # 未反映の🌈があれば、閉じる前にまとめて反映
+        except Exception as exc:  # noqa: BLE001 - 反映できなくても閉じられるように（記録は保存済み）
+            print(f'🌈の反映に失敗しました：{exc}')
+        root.destroy()
+    root.protocol('WM_DELETE_WINDOW', close_app)
     root.mainloop()
 
 

@@ -399,20 +399,10 @@ class MeruhenEvents:
         return result
 
     def set_rainbow(self, location, day, rack, on):
-        """確定が出た台の印🌈を付け外しする（RAINBOW.md）。バックアップ・閲覧用ファイルは notify() でまとめて。"""
+        """確定が出た台の印🌈を付け外しする（RAINBOW.md）。バックアップ・閲覧用ファイルはPC版がまとめて作り直す（on_rainbow・on_closed）。"""
         db = Store(self.db_path)
         try:
             db.set_rainbow(location, day, rack, on)
-        finally:
-            db.close()
-
-    def notify(self):
-        """🌈を付け外ししたあと（日のまとめの窓を閉じたとき）に1回だけ、バックアップ・閲覧用ファイル・結果を作り直す。"""
-        if not self.on_changed:
-            return
-        db = Store(self.db_path)
-        try:
-            self.on_changed(db)
         finally:
             db.close()
 
@@ -483,15 +473,20 @@ class PscubeEvents:
             store.close()
 
 
-def open_event_calendar(root, db_path, location=None, on_changed=None, today=None, events=None, on_open_record=None):
+def open_event_calendar(root, db_path, location=None, on_changed=None, today=None, events=None, on_open_record=None,
+                        on_rainbow=None, on_closed=None):
     """Open the calendar window. ``events`` is MeruhenEvents (default) or PscubeEvents.
     ``on_changed(db)`` runs after each save (automatic backup, report) while the database is still open.
+    ``on_rainbow()`` は🌈を付け外しするたびに呼ぶ（記録への保存は済んでいる。閲覧用ファイルなどの作り直しはまとめて）。
+    ``on_closed()`` はカレンダーの窓を閉じたときに呼ぶ（PC版はここで🌈の分をまとめて作り直す。2026-10-12）。
     日付を押すと、記録のある日はその日のまとめ（TOP10・強かった機種5選）、無い日はイベント名の入力。
     ``on_open_record(location, day, row)`` があれば、まとめのTOP10の行から結果を開ける。"""
     today = today or date.today()
     events = events or MeruhenEvents(db_path, on_changed)
     window = tk.Toplevel(root)
     window.title(events.title)
+    if on_closed:
+        window.bind('<Destroy>', lambda e: on_closed() if e.widget is window else None, add='+')
     window.transient(root)
     window.minsize(760, 560)
     labels = list(events.stores.values())
@@ -576,31 +571,21 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             edit_one(window, location, day, title)
             render()
             return
-        changed = []
-
         def rainbow(row, on):
             try:
                 events.set_rainbow(location, day.isoformat(), row['rack'], on)
             except Exception as error:  # noqa: BLE001 - 付けられなくても窓は使える
                 messagebox.showwarning('🌈', str(error), parent=window)
                 return False
-            changed.append(row['rack'])
+            if on_rainbow:
+                on_rainbow()   # 保存は済み。閲覧用ファイルなどはまとめて作り直す（日の窓を閉じるたびにはしない）
             return True
-        summary = open_day_summary(
+        open_day_summary(
             window, title, events.stores[location], rows, events.net_label,
             event_label(entries.get(day.isoformat())),
             lambda parent: edit_one(parent, location, day, title),
             None if on_open_record is None else lambda row: on_open_record(location, day.isoformat(), row),
             rainbow if hasattr(events, 'set_rainbow') else None)
-
-        def closed(event):
-            if event.widget is summary and changed:
-                changed.clear()
-                try:
-                    events.notify()
-                except Exception as error:  # noqa: BLE001
-                    status.set(f'バックアップを作り直せませんでした：{error}')
-        summary.bind('<Destroy>', closed, add='+')
 
     def edit_one(parent, location, day, title):
         """1日のイベント名を入れる・変える・消す。カレンダーを描き直し、新しい表示（＊つき）を返す。"""

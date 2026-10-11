@@ -758,9 +758,10 @@ class Store:
                 else:
                     payload.pop('rainbow', None)
                 payload['rainbow_at'] = at
+                # 観測の記録（_log_observation）には書かない：数値ではない印で、書くたびに古い行の掃除が全件を
+                # 見るため、押すたびに遅くなっていた（2026-10-12 利用者「一個押すたびに…数秒かかってしまう」）。
                 self.db.execute('UPDATE days SET payload=? WHERE store=? AND day=? AND machine=? AND rack=?',
                                 (json.dumps(payload, ensure_ascii=False), store, day, machine, int(rack)))
-                self._log_observation(payload)
         self._machine_cache = {}
         return len(found)
 

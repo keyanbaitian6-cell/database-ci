@@ -70,7 +70,7 @@ class VarietyRainbowTests(unittest.TestCase):
         frame = ttk.Frame(root)
         frame.pack(fill='both', expand=True)
         changed = []
-        build_variety_tab(frame, self.path, changed.append, STORE)
+        build_variety_tab(frame, self.path, lambda: changed.append('mark'), STORE)
         frame.variety_mode.set('list')   # 一覧（今までの表）
         root.update()
         table = next(w for child in frame.winfo_children() for w in child.winfo_children() if isinstance(w, ttk.Treeview))
@@ -89,7 +89,7 @@ class VarietyRainbowTests(unittest.TestCase):
         finally:
             db.close()
         self.assertIs(payload['rainbow'], True, 'その場で保存する')
-        self.assertEqual(changed, [], 'バックアップの作り直しは少し待ってまとめて')
+        self.assertEqual(changed, ['mark'], '押したときは保存と印だけ（作り直しはまとめて、2026-10-12）')
         # ほかの列を押しても付け外ししない。
         x, y, w, h = table.bbox(first, '#3')
         table.event_generate('<Button-1>', x=x + w // 2, y=y + h // 2)
@@ -112,7 +112,7 @@ class VarietyRainbowTests(unittest.TestCase):
         frame = ttk.Frame(root)
         frame.pack(fill='both', expand=True)
         changed = []
-        build_variety_tab(frame, self.path, changed.append, STORE)
+        build_variety_tab(frame, self.path, lambda: changed.append('mark'), STORE)
         root.update()
         self.assertEqual(frame.variety_mode.get(), 'grid', '初めは表')
         cells = frame.variety_cells
@@ -135,11 +135,33 @@ class VarietyRainbowTests(unittest.TestCase):
         cells[(61, '2026-10-09')].event_generate('<Button-1>', x=5, y=5)
         root.update()
         self.assertEqual(cells[(61, '2026-10-09')].cget('text'), '·')
-        self.assertEqual(changed, [], 'バックアップの作り直しは少し待ってまとめて')
+        self.assertEqual(changed, ['mark'], '押したときは保存と印だけ（作り直しはまとめて、2026-10-12）')
         # 一覧に切り替えると覚える。
         frame.variety_mode.set('list')
         root.update()
         self.assertEqual(load_settings(self.path.parent).get('variety_mode'), 'list')
+
+
+    def test_reflect_button_runs_the_rebuild_once(self):
+        """「閲覧・共有ページに反映」ボタン：押すたびではなく、まとめて1回作り直す（2026-10-12 利用者「まとめてつけてから
+        保存処理してほしい」）。"""
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1100x700+-3000+0')
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        marks, flushes = [], []
+        pending = tk.StringVar(value='反映済み')
+        build_variety_tab(frame, self.path, lambda: marks.append(1), STORE, on_flush=lambda: flushes.append(1), pending=pending)
+        root.update()
+        for rack in (50, 51, 60):
+            frame.variety_cells[(rack, '2026-10-10')].event_generate('<Button-1>', x=5, y=5)
+        root.update()
+        self.assertEqual((len(marks), flushes), (3, []), '3台押しても作り直しはまだ')
+        button = next(w for child in frame.winfo_children() for w in child.winfo_children()
+                      if isinstance(w, ttk.Button) and str(w.cget('textvariable')) == str(pending))
+        button.invoke()
+        self.assertEqual(flushes, [1])
 
 
     def test_saiwaichou_uses_one_rack_machines_only(self):

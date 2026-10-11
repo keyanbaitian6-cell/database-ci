@@ -31,8 +31,6 @@ SORTS = {
     f'最終{RAINBOW_MARK}の古い順': lambda r: (r['rainbow'], r.get('prev_rainbow') or '', r['rack']),
     '機種順': lambda r: (r['machine'], r['rack']),
 }
-# 付け外しのあと、バックアップ・閲覧用ファイルを作り直すまで待つ時間（続けて押すたびに作り直さない）。
-SAVE_DELAY_MS = 4000
 
 
 def variety_lineup(rows, max_racks=VARIETY_MAX_RACKS):
@@ -130,9 +128,11 @@ def rotation_cells(db_path, location, days):
     return {day: {int(r['rack']): r for r in events.day_records(location, day)} for day in days}
 
 
-def build_variety_tab(parent, db_path, on_changed, default_location=None):
-    """「バラエティ🌈」のタブの中身。on_changed(db) は付け外しのあと（少し待ってまとめて）呼ぶ
-    （バックアップ・閲覧用ファイル・結果の作り直し）。表示を描き直す関数を返す（タブを開いたとき用）。"""
+def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flush=None, pending=None):
+    """「バラエティ🌈」のタブの中身。押したときは記録への保存だけ（速い）で、on_marked() を呼ぶ。閲覧・共有ページ用の
+    ファイルとバックアップの作り直しはまとめて1回（on_flush：「閲覧・共有ページに反映」のボタン。PC版はタブを離れるとき・
+    閉じるときにも呼ぶ。2026-10-12 利用者「一個押すたびに保存処理をしているようで数秒かかってしまう。…まとめてつけてから
+    保存処理してほしい」）。pending はボタンの文字（未反映の台数）。表示を描き直す関数を返す（タブを開いたとき用）。"""
     ttk.Label(parent, text=f'バラエティの{RAINBOW_MARK}', style='H2.TLabel').pack(anchor='w')
     ttk.Label(parent, text=f'記録のそろった最新の日（ふだんの8割以上の台を取り込んだ日）の、幸町は1台だけの機種・長町南は1〜{VARIETY_MAX_RACKS}台の機種の台（入れ替えは、新しい日を取り込むと自動で変わります）。'
                            f'数値と{RAINBOW_MARK}は選んだ日のもの。{RAINBOW_MARK}の列を押すと、確定が出た台の印を付け外しします'
@@ -160,6 +160,9 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
     modes.grid(row=1, column=3, sticky='w')
     for key, label in VARIETY_MODES.items():
         ttk.Radiobutton(modes, text=label, value=key, variable=mode_var).pack(side='left', padx=(0, 10))
+    if on_flush is not None:
+        ttk.Label(bar, text='閲覧・共有ページ').grid(row=0, column=4, sticky='w', padx=(16, 0))
+        ttk.Button(bar, textvariable=pending, command=on_flush).grid(row=1, column=4, sticky='w', padx=(16, 0))
     summary = tk.StringVar()
     ttk.Label(parent, textvariable=summary).pack(anchor='w', pady=(10, 0))
     hint = tk.StringVar()
@@ -197,7 +200,7 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
     table.configure(yscrollcommand=scroll.set)
     table.pack(side='left', fill='both', expand=True)
     scroll.pack(side='left', fill='y')
-    state = {'rows': [], 'pending': None, 'cells': {}}
+    state = {'rows': [], 'cells': {}}
     parent.variety_cells = state['cells']   # 試験で押すマス（{(台番号, 日): Label}）
     parent.variety_mode = mode_var
 
@@ -314,7 +317,7 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
                 r['prev_rainbow'] = previous
                 state['gaps'][rack].configure(text=gap_text(row_gap(r)))
         set_summary()
-        save_later()
+        on_marked()
 
     def load(*_args):
         where = location()
@@ -337,19 +340,6 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
             day_var.set(chosen)   # 日付が変わると load が呼ばれる
         else:
             load()
-
-    def save_later():
-        if state['pending'] is not None:
-            parent.after_cancel(state['pending'])
-
-        def run():
-            state['pending'] = None
-            db = Store(db_path)
-            try:
-                on_changed(db)
-            finally:
-                db.close()
-        state['pending'] = parent.after(SAVE_DELAY_MS, run)
 
     def toggle(event):
         # 🌈の列（いちばん左）を押したときだけ付け外しする。ほかの列は行を選ぶだけ。
@@ -376,7 +366,7 @@ def build_variety_tab(parent, db_path, on_changed, default_location=None):
         row['rainbow_count'] += 1 if on else -1
         table.item(iid, values=values(row), tags=tags(row))
         set_summary()
-        save_later()
+        on_marked()
         return 'break'
 
     table.bind('<Button-1>', toggle)
