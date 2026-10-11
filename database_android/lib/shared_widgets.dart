@@ -366,7 +366,7 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
               padding: EdgeInsets.fromLTRB(16, 16, 16, bottom),
               children: [
                 RackStats(record: record, score: score),
-                if (allRecords != null)
+                if (allRecords != null && LastRainbow.shows(record, allRecords))
                   LastRainbow(record: record, all: allRecords),
                 const SizedBox(height: 12),
                 const EmptyState(
@@ -399,17 +399,19 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
 
 /// 最終🌈（2026-10-11 利用者「虹マークがついてない期間（最終🌈の日付）を表示させる欄」）。
 /// この台番号に最後に🌈が付いた日と、その日からの日数。その店に🌈が1つも無いときは出さない
-/// （🌈はPCで付ける。Android版では付けないので、ふだんは出ない）。
+/// （🌈はPCで付ける。Android版では付けないので、ふだんは出ない）。出さないときは一覧に行ごと足さない
+/// （高さ0の行でも、一覧の長さの見積もりが変わってスクロールの止まる位置が変わるため）。
 class LastRainbow extends StatelessWidget {
   const LastRainbow({super.key, required this.record, required this.all});
   final SlotRecord record;
   final List<SlotRecord> all;
 
+  /// この店に🌈の付いた台が1台でもあるか（無ければ出さない）。
+  static bool shows(SlotRecord record, List<SlotRecord> all) =>
+      all.any((r) => r.store == record.store && r.rainbow);
+
   @override
   Widget build(BuildContext context) {
-    if (!all.any((r) => r.store == record.store && r.rainbow)) {
-      return const SizedBox.shrink();
-    }
     final last = lastRainbowDay(all, record.store, record.rack, record.day);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
@@ -820,7 +822,8 @@ class _SavedGraphBody extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(16, 16, 16, bottom),
       children: [
         RackStats(record: record, score: score),
-        if (allRecords != null) LastRainbow(record: record, all: allRecords!),
+        if (allRecords != null && LastRainbow.shows(record, allRecords!))
+          LastRainbow(record: record, all: allRecords!),
         const SizedBox(height: 12),
         Card(
           child: Padding(

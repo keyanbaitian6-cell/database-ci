@@ -120,13 +120,23 @@ void main() {
     tester,
   ) async {
     final all = [rec('2026-10-08'), rec('2026-10-10')];
+    expect(LastRainbow.shows(all.last, all), isFalse);
+    expect(
+      LastRainbow.shows(all.last, [
+        ...all,
+        rec('2026-09-01', rack: 1, rainbow: true),
+      ]),
+      isTrue,
+    );
     await tester.pumpWidget(
       app(
-        Scaffold(
-          body: LastRainbow(record: all.last, all: all),
+        ViewerRecordPage(
+          data: ViewerData(records: all),
+          record: all.last,
         ),
       ),
     );
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('last-rainbow')), findsNothing);
   });
 }
