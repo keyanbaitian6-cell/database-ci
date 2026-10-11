@@ -52,6 +52,13 @@
 - **「🌈 外す」の文字が薄かった**：ボタンの大きさの名前（small）が、一覧の小さい灰色の文字の指定（`.list .small`）とぶつかって灰色になっていた（`mark-small`・`mark-large` に変えた。試験で白を確かめる）。押したあと送り終わるまで押せなくしていたのもやめた（すぐ描き直し、送るのは後ろで）。
 - 試験：`tool/test_share_viewer.mjs`（1台限定・7日・空き順）、`tool/test_share_viewer_rainbow_browser.mjs`（表・空き順・切り替えを覚える・日付送り・文字の色、320/393px）、`tool/test_share_viewer_idle_browser.mjs`（日付は帯）、`tests/test_variety_rainbow.py`（PCの1台限定）。
 
+## PCのバラエティ🌈にも表（2026-10-12）
+
+利用者「確認OK。この表の改善点あったらおしえていくね」「PCにも同じ表は用意しておいて」。
+
+- PCのバラエティ🌈タブに「見せ方：表／一覧」（`settings.json` の `variety_mode` に覚える。初めは表）。表は共有ページと同じ：台を縦、選んだ日を右端に7日（カレンダーの日、月日と曜日）を横、🌈の日のマスは色（#FAC775）、記録の無い日は「·」で押せない、選んだ日の列は青い枠、右端「空き」＝最後の🌈から何日（当日・なし）。マスを押すとその日の🌈を付け外し（押した時点で保存、バックアップ・閲覧用ファイルは4秒後にまとめて）。並べ方（台番順・最終🌈の古い順・機種順）は表にも効く。一覧は今までの表。
+- `variety_rainbow.window_days`・`days_since`・`gap_text`・`rotation_cells`（共有ページの windowDays・daysSinceRainbow と同じ規則）。試験 `tests/test_variety_rainbow.py`（表：初めは表・🌈のマス・記録の無いマス・選んだ日の枠・押すと付く・見せ方を覚える）。
+
 ## 持ち方
 
 - 台の記録（`days` の payload）に `rainbow: true`。外すと項目ごと消す。店舗・日・台番号で決める（その日のその台は1機種）。`Store.set_rainbow`・`rainbow_racks`・`last_rainbow_days`（`database/core.py`）。採点には使わない。

@@ -71,8 +71,9 @@ class VarietyRainbowTests(unittest.TestCase):
         frame.pack(fill='both', expand=True)
         changed = []
         build_variety_tab(frame, self.path, changed.append, STORE)
+        frame.variety_mode.set('list')   # 一覧（今までの表）
         root.update()
-        table = next(w for w in frame.winfo_children()[-1].winfo_children() if isinstance(w, ttk.Treeview))
+        table = next(w for child in frame.winfo_children() for w in child.winfo_children() if isinstance(w, ttk.Treeview))
         first = table.get_children()[0]
         self.assertEqual(table.item(first, 'values')[1], '50')
         self.assertEqual(table.item(first, 'values')[0], '＋')
@@ -94,6 +95,51 @@ class VarietyRainbowTests(unittest.TestCase):
         table.event_generate('<Button-1>', x=x + w // 2, y=y + h // 2)
         root.update()
         self.assertEqual(table.item(first, 'values')[0], '🌈')
+
+
+    def test_grid_like_the_share_page(self):
+        """PCにも共有ページと同じ表（2026-10-12 利用者「PCにも同じ表は用意しておいて」）：台×選んだ日までの7日、
+        マスを押すとその日の🌈を付け外し、記録の無い日は押せない、右端は最後の🌈から何日。見せ方は覚える。"""
+        from core import load_settings
+        from variety_rainbow import days_since, gap_text, window_days
+        self.assertEqual(window_days('2026-10-10'), ['2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07',
+                                                     '2026-10-08', '2026-10-09', '2026-10-10'])
+        self.assertEqual([gap_text(days_since(x, '2026-10-10')) for x in ('2026-10-09', '2026-10-10', None)],
+                         ['1日', '当日', 'なし'])
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1100x700+-3000+0')   # 画面の外に出す
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        changed = []
+        build_variety_tab(frame, self.path, changed.append, STORE)
+        root.update()
+        self.assertEqual(frame.variety_mode.get(), 'grid', '初めは表')
+        cells = frame.variety_cells
+        self.assertEqual(cells[(50, '2026-10-09')].cget('text'), '🌈', '10/9に付いている')
+        self.assertEqual(cells[(61, '2026-10-09')].cget('text'), '·', '61番台は10/9の記録が無い')
+        self.assertEqual(cells[(50, '2026-10-10')].cget('highlightbackground').lower(), '#0071e3', '選んだ日は青い枠')
+        # 10/10 の 51番台を押すと付く。
+        cell = cells[(51, '2026-10-10')]
+        cell.event_generate('<Button-1>', x=5, y=5)
+        root.update()
+        self.assertEqual((cell.cget('text'), cell.cget('background').lower()), ('🌈', '#fac775'))
+        db = Store(self.path)
+        try:
+            payload = json.loads(db.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND rack=51',
+                                               (STORE, '2026-10-10')).fetchone()[0])
+        finally:
+            db.close()
+        self.assertIs(payload['rainbow'], True)
+        # 記録の無いマスは押しても何もしない。
+        cells[(61, '2026-10-09')].event_generate('<Button-1>', x=5, y=5)
+        root.update()
+        self.assertEqual(cells[(61, '2026-10-09')].cget('text'), '·')
+        self.assertEqual(changed, [], 'バックアップの作り直しは少し待ってまとめて')
+        # 一覧に切り替えると覚える。
+        frame.variety_mode.set('list')
+        root.update()
+        self.assertEqual(load_settings(self.path.parent).get('variety_mode'), 'list')
 
 
     def test_saiwaichou_uses_one_rack_machines_only(self):
