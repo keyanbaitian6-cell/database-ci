@@ -104,8 +104,14 @@ async function enterName(name){
   await box.waitFor();await box.click();
   // 入力欄に入力の焦点が移ってから打つ（早すぎると最初の文字が落ちる。例：「末尾イベ」→「尾イベ」）。
   for(let i=0;i<40&&!(await page.evaluate(()=>['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)));i++)await page.waitForTimeout(50);
-  await page.keyboard.type(name);
-  for(let i=0;i<40&&(await box.inputValue().catch(()=>name))!==name;i++)await page.waitForTimeout(50);
+  // それでも最初の文字が落ちることがある（2026-10-11、「半列」→「列」）。入力欄の中身が違えば消して打ち直す（3回まで）。
+  for(let attempt=0;attempt<3;attempt++){
+    await page.keyboard.type(name);
+    for(let i=0;i<40&&(await box.inputValue().catch(()=>name))!==name;i++)await page.waitForTimeout(50);
+    if((await box.inputValue().catch(()=>name))===name)break;
+    await box.click();await page.keyboard.press('Control+A');await page.keyboard.press('Backspace');
+    await page.waitForTimeout(200);
+  }
   const save=page.getByRole('button',{name:'保存',exact:true});
   for(let i=0;i<20&&await save.isDisabled();i++)await page.waitForTimeout(100);
   await save.click();
