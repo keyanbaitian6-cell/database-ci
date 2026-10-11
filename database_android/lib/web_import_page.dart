@@ -288,6 +288,10 @@ class _WebImportPageState extends State<WebImportPage> {
   // 手動で取り込んでいるとき、いま済ませた機種。機種一覧へ戻ったあと、一覧の上から探し直さず
   // この機種の次から探すために一度だけ使う（自動取り込みは使わない）。
   String? _afterMachine;
+  // サイトが「該当する台情報が見つかりませんでした」と返した機種（`noRacksKey`：店舗・日・機種）。
+  // この画面を開いている間だけ覚え、次の機種を探すときに飛ばす（開き直せばもう一度見る：
+  // サイトが一時的に空を返しただけなら、次は取り込める）。PC版 `_no_racks` と同じ。
+  final _noRacks = <String>{};
   // 今回の取り込みを始めた時刻。その日の機種の表をこれより前に取ったきりなら取り直す
   // （昼に取った機種を、夜の取り込みで「済み」として飛ばさない。PC版と同じ）。
   // 画面を開いたとき・自動取り込みをONにしたときに決める。
@@ -711,6 +715,20 @@ class _WebImportPageState extends State<WebImportPage> {
         _showNotice('${extraction.machine}は取り込みの対象外です。保存しませんでした。');
         return;
       }
+      if (rows.isEmpty &&
+          decoded['no_racks'] == true &&
+          extraction.store != null &&
+          extraction.day != null &&
+          (extraction.machine ?? '').isNotEmpty) {
+        // 機種の表の代わりに「台情報なし」：保存せず、その日はこの機種を飛ばして機種一覧へ戻る。
+        await _skipMachineWithoutRacks(
+          store: extraction.store!,
+          day: extraction.day!,
+          machine: extraction.machine!,
+          autoToken: autoToken,
+        );
+        return;
+      }
       if (rows.isEmpty) {
         setState(
           () => _error = '表の行を読み取れませんでした。台番号・BB・RB・総回転数がある一覧を表示してから試してください。',
@@ -872,6 +890,38 @@ class _WebImportPageState extends State<WebImportPage> {
       }
     }
   });
+
+  /// 表示中の機種の表が「台情報なし」のとき、その日はこの機種を飛ばして機種一覧へ戻る
+  /// （PC版 `skip_machine_without_racks` と同じ）。戻った一覧では、次の機種を探すときに
+  /// この機種を飛ばす（手動のときは、この機種の次から探す）。
+  Future<void> _skipMachineWithoutRacks({
+    required String store,
+    required String day,
+    required String machine,
+    int? autoToken,
+  }) async {
+    if (!_autoCurrent(autoToken, _flow.page)) return;
+    _noRacks.add(noRacksKey(store, day, machine));
+    final notice = noRacksNotice(day, machine);
+    final url = meruhenMachineListUrl(store, day);
+    if (!_allowed(url)) {
+      _showNotice(notice);
+      return;
+    }
+    _flow.expectPage(notice: notice, advance: true);
+    _flow.startLoading();
+    _afterMachine = autoToken == null ? machine : null;
+    if (autoToken != null) _autoMessage('ON・$notice');
+    try {
+      await _web.loadRequest(Uri.parse(url));
+    } catch (error) {
+      if (mounted) {
+        _flow.cancelExpectation();
+        _flow.stopLoading();
+        setState(() => _error = '機種一覧へ移動できませんでした。\n$error');
+      }
+    }
+  }
 
   /// Only a link that stays on this site, in the same shop, and names the
   /// rack it was found on is kept; anything else is dropped.
@@ -1127,9 +1177,16 @@ class _WebImportPageState extends State<WebImportPage> {
           }
 
           Map<String, dynamic>? first;
+          final today = todayIso();
           for (var index = 0; index < machines.length; index++) {
             final status = guessed[index];
+            final skipped =
+                store != null &&
+                _noRacks.contains(
+                  noRacksKey(store, today, '${machines[index]['name'] ?? ''}'),
+                );
             if (openable(machines[index]) &&
+                !skipped &&
                 (status == null || status['done'] != status['total'])) {
               first = machines[index];
               break;
@@ -1177,6 +1234,12 @@ class _WebImportPageState extends State<WebImportPage> {
           // 一覧の並び（選んだ向き）の順に1回だけ見る。グラフが残る機種も、未取込・台数変更・
           // 古い表の機種も、並びで先にある方から（`machineNextStep`、PC版と同じ。2026-10-06）。
           for (final index in order) {
+            // その日はサイトに台情報が無かった機種。
+            if (_noRacks.contains(
+              noRacksKey(store, day, '${machines[index]['name'] ?? ''}'),
+            )) {
+              continue;
+            }
             final status = statuses[index];
             final step = machineNextStep(
               status,
@@ -2191,7 +2254,9 @@ const _extractTableScript = r'''
     ? candidates.slice().sort((a, b) => b.length - a.length)[0]
     : candidates.find(candidate => candidate.length === expectedCount) ||
       candidates.slice().sort((a, b) => b.length - a.length)[0]) || [];
-  return JSON.stringify({url: location.href, store, day, machine, expected_count: expectedCount, rows});
+  // 機種の表の代わりにサイトが出す「台情報なし」（PC版 NO_RACKS_PATTERN と同じ文）。
+  const no_racks = /該当する台情報が(?:見つかりませんでした|ありません)/.test(body);
+  return JSON.stringify({url: location.href, store, day, machine, expected_count: expectedCount, rows, no_racks});
 })()
 ''';
 
@@ -2446,7 +2511,9 @@ const _autoProbeScript = r'''
     .map(e => e.tagName === 'CANVAS' ? `${e.width}x${e.height}` : e.currentSrc || e.src || '');
   if (target === 'machines' && !document.querySelector('tr.teram2-link-block, a[href*="machine_name"]'))
     return JSON.stringify({ready:false, reason:'機種一覧の表示待ち', url});
-  if (target === 'table' && rows.length === 0)
+  // 「該当する台情報が見つかりませんでした」のページは表が無くても準備済み（取り込みで飛ばす）。
+  if (target === 'table' && rows.length === 0 &&
+      !/該当する台情報が(?:見つかりませんでした|ありません)/.test(words))
     return JSON.stringify({ready:false, reason:'表の表示待ち', url});
   if (target === 'graph' && curves.length === 0 && images.length === 0)
     return JSON.stringify({ready:false, reason:'グラフの表示待ち', url});

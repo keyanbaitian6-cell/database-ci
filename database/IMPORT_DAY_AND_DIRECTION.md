@@ -28,6 +28,15 @@
 - メルヘン PC：`browser_import.py`（`recent_days`・`with_target_date`・`_Bridge.set_target_day/set_auto_capture`・`_checked`・`next_unimported_machine`）、`auto_capture.py`（カード）。
 - メルヘン Android：`import_day.dart`、`web_import_page.dart`。
 
+## メルヘン：サイトに台情報が無い機種（2026-10-11）
+
+- 利用者：「その仕様に両方作り替えてビルドまでお願いします」。長町南の10/10を下から取り込む途中、Sハイパーラッシュ SLC8 の表がサイトの「個別台情報一覧　該当する台情報が見つかりませんでした。」になり、アプリはその機種を「未取込」として案内し続けて先へ進めなかった。
+- 機種の表のページ（URLに機種名と日付）で、サイトの文が「該当する台情報が見つかりませんでした」「該当する台情報がありません」で、台の表が読めないときは、**保存せず、その日はこの機種を飛ばして機種一覧へ戻り、次の機種へ進む**。自動取り込み・手動（「この画面を取り込む」）とも同じ。案内は「10/10のSﾊｲﾊﾟｰﾗｯｼｭSLC8は、サイトに台情報がありません（該当する台情報が見つかりませんでした）。この日は飛ばして、次の機種へ進みます。」。
+- 飛ばした機種（店舗・日・機種）は、取り込みの画面を開いている間だけ覚える。開き直せばもう一度見る（サイトが一時的に空を返しただけなら、次は取り込める）。別の日は飛ばさない。手動のときは、戻った一覧でこの機種の次から探す。
+- 日付の分からないページ（URLに `target_date` が無い）は飛ばさない（これまでどおり表の読み取りエラー）。表が読めれば、同じ文がページにあっても台情報ありとして扱う。
+- 実装：PC `browser_import.py`（`NO_RACKS_PATTERN`・`skip_machine_without_racks`・`_no_racks`、カードの `noRacksShown`）、`auto_capture.py`（自動の確認が `no_racks` を返す）。Android `web_import_page.dart`（表の読み取りの `no_racks`、`_skipMachineWithoutRacks`・`_noRacks`、自動の確認は表が無くても準備済み）、`import_day.dart`（`noRacksKey`・`noRacksNotice`・`meruhenMachineListUrl`）。
+- 確認：PC `tests/test_meruhen_no_racks.py`、Android `test/meruhen_no_racks_test.dart`、ブラウザ `tool/test_meruhen_no_racks_browser.mjs`（PCのカード）・`tool/test_meruhen_no_racks_android.mjs`（Androidの埋め込みJS）。実サイトでの動きは利用者の次の取り込みで確認する。
+
 ## 確認
 
 - PC：`test_pscube_import.py`・`test_pscube_auto.py`（P’s CUBE）、`tests/test_meruhen_day.py`（メルヘン6件）。

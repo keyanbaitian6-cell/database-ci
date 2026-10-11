@@ -447,6 +447,11 @@ GRAPH_EXTRACT_BODY = READ_DAY_JS + r'''
   });
 '''
 
+# サイトが機種の表の代わりに出す「台情報なし」の文（2026-10-11、長町南の10/10の
+# Sハイパーラッシュで「該当する台情報が見つかりませんでした」）。取り込みカードのJSもこれを使う。
+# Android版の表の読み取り（web_import_page.dart の `_extractTableScript` の no_racks）と同じ文。
+NO_RACKS_PATTERN = re.compile(r'該当する台情報が(?:見つかりませんでした|ありません)')
+
 OVERLAY_JS = (
     "(() => {\n"
     "  if (window.__databaseOverlayInstalled) return;\n"
@@ -782,6 +787,23 @@ OVERLAY_JS = (
     "  });\n"
     "  const extractTable = () => {\n" + TABLE_EXTRACT_BODY + "\n  };\n"
     "  const extractGraph = () => {\n" + GRAPH_EXTRACT_BODY + "\n  };\n"
+    # 機種の表の代わりにサイトが「該当する台情報が見つかりませんでした」を出しているか
+    # （その日のその機種のデータがサイトに無い）。表が読めるときは台情報ありとみなす。
+    # Android版 `_extractTableScript` の no_racks と同じ判定。
+    "  const noRacksShown = () => {\n"
+    "    const text = document.body ? document.body.innerText.replace(card.innerText, '') : '';\n"
+    "    if (!/" + NO_RACKS_PATTERN.pattern + "/.test(text)) return false;\n"
+    "    try { const p = JSON.parse(extractTable()); return !!p.error || !(p.matrix && p.matrix.length > 1); }\n"
+    "    catch (e) { return true; }\n"
+    "  };\n"
+    "  const skipNoRacks = async () => {\n"
+    "    const data = JSON.parse(await window.pywebview.api.skip_machine_without_racks(JSON.stringify(pageIdentity())));\n"
+    "    status.textContent = data.message || '';\n"
+    "    if (data.url) {\n"
+    "      try { localStorage.setItem('database-last-status', data.message || ''); } catch (e) {}\n"
+    "      location.href = data.url;\n"
+    "    }\n"
+    "  };\n"
     "  captureBtn.onclick = async () => {\n"
     "    try {\n"
     "      const id = pageIdentity();\n"
@@ -790,6 +812,7 @@ OVERLAY_JS = (
     "        status.textContent = 'グラフを送信しました。';\n"
     "        window.pywebview.api.submit_graph(result);\n"
     "      } else if (id.machine) {\n"
+    "        if (id.day && noRacksShown()) { await skipNoRacks(); return; }\n"
     "        const result = extractTable();\n"
     "        status.textContent = '表を送信しました。';\n"
     "        window.pywebview.api.submit_table(result);\n"
@@ -960,6 +983,18 @@ def machine_list_url(location, day, after=None):
     marker = f'&database_after={quote(after, safe="")}' if after else ''
     return (f'https://{HOST}/{location}/rack_info_kt/?kind_code=21'
             f'#database_next_machine=1&database_day={day}{marker}')
+
+
+def machine_key(name):
+    """機種の照合用の名前（正規化して空白を除く）。"""
+    return re.sub(r'\s+', '', normalize_machine_name(name))
+
+
+def no_racks_notice(day, machine):
+    """台情報が無い機種を飛ばすときの案内。Android版 `noRacksNotice` と同じ文。"""
+    month_day = f'{int(day[5:7])}/{int(day[8:10])}'
+    return (f'{month_day}の{machine}は、サイトに台情報がありません（該当する台情報が見つかりませんでした）。'
+            'この日は飛ばして、次の機種へ進みます。')
 
 
 def _next_step(store, day, machine, location, current_rack=None):
@@ -1159,6 +1194,10 @@ class _Bridge:
         self._overlay_ready = threading.Event()
         self._auto_display = None
         self._manual_continuation = True
+        # サイトが「該当する台情報が見つかりませんでした」と返した機種（店舗・日・機種）。
+        # この画面を開いている間だけ覚え、次の機種を探すときに飛ばす（開き直せばもう一度見る：
+        # サイトが一時的に空を返しただけなら、次は取り込める）。
+        self._no_racks = set()
         self._advance_generation = None
         self._auto_session = 0
         self._advance_session = None
@@ -1321,6 +1360,16 @@ class _Bridge:
                         # again in commit_auto_move after the awaited DB query.
                         self._auto.run_current(generation, lambda: self._window.evaluate_js(
                             'window.__databaseAutoMoveMachine(' + str(generation) + ')'))
+                    elif probe.get('kind') == 'no_racks':
+                        # 機種の表の代わりに「台情報なし」。保存せず、その日はこの機種を飛ばす。
+                        result = json.loads(self.skip_machine_without_racks(probe))
+                        url = result.get('url')
+                        self._auto.pause('ON・' + result.get('message', ''), generation)
+                        if url and is_allowed_url(url):
+                            self._window.evaluate_js("try { localStorage.setItem('database-last-status', " +
+                                                     json.dumps(result.get('message', '')) + "); } catch (e) {}")
+                            self._auto.run_current(generation, lambda: self._window.evaluate_js(
+                                'window.__databaseAutoAdvance && window.__databaseAutoAdvance(' + json.dumps(url) + ')'))
                     elif probe.get('kind') in ('table', 'graph'):
                         raw = self._checked(probe['raw'])
                         payload = json.loads(raw) if isinstance(raw, str) else raw
@@ -1438,6 +1487,32 @@ class _Bridge:
         return json.dumps({'url': step['url'], 'rack': step.get('rack'), 'remaining': step.get('remaining', 0),
                            'reason': reason, 'message': step['text']}, ensure_ascii=False)
 
+    def skip_machine_without_racks(self, raw):
+        """表示中の機種の表が「台情報なし」のとき、その日はこの機種を飛ばして機種一覧へ戻る。
+
+        保存はしない。戻った機種一覧では、次の機種を探すときにこの機種を飛ばす
+        （手動のときは、この機種の次から探す）。"""
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            payload = None
+        if not isinstance(payload, dict):
+            return json.dumps({'url': None, 'message': '表示中の機種を読み取れませんでした。'}, ensure_ascii=False)
+        store_path, day = payload.get('store'), payload.get('day')
+        machine = normalize_machine_name(payload.get('machine'))
+        try:
+            valid_day = isinstance(day, str) and date.fromisoformat(day).isoformat() == day
+        except ValueError:
+            valid_day = False
+        if store_path not in STORE_NAMES or not valid_day or not machine:
+            return json.dumps({'url': None, 'message': '店舗・日付・機種名を特定できないため、飛ばせませんでした。'},
+                              ensure_ascii=False)
+        self._no_racks.add((store_path, day, machine_key(machine)))
+        # 手動のときは、戻った一覧で次の機種を探す（表を保存したあとと同じ）。
+        self._manual_continuation = not self._auto.state()['enabled']
+        return json.dumps({'url': machine_list_url(store_path, day, after=machine),
+                           'message': no_racks_notice(day, machine)}, ensure_ascii=False)
+
     def next_unimported_machine(self, raw):
         """Choose the next item from the displayed machine list.
 
@@ -1518,7 +1593,10 @@ class _Bridge:
             # （以前はここだけ向きを見ず、最初の1機種が必ず一覧の上になっていた。2026-10-04）。
             if self._direction == 'bottom':
                 candidates.reverse()
-            candidates.sort(key=lambda item: done_today(item[1]))   # 安定ソート：未済が先
+            skipped_today = {key for location, skipped_day, key in self._no_racks
+                             if location == store_path and skipped_day == today_iso()}
+            # 安定ソート：未済が先。台情報が無かった機種は後へ。
+            candidates.sort(key=lambda item: (machine_key(item[1]) in skipped_today, done_today(item[1])))
             if candidates:
                 url, name = candidates[0]
                 return json.dumps({
@@ -1569,6 +1647,8 @@ class _Bridge:
                 # 下の機種の次にいきなり上へ飛んでいた。
                 for machine in candidates:
                     key = re.sub(r'\s+', '', normalize_machine_name(machine['name']))
+                    if (store_path, day, key) in self._no_racks:
+                        continue   # その日はサイトに台情報が無かった機種
                     done_total = progress.get(key)
                     old = done_total is not None and stale(key)
                     if done_total is not None and done_total[0] < done_total[1] and not old:

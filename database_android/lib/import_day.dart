@@ -94,3 +94,25 @@ String? machineNextStep(
   }
   return null;
 }
+
+/// サイトが機種の表の代わりに「該当する台情報が見つかりませんでした」を出した機種は、その日は
+/// 飛ばして次の機種へ進む（2026-10-11、長町南の10/10のSハイパーラッシュ）。その判定は表の読み取り
+/// （web_import_page.dart の `_extractTableScript` の no_racks、PC版 `NO_RACKS_PATTERN` と同じ文）。
+///
+/// 台情報が無かった機種を覚えるときの鍵（店舗・日・機種。機種名は正規化して空白を除く）。
+/// PC版の `(store, day, machine_key(machine))` と同じ。
+String noRacksKey(String store, String day, String machine) =>
+    '$store|$day|${normalizeMachineName(machine).replaceAll(RegExp(r'\s+'), '')}';
+
+/// 台情報が無い機種を飛ばすときの案内。PC版 `no_racks_notice` と同じ文。
+String noRacksNotice(String day, String machine) =>
+    '${int.parse(day.substring(5, 7))}/${int.parse(day.substring(8, 10))}の$machineは、'
+    'サイトに台情報がありません（該当する台情報が見つかりませんでした）。'
+    'この日は飛ばして、次の機種へ進みます。';
+
+/// その日の機種一覧（サイト自身のページ）。グラフが済んだあと・台情報が無い機種を
+/// 飛ばしたあとに戻り、ここから次の機種を探す。PC版 `machine_list_url` と同じ形（済ませた
+/// 機種の印は、Android版は画面の状態 `_afterMachine` で持つ）。
+String meruhenMachineListUrl(String store, String day) =>
+    'https://meruhenworld.pt.teramoba2.com/$store/rack_info_kt/?kind_code=21'
+    '#database_next_machine=1&database_day=${Uri.encodeComponent(day)}';

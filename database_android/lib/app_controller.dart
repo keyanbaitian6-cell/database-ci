@@ -14,6 +14,7 @@ import 'data_checks.dart';
 import 'database_service.dart';
 import 'date_events.dart';
 import 'graph_preview.dart';
+import 'import_day.dart' show meruhenMachineListUrl;
 import 'import_service.dart';
 import 'import_spool.dart';
 import 'record_analysis.dart';
@@ -1457,9 +1458,7 @@ class AppController extends ChangeNotifier {
       ..sort((a, b) => a.rack.compareTo(b.rack));
     if (pending.isEmpty) {
       return NextGraphTarget(
-        url:
-            'https://meruhenworld.pt.teramoba2.com/$store/rack_info_kt/?kind_code=21'
-            '#database_next_machine=1&database_day=${Uri.encodeComponent(day)}',
+        url: meruhenMachineListUrl(store, day),
         reason: 'all_done',
         warning: warning,
         dayComplete: dayComplete,

@@ -241,7 +241,11 @@ AUTO_CAPTURE_JS = r'''
     const id = pageIdentity();
     let kind, raw;
     if (id.rack !== null) { kind = 'graph'; raw = extractGraph(); }
-    else if (id.machine) { kind = 'table'; raw = extractTable(); }
+    else if (id.machine) {
+      // サイトに台情報が無い機種の表（「該当する台情報が見つかりませんでした」）は飛ばす。
+      if (id.day && noRacksShown()) return {kind: 'no_racks', url: location.href, ...id};
+      kind = 'table'; raw = extractTable();
+    }
     else if (/rack_info_kt/.test(location.pathname)) {
       if (!machineLinks().length) return {error: 'ON・機種一覧の読み込み待ち'};
       return {kind: 'machines', url: location.href};
