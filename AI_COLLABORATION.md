@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## iPhoneの閲覧ページから🌈を付ける（Apps Scriptを1回更新）、公開・PC再ビルド（Claude、2026-10-11）
+
+- 利用者：「iPhone版から付ける方法あんまりないよね？」→（スクリプトを使わない方法はほぼ無いと説明し、①今のスクリプトを1回更新 ②端末だけ＋ファイルで渡す ③イベントの窓口に紛れ込ませる、を示した）→「1回スクリプト更新するか」。途中で「これは読み取り専用の方？無題のプロジェクトのほう？」→ 更新するのは自分用（読み取り専用ではない方）、1行目と閲覧ページに入っているURLで見分けると案内（どちらが「無題」かはこちらから見えないので断定していない）。
+- 閲覧ページの台の画面に「🌈 付ける／外す」（Android版・P’s CUBEには出さない）。端末の内容の `rainbow_marks` に時刻つきで保存して表示に入れ、Apps Script へ `{file: 'rainbow', marks}`。Apps Script は `database-rainbow-shared.json` に足し込む（`?file=rainbow` で読む、新しい方が残る、形式検査）。PCは起動時・店舗日付の切り替え・カレンダー・バラエティ🌈タブで同期フォルダのファイルを取り込む（`pull_shared_rainbow`、`rainbow_at` より新しい印だけ）。PCの付け外しも `rainbow_at` を残す。仕様 `RAINBOW.md`「iPhoneから付ける」。
+- 試験：`tool/test_viewer_drive_script.mjs`（🌈 2件）、`test/rainbow_marks_test.dart`（5件）、`tool/test_viewer_rainbow_browser.mjs`（ビルドした閲覧ページで付ける・送る・開き直し・外す・ほかの端末の分）、`tests/test_rainbow.py`（PCの取り込み・時刻）。画面試験は最初、表で🌈の付いた台が「1085🌈」と出て「1085」ちょうどで探せず失敗→台番号で始まる文字で探すよう試験を直した。手元のWebビルドはGit Bashが `--base-href /database-viewer/` をWindowsのパスに書き換えて失敗したので `MSYS_NO_PATHCONV=1` で作った。`check_before_build.sh` **ALL PASSED**（39項目：PC 249件・P’s CUBE関連93件・Flutter 569件・analyzeエラー警告0/info18・全JS）。
+- **公開**：database-viewer `efe54d7`（ソース `566758e`）。公開中の `main.dart.js`・`shared_events.mjs` が手元と一致、seedは404。共有ページは変更なし（iPhoneの🌈はPCが取り込んだあとバックアップ経由で届く）。
+- **PC**：`build_windows.ps1 -BuildTag iphone-rainbow-20261011`、`smoke_frozen_runtime`（`a/work/outputs/frozen-runtime-20261011-iphone-rainbow.json`）・`smoke_frozen_capture` PASS。
+- **残り（利用者の操作）**：自分用のApps Scriptを `viewer_drive_script.gs` の新しい内容に貼り替えて「新バージョン」でデプロイ。更新前に押した🌈は端末に残り、更新後の付け外しでまとめて届く。
+
 ## 確定が出た台の印🌈（PCで付ける）・最終🌈・バラエティ🌈タブ、閲覧ページ・共有ページ公開、PC再ビルド（Claude、2026-10-11）
 
 - 利用者：「確定が出た台に簡単に🌈のマークつけられるようにしたいんだよなぁ。…Android版にはつけなくていい。iPhoneブラウザからでもいいんだけど、スクリプトつけなきゃいけないなら却下。pc版からのみでもいい」「ボタンワンタッチでつけられる感じね。機種別各データ一覧みてるときでもいいし、差枚一覧見てる時でもいいし」「この虹マークがついてない期間（最終🌈の日付）を表示させる欄も作ってほしいなぁ」「特にバラエティはローテーションで入れる傾向があるので、バラエティの機種一覧をpcで表示させて、この🌈マークをつけられるようにもしてほしい。そのタブかページを作って」「機種一覧名はとりあえず最新の機種一覧からとって表示させておけばいいよ。あと、入れ替えとかで変わったらその都度書き換えてってくださいね」。選択（質問に回答）：付ける画面＝取り込みブラウザの機種別の表・カレンダーの日の差枚一覧（差枚・回転数ランキングTOP50）、印＝「確定が出た」だけ、出す場所＝閲覧ページ・共有ページ・PCのまとめ・結果。
