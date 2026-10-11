@@ -67,7 +67,8 @@ class MachineGames {
   return (top: top.take(10).toList(), machines: machines.take(5).toList());
 }
 
-String _count(int value) => value > 0 ? signedMedals(value).substring(1) : '$value';
+String _count(int value) =>
+    value > 0 ? signedMedals(value).substring(1) : '$value';
 
 Color _netColor(int value) => value > 0
     ? AppColors.linkBlue
@@ -157,7 +158,10 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                         color: _netColor(nets.reduce((a, b) => a + b)),
                       ),
                     ),
-                    TextSpan(text: '（$netLabelがわかった台 ${nets.length}/${usable.length}台）'),
+                    TextSpan(
+                      text:
+                          '（$netLabelがわかった台 ${nets.length}/${usable.length}台）',
+                    ),
                   ],
                 ),
               ),
@@ -179,11 +183,13 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                         title: Text(
-                          '${r.rack}番　${displayMachineName(r.machine)}',
+                          '${r.rack}番${r.rainbow ? rainbowMark : ''}　${displayMachineName(r.machine)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        subtitle: Text('${_count(r.games)}G　BB${r.bb} RB${r.rb}'),
+                        subtitle: Text(
+                          '${_count(r.games)}G　BB${r.bb} RB${r.rb}',
+                        ),
                         trailing: Text(
                           r.netText!,
                           style: TextStyle(

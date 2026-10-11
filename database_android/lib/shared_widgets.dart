@@ -158,7 +158,7 @@ class DaySummaryCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${e.$1.rack}番台',
+                        '${e.$1.rack}番台${e.$1.rainbow ? rainbowMark : ''}',
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(width: 8),
@@ -354,7 +354,7 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
         MediaQuery.of(context).viewPadding.bottom;
     return Scaffold(
       appBar: AppBar(
-        title: Text('${record.rack}番台'),
+        title: Text('${record.rack}番台${record.rainbow ? ' $rainbowMark' : ''}'),
         bottom: widget.dateNavigation,
       ),
       floatingActionButton: widget.scrollTopButton
@@ -366,6 +366,8 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
               padding: EdgeInsets.fromLTRB(16, 16, 16, bottom),
               children: [
                 RackStats(record: record, score: score),
+                if (allRecords != null)
+                  LastRainbow(record: record, all: allRecords),
                 const SizedBox(height: 12),
                 const EmptyState(
                   icon: Icons.show_chart,
@@ -391,6 +393,31 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
               bottom: bottom,
               onOpenDay: widget.onOpenDay,
             ),
+    );
+  }
+}
+
+/// 最終🌈（2026-10-11 利用者「虹マークがついてない期間（最終🌈の日付）を表示させる欄」）。
+/// この台番号に最後に🌈が付いた日と、その日からの日数。その店に🌈が1つも無いときは出さない
+/// （🌈はPCで付ける。Android版では付けないので、ふだんは出ない）。
+class LastRainbow extends StatelessWidget {
+  const LastRainbow({super.key, required this.record, required this.all});
+  final SlotRecord record;
+  final List<SlotRecord> all;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!all.any((r) => r.store == record.store && r.rainbow)) {
+      return const SizedBox.shrink();
+    }
+    final last = lastRainbowDay(all, record.store, record.rack, record.day);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        '最終$rainbowMark：${lastRainbowText(last, record.day)}',
+        key: const ValueKey('last-rainbow'),
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
     );
   }
 }
@@ -482,7 +509,7 @@ class RackTrend extends StatelessWidget {
                   child: _row([
                     r.day == record.day || onOpenDay == null
                         ? Text(
-                            shortDayLabel(r.day),
+                            '${shortDayLabel(r.day)}${r.rainbow ? rainbowMark : ''}',
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: r.day == record.day
@@ -494,7 +521,7 @@ class RackTrend extends StatelessWidget {
                             key: ValueKey('rack-trend-${r.day}'),
                             onTap: () => onOpenDay!(r.day),
                             child: Text(
-                              shortDayLabel(r.day),
+                              '${shortDayLabel(r.day)}${r.rainbow ? rainbowMark : ''}',
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: AppColors.linkBlue,
@@ -793,6 +820,7 @@ class _SavedGraphBody extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(16, 16, 16, bottom),
       children: [
         RackStats(record: record, score: score),
+        if (allRecords != null) LastRainbow(record: record, all: allRecords!),
         const SizedBox(height: 12),
         Card(
           child: Padding(

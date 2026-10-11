@@ -413,6 +413,8 @@ class MachineDataTable extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _text('${entries[i].$1.rack}', bold: true),
+                  if (entries[i].$1.rainbow)
+                    const Text(rainbowMark, style: TextStyle(fontSize: 12)),
                   if (candidateRacks.contains(entries[i].$1.rack) ||
                       longTrendRacks.contains(entries[i].$1.rack))
                     Text(
@@ -720,7 +722,7 @@ class _GraphCard extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    '${record.rack}${candidate
+                    '${record.rack}${record.rainbow ? rainbowMark : ''}${candidate
                         ? ' ★'
                         : longTrend
                         ? ' ☆'

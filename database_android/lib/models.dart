@@ -494,6 +494,45 @@ class SlotRecord {
       : copyWith(graph: graph!.lightened());
 }
 
+/// 確定が出た台の印🌈（PCで付ける。RAINBOW.md）。このアプリの知らない項目として [SlotRecord.extra] に
+/// そのまま入っている（読み書きで落とさない）。
+const rainbowMark = '🌈';
+
+extension SlotRecordRainbow on SlotRecord {
+  bool get rainbow => extra['rainbow'] == true;
+}
+
+/// 最終🌈：同じ店舗・同じ台番号で、[day] 以前に最後に🌈が付いた日（無ければ null）。
+/// 台番号で見る（機種が入れ替わっても同じ台番号なら続けて数える。PC版 `last_rainbow_days` と同じ）。
+String? lastRainbowDay(
+  Iterable<SlotRecord> all,
+  String store,
+  int rack,
+  String day,
+) {
+  String? last;
+  for (final r in all) {
+    if (r.store == store &&
+        r.rack == rack &&
+        r.rainbow &&
+        r.day.compareTo(day) <= 0 &&
+        (last == null || r.day.compareTo(last) > 0)) {
+      last = r.day;
+    }
+  }
+  return last;
+}
+
+/// 最終🌈の表示：その日なら「当日」、前の日なら「9/26（15日前）」、無ければ「なし」。PC版 `last_rainbow_text` と同じ。
+String lastRainbowText(String? last, String day) {
+  if (last == null) return 'なし';
+  if (last == day) return '当日';
+  final days = DateTime.parse('${day}T00:00:00Z')
+      .difference(DateTime.parse('${last}T00:00:00Z'))
+      .inDays;
+  return '${int.parse(last.substring(5, 7))}/${int.parse(last.substring(8, 10))}（$days日前）';
+}
+
 /// 同じ台（同じ店舗・日付・機種・台番号）の2件を1件にまとめる。
 ///
 /// 回転数の多い方を新しい数値とし（同じなら [b]）、片方にしかない

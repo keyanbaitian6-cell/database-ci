@@ -86,6 +86,7 @@ P’s CUBE のイベント（`database/PSCUBE_SYNC.md` の `date_events`）と�
   - どちらも数値異常の台（整備中の 88888888 など）は数えない。
 - **台を押すと**：閲覧ページは台の詳細。PCは「結果を見る」でその日・その機種を選び、「選んだ機種の結果を開く」と同じ結果を開く（P’s CUBEは閲覧ページを開く）。
 - 数え方は Flutter `calendar_day_page.calendarDaySummary` と PC `event_calendar.day_summary` で同じ（同じ例の試験で確認）。P’s CUBEのPCで貸玉が複数ある日は、機種名の前に貸玉を付けて分ける。
+- **PCは差枚・回転数ランキングTOP50**（2026-10-11 利用者「差枚ランキング、回転数ランキングTOP50を表示させ、そこにもチェックマークをつける」）：PCの日のまとめは「推定差枚TOP50」「回転数TOP50」をタブで切り替える（回転数は多い順、同じなら台番号の小さい方。差枚の無い台も入れる）。強かった機種5選はそのまま。メルヘンは左端の🌈の列を押すと確定が出た台の印を付け外しし、右端に「最終🌈」を出す（`RAINBOW.md`）。閲覧ページ・Androidは TOP10・5選のまま。PC `event_calendar.day_summary`（`DAY_TOP`）・`open_day_summary`、試験 `tests/test_event_calendar.py`・`tests/test_rainbow.py`。
 
 ## 閲覧専用の共有（お試し、2026-10-09）
 

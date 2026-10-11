@@ -249,7 +249,7 @@ class _VarietyIdlePageState extends State<VarietyIdlePage> {
                       ListTile(
                         key: ValueKey('variety-idle-${idle.latest.key}'),
                         title: Text(
-                          '${idle.latest.rack}番　'
+                          '${idle.latest.rack}番${idle.latest.rainbow ? rainbowMark : ''}　'
                           '${displayMachineName(idle.latest.machine)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

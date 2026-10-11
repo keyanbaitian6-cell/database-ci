@@ -357,12 +357,17 @@ class DaySummaryTests(unittest.TestCase):
         return [dict(machine=m, rack=rack, net=net, games=games, bb=10, rb=5, needs_check=False)
                 for m, rack, net, games in racks]
 
-    def test_top_ten_by_net_and_five_machines_by_average_games(self):
-        from event_calendar import day_summary
-        top, machines = day_summary(self.rows())
+    def test_net_and_games_rankings_and_five_machines_by_average_games(self):
+        """PCは差枚・回転数ランキングとも TOP50（2026-10-11 利用者「差枚ランキング、回転数ランキングTOP50」）。"""
+        from event_calendar import DAY_TOP, day_summary
+        self.assertEqual(DAY_TOP, 50)
+        top, games, machines = day_summary(self.rows())
         self.assertEqual([r['rack'] for r in top[:5]], [21, 1, 5, 4, 12], '同じ差枚は回転数の多い方')
-        self.assertEqual(len(top), 10)
+        self.assertEqual(len(top), 17, '差枚のわかった台すべて（50台まで）')
         self.assertNotIn(3, [r['rack'] for r in top], '差枚の無い台は入れない')
+        self.assertEqual([r['rack'] for r in games[:5]], [21, 11, 12, 3, 2], '回転数の多い順。差枚の無い台も入れる')
+        self.assertEqual(len(games), 18)
+        self.assertEqual(len(day_summary(self.rows(), limit=10)[0]), 10)
         self.assertEqual([(m['machine'], m['racks'], m['average']) for m in machines],
                          [('機種B', 2, 8500), ('機種A', 15, 1767)], '1台だけの機種は入れない')
 

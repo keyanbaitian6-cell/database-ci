@@ -8,6 +8,7 @@ import {
   compactSigned, dayNet, daySummary, displayMachineName, enteredInAdvance, eventLabel, indexRecords,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel, viewerNameFrom,
   calendarDays, idleVarietyRacks, isHiddenMachine, storeDays,
+  lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -183,4 +184,23 @@ test('幸町の聖闘士星矢 海皇覚醒（1279番台、稼働停止）は表
     {store: 'saiwaichou', day: '2026-10-09', machine: 'L／オキドキデュオ2／FR', rack: 900, games: 3000, bb: 10, rb: 5, jo_net: 120},
   ]});
   assert.deepEqual(m.map(r => r.rack), [900]);
+});
+
+test('確定が出た台の印🌈（PCで付ける）と最終🌈：閲覧ページ・PCと同じ例（RAINBOW.md）', () => {
+  const rec = (day, rack, rainbow, machine = 'ハナハナ') => ({store: 'nagamachiminami', day, machine, rack, games: 3000, bb: 10, rb: 5,
+    ...(rainbow ? {rainbow: true} : {})});
+  const records = meruhenRecords({records: [rec('2026-09-26', 660, true), rec('2026-10-05', 660, true, '別の機種'),
+    rec('2026-10-10', 660, false), rec('2026-10-10', 661, false)]});
+  assert.deepEqual(records.map(r => r.rainbow), [true, true, false, false]);
+  assert.equal(rackMark(records[0]), '🌈');
+  assert.equal(rackMark(records[2]), '');
+  const byDay = indexRecords(records);
+  assert.equal(lastRainbowDay(byDay, 'nagamachiminami', 660, '2026-10-10'), '2026-10-05', '機種が変わっても同じ台番号');
+  assert.equal(lastRainbowDay(byDay, 'nagamachiminami', 660, '2026-10-01'), '2026-09-26');
+  assert.equal(lastRainbowDay(byDay, 'nagamachiminami', 661, '2026-10-10'), null);
+  assert.equal(lastRainbowText('2026-10-05', '2026-10-10'), '10/5（5日前）');
+  assert.equal(lastRainbowText('2026-10-10', '2026-10-10'), '当日');
+  assert.equal(lastRainbowText(null, '2026-10-10'), 'なし');
+  assert.equal(storeHasRainbow(byDay, 'nagamachiminami'), true);
+  assert.equal(storeHasRainbow(byDay, 'saiwaichou'), false, '🌈の無い店では最終🌈の欄を出さない');
 });

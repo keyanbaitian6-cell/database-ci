@@ -729,7 +729,51 @@ OVERLAY_JS = (
     "      status.textContent = (data && data.message) || '店舗・日付を特定できませんでした。機種別一覧か個別台のページで押してください。';\n"
     "    }\n"
     "  };\n"
-    "  card.append(grip, switchBtn, captureBtn, status, progress, undoBtn, retryBtn);\n"
+    # 確定が出た台の印🌈（2026-10-11 利用者「ボタンワンタッチでつけられる感じ」、RAINBOW.md）。
+    # サイトの表には手を入れない（表の読み取りが台番号を読めなくなるため）。カードに、表示中の機種の
+    # 保存済みの台（個別台のページはその台）を並べ、押すと付け外しする。
+    "  const rainbowBox = document.createElement('div');\n"
+    "  rainbowBox.id = 'database-rainbow';\n"
+    "  rainbowBox.style.cssText = 'display:none;font-size:12px;line-height:1.4';\n"
+    "  const renderRainbow = async () => {\n"
+    "    const id = pageIdentity();\n"
+    "    if (!id.store || !id.day || !(id.machine || id.rack !== null)) { rainbowBox.style.display = 'none'; return; }\n"
+    "    let data;\n"
+    "    try { data = JSON.parse(await window.pywebview.api.rainbow_racks(JSON.stringify(id))); } catch (e) { return; }\n"
+    "    rainbowBox.textContent = '';\n"
+    "    if (!data.racks.length) { rainbowBox.style.display = 'none'; return; }\n"
+    "    const head = document.createElement('div');\n"
+    "    head.textContent = '🌈 確定が出た台（押すと付け外し）';\n"
+    "    head.style.cssText = 'opacity:.85;margin-bottom:3px';\n"
+    "    const chips = document.createElement('div');\n"
+    "    chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px';\n"
+    "    for (const item of data.racks) {\n"
+    "      const chip = document.createElement('button');\n"
+    "      chip.type = 'button';\n"
+    "      chip.dataset.rack = String(item.rack);\n"
+    "      const paint = on => {\n"
+    "        chip.textContent = (on ? '🌈' : '＋') + item.rack;\n"
+    "        chip.setAttribute('aria-pressed', String(on));\n"
+    "        chip.style.cssText = 'padding:2px 6px;border-radius:980px;cursor:pointer;font-size:12px;border:1px solid ' +\n"
+    "          (on ? '#f5a623;background:#fff4dc;color:#1d1d1f' : '#5b6b84;background:transparent;color:#c9d3e3');\n"
+    "      };\n"
+    "      paint(item.on);\n"
+    "      chip.onclick = async () => {\n"
+    "        chip.disabled = true;\n"
+    "        try {\n"
+    "          const result = JSON.parse(await window.pywebview.api.set_rainbow(JSON.stringify({store: id.store, day: id.day, rack: item.rack, on: !item.on})));\n"
+    "          if (result.ok) { item.on = result.on; paint(item.on); }\n"
+    "          status.textContent = result.message || '';\n"
+    "        } catch (e) { status.textContent = String(e); }\n"
+    "        finally { chip.disabled = false; }\n"
+    "      };\n"
+    "      chips.append(chip);\n"
+    "    }\n"
+    "    rainbowBox.append(head, chips);\n"
+    "    rainbowBox.style.display = 'block';\n"
+    "  };\n"
+    "  window.__databaseRenderRainbow = renderRainbow;\n"
+    "  card.append(grip, switchBtn, captureBtn, status, progress, rainbowBox, undoBtn, retryBtn);\n"
     "  document.body.appendChild(card);\n"
     # Carries the "saved" / "残りN台" message across the page navigation that
     # a save (either kind) triggers -- set by the confirm subprocess (via
@@ -744,6 +788,7 @@ OVERLAY_JS = (
     "    }\n"
     "  } catch (e) {}\n"
     "  refreshProgress();\n"
+    "  renderRainbow();\n"
     "  markMachines();\n"
     "  setTimeout(markMachines, 1000);\n"
     # 位置はすべて「画面に見えている座標」で扱う。カードは zoom で拡大するため、
@@ -1486,6 +1531,49 @@ class _Bridge:
         reason = {'next': None, 'machine_done': 'all_done'}.get(step['kind'], step['kind'])
         return json.dumps({'url': step['url'], 'rack': step.get('rack'), 'remaining': step.get('remaining', 0),
                            'reason': reason, 'message': step['text']}, ensure_ascii=False)
+
+    def rainbow_racks(self, raw):
+        """取り込みカードの🌈ボタン用：表示中の機種の表（または個別台）の、保存済みの台と🌈の有無。
+
+        payload: {store, day, machine, rack}。rack があればその台だけ、無ければその機種の台（台番号順）。"""
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            payload = None
+        if not isinstance(payload, dict):
+            return json.dumps({'racks': []})
+        store_path, day = payload.get('store'), payload.get('day')
+        if store_path not in STORE_NAMES or not isinstance(day, str) or len(day) != 10:
+            return json.dumps({'racks': []})
+        rack = payload.get('rack')
+        machine = machine_key(payload.get('machine')) if payload.get('machine') else None
+        db = Store(self._db_path)
+        try:
+            rows = db.rows(day, None, store_path)
+        finally:
+            db.close()
+        racks = sorted({int(r['rack']): r.get('rainbow') is True for r in rows
+                        if (int(r['rack']) == int(rack) if rack is not None
+                            else machine is not None and machine_key(r['machine']) == machine)}.items())
+        return json.dumps({'racks': [{'rack': number, 'on': on} for number, on in racks]})
+
+    def set_rainbow(self, raw):
+        """取り込みカードの🌈ボタン：確定が出た台の印を付け外しする（RAINBOW.md）。
+        バックアップ・閲覧用ファイルは、取り込みの画面を閉じたときにまとめて作り直す（backup_after_session）。"""
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+            db = Store(self._db_path)
+            try:
+                db.set_rainbow(payload.get('store'), payload.get('day'), int(payload.get('rack')),
+                               payload.get('on') is True)
+            finally:
+                db.close()
+        except (TypeError, ValueError, AttributeError) as exc:
+            return json.dumps({'ok': False, 'message': f'🌈を付けられませんでした：{exc}'}, ensure_ascii=False)
+        on = payload.get('on') is True
+        return json.dumps({'ok': True, 'on': on,
+                           'message': f"{int(payload['rack'])}番台に🌈を付けました。" if on
+                           else f"{int(payload['rack'])}番台の🌈を外しました。"}, ensure_ascii=False)
 
     def skip_machine_without_racks(self, raw):
         """表示中の機種の表が「台情報なし」のとき、その日はこの機種を飛ばして機種一覧へ戻る。

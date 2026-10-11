@@ -11,7 +11,8 @@ import math
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core import STORE_NAMES, Store, date_event_in_advance, implausible_numbers, is_hidden_machine, rack_net, signed_medals
+from core import (RAINBOW_MARK, STORE_NAMES, Store, date_event_in_advance, implausible_numbers, is_hidden_machine,
+                  rack_net, signed_medals)
 
 WEEKDAYS = '日月火水木金土'
 # 「期間でまとめて入力」で一度に付けられる日数。
@@ -23,6 +24,11 @@ DAY_BG, HOVER_BG, PICKED_BG = '#FFFFFF', '#EEF4FB', '#F2C14E'
 DAY_BORDER, TODAY_BORDER = '#D2D2D7', '#0071E3'
 # 「強かった機種」に入れる最小の台数（1台だけの機種は、たまたまに左右されるため入れない）。
 STRONG_MACHINE_MIN_RACKS = 2
+# 日付を押したときの差枚・回転数ランキングの台数（PC、2026-10-11 利用者「差枚ランキング、回転数ランキングTOP50」）。
+DAY_TOP = 50
+# 🌈の列（押すと付け外し）。付いていない台は「＋」。
+RAINBOW_OFF = '＋'
+RAINBOW_BG = '#FFF4DC'
 
 
 def month_weeks(year, month):
@@ -127,11 +133,14 @@ def event_label(event):
     return event['name'] + ('' if date_event_in_advance(event) else LATE_MARK)
 
 
-def day_summary(rows):
-    """日付を押したときのまとめ（2026-10-09 利用者指定。Android・閲覧ページの calendarDaySummary と同じ）。
-    TOP10＝差枚の多い順（同じ差枚は回転数の多い方、次に台番号の小さい方。差枚の無い台は入れない）。
-    強かった機種5選＝1台あたりの平均回転数の多い順（STRONG_MACHINE_MIN_RACKS台以上の機種。同じなら台数の多い方）。"""
-    top = sorted((r for r in rows if r['net'] is not None), key=lambda r: (-r['net'], -r['games'], r['rack']))[:10]
+def day_summary(rows, limit=DAY_TOP):
+    """日付を押したときのまとめ（PC）。差枚ランキング・回転数ランキング（各 limit 台）と強かった機種5選。
+    差枚＝差枚の多い順（同じ差枚は回転数の多い方、次に台番号の小さい方。差枚の無い台は入れない）。
+    回転数＝回転数の多い順（同じなら台番号の小さい方）。
+    強かった機種5選＝1台あたりの平均回転数の多い順（STRONG_MACHINE_MIN_RACKS台以上の機種。同じなら台数の多い方）。
+    以前はTOP10だけ（2026-10-09、Android・閲覧ページの calendarDaySummary と同じ）。PCは2026-10-11からTOP50。"""
+    nets = sorted((r for r in rows if r['net'] is not None), key=lambda r: (-r['net'], -r['games'], r['rack']))[:limit]
+    games = sorted(rows, key=lambda r: (-r['games'], r['rack']))[:limit]
     by_machine = {}
     for r in rows:
         by_machine.setdefault(r['machine'], []).append(r)
@@ -139,14 +148,33 @@ def day_summary(rows):
                  'average': math.floor(sum(r['games'] for r in items) / len(items) + 0.5)}
                 for name, items in by_machine.items() if len(items) >= STRONG_MACHINE_MIN_RACKS]
     machines.sort(key=lambda m: (-m['average'], -m['racks'], m['machine']))
-    return top, machines[:5]
+    return nets, games, machines[:5]
 
 
-def open_day_summary(parent, title, store_label, rows, net_label, event_text, on_edit, on_open=None):
-    """その日・その店のTOP10と強かった機種5選の窓。on_edit(この窓) はイベント名を入れ直し、新しい表示を返す
-    （やめたら None）。
-    on_open(row) があれば、TOP10の行をダブルクリック（Enter）で結果を開く。"""
-    top, machines = day_summary(rows)
+def rainbow_cell(row):
+    """🌈の列の表示（付いた台は🌈、付いていない台は＋）。"""
+    return RAINBOW_MARK if row.get('rainbow') else RAINBOW_OFF
+
+
+def last_rainbow_text(row):
+    """最終🌈の列（2026-10-11 利用者「虹マークがついてない期間（最終🌈の日付）を表示させる欄」）。
+    その日に付いていれば「当日」、前に付いた日があれば「9/26（15日前）」、無ければ「なし」。
+    row の day はその日、prev_rainbow はその日より前で最後に🌈が付いた日（同じ台番号）。"""
+    if row.get('rainbow'):
+        return '当日'
+    last = row.get('prev_rainbow')
+    if not last:
+        return 'なし'
+    days = (date.fromisoformat(row['day']) - date.fromisoformat(last)).days
+    return f'{int(last[5:7])}/{int(last[8:10])}（{days}日前）'
+
+
+def open_day_summary(parent, title, store_label, rows, net_label, event_text, on_edit, on_open=None, on_rainbow=None):
+    """その日・その店の差枚・回転数ランキング（TOP50、タブで切り替え）と強かった機種5選の窓。
+    on_edit(この窓) はイベント名を入れ直し、新しい表示を返す（やめたら None）。
+    on_open(row) があれば、ランキングの行をダブルクリック（Enter）で結果を開く。
+    on_rainbow(row, on) があれば、左端の🌈の列を押すと確定が出た台の印を付け外しする（成功で True。メルヘンだけ）。"""
+    net_top, games_top, machines = day_summary(rows)
     window = tk.Toplevel(parent)
     window.title(f'{title} {store_label}')
     window.transient(parent)
@@ -173,36 +201,86 @@ def open_day_summary(parent, title, store_label, rows, net_label, event_text, on
                  fg=net_color({'total': sum(nets)})).pack(side='left')
         ttk.Label(total, text=f'（{net_label}がわかった台 {len(nets)}/{len(rows)}台）').pack(side='left')
 
-    ttk.Label(body, text=f'TOP10（{net_label}の多い順）', style='H3.TLabel').pack(anchor='w', pady=(12, 2))
-    columns = ('rank', 'rack', 'machine', 'games', 'bb', 'rb', 'net')
-    table = ttk.Treeview(body, columns=columns, show='headings', height=max(1, len(top)), selectmode='browse')
-    for key, label, width, anchor in (('rank', '順位', 44, 'e'), ('rack', '台番', 56, 'e'), ('machine', '機種', 260, 'w'),
-                                      ('games', '回転数', 76, 'e'), ('bb', 'BB', 44, 'e'), ('rb', 'RB', 44, 'e'),
-                                      ('net', net_label, 90, 'e')):
-        table.heading(key, text=label)
-        table.column(key, width=width, anchor=anchor, stretch=key == 'machine')
-    table.tag_configure('plus', foreground=PLUS_COLOR)
-    table.tag_configure('minus', foreground=MINUS_COLOR)
-    for i, r in enumerate(top):
-        table.insert('', 'end', iid=str(i), tags=('plus' if r['net'] > 0 else 'minus' if r['net'] < 0 else (),),
-                     values=(i + 1, r['rack'], r['machine'], f"{r['games']:,}", r['bb'], r['rb'],
-                             signed_medals(r['net']) + ('※' if r['needs_check'] else '')))
-    if top:
-        table.pack(fill='x')
-    else:
-        ttk.Label(body, text='この日は差枚がわかる台がありません。', style='Sub.TLabel').pack(anchor='w')
-    if on_open and top:
-        def open_selected(_event=None):
-            selected = table.selection()
-            if selected:
-                on_open(top[int(selected[0])])
-        table.bind('<Double-1>', open_selected)
-        table.bind('<Return>', open_selected)
-        ttk.Label(body, text='行をダブルクリックすると、結果を見るでその日・その機種を選んで結果を開きます。',
-                  style='Sub.TLabel').pack(anchor='w')
+    tabs = ttk.Notebook(body)
+    tabs.pack(fill='both', expand=True, pady=(12, 2))
+    tables = []
+
+    def ranking(rank_rows, empty_text):
+        frame = ttk.Frame(tabs, padding=(0, 6, 0, 0))
+        if not rank_rows:
+            ttk.Label(frame, text=empty_text, style='Sub.TLabel').pack(anchor='w')
+            return frame
+        columns = (('mark',) if on_rainbow else ()) + ('rank', 'rack', 'machine', 'games', 'bb', 'rb', 'net') + (
+            ('last',) if on_rainbow else ())
+        table = ttk.Treeview(frame, columns=columns, show='headings', height=min(15, len(rank_rows)),
+                             selectmode='browse')
+        for key, label, width, anchor in (('mark', RAINBOW_MARK, 40, 'center'), ('rank', '順位', 44, 'e'),
+                                          ('rack', '台番', 56, 'e'), ('machine', '機種', 260, 'w'),
+                                          ('games', '回転数', 76, 'e'), ('bb', 'BB', 44, 'e'), ('rb', 'RB', 44, 'e'),
+                                          ('net', net_label, 90, 'e'), ('last', f'最終{RAINBOW_MARK}', 120, 'e')):
+            if key in columns:
+                table.heading(key, text=label)
+                table.column(key, width=width, anchor=anchor, stretch=key == 'machine')
+        table.tag_configure('plus', foreground=PLUS_COLOR)
+        table.tag_configure('minus', foreground=MINUS_COLOR)
+        # 🌈の行は背景も色付けする（Windowsの表では🌈が白黒の小さな記号になり、目立たないため）。
+        table.tag_configure('rainbow', background=RAINBOW_BG)
+
+        def tags(r):
+            net = r['net'] or 0
+            return ('plus' if net > 0 else 'minus' if net < 0 else 'zero',) + (('rainbow',) if r.get('rainbow') else ())
+
+        def values(i, r):
+            net = '—' if r['net'] is None else signed_medals(r['net']) + ('※' if r['needs_check'] else '')
+            cells = (i + 1, r['rack'], r['machine'], f"{r['games']:,}", r['bb'], r['rb'], net)
+            return ((rainbow_cell(r),) if on_rainbow else ()) + cells + ((last_rainbow_text(r),) if on_rainbow else ())
+        for i, r in enumerate(rank_rows):
+            table.insert('', 'end', iid=str(i), tags=tags(r), values=values(i, r))
+        scroll = ttk.Scrollbar(frame, orient='vertical', command=table.yview)
+        table.configure(yscrollcommand=scroll.set)
+        table.pack(side='left', fill='both', expand=True)
+        scroll.pack(side='left', fill='y')
+        tables.append((table, rank_rows, values, tags))
+        if on_open:
+            def open_selected(_event=None):
+                selected = table.selection()
+                if selected:
+                    on_open(rank_rows[int(selected[0])])
+            table.bind('<Double-1>', open_selected)
+            table.bind('<Return>', open_selected)
+        if on_rainbow:
+            def toggle(event):
+                # 🌈の列（いちばん左）を押したときだけ付け外しする。ほかの列は行を選ぶだけ。
+                if table.identify_region(event.x, event.y) != 'cell' or table.identify_column(event.x) != '#1':
+                    return None
+                iid = table.identify_row(event.y)
+                if not iid:
+                    return None
+                row = rank_rows[int(iid)]
+                on = not row.get('rainbow')
+                if on_rainbow(row, on):
+                    # 同じ台は両方のランキングに出る（同じ行の辞書）ので、両方の表示を直す。
+                    row['rainbow'] = on
+                    for other, other_rows, other_values, other_tags in tables:
+                        for k, r in enumerate(other_rows):
+                            if r is row:
+                                other.item(str(k), values=other_values(k, r), tags=other_tags(r))
+                return 'break'
+            table.bind('<Button-1>', toggle)
+        return frame
+
+    tabs.add(ranking(net_top, f'この日は{net_label}がわかる台がありません。'), text=f'{net_label}TOP{DAY_TOP}')
+    tabs.add(ranking(games_top, 'この日は台の記録がありません。'), text=f'回転数TOP{DAY_TOP}')
+    notes = []
+    if on_rainbow:
+        notes.append(f'{RAINBOW_MARK}の列を押すと、確定が出た台の印を付け外しします（もう一度押すと外れます）。'
+                     f'最終{RAINBOW_MARK}＝その台番号に最後に{RAINBOW_MARK}が付いた日。')
+    if on_open:
+        notes.append('行をダブルクリックすると、結果を見るでその日・その機種を選んで結果を開きます。')
     if net_label == '推定差枚':
-        ttk.Label(body, text='推定差枚はグラフと最大持玉からの計算で、確定値ではありません（※は要確認）。',
-                  style='Sub.TLabel').pack(anchor='w')
+        notes.append('推定差枚はグラフと最大持玉からの計算で、確定値ではありません（※は要確認）。')
+    for note in notes:
+        ttk.Label(body, text=note, style='Sub.TLabel').pack(anchor='w')
 
     ttk.Label(body, text='強かった機種5選（1台あたりの平均回転数）', style='H3.TLabel').pack(anchor='w', pady=(14, 2))
     strong = ttk.Treeview(body, columns=('rank', 'machine', 'average', 'racks'), show='headings',
@@ -297,12 +375,14 @@ class MeruhenEvents:
             rows = db.db.execute(
                 "SELECT rack, machine, json_extract(payload,'$.games'), json_extract(payload,'$.bb'),"
                 " json_extract(payload,'$.rb'), json_extract(payload,'$.max_hold'),"
-                " json_extract(payload,'$.graph_measurement'), json_extract(payload,'$.jo_net') FROM days"
+                " json_extract(payload,'$.graph_measurement'), json_extract(payload,'$.jo_net'),"
+                " json_extract(payload,'$.rainbow') FROM days"
                 " WHERE store=? AND day=? AND json_valid(payload)", (location, day)).fetchall()
+            previous = db.last_rainbow_days(location, day)
         finally:
             db.close()
         result = []
-        for rack, machine, games, bb, rb, max_hold, measurement, jo_net in rows:
+        for rack, machine, games, bb, rb, max_hold, measurement, jo_net, rainbow in rows:
             if is_hidden_machine(location, machine):
                 continue
             if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
@@ -314,8 +394,27 @@ class MeruhenEvents:
             net, needs_check, _site = rack_net({'jo_net': jo_net, 'graph_measurement': measurement,
                                                 'max_hold': max_hold, 'games': games})
             result.append({'rack': rack, 'machine': machine, 'games': games or 0, 'bb': bb, 'rb': rb,
-                           'net': net, 'needs_check': bool(needs_check)})
+                           'net': net, 'needs_check': bool(needs_check), 'rainbow': rainbow == 1,
+                           'day': day, 'prev_rainbow': previous.get(int(rack))})
         return result
+
+    def set_rainbow(self, location, day, rack, on):
+        """確定が出た台の印🌈を付け外しする（RAINBOW.md）。バックアップ・閲覧用ファイルは notify() でまとめて。"""
+        db = Store(self.db_path)
+        try:
+            db.set_rainbow(location, day, rack, on)
+        finally:
+            db.close()
+
+    def notify(self):
+        """🌈を付け外ししたあと（日のまとめの窓を閉じたとき）に1回だけ、バックアップ・閲覧用ファイル・結果を作り直す。"""
+        if not self.on_changed:
+            return
+        db = Store(self.db_path)
+        try:
+            self.on_changed(db)
+        finally:
+            db.close()
 
     def save(self, location, days, name):
         db = Store(self.db_path)
@@ -477,11 +576,31 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             edit_one(window, location, day, title)
             render()
             return
-        open_day_summary(
+        changed = []
+
+        def rainbow(row, on):
+            try:
+                events.set_rainbow(location, day.isoformat(), row['rack'], on)
+            except Exception as error:  # noqa: BLE001 - 付けられなくても窓は使える
+                messagebox.showwarning('🌈', str(error), parent=window)
+                return False
+            changed.append(row['rack'])
+            return True
+        summary = open_day_summary(
             window, title, events.stores[location], rows, events.net_label,
             event_label(entries.get(day.isoformat())),
             lambda parent: edit_one(parent, location, day, title),
-            None if on_open_record is None else lambda row: on_open_record(location, day.isoformat(), row))
+            None if on_open_record is None else lambda row: on_open_record(location, day.isoformat(), row),
+            rainbow if hasattr(events, 'set_rainbow') else None)
+
+        def closed(event):
+            if event.widget is summary and changed:
+                changed.clear()
+                try:
+                    events.notify()
+                except Exception as error:  # noqa: BLE001
+                    status.set(f'バックアップを作り直せませんでした：{error}')
+        summary.bind('<Destroy>', closed, add='+')
 
     def edit_one(parent, location, day, title):
         """1日のイベント名を入れる・変える・消す。カレンダーを描き直し、新しい表示（＊つき）を返す。"""

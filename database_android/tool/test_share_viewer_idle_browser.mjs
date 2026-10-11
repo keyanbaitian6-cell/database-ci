@@ -28,7 +28,9 @@ const records = [];
 for (const d of [1, 2, 3, 6, 7, 8]) {
   const day = `2026-10-0${d}`;
   for (let rack = 1; rack <= 4; rack++) records.push({store: 'saiwaichou', day, machine: '主力', rack, games: 4000, bb: 20, rb: 10, jo_net: 100});
-  records.push({store: 'saiwaichou', day, machine: 'ハナハナ', rack: 50, games: 300, bb: 1, rb: 1, max_hold: 120, jo_net: -250});
+  // 10/2 に確定が出た（PCで🌈を付けた、RAINBOW.md）。
+  records.push({store: 'saiwaichou', day, machine: 'ハナハナ', rack: 50, games: 300, bb: 1, rb: 1, max_hold: 120, jo_net: -250,
+    ...(d === 2 ? {rainbow: true} : {})});
   records.push({store: 'saiwaichou', day, machine: 'ジャグラー', rack: 60, games: 800, bb: 2, rb: 2, jo_net: -500});
   records.push({store: 'saiwaichou', day, machine: 'L聖闘士星矢海皇覚醒ED', rack: 1279, games: 0, bb: 0, rb: 0, jo_net: 0});
 }
@@ -78,6 +80,7 @@ try {
     assert.equal(await page.locator('#sheet-title').innerText(), '50番台');
     assert.match(await sheet.innerText(), /差枚\s*-250/);
     assert.match(await sheet.innerText(), /最大持玉\s*120/);
+    assert.match(await sheet.innerText(), /最終🌈：10\/2（6日前）/, '台のデータに最終🌈');
     await page.getByRole('button', {name: '‹ 戻る'}).click();
     assert.equal(await page.locator('select[data-idle="games"]').inputValue(), '500');
     // 日付を戻すと数え直す（10/3 では10/1〜10/3 の3日間なので、7日以上には当たらない）。

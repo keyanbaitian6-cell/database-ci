@@ -37,6 +37,8 @@ VIEWER_FILE_NAME = 'database-viewer.json'
 VIEWER_DAYS = 60
 VIEWER_KEYS = ('store', 'kind_code', 'day', 'machine', 'rack', 'games', 'bb', 'rb', 'max_hold',
                'graph_measurement', 'captured_at', 'confirmed_setting',
+               # 確定が出た台の印🌈（PCで付ける。RAINBOW.md）
+               'rainbow',
                # ジャグラーオンラインの差枚（お試し、JUGGLER_ONLINE.md）。閲覧ページは推定差枚より優先する。
                'jo_net')
 # 取り込みの対象外の機種。次の機種の候補にせず、印は「対象外」にし、表・グラフも保存しない。
@@ -675,6 +677,53 @@ class Store:
         self._machine_cache = {}
         return cursor.rowcount
 
+    def set_rainbow(self, store, day, rack, on):
+        """確定が出た台の印🌈を付ける（on=True）・外す（False）。採点には使わない（RAINBOW.md）。
+
+        店舗・日・台番号で決める（その日のその台は1機種）。保存されていない台には付けられない。
+        記録の payload に ``rainbow: true`` を持つので、表を取り込み直しても・バックアップを読み込んでも残る。"""
+        if store not in STORE_NAMES:
+            raise ValueError('対象店舗が不正です。')
+        date.fromisoformat(day)
+        if not isinstance(on, bool):
+            raise ValueError('🌈の指定が不正です。')
+        found = self.db.execute('SELECT machine, payload FROM days WHERE store=? AND day=? AND rack=?',
+                                (store, day, int(rack))).fetchall()
+        found = [(machine, payload) for machine, payload in found if not is_hidden_machine(store, machine)]
+        if not found:
+            raise ValueError(f'{rack}番台は{day}の記録がありません。先に表を取り込んでください。')
+        with self.db:
+            for machine, raw in found:
+                payload = json.loads(raw)
+                if on:
+                    payload['rainbow'] = True
+                else:
+                    payload.pop('rainbow', None)
+                self.db.execute('UPDATE days SET payload=? WHERE store=? AND day=? AND machine=? AND rack=?',
+                                (json.dumps(payload, ensure_ascii=False), store, day, machine, int(rack)))
+                self._log_observation(payload)
+        self._machine_cache = {}
+        return len(found)
+
+    def rainbow_racks(self, store, day):
+        """その日・その店で🌈の付いた台番号（小さい順）。"""
+        rows = self.db.execute(
+            "SELECT machine, rack FROM days WHERE store=? AND day=? AND json_valid(payload)"
+            " AND json_extract(payload, '$.rainbow') = 1", (store, day)).fetchall()
+        return sorted({int(rack) for machine, rack in rows if not is_hidden_machine(store, machine)})
+
+    def last_rainbow_days(self, store, before):
+        """台番号ごとの、before より前で最後に🌈が付いた日（{台番号: 日}）。最終🌈の欄に使う（RAINBOW.md）。
+        台番号で見る（機種が入れ替わっても同じ台番号なら続けて数える）。"""
+        rows = self.db.execute(
+            "SELECT rack, machine, day FROM days WHERE store=? AND day<? AND json_valid(payload)"
+            " AND json_extract(payload, '$.rainbow') = 1", (store, before)).fetchall()
+        last = {}
+        for rack, machine, day in rows:
+            if not is_hidden_machine(store, machine) and day > last.get(int(rack), ''):
+                last[int(rack)] = day
+        return last
+
     def set_confirmed_setting(self, store, day, machine, rack, value):
         self._machine_cache = {}
         """Store a manually confirmed setting annotation without rescoring.
@@ -1006,6 +1055,14 @@ def export_backup(store, path, location=None, day=None):
     return count
 
 
+RAINBOW_MARK = '🌈'
+
+
+def rack_mark(row):
+    """台番号の横に付ける印（確定が出た台は「 🌈」）。PCの結果・まとめ・カレンダーで使う。"""
+    return f' {RAINBOW_MARK}' if row.get('rainbow') is True else ''
+
+
 def _valid_backup_record(record):
     try:
         return (isinstance(record, dict) and record.get('kind_code') == 21
@@ -1077,6 +1134,9 @@ def plan_backup_import(store, records):
             # the local row lacks (e.g. captured on the phone) -- safe to fill in.
             link_only.append(record)
         elif record.get('confirmed_setting') and not local.get('confirmed_setting'):
+            setting_only.append(record)
+        elif record.get('rainbow') is True and not local.get('rainbow'):
+            # 数値は同じで、別のPCなどで付けた🌈だけが新しい（RAINBOW.md）。
             setting_only.append(record)
         elif juggler_online_newer(record, local):
             # 数値は同じで、Androidで足したジャグラーオンラインの差枚など（jo_…）だけが新しい（JUGGLER_ONLINE.md）。
@@ -2280,7 +2340,7 @@ def report(store, day, machine, folder, location='nagamachiminami'):
         setting_display = r.get('confirmed_setting') or '—'
         estimate = r['setting_estimate']
         estimate_display = candidate_label(estimate)
-        cells = [str(r['rack']) + (f" {candidate_marks[int(r['rack'])]}" if int(r['rack']) in candidate_marks else ''), str(r['games']), str(r['bb']), str(r['rb']), max_hold_display,
+        cells = [str(r['rack']) + rack_mark(r) + (f" {candidate_marks[int(r['rack'])]}" if int(r['rack']) in candidate_marks else ''), str(r['games']), str(r['bb']), str(r['rb']), max_hold_display,
                  net_display, setting_display, estimate_display]
         cells += [fmt(s[k]) for k in ('max_hold','hits','positive','retention')]
         total_text = fmt(total)
@@ -2521,7 +2581,7 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
             reason_text = '・'.join(s['reasons']) or '—'
             graph_html = html.escape(measurement_preview_html(r), quote=True)
             rack_cell = (f'<button type="button" class="rack-btn" data-rack="{int(r["rack"])}" '
-                        f'data-graph="{graph_html}" onclick="showGraph(this)">{int(r["rack"])}</button>')
+                        f'data-graph="{graph_html}" onclick="showGraph(this)">{int(r["rack"])}{rack_mark(r)}</button>')
             setting = r.get('confirmed_setting') or '—'
             estimate = r['setting_estimate']
             estimate_text = candidate_label(estimate)
@@ -2700,7 +2760,7 @@ def summary_report(store, folder, day, top=5):
 
         rows = ''.join(
             f'<tr class="pick" data-title="{r["rack"]}番台" data-detail="{html.escape(detail(m, r), quote=True)}" '
-            f'onclick="showDetail(this)"><td class="rank">{i}</td><td>{html.escape(m)}</td><td class="num">{r["rack"]}番台</td>'
+            f'onclick="showDetail(this)"><td class="rank">{i}</td><td>{html.escape(m)}</td><td class="num">{r["rack"]}番台{rack_mark(r)}</td>'
             f'<td class="num">{r["games"]}G</td>'
             f'<td class="num"><span class="badge {"high" if r["score"]["total"] >= 80 else "mid" if r["score"]["total"] >= 60 else "low"}">'
             f'{r["score"]["total"]:.1f}</span></td></tr>'
