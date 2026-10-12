@@ -672,6 +672,8 @@ def main():
     ttk.Button(quick, text='この日のまとめ', command=lambda: open_summary()).pack(side='left')
     ttk.Button(quick, text='過去の記録を見る', command=lambda: open_history()).pack(side='left', padx=8)
     ttk.Button(quick, text='直前の保存を取り消す', command=lambda: undo_last()).pack(side='left')
+    # 4円パチンコの記録（PC版だけ、PACHINKO.md）。
+    ttk.Button(quick, text='パチンコの記録', command=lambda: open_pachinko()).pack(side='left', padx=8)
 
     sync_box = ttk.LabelFrame(tab_sync, text='同期フォルダ（Google Driveなど）', padding=14)
     sync_box.pack(fill='x', pady=(0, 14))
@@ -1114,6 +1116,13 @@ def main():
             os.startfile(output)
         except Exception as exc:
             messagebox.showerror('過去の記録を開けません', str(exc), parent=root)
+
+    def open_pachinko():
+        from pachinko_report import build_report
+        try:
+            os.startfile(build_report(ROOT / 'data' / 'database.sqlite3', ROOT / 'reports'))
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror('パチンコの記録を開けません', str(exc), parent=root)
 
     def delete_record():
         if pscube_only('台記録を削除'):

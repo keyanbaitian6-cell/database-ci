@@ -119,6 +119,28 @@ class PachinkoTests(unittest.TestCase):
         self.assertEqual(pachinko.panel_numbers('スタート\n153\n差玉\n\n前日最終スタート\n96\n1セット最大出玉\n-'),
                          {'スタート': '153', '前日最終スタート': '96'})
 
+    def test_report_page(self):
+        import pachinko_report
+        with self.assertRaises(ValueError):
+            pachinko_report.build_report(self.slot_db, Path(self.folder.name) / 'reports')
+        pachinko.save_table(table_payload(), self.slot_db)
+        pachinko.save_graph({'store': 'saiwaichou', 'rack': 80, 'target_date': '2026-10-10',
+                             'page_text': '\n'.join(['初当り', '888888', '4', '最大持玉', '888888', '9000'])},
+                            self.slot_db,
+                            {'baseline_y': 200.5, 'curve': [[0.5, 200.5], [10.5, 150.5]]})
+        output = pachinko_report.build_report(self.slot_db, Path(self.folder.name) / 'reports')
+        page = output.read_text(encoding='utf-8')
+        self.assertIn('パチンコの記録', page)
+        self.assertIn('e東京喰種MW', page)
+        self.assertNotIn('888888', page, 'ページの文字は載せない')
+        store = pachinko.PachinkoStore(pachinko.db_path_for(self.slot_db))
+        try:
+            records = {r['rack']: r for r in pachinko_report.report_records(store.rows())}
+        finally:
+            store.close()
+        self.assertEqual((records[80]['first'], records[80]['max_hold'], records[80]['games']), (4, 9000, 2673))
+        self.assertIsNone(records[81]['graph'])
+
     def test_slot_graph_refuses_other_kinds(self):
         db = Store(self.slot_db)
         try:
