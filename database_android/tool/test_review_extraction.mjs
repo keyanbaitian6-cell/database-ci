@@ -72,6 +72,34 @@ test('PC: 表のURLと台リンクに日付が無ければ選択欄を使う', a
   assert.equal(JSON.parse(vm.runInNewContext(pcTable, context)).target_date, '2024-02-29');
 });
 
+test('PC: 4円パチンコの台一覧（台番号・大当り・大当り確率・総回転数）も読む（2026-10-12、pachinko.py）', async () => {
+  const context = fixture({day: '2026-10-10'});
+  const rows = [['台番号▲', '大当り', '大当り確率', '総回転数'], ['80', '12', '1/222.8', '2673'], ['81', '4', '1/677.5', '2710']];
+  const table = {querySelectorAll(selector) {
+    if (selector === 'tr') return rows.map(cells => ({querySelectorAll: () => cells.map(textContent => ({textContent}))}));
+    if (selector === 'td a') return [80, 81].map(r => ({href: `https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph?rack_no=${r}`}));
+    return [];
+  }};
+  const query = context.document.querySelectorAll;
+  context.document.querySelectorAll = selector => selector === 'table' ? [table] : query(selector);
+  const r = JSON.parse(vm.runInNewContext(pcTable, context));
+  assert.deepEqual(r.matrix, [['台番号', '大当り', '大当り確率', '総回転数'], ['80', '12', '1/222.8', '2673'], ['81', '4', '1/677.5', '2710']]);
+  assert.equal(r.links.length, 2);
+});
+
+test('PC: 台のページは種別を返し（判定はPython）、グラフの中の数字とページの文字も返す（パチンコ用）', async () => {
+  const context = fixture({kind: '1'});
+  const svg = context.document.querySelector('svg.today');
+  svg.querySelectorAll = selector => selector === '[class*="info_"]'
+    ? [{classList: ['info_soukaiten'], textContent: '2673'}, {classList: ['x', 'info_max_mochidama'], textContent: '14030'}] : [];
+  context.document.body.innerText = 'メニュー\n台データ情報\n大当り\n12';
+  const r = JSON.parse(vm.runInNewContext(pcGraph, context));
+  assert.equal(r.error, undefined);
+  assert.equal(r.kind_code, '1');
+  assert.deepEqual(r.info, {info_soukaiten: '2673', info_max_mochidama: '14030'});
+  assert.equal(r.page_text, '台データ情報\n大当り\n12');
+});
+
 test('Android: 行クリックで半角カナ、空白、+を同じ機種として照合', () => {
   let clicks = 0;
   const row = {textContent: 'L ｶﾊﾞﾈﾘ', querySelector: selector => selector === 'th' ? null : {textContent: 'L ｶﾊﾞﾈﾘ'}, click: () => clicks++};

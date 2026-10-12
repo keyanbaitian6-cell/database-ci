@@ -27,6 +27,7 @@ from auto_capture import AUTO_CAPTURE_JS, AutoCapture
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page, retry_target
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
+import pachinko
 from core import (EXCLUDED_MACHINE_NOTES, EXCLUDED_MACHINE_WORDS, STORE_NAMES, Store, is_excluded_machine,
                   normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
                   graph_done, machine_last_capture, machine_progress, no_hits, stale_capture_cutoff, progress_text, remember_for_undo, undo_last_save)
@@ -257,6 +258,8 @@ def build_graph_context(payload, store):
     location = payload.get('store')
     if location not in STORE_NAMES:
         raise GraphExtractionError('対象外の店舗のページです。長町南店・幸町店のグラフを開いてください。')
+    if payload.get('kind_code') not in (None, '', '21', 21):
+        raise GraphExtractionError('対象は1000円46枚スロットのみです。')
     rack = payload.get('rack')
     if rack is None:
         raise GraphExtractionError('台番号を検出できません。個別台のグラフ画面を表示してください。')
@@ -340,7 +343,8 @@ TABLE_EXTRACT_BODY = READ_DAY_JS + r'''
   // returned matrix's own header row is padded/kept as-is; parse_table()
   // on the Python side already knows both shapes and fills a missing
   // max_hold in later from the individual rack's graph page instead.
-  const headerVariants = [''' + json.dumps(HEADERS) + ''', ''' + json.dumps(HEADERS_NO_MAX_HOLD) + r'''];
+  // 3つ目は4円パチンコの台一覧（PC版だけ、2026-10-12。pachinko.py）。保存先はスロットと別。
+  const headerVariants = [''' + json.dumps(HEADERS) + ''', ''' + json.dumps(HEADERS_NO_MAX_HOLD) + ''', ''' + json.dumps(pachinko.PACHI_HEADERS) + r'''];
   const headers = headerVariants[0];
   // Header cells can also carry a sort-arrow glyph (e.g. "台番号▲") baked
   // into their own textContent, and some pages add a whole extra header
@@ -409,8 +413,8 @@ TABLE_EXTRACT_BODY = READ_DAY_JS + r'''
 '''
 
 GRAPH_EXTRACT_BODY = READ_DAY_JS + r'''
+  // 種別（kind_code）は Python 側で見る：パチンコの台のページ（pachinko.py）も同じ作りのため。
   const kind = new URL(location.href).searchParams.get('kind_code');
-  if (kind && kind !== '21') return JSON.stringify({error: '対象は1000円46枚スロットのみです。'});
   const svg = document.querySelector('svg.today');
   if (!svg) return JSON.stringify({error: 'グラフを検出できません。個別台のグラフ画面を表示してください。'});
   const path = svg.querySelector('.path-slump path');
@@ -438,7 +442,18 @@ GRAPH_EXTRACT_BODY = READ_DAY_JS + r'''
   machine = machine.replace(/\+/g, ' ').replace(/\s+/g, ' ').trim();
   const store = location.pathname.startsWith('/saiwaichou/') ? 'saiwaichou' :
     location.pathname.startsWith('/nagamachiminami/') ? 'nagamachiminami' : null;
+  // グラフの中の数字（class が info_ で始まるもの）と、ページの文字（パチンコの台のページの初当り・当り履歴などを
+  // あとで読むため。スロットでは使わない）。
+  const info = {};
+  (svg.querySelectorAll ? Array.from(svg.querySelectorAll('[class*="info_"]')) : []).forEach(el => {
+    const name = Array.from(el.classList).find(c => c.startsWith('info_'));
+    if (name && !(name in info)) info[name] = el.textContent.trim().slice(0, 40);
+  });
+  const bodyText = document.body ? document.body.innerText : '';
+  const from = bodyText.indexOf('台データ情報');
+  const page_text = bodyText.slice(from >= 0 ? from : 0, (from >= 0 ? from : 0) + 6000);
   return JSON.stringify({
+    kind_code: kind, info, page_text,
     points, baseline_y: Number(zero.getAttribute('y1')), width, height,
     games: numOf('.info_soukaiten'), bb: numOf('.info_big'), rb: numOf('.info_reg'),
     max_hold: numOf('.info_max_mochidama'),
@@ -1953,6 +1968,13 @@ def _confirm_table(payload_path, db_path, reports_folder):
     if error:
         messagebox.showerror('取り込みできません', error, parent=root.get())
         return
+    if pachinko.is_pachinko_table(payload.get('matrix')):
+        # 4円パチンコの台一覧（pachinko.py）。スロットとは別のファイルに保存し、次の台へは移らない。
+        try:
+            _write_advance_signal(pachinko.save_table(payload, db_path))
+        except (pachinko.PachinkoError, ValueError) as exc:
+            messagebox.showerror('取り込みできません', str(exc), parent=root.get())
+        return
     try:
         rows, day, machine = build_table_rows(payload)
     except (TableExtractionError, ValueError) as exc:
@@ -2023,6 +2045,10 @@ def _confirm_graph(payload_path, db_path, reports_folder):
         try:
             context = build_graph_context(payload, store)
         except (GraphExtractionError, ValueError) as exc:
+            # スロットの一覧に無い台：取り込み済みの4円パチンコの台なら、パチンコの記録に足す（pachinko.py）。
+            if pachinko.graph_target(payload, db_path) is not None:
+                _save_pachinko_graph(payload, db_path, root, messagebox)
+                return
             messagebox.showerror('取り込みできません', str(exc), parent=root.get())
             return
         if is_excluded_machine(context['store'], context['machine']):
@@ -2069,6 +2095,23 @@ def _confirm_graph(payload_path, db_path, reports_folder):
         messagebox.showerror('予期しないエラー', f'{exc.__class__.__name__}: {exc}', parent=root.get())
     finally:
         store.close()
+
+
+def _save_pachinko_graph(payload, db_path, root, messagebox):
+    """パチンコの台のページを保存する（グラフはスロットと同じ形で残す）。"""
+    try:
+        points = _curve_points(payload.get('points'))
+        baseline_y = payload.get('baseline_y')
+        if baseline_y is None:
+            raise GraphExtractionError('ゼロ線を検出できません。')
+        baseline_y = float(baseline_y)
+        width = payload.get('width') or (points[-1][0] + 10)
+        height = payload.get('height') or (max(y for _, y in points) + 20)
+        context = dict(points=points, auto=auto_four_points(points, baseline_y, width))
+        measurement = graph_measurement_result(context, render_curve_image(points, baseline_y, width, height))
+        _write_advance_signal(pachinko.save_graph(payload, db_path, measurement))
+    except (GraphExtractionError, pachinko.PachinkoError, ValueError) as exc:
+        messagebox.showerror('取り込みできません', str(exc), parent=root.get())
 
 
 def run_session(db_path, reports_folder):
