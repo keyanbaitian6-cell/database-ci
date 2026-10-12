@@ -11,7 +11,7 @@ import {
   lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
   VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows,
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
-  lineupDay, suffixReport, isZorome,
+  lineupDay, suffixReport, isZorome, hasSuffixSummary,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -297,4 +297,17 @@ test('末尾別データまとめ（幸町、2026-10-12）：平均差枚の順�
   assert.equal(of('ゾロ目').records, 2);
   assert.ok(isZorome(1044) && isZorome(1099) && isZorome(1000) && !isZorome(1045));
   assert.equal(report.records, 5, 'ゾロ目は合計に二重に入れない');
+});
+
+test('P-STATION（P’s CUBE）の末尾別データまとめ（2026-10-12「共有のP-stationの方にも末尾データほしい」）：末尾0・1・2・3・5・6・7・8、ゾロ目に44は入らない、サイトの差枚で順位', () => {
+  const store = 'pscube:c740601:20';
+  assert.ok(hasSuffixSummary(store) && hasSuffixSummary('saiwaichou') && !hasSuffixSummary('nagamachiminami'));
+  const rec = (rack, net) => ({store: 'c740601', rate: '20', day: '2026-10-10', machine: 'x', rack, games: 3000, bb: 1, rb: 1, my: 100, net_medals: net});
+  const byDay = indexRecords(pscubeRecords({format: 'pscube-viewer', records: [rec(1003, 900), rec(1005, 100), rec(1044, 50), rec(1011, 300)]}));
+  const report = suffixReport(byDay, store, '2026-10-10', 1);
+  assert.deepEqual(report.summaries.map(s => s.label), ['末尾0', '末尾1', '末尾2', '末尾3', '末尾5', '末尾6', '末尾7', '末尾8', 'ゾロ目']);
+  assert.deepEqual(report.leaders.map(s => s.label), ['末尾3']);
+  assert.equal(report.summaries.find(s => s.label === 'ゾロ目').records, 1, '1011番台だけ（1044番台は入らない）');
+  assert.ok(!isZorome(1044, store) && isZorome(1044, 'saiwaichou'));
+  assert.equal(report.records, 3, '末尾4の1044番台は数えない');
 });

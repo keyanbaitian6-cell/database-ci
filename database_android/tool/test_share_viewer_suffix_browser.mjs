@@ -1,5 +1,5 @@
 // 閲覧専用の共有ページの「末尾別データまとめ」（2026-10-12 利用者「幸町にもつくってもらうだけでいい」）を隔離ブラウザで開く。
-// 幸町だけにボタン→選んだ日の末尾順位（平均差枚の順）→比較期間→末尾を押すとその末尾の台→台のデータ、日別の首位から
+// 幸町とP-STATIONにボタン（長町南には出さない）→選んだ日の末尾順位（平均差枚の順）→比較期間→末尾を押すとその末尾の台→台のデータ、日別の首位から
 // その日へ、狭い画面ではみ出さない、何も送らない（GETだけ）。
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -33,7 +33,10 @@ for (let rack = 1000; rack < 1030; rack++) {
 records.push({store: 'nagamachiminami', day: '2026-10-10', machine: '長町', rack: 10, games: 1000, bb: 1, rb: 1, jo_net: 0});
 const responses = {
   '': {format: 'database-backup', version: 1, exported_at: '2026-10-10T23:00:00+09:00', records},
-  pscube: {format: 'pscube-viewer', version: 1, records: []},
+  // P-STATION（P’s CUBE、20スロ）：末尾8が+600、ほかは-50。
+  pscube: {format: 'pscube-viewer', version: 1, records: Array.from({length: 20}, (_, i) => ({
+    store: 'c740601', rate: '20', day: '2026-10-10', machine: `P機種${i % 10}`, rack: 500 + i, games: 2500, bb: 5, rb: 5, my: 100,
+    net_medals: (500 + i) % 10 === 8 ? 600 : -50}))},
   events: {format: 'database-events', version: 1, kind: 'meruhen', events: []},
   'pscube-events': {format: 'database-events', version: 1, kind: 'pscube', events: []},
 };
@@ -83,6 +86,15 @@ try {
     // 日別の首位から、その日の末尾順位へ（10/9 は末尾7）。
     await page.locator('.sheet .row[data-suffix-day="2026-10-09"]').click();
     assert.match(await sheet.innerText(), /平均差枚の首位：末尾7/);
+    // P-STATION にも出す（2026-10-12「共有のP-stationの方にも末尾データほしいです」）。末尾4・9は無い。
+    await page.locator('[data-close]').click();
+    await page.locator('[data-store="pscube:c740601:20"]').click();
+    await page.getByRole('button', {name: '末尾別データまとめ'}).click();
+    await page.waitForSelector('.sheet');
+    const ps = await page.locator('.sheet').innerText();
+    assert.match(ps, /P-STATION（20スロ）・末尾0・1・2・3・5・6・7・8とゾロ目（下2桁が00・11・22・33・55・66・77・88/);
+    assert.match(ps, /平均差枚の首位：末尾8/);
+    assert.match(ps, /サイトの差枚/);
     const overflow = await page.evaluate(() => {
       const s = document.querySelector('.sheet');
       return Math.max(document.documentElement.scrollWidth - window.innerWidth, s.scrollWidth - s.clientWidth);
@@ -92,7 +104,7 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log('OK: 共有ページの末尾別データまとめ（幸町だけ・平均差枚の順・期間・末尾の台・日別の首位・320/393px）');
+  console.log('OK: 共有ページの末尾別データまとめ（幸町・P-STATION・平均差枚の順・期間・末尾の台・日別の首位・320/393px）');
 } finally {
   await browser.close();
   server.close();

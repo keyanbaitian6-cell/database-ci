@@ -14,5 +14,6 @@ P’s CUBEの店にあった「末尾別データまとめ」を、メルヘン�
 - 幸町を選ぶとカレンダーの上に「末尾別データまとめ」（`SUFFIX_STORES`）。上の帯で日付送り、比較期間（選択日・過去7日・過去30日）。
 - このページは採点を持たないので、**順位は平均差枚の高い順**（表示と同じ整数で同じなら同順位）。末尾ごとに平均G・台数・件数・差枚の分かった件数・プラスの割合。すべての末尾・ゾロ目、日別の首位（直近7記録日、押すとその日へ）。末尾を押すとその末尾の台（日ごと）→ 台のデータ。
 - 末尾・ゾロ目は閲覧ページ・Android版のメルヘンと同じ（`data.mjs` の `SUFFIXES`・`ZOROME_ENDINGS`）。
+- **P-STATION（P’s CUBE）にも出す**（2026-10-12 利用者「共有のP-stationの方にも末尾データほしいです」、`hasSuffixSummary`）。末尾は 0・1・2・3・5・6・7・8、ゾロ目は 00・11・22・33・55・66・77・88（閲覧ページ・Android版の P’s CUBE と同じ。`PSCUBE_SUFFIXES`・`PSCUBE_ZOROME_ENDINGS`）。差枚はサイトの差枚（net_medals）。順位はこのページでは平均差枚の順（閲覧ページ・Android版は平均点の順）。
 
 試験：`database_android/test/pscube_suffix_test.dart`（幸町の集計・画面）、`tool/test_share_viewer.mjs`（順位・同順位・ゾロ目）、`tool/test_share_viewer_suffix_browser.mjs`（共有ページを実際のブラウザで、320/393px）。
