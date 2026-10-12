@@ -672,8 +672,25 @@ def main():
     ttk.Button(quick, text='この日のまとめ', command=lambda: open_summary()).pack(side='left')
     ttk.Button(quick, text='過去の記録を見る', command=lambda: open_history()).pack(side='left', padx=8)
     ttk.Button(quick, text='直前の保存を取り消す', command=lambda: undo_last()).pack(side='left')
-    # 4円パチンコの記録（PC版だけ、PACHINKO.md）。
-    ttk.Button(quick, text='パチンコの記録', command=lambda: open_pachinko()).pack(side='left', padx=8)
+    # 4円パチンコ（PC版だけ、PACHINKO.md）：記録のページと、取り込む末尾（2026-10-12 利用者「取り込む末尾を毎月
+    # 変えたいから取り込む末尾選択ボタンが欲しい」。月に合わせる＝10月→0、11月→1）。
+    pachi = ttk.Frame(tab_home)
+    pachi.pack(anchor='w', pady=(10, 0))
+    ttk.Button(pachi, text='パチンコの記録', command=lambda: open_pachinko()).pack(side='left')
+    ttk.Label(pachi, text='取り込む末尾', style='Sub.TLabel').pack(side='left', padx=(16, 6))
+    tail_choices = {'month': '月に合わせる（10月→0・11月→1）', **{str(d): f'末尾{d}' for d in range(10)}}
+    tail_saved = str(load_settings(DATA_DIR).get('pachinko_tail', 'month'))
+    tail_var = tk.StringVar(value=tail_choices.get(tail_saved, tail_choices['month']))
+    tail_box = ttk.Combobox(pachi, textvariable=tail_var, values=list(tail_choices.values()), state='readonly', width=30)
+    tail_box.pack(side='left')
+
+    def choose_tail(_event=None):
+        key = next(k for k, v in tail_choices.items() if v == tail_var.get())
+        try:
+            save_settings(DATA_DIR, pachinko_tail=key)
+        except OSError as exc:
+            messagebox.showerror('取り込む末尾を保存できません', str(exc), parent=root)
+    tail_box.bind('<<ComboboxSelected>>', choose_tail)
 
     sync_box = ttk.LabelFrame(tab_sync, text='同期フォルダ（Google Driveなど）', padding=14)
     sync_box.pack(fill='x', pady=(0, 14))

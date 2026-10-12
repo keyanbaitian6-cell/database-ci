@@ -130,7 +130,7 @@ class PachinkoTests(unittest.TestCase):
                             {'baseline_y': 200.5, 'curve': [[0.5, 200.5], [10.5, 150.5]]})
         output = pachinko_report.build_report(self.slot_db, Path(self.folder.name) / 'reports')
         page = output.read_text(encoding='utf-8')
-        self.assertIn('パチンコ 末尾0の記録', page)
+        self.assertIn('パチンコ 末尾の記録', page)
         self.assertIn('e東京喰種MW', page)
         self.assertNotIn('888888', page, 'ページの文字は載せない')
         store = pachinko.PachinkoStore(pachinko.db_path_for(self.slot_db))
@@ -139,7 +139,28 @@ class PachinkoTests(unittest.TestCase):
         finally:
             store.close()
         self.assertEqual((records[80]['first'], records[80]['max_hold'], records[80]['games']), (4, 9000, 2673))
-        self.assertEqual(sorted(records), [80], '末尾0の台だけ')
+        self.assertEqual(sorted(records), [80, 81, 82], 'ページは全部の末尾を持ち、見る末尾をページで選ぶ')
+        self.assertIn('"tail_setting": "month"', page)
+
+    def test_tail_follows_the_month_or_the_chosen_digit(self):
+        # 2026-10-12 利用者「月と日付が重なる日が強い…10/10 11/11みたいなね。取り込む末尾を毎月変えたい」。
+        self.assertEqual([pachinko.tail_for(d) for d in ('2026-10-10', '2026-11-11', '2026-12-12', '2027-01-01')],
+                         [0, 1, 2, 1])
+        self.assertEqual(pachinko.tail_for('2026-10-10', '7'), 7)
+        self.assertEqual(pachinko.tail_for('2026-10-10', 'month'), 0)
+        self.assertEqual(pachinko.capture_tail(self.slot_db, '2026-11-03'), 1, '設定が無ければ月に合わせる')
+        from core import save_settings
+        save_settings(self.slot_db.parent, pachinko_tail='5')
+        self.assertEqual(pachinko.capture_tail(self.slot_db, '2026-11-03'), 5)
+        rows = [[str(r), '1', '1/200.0', '1000'] for r in range(100, 131)]
+        message, url = pachinko.save_table(table_payload(rows), self.slot_db)
+        self.assertIn('末尾5の105番台へ移動します', message)
+        page = 'https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph?dai_hall_id=821&rack_no={}&target_date=2026-10-10'
+        text = '\n'.join(['台データ情報', 'e機種', '104番台', '105番台', '106番台', '大当り確率', '1/200.0', '初当り', '1', '当り履歴'])
+        message, url = pachinko.save_graph({'store': 'saiwaichou', 'rack': 105, 'target_date': '2026-10-10',
+                                            'page_text': text, 'source_url': page.format(105)}, self.slot_db, {'end_y': 1})
+        self.assertIn('次の末尾5、115番台へ移動します', message)
+        self.assertIn('rack_no=115', url)
 
     def test_jumps_to_the_next_tail_zero_rack(self):
         # 2026-10-12 利用者「取り込んだら次の末尾0に飛ぶようにしてほしい110→120みたいな」。

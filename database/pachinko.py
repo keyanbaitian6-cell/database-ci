@@ -30,8 +30,24 @@ PACHI_HEADERS = ['台番号', '大当り', '大当り確率', '総回転数']
 PANEL_LABELS = ('大当り確率', '大当り', '総回転数', 'スタート', '初当り', '最大連チャン数', '1セット最大出玉',
                 '最大持玉', '差玉', '前日最終スタート')
 PAGE_TEXT_LIMIT = 20000
-# 取り込む末尾（2026-10-12 利用者「末尾0しか取り込まないし、見ない」）。
-TAIL = 0
+# 取り込む末尾（2026-10-12 利用者「末尾0しか取り込まないし、見ない」→「月と日付が重なる日が強いってことみたいだ。
+# 10/10 11/11みたいなね。なので取り込む末尾を毎月変えたいから取り込む末尾選択ボタンが欲しい」）。
+# settings.json の pachinko_tail：'month'（月に合わせる：10月→0、11月→1、12月→2、1月→1）か '0'〜'9'。既定は 'month'。
+TAIL_SETTING = 'pachinko_tail'
+TAIL_MONTH = 'month'
+
+
+def tail_for(day, setting=TAIL_MONTH):
+    """[day] に取り込む末尾（0〜9）。"""
+    if isinstance(setting, int) or (isinstance(setting, str) and setting.isdigit() and len(setting) == 1):
+        return int(setting) % 10
+    return int(str(day)[5:7]) % 10
+
+
+def capture_tail(slot_db_path, day):
+    """PC版で選んだ取り込む末尾（settings.json の pachinko_tail）で、[day] の末尾。"""
+    from core import load_settings
+    return tail_for(day, load_settings(Path(slot_db_path).parent).get(TAIL_SETTING, TAIL_MONTH))
 
 
 class PachinkoError(ValueError):
@@ -205,9 +221,9 @@ def has_graph(row):
     return bool(row and row.get('graph_measurement'))
 
 
-def is_tail(rack):
-    """末尾0の台か（2026-10-12 利用者「末尾0しか取り込まないし、見ないから」）。"""
-    return int(rack) % 10 == TAIL
+def is_tail(rack, tail):
+    """末尾 [tail] の台か。"""
+    return int(rack) % 10 == int(tail)
 
 
 def with_rack(url, rack, day):
@@ -221,15 +237,17 @@ def with_rack(url, rack, day):
     return urlunparse(parsed._replace(query=urlencode(query, doseq=True), fragment=''))
 
 
-def next_tail(store, location, day, after_rack, page_url=None):
-    """[after_rack] より後で、グラフがまだの末尾0の台（番号, URL）。無ければ (None, None)。
+def next_tail(store, location, day, after_rack, tail, page_url=None):
+    """[after_rack] より後で、グラフがまだの末尾 [tail] の台（番号, URL）。無ければ (None, None)。
     台一覧で分かっているパチンコの台番号（その店のどの日でも）の最大までを、10ずつ見る（110→120→130）。
     台一覧に無い台も、台のページのURLの台番号を差し替えて開く（台のページだけで保存できる）。"""
     known = [r for r in store.rows() if r['store'] == location]
     if not known:
         return None, None
     limit = max(int(r['rack']) for r in known)
-    rack = (int(after_rack) // 10 + 1) * 10 + TAIL
+    rack = int(after_rack) // 10 * 10 + int(tail)
+    if rack <= int(after_rack):
+        rack += 10
     while rack <= limit:
         row = store.get(location, day, rack)
         if not has_graph(row):
@@ -239,14 +257,14 @@ def next_tail(store, location, day, after_rack, page_url=None):
     return None, None
 
 
-def missing_tails(store, location, day):
-    """台一覧にある、グラフがまだの末尾0の台番号（小さい順）。"""
+def missing_tails(store, location, day, tail):
+    """台一覧にある、グラフがまだの末尾 [tail] の台番号（小さい順）。"""
     return sorted(int(r['rack']) for r in store.rows()
-                  if r['store'] == location and r['day'] == day and is_tail(r['rack']) and not has_graph(r))
+                  if r['store'] == location and r['day'] == day and is_tail(r['rack'], tail) and not has_graph(r))
 
 
 def save_table(payload, slot_db_path):
-    """台一覧を保存して、（利用者への一言, 次に開くURL）を返す。次は、この台一覧の末尾0でグラフがまだの最初の台。"""
+    """台一覧を保存して、（利用者への一言, 次に開くURL）を返す。次は、この台一覧の取り込む末尾でグラフがまだの最初の台。"""
     rows, day, machine = parse_pachinko_table(payload)
     store = PachinkoStore(db_path_for(slot_db_path))
     try:
@@ -257,14 +275,15 @@ def save_table(payload, slot_db_path):
         store.commit()
         export_records(store, Path(slot_db_path).parent)
         location = rows[0]['store']
+        tail = capture_tail(slot_db_path, day)
         target = next((r for r in sorted(rows, key=lambda r: r['rack'])
-                       if is_tail(r['rack']) and not has_graph(store.get(location, day, r['rack']))), None)
+                       if is_tail(r['rack'], tail) and not has_graph(store.get(location, day, r['rack']))), None)
     finally:
         store.close()
     message = f'パチンコ {machine}（{day}）{len(rows)}台を保存しました。'
     if target and target.get('detail_url'):
-        return message + f"末尾0の{target['rack']}番台へ移動します。", target['detail_url']
-    return message + 'この台一覧の末尾0の台は、グラフまで取り込み済みです。', None
+        return message + f"末尾{tail}の{target['rack']}番台へ移動します。", target['detail_url']
+    return message + f'この台一覧の末尾{tail}の台は、グラフまで取り込み済みです。', None
 
 
 def is_pachinko_page(payload):
@@ -313,7 +332,7 @@ def graph_target(payload, slot_db_path):
 def save_graph(payload, slot_db_path, measurement):
     """台のページ（グラフ・数字・ページの文字）を、その台の記録に足して、（利用者への一言, 次に開くURL）を返す。
     measurement はスロットと同じ形のグラフの記録（browser_import.graph_measurement_result）。
-    次は、この台より後の末尾0でグラフがまだの台（110→120）。"""
+    次は、この台より後の取り込む末尾でグラフがまだの台（末尾0なら110→120）。"""
     target = graph_target(payload, slot_db_path)
     if target is None:
         raise PachinkoError('先にこの日付・店舗のパチンコの台一覧を取り込んでください。')
@@ -334,8 +353,9 @@ def save_graph(payload, slot_db_path, measurement):
         store.save(row)
         store.commit()
         export_records(store, Path(slot_db_path).parent)
-        rack, url = next_tail(store, target['store'], target['day'], target['rack'], payload.get('source_url'))
-        left = [r for r in missing_tails(store, target['store'], target['day']) if r < int(target['rack'])]
+        tail = capture_tail(slot_db_path, target['day'])
+        rack, url = next_tail(store, target['store'], target['day'], target['rack'], tail, payload.get('source_url'))
+        left = [r for r in missing_tails(store, target['store'], target['day'], tail) if r < int(target['rack'])]
     finally:
         store.close()
     read = [f'{k}{v}' for k, v in panel.items() if k in ('初当り', '最大連チャン数', '最大持玉')]
@@ -344,9 +364,9 @@ def save_graph(payload, slot_db_path, measurement):
     message = (f"パチンコ {target['rack']}番台（{target['day']}）を保存しました"
                + (f"（{'・'.join(read)}）。" if read else '。'))
     if rack is not None:
-        message += f'次の末尾0、{rack}番台へ移動します。'
+        message += f'次の末尾{tail}、{rack}番台へ移動します。'
     else:
-        message += '末尾0の台はここまでです。'
+        message += f'末尾{tail}の台はここまでです。'
         if left:
-            message += f"まだの末尾0：{'・'.join(f'{r}番台' for r in left)}。"
+            message += f"まだの末尾{tail}：{'・'.join(f'{r}番台' for r in left)}。"
     return message, url
