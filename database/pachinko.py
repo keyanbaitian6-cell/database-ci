@@ -28,7 +28,7 @@ PACHI_HEADERS = ['台番号', '大当り', '大当り確率', '総回転数']
 # 台のページで数字を読む見出し（ページの文字で、見出しの次に出る数字）。
 PANEL_LABELS = ('大当り確率', '大当り', '総回転数', 'スタート', '初当り', '最大連チャン数', '1セット最大出玉',
                 '最大持玉', '差玉', '前日最終スタート')
-PAGE_TEXT_LIMIT = 6000
+PAGE_TEXT_LIMIT = 20000
 
 
 class PachinkoError(ValueError):
@@ -88,20 +88,61 @@ def parse_pachinko_table(payload):
     return rows, day, machine
 
 
+# 7セグ表示の背景（消えている桁）。ページの文字では見出しと数字の間に「88888」「888888」「8/8888.8」が入る
+# （2026-10-12、幸町の80番台を取り込んだ page_text で確認）。
+_GHOST = re.compile(r'8{5,}|8/8{4}\.8')
+_VALUE = re.compile(r'-?\d+(?:\.\d+)?|1/\d+(?:\.\d+)?')
+_DAY_HEAD = re.compile(r'(\d{4})/(\d{2})/(\d{2})\s*\(')
+
+
+def _lines(text):
+    return [line.replace('\xa0', ' ').strip() for line in str(text or '').splitlines()]
+
+
 def panel_numbers(text):
-    """台のページの文字から、見出しの次に出る数字を読む（読めない見出しは入れない）。
-    例：「大当り\n12\n大当り確率\n1/222.8」→ {'大当り': '12', '大当り確率': '1/222.8'}。"""
-    lines = [line.strip() for line in str(text or '').splitlines() if line.strip()]
+    """台のページの文字から、見出しの数字を読む（最初の＝その日の欄だけ。値が空の見出しは入れない）。
+    例：「大当り\n88888\n12\n大当り確率\n8/8888.8\n1/ 222.8」→ {'大当り': '12', '大当り確率': '1/222.8'}。"""
+    lines = [line for line in _lines(text) if line]
     result = {}
     for i, line in enumerate(lines):
         label = _clean(line)
         if label not in PANEL_LABELS or label in result:
             continue
-        # すぐ次の行だけを見る（値が空の見出しで、次の見出しの数字を拾わない）。
-        value = lines[i + 1].replace(',', '').strip() if i + 1 < len(lines) else ''
-        if re.fullmatch(r'-?\d+(?:\.\d+)?|1/\d+(?:\.\d+)?', value):
+        j = i + 1
+        if j < len(lines) and _GHOST.fullmatch(lines[j]):
+            j += 1   # 7セグの背景を飛ばす
+        value = lines[j].replace(',', '').replace(' ', '') if j < len(lines) else ''
+        if _VALUE.fullmatch(value):
             result[label] = value
     return result
+
+
+def hit_history(text, day):
+    """当り履歴の [day] の欄：当りごとの（連チャン数, その当りまでの回転数）。表示どおりの順。欄が無ければ None。
+    ページの文字では、日付の見出しのあとに目盛り（10〜1）、そのあと「連チャン数」「回転数」が当りごとに並ぶ。"""
+    lines = _lines(text)
+    try:
+        start = lines.index('当り履歴')
+    except ValueError:
+        return None
+    end = next((i for i in range(start, len(lines)) if lines[i] == 'グラフ表示'), len(lines))
+    want = tuple(day.split('-'))
+    head = next((i for i in range(start, end)
+                 if (m := _DAY_HEAD.match(lines[i])) and m.groups() == want), None)
+    if head is None:
+        return None
+    tokens = []
+    for line in lines[head + 1:end]:
+        if _DAY_HEAD.match(line):
+            break
+        if line:
+            tokens.append(line)
+    if tokens[:10] == [str(n) for n in range(10, 0, -1)]:
+        tokens = tokens[10:]   # 目盛り
+    numbers = [int(t) for t in tokens if re.fullmatch(r'\d+', t)]
+    if len(numbers) % 2:
+        return None
+    return [dict(chain=numbers[i], games=numbers[i + 1]) for i in range(0, len(numbers), 2)]
 
 
 class PachinkoStore:
@@ -201,9 +242,10 @@ def save_graph(payload, slot_db_path, measurement):
         raise PachinkoError('先にこの日付・店舗のパチンコの台一覧を取り込んでください。')
     text = str(payload.get('page_text') or '')[:PAGE_TEXT_LIMIT]
     panel = panel_numbers(text)
+    history = hit_history(text, target['day'])
     info = payload.get('info') if isinstance(payload.get('info'), dict) else {}
     row = dict(store=target['store'], day=target['day'], rack=target['rack'], machine=target.get('machine'),
-               graph_measurement=measurement, page_text=text, panel=panel, info=info,
+               graph_measurement=measurement, page_text=text, panel=panel, info=info, hit_history=history,
                graph_games=_int(payload.get('games')), max_hold=_int(payload.get('max_hold')),
                graph_source_url=payload.get('source_url'), graph_captured_at=now_stamp())
     store = PachinkoStore(db_path_for(slot_db_path))
@@ -213,6 +255,8 @@ def save_graph(payload, slot_db_path, measurement):
         export_records(store, Path(slot_db_path).parent)
     finally:
         store.close()
-    read = '・'.join(f'{k}{v}' for k, v in panel.items() if k in ('初当り', '最大連チャン数', '最大持玉'))
+    read = [f'{k}{v}' for k, v in panel.items() if k in ('初当り', '最大連チャン数', '最大持玉')]
+    if history:
+        read.append(f'当り履歴{len(history)}回')
     return (f"パチンコ {target['rack']}番台（{target['day']}）のグラフを保存しました"
-            + (f'（{read}）。' if read else '。'))
+            + (f"（{'・'.join(read)}）。" if read else '。'))

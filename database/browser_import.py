@@ -451,7 +451,7 @@ GRAPH_EXTRACT_BODY = READ_DAY_JS + r'''
   });
   const bodyText = document.body ? document.body.innerText : '';
   const from = bodyText.indexOf('台データ情報');
-  const page_text = bodyText.slice(from >= 0 ? from : 0, (from >= 0 ? from : 0) + 6000);
+  const page_text = bodyText.slice(from >= 0 ? from : 0, (from >= 0 ? from : 0) + 20000);
   return JSON.stringify({
     kind_code: kind, info, page_text,
     points, baseline_y: Number(zero.getAttribute('y1')), width, height,

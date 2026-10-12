@@ -89,6 +89,32 @@ class PachinkoTests(unittest.TestCase):
                                         '最大持玉': '14030'})
         self.assertEqual(row['max_hold'], 14030)
 
+    def test_page_text_with_seven_segment_backgrounds_and_hit_history(self):
+        # 実際のページの文字の形（2026-10-12に取り込んだ page_text と同じ並び。数字は作ったもの）。
+        nb, nl, tab = '\xa0', '\n', '\t'
+
+        def slots(pairs):
+            return nl.join(tab + nl + nl.join([nb] * 10) + nl + f'{c}{nl}{g}' for c, g in pairs)
+        axis = nl.join(str(n) for n in range(10, 0, -1))
+        text = nl.join([
+            '台データ情報', '更新日時：2026/10/11 00:17',
+            '大当り', '88888', '7', tab, '大当り確率', '8/8888.8', f'1/{nb}301.5',
+            'スタート', '888888', '88', tab, '総回転数', '888888', '2110',
+            '初当り', '888888', '5', tab, '最大連チャン数', '888888', '3', tab,
+            '1セット最大出玉', '888888', '最大持玉', '888888', '9120', tab, '差玉', '888888', tab,
+            '前日最終スタート', '888888', '40',
+            '当り履歴', '', '2026/10/11 (1日前)', '', axis, '', nb, slots([(1, 50)]), '',
+            '2026/10/10 (2日前)', '', axis, '', nb, slots([(1, 120), (3, 15), (1, 400), (1, 8), (1, 300)]), '',
+            'グラフ表示', '一覧表示', '過去データ履歴', '2026/10/09 (3日前)', '大当り', '88888', '99'])
+        self.assertEqual(pachinko.panel_numbers(text), {
+            '大当り': '7', '大当り確率': '1/301.5', 'スタート': '88', '総回転数': '2110', '初当り': '5',
+            '最大連チャン数': '3', '最大持玉': '9120', '前日最終スタート': '40'})
+        self.assertEqual(pachinko.hit_history(text, '2026-10-10'),
+                         [{'chain': 1, 'games': 120}, {'chain': 3, 'games': 15}, {'chain': 1, 'games': 400},
+                          {'chain': 1, 'games': 8}, {'chain': 1, 'games': 300}])
+        self.assertEqual(pachinko.hit_history(text, '2026-10-11'), [{'chain': 1, 'games': 50}])
+        self.assertIsNone(pachinko.hit_history(text, '2026-10-01'))
+
     def test_panel_numbers_reads_only_numbers_after_labels(self):
         self.assertEqual(pachinko.panel_numbers('スタート\n153\n差玉\n\n前日最終スタート\n96\n1セット最大出玉\n-'),
                          {'スタート': '153', '前日最終スタート': '96'})
