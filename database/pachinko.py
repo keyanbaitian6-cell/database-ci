@@ -356,6 +356,14 @@ def save_graph(payload, slot_db_path, measurement):
         tail = capture_tail(slot_db_path, target['day'])
         rack, url = next_tail(store, target['store'], target['day'], target['rack'], tail, payload.get('source_url'))
         left = [r for r in missing_tails(store, target['store'], target['day'], tail) if r < int(target['rack'])]
+        # 飛ばした台（グラフまで済んでいた末尾の台）。黙って飛ぶと分からないため知らせる（2026-10-12 利用者
+        # 「100の次がいきなり300にとんでしかも320で終わったんだけどなにこれ」）。
+        first = int(target['rack']) // 10 * 10 + int(tail)
+        if first <= int(target['rack']):
+            first += 10
+        known = [int(r['rack']) for r in store.rows() if r['store'] == target['store']]
+        last = (rack - 10) if rack is not None else (max(known) if known else first - 10)
+        skipped = [r for r in range(first, last + 1, 10) if has_graph(store.get(target['store'], target['day'], r))]
     finally:
         store.close()
     read = [f'{k}{v}' for k, v in panel.items() if k in ('初当り', '最大連チャン数', '最大持玉')]
@@ -363,10 +371,14 @@ def save_graph(payload, slot_db_path, measurement):
         read.append(f'当り履歴{len(history)}回')
     message = (f"パチンコ {target['rack']}番台（{target['day']}）を保存しました"
                + (f"（{'・'.join(read)}）。" if read else '。'))
+    if skipped:
+        span = f'{skipped[0]}番台' if len(skipped) == 1 else f'{skipped[0]}〜{skipped[-1]}番台'
+        message += f'{span}は取り込み済みなので飛ばしました。'
     if rack is not None:
         message += f'次の末尾{tail}、{rack}番台へ移動します。'
     else:
-        message += f'末尾{tail}の台はここまでです。'
+        message += (f'末尾{tail}の台はここまでです（分かっているパチンコの一番後ろは{max(known)}番台）。'
+                    if known else f'末尾{tail}の台はここまでです。')
         if left:
             message += f"まだの末尾{tail}：{'・'.join(f'{r}番台' for r in left)}。"
     return message, url

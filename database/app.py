@@ -677,7 +677,7 @@ def main():
     pachi = ttk.Frame(tab_home)
     pachi.pack(anchor='w', pady=(10, 0))
     ttk.Button(pachi, text='パチンコの記録', command=lambda: open_pachinko()).pack(side='left')
-    ttk.Label(pachi, text='取り込む末尾', style='Sub.TLabel').pack(side='left', padx=(16, 6))
+    ttk.Label(pachi, text='パチンコで取り込む末尾（スロットには関係なし）', style='Sub.TLabel').pack(side='left', padx=(16, 6))
     tail_choices = {'month': '月に合わせる（10月→0・11月→1）', **{str(d): f'末尾{d}' for d in range(10)}}
     tail_saved = str(load_settings(DATA_DIR).get('pachinko_tail', 'month'))
     tail_var = tk.StringVar(value=tail_choices.get(tail_saved, tail_choices['month']))

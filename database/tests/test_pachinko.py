@@ -183,8 +183,12 @@ class PachinkoTests(unittest.TestCase):
         # 130番台が済んでいれば、120番台のあとは飛ばして終わり（台一覧の最後は135番台）。
         pachinko.save_graph(graph(130), self.slot_db, {'end_y': 1})
         message, url = pachinko.save_graph(graph(120), self.slot_db, {'end_y': 1})
-        self.assertIn('末尾0の台はここまでです', message)
+        self.assertIn('末尾0の台はここまでです（分かっているパチンコの一番後ろは135番台）', message)
+        self.assertIn('130番台は取り込み済みなので飛ばしました', message, '黙って飛ばさない')
         self.assertIsNone(url)
+        # 済んだ台が続くときは範囲で知らせる（2026-10-12「100の次がいきなり300にとんで…」）。
+        message, url = pachinko.save_graph(graph(110), self.slot_db, {'end_y': 1})
+        self.assertIn('120〜130番台は取り込み済みなので飛ばしました', message)
         # 台一覧を取り込み直すと、グラフがまだの末尾0が無いので移動しない。
         message, url = pachinko.save_table(table_payload(rows), self.slot_db)
         self.assertIsNone(url)
