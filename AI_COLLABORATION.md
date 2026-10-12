@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 共有ページのP-STATIONにも末尾別データまとめ、公開（Claude、2026-10-12）
+
+- 利用者「共有のP-stationの方にも末尾データほしいです」。共有ページの末尾別データまとめをP’s CUBEの店（P-STATION表記）にも出す（`hasSuffixSummary`）。末尾 0・1・2・3・5・6・7・8、ゾロ目 00・11・22・33・55・66・77・88（閲覧ページ・Androidと同じ）、サイトの差枚で平均差枚の順。閲覧ページは前からP’s CUBEの末尾ページがあるので変更なし。
+- 前のインストール案内でクローン版の adb の場所を誤っていた（`AppData\Local` が抜けていた）→ 正しいコマンドを案内し直した。
+- 試験：`tool/test_share_viewer.mjs`（16件）、`tool/test_share_viewer_suffix_browser.mjs`（幸町・P-STATION、320/393px）。`check_before_build.sh` **ALL PASSED**（42項目：PC 269件・P’s CUBE関連93件・Flutter 573件・analyzeエラー警告0/info20）。
+- **公開**：database-share `64e51ab`（ソース `fc7424d`）。公開中の4ファイルが手元と一致、seedは404、公開した共有ページで末尾の画面試験PASS。
+
 ## 幸町の末尾別データまとめ（閲覧ページ・Android・共有ページ）、パチンコの飛ばし表示・389番台まで、公開・PC/APKビルド（Claude、2026-10-12）
 
 - 利用者「スロットは末尾ページあるからいいや。幸町にもつくってもらうだけでいい」、出す場所＝閲覧ページ（iPhone）・Android版・共有ページ（「同じオーバーレイに追加しておいて」は打ち間違い）。仕様 `SUFFIX_SUMMARY.md`。
