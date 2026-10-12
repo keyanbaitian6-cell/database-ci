@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -162,6 +163,7 @@ class PachinkoTests(unittest.TestCase):
         self.assertIn('次の末尾5、115番台へ移動します', message)
         self.assertIn('rack_no=115', url)
 
+    @mock.patch.dict(pachinko.LAST_RACK, clear=True)   # 最後の台を決めていない店として（取り込んだ一番後ろまで）
     def test_jumps_to_the_next_tail_zero_rack(self):
         # 2026-10-12 利用者「取り込んだら次の末尾0に飛ぶようにしてほしい110→120みたいな」。
         rows = [[str(r), '1', '1/200.0', '1000'] for r in range(105, 136)]
@@ -183,7 +185,7 @@ class PachinkoTests(unittest.TestCase):
         # 130番台が済んでいれば、120番台のあとは飛ばして終わり（台一覧の最後は135番台）。
         pachinko.save_graph(graph(130), self.slot_db, {'end_y': 1})
         message, url = pachinko.save_graph(graph(120), self.slot_db, {'end_y': 1})
-        self.assertIn('末尾0の台はここまでです（分かっているパチンコの一番後ろは135番台）', message)
+        self.assertIn('末尾0の台はここまでです（パチンコの一番後ろは135番台）', message)
         self.assertIn('130番台は取り込み済みなので飛ばしました', message, '黙って飛ばさない')
         self.assertIsNone(url)
         # 済んだ台が続くときは範囲で知らせる（2026-10-12「100の次がいきなり300にとんで…」）。
@@ -193,6 +195,23 @@ class PachinkoTests(unittest.TestCase):
         message, url = pachinko.save_table(table_payload(rows), self.slot_db)
         self.assertIsNone(url)
 
+    def test_saiwaichou_goes_up_to_rack_389(self):
+        # 2026-10-12 利用者「389番台までパチンコあります」：取り込んだ台が330までしか無くても389まで進む。
+        rows = [[str(r), '1', '1/200.0', '1000'] for r in range(320, 331)]
+        pachinko.save_table(table_payload(rows), self.slot_db)
+        page = 'https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph?dai_hall_id=821&rack_no={}&target_date=2026-10-10'
+        text = '\n'.join(['台データ情報', 'e機種', '1番台', '2番台', '大当り確率', '1/200.0', '初当り', '1', '当り履歴'])
+
+        def graph(rack):
+            return {'store': 'saiwaichou', 'rack': rack, 'target_date': '2026-10-10', 'page_text': text,
+                    'source_url': page.format(rack)}
+        message, url = pachinko.save_graph(graph(330), self.slot_db, {'end_y': 1})
+        self.assertIn('rack_no=340', url)
+        message, url = pachinko.save_graph(graph(380), self.slot_db, {'end_y': 1})
+        self.assertIsNone(url, '390番台は無い')
+        self.assertIn('パチンコの一番後ろは389番台', message)
+
+    @mock.patch.dict(pachinko.LAST_RACK, clear=True)   # 最後の台を決めていない店として（取り込んだ一番後ろまで）
     def test_a_rack_page_alone_is_saved_when_its_table_was_not_captured(self):
         pachinko.save_table(table_payload(), self.slot_db)   # 80〜82番台だけ
         text = '\n'.join(['台データ情報', 'P大海物語', '169番台', '170番台', '171番台', '大当り', '88888', '9',

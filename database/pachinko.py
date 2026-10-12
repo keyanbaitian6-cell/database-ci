@@ -34,6 +34,9 @@ PAGE_TEXT_LIMIT = 20000
 # 10/10 11/11みたいなね。なので取り込む末尾を毎月変えたいから取り込む末尾選択ボタンが欲しい」）。
 # settings.json の pachinko_tail：'month'（月に合わせる：10月→0、11月→1、12月→2、1月→1）か '0'〜'9'。既定は 'month'。
 TAIL_SETTING = 'pachinko_tail'
+# 店のパチンコの最後の台番号（2026-10-12 利用者「389番台までパチンコあります」＝幸町）。次の末尾の台へ進むのはここまで。
+# 書いていない店は、取り込んで分かっている一番後ろの台まで。
+LAST_RACK = {'saiwaichou': 389}
 TAIL_MONTH = 'month'
 
 
@@ -237,14 +240,21 @@ def with_rack(url, rack, day):
     return urlunparse(parsed._replace(query=urlencode(query, doseq=True), fragment=''))
 
 
+def last_rack(store, location):
+    """その店のパチンコの最後の台番号（[LAST_RACK]、無ければ取り込んで分かっている一番後ろ）。"""
+    known = [int(r['rack']) for r in store.rows() if r['store'] == location]
+    if location in LAST_RACK:
+        return max([LAST_RACK[location], *known])
+    return max(known) if known else None
+
+
 def next_tail(store, location, day, after_rack, tail, page_url=None):
     """[after_rack] より後で、グラフがまだの末尾 [tail] の台（番号, URL）。無ければ (None, None)。
-    台一覧で分かっているパチンコの台番号（その店のどの日でも）の最大までを、10ずつ見る（110→120→130）。
+    その店のパチンコの最後の台（[last_rack]、幸町は389）までを、10ずつ見る（110→120→130）。
     台一覧に無い台も、台のページのURLの台番号を差し替えて開く（台のページだけで保存できる）。"""
-    known = [r for r in store.rows() if r['store'] == location]
-    if not known:
+    limit = last_rack(store, location)
+    if limit is None:
         return None, None
-    limit = max(int(r['rack']) for r in known)
     rack = int(after_rack) // 10 * 10 + int(tail)
     if rack <= int(after_rack):
         rack += 10
@@ -361,8 +371,8 @@ def save_graph(payload, slot_db_path, measurement):
         first = int(target['rack']) // 10 * 10 + int(tail)
         if first <= int(target['rack']):
             first += 10
-        known = [int(r['rack']) for r in store.rows() if r['store'] == target['store']]
-        last = (rack - 10) if rack is not None else (max(known) if known else first - 10)
+        end = last_rack(store, target['store'])
+        last = (rack - 10) if rack is not None else (end if end is not None else first - 10)
         skipped = [r for r in range(first, last + 1, 10) if has_graph(store.get(target['store'], target['day'], r))]
     finally:
         store.close()
@@ -377,8 +387,8 @@ def save_graph(payload, slot_db_path, measurement):
     if rack is not None:
         message += f'次の末尾{tail}、{rack}番台へ移動します。'
     else:
-        message += (f'末尾{tail}の台はここまでです（分かっているパチンコの一番後ろは{max(known)}番台）。'
-                    if known else f'末尾{tail}の台はここまでです。')
+        message += (f'末尾{tail}の台はここまでです（パチンコの一番後ろは{end}番台）。'
+                    if end is not None else f'末尾{tail}の台はここまでです。')
         if left:
             message += f"まだの末尾{tail}：{'・'.join(f'{r}番台' for r in left)}。"
     return message, url
