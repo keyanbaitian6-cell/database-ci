@@ -13,6 +13,7 @@ import 'csv_export_service.dart';
 import 'data_checks.dart';
 import 'database_service.dart';
 import 'date_events.dart';
+import 'excluded_machines.dart' show isExcludedMachine;
 import 'graph_preview.dart';
 import 'import_day.dart' show meruhenMachineListUrl;
 import 'import_service.dart';
@@ -450,8 +451,13 @@ class AppController extends ChangeNotifier {
     const shortNames = {'nagamachiminami': '長町南', 'saiwaichou': '幸町'};
     final parts = <String>[];
     for (final entry in shortNames.entries) {
+      // 取り込みの対象外の機種（沖ドキなど）は数えない：サイトからは取らないのに、ジャグラーオンラインの
+      // 読み取りで記録ができ、済まない台として残って見えていた（2026-10-12、PC progress_text と同じ規則）。
       final rows = records
-          .where((r) => r.store == entry.key && r.day == target)
+          .where((r) =>
+              r.store == entry.key &&
+              r.day == target &&
+              !isExcludedMachine(r.store, r.machine))
           .toList();
       if (rows.isEmpty) continue;
       final done = rows.where((r) => r.graphDone).length;

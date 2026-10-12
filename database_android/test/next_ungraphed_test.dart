@@ -85,6 +85,23 @@ void main() {
     expect((t.reason, t.rack, t.url), ('no_link', 705, null));
   });
 
+  test('対象外の機種（沖ドキ）の台は進み具合に数えない（ジャグラーオンラインで記録ができても。2026-10-12）', () {
+    final c = AppController();
+    c.records = [
+      rec(701, graph: _graph, link: url(701)),
+      SlotRecord(
+        store: 'saiwaichou',
+        day: '2026-09-18',
+        machine: 'L／オキドキデュオ2／FR',
+        rack: 421,
+        games: 2400,
+        bb: 17,
+        rb: 5,
+      ),
+    ];
+    expect(c.progressText(store: 'saiwaichou', day: '2026-09-18'), '2026-09-18　幸町 1/1台');
+  });
+
   test('大当たり0回の台はグラフを取らない：次の台・進み具合・印・日の完了で済み扱い', () {
     final c = AppController();
     c.records = [

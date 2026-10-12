@@ -568,6 +568,29 @@ class BrowserImportTests(unittest.TestCase):
             self.assertFalse(is_excluded_machine(location, 'L コードギアス復活のルルーシュ ZS'))
             self.assertFalse(is_excluded_machine(location, 'ドキドキ'))
 
+    def test_progress_ignores_excluded_machines(self):
+        """対象外の機種（沖ドキ）の台は進み具合に数えない。ジャグラーオンラインで記録ができても、
+        「未取り込みの機種・グラフはありません」なのに 532/551台 と残って見えないように（2026-10-12）。"""
+        from core import progress_text
+        graph = dict(baseline_x=1, baseline_y=200, peak_x=2, peak_y=100, trough_x=3, trough_y=250,
+                     end_x=4, end_y=150)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save([dict(row(rack=701), store='saiwaichou', graph_measurement=graph),
+                     dict(row(rack=702), store='saiwaichou', graph_measurement=graph)])
+            # 対象外の機種の行（グラフ無し）を直接入れる（ジャグラーオンラインの読み取りでできる記録と同じ形）。
+            for rack in (421, 422):
+                payload = dict(row(rack=rack), store='saiwaichou', machine='L／オキドキデュオ2／FR')
+                db.db.execute('INSERT INTO days(store, day, machine, rack, payload) VALUES (?,?,?,?,?)',
+                              ('saiwaichou', '2026-09-13', payload['machine'], rack,
+                               json.dumps(payload, ensure_ascii=False)))
+            db.db.commit()
+            self.assertEqual(len(db.rows('2026-09-13', None, 'saiwaichou')), 4)
+            try:
+                self.assertEqual(progress_text(db, '2026-09-13'), '2026-09-13　幸町 2/2台')
+            finally:
+                db.close()
+
     def test_no_hit_racks_need_no_graph(self):
         """大当たり0回の台はグラフを取らない：次の台・進み具合・印・日の完了・未取得一覧で済み扱い。"""
         from browser_import import _find_next_ungraphed

@@ -1509,10 +1509,13 @@ def graph_done(row):
 
 def progress_text(store, day):
     """"2026-09-18　長町南 42/80台・幸町 18/60台" -- graphs done / racks listed
-    (大当たり0回でグラフを取らない台は済みとして数える)."""
+    (大当たり0回でグラフを取らない台は済みとして数える).
+    取り込みの対象外の機種（沖ドキなど）は数えない：サイトからは取らないのに、ジャグラーオンラインの読み取りで
+    記録ができるため、「未取り込みの機種・グラフはありません」なのに 532/551台 のように残って見えていた
+    （2026-10-12、幸町のオキドキデュオ2の19台）。Android の progressText と同じ規則。"""
     parts = []
     for location, short in SHORT_STORE_NAMES.items():
-        rows = store.rows(day, None, location)
+        rows = [r for r in store.rows(day, None, location) if not is_excluded_machine(location, r['machine'])]
         if rows:
             done = sum(1 for r in rows if graph_done(r))
             parts.append(f'{short} {done}/{len(rows)}台')
