@@ -1,5 +1,5 @@
-// PC版のパチンコの記録のページ（database/pachinko_report.py、2026-10-12）。作った記録でページを作り、
-// 実際のブラウザで開いて、数字・末尾の絞り込み・台のくわしい表示・スマホ幅ではみ出さないことを確かめる。
+// PC版のパチンコ 末尾0の記録のページ（database/pachinko_report.py、2026-10-12）。作った記録でページを作り、
+// 実際のブラウザで開いて、末尾0だけ・一覧から台のくわしい記録へ・スマホ幅ではみ出さないことを確かめる。
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {rmSync} from 'node:fs';
@@ -16,7 +16,7 @@ rows = [[str(r), str(r % 7 + 1), '1/250.0', str(1000 + r * 10 + (900 if r % 10 =
 pachinko.save_table(dict(store='saiwaichou', machine='テスト機', target_date='2026-10-10', kind_code='4',
     matrix=[pachinko.PACHI_HEADERS] + rows, links=['https://example.invalid/'] * len(rows)), slot)
 pachinko.save_table(dict(store='saiwaichou', machine='テスト機', target_date='2026-10-20', kind_code='4',
-    matrix=[pachinko.PACHI_HEADERS] + rows[:3], links=['https://example.invalid/'] * 3), slot)
+    matrix=[pachinko.PACHI_HEADERS] + rows[3:7], links=['https://example.invalid/'] * 4), slot)
 text = '\\n'.join(['当り履歴', '2026/10/10 (2日前)'] + [str(n) for n in range(10, 0, -1)] + ['1', '186', '2', '26', 'グラフ表示'])
 text = '\\n'.join(['台データ情報', '初当り', '888888', '2', '最大持玉', '888888', '5000']) + '\\n' + text
 pachinko.save_graph(dict(store='saiwaichou', rack=80, target_date='2026-10-10', page_text=text, max_hold=5000),
@@ -35,21 +35,22 @@ try {
     await page.goto(pathToFileURL(path).href);
     assert.equal(await page.locator('#day').inputValue(), '2026-10-20', '最新の日から');
     await page.selectOption('#day', '2026-10-10');
-    assert.match(await page.locator('#kpis').innerText(), /32台/);
-    assert.match(await page.locator('#kpis').innerText(), /末尾0の平均総回転数/);
-    await page.click('.digit[data-d="0"]');
-    assert.match(await page.locator('#listTitle').innerText(), /3台・末尾0だけ/);
+    assert.match(await page.locator('#kpis').innerText(), /3台/, '末尾0（80・90・100）だけ');
+    assert.deepEqual(await page.locator('tr.rack').evaluateAll(trs => trs.map(t => t.dataset.r)), ['80', '90', '100']);
+    assert.equal(await page.locator('.rcard').count(), 3);
     await page.click('tr.rack[data-r="80"]');
-    await page.locator('.detail svg.graph').waitFor();
-    assert.equal(await page.locator('.hist > div').count(), 2, '当り履歴2回');
-    assert.match(await page.locator('.detail').innerText(), /5,000/);
+    const card = page.locator('#rack-80');
+    await card.locator('svg.graph').waitFor();
+    assert.equal(await card.locator('.hist > div').count(), 2, '当り履歴2回');
+    assert.match(await card.innerText(), /5,000/);
+    assert.match(await page.locator('#rack-90').innerText(), /まだです/);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 0, `${width}px で横にはみ出さない（${overflow}px）`);
     await page.click('#prev', {force: true}).catch(() => {});
     assert.deepEqual(errors, []);
     await page.close();
   }
-  console.log('OK: パチンコの記録のページ（数字・末尾0の絞り込み・台のくわしい表示・1200/390/320px）');
+  console.log('OK: パチンコ 末尾0の記録のページ（末尾0だけ・一覧から台へ・くわしい記録・1200/390/320px）');
 } finally {
   await browser.close();
   rmSync(dirname(dirname(path)), {recursive: true, force: true});

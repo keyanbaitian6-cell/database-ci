@@ -51,7 +51,7 @@ class PachinkoTests(unittest.TestCase):
             pachinko.parse_pachinko_table(dict(table_payload(), target_date=None))
 
     def test_saving_keeps_slot_records_apart_and_writes_the_export(self):
-        message = pachinko.save_table(table_payload(), self.slot_db)
+        message, _ = pachinko.save_table(table_payload(), self.slot_db)
         self.assertIn('3台を保存しました', message)
         self.assertFalse(self.slot_db.exists(), 'スロットの記録には書かない')
         store = pachinko.PachinkoStore(pachinko.db_path_for(self.slot_db))
@@ -73,7 +73,7 @@ class PachinkoTests(unittest.TestCase):
             pachinko.save_graph(graph, self.slot_db, {'end_y': 1})
         pachinko.save_table(table_payload(), self.slot_db)
         self.assertEqual(pachinko.graph_target(graph, self.slot_db)['rack'], 80)
-        message = pachinko.save_graph(graph, self.slot_db, {'end_y': 1})
+        message, _ = pachinko.save_graph(graph, self.slot_db, {'end_y': 1})
         self.assertIn('80番台', message)
         self.assertIn('初当り10', message)
         # 台一覧を取り込み直しても、グラフ・ページの数字は残る。
@@ -130,7 +130,7 @@ class PachinkoTests(unittest.TestCase):
                             {'baseline_y': 200.5, 'curve': [[0.5, 200.5], [10.5, 150.5]]})
         output = pachinko_report.build_report(self.slot_db, Path(self.folder.name) / 'reports')
         page = output.read_text(encoding='utf-8')
-        self.assertIn('パチンコの記録', page)
+        self.assertIn('パチンコ 末尾0の記録', page)
         self.assertIn('e東京喰種MW', page)
         self.assertNotIn('888888', page, 'ページの文字は載せない')
         store = pachinko.PachinkoStore(pachinko.db_path_for(self.slot_db))
@@ -139,7 +139,54 @@ class PachinkoTests(unittest.TestCase):
         finally:
             store.close()
         self.assertEqual((records[80]['first'], records[80]['max_hold'], records[80]['games']), (4, 9000, 2673))
-        self.assertIsNone(records[81]['graph'])
+        self.assertEqual(sorted(records), [80], '末尾0の台だけ')
+
+    def test_jumps_to_the_next_tail_zero_rack(self):
+        # 2026-10-12 利用者「取り込んだら次の末尾0に飛ぶようにしてほしい110→120みたいな」。
+        rows = [[str(r), '1', '1/200.0', '1000'] for r in range(105, 136)]
+        message, url = pachinko.save_table(table_payload(rows), self.slot_db)
+        self.assertIn('末尾0の110番台へ移動します', message)
+        self.assertEqual(url, LINK.format(110))
+        page = 'https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph?dai_hall_id=821&rack_no={}&target_date=2026-10-10'
+        text = '\n'.join(['台データ情報', 'e機種', '109番台', '110番台', '111番台', '大当り', '88888', '1', '大当り確率',
+                          '8/8888.8', '1/200.0', '初当り', '888888', '1', '当り履歴'])
+
+        def graph(rack):
+            return {'store': 'saiwaichou', 'rack': rack, 'target_date': '2026-10-10', 'page_text': text,
+                    'source_url': page.format(rack)}
+        message, url = pachinko.save_graph(graph(110), self.slot_db, {'end_y': 1})
+        self.assertIn('次の末尾0、120番台へ移動します', message)
+        self.assertIn('rack_no=120', url)
+        self.assertIn('dai_hall_id=821', url)
+        self.assertIn('target_date=2026-10-10', url)
+        # 130番台が済んでいれば、120番台のあとは飛ばして終わり（台一覧の最後は135番台）。
+        pachinko.save_graph(graph(130), self.slot_db, {'end_y': 1})
+        message, url = pachinko.save_graph(graph(120), self.slot_db, {'end_y': 1})
+        self.assertIn('末尾0の台はここまでです', message)
+        self.assertIsNone(url)
+        # 台一覧を取り込み直すと、グラフがまだの末尾0が無いので移動しない。
+        message, url = pachinko.save_table(table_payload(rows), self.slot_db)
+        self.assertIsNone(url)
+
+    def test_a_rack_page_alone_is_saved_when_its_table_was_not_captured(self):
+        pachinko.save_table(table_payload(), self.slot_db)   # 80〜82番台だけ
+        text = '\n'.join(['台データ情報', 'P大海物語', '169番台', '170番台', '171番台', '大当り', '88888', '9',
+                          '大当り確率', '8/8888.8', '1/ 300.0', 'スタート', '888888', '12', '総回転数', '888888', '2700',
+                          '初当り', '888888', '6', '当り履歴'])
+        payload = {'store': 'saiwaichou', 'rack': 170, 'target_date': '2026-10-10', 'page_text': text,
+                   'source_url': LINK.format(170)}
+        self.assertEqual(pachinko.graph_target(payload, self.slot_db)['machine'], 'P大海物語')
+        message, url = pachinko.save_graph(payload, self.slot_db, {'end_y': 1})
+        self.assertIn('170番台', message)
+        self.assertIn('まだの末尾0：80番台', message, '前に残っている末尾0を知らせる')
+        store = pachinko.PachinkoStore(pachinko.db_path_for(self.slot_db))
+        try:
+            row = store.get('saiwaichou', '2026-10-10', 170)
+        finally:
+            store.close()
+        self.assertEqual((row['machine'], row['hits'], row['games'], row['probability']), ('P大海物語', 9, 2700, '1/300.0'))
+        # スロットの台のページ（初当り・当り履歴が無い）は、パチンコとして保存しない。
+        self.assertIsNone(pachinko.graph_target(dict(payload, rack=999, page_text='BB\n3\nRB\n2'), self.slot_db))
 
     def test_slot_graph_refuses_other_kinds(self):
         db = Store(self.slot_db)

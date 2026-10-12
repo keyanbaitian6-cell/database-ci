@@ -1971,7 +1971,8 @@ def _confirm_table(payload_path, db_path, reports_folder):
     if pachinko.is_pachinko_table(payload.get('matrix')):
         # 4円パチンコの台一覧（pachinko.py）。スロットとは別のファイルに保存し、次の台へは移らない。
         try:
-            _write_advance_signal(pachinko.save_table(payload, db_path))
+            message, next_url = pachinko.save_table(payload, db_path)
+            _write_advance_signal(message, next_url=next_url)
         except (pachinko.PachinkoError, ValueError) as exc:
             messagebox.showerror('取り込みできません', str(exc), parent=root.get())
         return
@@ -2109,7 +2110,8 @@ def _save_pachinko_graph(payload, db_path, root, messagebox):
         height = payload.get('height') or (max(y for _, y in points) + 20)
         context = dict(points=points, auto=auto_four_points(points, baseline_y, width))
         measurement = graph_measurement_result(context, render_curve_image(points, baseline_y, width, height))
-        _write_advance_signal(pachinko.save_graph(payload, db_path, measurement))
+        message, next_url = pachinko.save_graph(payload, db_path, measurement)
+        _write_advance_signal(message, next_url=next_url)
     except (GraphExtractionError, pachinko.PachinkoError, ValueError) as exc:
         messagebox.showerror('取り込みできません', str(exc), parent=root.get())
 
