@@ -11,7 +11,7 @@ import {
   lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
   VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows,
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
-  lineupDay,
+  lineupDay, suffixReport, isZorome,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -282,4 +282,19 @@ test('長町南10/7は推定差枚を出さない（グラフが直線だけの�
   assert.equal(joDay.net, -280);
   assert.equal(otherDay.net, 1422);
   assert.equal(otherStore.net, 1422);
+});
+
+test('末尾別データまとめ（幸町、2026-10-12）：平均差枚の順・表示と同じ整数で同順位・差枚の無い台は平均に入れない・ゾロ目は44・99も', () => {
+  const rec = (rack, net) => ({store: 'saiwaichou', day: '2026-10-10', machine: 'x', rack, games: 3000, bb: 1, rb: 1, ...(net == null ? {} : {jo_net: net})});
+  const byDay = indexRecords(meruhenRecords({records: [rec(1000, 300), rec(1001, 300), rec(1002, 100), rec(1012, null), rec(1044, 50)]}));
+  const report = suffixReport(byDay, 'saiwaichou', '2026-10-10', 1);
+  const of = label => report.summaries.find(s => s.label === label);
+  assert.deepEqual(report.leaders.map(s => s.label), ['末尾0', '末尾1']);
+  assert.equal(report.rankOf(of('ゾロ目')), 3, 'ゾロ目（1000・1044、平均+175）も順位に入る');
+  assert.equal(report.rankOf(of('末尾2')), 4);
+  assert.equal(of('末尾2').records, 2);
+  assert.equal(of('末尾2').averageNet, 100, '差枚の無い1012番台は平均に入れない');
+  assert.equal(of('ゾロ目').records, 2);
+  assert.ok(isZorome(1044) && isZorome(1099) && isZorome(1000) && !isZorome(1045));
+  assert.equal(report.records, 5, 'ゾロ目は合計に二重に入れない');
 });

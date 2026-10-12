@@ -31,6 +31,9 @@ import 'web_import_page.dart';
 import 'picked_file.dart';
 import 'storage_usage_page.dart';
 import 'viewer_pages.dart' show ViewerDateBar, viewerDays;
+import 'pscube_suffix.dart' show meruhenSuffixStores;
+import 'pscube_suffix_page.dart';
+import 'viewer_data.dart' show ViewerData;
 
 // 翌日候補の「平均より +13」表示は machine_sections.dart へ移した。既存の
 // 呼び出し元（テストを含む）がこのファイルから使えるよう公開し続ける。
@@ -987,6 +990,27 @@ class _ResultsPageState extends State<ResultsPage> {
     super.dispose();
   }
 
+  /// 末尾別データまとめ（閲覧ページと同じ画面。台を押すとAndroid版の台の画面）。
+  void _openSuffixPage() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => PscubeSuffixPage(
+        data: ViewerData(
+          records: widget.controller.records,
+          dateEvents: widget.controller.dateEvents,
+        ),
+        store: store!,
+        day: day!,
+        onDayChanged: (changed) => setState(() => day = changed),
+        onOpenRecord: (context, record) => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                AndroidRecordPage(controller: widget.controller, record: record),
+          ),
+        ),
+      ),
+    ),
+  );
+
   void _openRecord(SlotRecord record, ScoreResult? score) =>
       Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -1335,6 +1359,13 @@ class _ResultsPageState extends State<ResultsPage> {
                           onPressed: _openEventCalendar,
                           icon: const Icon(Icons.calendar_month_outlined),
                         ),
+                        // 幸町の末尾別データまとめ（2026-10-12、閲覧ページと同じ画面）。
+                        if (meruhenSuffixStores.contains(store) && day != null)
+                          IconButton(
+                            tooltip: '末尾別データまとめ',
+                            onPressed: _openSuffixPage,
+                            icon: const Icon(Icons.table_chart_outlined),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 14),

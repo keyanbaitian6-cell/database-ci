@@ -12,6 +12,7 @@ import 'daily_net_page.dart';
 import 'date_events.dart';
 import 'event_calendar_page.dart';
 import 'event_name_dialog.dart';
+import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'pscube_suffix_page.dart';
 import 'rainbow_marks.dart';
 import 'scoring.dart';
@@ -969,6 +970,24 @@ class _ViewerHomeState extends State<ViewerHome> {
             eventFor: (changed) => data.dateEventFor(store, changed)?.name,
           ),
           const SizedBox(height: 8),
+          // 幸町の末尾別データまとめ（2026-10-12 利用者「幸町にもつくってもらうだけでいい」。P’s CUBEと同じ画面）。
+          if (meruhenSuffixStores.contains(store)) ...[
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => PscubeSuffixPage(
+                    data: data,
+                    store: store,
+                    day: day,
+                    onDayChanged: (changed) => setState(() => _day = changed),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.table_chart_outlined),
+              label: const Text('末尾別データまとめ'),
+            ),
+            const SizedBox(height: 8),
+          ],
         ],
         OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(

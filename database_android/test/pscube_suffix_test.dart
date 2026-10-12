@@ -590,4 +590,87 @@ void main() {
     expect(find.textContaining('7台・42件（台×日）'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  // 幸町（メルヘン）の末尾別データまとめ（2026-10-12 利用者「幸町にもつくってもらうだけでいい」）。
+  SlotRecord meruhen(
+    int rack,
+    String day, {
+    String scope = 'saiwaichou',
+    int? net,
+  }) => SlotRecord(
+    store: scope,
+    day: day,
+    rack: rack,
+    machine: 'L北斗',
+    games: 3000,
+    bb: 10,
+    rb: 5,
+    extra: {if (net != null) 'jo_net': net},
+  );
+
+  test('幸町：末尾0〜9とゾロ目、平均差枚、長町南・P’s CUBEは混ぜない', () {
+    expect(hasSuffixPage('saiwaichou'), isTrue);
+    expect(hasSuffixPage('nagamachiminami'), isFalse);
+    expect(hasSuffixPage(store), isTrue);
+    expect(suffixesFor('saiwaichou'), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    final report = summarizePscubeSuffixes(
+      [
+        meruhen(1004, '2026-10-10', net: 500),
+        meruhen(1014, '2026-10-10', net: -100),
+        meruhen(1029, '2026-10-10'),
+        meruhen(1011, '2026-10-10', net: 200),
+        meruhen(1004, '2026-10-10', scope: 'nagamachiminami', net: 9999),
+        row(1004, '2026-10-10'),
+      ],
+      store: 'saiwaichou',
+      day: '2026-10-10',
+    );
+    final byLabel = {for (final s in report.summaries) s.label: s};
+    expect(byLabel.keys, [
+      for (final d in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) '末尾$d',
+      'ゾロ目',
+    ]);
+    expect(byLabel['末尾4']!.records, 2);
+    expect(byLabel['末尾4']!.averageNet, 200);
+    expect(byLabel['末尾9']!.records, 1);
+    expect(byLabel['末尾9']!.averageNet, isNull, reason: '差枚の分からない台は平均に入れない');
+    expect(byLabel['ゾロ目']!.records, 1, reason: '1011番台（下2桁11）');
+    expect(isZoromeAt('saiwaichou', 1044), isTrue, reason: 'メルヘンは44・99もゾロ目');
+    expect(isZoromeAt(store, 1044), isFalse, reason: 'P’s CUBEは利用者の指定どおり');
+    expect(report.records, 4);
+  });
+
+  testWidgets('幸町の末尾別データまとめ：平均差枚を出し、機種タイプ・イベントの編集は出さない', (tester) async {
+    final data = ViewerData(
+      records: [
+        for (var rack = 1000; rack < 1020; rack++)
+          meruhen(rack, '2026-10-10', net: rack.isEven ? 300 : -300),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: PscubeSuffixPage(
+          data: data,
+          store: 'saiwaichou',
+          day: '2026-10-10',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byType(DropdownButtonFormField<PscubeSuffixType>),
+      findsNothing,
+    );
+    expect(find.textContaining('自由記入'), findsNothing);
+    expect(find.textContaining('平均差枚'), findsWidgets);
+    expect(find.textContaining('平均MY'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.textContaining('末尾0・1・2・3・4・5・6・7・8・9を集計'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('20台・20件（台×日）'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -3,12 +3,39 @@ import 'scoring.dart';
 
 const pscubeSuffixes = [0, 1, 2, 3, 5, 6, 7, 8];
 
+/// メルヘンの末尾（台番号に4・9もあるので0〜9）。
+const meruhenSuffixes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+/// 末尾別データまとめを出すメルヘンの店（2026-10-12 利用者「幸町にもつくってもらうだけでいい」。
+/// P’s CUBEの店はすべて）。閲覧ページ・Android版・共有ページ（share_viewer/data.mjs の SUFFIX_STORES）で同じ。
+const meruhenSuffixStores = {'saiwaichou'};
+bool hasSuffixPage(String store) =>
+    isPscubeStore(store) || meruhenSuffixStores.contains(store);
+
+/// その店で集計する末尾。
+List<int> suffixesFor(String store) =>
+    isPscubeStore(store) ? pscubeSuffixes : meruhenSuffixes;
+
 /// ゾロ目（台番号の下2桁が00・11・22・33・55・66・77・88、2026-10-11 利用者指定）の集計の印。
 /// 末尾とは別の項目として順位・表に並べる。ゾロ目の台は末尾の集計にも入る（例：1111番台は末尾1とゾロ目）。
 const pscubeZorome = 100;
 const pscubeZoromeEndings = [0, 11, 22, 33, 55, 66, 77, 88];
 bool isPscubeZorome(int rack) =>
     rack >= 10 && pscubeZoromeEndings.contains(rack % 100);
+
+/// メルヘンのゾロ目：台番号に4・9もあるので、下2桁が00・11・22・…・99（44・99も入る）。
+const meruhenZoromeEndings = [0, 11, 22, 33, 44, 55, 66, 77, 88, 99];
+
+/// その店のゾロ目か。
+bool isZoromeAt(String store, int rack) => isPscubeStore(store)
+    ? isPscubeZorome(rack)
+    : rack >= 10 && meruhenZoromeEndings.contains(rack % 100);
+
+/// 画面に出すゾロ目の下2桁（「00・11・…」）。
+String zoromeEndingsText(String store) =>
+    (isPscubeStore(store) ? pscubeZoromeEndings : meruhenZoromeEndings)
+        .map((n) => n.toString().padLeft(2, '0'))
+        .join('・');
 
 enum PscubeSuffixPeriod {
   day('選択日', 1),
@@ -51,6 +78,17 @@ class PscubeSuffixSummary {
   int get rb => entries.fold(0, (n, e) => n + e.$1.rb);
   int get atArt => entries.fold(0, (n, e) => n + e.$1.atArt);
   double? get averageGames => records == 0 ? null : games / records;
+
+  /// 1記録あたりの差枚（メルヘン：推定差枚、ジャグラーオンラインの差枚があればそれ。差枚の分かった記録だけ）。
+  double? get averageNet {
+    final values = entries.map((e) => e.$1.netValue).whereType<int>().toList();
+    return values.isEmpty
+        ? null
+        : values.reduce((a, b) => a + b) / values.length;
+  }
+
+  int get nets => entries.where((e) => e.$1.netValue != null).length;
+
   double? get averageMy {
     final values = entries.map((e) => e.$1.my).whereType<int>().toList();
     return values.isEmpty
@@ -152,20 +190,23 @@ PscubeSuffixReport summarizePscubeSuffixes(
             .subtract(Duration(days: period.days! - 1))
             .toIso8601String()
             .substring(0, 10);
+  final pscube = isPscubeStore(store);
+  final suffixes = suffixesFor(store);
   final grouped = {
-    for (final suffix in pscubeSuffixes) suffix: <(SlotRecord, ScoreResult)>[],
+    for (final suffix in suffixes) suffix: <(SlotRecord, ScoreResult)>[],
   };
   final zorome = <(SlotRecord, ScoreResult)>[];
   var invalid = 0, otherSuffix = 0;
   for (final r in all) {
-    if (!r.isPscube ||
+    if (r.isPscube != pscube ||
         r.store != store ||
         r.day.compareTo(day) > 0 ||
         (start != null && r.day.compareTo(start) < 0)) {
       continue;
     }
-    if (type == PscubeSuffixType.normal && !r.pscubeNormal ||
-        type == PscubeSuffixType.other && r.pscubeNormal) {
+    // 機種タイプ（ノーマル／それ以外）はP’s CUBEだけ。
+    if (pscube && type == PscubeSuffixType.normal && !r.pscubeNormal ||
+        pscube && type == PscubeSuffixType.other && r.pscubeNormal) {
       continue;
     }
     if (hasImplausibleNumbers(r) ||
@@ -184,7 +225,7 @@ PscubeSuffixReport summarizePscubeSuffixes(
     }
     final entry = (r, scoreRecord(r, all));
     entries.add(entry);
-    if (isPscubeZorome(r.rack)) zorome.add(entry);
+    if (isZoromeAt(store, r.rack)) zorome.add(entry);
   }
   for (final entries in [...grouped.values, zorome]) {
     entries.sort((a, b) {
@@ -194,7 +235,7 @@ PscubeSuffixReport summarizePscubeSuffixes(
   }
   return PscubeSuffixReport(
     summaries: [
-      for (final suffix in pscubeSuffixes)
+      for (final suffix in suffixes)
         PscubeSuffixSummary(suffix, grouped[suffix]!),
       PscubeSuffixSummary(pscubeZorome, zorome),
     ],

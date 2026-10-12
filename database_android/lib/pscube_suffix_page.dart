@@ -21,9 +21,13 @@ class PscubeSuffixPage extends StatefulWidget {
     this.onDayChanged,
     this.onDataChanged,
     this.saveDateEvent,
+    this.onOpenRecord,
   });
   final ViewerData data;
   final String store, day;
+
+  /// 台を押したとき（Android版は自分の台の画面。null は閲覧ページの台の画面）。
+  final void Function(BuildContext context, SlotRecord record)? onOpenRecord;
   final ValueChanged<String>? onDayChanged;
   final ValueChanged<ViewerData>? onDataChanged;
 
@@ -38,6 +42,8 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
   late String _day = widget.day;
   late ViewerData _data = widget.data;
   bool _savingEvent = false;
+  // メルヘンの店（幸町、2026-10-12）：平均MYの代わりに平均差枚。機種タイプ・イベントの編集は出さない（P’s CUBEだけ）。
+  late final bool _pscube = isPscubeStore(widget.store);
   var _period = PscubeSuffixPeriod.day;
   var _type = PscubeSuffixType.all;
   final _scroll = ScrollController();
@@ -144,12 +150,15 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
           data: _data,
           store: widget.store,
           summary: summary,
+          onOpenRecord: widget.onOpenRecord,
         ),
       ),
     );
   }
 
   String _average(double? value) => value?.toStringAsFixed(1) ?? '—';
+  String _net(double? value) =>
+      value == null ? '—' : '${value >= 0 ? '+' : ''}${value.round()}';
   String _positive(PscubeSuffixSummary s) => s.positivePercent == null
       ? 'プラス終点 —（グラフなし）'
       : 'プラス終点 ${s.positivePercent!.toStringAsFixed(1)}%（${s.positiveGraphs}/${s.graphs}件）';
@@ -186,7 +195,9 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
           ],
         ),
         Text(
-          '平均MY ${_average(s.averageMy)}・平均G ${_average(s.averageGames)}',
+          _pscube
+              ? '平均MY ${_average(s.averageMy)}・平均G ${_average(s.averageGames)}'
+              : '平均差枚 ${_net(s.averageNet)}（${s.nets}件）・平均G ${_average(s.averageGames)}',
           style: const TextStyle(fontSize: 12),
         ),
         Text(
@@ -273,7 +284,9 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                   ),
                 ),
               ),
-              child: const Text('8末尾・ゾロ目すべての順位・内訳を見る'),
+              child: Text(
+                '${suffixesFor(widget.store).length}末尾・ゾロ目すべての順位・内訳を見る',
+              ),
             ),
           ],
         ),
@@ -380,7 +393,7 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                 '台数',
                 '記録件数',
                 '平均G',
-                '平均MY',
+                _pscube ? '平均MY' : '平均差枚',
                 '平均点',
                 '採点件数',
                 'プラス終点',
@@ -400,7 +413,11 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
                     DataCell(Text('${s.racks}')),
                     DataCell(Text('${s.records}')),
                     DataCell(Text(_average(s.averageGames))),
-                    DataCell(Text(_average(s.averageMy))),
+                    DataCell(
+                      Text(
+                        _pscube ? _average(s.averageMy) : _net(s.averageNet),
+                      ),
+                    ),
                     DataCell(Text(_average(s.averageScore))),
                     DataCell(Text('${s.scored}')),
                     DataCell(
@@ -425,7 +442,8 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
             onTap: () => _open(s),
             title: Text('${s.label}の内訳'),
             subtitle: Text(
-              '${s.racks}台・${s.days}日・${s.records}件／BB ${s.bb}・RB ${s.rb}・AT/ART ${s.atArt}',
+              '${s.racks}台・${s.days}日・${s.records}件／BB ${s.bb}・RB ${s.rb}'
+              '${_pscube ? '・AT/ART ${s.atArt}' : ''}',
             ),
             trailing: const Icon(Icons.chevron_right),
           ),
@@ -459,37 +477,39 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
               style: const TextStyle(color: AppColors.ash),
             ),
             const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                title: Text(
-                  'イベント：${_data.dateEventFor(widget.store, _day)?.name ?? 'なし'}',
+            if (_pscube) ...[
+              Card(
+                child: ListTile(
+                  title: Text(
+                    'イベント：${_data.dateEventFor(widget.store, _day)?.name ?? 'なし'}',
+                  ),
+                  subtitle: Text(
+                    _savingEvent
+                        ? '保存中…'
+                        : '自由記入。一度付けた名前はプルダウンから選べます（「末尾イベ」も含む）。',
+                  ),
+                  trailing: const Icon(Icons.edit_outlined),
+                  enabled: !_savingEvent,
+                  onTap: _editEvent,
                 ),
-                subtitle: Text(
-                  _savingEvent
-                      ? '保存中…'
-                      : '自由記入。一度付けた名前はプルダウンから選べます（「末尾イベ」も含む）。',
-                ),
-                trailing: const Icon(Icons.edit_outlined),
-                enabled: !_savingEvent,
-                onTap: _editEvent,
               ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<PscubeSuffixType>(
-              initialValue: _type,
-              decoration: const InputDecoration(labelText: '機種タイプ'),
-              items: [
-                for (final t in PscubeSuffixType.values)
-                  DropdownMenuItem(value: t, child: Text(t.label)),
-              ],
-              onChanged: (t) {
-                if (t != null && t != _type) {
-                  _type = t;
-                  _calculate();
-                }
-              },
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<PscubeSuffixType>(
+                initialValue: _type,
+                decoration: const InputDecoration(labelText: '機種タイプ'),
+                items: [
+                  for (final t in PscubeSuffixType.values)
+                    DropdownMenuItem(value: t, child: Text(t.label)),
+                ],
+                onChanged: (t) {
+                  if (t != null && t != _type) {
+                    _type = t;
+                    _calculate();
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
             if (!ready)
               const Center(child: CircularProgressIndicator())
             else if (report != null && _selectedDay != null) ...[
@@ -533,19 +553,22 @@ class _PscubeSuffixPageState extends State<PscubeSuffixPage> {
               Notice(
                 text:
                     '${report.start ?? '保存開始'}〜${report.end}：記録${report.days}日・'
-                    '${report.racks}台・${report.records}件（台×日）。末尾0・1・2・3・5・6・7・8を集計。'
-                    'ゾロ目（下2桁が00・11・22・33・55・66・77・88）は末尾とは別に並べる（末尾の集計にも入る）。'
+                    '${report.racks}台・${report.records}件（台×日）。末尾${suffixesFor(widget.store).join('・')}を集計。'
+                    'ゾロ目（下2桁が${zoromeEndingsText(widget.store)}）は末尾とは別に並べる（末尾の集計にも入る）。'
                     '${report.excludedInvalid > 0 ? '数値異常${report.excludedInvalid}件は対象外。' : ''}'
                     '${report.excludedSuffix > 0 ? '指定外の末尾${report.excludedSuffix}件は対象外。' : ''}',
               ),
               const SizedBox(height: 12),
               _numbers(report),
               const SizedBox(height: 12),
-              const Notice(
-                text:
-                    '平均G・平均MYは1記録（台×日）あたり。平均点は採点できた記録のみ。'
-                    '同点は表示と同じ小数1桁で判定。プラス終点は取得済みグラフのうち終点がゼロ線より上の割合（1ピクセル以内はゼロ扱い）。'
-                    'MYは差枚ではありません。全機種では機種構成の影響を含むため、機種タイプと内訳も確認できます。',
+              Notice(
+                text: _pscube
+                    ? '平均G・平均MYは1記録（台×日）あたり。平均点は採点できた記録のみ。'
+                          '同点は表示と同じ小数1桁で判定。プラス終点は取得済みグラフのうち終点がゼロ線より上の割合（1ピクセル以内はゼロ扱い）。'
+                          'MYは差枚ではありません。全機種では機種構成の影響を含むため、機種タイプと内訳も確認できます。'
+                    : '平均G・平均差枚は1記録（台×日）あたり。平均差枚は差枚の分かった記録だけ（推定差枚、ジャグラーオンラインの差枚があればそれ）。'
+                          '平均点は採点できた記録のみ。同点は表示と同じ小数1桁で判定。'
+                          'プラス終点は取得済みグラフのうち終点がゼロ線より上の割合（1ピクセル以内はゼロ扱い）。機種構成の影響を含みます。',
               ),
             ],
           ],
@@ -560,10 +583,12 @@ class _PscubeSuffixDetails extends StatefulWidget {
     required this.data,
     required this.store,
     required this.summary,
+    this.onOpenRecord,
   });
   final ViewerData data;
   final String store;
   final PscubeSuffixSummary summary;
+  final void Function(BuildContext context, SlotRecord record)? onOpenRecord;
   @override
   State<_PscubeSuffixDetails> createState() => _PscubeSuffixDetailsState();
 }
@@ -602,12 +627,16 @@ class _PscubeSuffixDetailsState extends State<_PscubeSuffixDetails> {
                 entries: summary.entries.where((e) => e.$1.day == day).toList(),
                 graph: _graph,
                 onGraphChanged: (v) => setState(() => _graph = v),
-                onTap: (record, score) => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        ViewerRecordPage(data: widget.data, record: record),
-                  ),
-                ),
+                onTap: (record, score) => widget.onOpenRecord != null
+                    ? widget.onOpenRecord!(context, record)
+                    : Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ViewerRecordPage(
+                            data: widget.data,
+                            record: record,
+                          ),
+                        ),
+                      ),
               ),
               const SizedBox(height: 24),
             ],
