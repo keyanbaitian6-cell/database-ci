@@ -103,7 +103,7 @@ def meruhen_day_nets(db, location, first, last):
             measurement = None
         # ジャグラーオンラインの差枚があれば優先（お試し、JUGGLER_ONLINE.md）。
         net, needs_check, _site = rack_net({'jo_net': jo_net, 'graph_measurement': measurement,
-                                            'max_hold': max_hold, 'games': games})
+                                            'max_hold': max_hold, 'games': games, 'store': location, 'day': day})
         _add_net(totals, day, net, needs_check)
     return totals
 
@@ -392,7 +392,7 @@ class MeruhenEvents:
             except ValueError:
                 measurement = None
             net, needs_check, _site = rack_net({'jo_net': jo_net, 'graph_measurement': measurement,
-                                                'max_hold': max_hold, 'games': games})
+                                                'max_hold': max_hold, 'games': games, 'store': location, 'day': day})
             result.append({'rack': rack, 'machine': machine, 'games': games or 0, 'bb': bb, 'rb': rb,
                            'net': net, 'needs_check': bool(needs_check), 'rainbow': rainbow == 1,
                            'day': day, 'prev_rainbow': previous.get(int(rack))})

@@ -731,5 +731,44 @@ void main() {
       );
       expect(r.netValue, 100);
     });
+
+    test('長町南10/7は推定差枚を出さない（グラフが直線だけの日、2026-10-12）。ジャグラーオンラインの差枚・ほかの日は出す', () {
+      const g = GraphMeasurement(
+        baselineY: 200.5,
+        peakY: 53.5,
+        troughY: 263.5,
+        endY: 72.5,
+        curve: [
+          [0.5, 200.5],
+          [10.5, 263.5],
+          [20.5, 160.5],
+          [30.5, 53.5],
+          [40.5, 72.5],
+        ],
+      );
+      SlotRecord rec(
+        String store,
+        String day, [
+        Map<String, Object?> extra = const {},
+      ]) => SlotRecord(
+        store: store,
+        day: day,
+        machine: '北斗',
+        rack: 1,
+        games: 3000,
+        bb: 10,
+        rb: 5,
+        maxHold: 2376,
+        graph: g,
+        extra: extra,
+      );
+      expect(rec('nagamachiminami', '2026-10-07').netValue, isNull);
+      expect(
+        rec('nagamachiminami', '2026-10-07', {'jo_net': -280}).netValue,
+        -280,
+      );
+      expect(rec('nagamachiminami', '2026-10-08').netValue, 1422);
+      expect(rec('saiwaichou', '2026-10-07').netValue, 1422);
+    });
   });
 }

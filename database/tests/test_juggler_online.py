@@ -85,6 +85,16 @@ class JugglerOnlineTests(unittest.TestCase):
 
     def test_the_juggler_online_net_is_preferred_over_the_estimate(self):
         self.assertEqual(rack_net({'jo_net': -280, 'graph_measurement': None, 'max_hold': 10, 'games': 100}), (-280, False, True))
+
+    def test_nagamachi_1007_hides_estimates(self):
+        # 長町南10/7は推定差枚を出さない（サイトのグラフが全台直線、2026-10-12）。ジャグラーオンラインの差枚・ほかの日は出す。
+        graph = {'baseline_y': 200.5, 'peak_y': 53.5, 'trough_y': 263.5, 'end_y': 72.5,
+                 'curve': [[0.5, 200.5], [10.5, 263.5], [20.5, 160.5], [30.5, 53.5], [40.5, 72.5]]}
+        row = {'graph_measurement': graph, 'max_hold': 2376, 'games': 3000}
+        self.assertEqual(rack_net(dict(row, store='nagamachiminami', day='2026-10-07')), (None, False, False))
+        self.assertEqual(rack_net(dict(row, store='nagamachiminami', day='2026-10-07', jo_net=-280)), (-280, False, True))
+        self.assertEqual(rack_net(dict(row, store='nagamachiminami', day='2026-10-08'))[0], 1422)
+        self.assertEqual(rack_net(dict(row, store='saiwaichou', day='2026-10-07'))[0], 1422)
         self.assertEqual(rack_net({'graph_measurement': None, 'max_hold': 10, 'games': 100}), (None, False, False))
         self.assertEqual(rack_net({'jo_net': True})[2], False, '真偽値は差枚にしない')
 

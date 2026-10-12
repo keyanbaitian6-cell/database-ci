@@ -335,7 +335,7 @@ class SlotRecord {
 
   ({int? value, bool needsCheck})? get _meruhenNet {
     final g = graph;
-    if (isPscube || g == null) return null;
+    if (isPscube || g == null || meruhenNetHidden(store, day)) return null;
     return meruhenNetEstimateDetail(
       baselineY: g.baselineY,
       peakY: g.peakY,

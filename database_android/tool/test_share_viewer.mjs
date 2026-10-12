@@ -271,3 +271,15 @@ test('バラエティ🌈の並べる台は、記録のそろった最新の日�
     [[1, true], [2, false], [3, false], [4, false]]);
   assert.equal(lineupDay(byDay, 'saiwaichou'), null);
 });
+
+test('長町南10/7は推定差枚を出さない（グラフが直線だけの日、2026-10-12）。ジャグラーオンラインの差枚とほかの日は出す', () => {
+  const g = measurement([0, -63, 40, 147, 128]);
+  const rec = (store, d, extra = {}) => ({store, day: d, machine: '北斗', rack: 1, games: 3000, bb: 10, rb: 5, max_hold: 2376, graph_measurement: g, ...extra});
+  const [hidden, joDay, otherDay, otherStore] = meruhenRecords({records: [
+    rec('nagamachiminami', '2026-10-07'), rec('nagamachiminami', '2026-10-07', {rack: 2, jo_net: -280}),
+    rec('nagamachiminami', '2026-10-08'), rec('saiwaichou', '2026-10-07')]});
+  assert.equal(hidden.net, null);
+  assert.equal(joDay.net, -280);
+  assert.equal(otherDay.net, 1422);
+  assert.equal(otherStore.net, 1422);
+});

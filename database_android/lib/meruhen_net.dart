@@ -11,6 +11,18 @@
 /// PC版 `core.meruhen_net_estimate` と同じ規則。
 library;
 
+/// 推定差枚を出さない店・日（ジャグラーオンラインの差枚は出す）。長町南の10/7は、サイトのグラフが全台
+/// 「始点と終点を結んだ直線」で途中の推移が無く、推定が正しく決められないため
+/// （2026-10-12 利用者「長町南10/7だけ消す」）。PC `core.MERUHEN_NET_HIDDEN_DAYS`・共有ページ
+/// `share_viewer/net.mjs` と同じ。
+const meruhenNetHiddenDays = <String, Set<String>>{
+  'nagamachiminami': {'2026-10-07'},
+};
+
+/// その店・日の推定差枚を出さないか（[meruhenNetHiddenDays]）。
+bool meruhenNetHidden(String? store, String? day) =>
+    meruhenNetHiddenDays[store]?.contains(day) ?? false;
+
 /// グラフの縦軸の片側の幅（枚）の段階。
 const meruhenAxisSteps = <int>[
   1000,

@@ -1254,11 +1254,25 @@ def juggler_online_newer(record, local):
         return False
 
 
+# 推定差枚を出さない店・日（ジャグラーオンラインの差枚は出す）。長町南の10/7は、サイトのグラフが全台「始点と終点を
+# 結んだ直線」で途中の推移が無く、推定が正しく決められないため（2026-10-12 利用者「長町南10/7だけ消す」）。
+# Android・閲覧ページ（lib/meruhen_net.dart の meruhenNetHiddenDays）・共有ページ（share_viewer/net.mjs）と同じ。
+MERUHEN_NET_HIDDEN_DAYS = {'nagamachiminami': ('2026-10-07',)}
+
+
+def meruhen_net_hidden(store, day):
+    """その店・日の推定差枚を出さないか（[MERUHEN_NET_HIDDEN_DAYS]）。"""
+    return day in MERUHEN_NET_HIDDEN_DAYS.get(store, ())
+
+
 def rack_net(row):
     """画面に出す差枚：ジャグラーオンラインの差枚（jo_net、お試し JUGGLER_ONLINE.md）があればそれ、
-    無ければグラフと最大持玉からの推定差枚。戻り値は（差枚、要確認、ジャグラーオンラインか）。"""
+    無ければグラフと最大持玉からの推定差枚（[MERUHEN_NET_HIDDEN_DAYS] の店・日は出さない）。
+    戻り値は（差枚、要確認、ジャグラーオンラインか）。"""
     if isinstance(row.get('jo_net'), int) and not isinstance(row.get('jo_net'), bool):
         return row['jo_net'], False, True
+    if meruhen_net_hidden(row.get('store'), row.get('day')):
+        return None, False, False
     net, needs_check = meruhen_net_estimate_detail(row.get('graph_measurement'), row.get('max_hold'), row.get('games'))
     return net, needs_check, False
 
