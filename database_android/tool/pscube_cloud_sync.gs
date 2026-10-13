@@ -35,7 +35,7 @@ class PscubeCloudUrl {
 }
 const URL = PscubeCloudUrl;
 
-/** 初回だけエディタから実行。フォルダ確認→初回同期→5分おきの自動実行を設定する。 */
+/** 初回・間隔変更時にエディタから実行。フォルダ確認→同期→30分おきの自動実行を設定する。 */
 function setupPscubeCloudSync() {
   const properties = PropertiesService.getScriptProperties();
   let folder;
@@ -60,10 +60,11 @@ function setupPscubeCloudSync() {
   properties.setProperty('pscubeCloudFolder', folder.getId());
   const result = syncPscubeCloud();
   const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === PSCUBE_CLOUD_HANDLER);
-  if (!triggers.length) ScriptApp.newTrigger(PSCUBE_CLOUD_HANDLER).timeBased().everyMinutes(5).create();
-  // 設定を何度実行しても、他の関数のトリガーを触らず、自分のトリガーを1個だけにする。
-  for (const trigger of triggers.slice(1)) ScriptApp.deleteTrigger(trigger);
-  console.log('設定完了：5分おきにP’s CUBEを共有へ反映します。残りの未処理ファイル：' + result.pending);
+  // 新しいトリガーを作ってから古いものを外す。作成失敗時には既存の自動実行を残す。
+  ScriptApp.newTrigger(PSCUBE_CLOUD_HANDLER).timeBased().everyMinutes(30).create();
+  // 再設定で旧5分トリガーも置き換える。他の関数のトリガーには触らない。
+  for (const trigger of triggers) ScriptApp.deleteTrigger(trigger);
+  console.log('設定完了：30分おきにP’s CUBEを共有へ反映します。残りの未処理ファイル：' + result.pending);
   return result;
 }
 

@@ -62,8 +62,8 @@ function drive({seed = true} = {}) {
     ScriptApp: {
       getProjectTriggers: () => [...triggers], getOAuthToken: () => 'test-only-token',
       deleteTrigger: trigger => { triggers.splice(triggers.indexOf(trigger), 1); },
-      newTrigger(handler) { return {timeBased() { return this; }, everyMinutes(n) { assert.equal(n, 5); return this; },
-        create() { const trigger = {getHandlerFunction: () => handler}; triggers.push(trigger); return trigger; }}; },
+      newTrigger(handler) { let minutes; return {timeBased() { return this; }, everyMinutes(n) { assert.equal(n, 30); minutes = n; return this; },
+        create() { const trigger = {minutes, getHandlerFunction: () => handler}; triggers.push(trigger); return trigger; }}; },
     },
     Utilities: {DigestAlgorithm: {SHA_256: 'sha256'},
       computeDigest: (_, text) => [...createHash('sha256').update(text).digest()],
@@ -91,6 +91,29 @@ function drive({seed = true} = {}) {
 
 test('配布用Apps Scriptは共通パーサー・ランタイムから再生成した内容と一致する', () => {
   assert.equal(source, buildCloudScript());
+});
+
+test('再設定で旧5分・重複トリガーを30分1個へ置き換え、他の関数と手動実行を保持する', () => {
+  const d = drive();
+  const other = {minutes: 5, getHandlerFunction: () => 'otherJob'};
+  d.triggers.push(other, {minutes: 5, getHandlerFunction: () => 'syncPscubeCloud'},
+    {minutes: 5, getHandlerFunction: () => 'syncPscubeCloud'});
+  d.setup();
+  assert.equal(d.triggers.length, 2); assert.equal(d.triggers[0], other);
+  assert.equal(d.triggers[1].minutes, 30);
+  d.setup(); assert.equal(d.triggers.length, 2); assert.equal(d.triggers[1].minutes, 30);
+  d.add('pscube-backup-android-20261013-090000.json', backup([record(2)]));
+  assert.equal(d.sync().viewerRecords, 2, '手動実行ですぐ反映できる');
+  assert.equal(d.triggers.length, 2, '手動実行ではトリガーを増やさない');
+});
+
+test('新しいトリガーの作成に失敗した場合は旧トリガーを残す', () => {
+  const d = drive();
+  const old = {minutes: 5, getHandlerFunction: () => 'syncPscubeCloud'};
+  d.triggers.push(old);
+  d.context.ScriptApp.newTrigger = () => {throw new Error('trigger quota');};
+  assert.throws(() => d.setup(), /trigger quota/);
+  assert.deepEqual(d.triggers, [old]);
 });
 
 test('Androidのアップロードだけで両方の閲覧ページ用ファイルを更新し、全期間・共有設定・入力を保持する', async () => {
