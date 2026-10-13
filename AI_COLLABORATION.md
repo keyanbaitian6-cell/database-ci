@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 【Android APKビルド完了／インストール待ち】バックアップの保存先を記憶（Codex、2026-10-14）
+
+- 利用者「昨日のAndroid更新も含め、デフォルトのバックアップ保存先をdatabase共有にできるなら変更してビルド、その後インストールコマンド」。最新mainを取得して作業。**インストールは依頼範囲に含めず未実施**。接続端末RFGL146LVVW（SM_A253C）には通常版0.5.36+2026101203、P’s CUBE版0.5.36+2026101204が入っていることを読み取り確認した。
+- AndroidのJSONバックアップを共有画面から `ACTION_CREATE_DOCUMENT` の保存画面へ変更。メルヘン・P’s CUBEの両書き出し経路と非常用書き出しを共通化。**各アプリの初回は利用者がDriveのimakurudev@gmail.com → マイドライブ → database共有を選ぶ**。成功した保存先URIを端末に記憶し、次回の `EXTRA_INITIAL_URI` に指定する。Google Driveがこの指定を受け付けるかはまだ実機未確認。フォルダの強制固定・無操作の自動アップロードではない。詳細と公式資料は `database_android/ANDROID_BACKUP_DESTINATION.md`。
+- コピーはワーカースレッドでストリーム書き込み。元ファイルは残し、ファイル名・JSON形式・保存済み記録を維持。キャンセル／書き込み失敗をバックアップ済みにしない。全期間メルヘンの「保存できた」確認も維持。初期表示用の永続URI権限は直近1件だけ保持する。Driveのアップロード完了はコピー完了とは別なので、確認画面は実際のアップロードを確認してから押す。
+- 昨日の未ビルド変更（幸町のバラエティ1〜2台、🌈過去7日の表示・当日を含める集計等）も今回のソースに含む。先行の関連28件PASS。`check_before_build.sh` **ALL PASSED（52項目）**：PC273件＋P’s CUBE93件、Flutter589件（今回5件追加）、JS45本・224件、analyzeエラー／警告0・info21。実保存ページ検査は `PSCUBE_ARCHIVE_DIR` がないため従来どおりSKIP。同じ検証済み実装から通常版→P’s CUBE版を作成し、versionCodeだけ1401→1402へ上げた。
+- **APK**：`a/work/outputs/android-backup-destination-20261014/database-0.5.37-2026101401.apk`（com.keyan.database_android、94,531,325 bytes、SHA-256 `a2173127da4e9a625d0bc2a5c6fac2b5bc387100da3ea6202a3337f404792956`）、同フォルダ `database-pscube-clone-0.5.37-2026101402.apk`（com.keyan.database_android.pscube、94,531,353 bytes、SHA-256 `71cae26c91837a5e46d193405a187a824efef772fcbbd27e5b6419cfe768f1b8`）。aaptでパッケージ・版、apksignerで署名を確認。両方とも前回APKと同じ証明書 `4332fcb94ea909187733f9e8e3537d428f84d3248e39eeda2baf64387ee7a047`。DEXとarm64 Flutter AOTに保存channelが含まれることも確認。
+- 証跡・各APKのメタデータ・`adb install -r` コマンドは同フォルダの `RELEASE.md`、`release-verification.json`、検証／ビルドログ。**今回APKのインストール・起動・実Google Driveへの保存・初期フォルダの再表示は未確認**。アンインストール・データ消去・実記録操作はしていない。
+- 作業中の追加質問「移動したアンケートの回答先は問題ないか」に、Google Driveスキルでフォーム／回答シートを読み取り確認。両ファイルIDは移動前と同じ、現在の親は「database管理/アンケート」。移動は親変更だけで回答先変更・リンク解除はしておらず、設定し直す必要はない旨をGoogle公式ヘルプとともに回答。移動後の新規回答の着信やテスト回答送信は未確認／未実施。Google設定の追加変更はしていない。
+
 ## 【実Google出力・実表示確認／Drive整理完了】両サイト・両ページ（Codex、2026-10-14）
 
 - 利用者が4本のGSを貼り替えて実行。提示ログ：メルヘンは1ファイル取り込み・556台反映、閲覧21,414件／貯めたAndroid12,961件、初回差分36パーツ・17,323.7KB。P-STATIONは正常完了・1ファイル取り込み、全期間／閲覧とも5,429件、初回差分19パーツ・3,117.9KB。メルヘンのログには従来の `database-backup-android-20261012-064105.json` の48MiB超過による未取り込みが残る。初回は全パーツ作成であり、今後の変更日だけの出力・実通信速度はこのログだけでは実証していない。

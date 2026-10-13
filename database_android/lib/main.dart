@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import 'app_controller.dart';
 import 'android_record_page.dart';
 import 'backup_service.dart';
+import 'backup_destination.dart';
 import 'data_checks.dart';
 import 'daily_net_page.dart';
 import 'date_events.dart';
@@ -96,15 +97,10 @@ class _StartupErrorAppState extends State<StartupErrorApp> {
     try {
       final file = await BackupService().newBackupFile();
       final written = await export(file);
-      final name = file.uri.pathSegments.last;
-      await SharePlus.instance.share(
-        ShareParams(
-          title: name,
-          subject: name,
-          text: 'アプリが起動できないときに書き出したdatabaseのバックアップです。',
-          files: [XFile(file.path, mimeType: 'application/json')],
-        ),
-      );
+      if (!await saveBackup(file)) {
+        _result = '保存を取りやめました。端末の記録は残っています。';
+        return;
+      }
       _result =
           '${written.records}台・イベント${written.events}件・翌日候補の記録${written.candidates}件を書き出しました'
           '。'
@@ -246,7 +242,7 @@ class AppShell extends StatelessWidget {
               PopupMenuItem(
                 value: 'export',
                 child: Text(
-                  'バックアップを共有（書き出し）\n全期間：${_lastExportText(controller.lastFullBackupExport)}',
+                  'バックアップを保存（書き出し）\n全期間：${_lastExportText(controller.lastFullBackupExport)}',
                 ),
               ),
               const PopupMenuItem(value: 'import', child: Text('バックアップを読み込む')),
@@ -364,25 +360,14 @@ Future<void> _shareBackup(
       ),
     );
     final file = exported.file;
-    // Some share targets (e.g. "Save to Drive") name the saved file after
-    // this title/subject rather than the actual file, so keep both equal to
-    // the real filename -- plain ASCII, no half-width/full-width mixing.
-    final fileName = file.uri.pathSegments.last;
-    final shared = await SharePlus.instance.share(
-      ShareParams(
-        title: fileName,
-        subject: fileName,
-        text: 'PC版と共有するdatabaseのバックアップです。Google Driveなどに保存してください。',
-        files: [XFile(file.path, mimeType: 'application/json')],
-      ),
-    );
+    final savedToDestination = await saveBackup(file);
     if (!context.mounted) return;
     final summary =
         '${exported.records}台・イベント${exported.events}件・翌日候補の記録${exported.candidates}件'
         '${exported.unreadable > 0 ? '（読めないデータ${exported.unreadable}件の元の内容を含む救出用ファイル）' : ''}';
-    if (shared.status == ShareResultStatus.dismissed) {
+    if (!savedToDestination) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('共有を取りやめました（$summary）。バックアップ済みにはしていません。')),
+        SnackBar(content: Text('保存を取りやめました（$summary）。バックアップ済みにはしていません。')),
       );
       return;
     }
@@ -404,7 +389,7 @@ Future<void> _shareBackup(
       );
       return;
     }
-    // 共有先を選んでも、Googleドライブなどへ保存できたかはアプリから分から
+    // 保存先へ書き込めても、Googleドライブへのアップロード完了はアプリから分から
     // ない。全期間のバックアップは、保存できたと確かめてから印を付ける
     // （この印の後で、端末から古い記録を片付ける）。
     final saved = exported.full
@@ -448,7 +433,7 @@ Future<void> _shareBackup(
   } catch (error) {
     if (context.mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('バックアップを共有できませんでした：$error')));
+          .showSnackBar(SnackBar(content: Text('バックアップを保存できませんでした：$error')));
     }
   }
 }
@@ -562,6 +547,12 @@ class _BackupExportDialogState extends State<_BackupExportDialog> {
             }),
           ),
           const SizedBox(height: 12),
+          if (widget.allowPscube) ...[
+            const Text(
+              '保存先はGoogle Driveの「database共有」を選んでください。次回は前回の保存場所を優先します。',
+            ),
+            const SizedBox(height: 12),
+          ],
           if (_store == pscubeBackupChoice)
             const Text(
               'P’s CUBEの記録は、メルヘンとは別のファイル（pscube-backup-android-…）で全期間を書き出します。',
@@ -2420,23 +2411,16 @@ Future<void> _sharePscubeBackup(BuildContext context) async {
   try {
     final file = await store.exportViewer();
     final fileName = file.uri.pathSegments.last;
-    final shared = await SharePlus.instance.share(
-      ShareParams(
-        title: fileName,
-        subject: fileName,
-        text: 'PC版と共有するP’s CUBEのバックアップです。Google Driveの「database共有」などに保存してください。',
-        files: [XFile(file.path, mimeType: 'application/json')],
-      ),
-    );
-    if (shared.status != ShareResultStatus.dismissed) {
+    final savedToDestination = await saveBackup(file);
+    if (savedToDestination) {
       await store.markBackedUp();
     }
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            shared.status == ShareResultStatus.dismissed
-                ? '共有を取りやめました。バックアップ済みにはしていません。'
+            !savedToDestination
+                ? '保存を取りやめました。バックアップ済みにはしていません。'
                 : 'P’s CUBEのバックアップを書き出しました（$fileName）。',
           ),
         ),

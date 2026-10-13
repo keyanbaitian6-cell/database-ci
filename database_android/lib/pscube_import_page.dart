@@ -5,12 +5,12 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'auto_capture_state.dart' show autoCaptureScreenNote;
 import 'browser_session.dart';
+import 'backup_destination.dart';
 import 'daily_net_page.dart' show dailyNetLookup, dailyNetNote;
 import 'date_events.dart' show DateEvent;
 import 'event_calendar_page.dart';
@@ -718,8 +718,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     }
   }
 
-  /// バックアップを書き出して共有する（Googleドライブの「database共有」へ保存すると、
-  /// PC版が読み込める）。共有を取りやめたときは「書き出し済み」にしない。
+  /// バックアップを書き出して保存する（Googleドライブの「database共有」へ保存すると、
+  /// PC版が読み込める）。保存を取りやめたときは「書き出し済み」にしない。
   Future<void> _share() async {
     final store = _store;
     if (store == null || _busy) return;
@@ -728,18 +728,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       final file = await store.exportViewer();
       if (!mounted) return;
       final fileName = file.uri.pathSegments.last;
-      final shared = await SharePlus.instance.share(
-        ShareParams(
-          title: fileName,
-          subject: fileName,
-          text:
-              'PC版と共有するP’s CUBEのバックアップです。Google Driveの「database共有」などに保存してください。',
-          files: [XFile(file.path, mimeType: 'application/json')],
-        ),
-      );
+      final savedToDestination = await saveBackup(file);
       if (!mounted) return;
-      if (shared.status == ShareResultStatus.dismissed) {
-        setState(() => _status = '共有を取りやめました。バックアップ済みにはしていません。');
+      if (!savedToDestination) {
+        setState(() => _status = '保存を取りやめました。バックアップ済みにはしていません。');
         return;
       }
       await store.markBackedUp();
@@ -874,7 +866,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           icon: const Icon(Icons.file_open),
         ),
         IconButton(
-          tooltip: 'バックアップを書き出す（共有）',
+          tooltip: 'バックアップを保存（初回はDriveの「database共有」を選択）',
           onPressed: _busy || _store == null ? null : _share,
           icon: const Icon(Icons.ios_share),
         ),
