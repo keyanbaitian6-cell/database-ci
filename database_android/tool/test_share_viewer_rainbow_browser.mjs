@@ -74,6 +74,8 @@ try {
     };
     await open();
     const sheet = page.locator('.sheet');
+    // 幸町の初回は過去7日。従来の表・付け外しも切り替えて確認する。
+    await page.getByRole('button', {name: '表', exact: true}).click();
     const text = async () => (await sheet.innerText()).replace(/\s+/g, ' ');
     const cell = (rack, md, verb) => sheet.getByRole('button', {name: `${rack}番台 ${md}の🌈${verb}`});
     const waitPosts = async (n) => { for (let i = 0; i < 40 && posts.length < n; i++) await page.waitForTimeout(100); };

@@ -20,6 +20,7 @@ import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'variety_idle.dart';
+import 'variety_week.dart';
 import 'viewer_bridge.dart';
 import 'viewer_data.dart';
 import 'viewer_pages.dart';
@@ -988,6 +989,24 @@ class _ViewerHomeState extends State<ViewerHome> {
             ),
             const SizedBox(height: 8),
           ],
+        ],
+        if (store == 'saiwaichou' && day != null) ...[
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => VarietyWeekPage(
+                  data: data,
+                  store: store,
+                  day: day,
+                  currentData: () => _data!,
+                  onDayChanged: (changed) => setState(() => _day = changed),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.view_week_outlined),
+            label: const Text('バラエティ🌈・過去7日（70点以上／🌈なし）'),
+          ),
+          const SizedBox(height: 8),
         ],
         OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(
