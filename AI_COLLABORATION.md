@@ -7,7 +7,7 @@
 - **Android APKは作らない**。利用者「ビルドはまだいい」→「android版のビルドって意味ね」。Androidのコード・試験まで実施し、バージョン更新は保留。既存APKを置き換え・インストールしていない。PC・両Webのビルドと反映は継続。
 - **回帰**：`check_before_build.sh` **ALL PASSED（46項目）**：PC272＋P’s CUBE93件、Flutter580件、analyzeエラー・警告0／既存info20、Webビルド／公開用stageと全39本のJS。初回は候補の方式文字列の旧期待値1件が失敗し、該当テストを更新して全件再実行した。`test_pscube_capture` の実保存ページ検査は `PSCUBE_ARCHIVE_DIR` が無いため従来どおり **SKIP**。最終ログを `a/work/outputs/variety-scope-20261013/checks/` に退避（別作業のgateによる上書きを避ける）。
 - **公開**：database-viewer **`e10b5bc`**、database-share **`26fb3f5`**。両Pagesが今回のcommitでbuilt、公開8ファイルが検証済みstageとSHA-256一致、両seedは404。公開URLで `test_share_viewer_idle_browser.mjs`・`test_viewer_variety_idle_browser.mjs` **PASS**（合成データ・Google通信は模擬、320/393px、幸町の3台機種を除外）。実Google・iPhone実機での操作は未確認。
-- PCはソース `30e085b` の別worktreeで3 EXEをビルドし、凍結ソース／依存DLL／起動／WebView2補助2本／合成データの表とグラフ保存の試験PASS。正本 `database/bin/` へ反映（元DB・Cookie・バックアップを操作せず）。証跡 `a/work/outputs/variety-scope-20261013/pc-snapshot-smoke.json`、公開照合 `release-verification.json`。seedの作業前後SHA-256は一致。
+- PCはソース `30e085b` の別worktreeで3 EXEをビルドし、凍結ソース／依存DLL／起動／WebView2補助2本／合成データの表とグラフ保存の試験PASS。正本 `database/bin/` へ反映（元DB・Cookie・バックアップを操作せず）。反映後の一致検査は、P’s CUBE同梱JS2本のCRLFの差で一度失敗（LF正規化で内容一致を確認）。正本の同じJSを同梱先へコピーし、反映先でも全一致・起動・表とグラフ保存の試験PASS。証跡 `a/work/outputs/variety-scope-20261013/pc-snapshot-smoke.json`・`pc-installed-smoke.json`、公開照合 `release-verification.json`、ビルドログ `pc-build-logs/`。seedの作業前後SHA-256は一致。ビルド用worktreeは検証後に片付けた。
 
 ## 幸町バラエティの「高設定はローテーション」仮説の検討／過去7日を当日含みへ訂正の依頼（Claude、2026-10-13）
 
