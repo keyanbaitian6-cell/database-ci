@@ -14,13 +14,23 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 SOURCE = HERE.parent / 'share_viewer'
-FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs'}
+TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json'}
+FILES = TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
 SCRIPT_ID = re.compile(rb'AKfyc[A-Za-z0-9_-]{20,}|/macros/s/[A-Za-z0-9_-]{20,}')
 
 # ページが読むファイルの参照（どれも1か所だけ）。公開のたびに中身から作った版 ?v= を付ける。
 # iPhoneのSafariは前の版の app.mjs・data.mjs を覚えたまま使い、公開しても古い画面のままになった
 # （2026-10-10、利用者「強かった機種5選がゲーム数ランキング10に切り替わってない」）。
-REFERENCES = (('index.html', 'src="./app.mjs"'), ('app.mjs', "from './data.mjs'"), ('data.mjs', "from './net.mjs'"))
+REFERENCES = (
+    ('index.html', 'src="./app.mjs"'),
+    ('app.mjs', "from './data.mjs'"),
+    ('data.mjs', "from './net.mjs'"),
+    ('index.html', 'href="./apple-touch-icon.png"'),
+    ('index.html', 'href="./favicon.png"'),
+    ('index.html', 'href="./manifest.json"'),
+    ('manifest.json', '"./icon-192.png"'),
+    ('manifest.json', '"./icon-512.png"'),
+)
 
 
 def version_of(files):
@@ -73,8 +83,11 @@ def main(target):
         shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
     version = version_of(FILES)
     for name in sorted(FILES):
-        text = (SOURCE / name).read_text(encoding='utf-8')
-        (target / name).write_text(stamped(name, text, version), encoding='utf-8', newline='\n')
+        if name in TEXT_FILES:
+            text = (SOURCE / name).read_text(encoding='utf-8')
+            (target / name).write_text(stamped(name, text, version), encoding='utf-8', newline='\n')
+        else:
+            shutil.copyfile(SOURCE / name, target / name)
     (target / '.nojekyll').write_text('', encoding='utf-8')
     (target / 'README.md').write_text(README, encoding='utf-8')
     print(f'OK: {target} に閲覧専用ページを用意しました（{len(FILES)}ファイル、版 {version}、記録の文字列 {len(probes)} 種・スクリプトのIDで確認、該当なし）。')
