@@ -1004,7 +1004,7 @@ class _ViewerHomeState extends State<ViewerHome> {
               ),
             ),
             icon: const Icon(Icons.view_week_outlined),
-            label: const Text('バラエティの候補（7日間🌈なし）'),
+            label: const Text('バラエティ🌈・過去7日（70点以上／🌈なし）'),
           ),
           const SizedBox(height: 8),
         ],

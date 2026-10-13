@@ -112,78 +112,113 @@ class _VarietyWeekPageState extends State<VarietyWeekPage> {
     if (mounted) setState(() => _data = widget.currentData?.call() ?? _data);
   }
 
-  Widget _rack(VarietyWeekRack x, {required bool candidate}) {
-    final best = x.high.isEmpty ? null : x.high.first;
-    return Card(
-      key: ValueKey('week-${candidate ? 'candidate' : 'marked'}-${x.current.rack}'),
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        title: Text('${x.current.rack}番　${displayMachineName(x.current.machine)}',
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-        subtitle: Padding(padding: const EdgeInsets.only(top: 6), child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(best == null ? '70点以上の記録なし' : '70点以上あり',
-              style: TextStyle(fontSize: 14, fontWeight: best == null ? FontWeight.normal : FontWeight.w700,
-                color: best == null ? AppColors.ash : AppColors.linkBlue)),
-            if (best != null) Text('最高 ${best.score.total!.toStringAsFixed(1)}点'
-              '（${shortDayLabel(best.record.day)}・${best.score.provisional ? '暫定' : '参考'}）',
-              style: const TextStyle(fontSize: 13, color: AppColors.carbon)),
-            const SizedBox(height: 5),
-            Text(x.records.length == 7 ? '7日分の記録あり' : '記録${x.records.length}/7日・未取得${7 - x.records.length}日',
-              style: const TextStyle(fontSize: 12, color: AppColors.ash)),
-            if (!candidate) Text('🌈の記録 ${x.rainbowDays}日', style: const TextStyle(fontSize: 12, color: AppColors.ash)),
-            if (x.records.any((r) => r.machine != x.current.machine))
-              const Text('入れ替え前の機種を含む履歴', style: TextStyle(fontSize: 12, color: AppColors.ash)),
-          ],
-        )),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => _open(x.openRecord),
+  Widget _group(
+    String title,
+    List<VarietyWeekRack> rows, {
+    bool high = false,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        '$title（${rows.length}台）',
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
       ),
-    );
-  }
+      const SizedBox(height: 8),
+      if (rows.isEmpty)
+        const Text('該当する台はありません', style: TextStyle(color: AppColors.ash))
+      else
+        Card(
+          child: Column(
+            children: [
+              for (final x in rows)
+                ListTile(
+                  key: ValueKey(
+                    'week-${high ? 'high' : 'none'}-${x.current.rack}',
+                  ),
+                  title: Text(
+                    '${x.current.rack}番　${displayMachineName(x.current.machine)}',
+                  ),
+                  subtitle: Text(
+                    [
+                      if (high) ...[
+                        '最高：${shortDayLabel(x.high.first.record.day)} '
+                            '${x.high.first.score.provisional ? '暫定' : '参考'} '
+                            '${x.high.first.score.total!.toStringAsFixed(1)}点'
+                            '${x.high.first.record.rainbow ? rainbowMark : ''}',
+                        '70点以上 ${x.high.length}日',
+                      ],
+                      '記録${x.records.length}/7日・期間内の$rainbowMark ${x.rainbowDays}日',
+                      if (x.records.length < 7) '未取得の日は判定できません',
+                      if (x.records.any((r) => r.machine != x.current.machine))
+                        '入れ替え前の機種を含む台番号の履歴',
+                    ].join('\n'),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _open(x.openRecord),
+                ),
+            ],
+          ),
+        ),
+      const SizedBox(height: 20),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
     final days = varietyWeekDays(_day);
     final rows = varietyWeekRacks(_data.records, widget.store, _day);
-    final candidates = rows.where((x) => x.records.isNotEmpty && x.rainbowDays == 0).toList();
-    final marked = rows.where((x) => x.rainbowDays > 0).toList();
     final unknown = rows.where((x) => x.records.isEmpty).length;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('バラエティの候補'),
+        title: const Text('バラエティ🌈・過去7日'),
         bottom: ViewerDateBar(
-          days: viewerDays(_data.records, widget.store), day: _day,
+          days: viewerDays(_data.records, widget.store),
+          day: _day,
           eventFor: (d) => _data.dateEventFor(widget.store, d)?.name,
           event: _data.dateEventFor(widget.store, _day)?.name,
-          onChanged: (d) { if (d != null) { setState(() => _day = d); widget.onDayChanged?.call(d); } },
+          onChanged: (d) {
+            if (d != null) {
+              setState(() => _day = d);
+              widget.onDayChanged?.call(d);
+            }
+          },
         ),
       ),
-      body: SafeArea(child: ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('7日間🌈なしの候補', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        Text('${days.first}〜${days.last}', style: const TextStyle(fontSize: 15, color: AppColors.ash)),
-        const SizedBox(height: 8),
-        const Text('幸町・1台機種。前日まで7日間に🌈の記録がない台です。'
-          '70点以上の日がある台も候補に残し、点数を添えます。',
-          style: TextStyle(fontSize: 13, color: AppColors.ash)),
-        const SizedBox(height: 16),
-        Text('候補 ${candidates.length}台', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 8),
-        if (candidates.isEmpty) const Text('候補はありません', style: TextStyle(color: AppColors.ash)),
-        for (final x in candidates) _rack(x, candidate: true),
-        if (candidates.any((x) => x.records.length < 7))
-          const Padding(padding: EdgeInsets.only(bottom: 12), child: Text('未取得の日の🌈はわかりません。', style: TextStyle(fontSize: 12, color: AppColors.ash))),
-        ExpansionTile(
-          key: ValueKey('week-marked-$_day'), tilePadding: EdgeInsets.zero,
-          title: Text('🌈が付いた台（${marked.length}台）', style: const TextStyle(fontSize: 15)),
-          children: [for (final x in marked) _rack(x, candidate: false)],
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              '${days.first}〜${days.last}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '幸町の記録のそろった最新の日の1台機種。選んだ日の前日まで7日間を台番号で比較します。'
+              '70点以上と🌈なしは別々に表示し、両方に当てはまる台は両方に出ます。'
+              '🌈なしは取得済みの記録で判定します。採点は既存の実績点（暫定を含む）です。',
+              style: TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+            const SizedBox(height: 16),
+            _group(
+              '70点以上になった台',
+              rows.where((x) => x.high.isNotEmpty).toList(),
+              high: true,
+            ),
+            _group(
+              '🌈がない台',
+              rows
+                  .where((x) => x.records.isNotEmpty && x.rainbowDays == 0)
+                  .toList(),
+            ),
+            if (unknown > 0)
+              Text(
+                '期間内の記録なし：$unknown台（🌈の有無はわかりません）',
+                style: const TextStyle(color: AppColors.ash),
+              ),
+          ],
         ),
-        if (unknown > 0) Padding(padding: const EdgeInsets.only(top: 12), child:
-          Text('記録がない台：$unknown台（候補に含めていません）', style: const TextStyle(fontSize: 12, color: AppColors.ash))),
-      ])),
+      ),
     );
   }
 }
