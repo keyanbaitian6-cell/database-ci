@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 幸町の通常バラエティを1〜2台機種へ、全版コード・PC/両Web反映（Codex、2026-10-13）
+
+- 利用者「幸町のバラエティの扱いについて、3台機種は省いていいかな。ちょっと見づらくなる原因」。適用先への回答は「PC・Androidを含む全版」。通常バラエティだけ幸町1〜2台機種に変更。3台機種は通常機種として残し、保存済み記録・表・グラフは保持。他店は1〜3台、幸町の🌈一覧・🌈なし候補は従来の1台機種限定。仕様 `VARIETY_SCOPE.md`。
+- PC/Dart/共有の上限判定と説明文、機種一覧・過去の記録・翌日候補・回っていない台・候補保存対象を統一。幸町バラエティの候補履歴だけ方式を `2026-10-13-saiwaichou-variety-2` として旧母集団と区別（既存履歴は保持、通常機種の検証方式は維持）。ソース **`30e085b`** をmainへpush済み。他チャットで進行中の本日🌈等の未コミット変更を含めず、重複ファイルは今回の差分だけ選択してコミットした。
+- **Android APKは作らない**。利用者「ビルドはまだいい」→「android版のビルドって意味ね」。Androidのコード・試験まで実施し、バージョン更新は保留。既存APKを置き換え・インストールしていない。PC・両Webのビルドと反映は継続。
+- **回帰**：`check_before_build.sh` **ALL PASSED（46項目）**：PC272＋P’s CUBE93件、Flutter580件、analyzeエラー・警告0／既存info20、Webビルド／公開用stageと全39本のJS。初回は候補の方式文字列の旧期待値1件が失敗し、該当テストを更新して全件再実行した。`test_pscube_capture` の実保存ページ検査は `PSCUBE_ARCHIVE_DIR` が無いため従来どおり **SKIP**。最終ログを `a/work/outputs/variety-scope-20261013/checks/` に退避（別作業のgateによる上書きを避ける）。
+- **公開**：database-viewer **`e10b5bc`**、database-share **`26fb3f5`**。両Pagesが今回のcommitでbuilt、公開8ファイルが検証済みstageとSHA-256一致、両seedは404。公開URLで `test_share_viewer_idle_browser.mjs`・`test_viewer_variety_idle_browser.mjs` **PASS**（合成データ・Google通信は模擬、320/393px、幸町の3台機種を除外）。実Google・iPhone実機での操作は未確認。
+- PCはソース `30e085b` の別worktreeで3 EXEをビルドし、凍結ソース／依存DLL／起動／WebView2補助2本／合成データの表とグラフ保存の試験PASS。正本 `database/bin/` へ反映（元DB・Cookie・バックアップを操作せず）。証跡 `a/work/outputs/variety-scope-20261013/pc-snapshot-smoke.json`、公開照合 `release-verification.json`。seedの作業前後SHA-256は一致。
+
 ## 幸町バラエティの「高設定はローテーション」仮説の検討／過去7日を当日含みへ訂正の依頼（Claude、2026-10-13）
 
 - 利用者「幸町のバラエティに高設定が入るのはバラエティの中でのローテーションで、数台ずつ入れているのではと仮定」「claudeの分析の目線から高得点台や差枚好調台がどのようになっているかを検討してもらいたい」。分析のみ（コード・採点・保存データは変更なし）。
