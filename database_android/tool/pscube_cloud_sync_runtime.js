@@ -76,14 +76,20 @@ function syncPscubeCloud() {
     if (folder.isTrashed()) throw new Error('共有フォルダがごみ箱にあります。');
     const backupFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_BACKUP);
     const viewerFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_VIEWER);
-    const inputs = [];
-    const files = folder.getFiles();
-    while (files.hasNext()) {
-      const file = files.next(), name = file.getName();
-      if (!file.isTrashed() && /^pscube-backup-(?:auto|(?:android|pc)-\d{8}-\d{6})\.json$/.test(name)) {
-        inputs.push({file: file, id: file.getId(), version: pscubeCloudVersion(file)});
+    const inputsById = new Map();
+    const sources = new Map([folder, DriveApp.getRootFolder()].map(f => [f.getId(), f]));
+    for (const sourceFolder of sources.values()) {
+      // Drive側で名前を絞る。マイドライブにある無関係のファイルは列挙・読取しない。
+      // Folder.searchFiles はDrive API v2形式の title を使う。
+      const files = sourceFolder.searchFiles("trashed = false and title contains 'pscube-backup-'");
+      while (files.hasNext()) {
+        const file = files.next(), name = file.getName(), fileId = file.getId();
+        if (!file.isTrashed() && !inputsById.has(fileId) && /^pscube-backup-(?:auto|(?:android|pc)-\d{8}-\d{6})\.json$/.test(name)) {
+          inputsById.set(fileId, {file: file, id: fileId, version: pscubeCloudVersion(file)});
+        }
       }
     }
+    const inputs = [...inputsById.values()];
     inputs.sort((a, b) => a.file.getLastUpdated().getTime() - b.file.getLastUpdated().getTime() || a.id.localeCompare(b.id));
     const inputVersion = pscubeCloudDigest(inputs.map(i => [i.id, i.version]));
     const backupVersion = backupFile ? pscubeCloudVersion(backupFile) : '';
@@ -97,7 +103,7 @@ function syncPscubeCloud() {
     let data = backupFile ? pscubeCloudRead(backupFile) : {...emptyData(), rack_captures: []};
     const versions = {...(data.cloud_sync && data.cloud_sync.inputs || {})};
     const pending = inputs.filter(i => versions[i.id] !== i.version);
-    if (!backupFile && !pending.length) throw new Error('共有フォルダにAndroidまたはPCのP’s CUBEバックアップがありません。先にDriveへ保存してください。');
+    if (!backupFile && !pending.length) throw new Error('共有フォルダとマイドライブ直下にAndroidまたはPCのP’s CUBEバックアップがありません。先にDriveへ保存してください。');
     const selected = [];
     const startedAt = Date.now();
     let readBytes = 0;

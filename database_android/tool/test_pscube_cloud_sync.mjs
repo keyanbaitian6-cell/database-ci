@@ -27,10 +27,15 @@ function drive({seed = true} = {}) {
   const files = [], writes = [], logs = [], triggers = [], properties = new Map();
   let apiStatus = 200, apiName = null, locked = false;
   const iterator = list => { let i = 0; return {hasNext: () => i < list.length, next: () => list[i++]}; };
-  const root = {id: 'root', getId: () => 'root', isTrashed: () => false};
+  const searchIn = (parent, query) => {
+    assert.equal(query, "trashed = false and title contains 'pscube-backup-'");
+    return iterator(files.filter(f => f.parent === parent && !f.trashed && f.name.includes('pscube-backup-')));
+  };
+  const root = {id: 'root', getId: () => 'root', isTrashed: () => false, searchFiles: query => searchIn(root, query)};
   const folder = {
     id: 'shared', getId: () => 'shared', isTrashed: () => false,
     getFiles: () => iterator(files.filter(f => f.parent === folder)),
+    searchFiles: query => searchIn(folder, query),
     getFilesByName: name => iterator(files.filter(f => f.parent === folder && f.name === name)),
     createFile(blob) {
       const file = add(blob.name, blob.text);
@@ -51,6 +56,7 @@ function drive({seed = true} = {}) {
     console: {log: text => logs.push(text)},
     DriveApp: {
       getFilesByName: name => iterator(files.filter(f => f.name === name)),
+      getRootFolder: () => root,
       getFolderById: id => { assert.equal(id, 'shared'); return folder; },
       getFileById: id => { const file = files.find(f => f.id === id); assert.ok(file); return file; },
     },
@@ -196,11 +202,44 @@ test('壊れたJSON・不正な台・機種・印・閲覧用偽装ファイル�
 
 test('別フォルダ・ブラウザの部分バックアップ・ごみ箱・別サイトのファイルを拾わない', () => {
   const d = drive();
-  d.add('pscube-backup-android-20261013-090000.json', backup([record(90)]), d.root);
+  d.add('pscube-backup-android-20261013-090000.json', backup([record(90)]), {id: 'another-folder'});
   d.add('pscube-backup-browser-20261013-090000.json', backup([record(91)]));
   d.add('pscube-backup-android-20261013-100000.json', backup([record(92)])).trashed = true;
   d.add('database-backup-android-20261013-090000.json', '{broken'); d.setup();
   assert.equal(d.doc('pscube-viewer-drive.json').records.length, 1);
+});
+
+test('マイドライブ直下と共有フォルダのバックアップを統合し、出力は共有フォルダだけに書く', () => {
+  const d = drive();
+  const latest = record(1, '2026-10-12', {games: 4500, observed_at: '2026-10-13T02:00:00+09:00'});
+  const rootFile = d.add('pscube-backup-android-20261013-100621.json', backup([latest, record(2)]), d.root);
+  const original = rootFile.text;
+  d.add('pscube-backup-android-20261013-110000.json', backup([record(3)]));
+  d.setup();
+  const full = d.doc('pscube-backup-cloud.json');
+  assert.equal(full.records.length, 4);
+  assert.equal(full.records.find(r => r.rack === 1 && r.day === '2026-10-12').games, 4500);
+  assert.equal(rootFile.text, original); assert.equal(rootFile.parent, d.root);
+  assert.equal(d.files.filter(f => f.parent === d.root).length, 1, '出力をマイドライブへ作らない');
+  assert.equal(d.sync().changed, false);
+});
+
+test('同じファイルを直下と共有フォルダの間で移動しても再処理・再出力しない', () => {
+  const d = drive();
+  const file = d.add('pscube-backup-android-20261013-100621.json', backup([record(2)]), d.root);
+  d.setup(); const writes = d.writes.length, reads = file.reads;
+  file.parent = d.folder; assert.equal(d.sync().changed, false);
+  file.parent = d.root; assert.equal(d.sync().changed, false);
+  assert.equal(d.writes.length, writes); assert.equal(file.reads, reads);
+});
+
+test('同じIDが両方の検索結果に出ても一度だけ読み、同内容の別コピーも台を増殖させない', () => {
+  const d = drive();
+  const file = d.add('pscube-backup-android-20261013-100621.json', backup([record(2)]));
+  d.root.searchFiles = () => { let done = false; return {hasNext: () => !done, next: () => {done = true; return file;}}; };
+  d.setup(); assert.equal(file.reads, 1);
+  d.add('pscube-backup-android-20261013-110000.json', backup([record(2)]));
+  d.sync(); assert.equal(d.doc('pscube-viewer-drive.json').records.length, 2);
 });
 
 test('初期設定で複数の共有フォルダ・同名出力の重複・バックアップ不在を検出する', () => {
