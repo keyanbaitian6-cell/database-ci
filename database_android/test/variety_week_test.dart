@@ -90,7 +90,7 @@ void main() {
       reason: '既存の🌈表と同じ台番号で見る',
     );
   });
-  testWidgets('320/393pxで2一覧・対象期間・不足記録を表示、固定帯の日付で再計算', (tester) async {
+  testWidgets('320/393pxで候補が先頭、70点以上の台も残し、🌈ありは折りたたみ', (tester) async {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
@@ -108,12 +108,19 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('2026-10-06〜2026-10-12'), findsOneWidget);
-      expect(find.text('70点以上になった台（2台）'), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('🌈がない台（4台）'), 300);
-      await tester.scrollUntilVisible(
-        find.text('期間内の記録なし：1台（🌈の有無はわかりません）'),
-        300,
-      );
+      expect(find.text('候補 4台'), findsOneWidget);
+      expect(find.byKey(const ValueKey('week-candidate-1102')), findsOneWidget);
+      expect(find.byKey(const ValueKey('week-candidate-1101')), findsNothing);
+      expect(find.text('70点以上あり'), findsOneWidget);
+      expect(find.text('70点以上になった台（2台）'), findsNothing);
+      await tester.scrollUntilVisible(find.text('🌈が付いた台（1台）'), 300);
+      await tester.ensureVisible(find.text('🌈が付いた台（1台）'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('week-marked-1101')), findsNothing);
+      await tester.tap(find.text('🌈が付いた台（1台）'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('week-marked-1101')), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('記録がない台：1台（候補に含めていません）'), 300);
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip('前の記録日'));
       await tester.pumpAndSettle();

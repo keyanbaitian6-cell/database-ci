@@ -75,7 +75,7 @@ try {
     await open();
     const sheet = page.locator('.sheet');
     // 幸町の初回は過去7日。従来の表・付け外しも切り替えて確認する。
-    await page.getByRole('button', {name: '表', exact: true}).click();
+    await page.getByRole('button', {name: '🌈の記録', exact: true}).click();
     const text = async () => (await sheet.innerText()).replace(/\s+/g, ' ');
     const cell = (rack, md, verb) => sheet.getByRole('button', {name: `${rack}番台 ${md}の🌈${verb}`});
     const waitPosts = async (n) => { for (let i = 0; i < 40 && posts.length < n; i++) await page.waitForTimeout(100); };
@@ -109,7 +109,8 @@ try {
     assert.equal(await page.locator('select[data-sheet-day]').inputValue(), '2026-10-10');
 
     // 空き順：一度も無い 1203 が上。覚える。
-    await page.getByRole('button', {name: '空き順', exact: true}).click();
+    await sheet.getByLabel('並べ方', {exact: true}).selectOption('gap');
+    assert.equal(await page.getByRole('button', {name: '空き順', exact: true}).count(), 0);
     assert.deepEqual(await sheet.locator('.list .rack').allInnerTexts(), ['1203番', '1201番🌈', '1202番🌈']);
     assert.match(await text(), /1203番 新バラエティ なし/);
     // 「🌈 外す」の文字は白（2026-10-12、ボタンの大きさの名前が一覧の小さい文字の指定とぶつかり、灰色で薄く見えていた）。
@@ -131,9 +132,11 @@ try {
     await page.reload();
     await page.waitForSelector('.grid');
     await open();
-    assert.equal(await page.getByRole('button', {name: '空き順', exact: true}).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.getByRole('button', {name: '🌈の記録', exact: true}).getAttribute('aria-pressed'), 'true');
+    assert.equal(await sheet.getByLabel('並べ方', {exact: true}).inputValue(), 'gap');
     assert.match(await text(), /1203番🌈/);
-    await page.getByRole('button', {name: '表', exact: true}).click();
+    await page.getByRole('button', {name: '🌈の記録', exact: true}).click();
+    await sheet.getByLabel('並べ方', {exact: true}).selectOption('grid');
     assert.ok(await cell(1203, '10/10', 'を外す').isVisible());
     await page.getByRole('button', {name: '閉じる'}).click();
     assert.deepEqual(errors, []);
