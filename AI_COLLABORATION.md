@@ -1,12 +1,12 @@
 # database AI共同作業メモ
 
-## 【実装・検証完了／公開承認待ち】database共有の写真アイコン（Codex、2026-10-13）
+## 【公開完了】database共有の写真アイコン（Codex、2026-10-13）
 
 - 利用者指定の添付写真を `design/share_icon/source.png` へそのまま保存（元画像とSHA-256一致）。`tool/generate_share_icons.dart` で構図を変えず32／180／192／512pxへ縮小し、共有ページにfavicon・apple-touch-icon・manifestを追加した。起動は従来のブラウザ表示を維持。Android・自分用閲覧ページのアイコンは変更していない。
 - `tool/stage_share_viewer.py` は9ファイルを許可し、PNGをバイナリのままコピーする。HTML／manifestの画像参照にも共通の内容由来の版を付ける。原画像は公開ステージに含めない。`test_share_icon_assets.mjs` の2件で寸法・参照・版・バイナリ保持を検証。
 - `check_before_build.sh` は **ALL PASSED（50項目）**。PC273件＋P’s CUBE93件、Flutter584件、analyzeはエラー・警告0／info21、JS43本・212件。実保存ページの検査は `PSCUBE_ARCHIVE_DIR` がないため従来どおりSKIP。共有ページの画面試験前にmanifestのdisplayをbrowserへ確定し、共有stageを再生成してから共有関連試験を実施。最終公開stageの版は `7bf569ceac9e`。
 - 証跡と公開準備用cloneは `a/work/outputs/share-icon-20261013/`（`checks/`、`checks-summary.json`、`public-share/`）。192pxの画像を目視確認。実記録・Google・端末保存領域は操作していない。
-- **公開は未実施**。公開リポジトリへのpushが自動承認審査で拒否された（添付写真を公開先へ送信する明示的承認がないとの理由）。利用者に具体的な公開先と画像を示して承認を求める。承認後は正本と公開cloneの最新状態を確認し、公開してPagesの成功・9ファイルのSHA-256一致・seedと原画像が404であることを `verify-public.mjs` で検査する。iPhone実機のアイコン更新も未確認。
+- **公開**：利用者から「元写真は公開せず、アイコン用画像だけ公開」の承認を得て `database-share` **`1363516`** を公開。Pages run **38394871077** はsuccess、同commitでbuilt。`verify-public.mjs` で公開9ファイルのSHA-256一致・seedと原画像が404であることを確認（`release-verification.json`）。公開URLで共有ページのブラウザ試験PASS（320／393／1280px、合成データ・模擬Google、`public-browser.log`）。原写真は公開リポジトリに含めていない。iPhone実機のアイコン更新は未確認。
 
 ## 【実装・試験完了／Google初回設定待ち】メルヘン（幸町・長町南）のPC不要同期（Codex、2026-10-13）
 
