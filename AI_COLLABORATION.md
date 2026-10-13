@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 幸町バラエティの7日間の候補を「選んだ日を含む7日間」へ、閲覧・共有へ公開（Claude、2026-10-13）
+
+- 利用者「表示がデータ取り込んだ当日分までの7日分から翌日の候補を出したいので、当日を含む7日間と訂正したい」。例：10/13選択 → 10/7〜10/13（従来は10/6〜10/12）。選んだ日の🌈も分類に入る。候補条件・70点判定・採点・保存データは変更なし。仕様 `RAINBOW.md` 冒頭。
+- 変更：`variety_week.dart` の `varietyWeekDays`（`i = 6..0`）と説明文、`share_viewer/data.mjs` の `varietyWeek`（`windowDays(day)`）、`app.mjs` の説明文。両版で同じ規則。
+- 試験：`variety_week_test.dart`・`test_variety_week.mjs`・`test_variety_week_browser.mjs` を新しい期間へ。選んだ日（10/13）の🌈が入る・8日前（10/6）の🌈が入らない・10/12選択では10/13の印が入らない・月年境界（2027-01-03 → 12/28〜1/3）・記録0日の台・入れ替えをまたぐ台番号。別チャットの `rainbow_today_test.dart` の期間の期待値も更新。最初の全体試験で私が書いた「記録がない台」が説明文「🌈の記録がない台です」にも一致して失敗したため「記録がない台：」に直した（試験の誤り。コードの不具合ではない）。
+- 進め方：同じファイルを別チャットが編集中だったため、`origin/main` から別worktreeで作業し、別チャットの `bf7096c`（本日🌈）の上に載せ直した（`variety_week.dart` の1か所が衝突し、上流版に同じ3か所の修正を当て直した）。本来のフォルダの未コミット変更（`main.dart`・`pubspec.yaml`）には触れていない。
+- **`check_before_build.sh` ALL PASSED（48項目）**：PC273＋P’s CUBE93件、Flutter584件、analyzeエラー・警告0／info21、Webビルドと公開用stage、JS全本。`test_pscube_capture` の実保存ページ検査は従来どおり `PSCUBE_ARCHIVE_DIR` がないためSKIP。
+- ソース **`eef6c99`**。**公開**：database-viewer **`59bf289`**、database-share **`b82f9bf`**（試験したstageをそのまま）。両Pagesがbuilt、公開8ファイルがSHA-256一致、両seedは404。公開URLで `test_variety_week_browser.mjs` **PASS**（合成データ・模擬Google、320/393px）、画面画像も目視。実Google・iPhone実機の操作は未確認。APK・PCは対象外（ビルドなし）。
+- 証跡 `a/work/outputs/week7-include-day-20261013/`：`release-verification.json`・`public-browser.log`・`check_before_build.log`・`checks/`・`shots/`（合成データ）。worktreeは片付け済み。
+
 ## 幸町バラエティの「本日」：取り込み前にも🌈を記録、閲覧・共有へ公開（Codex、2026-10-13）
 
 - 利用者「データを取り込む前の当日稼働中にもつけられるようにしたい」「本日という項目もつけて各機種に印をつけられるように」「稼働中に確定をみたりして付け忘れるのを避けたい」。対象は「閲覧ページと共有ページの両方」。公開と、正本mainへのコミット・pushも明示的に許可された。
