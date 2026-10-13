@@ -96,7 +96,9 @@ function drive({seed = true} = {}) {
 }
 
 test('配布用Apps Scriptは共通パーサー・ランタイムから再生成した内容と一致する', () => {
-  assert.equal(source, buildCloudScript());
+  // Windowsのgitは .gs を CRLF で書き出すので、改行をそろえてから比べる（中身の違いは今までどおり検出する）。
+  const lf = (text) => text.split('\r\n').join('\n');
+  assert.equal(lf(source), lf(buildCloudScript()));
 });
 
 test('再設定で旧5分・重複トリガーを30分1個へ置き換え、他の関数と手動実行を保持する', () => {
