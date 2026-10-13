@@ -1,6 +1,17 @@
 # database AI共同作業メモ
 
-## 【引き継ぎ・作業途中】メルヘン（幸町・長町南）のPC不要同期（Claude→チャッピー、2026-10-13 夜）
+## 【実装・試験完了／Google初回設定待ち】メルヘン（幸町・長町南）のPC不要同期（Codex、2026-10-13）
+
+- 下の引き継ぎの残作業を完了。配布用 `database_android/tool/meruhen_cloud_sync.gs` の未試験表示を外し、手順書 `database_android/MERUHEN_CLOUD_SYNC.md` と模擬Drive試験 `database_android/tool/test_meruhen_cloud_sync.mjs`（21件）を追加した。
+- 同じ数値・同じ差枚を再取得した場合も `captured_at`・`jo_captured_at` の新しい時刻を保持するよう修正。保持しないと、その後で届いた中間時刻の異なる値へ巻き戻ることを試験で再現し、修正後PASS。新しい数値に差し替えるときの古いグラフの除去と、null／undefinedの扱いも整理。
+- 不正な日付で他の正常な台まで処理できなくなる点を修正（PC同様にその行を飛ばす、`previous_start` の整数検査も追加）。蓄積ファイル内の不正な行は黙って捨てず停止。閲覧・蓄積の容量上限を読み出し前にも検査し、出力容量は両方を保存前に検査する。
+- PCが処理中に閲覧用を書き直した場合、保存直前の版検査で止め、次回に足し直す。PCとは共通ロックがないため、最後の版検査と書き込みの間の同時更新を完全に防ぐ保証はない（手順書に記載）。60日より前の入力を足して除くだけの回では、閲覧用を無駄に更新しない。
+- 試験：537番台の15725枚・両店の台／新しい日・取得時刻の競合・PC再出力後の再反映・変更なしの読み書き省略・失敗入力の隔離と更新後の再試行・一時的なDrive障害・書き込み再試行と復旧・非表示機種／「+」・60日境界・トリガー／ロック／容量上限・共有 `meruhenRecords` とPC `read_backup_file(allow_viewer=True)`・閲覧用1行目の `recordsStart` 互換を確認。実データそのものではなく、報告された537番台の値を含む模擬記録による試験。
+- `check_before_build.sh` は **ALL PASSED（49項目）**。PC 273件・P’s CUBE関連93件・Flutter 584件、analyzeはエラー／警告0・info21、JS全42スイート・210件。検証用Webビルド・記録を除いたステージでの画面試験を含む。APK・PCの配布ビルドとWeb公開はしていない。
+- **利用者が次に行うこと**：「database共有」があるアカウントで新しいApps Scriptプロジェクトを作る → `meruhen_cloud_sync.gs` 全文を貼って保存 → `setupMeruhenCloudSync` を1回実行。既存の閲覧用・共有用・P’s CUBE用プロジェクトには貼らない。以後はAndroidの「共有」書き出しをマイドライブ直下または「database共有」直下へ保存し、30分の自動実行を待つ（急ぐなら `syncMeruhenCloud`）。状態は `showMeruhenCloudStatus`。
+- Googleアカウントへの設置・認可・実トリガー実行・iPhone／共有ページの実データ反映は**未確認**。実Googleのファイルはこの作業では読み書きしていない。PC内部DBは更新しない設計で、帰宅後は従来どおり元のAndroidバックアップをPCへ読み込む。PCで「PCの値」を選んでも、閲覧用ではAndroidの取得時刻が新しければAndroidの数値を採用することを手順書に明記した。
+
+## 【引き継ぎ履歴・上の項で完了】メルヘン（幸町・長町南）のPC不要同期（Claude→チャッピー、2026-10-13 夜）
 
 - 利用者「P-stationだけだったの！？ メルヘンもやってください」→ 途中で「そろそろ使用量限界くるからチャッピーへ引き継ぎたい」。今日のPC不要同期（`pscube_cloud_sync.gs`）はP’s CUBEだけで、メルヘンのAndroidバックアップは共有・iPhoneに反映されない（直前の項）。
 - **作成途中のファイル**：`database_android/tool/meruhen_cloud_sync.gs`（未試験。先頭に「貼らない」と明記）。P’s CUBE版と同じ作り（別のApps Scriptプロジェクト、`setupMeruhenCloudSync`／30分おきの `syncMeruhenCloud`／`showMeruhenCloudStatus`、入力ごとの失敗記録・版が変わるまで読み直さない・一時的な読み出し障害は次回・書き出しはDrive APIのメディア更新で3回まで再試行・48MiB上限・ロック）。

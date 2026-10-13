@@ -1,4 +1,4 @@
-// ※作成途中・未試験（2026-10-13 Claude→チャッピーへ引き継ぎ）。試験と手順書ができるまで、Apps Scriptへ貼らない。
+// 模擬Drive・既存読み込みとの互換試験済み。Googleでの初回設定・実機反映は MERUHEN_CLOUD_SYNC.md に沿って確認する。
 // メルヘン（幸町・長町南）PC不要同期（2026-10-13 利用者「メルヘンもやってください」）。
 // 初回: 別のApps Scriptプロジェクトに全文を貼り、setupMeruhenCloudSync を実行。手順は MERUHEN_CLOUD_SYNC.md。
 // 既存の閲覧用・共有用スクリプト、P’s CUBEの自動反映プロジェクトは変更不要。ウェブ公開も不要。
@@ -35,7 +35,7 @@ const MERUHEN_CLOUD_WRITE_TRIES = 3;
 
 /** Driveの一時的な障害（読み出しの例外）。壊れたファイルとして記録せず、次の実行でやり直す。 */
 class MeruhenCloudTransient extends Error {}
-/** 入力ではなく、同期そのものを止める失敗（設定・閲覧用ファイル・出力）。既存の出力は書き換えない。 */
+/** 入力ではなく、同期そのものを止める失敗（設定・閲覧用ファイル・出力）。保存済みの蓄積から次回再試行する。 */
 class MeruhenCloudStop extends Error {
   constructor(kind, message) { super(message); this.kind = kind; }
 }
@@ -176,6 +176,9 @@ function meruhenCloudRun() {
     for (const key of Object.keys(versions)) if (!liveIds.has(key)) { delete versions[key]; storeChanged = true; }
 
     // 閲覧用ファイル（PCの書き出し、または前回この同期で足し込んだもの）へ足し込む。
+    if (viewerFile.getSize() > MERUHEN_CLOUD_MAX_BYTES) {
+      throw new MeruhenCloudStop('viewer', MERUHEN_CLOUD_VIEWER + ' が48MiBを超えます。書き換えずに止めました。');
+    }
     let viewerText;
     try { viewerText = viewerFile.getBlob().getDataAsString('UTF-8'); }
     catch (error) {
@@ -185,12 +188,16 @@ function meruhenCloudRun() {
     let viewer;
     try { viewer = JSON.parse(viewerText.replace(/^﻿/, '')); }
     catch (error) { throw new MeruhenCloudStop('viewer', MERUHEN_CLOUD_VIEWER + ' を読めません（書き出し途中の可能性）。次の自動実行でやり直します。'); }
-    if (!viewer || viewer.format !== 'database-backup' || viewer.source !== 'pc-viewer' || !Array.isArray(viewer.records)) {
+    if (!viewer || viewer.format !== 'database-backup' || viewer.version !== 1 || viewer.source !== 'pc-viewer' ||
+        !Array.isArray(viewer.records) || !viewer.records.every(meruhenValidRecord)) {
       throw new MeruhenCloudStop('viewer', MERUHEN_CLOUD_VIEWER + ' がPC版の閲覧用ファイルの形ではありません。書き換えずに止めました。');
     }
     const merged = meruhenApply(viewer, [...records.values()]);
     // 期間（60日）より古いAndroidの記録は貯めない。
     for (const [key, r] of records) if (r.day < merged.cutoff) { records.delete(key); storeChanged = true; }
+    // 両方の出力を容量検査してから保存を始める。
+    const outputText = merged.changed ? meruhenViewerText(viewer, merged.records, merged.changed) : null;
+    let savedViewer = viewerFile, viewerBytes = outputText == null ? viewerFile.getSize() : meruhenCheckSize(outputText, MERUHEN_CLOUD_VIEWER);
     if (storeChanged || !storeFile) {
       const storeText = JSON.stringify({format: 'database-android-cloud', version: 1, exported_at: new Date().toISOString(),
         note: 'メルヘンのPC不要同期が貯めたAndroidの記録（画像なし）。PCのバックアップとしては読み込まない。',
@@ -202,11 +209,12 @@ function meruhenCloudRun() {
     } else {
       meruhenSave(props, null, failures, failedVersions);
     }
-    let savedViewer = viewerFile, viewerBytes = viewerFile.getSize();
+    // PCの書き出しは別プロセス・別ロック。読み始めてから変わった版を上書きしない。
+    if (viewerVersion !== meruhenVersion(viewerFile)) {
+      throw new MeruhenCloudStop('transient', MERUHEN_CLOUD_VIEWER + ' が処理中に変更されました。次の自動実行で新しいPCの記録へ足し直します。');
+    }
     if (merged.changed) {
-      const text = meruhenViewerText(viewer, merged.records, merged.changed);
-      viewerBytes = meruhenCheckSize(text, MERUHEN_CLOUD_VIEWER);
-      savedViewer = meruhenWrite(folder, viewerFile, MERUHEN_CLOUD_VIEWER, text);
+      savedViewer = meruhenWrite(folder, viewerFile, MERUHEN_CLOUD_VIEWER, outputText);
     }
     props.setProperty('meruhenCloudViewer', meruhenVersion(savedViewer));
     if (!remaining) props.setProperty('meruhenCloudInputs', inputVersion);
@@ -272,23 +280,31 @@ function meruhenReadBackup(file, size) {
 }
 
 function meruhenReadStore(file) {
+  if (file.getSize() > MERUHEN_CLOUD_MAX_BYTES) throw new Error('48MiBを超えています');
   let text;
   try { text = file.getBlob().getDataAsString('UTF-8'); }
   catch (error) { throw new MeruhenCloudTransient(String(error && error.message || error).slice(0, 120)); }
   const raw = JSON.parse(text);
-  if (!raw || raw.format !== 'database-android-cloud' || !Array.isArray(raw.records) || !raw.inputs || typeof raw.inputs !== 'object') {
+  if (!raw || raw.format !== 'database-android-cloud' || raw.version !== 1 || !Array.isArray(raw.records) ||
+      !raw.records.every(meruhenValidRecord) || !raw.inputs || typeof raw.inputs !== 'object' || Array.isArray(raw.inputs) ||
+      !Object.values(raw.inputs).every(v => typeof v === 'string')) {
     throw new Error('形式が不正です');
   }
-  return {inputs: raw.inputs, records: raw.records.filter(meruhenValidRecord)};
+  return {inputs: raw.inputs, records: raw.records};
 }
 
+function meruhenValidDay(day) {
+  if (typeof day !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(day) || day.startsWith('0000-')) return false;
+  const time = Date.parse(day + 'T00:00:00Z');
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === day;
+}
 function meruhenValidRecord(r) {
   const whole = x => Number.isSafeInteger(x) && x >= 0;
   return !!r && typeof r === 'object' && r.kind_code === 21 && MERUHEN_STORES.includes(r.store) &&
     typeof r.machine === 'string' && r.machine.trim() !== '' && whole(r.rack) && r.rack > 0 &&
-    ['games', 'bb', 'rb'].every(k => whole(r[k])) && (r.max_hold == null || whole(r.max_hold)) &&
+    ['games', 'bb', 'rb'].every(k => whole(r[k])) && ['max_hold', 'previous_start'].every(k => r[k] == null || whole(r[k])) &&
     (r.confirmed_setting == null || MERUHEN_SETTINGS.includes(r.confirmed_setting)) &&
-    typeof r.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.day) && new Date(r.day + 'T00:00:00Z').toISOString().slice(0, 10) === r.day;
+    meruhenValidDay(r.day);
 }
 
 /** 閲覧用の項目だけ（グラフの画像は外し、曲線は残す。PCの export_viewer と同じ）＋取得時刻。 */
@@ -330,23 +346,28 @@ const meruhenHasGraph = r => !!(r.graph_measurement && typeof r.graph_measuremen
 function meruhenPick(base, other) {
   let out = base;
   const set = (patch) => { out = out === base ? {...base, ...patch} : {...out, ...patch}; };
+  const mine = meruhenTime(base.captured_at), theirs = meruhenTime(other.captured_at);
   if (!meruhenSameNumbers(base, other)) {
-    const mine = meruhenTime(base.captured_at), theirs = meruhenTime(other.captured_at);
     if (theirs != null && (mine == null || theirs > mine)) {
-      const patch = {};
-      for (const key of [...MERUHEN_NUMBERS, 'captured_at', 'graph_measurement']) patch[key] = other[key];
-      set(patch);
-      for (const key of [...MERUHEN_NUMBERS, 'graph_measurement']) if (out[key] === undefined) { const copy = {...out}; delete copy[key]; out = copy; }
+      out = {...out};
+      for (const key of [...MERUHEN_NUMBERS, 'captured_at', 'graph_measurement']) {
+        if (other[key] === undefined) delete out[key];
+        else out[key] = other[key];
+      }
     }
   } else {
     if (!meruhenHasGraph(base) && meruhenHasGraph(other)) set({graph_measurement: other.graph_measurement});
     if (base.max_hold == null && other.max_hold != null) set({max_hold: other.max_hold});
+    // 同じ数値を新しく観測した場合も時刻を残す。後で届いた中間時刻の数値に巻き戻さない。
+    if (theirs != null && (mine == null || theirs > mine)) set({captured_at: other.captured_at});
   }
   if (base.confirmed_setting == null && other.confirmed_setting != null) set({confirmed_setting: other.confirmed_setting});
   if (Number.isSafeInteger(other.jo_net)) {
     const mine = meruhenTime(base.jo_captured_at), theirs = meruhenTime(other.jo_captured_at);
-    if (!Number.isSafeInteger(base.jo_net) || (base.jo_net !== other.jo_net && theirs != null && (mine == null || theirs > mine))) {
-      set({jo_net: other.jo_net, ...(other.jo_captured_at ? {jo_captured_at: other.jo_captured_at} : {})});
+    if (!Number.isSafeInteger(base.jo_net) || (theirs != null && (mine == null || theirs > mine))) {
+      set({jo_net: other.jo_net});
+      if (other.jo_captured_at) set({jo_captured_at: other.jo_captured_at});
+      else if ('jo_captured_at' in out) { out = {...out}; delete out.jo_captured_at; }
     }
   }
   return out;
@@ -360,28 +381,39 @@ function meruhenPick(base, other) {
 function meruhenApply(viewer, android) {
   const byKey = new Map();
   for (const r of viewer.records) if (r && typeof r === 'object') byKey.set(meruhenKey(r), r);
-  let changed = 0;
   for (const a of android) {
     const key = meruhenKey(a), local = byKey.get(key);
-    if (!local) { byKey.set(key, meruhenViewerRecord(a)); changed++; continue; }
+    if (!local) { byKey.set(key, meruhenViewerRecord(a)); continue; }
     let next = meruhenPick(local, {...a, jo_captured_at: undefined});
     if (Number.isSafeInteger(a.jo_net) && next.jo_net !== a.jo_net) next = {...next, jo_net: a.jo_net};
     if (next !== local) {
       const out = meruhenViewerRecord(next);
-      if (JSON.stringify(out) !== JSON.stringify(meruhenViewerRecord(local))) { byKey.set(key, out); changed++; }
+      if (JSON.stringify(out) !== JSON.stringify(meruhenViewerRecord(local))) byKey.set(key, out);
     }
   }
   const latest = [...byKey.values()].reduce((day, r) => typeof r.day === 'string' && r.day > day ? r.day : day, '');
   const cutoff = latest ? new Date(Date.parse(latest + 'T00:00:00Z') - (MERUHEN_VIEWER_DAYS - 1) * 86400000).toISOString().slice(0, 10) : '';
   const records = [...byKey.values()].filter(r => !cutoff || !(typeof r.day === 'string') || r.day >= cutoff);
-  if (records.length !== byKey.size) changed += byKey.size - records.length;
   // PCと同じ並び（日付・店舗・台番号）。
   records.sort((a, b) => String(a.day).localeCompare(String(b.day)) || String(a.store).localeCompare(String(b.store)) || (a.rack || 0) - (b.rack || 0));
+  // 範囲外の古い入力を足してから除いただけでは、閲覧用を更新しない。
+  const previous = new Map(viewer.records.map(r => [meruhenKey(r), JSON.stringify(meruhenViewerRecord(r))]));
+  let changed = 0;
+  for (const r of records) {
+    const key = meruhenKey(r);
+    if (previous.get(key) !== JSON.stringify(meruhenViewerRecord(r))) changed++;
+    previous.delete(key);
+  }
+  changed += previous.size;
   return {records: records, changed: changed, cutoff: cutoff};
 }
 function meruhenViewerRecord(r) {
   const out = {};
-  for (const key of MERUHEN_VIEWER_KEYS) if (r[key] !== undefined && r[key] !== null || (key in r && r[key] === null && key !== 'jo_net')) out[key] = r[key];
+  for (const key of MERUHEN_VIEWER_KEYS) {
+    const value = r[key];
+    if (value === undefined || (key === 'jo_net' && !Number.isSafeInteger(value))) continue;
+    out[key] = value;
+  }
   return out;
 }
 
@@ -397,7 +429,7 @@ function meruhenViewerText(viewer, records, changed) {
 
 function meruhenStatusLines(status, failures, failedCount = failures.length) {
   const label = {ok: '正常に完了', partial: '一部失敗（ほかは反映済み）', unchanged: '変更なし',
-    'unchanged-partial': '変更なし（取り込めないファイルあり）', error: '停止（既存の出力はそのまま）'}[status.result] || 'まだ実行していません';
+    'unchanged-partial': '変更なし（取り込めないファイルあり）', error: '停止（次の実行で再試行）'}[status.result] || 'まだ実行していません';
   const lines = ['状態：' + label + (status.at ? '（' + status.at + '）' : '') + (status.message ? '・' + status.message : '')];
   if (status.viewer_records != null) {
     lines.push('閲覧用 ' + status.viewer_records + '件・' + ((status.viewer_bytes || 0) / 1048576).toFixed(1) + 'MB（上限48MB）／貯めたAndroidの記録 ' + status.android_records + '件');
