@@ -22,7 +22,32 @@ const backup = (records, patch = {}) => ({...emptyData(), kind: 'backup', source
   machines: [machine], records, rack_captures: records.filter(r => r.graph?.kind === 'daily').map(recordKey), ...patch});
 const plain = value => JSON.parse(JSON.stringify(value));
 
-function drive({seed = true} = {}) {
+test('P-STATION差分：1日だけ再出力し、PC用全期間バックアップを維持、失敗後も復旧する', () => {
+  const d = drive({incremental: true});
+  d.replace(d.files.find(f => f.name === 'pscube-backup-auto.json'), backup([record(10, '2026-10-11'), record(11)]));
+  d.setup();
+  const baseFile = d.files.find(f => f.name === 'pscube-viewer-drive.json');
+  const baseText = baseFile.text;
+  const get = () => plain(d.context.vpGet(baseFile, 'pscube', {}));
+  assert.equal(d.status().incremental.parts, 2);
+  const first = get(); assert.equal(validateData(first).records.length, 2);
+  d.add('pscube-backup-android-20261013-220000.json', backup([record(11, '2026-10-12', {games: 4500, observed_at: '2026-10-13T22:00:00+09:00'})]));
+  d.sync(); assert.equal(d.status().incremental.parts, 1); assert.equal(baseFile.text, baseText);
+  assert.equal(get().records.find(r => r.rack === 11).games, 4500);
+  assert.equal(d.doc('pscube-backup-cloud.json').records.find(r => r.rack === 11).games, 4500);
+  const writes = d.writes.length; d.sync(); assert.equal(d.writes.length, writes);
+  const index = d.files.find(f => f.name === 'database-viewer-parts-pscube.json'), old = index.text;
+  d.add('pscube-backup-android-20261013-230000.json', backup([record(12)]));
+  d.failApi(403, index.name); assert.throws(() => d.sync(), /更新に失敗/); assert.equal(index.text, old);
+  d.failApi(200); d.sync(); assert.equal(get().records.length, 3);
+  d.setMode(false); d.sync(); assert.equal(get(), null);
+  assert.equal(JSON.parse(baseFile.text).records.length, 3);
+  d.setMode(true); d.sync(); assert.equal(get().records.length, 3);
+  baseFile.id = 'replacement-id';
+  assert.equal(get(), null); d.sync(); assert.equal(get().records.length, 3);
+});
+
+function drive({seed = true, incremental = false} = {}) {
   let clock = 1000, serial = 0;
   const files = [], writes = [], logs = [], triggers = [], properties = new Map();
   // Driveへの問い合わせ回数（ファイルごとの読み出し）。入力が増えたときの負荷を確かめる。
@@ -77,9 +102,9 @@ function drive({seed = true} = {}) {
       newTrigger(handler) { let minutes; return {timeBased() { return this; }, everyMinutes(n) { assert.equal(n, 30); minutes = n; return this; },
         create() { const trigger = {minutes, getHandlerFunction: () => handler}; triggers.push(trigger); return trigger; }}; },
     },
-    Utilities: {DigestAlgorithm: {SHA_256: 'sha256'},
+    Utilities: {Charset: {UTF_8: 'UTF-8'}, DigestAlgorithm: {SHA_256: 'sha256'},
       computeDigest: (_, text) => [...createHash('sha256').update(text).digest()],
-      newBlob: (text, mime, name) => ({text, mime, name}), sleep: ms => { flaky.sleeps.push(ms); }},
+      newBlob: (text, mime, name) => ({text, mime, name, getBytes: () => [...Buffer.from(text)]}), sleep: ms => { flaky.sleeps.push(ms); }},
     UrlFetchApp: {fetch(url, options) {
       assert.match(url, /^https:\/\/www\.googleapis\.com\/upload\/drive\/v3\/files\/f\d+\?uploadType=media$/);
       assert.equal(options.method, 'patch'); assert.equal(options.headers.Authorization, 'Bearer test-only-token');
@@ -92,7 +117,7 @@ function drive({seed = true} = {}) {
       return {getResponseCode: () => status};
     }},
   };
-  vm.createContext(context); vm.runInContext(source, context);
+  vm.createContext(context); vm.runInContext(source.replace('const PSCUBE_INCREMENTAL_VIEWER = false;', 'let PSCUBE_INCREMENTAL_VIEWER = ' + incremental + ';'), context);
   const doc = name => JSON.parse(files.find(f => !f.trashed && f.parent === folder && f.name === name).text);
   const replace = (file, value) => { file.text = typeof value === 'string' ? value : JSON.stringify(value); file.updated = clock++; };
   if (seed) {
@@ -103,6 +128,7 @@ function drive({seed = true} = {}) {
   const status = () => JSON.parse(properties.get('pscubeCloudStatus') ?? '{}');
   const failures = () => Object.values(JSON.parse(properties.get('pscubeCloudErrors') ?? '{}'));
   return {context, files, writes, logs, triggers, properties, folder, root, add, doc, replace, calls, status, failures,
+    setMode: value => vm.runInContext('PSCUBE_INCREMENTAL_VIEWER = ' + value, context),
     failApi: (status, name = null) => { apiStatus = status; apiName = name; }, flaky, setup: () => context.setupPscubeCloudSync(), sync: () => context.syncPscubeCloud()};
 }
 

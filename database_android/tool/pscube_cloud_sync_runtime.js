@@ -5,6 +5,8 @@
 const PSCUBE_FOLDER_ID = '';
 const PSCUBE_CLOUD_BACKUP = 'pscube-backup-cloud.json';
 const PSCUBE_CLOUD_VIEWER = 'pscube-viewer-drive.json';
+// 両ページ用Apps Scriptの更新後にtrueへ変更（VIEWER_INCREMENTAL_SYNC.md）。
+const PSCUBE_INCREMENTAL_VIEWER = false;
 const PSCUBE_CLOUD_BATCH = 10;
 const PSCUBE_CLOUD_MAX_BYTES = 48 * 1024 * 1024;
 const PSCUBE_CLOUD_HANDLER = 'syncPscubeCloud';
@@ -113,6 +115,12 @@ function showPscubeCloudStatus() {
   return {status: status, failures: failures};
 }
 
+/** 日別ファイルが消えた・壊れた場合だけ実行。元バックアップは変更しない。 */
+function rebuildPscubeViewerParts() {
+  PropertiesService.getScriptProperties().deleteProperty('pscubeCloudInputs');
+  return syncPscubeCloud();
+}
+
 function pscubeCloudRun() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return {busy: true, changed: false, pending: 0, failed: [], newFailures: []};
@@ -138,10 +146,12 @@ function pscubeCloudRun() {
     const inputVersion = pscubeCloudDigest(inputs.map(i => [i.id, i.version]));
     const backupVersion = backupFile ? pscubeCloudVersion(backupFile) : '';
     const viewerVersion = viewerFile ? pscubeCloudVersion(viewerFile) : '';
+    const partsVersion = PSCUBE_INCREMENTAL_VIEWER ? vpCheckpoint(folder, 'pscube', viewerFile) : 'legacy';
     // 変化がなければ、巨大なJSONを毎回読むことも、書き直すこともしない。
     if (backupFile && viewerFile && props.getProperty('pscubeCloudInputs') === inputVersion &&
-        props.getProperty('pscubeCloudBackup') === backupVersion && props.getProperty('pscubeCloudViewer') === viewerVersion) {
+        props.getProperty('pscubeCloudBackup') === backupVersion && props.getProperty('pscubeCloudViewer') === viewerVersion && props.getProperty('pscubeCloudParts') === partsVersion) {
       const failed = Object.values(failures), failedCount = Object.keys(failedVersions).length;
+      if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props);
       const status = {...previous, at: new Date().toISOString(), result: failedCount ? 'unchanged-partial' : 'unchanged',
         message: '変更なし', inputs: inputs.length, failed: failedCount, transient: 0, elapsed_ms: Date.now() - startedAt,
         backup_bytes: backupFile.getSize(), viewer_bytes: viewerFile.getSize()};
@@ -219,7 +229,7 @@ function pscubeCloudRun() {
     // 閲覧用は、新しい記録があるとき・無いとき・PCなどが書き直したとき・前回の閲覧用の更新が失敗して全期間だけ
     // 新しくなっているとき（確定した版と違う）に作り直す。
     const writeViewer = writeBackup || !viewerFile || props.getProperty('pscubeCloudViewer') !== viewerVersion ||
-      props.getProperty('pscubeCloudBackup') !== backupVersion;
+      props.getProperty('pscubeCloudBackup') !== backupVersion || props.getProperty('pscubeCloudParts') !== partsVersion;
     const exportedAt = new Date().toISOString();
     const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt, cloud_sync: {version: 1, inputs: versions}};
     const viewer = pscubeCloudViewer(backup, exportedAt);
@@ -232,7 +242,14 @@ function pscubeCloudRun() {
     // バックアップを先に確定。閲覧用の更新が失敗しても次回このバックアップから復旧できる。
     if (writeBackup) savedBackup = pscubeCloudWrite(folder, backupFile, PSCUBE_CLOUD_BACKUP, backupText);
     // PCが古い閲覧用ファイルを書き直した場合も、統合済みの内容から再生成する。
-    if (writeViewer) savedViewer = pscubeCloudWrite(folder, viewerFile, PSCUBE_CLOUD_VIEWER, viewerText);
+    let incremental = null;
+    if (PSCUBE_INCREMENTAL_VIEWER) {
+      // 初回の旧形式ファイルだけは作り、PC書き出しとの世代照合に使う。
+      if (!savedViewer) savedViewer = pscubeCloudWrite(folder, null, PSCUBE_CLOUD_VIEWER, JSON.stringify(viewer));
+      incremental = vpPublish(folder, savedViewer, 'pscube', viewer, pscubeCloudWrite, viewerFile ? viewerFile.getId() + ':' + viewerVersion : undefined);
+    } else if (writeViewer) savedViewer = pscubeCloudWrite(folder, viewerFile, PSCUBE_CLOUD_VIEWER, viewerText);
+    props.setProperty('pscubeCloudParts', PSCUBE_INCREMENTAL_VIEWER ? vpCheckpoint(folder, 'pscube', savedViewer) : 'legacy');
+    if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props);
     props.setProperties({pscubeCloudBackup: pscubeCloudVersion(savedBackup), pscubeCloudViewer: pscubeCloudVersion(savedViewer)});
     // 取り込めなかった入力は版ごと記録済みなので、残りが無ければチェックポイントを確定する。未取り込みの入力（次回分・
     // 読み込み中に変わった入力・一時的な障害で読めなかった入力）が残る間は確定しない。
@@ -245,7 +262,7 @@ function pscubeCloudRun() {
       processed: selected.length, failed: failedCount, new_failures: newFailures.length, remaining: remaining,
       changed_while_reading: changedWhileReading.length, transient: transient.length, inputs: inputs.length,
       records: backup.records.length, viewer_records: viewer.records.length,
-      backup_bytes: backupBytes, viewer_bytes: viewerBytes, elapsed_ms: Date.now() - startedAt};
+      incremental: incremental, backup_bytes: backupBytes, viewer_bytes: viewerBytes, elapsed_ms: Date.now() - startedAt};
     status.warnings = pscubeCloudWarnings(status);
     pscubeCloudSave(props, status, failures, failedVersions);
     for (const line of pscubeCloudStatusLines(status, failed, failedCount)) console.log(line);
@@ -309,6 +326,8 @@ function pscubeCloudStatusLines(status, failures, failedCount = failures.length)
     lines.push('全期間 ' + status.records + '件・' + ((status.backup_bytes || 0) / 1048576).toFixed(1) + 'MB／閲覧用 ' +
       status.viewer_records + '件・' + ((status.viewer_bytes || 0) / 1048576).toFixed(1) + 'MB（上限48MB）');
   }
+  if (status.incremental) lines.push((['ok', 'partial'].includes(status.result) ? '今回' : '前回確定時') +
+    'の差分出力：' + status.incremental.parts + 'パーツ・' + (status.incremental.bytes / 1024).toFixed(1) + 'KB');
   if (status.remaining) lines.push('次回に回したファイル：' + status.remaining);
   if (failedCount > failures.length) lines.push('取り込めないファイル：全部で' + failedCount + '件（理由は新しい' + failures.length + '件）');
   for (const f of failures) lines.push('取り込めないファイル：' + f.name + '（' + f.reason + '、確認 ' + f.checked_at + '）');

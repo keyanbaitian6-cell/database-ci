@@ -8,6 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import {meruhenRecords} from '../../share_viewer/data.mjs';
+import {fetchViewerParts} from '../web/viewer_parts.mjs';
 
 const source = await fs.readFile(new URL('./meruhen_cloud_sync.gs', import.meta.url), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -19,7 +20,47 @@ function record(rack, day = '2026-10-02', patch = {}) {
 const backup = (records, patch = {}) => ({format: 'database-backup', version: 1, source: 'android', records, ...patch});
 const viewer = records => backup(records, {source: 'pc-viewer', days: 60, exported_at: '2026-10-13T09:00:00+09:00', date_events: []});
 
-function drive({seed = true} = {}) {
+test('メルヘン差分：2日初回・1日更新・Web再取得・変更なし・PC再出力・出力失敗から復旧', async () => {
+  const d = drive({incremental: true});
+  const base = d.files[0], original = base.text;
+  d.add('database-backup-android.json', backup([record(538, '2026-10-03')]));
+  d.setup();
+  const get = params => plain(d.context.vpGet(base, 'meruhen', params));
+  const cache = new Map(), storage = {get: key => cache.get(key), set: (key, value) => cache.set(key, value)};
+  let requests = [];
+  const read = url => { const params = Object.fromEntries(new URL(url).searchParams); requests.push(params); return get(params); };
+  const first = get({check: '1'}).parts;
+  const doc = await fetchViewerParts('https://example.test/exec', 'meruhen', first, read, storage);
+  assert.equal(doc.records.length, 2); assert.equal(base.text, original);
+  assert.equal(d.status().incremental.parts, 2);
+  const writes = d.writes.length, reads = d.calls.read;
+  d.sync(); assert.equal(d.writes.length, writes); assert.equal(d.calls.read, reads);
+  d.add('database-backup-android-20261013-220000.json', backup([record(537, '2026-10-02', {jo_net: 15725})]));
+  d.sync(); assert.equal(d.status().incremental.parts, 1); assert.equal(base.text, original);
+  const second = get({check: '1'}).parts;
+  requests = [];
+  const updated = await fetchViewerParts('https://example.test/exec', 'meruhen', second, read, storage);
+  assert.equal(requests.length, 1); assert.equal(requests[0].parts.split(',').length, 1);
+  assert.equal(updated.records.find(r => r.rack === 537).jo_net, 15725);
+  assert.deepEqual(meruhenRecords(updated), meruhenRecords(get({})));
+  assert.throws(() => get({parts: first.parts[0].hash, revision: first.revision}), /更新/);
+  assert.throws(() => get({parts: 'private-id', revision: second.revision}), /指定/);
+  const index = d.files.find(f => f.name === 'database-viewer-parts-meruhen.json'), saved = index.text;
+  d.add('database-backup-android-20261013-230000.json', backup([record(539, '2026-10-03')]));
+  d.failApi(403, index.name); assert.throws(() => d.sync(), /更新に失敗/); assert.equal(index.text, saved);
+  assert.equal(get({}).records.length, 2);
+  d.failApi(200); d.sync(); assert.equal(get({}).records.length, 3);
+  d.replace(base, viewer([record(600, '2026-10-04')]));
+  assert.equal(get({check: '1'}), null); // PCの新しい全件版を一旦使う。
+  d.sync(); assert.equal(get({}).records.length, 4);
+  d.setMode(false); d.sync(); assert.equal(get({}), null);
+  assert.equal(JSON.parse(base.text).records.length, 4);
+  d.setMode(true); d.sync(); assert.equal(get({}).records.length, 4);
+  base.id = 'replacement-id'; // Driveで同サイズ・同更新日時の別IDへ差し替えられた場合。
+  assert.equal(get({}), null); d.sync(); assert.equal(get({}).records.length, 4);
+});
+
+function drive({seed = true, incremental = false} = {}) {
   let clock = 1000, serial = 0;
   const files = [], writes = [], logs = [], triggers = [], properties = new Map();
   // Driveへの問い合わせ回数（ファイルごとの読み出し）。入力が増えたときの負荷を確かめる。
@@ -74,9 +115,9 @@ function drive({seed = true} = {}) {
       newTrigger(handler) { let minutes; return {timeBased() { return this; }, everyMinutes(n) { assert.equal(n, 30); minutes = n; return this; },
         create() { const trigger = {minutes, getHandlerFunction: () => handler}; triggers.push(trigger); return trigger; }}; },
     },
-    Utilities: {DigestAlgorithm: {SHA_256: 'sha256'},
+    Utilities: {Charset: {UTF_8: 'UTF-8'}, DigestAlgorithm: {SHA_256: 'sha256'},
       computeDigest: (_, text) => [...createHash('sha256').update(text).digest()],
-      newBlob: (text, mime, name) => ({text, mime, name}), sleep: ms => { flaky.sleeps.push(ms); }},
+      newBlob: (text, mime, name) => ({text, mime, name, getBytes: () => [...Buffer.from(text)]}), sleep: ms => { flaky.sleeps.push(ms); }},
     UrlFetchApp: {fetch(url, options) {
       assert.match(url, /^https:\/\/www\.googleapis\.com\/upload\/drive\/v3\/files\/f\d+\?uploadType=media$/);
       assert.equal(options.method, 'patch'); assert.equal(options.headers.Authorization, 'Bearer test-only-token');
@@ -89,13 +130,14 @@ function drive({seed = true} = {}) {
       return {getResponseCode: () => status};
     }},
   };
-  vm.createContext(context); vm.runInContext(source, context);
+  vm.createContext(context); vm.runInContext(source.replace('const MERUHEN_INCREMENTAL_VIEWER = false;', 'let MERUHEN_INCREMENTAL_VIEWER = ' + incremental + ';'), context);
   const doc = name => JSON.parse(files.find(f => !f.trashed && f.parent === folder && f.name === name).text);
   const replace = (file, value) => { file.text = typeof value === 'string' ? value : JSON.stringify(value); file.updated = clock++; };
   if (seed) add('database-viewer.json', viewer([record(537, '2026-10-02', {games: 1624, bb: 70, rb: 77, captured_at: '2026-10-02T22:00:00'})]));
   const status = () => JSON.parse(properties.get('meruhenCloudStatus') ?? '{}');
   const failures = () => Object.values(JSON.parse(properties.get('meruhenCloudErrors') ?? '{}'));
   return {context, files, writes, logs, triggers, properties, folder, root, add, doc, replace, calls, status, failures,
+    setMode: value => vm.runInContext('MERUHEN_INCREMENTAL_VIEWER = ' + value, context),
     failApi: (status, name = null) => { apiStatus = status; apiName = name; }, flaky, setup: () => context.setupMeruhenCloudSync(), sync: () => context.syncMeruhenCloud()};
 }
 

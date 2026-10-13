@@ -14,7 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 SOURCE = HERE.parent / 'share_viewer'
-TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json'}
+TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs'}
 FILES = TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
 SCRIPT_ID = re.compile(rb'AKfyc[A-Za-z0-9_-]{20,}|/macros/s/[A-Za-z0-9_-]{20,}')
 
@@ -24,6 +24,7 @@ SCRIPT_ID = re.compile(rb'AKfyc[A-Za-z0-9_-]{20,}|/macros/s/[A-Za-z0-9_-]{20,}')
 REFERENCES = (
     ('index.html', 'src="./app.mjs"'),
     ('app.mjs', "from './data.mjs'"),
+    ('app.mjs', "from './viewer_parts.mjs'"),
     ('data.mjs', "from './net.mjs'"),
     ('index.html', 'href="./apple-touch-icon.png"'),
     ('index.html', 'href="./favicon.png"'),
@@ -57,7 +58,7 @@ README = """# database カレンダー（閲覧専用）
 - このリポジトリには、ページのファイルだけが入っています。記録のデータや接続先は入っていません。
 - 記録は、受け取ったリンクの接続先（読むだけのGoogle Apps Script）から、開いた端末のブラウザが直接読みます。
 - 書き込むのは🌈（確定が出た台の印）だけです。押したときに、その接続先へ送ります。記録やイベントは書き換えません。
-- 端末には接続先と表示の選択（店舗・回っていない台の期間とゲーム数・バラエティ🌈の並べ方）と、付けた🌈だけを覚えます。
+- 端末には接続先と表示の選択（店舗・回っていない台の期間とゲーム数・バラエティ🌈の並べ方）と、付けた🌈を覚えます。差分読み込みでは接続先ごとに記録のキャッシュも保存します。ブラウザが削除した場合は次回取り直します。
 """
 
 

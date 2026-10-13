@@ -48,7 +48,8 @@ const EVENT_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d
 
 function doGet(e) {
   const key = (e && e.parameter && e.parameter.file) || '';
-  if (key === '' && !(e && e.parameter && e.parameter.check)) logAccess(e && e.parameter && e.parameter.u);
+  if (key === '' && !(e && e.parameter && e.parameter.parts) &&
+      (!(e && e.parameter && e.parameter.check) || e.parameter.access === '1')) logAccess(e && e.parameter && e.parameter.u);
   if (key === 'rainbow') {
     const file = latestFile(RAINBOW_FILE.name);
     return respond(file ? file.getBlob().getDataAsString('UTF-8') : JSON.stringify(rainbowDocument([])));
@@ -64,6 +65,10 @@ function doGet(e) {
   if (!latest) {
     return respond(JSON.stringify({ error: fileName + ' がGoogleドライブに見つかりません。' }));
   }
+  try {
+    const parts = vpGet(latest, key === 'pscube' ? 'pscube' : 'meruhen', (e && e.parameter) || {});
+    if (parts) return respond(JSON.stringify(parts));
+  } catch (error) { return respond(JSON.stringify({error: String(error.message || error)})); }
   // ?check=1 のときは、中身を読まず「更新の目印」（更新時刻とサイズ）だけを返す（自分用と同じ）。
   if (e && e.parameter && e.parameter.check) {
     return respond(JSON.stringify({
@@ -176,4 +181,104 @@ function latestFile(name) {
 
 function respond(body) {
   return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
+}
+// BEGIN GENERATED VIEWER PARTS
+// 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
+const VP_FORMAT = 'database-viewer-parts';
+const VP_MAX_BYTES = 48 * 1024 * 1024;
+const VP_PART_BYTES = 1024 * 1024;
+const VP_BATCH = 8;
+function vpCanonical(value) {
+  if (Array.isArray(value)) return '[' + value.map(vpCanonical).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort()
+    .filter(k => value[k] !== undefined).map(k => JSON.stringify(k) + ':' + vpCanonical(value[k])).join(',') + '}';
+  return JSON.stringify(value);
+}
+function vpManifestName(site) { return 'database-viewer-parts-' + site + '.json'; }
+function vpPartName(site, hash) { return 'database-viewer-part-' + site + '-' + hash + '.json'; }
+function vpValidManifest(m, site) {
+  const fail = () => { throw new Error('閲覧用の更新一覧が不正です。'); };
+  if (!m || m.format !== VP_FORMAT || m.version !== 1 || m.site !== site ||
+      !['meruhen', 'pscube'].includes(site) || !/^[a-f0-9]{64}$/.test(m.revision) ||
+      !m.header || typeof m.header !== 'object' || Array.isArray(m.header) || 'records' in m.header ||
+      m.header.version !== 1 || m.header.format !== (site === 'meruhen' ? 'database-backup' : 'pscube-viewer') ||
+      typeof m.header.exported_at !== 'string' || !Array.isArray(m.parts) || m.parts.length > 1024) fail();
+  const seen = new Set(); let bytes = 0, count = 0;
+  for (const p of m.parts) {
+    if (!p || !/^[a-f0-9]{64}$/.test(p.hash) || seen.has(p.hash) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(p.day) || !Number.isSafeInteger(p.count) || p.count < 1 ||
+        !Number.isSafeInteger(p.bytes) || p.bytes < 2 || p.bytes > VP_PART_BYTES) fail();
+    seen.add(p.hash); bytes += p.bytes; count += p.count;
+  }
+  if (bytes > VP_MAX_BYTES || count > 100000 || count !== m.count) fail();
+  return m;
+}
+function vpPublic(m) {
+  return {format: m.format, version: m.version, site: m.site, revision: m.revision,
+    header: m.header, count: m.count, parts: m.parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes}))};
+}
+function vpRows(text, part) {
+  const rows = JSON.parse(text);
+  if (!Array.isArray(rows) || rows.length !== part.count || rows.some(r => !r || r.day !== part.day)) {
+    throw new Error('閲覧用の日別データが更新一覧と一致しません。');
+  }
+  return rows;
+}
+
+// 読み取り専用。利用者の指定したDrive IDを直接開かず、確定した一覧の中だけを読む。
+function vpVersion(file) { return file.getId() + ':' + file.getLastUpdated().getTime() + '-' + file.getSize(); }
+function vpHash(text) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
+    .map(b => ('0' + (b & 255).toString(16)).slice(-2)).join('');
+}
+function vpUnique(folder, name) {
+  const files = folder.getFilesByName(name); let found = null;
+  while (files.hasNext()) { const f = files.next(); if (f.isTrashed()) continue;
+    if (found) throw new Error(name + ' が複数あります。'); found = f; }
+  return found;
+}
+function vpReadManifest(file, site) {
+  if (file.getSize() > 1024 * 1024) throw new Error('閲覧用の更新一覧が大きすぎます。');
+  return vpValidManifest(JSON.parse(file.getBlob().getDataAsString('UTF-8')), site);
+}
+function vpReadPart(site, p) {
+  const file = DriveApp.getFileById(p.id);
+  if (file.isTrashed() || file.getName() !== vpPartName(site, p.hash) || file.getSize() !== p.bytes) {
+    throw new Error('閲覧用の日別ファイルが見つかりません。同期を再実行してください。');
+  }
+  const text = file.getBlob().getDataAsString('UTF-8');
+  if (vpHash(text) !== p.hash) throw new Error('閲覧用の日別ファイルが破損しています。');
+  vpRows(text, p);
+  return text;
+}
+function vpGet(latest, site, params) {
+  // 旧形式だけの環境では追加の権限・設定は不要。
+  const candidates = DriveApp.getFilesByName(vpManifestName(site));
+  let manifest = null;
+  while (candidates.hasNext()) {
+    const file = candidates.next(); if (file.isTrashed()) continue;
+    if (file.getSize() > 1024 * 1024) continue;
+    const raw = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
+    if (raw.base !== vpVersion(latest)) continue;
+    const m = vpValidManifest(raw, site);
+    if (manifest) throw new Error('閲覧用の更新一覧が複数あります。');
+    manifest = m;
+  }
+  if (!manifest) {
+    if (params.parts) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
+    return null;
+  }
+  if (params.check) return {format: 'drive-check', version: 'parts:' + manifest.revision, parts: vpPublic(manifest)};
+  if (params.parts) {
+    const hashes = params.parts.split(',');
+    if (params.revision !== manifest.revision || hashes.length > VP_BATCH || new Set(hashes).size !== hashes.length) {
+      throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
+    }
+    const allowed = new Map(manifest.parts.map(p => [p.hash, p]));
+    if (hashes.some(hash => !allowed.has(hash))) throw new Error('指定できない日別ファイルです。');
+    return {format: VP_FORMAT, revision: manifest.revision,
+      parts: hashes.map(hash => ({hash, text: vpReadPart(site, allowed.get(hash))}))};
+  }
+  // 更新前のWebページにも従来の全件JSONを返す。
+  return {...manifest.header, records: manifest.parts.flatMap(p => vpRows(vpReadPart(site, p), p))};
 }

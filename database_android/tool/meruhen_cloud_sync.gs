@@ -10,6 +10,8 @@
 
 // 通常は空欄のまま。database-viewer.json が複数のフォルダにある場合だけ、「database共有」のフォルダIDを入れる。
 const MERUHEN_FOLDER_ID = '';
+// 自分用・共有用の両Apps Scriptを更新してから true にする（VIEWER_INCREMENTAL_SYNC.md）。
+const MERUHEN_INCREMENTAL_VIEWER = false;
 const MERUHEN_CLOUD_VIEWER = 'database-viewer.json';
 const MERUHEN_CLOUD_STORE = 'database-android-cloud.json';
 const MERUHEN_CLOUD_HANDLER = 'syncMeruhenCloud';
@@ -92,6 +94,12 @@ function showMeruhenCloudStatus() {
   return {status: status, failures: failures};
 }
 
+/** 日別ファイルが消えた・壊れた場合だけ実行。元バックアップは変更しない。 */
+function rebuildMeruhenViewerParts() {
+  PropertiesService.getScriptProperties().deleteProperty('meruhenCloudInputs');
+  return syncMeruhenCloud();
+}
+
 function meruhenCloudRun() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return {busy: true, changed: false, pending: 0, newFailures: []};
@@ -116,10 +124,13 @@ function meruhenCloudRun() {
     const inputVersion = meruhenDigest(inputs.map(i => [i.id, i.version]));
     const viewerVersion = meruhenVersion(viewerFile);
     const storeVersion = storeFile ? meruhenVersion(storeFile) : '';
+    const partsVersion = MERUHEN_INCREMENTAL_VIEWER ? vpCheckpoint(folder, 'meruhen', viewerFile) : 'legacy';
     // 入力も閲覧用ファイルも前回のままなら、大きいJSONを読まず、書き直さない。
     if (props.getProperty('meruhenCloudInputs') === inputVersion && props.getProperty('meruhenCloudViewer') === viewerVersion &&
-        props.getProperty('meruhenCloudStore') === storeVersion) {
+        props.getProperty('meruhenCloudStore') === storeVersion &&
+        props.getProperty('meruhenCloudParts') === partsVersion) {
       const failedCount = Object.keys(failedVersions).length;
+      if (MERUHEN_INCREMENTAL_VIEWER) vpMaintain(folder, 'meruhen', props);
       const status = {...previous, at: new Date().toISOString(), result: failedCount ? 'unchanged-partial' : 'unchanged',
         message: '変更なし', inputs: inputs.length, failed: failedCount, elapsed_ms: Date.now() - startedAt};
       meruhenSave(props, status, failures, failedVersions);
@@ -196,7 +207,8 @@ function meruhenCloudRun() {
     // 期間（60日）より古いAndroidの記録は貯めない。
     for (const [key, r] of records) if (r.day < merged.cutoff) { records.delete(key); storeChanged = true; }
     // 両方の出力を容量検査してから保存を始める。
-    const outputText = merged.changed ? meruhenViewerText(viewer, merged.records, merged.changed) : null;
+    const leavingParts = !MERUHEN_INCREMENTAL_VIEWER && props.getProperty('meruhenCloudParts') && props.getProperty('meruhenCloudParts') !== 'legacy';
+    const outputText = merged.changed || leavingParts ? meruhenViewerText(viewer, merged.records, merged.changed) : null;
     let savedViewer = viewerFile, viewerBytes = outputText == null ? viewerFile.getSize() : meruhenCheckSize(outputText, MERUHEN_CLOUD_VIEWER);
     if (storeChanged || !storeFile) {
       const storeText = JSON.stringify({format: 'database-android-cloud', version: 1, exported_at: new Date().toISOString(),
@@ -213,9 +225,15 @@ function meruhenCloudRun() {
     if (viewerVersion !== meruhenVersion(viewerFile)) {
       throw new MeruhenCloudStop('transient', MERUHEN_CLOUD_VIEWER + ' が処理中に変更されました。次の自動実行で新しいPCの記録へ足し直します。');
     }
-    if (merged.changed) {
+    let incremental = null;
+    if (MERUHEN_INCREMENTAL_VIEWER) {
+      incremental = vpPublish(folder, viewerFile, 'meruhen', outputText ? JSON.parse(outputText) : viewer, meruhenWrite, viewerFile.getId() + ':' + viewerVersion);
+      viewerBytes = incremental.total;
+    } else if (outputText) {
       savedViewer = meruhenWrite(folder, viewerFile, MERUHEN_CLOUD_VIEWER, outputText);
     }
+    props.setProperty('meruhenCloudParts', MERUHEN_INCREMENTAL_VIEWER ? vpCheckpoint(folder, 'meruhen', savedViewer) : 'legacy');
+    if (MERUHEN_INCREMENTAL_VIEWER) vpMaintain(folder, 'meruhen', props);
     props.setProperty('meruhenCloudViewer', meruhenVersion(savedViewer));
     if (!remaining) props.setProperty('meruhenCloudInputs', inputVersion);
     else props.deleteProperty('meruhenCloudInputs');
@@ -226,7 +244,7 @@ function meruhenCloudRun() {
       processed: processed, failed: failedCount, new_failures: newFailures.length, remaining: remaining,
       changed_while_reading: changedWhileReading.length, transient: transient.length, inputs: inputs.length,
       android_records: records.size, viewer_records: merged.records.length, viewer_changed: merged.changed,
-      viewer_bytes: viewerBytes, elapsed_ms: Date.now() - startedAt};
+      incremental: incremental, viewer_bytes: viewerBytes, elapsed_ms: Date.now() - startedAt};
     meruhenSave(props, status, failures, failedVersions);
     for (const line of meruhenStatusLines(status, Object.values(failures), failedCount)) console.log(line);
     return {changed: Boolean(merged.changed), pending: remaining, newFailures: newFailures, status: status};
@@ -434,6 +452,8 @@ function meruhenStatusLines(status, failures, failedCount = failures.length) {
   if (status.viewer_records != null) {
     lines.push('閲覧用 ' + status.viewer_records + '件・' + ((status.viewer_bytes || 0) / 1048576).toFixed(1) + 'MB（上限48MB）／貯めたAndroidの記録 ' + status.android_records + '件');
   }
+  if (status.incremental) lines.push((['ok', 'partial'].includes(status.result) ? '今回' : '前回確定時') +
+    'の差分出力：' + status.incremental.parts + 'パーツ・' + (status.incremental.bytes / 1024).toFixed(1) + 'KB');
   if (status.remaining) lines.push('次回に回したファイル：' + status.remaining);
   if (failedCount > failures.length) lines.push('取り込めないファイル：全部で' + failedCount + '件（理由は新しい' + failures.length + '件）');
   for (const f of failures) lines.push('取り込めないファイル：' + f.name + '（' + f.reason + '、確認 ' + f.checked_at + '）');
@@ -490,4 +510,195 @@ function meruhenWrite(folder, file, name, text) {
     Utilities.sleep(1000 * attempt);
   }
   throw new MeruhenCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
+}
+// BEGIN GENERATED VIEWER PARTS
+// 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
+const VP_FORMAT = 'database-viewer-parts';
+const VP_MAX_BYTES = 48 * 1024 * 1024;
+const VP_PART_BYTES = 1024 * 1024;
+const VP_BATCH = 8;
+function vpCanonical(value) {
+  if (Array.isArray(value)) return '[' + value.map(vpCanonical).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort()
+    .filter(k => value[k] !== undefined).map(k => JSON.stringify(k) + ':' + vpCanonical(value[k])).join(',') + '}';
+  return JSON.stringify(value);
+}
+function vpManifestName(site) { return 'database-viewer-parts-' + site + '.json'; }
+function vpPartName(site, hash) { return 'database-viewer-part-' + site + '-' + hash + '.json'; }
+function vpValidManifest(m, site) {
+  const fail = () => { throw new Error('閲覧用の更新一覧が不正です。'); };
+  if (!m || m.format !== VP_FORMAT || m.version !== 1 || m.site !== site ||
+      !['meruhen', 'pscube'].includes(site) || !/^[a-f0-9]{64}$/.test(m.revision) ||
+      !m.header || typeof m.header !== 'object' || Array.isArray(m.header) || 'records' in m.header ||
+      m.header.version !== 1 || m.header.format !== (site === 'meruhen' ? 'database-backup' : 'pscube-viewer') ||
+      typeof m.header.exported_at !== 'string' || !Array.isArray(m.parts) || m.parts.length > 1024) fail();
+  const seen = new Set(); let bytes = 0, count = 0;
+  for (const p of m.parts) {
+    if (!p || !/^[a-f0-9]{64}$/.test(p.hash) || seen.has(p.hash) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(p.day) || !Number.isSafeInteger(p.count) || p.count < 1 ||
+        !Number.isSafeInteger(p.bytes) || p.bytes < 2 || p.bytes > VP_PART_BYTES) fail();
+    seen.add(p.hash); bytes += p.bytes; count += p.count;
+  }
+  if (bytes > VP_MAX_BYTES || count > 100000 || count !== m.count) fail();
+  return m;
+}
+function vpPublic(m) {
+  return {format: m.format, version: m.version, site: m.site, revision: m.revision,
+    header: m.header, count: m.count, parts: m.parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes}))};
+}
+function vpRows(text, part) {
+  const rows = JSON.parse(text);
+  if (!Array.isArray(rows) || rows.length !== part.count || rows.some(r => !r || r.day !== part.day)) {
+    throw new Error('閲覧用の日別データが更新一覧と一致しません。');
+  }
+  return rows;
+}
+
+// 読み取り専用。利用者の指定したDrive IDを直接開かず、確定した一覧の中だけを読む。
+function vpVersion(file) { return file.getId() + ':' + file.getLastUpdated().getTime() + '-' + file.getSize(); }
+function vpHash(text) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
+    .map(b => ('0' + (b & 255).toString(16)).slice(-2)).join('');
+}
+function vpUnique(folder, name) {
+  const files = folder.getFilesByName(name); let found = null;
+  while (files.hasNext()) { const f = files.next(); if (f.isTrashed()) continue;
+    if (found) throw new Error(name + ' が複数あります。'); found = f; }
+  return found;
+}
+function vpReadManifest(file, site) {
+  if (file.getSize() > 1024 * 1024) throw new Error('閲覧用の更新一覧が大きすぎます。');
+  return vpValidManifest(JSON.parse(file.getBlob().getDataAsString('UTF-8')), site);
+}
+function vpReadPart(site, p) {
+  const file = DriveApp.getFileById(p.id);
+  if (file.isTrashed() || file.getName() !== vpPartName(site, p.hash) || file.getSize() !== p.bytes) {
+    throw new Error('閲覧用の日別ファイルが見つかりません。同期を再実行してください。');
+  }
+  const text = file.getBlob().getDataAsString('UTF-8');
+  if (vpHash(text) !== p.hash) throw new Error('閲覧用の日別ファイルが破損しています。');
+  vpRows(text, p);
+  return text;
+}
+function vpGet(latest, site, params) {
+  // 旧形式だけの環境では追加の権限・設定は不要。
+  const candidates = DriveApp.getFilesByName(vpManifestName(site));
+  let manifest = null;
+  while (candidates.hasNext()) {
+    const file = candidates.next(); if (file.isTrashed()) continue;
+    if (file.getSize() > 1024 * 1024) continue;
+    const raw = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
+    if (raw.base !== vpVersion(latest)) continue;
+    const m = vpValidManifest(raw, site);
+    if (manifest) throw new Error('閲覧用の更新一覧が複数あります。');
+    manifest = m;
+  }
+  if (!manifest) {
+    if (params.parts) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
+    return null;
+  }
+  if (params.check) return {format: 'drive-check', version: 'parts:' + manifest.revision, parts: vpPublic(manifest)};
+  if (params.parts) {
+    const hashes = params.parts.split(',');
+    if (params.revision !== manifest.revision || hashes.length > VP_BATCH || new Set(hashes).size !== hashes.length) {
+      throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
+    }
+    const allowed = new Map(manifest.parts.map(p => [p.hash, p]));
+    if (hashes.some(hash => !allowed.has(hash))) throw new Error('指定できない日別ファイルです。');
+    return {format: VP_FORMAT, revision: manifest.revision,
+      parts: hashes.map(hash => ({hash, text: vpReadPart(site, allowed.get(hash))}))};
+  }
+  // 更新前のWebページにも従来の全件JSONを返す。
+  return {...manifest.header, records: manifest.parts.flatMap(p => vpRows(vpReadPart(site, p), p))};
+}
+
+// 全件のバックアップは従来どおり保持。閲覧用の出力だけを分割する。
+function vpCheckpoint(folder, site, base) {
+  const file = vpUnique(folder, vpManifestName(site));
+  return (file ? vpVersion(file) : '') + (base ? ':' + vpVersion(base) : '');
+}
+function vpPublish(folder, base, site, doc, write, expectedBase) {
+  const name = vpManifestName(site), oldFile = vpUnique(folder, name);
+  const old = oldFile ? vpReadManifest(oldFile, site) : null;
+  const byDay = new Map();
+  for (const r of doc.records) {
+    if (!byDay.has(r.day)) byDay.set(r.day, []);
+    byDay.get(r.day).push(vpCanonical(r));
+  }
+  const planned = [];
+  for (const day of [...byDay.keys()].sort()) {
+    let rows = [], size = 2;
+    const flush = () => { if (!rows.length) return; const text = '[' + rows.join(',') + ']';
+      planned.push({day, count: rows.length, bytes: size, hash: vpHash(text), text}); rows = []; size = 2; };
+    for (const row of byDay.get(day).sort()) {
+      const bytes = Utilities.newBlob(row).getBytes().length;
+      if (bytes + 2 > VP_PART_BYTES) throw new Error('1台の閲覧用データが1MiBを超えています。');
+      if (size + bytes + (rows.length ? 1 : 0) > VP_PART_BYTES) flush();
+      size += bytes + (rows.length ? 1 : 0); rows.push(row);
+    }
+    flush();
+  }
+  const {records, exported_at, cloud_merged, ...stableHeader} = doc;
+  const signature = vpHash(vpCanonical({header: stableHeader, parts: planned.map(({day, hash}) => ({day, hash}))}));
+  const header = {...stableHeader, exported_at: old?.signature === signature ? old.header.exported_at : exported_at};
+  if (cloud_merged !== undefined) header.cloud_merged = cloud_merged;
+  const version = expectedBase || vpVersion(base);
+  if (vpVersion(base) !== version) throw new Error('PCの閲覧用が更新されました。次の同期でやり直します。');
+  const revision = vpHash(vpCanonical({signature, base: version}));
+  const m = {format: VP_FORMAT, version: 1, site, base: version, signature, revision,
+    header, count: records.length, parts: planned.map(({text, ...p}) => p)};
+  vpValidManifest(m, site); // 全出力の容量を先に検査。途中で失敗しても旧一覧は残る。
+  // IDと版の追記分も見込んで、一覧の読み出し上限より余裕を持って止める。
+  if (Utilities.newBlob(JSON.stringify(m)).getBytes().length + m.parts.length * 256 > 1024 * 1024) {
+    throw new Error('閲覧用の更新一覧が1MiBを超えます。旧一覧を保って停止しました。');
+  }
+  const oldParts = new Map((old?.parts || []).map(p => [p.hash, p]));
+  let written = 0, writtenBytes = 0;
+  for (const p of m.parts) {
+    const prior = oldParts.get(p.hash);
+    let file = null;
+    if (prior) { try { file = DriveApp.getFileById(prior.id); } catch (_) { /* 消えた生成ファイルを作り直す */ } }
+    else file = vpUnique(folder, vpPartName(site, p.hash));
+    // 紛失・手編集された生成ファイルは上書き修復。元バックアップには触れない。
+    let valid = false;
+    if (file && !file.isTrashed()) {
+      valid = file.getName() === vpPartName(site, p.hash) && file.getSize() === p.bytes &&
+        (!prior || prior.file_version === vpVersion(file));
+      if (valid && !prior) valid = vpHash(file.getBlob().getDataAsString('UTF-8')) === p.hash;
+    }
+    if (!valid) {
+      // 壊れた旧IDは旧一覧で読まれている可能性があるため、別の不変ファイルを作る。
+      file = write(folder, null, vpPartName(site, p.hash), planned.find(x => x.hash === p.hash).text);
+      written++; writtenBytes += p.bytes;
+    }
+    p.id = file.getId(); p.file_version = vpVersion(file);
+  }
+  if (vpVersion(base) !== version) throw new Error('PCの閲覧用が更新されました。次の同期でやり直します。');
+  const text = JSON.stringify(m);
+  const unchanged = old && vpCanonical(old) === vpCanonical(m);
+  if (!unchanged) write(folder, oldFile, name, text); // 一覧を最後に確定する。
+  return {parts: written, bytes: writtenBytes, total: planned.reduce((n, p) => n + p.bytes, 0), revision};
+}
+
+// 現在の一覧にない生成パーツだけを7日後にごみ箱へ。バックアップや旧形式JSONは対象外。
+// 一覧確定後の保守であり、失敗しても確定済みの閲覧データは有効。
+function vpPrune(folder, site) {
+  const manifest = vpReadManifest(vpUnique(folder, vpManifestName(site)), site);
+  const active = new Set(manifest.parts.map(p => p.id));
+  const pattern = new RegExp('^database-viewer-part-' + site + '-[a-f0-9]{64}\\.json$');
+  const files = folder.getFiles(), cutoff = Date.now() - 7 * 86400000;
+  let removed = 0;
+  while (files.hasNext() && removed < 200) {
+    const f = files.next();
+    if (!f.isTrashed() && pattern.test(f.getName()) && !active.has(f.getId()) && f.getLastUpdated().getTime() < cutoff) {
+      f.setTrashed(true); removed++;
+    }
+  }
+  return removed;
+}
+function vpMaintain(folder, site, props) {
+  const key = site + 'ViewerPartsCleaned';
+  if (Date.now() - Number(props.getProperty(key) || 0) < 6 * 3600000) return;
+  try { vpPrune(folder, site); props.setProperty(key, String(Date.now())); }
+  catch (error) { console.log('古い閲覧用キャッシュの整理は次回再試行します：' + String(error.message || error)); }
 }
