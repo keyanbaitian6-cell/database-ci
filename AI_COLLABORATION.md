@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## 【引き継ぎ・未公開】共有ページのAndroid専用起動入口（Codex、2026-10-14）
+
+- 利用者の明示的な依頼：最新mainをベースに、既存iPhone用の `index.html`・`manifest.json`（browser）を維持し、Android Chromeの独立起動用 `android.html`・専用manifest（standalone）を追加、全回帰試験のALL PASSED後に `keyanbaitian6-cell/database-share` へ公開する。開始時の最新mainは `0b13fbd`。Windows側の履歴同期・オフライン等の未コミット作業は混ぜない。
+- 実装：`tool/stage_share_viewer.py` が共通 `share_viewer/index.html` のmanifest参照だけを変えた `android.html` と、既存manifestから `id/start_url: ./android.html`・`display: standalone` にした `manifest-android.json` を生成。scopeは `./`、4画像と全モジュールを共用。生成物も許可リスト・内容由来の版番号・ID/記録検査の対象。既存HTML・manifest・アプリ処理のソースは変更していない。最新mainにはService Workerはなく、日別IndexedDBキャッシュはある。
+- `check_before_build.sh` のPythonパス処理をcygpathが無いLinuxでも環境変数で指定できるようにし、専用の `CHECK_BUILD_WORK` を指定可能にした。作業ディレクトリの一括削除をやめ、今回の検証は新規専用ディレクトリに分離した。
+- 追加試験：`tool/test_share_android_entry.mjs` **3件PASS**（既存設定維持・共通HTML・起動先/ID/scope・同じ版・許可リスト・画像バイナリ・公開物の漏洩防止）。`tool/test_share_android_browser.mjs` **1本PASS**（実Chromium、320/393px、通常→Android、接続先/呼び名/店舗/🌈/日別IndexedDB保持、再読込・新コンテキストへの保存復元、Android側の共有リンク#処理。Google応答は合成・模擬、実Google書き込みなし）。Android実機のインストール・独立起動は未確認。
+- LinuxクラウドにFlutter 3.47.7/Dart3.13.5・Python/Selenium・Playwright・Xvfbを準備。既存の非公開303番台採点テスト用seedはDriveのバックアップを読み取り専用で取得し、9/15の90行からローカルの無追跡 `assets/database_seed.json` を用意（該当機種名は旧seed表記へ戻しただけ、数値・座標は無変更）。このseedはコミット・公開しない。採点試験11件PASS。
+- 全ゲート `check_before_build.sh` を `/workspace/scratch/check-share-android-xBhg5p` で開始し、**PC273件・P’s CUBE93件PASS**。利用者がWindowsデスクトップ側の新チャットへ切り替えるため、Flutter全試験の途中で今回のゲートとその子プロセスだけを停止した。**ALL PASSEDは未達**。残りのFlutter全試験・analyze・Webビルド/stage・JS全試験はWindowsで単独で流し直す。途中ログは成功扱いにしない。
+- **公開は未実施**。公開先の確認済みHEADは `0edca4279130f14da629d00a9ed0b990e71393a1`。CLIの `imakurudev-eng` は公開先push権限なしだが、接続済みの所有者GitHubアカウント `keyanbaitian6-cell` ではファイルの読取に成功。Windowsの既存公開クローンの資格情報でpushするか、所有者アカウントのGitHub接続を使う。公開時は最新HEADを取り込み、未知のファイル・並行変更を削除しない。必ずstageを専用一時フォルダへ出し、検証済みの許可ファイルを公開先へ反映し、force pushしない。
+- 次：最新mainと未コミット作業を確認→必要なら別worktreeで今回の変更だけ検証→全ゲートALL PASSED→ソースmainへ必要な更新をpush→検証済みstageを公開repoへ反映→Pages成功と配信全ファイルSHA-256一致、通常browser/Android standaloneを確認→両入口の公開URLで合成Googleブラウザ試験→公開commit・件数・未確認事項をこのメモへ追記。Android URLは公開完了後 `https://keyanbaitian6-cell.github.io/database-share/android.html`。インストール手順と既存iPhone設定維持、実機未確認を短く報告する。
+
 ## 【Android APKビルド完了／インストール待ち】バックアップの保存先を記憶（Codex、2026-10-14）
 
 - 利用者「昨日のAndroid更新も含め、デフォルトのバックアップ保存先をdatabase共有にできるなら変更してビルド、その後インストールコマンド」。最新mainを取得して作業。**インストールは依頼範囲に含めず未実施**。接続端末RFGL146LVVW（SM_A253C）には通常版0.5.36+2026101203、P’s CUBE版0.5.36+2026101204が入っていることを読み取り確認した。
