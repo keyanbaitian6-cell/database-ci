@@ -29,6 +29,7 @@ for (const d of [1, 2, 3, 6, 7, 8]) {
   const day = `2026-10-0${d}`;
   for (let rack = 1; rack <= 4; rack++) records.push({store: 'saiwaichou', day, machine: '主力', rack, games: 4000, bb: 20, rb: 10, jo_net: 100});
   // 10/2 に確定が出た（PCで🌈を付けた、RAINBOW.md）。
+  for (let rack = 70; rack <= 72; rack++) records.push({store: 'saiwaichou', day, machine: '三台機種', rack, games: 300, bb: 1, rb: 1}); // 幸町のバラエティから外す
   records.push({store: 'saiwaichou', day, machine: 'ハナハナ', rack: 50, games: 300, bb: 1, rb: 1, max_hold: 120, jo_net: -250,
     ...(d === 2 ? {rainbow: true} : {})});
   records.push({store: 'saiwaichou', day, machine: 'ジャグラー', rack: 60, games: 800, bb: 2, rb: 2, jo_net: -500});

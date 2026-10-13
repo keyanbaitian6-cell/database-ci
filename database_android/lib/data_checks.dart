@@ -93,6 +93,17 @@ const nextDayMethodVersion = '2026-10-07';
 /// あるので、これらの機種は一度も候補に入らなかった。
 const varietyMaxRacks = 3;
 
+/// 2026-10-13 利用者指定：幸町の通常バラエティは1〜2台。ほかの店舗は1〜3台。
+int varietyMaxRacksFor(String store) =>
+    store == 'saiwaichou' ? 2 : varietyMaxRacks;
+String varietyRangeFor(String store) => '1〜${varietyMaxRacksFor(store)}台';
+
+/// 幸町のバラエティの母集団変更を旧候補の記録と区別する。通常機種の固定方式は維持。
+String candidateMethodVersion(String store, String machine) =>
+    store == 'saiwaichou' && machine == varietyGroupName
+    ? '2026-10-13-saiwaichou-variety-2'
+    : nextDayMethodVersion;
+
 /// バラエティで「よく回った」とみなす回転数。4時間ほど打たれた台の目安で、
 /// 回されるのは打ち手が良い台だと見たからだ、というプロの見方による（経験則
 /// で、根拠となる数値の出典は無い）。実データ（2026-09-22〜28）でも、前日
@@ -109,12 +120,14 @@ const varietyGroupName = 'バラエティ';
 /// [dayRows]（1店舗・1日）のうち、バラエティにまとめる機種の名前。
 Set<String> varietyMachines(Iterable<SlotRecord> dayRows) {
   final counts = <String, int>{};
+  final limits = <String, int>{};
   for (final r in dayRows) {
     counts[r.machine] = (counts[r.machine] ?? 0) + 1;
+    limits[r.machine] = varietyMaxRacksFor(r.store);
   }
   return {
     for (final entry in counts.entries)
-      if (entry.value <= varietyMaxRacks) entry.key,
+      if (entry.value <= limits[entry.key]!) entry.key,
   };
 }
 
@@ -126,7 +139,7 @@ bool isVarietyRecord(SlotRecord record, List<SlotRecord> all) =>
       record.store,
       record.machine,
     ).where((r) => r.day == record.day).length <=
-    varietyMaxRacks;
+    varietyMaxRacksFor(record.store);
 
 /// Historical hit-frequency tendency for the provisional candidate view.
 ///

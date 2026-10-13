@@ -124,12 +124,12 @@ class _MachineSectionState extends State<MachineSection> {
           ],
         ),
         if (variety)
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
             child: Text(
-              '1〜3台の機種をまとめています。点数・推定設定は台ごとに、その台の機種の'
+              '${widget.entries.isEmpty ? '少台数' : varietyRangeFor(widget.entries.first.$1.store)}の機種をまとめています。点数・推定設定は台ごとに、その台の機種の'
               '過去と比べたもので、別の機種の台どうしは比べていません。',
-              style: TextStyle(fontSize: 12, color: AppColors.ash),
+              style: const TextStyle(fontSize: 12, color: AppColors.ash),
             ),
           ),
         if (widget.candidateRacks.isNotEmpty ||
@@ -977,7 +977,7 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             if (variety.isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
-                '$varietyGroupName（1〜3台の機種）の参考候補${variety.length}台',
+                '$varietyGroupName（${varietyRangeFor(variety.first.record.store)}の機種）の参考候補${variety.length}台',
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
@@ -1236,7 +1236,7 @@ String varietyJudgementText(SlotRecord record, List<SlotRecord> all) {
       '${state.label}'
           '${hit.percent == null ? '（当たりは普段と比べる記録が足りない）' : '・当たり 普段より ${delta >= 0 ? '+' : '-'}${delta.abs().toStringAsFixed(0)}（比べた記録${hit.refs}件）'}',
   };
-  return 'この台は1〜3台の機種なので「$varietyGroupName」にまとめています。'
+  return 'この台は${varietyRangeFor(record.store)}の機種なので「$varietyGroupName」にまとめています。'
       '翌日向けの参考候補は、${storeShortName(record.store)}で'
       '${varietyRuleText(record.store)}。\n'
       'この日のこの台：${record.games}G・$detail。'

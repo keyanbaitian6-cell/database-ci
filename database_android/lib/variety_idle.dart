@@ -220,7 +220,7 @@ class _VarietyIdlePageState extends State<VarietyIdlePage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'バラエティ（その日1〜3台の機種）の台で、選んだ日から前へ'
+              'バラエティ（その日${varietyRangeFor(widget.store)}の機種）の台で、選んだ日から前へ'
               '$_minDays日（カレンダーの日数）以上、毎日${_count(_games)}G未満の台です。'
               '記録の無い日（サイトが落ちていた日など）は飛ばして数えます。'
               '期間の長い順。台を押すとその台の記録を開きます。',

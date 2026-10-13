@@ -1995,7 +1995,7 @@ class _HistoryPageState extends State<HistoryPage> {
                     [
                       storeShortName(group.store),
                       group.variety
-                          ? '1〜3台の機種の${group.rows.length}台'
+                          ? '${varietyRangeFor(group.store)}の機種の${group.rows.length}台'
                           : '${group.rows.length}台',
                       if (settings > 0) '設定情報$settings台',
                     ].join('・'),
@@ -2141,7 +2141,7 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
                     icon: Icons.inbox_outlined,
                     title: '記録がありません',
                     body: variety
-                        ? 'この日のバラエティ（1〜3台の機種）の記録はありません。'
+                        ? 'この日のバラエティ（${varietyRangeFor(widget.store)}の機種）の記録はありません。'
                         : 'この日のこの機種の記録はありません。別の日付を選んでください。',
                   )
                 else

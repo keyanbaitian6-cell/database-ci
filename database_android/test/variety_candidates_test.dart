@@ -173,7 +173,7 @@ void main() {
       {'saiwaichou|2026-09-25|R', 'saiwaichou|2026-09-25|バラエティ'},
     );
     final variety = changed.firstWhere((s) => s.machine == varietyGroupName);
-    expect((variety.total, variety.eligible, variety.method), (8, 6, '2026-10-07'));
+    expect((variety.total, variety.eligible, variety.method), (8, 6, '2026-10-13-saiwaichou-variety-2'));
     expect([for (final c in variety.candidates) c.rack], [1, 7, 8, 2, 3]);
     // 同じ中身なら記録し直さない。
     final latest = latestCandidateSnapshots(changed);

@@ -535,9 +535,9 @@ class Store:
                 racks = counts[(location, day)].get(machine, 0)
                 previous = latest_of(location, day, machine)
                 was_listed = bool(previous and previous.get('candidates'))
-                if racks == 0 or racks > VARIETY_MAX_RACKS or was_listed:
+                if racks == 0 or racks > variety_max_racks(location) or was_listed:
                     targets.add((location, machine, day))
-                has_variety = any(n <= VARIETY_MAX_RACKS for n in counts[(location, day)].values())
+                has_variety = any(n <= variety_max_racks(location) for n in counts[(location, day)].values())
                 if has_variety or latest_of(location, day, VARIETY_GROUP_NAME) is not None:
                     targets.add((location, VARIETY_GROUP_NAME, day))
             self._machine_cache = {}
@@ -932,7 +932,7 @@ def candidate_snapshot(store, location, day, machine, now=None):
               else provisional_next_day_candidates(store, day, machine, location))
     return dict(store=location, day=day, machine=machine,
                 taken_at=(now or datetime.now().astimezone()).isoformat(),
-                method=NEXT_DAY_METHOD_VERSION,
+                method=candidate_method_version(location, machine),
                 total=result['total'], eligible=result['eligible'],
                 candidates=[dict(rack=int(c['row']['rack']), index=c['index'], days=c['days'])
                             for c in result['candidates']])
@@ -1639,6 +1639,23 @@ NEXT_DAY_METHOD_VERSION = '2026-10-07'
 # 同じ機種の台どうしで比べ、1機種で4台以上判定できる必要があるので、これらの機種は
 # 一度も候補に入らなかった。Android版 `varietyMaxRacks`・`varietyGroupName` と同じ。
 VARIETY_MAX_RACKS = 3
+
+
+def variety_max_racks(location):
+    """店舗のバラエティ上限。2026-10-13利用者指定：幸町は1〜2台、ほかは1〜3台。"""
+    return 2 if location == 'saiwaichou' else VARIETY_MAX_RACKS
+
+
+def variety_range(location):
+    return f'1〜{variety_max_racks(location)}台'
+
+
+def candidate_method_version(location, machine):
+    # 幸町のバラエティの母集団変更を旧記録と区別する。通常機種の固定検証方式は維持。
+    return ('2026-10-13-saiwaichou-variety-2'
+            if location == 'saiwaichou' and machine == VARIETY_GROUP_NAME
+            else NEXT_DAY_METHOD_VERSION)
+
 VARIETY_GROUP_NAME = 'バラエティ'
 # バラエティで「よく回った」とみなす回転数（4時間ほど打たれた台の目安。プロの経験則で、
 # 数値の出典は無い）と、候補に出す台数（利用者の指定）。Android版と同じ。
@@ -1650,16 +1667,17 @@ VARIETY_STATE_LABELS = {'dented': '回ったのに凹み', 'plus': '回ってプ
 
 def variety_machines(rows):
     """1店舗・1日の行 ``rows`` のうち、バラエティにまとめる機種の名前。"""
-    counts = {}
+    counts, limits = {}, {}
     for r in rows:
         counts[r['machine']] = counts.get(r['machine'], 0) + 1
-    return {machine for machine, count in counts.items() if count <= VARIETY_MAX_RACKS}
+        limits[r['machine']] = variety_max_racks(r.get('store', 'nagamachiminami'))
+    return {machine for machine, count in counts.items() if count <= limits[machine]}
 
 
 def is_variety_row(store, row):
     """その台の機種が、その日その店でバラエティ（1〜3台）か。"""
     return sum(1 for r in store._machine_rows(row['machine'], row['store'])
-               if r['day'] == row['day']) <= VARIETY_MAX_RACKS
+               if r['day'] == row['day']) <= variety_max_racks(row['store'])
 
 
 def next_day_index(store, row, max_days=10, shrink_days=5):
@@ -1803,7 +1821,7 @@ def variety_judgement_text(store, row):
         delta = hit['percent'] - 50
         detail = (f'{VARIETY_STATE_LABELS[state]}・当たり 普段より {"+" if delta >= 0 else "-"}'
                   f'{abs(delta):.0f}（比べた記録{hit["refs"]}件）')
-    return (f'この台は1〜3台の機種なので「{VARIETY_GROUP_NAME}」にまとめています。'
+    return (f'この台は{variety_range(row["store"])}の機種なので「{VARIETY_GROUP_NAME}」にまとめています。'
             f'{SHORT_STORE_NAMES.get(row["store"], row["store"])}の狙い方：{variety_rule_text(row["store"])}。'
             f'この日のこの台：{row["games"]}G・{detail}。'
             '当たりは同じ機種の前の30日（1台の機種ならこの台自身の過去）とだけ比べ、別の機種の台とは比べていません。')
@@ -2416,7 +2434,7 @@ def report(store, day, machine, folder, location='nagamachiminami'):
     if location not in STORE_NAMES:
         raise ValueError('対象外の店舗です。')
     results = scored_rows(store, day, machine, location)
-    variety = 0 < len(results) <= VARIETY_MAX_RACKS
+    variety = 0 < len(results) <= variety_max_racks(location)
     candidate_info = (variety_next_day_candidates(store, day, location) if variety else
                       provisional_next_day_candidates(store, day, machine, location))
     candidate_marks = {int(c['row']['rack']): '★' if variety or c['focus'] else '☆'
@@ -2491,7 +2509,7 @@ def report(store, day, machine, folder, location='nagamachiminami'):
     source_html = f'｜ <a href="{html.escape(source, quote=True)}">画面の出典</a>' if source else ''
     # 1〜3台の機種は、機種ごとではなく店の「バラエティ」にまとめて判定する。
     if variety:
-        candidate_lead = ('<p class="candidate-lead">この機種は1〜3台の機種なので、店の「バラエティ」に'
+        candidate_lead = (f'<p class="candidate-lead">この機種は{variety_range(location)}の機種なので、店の「バラエティ」に'
                           f'まとめて選びます。{html.escape(SHORT_STORE_NAMES.get(location, location))}の狙い方：'
                           f'{html.escape(variety_rule_text(location))}。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')

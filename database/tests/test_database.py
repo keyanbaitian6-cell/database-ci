@@ -1530,7 +1530,7 @@ class VarietyTests(unittest.TestCase):
             self.assertEqual({s['machine'] for s in logged}, {'R', VARIETY_GROUP_NAME})
             variety = next(s for s in logged if s['machine'] == VARIETY_GROUP_NAME)
             self.assertEqual((variety['total'], variety['eligible'], variety['method']),
-                             (8, 6, NEXT_DAY_METHOD_VERSION))
+                             (8, 6, '2026-10-13-saiwaichou-variety-2'))
             self.assertEqual([c['rack'] for c in variety['candidates']], [1, 7, 8, 2, 3])
             self.assertEqual(NEXT_DAY_METHOD_VERSION, '2026-10-07')
             # 同じ中身なら記録し直さない。

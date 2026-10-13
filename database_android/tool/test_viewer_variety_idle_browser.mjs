@@ -31,9 +31,10 @@ const origin = 'http://127.0.0.1:' + server.address().port;
 const records = [];
 for (let d = 1; d <= 8; d++) {
   const day = `2026-10-0${d}`;
-  for (let rack = 1; rack <= 4; rack++) records.push({store: 'nagamachiminami', day, machine: '北斗', rack, games: 3000, bb: 10, rb: 5});
-  records.push({store: 'nagamachiminami', day, machine: 'ハナハナ', rack: 50, games: 300, bb: 1, rb: 1});
-  records.push({store: 'nagamachiminami', day, machine: 'ジャグラー', rack: 60, games: 800, bb: 2, rb: 2});
+  for (let rack = 1; rack <= 4; rack++) records.push({store: 'saiwaichou', day, machine: '北斗', rack, games: 3000, bb: 10, rb: 5});
+  for (let rack = 70; rack <= 72; rack++) records.push({store: 'saiwaichou', day, machine: '三台機種', rack, games: 300, bb: 1, rb: 1}); // 1〜2台だけにまとめ、3台機種を除く
+  records.push({store: 'saiwaichou', day, machine: 'ハナハナ', rack: 50, games: 300, bb: 1, rb: 1});
+  records.push({store: 'saiwaichou', day, machine: 'ジャグラー', rack: 60, games: 800, bb: 2, rb: 2});
 }
 const meruhen = {header: {format: 'database-backup', version: 1, source: 'pc', exported_at: '2026-10-08T23:00:00+09:00'}, records};
 
@@ -44,7 +45,7 @@ const errors = [];
 page.on('pageerror', e => { errors.push(e.message); console.error('pageerror', e.message); });
 
 async function home() {
-  await page.goto(origin + prefix);
+  await page.goto(process.env.VIEWER_PUBLIC_URL || origin + prefix);
   await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
   const placeholder = page.locator('flt-semantics-placeholder');
   if (await placeholder.count()) await placeholder.evaluate(e => e.click());
@@ -70,7 +71,7 @@ async function choose(current, next) {
 }
 
 try {
-  await page.goto(origin + '/setup');
+  await page.goto(process.env.VIEWER_PUBLIC_URL || origin + '/setup');
   await page.evaluate(async data => {
     const db = await new Promise((resolve, reject) => { const q = indexedDB.open('database-viewer', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv'); q.onsuccess = () => resolve(q.result); q.onerror = () => reject(q.error); });
     await new Promise((resolve, reject) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(JSON.stringify(data), 'data'); tx.objectStore('kv').put('meruhen', 'active_source'); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); db.close();
@@ -79,6 +80,7 @@ try {
   await openPage();
   // 既定：7日以上・1,000G未満 → ハナハナとジャグラー（10/1〜10/8 の8日間）。
   await waitSeen(/^2台$/);
+  assert.equal((await labels()).some(l => l.includes('三台機種')), false, '3台機種はバラエティの回っていない台に入れない');
   await waitSeen(/8日間 1,000G未満/);
   assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-idle-games')), null, '選ぶまでは覚えない');
   // 500G未満にすると、800Gのジャグラーは外れる。

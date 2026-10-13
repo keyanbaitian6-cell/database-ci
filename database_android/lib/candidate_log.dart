@@ -137,7 +137,7 @@ CandidateSnapshot candidateSnapshot({
     day: day,
     machine: machine,
     takenAt: timestampWithOffset(now),
-    method: nextDayMethodVersion,
+    method: candidateMethodVersion(store, machine),
     total: result.total,
     eligible: result.eligible,
     candidates: [
@@ -192,7 +192,9 @@ List<CandidateSnapshot> changedCandidateSnapshots({
     }
   }
   bool hasVariety(String store, String day) => counts.entries.any(
-    (e) => e.key.startsWith('$store|$day|') && e.value <= varietyMaxRacks,
+    (e) =>
+        e.key.startsWith('$store|$day|') &&
+        e.value <= varietyMaxRacksFor(store),
   );
   final targets = <String, (String, String, String)>{};
   for (final (store, day, machine) in affected) {
@@ -201,7 +203,7 @@ List<CandidateSnapshot> changedCandidateSnapshots({
     // 1〜3台の機種の候補はバラエティで出す。機種ごとの記録は、以前に候補が
     // 出ていた（4台以上だった）ときだけ「候補なし」に更新する。
     final wasListed = latest[key]?.candidates.isNotEmpty ?? false;
-    if (racks == 0 || racks > varietyMaxRacks || wasListed) {
+    if (racks == 0 || racks > varietyMaxRacksFor(store) || wasListed) {
       targets[key] = (store, day, machine);
     }
     final varietyKey = '$store|$day|$varietyGroupName';

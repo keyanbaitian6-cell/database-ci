@@ -300,7 +300,7 @@ class MachineSummaryList extends StatelessWidget {
   }
 
   static String _detail(MachineSummary s) => [
-    s.variety ? '1〜3台の機種の${s.racks}台' : '${s.racks}台',
+    s.variety ? '1〜${s.varietyLimit}台の機種の${s.racks}台' : '${s.racks}台',
     if (s.best != null) '最高${s.best!.toStringAsFixed(1)}',
     if (s.noGraph > 0) 'グラフ未取得${s.noGraph}台',
   ].join('・');

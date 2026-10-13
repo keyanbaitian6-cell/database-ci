@@ -88,11 +88,13 @@ class MachineSummary {
     required this.bestRack,
     this.machines = 1,
     this.variety = false,
+    this.varietyLimit = varietyMaxRacks,
   });
 
   final String machine;
   final int machines;
   final bool variety;
+  final int varietyLimit;
 
   /// 台数・合計点が出た台数・グラフ未取得の台数（大当たり0回でグラフを
   /// 取らない台は数えない）。
@@ -167,6 +169,7 @@ List<MachineSummary> summarizeMachines(
               ? {for (final e in rows) e.$1.machine}.length
               : 1,
           variety: name == varietyGroupName,
+          varietyLimit: varietyMaxRacksFor(rows.first.$1.store),
           racks: rows.length,
           scored: scored.length,
           noGraph: rows.where((e) => !e.$1.graphDone).length,

@@ -268,7 +268,7 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
                 body: _hasDayRecords
                     ? 'この日の機種の記録はあります。台番号が変わっている場合は、全台を表示して確認してください。'
                     : variety
-                    ? 'この日は1〜3台の機種（バラエティ）の記録がありません。別の日付を選んでください。'
+                    ? 'この日は${varietyRangeFor(widget.store)}の機種（バラエティ）の記録がありません。別の日付を選んでください。'
                     : 'この機種の記録がある別の日付を選んでください。入れ替え前や、まだ取り込んでいない日は表示されません。',
               ),
               if (_hasDayRecords)

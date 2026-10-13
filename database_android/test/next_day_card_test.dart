@@ -131,7 +131,7 @@ void main() {
       ),
     );
     expect(find.text('すべて表示（9台）'), findsOneWidget);
-    expect(find.text('バラエティ（1〜3台の機種）の参考候補2台'), findsOneWidget);
+    expect(find.text('バラエティ（1〜2台の機種）の参考候補2台'), findsOneWidget);
     expect(find.text('801番台'), findsOneWidget);
     expect(find.text('1台の機種'), findsOneWidget);
     expect(find.text('（バラエティ）'), findsNWidgets(2));
