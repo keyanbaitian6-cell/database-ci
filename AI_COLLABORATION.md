@@ -1,5 +1,19 @@
 # database AI共同作業メモ
 
+## 【引き継ぎ・作業途中】メルヘン（幸町・長町南）のPC不要同期（Claude→チャッピー、2026-10-13 夜）
+
+- 利用者「P-stationだけだったの！？ メルヘンもやってください」→ 途中で「そろそろ使用量限界くるからチャッピーへ引き継ぎたい」。今日のPC不要同期（`pscube_cloud_sync.gs`）はP’s CUBEだけで、メルヘンのAndroidバックアップは共有・iPhoneに反映されない（直前の項）。
+- **作成途中のファイル**：`database_android/tool/meruhen_cloud_sync.gs`（未試験。先頭に「貼らない」と明記）。P’s CUBE版と同じ作り（別のApps Scriptプロジェクト、`setupMeruhenCloudSync`／30分おきの `syncMeruhenCloud`／`showMeruhenCloudStatus`、入力ごとの失敗記録・版が変わるまで読み直さない・一時的な読み出し障害は次回・書き出しはDrive APIのメディア更新で3回まで再試行・48MiB上限・ロック）。
+- 設計：
+  - 入力＝「database共有」直下とマイドライブ直下の `database-backup-android(-YYYYMMDD-HHMMSS).json`（Androidの「共有」書き出し。今日の例：マイドライブ直下の `-184425`（幸町の全期間）・`-192534`（10/2）・`-195107`（10/1））。PCの `database-backup-auto.json` は読まない（PCが閲覧用に出す内容と同じため）。
+  - 検査はPC `core._valid_backup_record` と同じ（kind_code 21・店舗2つ・整数・確定設定・日付）、機種名は `normalize_machine_name`、表示しない機種（`HIDDEN_MACHINE_WORDS`）は除く。台の同一性は（店舗・日付・機種名・台番号）＝PC `plan_backup_import` と同じ。
+  - 読んだ記録は画像を外して（曲線は残す）`database共有/database-android-cloud.json`（format `database-android-cloud`、PCのバックアップとしては読まれない形）に貯める。項目は `core.VIEWER_KEYS`＋`jo_captured_at`。
+  - 毎回、PCの `database-viewer.json`（source `pc-viewer`、60日、1行目見出し＋1台1行）に足し込み、変化があるときだけ同じファイルIDへ書き戻す（見出しの `exported_at` を新しくし `cloud_merged` を付ける。閲覧ページは1行目の時刻と `?check=1` の版で読み直す）。PCが閲覧用を書き直したら、次の実行で足し直す。
+  - 足し込みの規則（`meruhenPick`／`meruhenApply`）：閲覧用に無い台は追加（ジャグラーオンラインで作った台・PCが取れていない日）。数値（games・bb・rb・max_hold）が違えば `captured_at` の新しい方の数値・グラフ・時刻（タイムゾーンなしは日本時間）。数値が同じならグラフ・最大持玉・確定設定の無い方を補う。差枚 `jo_net` はAndroidの値を使う（PCの差枚もAndroid由来で、閲覧用に取得時刻が無いため）。🌈は閲覧用（PC・共有の印）のまま。最新日から60日より前は出さない・貯めない。イベント・候補記録は扱わない。
+  - PCの記録（database.sqlite3）は変えない。PCには今までどおり「バックアップを読み込む」。PCで競合を「PCの値」に決めた台でも、閲覧用ではAndroidの取得時刻が新しければAndroidの数値が出る（手順書に明記すること）。
+- **残りの作業**：①試験 `database_android/tool/test_meruhen_cloud_sync.mjs`（`test_pscube_cloud_sync.mjs` の模擬Driveを流用。検索語は `"trashed = false and title contains 'database-backup-android'"`）：設定・30分トリガー1個、10/2の537番台のように閲覧用へ差枚が入る、新しい日・作った台の追加、数値の競合（新しい方）、PCが閲覧用を書き直した後の足し直し、変更なしの回は大きいファイルを読まない・書かない、不正な入力は1回だけ記録して他は反映、一時的な障害は次回、表示しない機種・「+」表記、60日の範囲、出力を `share_viewer/data.mjs` の `meruhenRecords` とPCの `read_backup_file(allow_viewer=True)` で読めること（Python呼び出しは `test_variety_week.mjs` と同じ方法）、1行目の見出しが閲覧ページの `recordsStart` に合うこと。②下書きで気になっている点：`meruhenViewerRecord` の条件式が読みにくい（null の扱いを見直す）、`meruhenPick` の数値を差し替える部分の undefined の消し方。③手順書 `database_android/MERUHEN_CLOUD_SYNC.md`（`PSCUBE_CLOUD_SYNC.md` に合わせる。新しいプロジェクトを作り、全文を貼って `setupMeruhenCloudSync` を実行）。④試験が通ったら `check_before_build.sh` を流してからコミット・push。利用者に貼り方を案内。APK・PC・Webのビルドは不要（Google側のスクリプトだけ）。
+- 当面のしのぎ方（利用者へ案内済み）：PC「バックアップ・同期」→「バックアップを読み込む」でマイドライブ直下の3ファイルを読むと、10/1〜10/3の差枚が共有・iPhoneに出る。
+
 ## ジャグラーオンラインの10/1〜10/3取り込み「データがずれている」の調査（Claude、2026-10-13）
 
 - 利用者「10/1、2、3と取り込みデータとばしてたけどデータずれてる。共有の仕方間違えたかな？ 取り込み→読み取り→保存→共有から幸町の日付指定」「10/2の537番台は15725枚なのに、カレンダーでみると14000」。調査のみ、コード・データの変更なし。
