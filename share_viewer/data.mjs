@@ -488,9 +488,9 @@ function weeklyScorer(byDay) {
   return cached;
 }
 
-/** 幸町の最新の並びの1台機種。選択日の前日まで7日、台番号ごと（既存の🌈表と同じ）。 */
+/** 幸町の最新の並びの1台機種。選択日を含む7日（2026-10-13 利用者「当日を含む7日間」）、台番号ごと（既存の🌈表と同じ）。 */
 export function varietyWeek(byDay, store, day) {
-  const days = windowDays(day, 8).slice(0, 7), score = weeklyScorer(byDay);
+  const days = windowDays(day), score = weeklyScorer(byDay);
   const rows = store === 'saiwaichou' ? varietyRainbowRows(byDay, store, day).map(x => {
     const records = rackDays(byDay, store, x.rack, days).filter(Boolean);
     const high = records.map(record => ({record, score: score(record)})).filter(x => x.score.total != null && x.score.total >= 70);

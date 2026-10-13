@@ -8,9 +8,9 @@ import 'theme.dart';
 import 'viewer_data.dart';
 import 'viewer_pages.dart';
 
-/// 選んだ日の前日までの7日（カレンダーの日数、古い順）。
+/// 選んだ日を含む7日（選んだ日を右端に、カレンダーの日数、古い順。2026-10-13 利用者「当日を含む7日間」）。
 List<String> varietyWeekDays(String day) => [
-  for (var i = 7; i >= 1; i--)
+  for (var i = 6; i >= 0; i--)
     DateTime.parse('${day}T00:00:00Z')
         .subtract(Duration(days: i))
         .toIso8601String()
@@ -261,7 +261,7 @@ class _VarietyWeekPageState extends State<VarietyWeekPage> {
         ),
         const SizedBox(height: 8),
         const Text(
-          '幸町・1台機種。前日まで7日間に🌈の記録がない台です。'
+          '幸町・1台機種。選んだ日を含む7日間に🌈の記録がない台です。'
           '70点以上の日がある台も候補に残し、点数を添えます。',
           style: TextStyle(fontSize: 13, color: AppColors.ash),
         ),

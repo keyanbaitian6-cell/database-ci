@@ -176,7 +176,7 @@ void main() {
       expect(find.text('本日の🌈 0台'), findsOneWidget);
       await tester.tap(find.text('7日間の候補'));
       await tester.pumpAndSettle();
-      expect(find.text('2026-10-06〜2026-10-12'), findsOneWidget);
+      expect(find.text('2026-10-07〜2026-10-13'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     }

@@ -37,25 +37,28 @@ try {
     const sheet=page.locator('.sheet');
     const none=sheet.locator('[data-week-group="none"]');
     await none.waitFor();
-    assert.match(await sheet.innerText(),/2026-10-06〜2026-10-12/);
-    assert.match(await sheet.innerText(),/候補 4台/);
-    assert.deepEqual(await none.locator('.rack').allInnerTexts(),['1102番','1103番','1104番','1105番']);
+    assert.match(await sheet.innerText(),/2026-10-07〜2026-10-13/);
+    assert.match(await sheet.innerText(),/選んだ日を含む7日間/);
+    assert.match(await sheet.innerText(),/候補 5台/);
+    assert.deepEqual(await none.locator('.rack').allInnerTexts(),['1101番','1102番','1104番','1105番','1106番'],'選んだ日（10/13）の🌈は入り、10/6の🌈は入らない');
     assert.match(await none.getByRole('button',{name:/1102番/}).innerText(),/70点以上あり[\s\S]*最高 70.0点/);
-    assert.match(await none.innerText(),/記録4\/7日・未取得3日/);
+    assert.match(await none.innerText(),/記録5\/7日・未取得2日/);
+    assert.match(await none.innerText(),/記録1\/7日・未取得6日/);
     assert.equal(await sheet.locator('.week-marked').getAttribute('open'),null);
     assert.equal(await sheet.locator('[data-week-group="marked"] button').isVisible(),false);
-    assert.match(await sheet.innerText(),/記録がない台：1台/);
+    assert.doesNotMatch(await sheet.innerText(),/記録がない台：/);
     assert.equal(await sheet.evaluate(e=>e.scrollWidth>e.clientWidth),false);
     assert.equal(await sheet.getByRole('button',{name:'空き順',exact:true}).count(),0);
     if(process.env.WEEK_SHOTS) await page.screenshot({path:`${process.env.WEEK_SHOTS}/share-week-${width}.png`});
     await none.getByRole('button',{name:/1102番/}).click();
     await sheet.getByRole('button',{name:'1102番台の🌈 付ける'}).click();
     await page.getByRole('button',{name:'‹ 戻る'}).click();
-    assert.deepEqual(await none.locator('.rack').allInnerTexts(),['1103番','1104番','1105番'],'過去日の🌈付け外し後に戻ると分類を更新');
-    assert.ok(posts.some(p=>p.marks?.some(m=>m.rack===1102&&m.day==='2026-10-12'&&m.on)));
+    assert.deepEqual(await none.locator('.rack').allInnerTexts(),['1101番','1104番','1105番','1106番'],'選んだ日の🌈付け外し後に戻ると分類を更新');
+    assert.ok(posts.some(p=>p.marks?.some(m=>m.rack===1102&&m.day==='2026-10-13'&&m.on)));
     await page.getByRole('button',{name:'前の日',exact:true}).click();
-    assert.match(await sheet.innerText(),/2026-10-05〜2026-10-11/);
-    assert.deepEqual(await none.locator('.rack').allInnerTexts(),['1102番','1103番','1105番'],'選択日を戻すと10/5の🌈を含む');
+    assert.match(await sheet.innerText(),/2026-10-06〜2026-10-12/);
+    assert.deepEqual(await none.locator('.rack').allInnerTexts(),['1102番','1103番','1104番','1105番'],'選択日を戻すと10/13の🌈は期間外、10/6の🌈を含む');
+    assert.match(await sheet.innerText(),/記録がない台：1台/);
     assert.deepEqual(errors,[]);
     await context.close();
   }
@@ -79,10 +82,10 @@ try {
     await button.click();
     const labels=()=>page.evaluate(()=>[...document.querySelectorAll('flt-semantics')].map(e=>e.getAttribute('aria-label')||e.textContent||''));
     const seen=async pattern=>{for(let i=0;i<60;i++){if((await labels()).some(l=>pattern.test(l)))return;await page.waitForTimeout(150);}assert.fail(`not seen: ${pattern}\n${(await labels()).join('\n')}`);};
-    await seen(/2026-10-06〜2026-10-12/);
-    await seen(/候補 4台/);
+    await seen(/2026-10-07〜2026-10-13/);
+    await seen(/候補 5台/);
     await seen(/70点以上あり/);
-    await seen(/最高 70.0点.*10\/12/);
+    await seen(/最高 70.0点.*10\/13/);
     if(process.env.WEEK_SHOTS)await page.screenshot({path:`${process.env.WEEK_SHOTS}/iphone-week-${width}.png`});
     // 高得点の日の台を開き、🌈を付けて戻ったときの一覧を確認する。
     await page.getByText(/^1102番　/).first().click();
@@ -91,13 +94,13 @@ try {
     await page.getByRole('button',{name:'Back',exact:true}).click();
     await page.mouse.move(width/2,700);
     await page.mouse.wheel(0,-1500);await page.waitForTimeout(300);
-    await seen(/候補 3台/);
+    await seen(/候補 4台/);
     await page.getByRole('button',{name:'前の記録日',exact:true}).click();
     await page.mouse.wheel(0,-2500);await page.waitForTimeout(300);
-    await seen(/2026-10-05〜2026-10-11/);
+    await seen(/2026-10-06〜2026-10-12/);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     assert.deepEqual(errors,[]);
     await context.close();
   }
-  console.log('PASS: 共有・iPhone閲覧ページの🌈なし候補が先頭、70点以上は候補のカード内、🌈あり折りたたみ、前日までの期間、欠損、日付送り、🌈変更後の再分類、320/393px');
+  console.log('PASS: 共有・iPhone閲覧ページの🌈なし候補が先頭、70点以上は候補のカード内、🌈あり折りたたみ、選んだ日を含む7日間、欠損、日付送り、🌈変更後の再分類、320/393px');
 } finally {await browser.close();await new Promise(r=>server.close(r));}

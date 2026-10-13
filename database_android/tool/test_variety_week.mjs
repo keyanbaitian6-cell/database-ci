@@ -7,21 +7,26 @@ import {meruhenRecords, indexRecords, varietyWeek, meruhenScore, applyRainbowMar
 
 const fixture = JSON.parse(fs.readFileSync(new URL('../test/fixtures/variety_week.json', import.meta.url), 'utf8'));
 const racks = rows => rows.map(x => x.rack);
-test('前日まで7日：70点ちょうど、🌈なし、重複、範囲外の🌈、欠損（Flutterと同じ例）', () => {
+test('選んだ日を含む7日：当日の🌈は入り、8日前の🌈は入らない、70点ちょうど、重複、欠損（Flutterと同じ例）', () => {
   const byDay = indexRecords(meruhenRecords(fixture));
   const week = varietyWeek(byDay, 'saiwaichou', '2026-10-13');
-  assert.deepEqual([week.days[0],week.days.at(-1)],['2026-10-06','2026-10-12']);
+  assert.deepEqual([week.days[0],week.days.at(-1)],['2026-10-07','2026-10-13']);
   assert.deepEqual(racks(week.rows),[1101,1102,1103,1104,1105,1106]);
   assert.deepEqual(racks(week.high),[1101,1102]);
   assert.deepEqual(week.high[0].high.map(h => h.score.total),Array(7).fill(70));
-  assert.deepEqual(racks(week.noRainbow),[1102,1103,1104,1105]);
-  assert.deepEqual(week.rows.map(x => [x.observedDays,x.rainbowDays]),[[7,1],[7,0],[7,0],[7,0],[4,0],[0,0]]);
-  assert.deepEqual(racks(week.unknown),[1106]);
+  assert.deepEqual(racks(week.noRainbow),[1101,1102,1104,1105,1106],'1101の🌈（10/6）は期間外、1103の🌈（選んだ日10/13）は期間内');
+  assert.deepEqual(week.rows.map(x => [x.observedDays,x.rainbowDays]),[[7,0],[7,0],[7,1],[7,0],[5,0],[1,0]]);
+  assert.deepEqual(racks(week.unknown),[]);
+  const before = varietyWeek(byDay,'saiwaichou','2026-10-12');
+  assert.deepEqual([before.days[0],before.days.at(-1)],['2026-10-06','2026-10-12']);
+  assert.deepEqual(racks(before.noRainbow),[1102,1103,1104,1105],'10/12を選ぶと10/13の🌈は入らず、10/6の🌈が入る');
+  assert.deepEqual(racks(before.unknown),[1106]);
   assert.equal(varietyWeek(byDay, 'nagamachiminami', '2026-10-13').rows.length,0);
-  assert.equal(varietyWeek(byDay,'saiwaichou','2026-10-12').rows.find(x => x.rack === 1104).rainbowDays,1);
-  assert.equal(varietyWeek(byDay,'saiwaichou','2027-01-03').days[0],'2026-12-27');
-  applyRainbowMarks(byDay,[{store:'saiwaichou',day:'2026-10-12',rack:1102,on:true,updated_at:'2026-10-13T00:00:00Z'}]);
-  assert.ok(!racks(varietyWeek(byDay,'saiwaichou','2026-10-13').noRainbow).includes(1102),'付け外しで直ちに分類を更新');
+  assert.equal(varietyWeek(byDay,'saiwaichou','2026-10-11').rows.find(x => x.rack === 1104).rainbowDays,1,'10/11を含む7日なので10/5も入る');
+  assert.deepEqual([varietyWeek(byDay,'saiwaichou','2027-01-03').days[0],varietyWeek(byDay,'saiwaichou','2027-01-03').days.at(-1)],['2026-12-28','2027-01-03']);
+  applyRainbowMarks(byDay,[{store:'saiwaichou',day:'2026-10-13',rack:1102,on:true,updated_at:'2026-10-13T12:00:00Z'}]);
+  assert.ok(!racks(varietyWeek(byDay,'saiwaichou','2026-10-13').noRainbow).includes(1102),'選んだ日の付け外しで直ちに分類を更新');
+  assert.ok(racks(varietyWeek(byDay,'saiwaichou','2026-10-12').noRainbow).includes(1102),'10/13の印は10/12を含む7日には入らない');
 });
 
 test('共有の採点は既存のPC採点v12と一致（欠損、低稼働、0回、ゼロ線、比較除外、70点境界）', () => {
