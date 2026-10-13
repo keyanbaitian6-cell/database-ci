@@ -28,6 +28,8 @@ function drive({seed = true} = {}) {
   // Driveへの問い合わせ回数（ファイルごとの読み出し）。入力が増えたときの負荷を確かめる。
   const calls = {name: 0, id: 0, updated: 0, size: 0, trashed: 0, read: 0};
   let apiStatus = 200, apiName = null, locked = false;
+  // 一時的な失敗：指定の回数だけ HTTP の失敗（times）か通信の例外（throws）を返し、そのあとは成功する。待った回数も数える。
+  const flaky = {status: 0, name: null, times: 0, throws: 0, sleeps: [], attempts: 0};
   const iterator = list => { let i = 0; return {hasNext: () => i < list.length, next: () => list[i++]}; };
   const searchIn = (parent, query) => {
     assert.equal(query, "trashed = false and title contains 'pscube-backup-'");
@@ -77,11 +79,14 @@ function drive({seed = true} = {}) {
     },
     Utilities: {DigestAlgorithm: {SHA_256: 'sha256'},
       computeDigest: (_, text) => [...createHash('sha256').update(text).digest()],
-      newBlob: (text, mime, name) => ({text, mime, name})},
+      newBlob: (text, mime, name) => ({text, mime, name}), sleep: ms => { flaky.sleeps.push(ms); }},
     UrlFetchApp: {fetch(url, options) {
       assert.match(url, /^https:\/\/www\.googleapis\.com\/upload\/drive\/v3\/files\/f\d+\?uploadType=media$/);
       assert.equal(options.method, 'patch'); assert.equal(options.headers.Authorization, 'Bearer test-only-token');
       const file = files.find(f => url.includes('/' + f.id + '?'));
+      flaky.attempts++;
+      if (flaky.throws > 0) { flaky.throws--; throw new Error('Address unavailable: https://www.googleapis.com/'); }
+      if (flaky.times > 0 && (!flaky.name || flaky.name === file.name)) { flaky.times--; return {getResponseCode: () => flaky.status}; }
       const status = !apiName || apiName === file.name ? apiStatus : 200;
       if (status >= 200 && status < 300) { file.text = options.payload.text; file.updated = clock++; writes.push(['update', file.name]); }
       return {getResponseCode: () => status};
@@ -98,7 +103,7 @@ function drive({seed = true} = {}) {
   const status = () => JSON.parse(properties.get('pscubeCloudStatus') ?? '{}');
   const failures = () => Object.values(JSON.parse(properties.get('pscubeCloudErrors') ?? '{}'));
   return {context, files, writes, logs, triggers, properties, folder, root, add, doc, replace, calls, status, failures,
-    failApi: (status, name = null) => { apiStatus = status; apiName = name; }, setup: () => context.setupPscubeCloudSync(), sync: () => context.syncPscubeCloud()};
+    failApi: (status, name = null) => { apiStatus = status; apiName = name; }, flaky, setup: () => context.setupPscubeCloudSync(), sync: () => context.syncPscubeCloud()};
 }
 
 test('配布用Apps Scriptは共通パーサー・ランタイムから再生成した内容と一致する', () => {
@@ -468,4 +473,65 @@ test('状態の報告：正常・一部失敗・変更なし・停止を分け�
   const stored = many.properties.get('pscubeCloudErrors');
   assert.ok(Buffer.byteLength(stored) < 9000, `${Buffer.byteLength(stored)}バイト`);
   assert.equal(many.failures().length, 10); assert.ok(many.failures().every(f => f.reason.length <= 120));
+});
+
+test('一時的な読み出しの失敗（Driveの通信障害）は壊れたファイルとして記録せず、次の実行で読み直す（再発防止 2026-10-13）', () => {
+  const d = drive(); d.setup();
+  const file = d.add('pscube-backup-android-20261013-090000.json', backup([record(2)]));
+  const blob = file.getBlob;
+  file.getBlob = () => { throw new Error('Service error: Drive'); };
+  const result = d.sync();
+  assert.deepEqual(d.failures(), [], '中身の不正ではないので失敗として記録しない');
+  assert.equal(result.pending, 1, '未取り込みのまま次の実行へ残す');
+  assert.equal(d.status().transient, 1);
+  file.getBlob = blob;   // 通信が戻る（ファイルは更新されていない）
+  assert.equal(d.sync().viewerRecords, 2, '同じ版のままでも次の実行で取り込む');
+});
+
+test('書き出しの一時的な失敗（429・5xx・通信の例外）は同じ実行の中で少し待って再試行し、403などはすぐ止める（再発防止 2026-10-13）', () => {
+  const d = drive(); d.setup();
+  d.add('pscube-backup-android-20261013-090000.json', backup([record(2)]));
+  Object.assign(d.flaky, {status: 503, name: 'pscube-viewer-drive.json', times: 2});
+  assert.equal(d.sync().viewerRecords, 2, '2回失敗しても3回目で書けば止めない');
+  assert.deepEqual(plain(d.flaky.sleeps), [1000, 2000]);
+  d.add('pscube-backup-android-20261013-100000.json', backup([record(3)]));
+  Object.assign(d.flaky, {throws: 1, sleeps: []});
+  assert.equal(d.sync().viewerRecords, 3, '通信の例外も再試行する');
+  // 一時的でない失敗（権限など）は待たずに止め、次の自動実行に任せる。
+  d.add('pscube-backup-android-20261013-110000.json', backup([record(4)]));
+  Object.assign(d.flaky, {sleeps: [], attempts: 0}); d.failApi(403, 'pscube-backup-cloud.json');
+  assert.throws(() => d.sync(), /HTTP 403/); assert.equal(d.flaky.attempts, 1); assert.deepEqual(plain(d.flaky.sleeps), []);
+  // 続けて失敗する一時的な障害は3回で止める（既存の出力は書き換えない）。
+  d.failApi(200); Object.assign(d.flaky, {status: 503, name: null, times: 99, attempts: 0});
+  assert.throws(() => d.sync(), /HTTP 503/); assert.equal(d.flaky.attempts, 3);
+  Object.assign(d.flaky, {times: 0}); assert.equal(d.sync().viewerRecords, 4, '障害が終われば次の実行で反映');
+});
+
+test('失敗記録の10件上限から外れた不正ファイルも、版が変わるまで読み直さず、毎回は通知しない。直せば取り込む（再発防止 2026-10-13）', () => {
+  const d = drive(); d.setup();
+  const broken = [];
+  for (let i = 0; i < 12; i++) broken.push(d.add(`pscube-backup-android-20261014-${String(100000 + i)}.json`, '{broken ' + i));
+  assert.throws(() => d.sync(), /取り込めませんでした/);   // 10ファイル
+  assert.throws(() => d.sync(), /取り込めませんでした/);   // 残りの2ファイル
+  const reads = broken.map(f => f.reads);
+  // 別の正常なバックアップが届いた回（変更なしで終わらない回）でも、上限から外れた不正ファイルを読み直さず、新しい失敗にしない。
+  d.add('pscube-backup-android-20261014-200000.json', backup([record(6)]));
+  const third = d.sync();
+  assert.equal(third.viewerRecords, 2);
+  assert.deepEqual(plain(third.newFailures), [], '新しい失敗は無い（毎回通知しない）');
+  assert.deepEqual(broken.map(f => f.reads), reads, '上限から外れたファイルも読み直さない');
+  assert.equal(d.status().failed, 12, '件数は全部数える（詳しい理由は新しい10件）');
+  assert.equal(d.failures().length, 10);
+  // 上限から外れたファイルを直すと取り込む。
+  const dropped = broken.find(f => !d.failures().some(x => x.name === f.name));
+  d.replace(dropped, backup([record(5)]));
+  assert.equal(d.sync().viewerRecords, 3);
+  assert.equal(d.status().failed, 11);
+});
+
+test('先頭にBOMが付いたバックアップも読める（配布用スクリプトの書き方の取り違えの再発防止 2026-10-13）', () => {
+  const d = drive(); d.setup();
+  d.add('pscube-backup-android-20261013-090000.json', String.fromCharCode(0xfeff) + JSON.stringify(backup([record(2)])));
+  assert.equal(d.sync().viewerRecords, 2);
+  assert.ok(!source.includes(String.fromCharCode(0xfeff)), '配布用スクリプトに見えない文字（BOM）をそのまま入れない');
 });
