@@ -12,6 +12,15 @@ const PSCUBE_CLOUD_VIEWER = 'pscube-viewer-drive.json';
 const PSCUBE_CLOUD_BATCH = 10;
 const PSCUBE_CLOUD_MAX_BYTES = 48 * 1024 * 1024;
 const PSCUBE_CLOUD_HANDLER = 'syncPscubeCloud';
+// 上限（共通パーサーの全期間20万件・閲覧ページの10万件）と、上限に近づいたと知らせる割合（2026-10-13）。
+const PSCUBE_CLOUD_RECORD_LIMIT = 200000;
+const PSCUBE_CLOUD_VIEWER_LIMIT = 100000;
+const PSCUBE_CLOUD_WARN = 0.6, PSCUBE_CLOUD_ALERT = 0.8;
+// 1回の実行時間の目安（Googleの上限は6分）。これを超えたら残りは次回。
+const PSCUBE_CLOUD_TIME_BUDGET_MS = 180000;
+// 取り込めなかった入力（ファイルID→名前・理由・版・確認日時）と、直近の実行の状態。スクリプトのプロパティに置く。
+const PSCUBE_CLOUD_ERRORS = 'pscubeCloudErrors';
+const PSCUBE_CLOUD_STATUS = 'pscubeCloudStatus';
 
 // Google Apps ScriptにはブラウザのURLクラスがないため、共通パーサーが使う部分を実装する。
 class PscubeCloudUrl {
@@ -34,6 +43,11 @@ class PscubeCloudUrl {
   }
 }
 const URL = PscubeCloudUrl;
+
+/** 入力ではなく、同期そのものを止める失敗（統合済みバックアップが読めない・出力できない・設定）。 */
+class PscubeCloudStop extends Error {
+  constructor(kind, message) { super(message); this.kind = kind; }
+}
 
 /** 初回・間隔変更時にエディタから実行。フォルダ確認→同期→30分おきの自動実行を設定する。 */
 function setupPscubeCloudSync() {
@@ -58,7 +72,8 @@ function setupPscubeCloudSync() {
   }
   if (folder.isTrashed()) throw new Error('共有フォルダがごみ箱にあります。');
   properties.setProperty('pscubeCloudFolder', folder.getId());
-  const result = syncPscubeCloud();
+  // 一部のバックアップが不正でも、正常な分を反映したうえで自動実行は設定する（失敗はログと状態に残る）。
+  const result = pscubeCloudRun();
   const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === PSCUBE_CLOUD_HANDLER);
   // 新しいトリガーを作ってから古いものを外す。作成失敗時には既存の自動実行を残す。
   ScriptApp.newTrigger(PSCUBE_CLOUD_HANDLER).timeBased().everyMinutes(30).create();
@@ -68,86 +83,221 @@ function setupPscubeCloudSync() {
   return result;
 }
 
-/** エディタからの手動実行も可。ウェブ公開・デプロイは不要。 */
+/**
+ * 30分おきの自動実行・エディタからの手動実行。ウェブ公開・デプロイは不要。
+ * 不正な入力があっても、ほかの正常な入力は反映する。新しく取り込めない入力が見つかった回だけ、反映を済ませたあとで
+ * エラーにして「実行数」に失敗として残す（Googleから失敗の通知が届く）。同じ版のファイルでは繰り返さない。
+ */
 function syncPscubeCloud() {
+  const result = pscubeCloudRun();
+  if (result.newFailures && result.newFailures.length) {
+    throw new Error('一部のバックアップを取り込めませんでした（ほかは反映済み）：' +
+      result.newFailures.map(f => f.name + '（' + f.reason + '）').join('、'));
+  }
+  return result;
+}
+
+/** 直近の実行の状態をログに出す（スマホのエディタで選んで実行）。何も書き換えない。 */
+function showPscubeCloudStatus() {
+  const props = PropertiesService.getScriptProperties();
+  const status = pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_STATUS)) || {};
+  const failures = Object.values(pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_ERRORS)) || {});
+  for (const line of pscubeCloudStatusLines(status, failures)) console.log(line);
+  return {status: status, failures: failures};
+}
+
+function pscubeCloudRun() {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return {busy: true, pending: 0};
+  if (!lock.tryLock(1000)) return {busy: true, changed: false, pending: 0, failed: [], newFailures: []};
+  const props = PropertiesService.getScriptProperties();
+  const startedAt = Date.now();
+  const previous = pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_STATUS)) || {};
   try {
-    const props = PropertiesService.getScriptProperties();
     const id = props.getProperty('pscubeCloudFolder');
-    if (!id) throw new Error('最初に setupPscubeCloudSync を実行してください。');
+    if (!id) throw new PscubeCloudStop('config', '最初に setupPscubeCloudSync を実行してください。');
     const folder = DriveApp.getFolderById(id);
-    if (folder.isTrashed()) throw new Error('共有フォルダがごみ箱にあります。');
+    if (folder.isTrashed()) throw new PscubeCloudStop('config', '共有フォルダがごみ箱にあります。');
     const backupFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_BACKUP);
     const viewerFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_VIEWER);
-    const inputsById = new Map();
-    const sources = new Map([folder, DriveApp.getRootFolder()].map(f => [f.getId(), f]));
-    for (const sourceFolder of sources.values()) {
-      // Drive側で名前を絞る。マイドライブにある無関係のファイルは列挙・読取しない。
-      // Folder.searchFiles はDrive API v2形式の title を使う。
-      const files = sourceFolder.searchFiles("trashed = false and title contains 'pscube-backup-'");
-      while (files.hasNext()) {
-        const file = files.next(), name = file.getName(), fileId = file.getId();
-        if (!file.isTrashed() && !inputsById.has(fileId) && /^pscube-backup-(?:auto|(?:android|pc)-\d{8}-\d{6})\.json$/.test(name)) {
-          inputsById.set(fileId, {file: file, id: fileId, version: pscubeCloudVersion(file)});
-        }
-      }
-    }
-    const inputs = [...inputsById.values()];
-    inputs.sort((a, b) => a.file.getLastUpdated().getTime() - b.file.getLastUpdated().getTime() || a.id.localeCompare(b.id));
+    const inputs = pscubeCloudListInputs([folder, DriveApp.getRootFolder()]);
+    const liveIds = new Set(inputs.map(i => i.id));
+    const failures = pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_ERRORS)) || {};
+    // Driveから無くなった入力の失敗記録は消す。
+    for (const key of Object.keys(failures)) if (!liveIds.has(key)) delete failures[key];
     const inputVersion = pscubeCloudDigest(inputs.map(i => [i.id, i.version]));
     const backupVersion = backupFile ? pscubeCloudVersion(backupFile) : '';
     const viewerVersion = viewerFile ? pscubeCloudVersion(viewerFile) : '';
     // 変化がなければ、巨大なJSONを毎回読むことも、書き直すこともしない。
     if (backupFile && viewerFile && props.getProperty('pscubeCloudInputs') === inputVersion &&
         props.getProperty('pscubeCloudBackup') === backupVersion && props.getProperty('pscubeCloudViewer') === viewerVersion) {
-      console.log('変更なし');
-      return {changed: false, pending: 0};
+      const failed = Object.values(failures);
+      const status = {...previous, at: new Date().toISOString(), result: failed.length ? 'unchanged-partial' : 'unchanged',
+        message: '変更なし', inputs: inputs.length, failed: failed.length, elapsed_ms: Date.now() - startedAt,
+        backup_bytes: backupFile.getSize(), viewer_bytes: viewerFile.getSize()};
+      status.warnings = pscubeCloudWarnings(status);
+      pscubeCloudSave(props, status, failures);
+      console.log(failed.length ? '変更なし（取り込めないファイル ' + failed.length + '件は、更新されたら再試行します）' : '変更なし');
+      return {changed: false, pending: 0, failed: failed.map(f => f.name), newFailures: [], status: status};
     }
-    let data = backupFile ? pscubeCloudRead(backupFile) : {...emptyData(), rack_captures: []};
+    let data;
+    try {
+      data = backupFile ? pscubeCloudRead(backupFile, backupFile.getSize()) : {...emptyData(), rack_captures: []};
+    } catch (error) {
+      // 統合済みバックアップは入力ではない。壊れていたら上書きせずに止める（入力の不正とは分けて知らせる）。
+      throw new PscubeCloudStop('backup', PSCUBE_CLOUD_BACKUP + ' を読めません（' + error.message + '）。上書きせずに止めました。' +
+        '共有フォルダから外す（名前を変える）と、次の実行で入力から作り直します。');
+    }
     const versions = {...(data.cloud_sync && data.cloud_sync.inputs || {})};
-    const pending = inputs.filter(i => versions[i.id] !== i.version);
-    if (!backupFile && !pending.length) throw new Error('共有フォルダとマイドライブ直下にAndroidまたはPCのP’s CUBEバックアップがありません。先にDriveへ保存してください。');
-    const selected = [];
-    const startedAt = Date.now();
-    let readBytes = 0;
-    // 全件検証してから書く。不正・アップロード途中のファイルで正常な記録を置き換えない。
+    // 取り込み済みの版・取り込めなかった同じ版は読まない（直したり更新したりすると版が変わり、再試行する）。
+    const pending = inputs.filter(i => versions[i.id] !== i.version && !(failures[i.id] && failures[i.id].version === i.version));
+    if (!backupFile && !inputs.length) {
+      throw new PscubeCloudStop('config', '共有フォルダとマイドライブ直下にAndroidまたはPCのP’s CUBEバックアップがありません。先にDriveへ保存してください。');
+    }
+    const selected = [], newFailures = [], changedWhileReading = [];
+    let attempted = 0, readBytes = 0;
     for (const input of pending.slice(0, PSCUBE_CLOUD_BATCH)) {
       // Googleの実行時間内に書き出しまで終えられるよう、大きい入力は次回へ分ける。
-      if (selected.length && (Date.now() - startedAt > 180000 || readBytes + input.file.getSize() > 64 * 1024 * 1024)) break;
-      try { data = pscubeCloudMerge(data, pscubeCloudRead(input.file)); }
-      catch (error) { throw new Error(input.file.getName() + '：' + error.message); }
-      if (input.version !== pscubeCloudVersion(input.file)) throw new Error('読み込み中にバックアップが変わりました。次の自動実行でやり直します。');
+      if (attempted && (Date.now() - startedAt > PSCUBE_CLOUD_TIME_BUDGET_MS || readBytes + input.size > 64 * 1024 * 1024)) break;
+      attempted++;
+      readBytes += input.size;
+      let merged;
+      try {
+        merged = pscubeCloudMerge(data, pscubeCloudRead(input.file, input.size));
+      } catch (error) {
+        // 入力1つ分だけ取り消す。元ファイルは消さない・移さない・書き換えない。
+        const failure = {name: input.name, reason: String(error.message || error).slice(0, 120), version: input.version,
+          checked_at: new Date().toISOString(), size: input.size};
+        if (!failures[input.id] || failures[input.id].version !== input.version) newFailures.push(failure);
+        failures[input.id] = failure;
+        continue;
+      }
+      // 読み込み中の変更（アップロード途中など）は、この回は取り込まず次回やり直す（失敗とはしない）。
+      if (input.version !== pscubeCloudVersion(input.file)) { changedWhileReading.push(input.name); continue; }
+      data = merged;
       versions[input.id] = input.version;
-      readBytes += input.file.getSize();
+      delete failures[input.id];
       selected.push(input);
     }
+    const remaining = pending.length - selected.length - (attempted - selected.length - changedWhileReading.length);
+    if (!backupFile && !selected.length) {
+      pscubeCloudSave(props, {...previous, at: new Date().toISOString(), result: 'error', message: '取り込めるバックアップがありません'}, failures);
+      throw new PscubeCloudStop('config', '取り込めるP’s CUBEバックアップがありません：' +
+        (Object.values(failures).map(f => f.name + '（' + f.reason + '）').join('、') || 'Driveへの保存を待っています'));
+    }
     // 過去に処理した入力がDriveから移動・削除されても、統合済みの台は消さない。
-    const liveIds = new Set(inputs.map(i => i.id));
     for (const key of Object.keys(versions)) if (!liveIds.has(key)) delete versions[key];
+    const writeBackup = Boolean(selected.length) || !backupFile;
+    // 閲覧用は、新しい記録があるとき・無いとき・PCなどが書き直したとき・前回の閲覧用の更新が失敗して全期間だけ
+    // 新しくなっているとき（確定した版と違う）に作り直す。
+    const writeViewer = writeBackup || !viewerFile || props.getProperty('pscubeCloudViewer') !== viewerVersion ||
+      props.getProperty('pscubeCloudBackup') !== backupVersion;
     const exportedAt = new Date().toISOString();
     const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt, cloud_sync: {version: 1, inputs: versions}};
     const viewer = pscubeCloudViewer(backup, exportedAt);
-    const backupText = JSON.stringify(backup), viewerText = JSON.stringify(viewer);
-    pscubeCloudCheckSize(backupText); pscubeCloudCheckSize(viewerText);
+    const backupText = writeBackup ? JSON.stringify(backup) : null, viewerText = writeViewer ? JSON.stringify(viewer) : null;
+    const backupBytes = backupText ? pscubeCloudCheckSize(backupText) : backupFile.getSize();
+    const viewerBytes = viewerText ? pscubeCloudCheckSize(viewerText) : viewerFile.getSize();
+    // 入力の失敗は、出力に失敗しても残す（同じ版を何度も読まない）。
+    pscubeCloudSave(props, null, failures);
+    let savedBackup = backupFile, savedViewer = viewerFile;
     // バックアップを先に確定。閲覧用の更新が失敗しても次回このバックアップから復旧できる。
-    let savedBackup = backupFile;
-    if (selected.length || !backupFile) savedBackup = pscubeCloudWrite(folder, backupFile, PSCUBE_CLOUD_BACKUP, backupText);
+    if (writeBackup) savedBackup = pscubeCloudWrite(folder, backupFile, PSCUBE_CLOUD_BACKUP, backupText);
     // PCが古い閲覧用ファイルを書き直した場合も、統合済みの内容から再生成する。
-    const savedViewer = pscubeCloudWrite(folder, viewerFile, PSCUBE_CLOUD_VIEWER, viewerText);
-    const remaining = pending.length - selected.length;
+    if (writeViewer) savedViewer = pscubeCloudWrite(folder, viewerFile, PSCUBE_CLOUD_VIEWER, viewerText);
     props.setProperties({pscubeCloudBackup: pscubeCloudVersion(savedBackup), pscubeCloudViewer: pscubeCloudVersion(savedViewer)});
+    // 取り込めなかった入力は版ごと記録済みなので、残りが無ければチェックポイントを確定する。未取り込みの入力（次回分・
+    // 読み込み中に変わった入力）が残る間は確定しない。
     if (!remaining) props.setProperty('pscubeCloudInputs', inputVersion);
     else props.deleteProperty('pscubeCloudInputs');
-    console.log('共有へ反映：' + viewer.records.length + '台分の記録、全期間：' + backup.records.length + '件、未処理ファイル：' + remaining);
-    return {changed: true, records: backup.records.length, viewerRecords: viewer.records.length, pending: remaining};
+    const failed = Object.values(failures);
+    const status = {at: new Date().toISOString(), result: failed.length ? 'partial' : 'ok',
+      message: selected.length ? selected.length + 'ファイルを取り込み' : '閲覧用を作り直し',
+      processed: selected.length, failed: failed.length, new_failures: newFailures.length, remaining: remaining,
+      changed_while_reading: changedWhileReading.length, inputs: inputs.length,
+      records: backup.records.length, viewer_records: viewer.records.length,
+      backup_bytes: backupBytes, viewer_bytes: viewerBytes, elapsed_ms: Date.now() - startedAt};
+    status.warnings = pscubeCloudWarnings(status);
+    pscubeCloudSave(props, status, failures);
+    for (const line of pscubeCloudStatusLines(status, failed)) console.log(line);
+    return {changed: true, records: backup.records.length, viewerRecords: viewer.records.length, pending: remaining,
+      failed: failed.map(f => f.name), newFailures: newFailures, status: status};
+  } catch (error) {
+    // 同期そのものを止めた失敗は、入力の失敗と分けて状態に残す（既存の出力は書き換えていない）。
+    // 想定した停止（設定・統合済みバックアップ・出力）と、Drive側の予期しない例外など（other）を分ける。
+    const kind = error instanceof PscubeCloudStop ? error.kind : 'other';
+    const status = {...previous, at: new Date().toISOString(), result: 'error', stop: kind, message: String(error.message || error).slice(0, 300)};
+    try { props.setProperty(PSCUBE_CLOUD_STATUS, JSON.stringify(status)); } catch (_) { /* 状態を残せなくても元のエラーを返す */ }
+    throw error;
   } finally { lock.releaseLock(); }
 }
+
+/** 入力の候補。ID・名前・更新時刻・サイズを一度だけ読み、以降（並べ替え・版の比較）でDriveへ問い合わせない。 */
+function pscubeCloudListInputs(folders) {
+  const byId = new Map(), seen = new Set();
+  for (const folder of folders) {
+    if (seen.has(folder.getId())) continue;
+    seen.add(folder.getId());
+    // Drive側で名前とごみ箱を絞る。マイドライブにある無関係のファイルは列挙・読取しない。
+    // Folder.searchFiles はDrive API v2形式の title を使う。
+    const files = folder.searchFiles("trashed = false and title contains 'pscube-backup-'");
+    while (files.hasNext()) {
+      const file = files.next(), name = file.getName();
+      if (!/^pscube-backup-(?:auto|(?:android|pc)-\d{8}-\d{6})\.json$/.test(name)) continue;
+      const id = file.getId();
+      if (byId.has(id)) continue;
+      const updated = file.getLastUpdated().getTime(), size = file.getSize();
+      byId.set(id, {file: file, id: id, name: name, updated: updated, size: size, version: updated + '-' + size});
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.updated - b.updated || a.id.localeCompare(b.id));
+}
+
+/** 上限に近づいたときの知らせ（全期間・閲覧用の容量と件数、処理時間、入力の数）。 */
+function pscubeCloudWarnings(s) {
+  const out = [];
+  const share = (value, limit) => (value || 0) / limit;
+  const mb = n => (n / 1048576).toFixed(1) + 'MB';
+  const check = (value, limit, label, unit) => {
+    const r = share(value, limit);
+    if (r >= PSCUBE_CLOUD_ALERT) out.push(label + 'が上限の' + Math.round(r * 100) + '%（' + unit(value) + '）。まもなく上限です。分割方式への切り替えを相談してください。');
+    else if (r >= PSCUBE_CLOUD_WARN) out.push(label + 'が上限の' + Math.round(r * 100) + '%（' + unit(value) + '）。分割方式の検討を始める目安です。');
+  };
+  check(s.backup_bytes, PSCUBE_CLOUD_MAX_BYTES, '全期間バックアップの容量', mb);
+  check(s.viewer_bytes, PSCUBE_CLOUD_MAX_BYTES, '閲覧用の容量', mb);
+  check(s.records, PSCUBE_CLOUD_RECORD_LIMIT, '全期間の件数', n => n + '件');
+  check(s.viewer_records, PSCUBE_CLOUD_VIEWER_LIMIT, '閲覧用の件数', n => n + '件');
+  if ((s.elapsed_ms || 0) >= 120000) out.push('処理に' + Math.round(s.elapsed_ms / 1000) + '秒かかりました（Googleの上限は6分）。');
+  if ((s.inputs || 0) >= 300) out.push('読み込み対象のバックアップが' + s.inputs + '個あります（毎回の確認が増えます。古いファイルの整理を検討してください）。');
+  return out;
+}
+
+function pscubeCloudStatusLines(status, failures) {
+  const label = {ok: '正常に完了', partial: '一部失敗（ほかは反映済み）', unchanged: '変更なし',
+    'unchanged-partial': '変更なし（取り込めないファイルあり）', error: '停止（既存の出力はそのまま）'}[status.result] || 'まだ実行していません';
+  const lines = ['状態：' + label + (status.at ? '（' + status.at + '）' : '') + (status.message ? '・' + status.message : '')];
+  if (status.records != null) {
+    lines.push('全期間 ' + status.records + '件・' + ((status.backup_bytes || 0) / 1048576).toFixed(1) + 'MB／閲覧用 ' +
+      status.viewer_records + '件・' + ((status.viewer_bytes || 0) / 1048576).toFixed(1) + 'MB（上限48MB）');
+  }
+  if (status.remaining) lines.push('次回に回したファイル：' + status.remaining);
+  for (const f of failures) lines.push('取り込めないファイル：' + f.name + '（' + f.reason + '、確認 ' + f.checked_at + '）');
+  for (const w of status.warnings || []) lines.push('注意：' + w);
+  return lines;
+}
+
+function pscubeCloudSave(props, status, failures) {
+  // プロパティ1つの上限（約9KB）に収める（理由は120字まで・10件。日本語は1字3バイト）。新しく確認したものを残す。
+  // 外れた古い失敗は記録から消えるが、その入力は取り込み済みにしないので、次の実行で読み直して改めて記録する。
+  const list = Object.entries(failures).sort((a, b) => String(b[1].checked_at).localeCompare(String(a[1].checked_at))).slice(0, 10);
+  props.setProperty(PSCUBE_CLOUD_ERRORS, JSON.stringify(Object.fromEntries(list)));
+  if (status) props.setProperty(PSCUBE_CLOUD_STATUS, JSON.stringify(status));
+}
+function pscubeCloudParse(text) { try { return text ? JSON.parse(text) : null; } catch (_) { return null; } }
 
 function pscubeCloudUniqueFile(folder, name) {
   const files = folder.getFilesByName(name), found = [];
   while (files.hasNext()) { const file = files.next(); if (!file.isTrashed()) found.push(file); }
-  if (found.length > 1) throw new Error(name + ' が共有フォルダに複数あります。重複を解消してから実行してください。');
+  if (found.length > 1) throw new PscubeCloudStop('config', name + ' が共有フォルダに複数あります。重複を解消してから実行してください。');
   return found[0] || null;
 }
 function pscubeCloudVersion(file) { return file.getLastUpdated().getTime() + '-' + file.getSize(); }
@@ -155,9 +305,9 @@ function pscubeCloudDigest(value) {
   return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(value))
     .map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
 }
-function pscubeCloudRead(file) {
-  if (file.getSize() > PSCUBE_CLOUD_MAX_BYTES) throw new Error('ファイルが48MiBを超えています。記録は変更していません。');
-  const raw = JSON.parse(file.getBlob().getDataAsString('UTF-8').replace(/^\uFEFF/, ''));
+function pscubeCloudRead(file, size) {
+  if (size > PSCUBE_CLOUD_MAX_BYTES) throw new Error('ファイルが48MiBを超えています。記録は変更していません。');
+  const raw = JSON.parse(file.getBlob().getDataAsString('UTF-8').replace(/^﻿/, ''));
   if (raw.kind === 'viewer') throw new Error('軽量な閲覧用ファイルは全期間バックアップとして使えません。');
   const data = validateData(raw);
   const keys = new Set(data.records.map(recordKey));
@@ -183,7 +333,7 @@ function pscubeCloudViewer(backup, exportedAt) {
   const latest = backup.records.reduce((day, r) => r.day > day ? r.day : day, '');
   const first = latest ? new Date(Date.parse(latest) - 30 * 86400000).toISOString().slice(0, 10) : '';
   const records = backup.records.filter(r => r.day >= first).map(r => ({...r, graph: pscubeCloudThinGraph(r.graph)}));
-  if (records.length > 100000) throw new Error('直近31日の記録が閲覧ページの上限10万件を超えています。');
+  if (records.length > PSCUBE_CLOUD_VIEWER_LIMIT) throw new PscubeCloudStop('output', '直近31日の記録が閲覧ページの上限10万件を超えています。');
   return {format: FORMAT, version: 1, kind: 'viewer', source: 'cloud', exported_at: exportedAt,
     machines: backup.machines, records: records, ...(backup.date_events ? {date_events: backup.date_events} : {})};
 }
@@ -200,11 +350,12 @@ function pscubeCloudThinGraph(graph) {
   for (let k = 0; k < slots; k++) required.add(others[round(k * (others.length - 1) / (slots - 1))]);
   return {...graph, points: [...required].sort((a, b) => a - b).map(i => points[i])};
 }
+/** UTF-8のバイト数（getBytes() の巨大な数値配列を作らずに数える）。48MiBを超えたら出力しないで止める。 */
 function pscubeCloudCheckSize(text) {
-  // getBytes() の巨大な数値配列を作らず、UTF-8のバイト数を数える。
   let size = 0;
   for (const char of text) { const n = char.codePointAt(0); size += n < 128 ? 1 : n < 2048 ? 2 : n < 65536 ? 3 : 4; }
-  if (size > PSCUBE_CLOUD_MAX_BYTES) throw new Error('統合ファイルが48MiBを超えています。分割対応が必要です。');
+  if (size > PSCUBE_CLOUD_MAX_BYTES) throw new PscubeCloudStop('output', '統合ファイルが48MiBを超えています。既存の出力はそのままです。分割方式への切り替えが必要です。');
+  return size;
 }
 function pscubeCloudWrite(folder, file, name, text) {
   const blob = Utilities.newBlob(text, 'application/json', name);
@@ -216,7 +367,7 @@ function pscubeCloudWrite(folder, file, name, text) {
     headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()}, muteHttpExceptions: true,
   });
   if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
-    throw new Error(name + ' の更新に失敗しました（HTTP ' + response.getResponseCode() + '）。次の自動実行でやり直します。');
+    throw new PscubeCloudStop('output', name + ' の更新に失敗しました（HTTP ' + response.getResponseCode() + '）。次の自動実行でやり直します。');
   }
   return DriveApp.getFileById(file.getId());
 }

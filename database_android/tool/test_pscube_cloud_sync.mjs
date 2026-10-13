@@ -25,6 +25,8 @@ const plain = value => JSON.parse(JSON.stringify(value));
 function drive({seed = true} = {}) {
   let clock = 1000, serial = 0;
   const files = [], writes = [], logs = [], triggers = [], properties = new Map();
+  // Driveへの問い合わせ回数（ファイルごとの読み出し）。入力が増えたときの負荷を確かめる。
+  const calls = {name: 0, id: 0, updated: 0, size: 0, trashed: 0, read: 0};
   let apiStatus = 200, apiName = null, locked = false;
   const iterator = list => { let i = 0; return {hasNext: () => i < list.length, next: () => list[i++]}; };
   const searchIn = (parent, query) => {
@@ -45,10 +47,12 @@ function drive({seed = true} = {}) {
   function add(name, value, parent = folder) {
     const file = {id: 'f' + serial++, name, text: typeof value === 'string' ? value : JSON.stringify(value),
       parent, updated: clock++, trashed: false, reads: 0, readHook: null,
-      getId: () => file.id, getName: () => file.name, isTrashed: () => file.trashed,
-      getLastUpdated: () => new Date(file.updated), getSize: () => Buffer.byteLength(file.text),
+      getId: () => { calls.id++; return file.id; }, getName: () => { calls.name++; return file.name; },
+      isTrashed: () => { calls.trashed++; return file.trashed; },
+      getLastUpdated: () => { calls.updated++; return new Date(file.updated); },
+      getSize: () => { calls.size++; return Buffer.byteLength(file.text); },
       getParents: () => iterator([file.parent]),
-      getBlob: () => ({getDataAsString() { file.reads++; if (file.readHook) file.readHook(file); return file.text; }}),
+      getBlob: () => ({getDataAsString() { calls.read++; file.reads++; if (file.readHook) file.readHook(file); return file.text; }}),
     };
     files.push(file); return file;
   }
@@ -91,7 +95,9 @@ function drive({seed = true} = {}) {
     add('pscube-backup-auto.json', backup([record(1, '2026-09-01'), record(1)], {source: 'pc'}));
     add('pscube-viewer-drive.json', {...backup([record(1)]), kind: 'viewer'});
   }
-  return {context, files, writes, logs, triggers, properties, folder, root, add, doc, replace,
+  const status = () => JSON.parse(properties.get('pscubeCloudStatus') ?? '{}');
+  const failures = () => Object.values(JSON.parse(properties.get('pscubeCloudErrors') ?? '{}'));
+  return {context, files, writes, logs, triggers, properties, folder, root, add, doc, replace, calls, status, failures,
     failApi: (status, name = null) => { apiStatus = status; apiName = name; }, setup: () => context.setupPscubeCloudSync(), sync: () => context.syncPscubeCloud()};
 }
 
@@ -184,22 +190,77 @@ test('イベント名と消した印を新しい時刻で統合し、共有イ�
   assert.deepEqual([shared.text, rainbow.text], untouched);
 });
 
-test('壊れたJSON・不正な台・機種・印・閲覧用偽装ファイルは全件検証で止め、既存出力を維持する', () => {
+test('不正な入力はそのファイルだけ取り消し、正常な入力は反映する。元ファイルは変えず、直すと再試行する', () => {
   const badDocs = ['{broken', backup([record(1, '2026-10-12', {games: -1})]),
     backup([record(1)], {rack_captures: ['wrong']}), {...backup([record(1)]), kind: 'viewer'},
     backup([record(1, '2026-10-12', {detail_url: 'https://evil.example/'})]),
     backup([record(1), record(1)]), backup([record(1)], {machines: []})];
   for (const bad of badDocs) {
     const d = drive(); d.setup();
-    const before = [d.doc('pscube-backup-cloud.json'), d.doc('pscube-viewer-drive.json')];
     d.add('pscube-backup-android-20261013-080000.json', backup([record(2)]));
     const file = d.add('pscube-backup-android-20261013-090000.json', bad);
-    const writes = d.writes.length;
-    assert.throws(() => d.sync()); assert.equal(d.writes.length, writes);
-    assert.deepEqual([d.doc('pscube-backup-cloud.json'), d.doc('pscube-viewer-drive.json')], before);
-    d.replace(file, backup([record(3)])); d.sync();
-    assert.equal(d.doc('pscube-viewer-drive.json').records.length, 3, '不正ファイルを直すと次回に復旧する');
+    const original = file.text;
+    // 新しく取り込めない入力が見つかった回は、正常な分を反映したうえで失敗として知らせる。
+    assert.throws(() => d.sync(), /一部のバックアップを取り込めませんでした（ほかは反映済み）：pscube-backup-android-20261013-090000\.json/);
+    assert.equal(d.doc('pscube-viewer-drive.json').records.length, 2, '正常な入力（2番台）は反映済み');
+    assert.equal(file.text, original, '元ファイルは書き換えない');
+    assert.ok(d.files.includes(file) && !file.trashed && file.parent === d.folder, '元ファイルは消さない・移さない');
+    const [failure] = d.failures();
+    assert.equal(failure.name, file.name); assert.ok(failure.reason); assert.match(failure.checked_at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(d.status().result, 'partial');
+    // 同じ版のままなら読み直さず、毎回は失敗にしない（「変更なし（取り込めないファイルあり）」）。
+    const reads = file.reads;
+    const again = d.sync();
+    assert.equal(again.changed, false); assert.deepEqual(plain(again.failed), [file.name]);
+    assert.equal(file.reads, reads); assert.equal(d.status().result, 'unchanged-partial');
+    // 直す（更新する）と再試行し、取り込めたら失敗の記録を消す。
+    d.replace(file, backup([record(3)]));
+    assert.equal(d.sync().viewerRecords, 3, '不正ファイルを直すと次回に取り込む');
+    assert.deepEqual(d.failures(), []); assert.equal(d.status().result, 'ok');
   }
+});
+
+test('取り込み済みのファイルが壊れた版に更新されても、取り込み済みの記録は消さず巻き戻さない', () => {
+  const d = drive();
+  const file = d.add('pscube-backup-android-20261013-090000.json', backup([record(2, '2026-10-12', {games: 4000})]));
+  d.setup();
+  d.replace(file, '{broken');
+  assert.throws(() => d.sync(), /取り込めませんでした/);
+  const saved = d.doc('pscube-backup-cloud.json').records.find(r => r.rack === 2);
+  assert.equal(saved.games, 4000, '前に取り込んだ記録はそのまま');
+  assert.equal(d.doc('pscube-viewer-drive.json').records.length, 2);
+  d.replace(file, backup([record(2, '2026-10-12', {games: 4500, observed_at: '2026-10-13T02:00:00+09:00'})]));
+  d.sync(); assert.equal(d.doc('pscube-backup-cloud.json').records.find(r => r.rack === 2).games, 4500);
+});
+
+test('統合済みバックアップ自体が壊れていたら、入力の不正とは分けて上書きせずに止め、外すと入力から作り直す', () => {
+  const d = drive(); d.add('pscube-backup-android-20261013-090000.json', backup([record(2)])); d.setup();
+  const cloud = d.files.find(f => f.name === 'pscube-backup-cloud.json');
+  d.replace(cloud, '{broken');
+  d.add('pscube-backup-android-20261013-100000.json', backup([record(3)]));
+  const writes = d.writes.length, viewer = d.doc('pscube-viewer-drive.json');
+  assert.throws(() => d.sync(), /pscube-backup-cloud\.json を読めません.*上書きせずに止めました/);
+  assert.equal(d.writes.length, writes); assert.equal(cloud.text, '{broken');
+  assert.deepEqual(d.doc('pscube-viewer-drive.json'), viewer);
+  assert.equal(d.status().result, 'error'); assert.equal(d.status().stop, 'backup');
+  assert.deepEqual(d.failures(), [], '入力の失敗としては記録しない');
+  cloud.name = 'pscube-backup-cloud-壊れた.json';   // 利用者が名前を変えて外す
+  assert.equal(d.sync().viewerRecords, 3, '入力から作り直す');
+});
+
+test('セットアップ時に不正な入力があっても、正常な分を反映して自動実行は設定する', () => {
+  const d = drive();
+  d.add('pscube-backup-android-20261013-090000.json', '{broken');
+  const result = d.setup();
+  assert.equal(d.triggers.length, 1); assert.deepEqual(plain(result.failed), ['pscube-backup-android-20261013-090000.json']);
+  assert.equal(d.doc('pscube-viewer-drive.json').records.length, 1);
+});
+
+test('入力が全部不正で統合済みバックアップも無いときは、何も作らずに止める', () => {
+  const d = drive({seed: false}); d.add('pscube-viewer-drive.json', {});
+  d.add('pscube-backup-android-20261013-090000.json', '{broken');
+  assert.throws(() => d.setup(), /取り込めるP’s CUBEバックアップがありません：pscube-backup-android/);
+  assert.equal(d.writes.length, 0); assert.equal(d.triggers.length, 0);
 });
 
 test('別フォルダ・ブラウザの部分バックアップ・ごみ箱・別サイトのファイルを拾わない', () => {
@@ -281,12 +342,14 @@ test('初回の入力が多い場合は分けて処理し、入力の移動・�
   assert.equal(d.sync().viewerRecords, 15); assert.equal(d.sync().changed, false);
 });
 
-test('読み込み中にアップロードが変われば何も書かず再試行する', () => {
+test('読み込み中にアップロードが変わった入力は、その回は取り込まず失敗にもしないで次回やり直す', () => {
   const d = drive(); d.setup();
   const file = d.add('pscube-backup-android-20261013-090000.json', backup([record(2)]));
   file.readHook = f => { f.updated++; };
   const writes = d.writes.length;
-  assert.throws(() => d.sync(), /読み込み中/); assert.equal(d.writes.length, writes);
+  const result = d.sync();
+  assert.equal(result.pending, 1, '未取り込みのまま残す'); assert.equal(d.writes.length, writes);
+  assert.deepEqual(d.failures(), [], '不正なファイルとは扱わない');
   file.readHook = null; assert.equal(d.sync().viewerRecords, 2);
 });
 
@@ -340,4 +403,69 @@ test('全期間バックアップは既存PCで読み込み可能で、グラフ
   const result = JSON.parse(proc.stdout);
   assert.deepEqual(result.records, d.doc('pscube-backup-cloud.json').records);
   assert.deepEqual(result.thin, plain(d.context.pscubeCloudThinGraph(graph)));
+});
+
+test('入力が数百〜千ファイルでも、1ファイルの問い合わせ回数は一定で、変更なしの回は大きいJSONを読まない', (t) => {
+  const measure = (count) => {
+    const d = drive();
+    // 実際の読み込みは10ファイルずつなので、取り込み済みの状態を作ってから数える。
+    for (let i = 0; i < count; i++) {
+      d.add(`pscube-backup-android-202610${String(1 + (i % 28)).padStart(2, '0')}-${String(100000 + i).slice(-6)}.json`,
+        backup([record(2 + (i % 5))]), i % 2 ? d.root : d.folder);
+    }
+    for (let i = 0; i < Math.ceil(count / 10) + 2 && (i === 0 ? d.setup() : d.sync()).pending; i++);
+    const before = {...d.calls};
+    const started = performance.now();
+    const unchanged = d.sync();
+    const ms = performance.now() - started;
+    const used = Object.fromEntries(Object.entries(d.calls).map(([k, v]) => [k, v - before[k]]));
+    t.diagnostic(`${count}ファイル・変更なしの回：${JSON.stringify(used)}・${ms.toFixed(1)}ms`);
+    return {unchanged, used, d};
+  };
+  const small = measure(100), medium = measure(300), large = measure(1000);
+  for (const {unchanged, used} of [small, large]) {
+    assert.equal(unchanged.changed, false);
+    assert.equal(used.read, 0, '変更がない回はJSONを読まない');
+  }
+  // 1ファイルあたり名前・ID・更新時刻・サイズを1回ずつ（出力2ファイル分の確認は別に数回）。並べ替えで問い合わせない。
+  for (const key of ['name', 'id', 'updated', 'size']) {
+    assert.ok(small.used[key] <= 100 + 6 && large.used[key] <= 1000 + 6, `${key}: ${small.used[key]} / ${large.used[key]}`);
+  }
+  assert.ok(large.used.updated < 1000 * 1.1, '更新時刻は1ファイル1回');
+  assert.ok(large.used.trashed <= 4, 'ごみ箱の確認は検索で済ませ、入力ごとには問い合わせない');
+  // 新しい入力が1つ増えた回：読むのはその1ファイル＋統合済みバックアップだけ。
+  const before = large.d.files.map(f => f.reads);
+  large.d.add('pscube-backup-android-20261031-235959.json', backup([record(9)]));
+  assert.equal(large.d.sync().viewerRecords, 7);
+  const read = large.d.files.filter((f, i) => f.reads > (before[i] ?? 0)).map(f => f.name);
+  assert.deepEqual(read.sort(), ['pscube-backup-android-20261031-235959.json', 'pscube-backup-cloud.json']);
+});
+
+test('状態の報告：正常・一部失敗・変更なし・停止を分け、件数・容量と上限に近づいた知らせを残す', () => {
+  const d = drive(); d.add('pscube-backup-android-20261013-090000.json', backup([record(2)])); d.setup();
+  const ok = d.status();
+  assert.equal(ok.result, 'ok'); assert.equal(ok.records, 3); assert.equal(ok.viewer_records, 2);
+  assert.ok(ok.backup_bytes > 0 && ok.viewer_bytes > 0); assert.deepEqual(ok.warnings, []);
+  assert.equal(d.sync().changed, false); assert.equal(d.status().result, 'unchanged');
+  const shown = d.context.showPscubeCloudStatus();
+  assert.equal(shown.status.result, 'unchanged'); assert.match(d.logs.at(-2) + d.logs.at(-1), /全期間 3件/);
+  const warn = s => d.context.pscubeCloudWarnings(s);
+  assert.match(warn({backup_bytes: 30 * 1048576})[0], /上限の63%.*検討を始める目安/);
+  assert.match(warn({backup_bytes: 40 * 1048576})[0], /上限の83%.*まもなく上限/);
+  assert.match(warn({records: 130000})[0], /全期間の件数が上限の65%/);
+  assert.match(warn({viewer_records: 85000})[0], /閲覧用の件数が上限の85%/);
+  assert.match(warn({elapsed_ms: 150000})[0], /150秒/);
+  assert.match(warn({inputs: 320})[0], /320個/);
+  d.failApi(503, 'pscube-viewer-drive.json');
+  d.add('pscube-backup-android-20261013-100000.json', backup([record(3)]));
+  assert.throws(() => d.sync(), /HTTP 503/);
+  assert.equal(d.status().result, 'error'); assert.equal(d.status().stop, 'output', '出力の失敗は入力の失敗と区別する');
+  assert.deepEqual(d.failures(), []);
+  // 失敗の記録はプロパティ1つの上限（約9KB）に収める：長い理由・多数の不正ファイルでも10件・120字まで。
+  const many = drive(); many.setup();
+  for (let i = 0; i < 25; i++) many.add(`pscube-backup-android-20261014-${String(100000 + i)}.json`, '{' + 'あ'.repeat(500));
+  for (let i = 0; i < 4; i++) { try { many.sync(); } catch (_) { /* 新しい失敗の知らせ */ } }
+  const stored = many.properties.get('pscubeCloudErrors');
+  assert.ok(Buffer.byteLength(stored) < 9000, `${Buffer.byteLength(stored)}バイト`);
+  assert.equal(many.failures().length, 10); assert.ok(many.failures().every(f => f.reason.length <= 120));
 });
