@@ -387,6 +387,26 @@ export function varietyRainbowRows(byDay, store, day) {
     .sort((a, b) => a.rack - b.rack);
 }
 
+/** 本日用の印一覧。未取得の数値行を byDay へ足さず、印だけを別に扱う。 */
+export function rainbowTodayRows(byDay, marks, store, day) {
+  if (store !== 'saiwaichou') return {lineupDay: null, rows: []};
+  const known = new Map([...byDay].filter(([key]) => key.startsWith(`${store}|`) && key.slice(store.length + 1) <= day));
+  const source = lineupDay(known, store);
+  const markMap = new Map(mergeMarks([], marks).map(m => [`${m.store}|${m.day}|${m.rack}`, m]));
+  const rows = varietyRainbowRows(known, store, day).map(x => {
+    const actual = x.record;
+    const marker = {store, day, rack: x.rack, machine: actual?.machine ?? x.machine,
+      rainbow: actual?.rainbow ?? false, rainbowAt: actual?.rainbowAt ?? null};
+    const mark = markMap.get(`${store}|${day}|${x.rack}`);
+    if (mark && (!marker.rainbowAt || isoTime(mark.updated_at) > isoTime(marker.rainbowAt))) {
+      marker.rainbow = mark.on;
+      marker.rainbowAt = mark.updated_at;
+    }
+    return {...x, marker, imported: !!actual};
+  });
+  return {lineupDay: source, rows};
+}
+
 /**
  * 🌈の一覧で「バラエティ」とする台数（2026-10-12 利用者「幸町のバラエティは1台機種限定にして欲しい」）。幸町は1台だけの機種、
  * ほかの店は1〜3台（VARIETY_MAX_RACKS）。回っていない台・翌日候補の「バラエティ」は1〜3台のまま。PC版

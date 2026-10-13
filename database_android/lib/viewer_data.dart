@@ -17,6 +17,7 @@ class ViewerData {
     required this.records,
     this.dateEvents = const {},
     this.eventNames = const {},
+    this.rainbowMarks = const {},
     this.file,
     this.exportedAt,
     this.exportedAtText,
@@ -27,6 +28,9 @@ class ViewerData {
   });
 
   final List<SlotRecord> records;
+
+  /// 未取り込み日の印も、数値の記録と別に保持する。
+  final Map<String, RainbowMark> rainbowMarks;
   final Map<String, DateEvent> dateEvents;
 
   /// P’s CUBEの店舗（`pscube:店:貸玉`）ごとの、今までに付けたイベント名（新しく使った順）。
@@ -110,6 +114,7 @@ class ViewerData {
           });
     return ViewerData(
       records: records,
+      rainbowMarks: pscube ? const {} : rainbowMarksOf(decoded),
       dateEvents: dateEvents,
       eventNames: eventNames,
       file: decoded['file'] as String?,

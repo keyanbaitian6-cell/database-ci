@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'list_views.dart' show displayMachineName, shortDayLabel;
 import 'models.dart';
+import 'rainbow_today.dart';
 import 'scoring.dart';
 import 'theme.dart';
 import 'viewer_data.dart';
@@ -102,6 +103,7 @@ class VarietyWeekPage extends StatefulWidget {
 class _VarietyWeekPageState extends State<VarietyWeekPage> {
   late String _day = widget.day;
   late ViewerData _data = widget.data;
+  bool _today = false;
 
   Future<void> _open(SlotRecord record) async {
     await Navigator.of(context).push(
@@ -175,7 +177,9 @@ class _VarietyWeekPageState extends State<VarietyWeekPage> {
   @override
   Widget build(BuildContext context) {
     final days = varietyWeekDays(_day);
-    final rows = varietyWeekRacks(_data.records, widget.store, _day);
+    final rows = _today
+        ? const <VarietyWeekRack>[]
+        : varietyWeekRacks(_data.records, widget.store, _day);
     final candidates = rows
         .where((x) => x.records.isNotEmpty && x.rainbowDays == 0)
         .toList();
@@ -183,76 +187,119 @@ class _VarietyWeekPageState extends State<VarietyWeekPage> {
     final unknown = rows.where((x) => x.records.isEmpty).length;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('バラエティの候補'),
-        bottom: ViewerDateBar(
-          days: viewerDays(_data.records, widget.store),
-          day: _day,
-          eventFor: (d) => _data.dateEventFor(widget.store, d)?.name,
-          event: _data.dateEventFor(widget.store, _day)?.name,
-          onChanged: (d) {
-            if (d != null) {
-              setState(() => _day = d);
-              widget.onDayChanged?.call(d);
-            }
-          },
-        ),
+        title: Text(_today ? 'バラエティ🌈 本日' : 'バラエティの候補'),
+        bottom: _today
+            ? null
+            : ViewerDateBar(
+                days: viewerDays(_data.records, widget.store),
+                day: _day,
+                eventFor: (d) => _data.dateEventFor(widget.store, d)?.name,
+                event: _data.dateEventFor(widget.store, _day)?.name,
+                onChanged: (d) {
+                  if (d != null) {
+                    setState(() => _day = d);
+                    widget.onDayChanged?.call(d);
+                  }
+                },
+              ),
       ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text(
-              '7日間🌈なしの候補',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${days.first}〜${days.last}',
-              style: const TextStyle(fontSize: 15, color: AppColors.ash),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '幸町・1台機種。前日まで7日間に🌈の記録がない台です。'
-              '70点以上の日がある台も候補に残し、点数を添えます。',
-              style: TextStyle(fontSize: 13, color: AppColors.ash),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '候補 ${candidates.length}台',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            if (candidates.isEmpty)
-              const Text('候補はありません', style: TextStyle(color: AppColors.ash)),
-            for (final x in candidates) _rack(x, candidate: true),
-            if (candidates.any((x) => x.records.length < 7))
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Text(
-                  '未取得の日の🌈はわかりません。',
-                  style: TextStyle(fontSize: 12, color: AppColors.ash),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ChoiceChip(
+                  label: const Text('7日間の候補'),
+                  labelStyle: TextStyle(color: !_today ? Colors.white : AppColors.carbon),
+                  selected: !_today,
+                  onSelected: (_) => setState(() => _today = false),
                 ),
-              ),
-            ExpansionTile(
-              key: ValueKey('week-marked-$_day'),
-              tilePadding: EdgeInsets.zero,
-              title: Text(
-                '🌈が付いた台（${marked.length}台）',
-                style: const TextStyle(fontSize: 15),
-              ),
-              children: [for (final x in marked) _rack(x, candidate: false)],
-            ),
-            if (unknown > 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  '記録がない台：$unknown台（候補に含めていません）',
-                  style: const TextStyle(fontSize: 12, color: AppColors.ash),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: const Text('本日'),
+                  labelStyle: TextStyle(color: _today ? Colors.white : AppColors.carbon),
+                  selected: _today,
+                  onSelected: (_) => setState(() => _today = true),
                 ),
-              ),
-          ],
-        ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _today
+                ? RainbowTodayList(
+                    data: _data,
+                    store: widget.store,
+                    currentData: widget.currentData,
+                    onDataChanged: (data) => setState(() => _data = data),
+                  )
+                : _weekBody(days, candidates, marked, unknown),
+          ),
+        ],
       ),
     );
   }
+
+  Widget _weekBody(
+    List<String> days,
+    List<VarietyWeekRack> candidates,
+    List<VarietyWeekRack> marked,
+    int unknown,
+  ) => SafeArea(
+    child: ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          '7日間🌈なしの候補',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${days.first}〜${days.last}',
+          style: const TextStyle(fontSize: 15, color: AppColors.ash),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          '幸町・1台機種。前日まで7日間に🌈の記録がない台です。'
+          '70点以上の日がある台も候補に残し、点数を添えます。',
+          style: TextStyle(fontSize: 13, color: AppColors.ash),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          '候補 ${candidates.length}台',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        if (candidates.isEmpty)
+          const Text('候補はありません', style: TextStyle(color: AppColors.ash)),
+        for (final x in candidates) _rack(x, candidate: true),
+        if (candidates.any((x) => x.records.length < 7))
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text(
+              '未取得の日の🌈はわかりません。',
+              style: TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+          ),
+        ExpansionTile(
+          key: ValueKey('week-marked-$_day'),
+          tilePadding: EdgeInsets.zero,
+          title: Text(
+            '🌈が付いた台（${marked.length}台）',
+            style: const TextStyle(fontSize: 15),
+          ),
+          children: [for (final x in marked) _rack(x, candidate: false)],
+        ),
+        if (unknown > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              '記録がない台：$unknown台（候補に含めていません）',
+              style: const TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+          ),
+      ],
+    ),
+  );
 }
