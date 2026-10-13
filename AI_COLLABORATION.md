@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 今日の更新の確認：Android版（APK）の更新は不要（Claude、2026-10-13）
+
+- 利用者「今日の更新を確認してください。今更新中のものもありますが、とりあえずandroid版の更新は必要なさそう？」。確認のみで、コード・ビルド・公開は変更なし。
+- 今日のコミット（`7797c84`〜`db5b022`）は、P’s CUBEクラウド同期（`database_android/tool/` のApps Script・試験・手順書）、幸町バラエティ過去7日（`d2598f6`・`db5b022`、`variety_week.dart`・`viewer_main.dart`・`share_viewer/`・`RAINBOW.md`・試験）、モデル推奨の `AGENTS.md`、メモ。
+- `variety_week.dart` を読み込むのは `viewer_main.dart`（iPhoneブラウザ版の入口）だけで、`viewer_main.dart` はAndroidアプリの `main.dart`・`app_controller.dart` から読み込まれていない（grepで確認）。共通部品（`viewer_pages.dart`・`viewer_data.dart`・`scoring.dart` など）は今日変更なし。Apps ScriptはGoogle側で動き、APKには入らない。→ 今日の確定分はAPKの動作に影響せず、Android版の更新は不要。
+- 確認中に別セッションが作業中の変更を `db5b022` としてコミット（これもブラウザ版・共有ページ側だけ）。その公開・検証状況はこの確認の対象外。
+
 ## P’s CUBEクラウド同期：一時的な通信障害の再試行・失敗記録の上限から外れた入力の読み直し防止（Claude、2026-10-13）
 
 - 利用者（Codexの指摘の貼り忘れ）：「b38a724でも、Codexが指摘した2点が再現…『一時的な通信障害の再試行』と『失敗記録10件上限から外れた入力の再確認』を修正し、それぞれ修正前に失敗する再発テストを追加」。
