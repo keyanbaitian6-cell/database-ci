@@ -79,6 +79,18 @@ test('初回・日別修正・期間落ち・日内削除・同一内容で時�
   assert.equal(Object.keys([...cache.map.values()][0].parts).length, 1);
 });
 
+test('共有の閲覧ログは差分有効前も後も1回だけ（確認・パーツ取得では重複しない）', () => {
+  const f = fixture(), logs = []; f.context.console = {log: value => logs.push(value)};
+  const source = readFileSync(new URL('viewer_drive_script_readonly.gs', import.meta.url), 'utf8');
+  vm.runInContext(source.split('// BEGIN GENERATED VIEWER PARTS')[0], f.context);
+  const call = parameter => JSON.parse(f.context.doGet({parameter}).text);
+  call({check: '1', access: '1', u: 'friend'}); assert.equal(logs.length, 0);
+  call({u: 'friend'}); assert.equal(logs.length, 1);
+  f.publish([row('2026-10-02')]); logs.length = 0;
+  const check = call({check: '1', access: '1', u: 'friend'}); assert.equal(logs.length, 1);
+  call({parts: check.parts.parts[0].hash, revision: check.parts.revision}); assert.equal(logs.length, 1);
+});
+
 test('キャッシュ破損・消失・保存拒否・接続先とサイトの分離', async () => {
   const f = fixture(), cache = storage(); f.publish([row('2026-10-02')]);
   const m = f.get({check: '1'}).parts; let calls = 0;

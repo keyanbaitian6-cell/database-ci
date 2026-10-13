@@ -54,12 +54,12 @@ Googleのファイル更新仕様：[Drive APIのアップロード](https://dev
 
 差分出力は配布状態では **false（従来方式）**。読み取りスクリプトを先に更新しないと、更新前のスクリプトは古い全件ファイルを表示する。
 
-1. 検証済みの自分用Webページ・共有Webページを公開する。公開ステージは `tool/stage_viewer.py` / `tool/stage_share_viewer.py` を通す。ページの接続先や実記録は公開しない。
+1. **Web側は2026-10-14に公開済み**（自分用 `b1b56bb`、共有 `0edca42`）。再公開する場合は、検証済みの自分用Webページ・共有Webページを公開する。公開ステージは `tool/stage_viewer.py` / `tool/stage_share_viewer.py` を通す。ページの接続先や実記録は公開しない。
 2. **自分用**の既存Apps Scriptへ `tool/viewer_drive_script.gs` 全文を貼り替え、デプロイ管理 → 編集 → 新バージョンで更新する（URLを維持）。
 3. **共有用**の既存Apps Scriptへ `tool/viewer_drive_script_readonly.gs` 全文を貼り替え、同様に新バージョンで更新する。イベントへの書き込みを拒否する従来の制約は維持。
 4. メルヘンの30分同期プロジェクトへ `tool/meruhen_cloud_sync.gs` 全文を貼る。上部の `MERUHEN_INCREMENTAL_VIEWER` を `true` にして保存、`syncMeruhenCloud` を実行する。
 5. P-STATIONの30分同期プロジェクトへ `tool/pscube_cloud_sync.gs` 全文を貼る。`PSCUBE_INCREMENTAL_VIEWER` を `true` にして保存、`syncPscubeCloud` を実行する。
-6. 両ページを再読み込みし、両サイトの既知の台・日付・数値を確認する。初回は全日分の取得。以後、1日分を追加したときに `showMeruhenCloudStatus` / `showPscubeCloudStatus` の戻り値 `status.incremental` で新規パーツ数 `parts` と書いたバイト数 `bytes` を確認できる。
+6. 両ページを再読み込みし、両サイトの既知の台・日付・数値を確認する。初回は全日分の取得。以後、1日分を追加したときに `showMeruhenCloudStatus` / `showPscubeCloudStatus` のログ「今回の差分出力」で更新パーツ数・KBを確認できる（戻り値の `status.incremental.parts` / `bytes` にも記録）。
 
 差分モード中、従来名の閲覧用JSONはPCの入力基準として残り、Googleによる新しい統合結果は日別版に出る。Driveから旧名JSONを手動ダウンロードしても最新の統合結果ではない。旧名ファイルは削除しない。PCへ戻す方法はこれまでどおり、メルヘンは元のAndroidバックアップ、P-STATIONは `pscube-backup-cloud.json` を読み込む。
 
@@ -74,3 +74,5 @@ Googleのファイル更新仕様：[Drive APIのアップロード](https://dev
 共通ソース：`tool/viewer_parts_core.js`、`viewer_parts_drive.js`（読み取り専用）、`viewer_parts_publish.js`（同期用）、`viewer_parts_client.js`（Web用）。`node tool/build_viewer_parts.mjs` で配布GS4本とWebモジュール2本へ反映。P’s CUBEの既存生成器からも同じ同期部品を取り込む。
 
 `test_viewer_parts.mjs` は出力確定順・復旧・ハッシュ・キャッシュ・上限・旧形式互換・読み取り許可範囲を検証。既存の両同期試験に差分モードの統合試験を追加。`test_viewer_parts_browser.mjs` は実ブラウザと実IndexedDBで両サイト・両ページの「初回2日 → 更新した1日 → 再読み込み0日」を確認する。Googleの応答には合成データを使用し、実Google・実iPhoneの確認とは区別する。
+
+検証結果（2026-10-14）：Web公開前の全ゲート52項目ALL PASSED（PC273＋93、Flutter584、JS45本・223件、analyzeエラー警告0／info21）。実保存ページの検査は `PSCUBE_ARCHIVE_DIR` がなくSKIP。公開URLで両サイト・両ページの差分試験と共有画面試験PASS、配信18ファイルが公開commitと一致・seed4パス404。その後のGS閲覧ログ条件補正は関連73件PASSで別途確認済み。Google側の差分モード有効化・実iPhone速度は未確認。

@@ -48,8 +48,7 @@ const EVENT_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d
 
 function doGet(e) {
   const key = (e && e.parameter && e.parameter.file) || '';
-  if (key === '' && !(e && e.parameter && e.parameter.parts) &&
-      (!(e && e.parameter && e.parameter.check) || e.parameter.access === '1')) logAccess(e && e.parameter && e.parameter.u);
+  if (key === '' && !(e && e.parameter && (e.parameter.parts || e.parameter.check))) logAccess(e && e.parameter && e.parameter.u);
   if (key === 'rainbow') {
     const file = latestFile(RAINBOW_FILE.name);
     return respond(file ? file.getBlob().getDataAsString('UTF-8') : JSON.stringify(rainbowDocument([])));
@@ -67,7 +66,11 @@ function doGet(e) {
   }
   try {
     const parts = vpGet(latest, key === 'pscube' ? 'pscube' : 'meruhen', (e && e.parameter) || {});
-    if (parts) return respond(JSON.stringify(parts));
+    if (parts) {
+      // 日別版ではcheckが閲覧1回。全件版では後続の通常GETで記録し、移行中も二重に数えない。
+      if (key === '' && e && e.parameter && e.parameter.check && e.parameter.access === '1') logAccess(e.parameter.u);
+      return respond(JSON.stringify(parts));
+    }
   } catch (error) { return respond(JSON.stringify({error: String(error.message || error)})); }
   // ?check=1 のときは、中身を読まず「更新の目印」（更新時刻とサイズ）だけを返す（自分用と同じ）。
   if (e && e.parameter && e.parameter.check) {
