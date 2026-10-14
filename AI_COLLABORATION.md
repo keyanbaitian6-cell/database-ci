@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## 【検証・公開完了】共有ページのAndroid専用起動入口（Codex、2026-10-14）
+
+- 引き継ぎ後に `imakurudev-eng/database` をfetchし、最新main **`663c103`** を確認。Windows正本には履歴同期・オフライン等の未コミット作業があったため、最新mainから専用worktreeを作成し、そこでpull・ルール確認・検証・公開を実施した。正本の未コミット作業を混ぜたり編集したりしていない。今回の実装コードの追加変更はなく、この記録だけをソースmainへpushする。
+- **全ゲート `check_before_build.sh` ALL PASSED（54項目）**。他のgateと重ねず、専用 `CHECK_BUILD_WORK` で単独実行。PC **273件**、P’s CUBE **93件**、Flutter **589件**、JS **47本・228件** PASS。analyzeはエラー・警告0／info21。閲覧用Flutter Webを新規ビルドしてから両stageと全JSを検証。実保存P’s CUBEページ検査は `PSCUBE_ARCHIVE_DIR` 未指定のためスクリプト既定の **SKIP（未確認）**。この検査を実施済みと扱わない。
+- `tool/stage_share_viewer.py` から専用一時フォルダへ出力。12公開アセット＋README・.nojekyllの **14ファイル**だけを許可し、全ゲートで試験したstageとのSHA-256一致を確認。実記録由来の90種の文字列と接続先ID検査は該当なし。公開先もfetch/pullして最新mainを取り込み、未知のファイルを削除せず、所有者 `keyanbaitian6-cell` のWindows認証で通常pushした。force pushなし。Windowsの改行も含め、試験済みstageと同一バイトを公開した。
+- **公開コミット `fa9af147394038dab8cdff84f113ffa24e875fdf`**（`keyanbaitian6-cell/database-share`）。[Pages run 38503115163](https://github.com/keyanbaitian6-cell/database-share/actions/runs/38503115163) は今回のcommitで **success**、Pages buildは **built**。配信14ファイルすべてがstage・Git公開commitとSHA-256一致。`source.png`・`design/share_icon/source.png`・`assets/database_seed.json`・`assets/assets/database_seed.json` はすべて404（計18検査）。元写真・実記録・接続先IDは公開していない。
+- 配信された通常manifestは **browser**、Android専用manifestだけ **standalone**、`id/start_url: ./android.html`・`scope: ./`。既存iPhone側の起動設定・共用アイコンを維持した。公開URLで `test_share_android_browser.mjs` **1本PASS**（320/393px、通常→Android、店舗・呼び名・接続先・🌈・日別IndexedDB保持、再読込・新しいコンテキストへの保存復元、#処理）。加えて `test_share_viewer_browser.mjs` を **index.htmlとandroid.htmlの各入口で1本ずつPASS**（320/393/1280px、カレンダー・日別・台・店舗切替・リンク処理等）。Googleは全て合成応答／模擬通信で、実Googleへの書き込み・利用者データの変更はしていない。
+- **未確認**：Android実機のChromeメニュー表示、インストール・ホーム画面からの独立起動・実機での保存引継ぎ。iPhone実機の再確認、実Googleとの動作、非公開実保存アーカイブ検査。実ブラウザの保存復元試験はAndroid実機インストールの確認ではない。APK作成・端末インストール・データ消去は実施していない。
+- Android入口：[android.html](https://keyanbaitian6-cell.github.io/database-share/android.html)。AndroidのChromeで開き、受け取った共有リンクを設定（またはそのリンクの `#` 以降をAndroid URLへ付ける）→Chromeの︙→「アプリをインストール」（表示により「ホーム画面に追加」／「インストールしてショートカットを作成」→「インストール」）→画面に従う。[Chrome公式手順](https://support.google.com/chrome/answer/9658361?co=GENIE.Platform%3DAndroid&hl=ja)。既存iPhoneは従来の通常URLをそのまま使う。
+- 証跡：`a/work/outputs/share-android-release-20261014/` の `check_before_build.log`・`checks/`・`checks-summary.json`・`release-verification.json`・`pages-run.json`・`pages-build.json`・`public-android-browser.log`・`public-index.html-browser.log`・`public-android.html-browser.log`。ローカルseedは既存正本からコピーし、前後SHA-256 `28619184bad5ff0f9f7ec731a9244d2452e28e47d17ce312ddd76aef793e9f93` 一致。seedは無追跡・非公開のまま。
+
 ## 【引き継ぎ・未公開】共有ページのAndroid専用起動入口（Codex、2026-10-14）
 
 - 利用者の明示的な依頼：最新mainをベースに、既存iPhone用の `index.html`・`manifest.json`（browser）を維持し、Android Chromeの独立起動用 `android.html`・専用manifest（standalone）を追加、全回帰試験のALL PASSED後に `keyanbaitian6-cell/database-share` へ公開する。開始時の最新mainは `0b13fbd`。Windows側の履歴同期・オフライン等の未コミット作業は混ぜない。
