@@ -22,6 +22,25 @@ Map<String, dynamic> raw(
 ).copyWith(rack: rack, machine: machine, games: games).toJson();
 
 void main() {
+  test('履歴の完成日一覧で消した古い日を復活させず、対象外の日は保持する', () {
+    final stored = jsonEncode({
+      'records': [
+        {...raw(1), 'day': '2025-01-01'},
+        {...raw(2), 'day': '2025-01-02'},
+        raw(3),
+      ],
+    });
+    final incoming = jsonEncode({
+      'history_days': ['2025-01-01', '2026-09-25'],
+      'records': [raw(4)],
+    });
+    final result = ViewerData.parse(ViewerData.merge(stored, incoming).text);
+    expect(result.records.map((r) => (r.day, r.rack)).toSet(), {
+      ('2025-01-02', 2),
+      ('2026-09-25', 4),
+    });
+  });
+
   test('閲覧ページはAndroid版と同じ規則で台をそろえ、壊れた台は飛ばす', () {
     final text = jsonEncode({
       'header': {

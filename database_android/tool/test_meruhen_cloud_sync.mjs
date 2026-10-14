@@ -20,6 +20,60 @@ function record(rack, day = '2026-10-02', patch = {}) {
 const backup = (records, patch = {}) => ({format: 'database-backup', version: 1, source: 'android', records, ...patch});
 const viewer = records => backup(records, {source: 'pc-viewer', days: 60, exported_at: '2026-10-13T09:00:00+09:00', date_events: []});
 
+test('履歴の旧原本整理は7日超・未参照だけ、移行途中の入力削除でも進捗を解消し記録を保持', () => {
+  const d = drive({history: true}); d.setup();
+  const before = d.doc('database-viewer-parts-meruhen.json').cloud_days[0];
+  const raw = d.files.find(f => f.id === before.id);
+  d.add('database-backup-android.json', backup([record(537, '2026-10-02', {jo_net: 100})])); d.sync();
+  raw.updated = Date.now() - 8 * 86400000;
+  d.properties.delete('meruhenHistoryCleaned'); d.sync(); assert.equal(raw.trashed, true);
+  const current = d.files.find(f => f.id === d.doc('database-viewer-parts-meruhen.json').cloud_days[0].id);
+  current.updated = raw.updated;
+  d.properties.delete('meruhenHistoryCleaned'); d.sync(); assert.equal(current.trashed, false);
+  const input = d.add('database-backup-android-20261014-180000.json', backup(Array.from({length: 40}, (_, i) =>
+    record(600, new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10)))));
+  d.sync(); assert.ok(d.status().remaining > 0);
+  input.trashed = true; d.sync(); assert.equal(d.status().remaining, 0);
+  assert.equal(Object.keys(d.doc('database-viewer-parts-meruhen.json').history_progress).length, 0);
+  assert.ok(d.status().viewer_records >= 25);
+});
+
+test('メルヘン履歴：60日以前も蓄積・変更日だけ原本更新・PC再出力後も差枚と過去分を保持', () => {
+  const d = drive({history: true}), base = d.files[0];
+  d.add('database-backup-android.json', backup([record(500, '2025-01-01', {jo_net: 123}), record(537, '2026-10-02', {jo_net: 15725})]));
+  d.setup();
+  const get = () => plain(d.context.vpGet(base, 'meruhen', {}));
+  assert.deepEqual(get().records.map(r => r.day), ['2025-01-01', '2026-10-02']);
+  const first = d.doc('database-viewer-parts-meruhen.json'), writes = d.writes.length;
+  d.sync(); assert.equal(d.writes.length, writes); assert.equal(d.status().incremental.parts, 0);
+  const ancient = first.cloud_days.find(d => d.day === '2025-01-01');
+  d.add('database-backup-android-20261014-120000.json', backup([record(537, '2026-10-02', {jo_net: 18000, jo_captured_at: '2026-10-14T12:00:00+09:00'})]));
+  d.sync();
+  assert.equal(d.doc('database-viewer-parts-meruhen.json').cloud_days.find(d => d.day === ancient.day).id, ancient.id);
+  assert.equal(get().records.find(r => r.rack === 537).jo_net, 18000);
+  d.replace(base, viewer([record(600, '2026-10-14')])); d.sync();
+  assert.equal(get().records.length, 3); assert.equal(get().records.find(r => r.rack === 537).jo_net, 18000);
+  assert.equal(d.doc('database-viewer-parts-meruhen.json').version, 2);
+});
+
+test('メルヘン履歴：24日ずつ再開・一覧書込失敗は旧世代保持・破損原本は停止・閲覧パーツ復旧', () => {
+  const d = drive({history: true}), base = d.files[0];
+  const rows = Array.from({length: 55}, (_, i) => record(500, new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10)));
+  d.add('database-backup-android.json', backup(rows)); d.setup();
+  assert.ok(d.status().remaining > 0); d.sync(); d.sync();
+  assert.equal(d.status().remaining, 0);
+  const manifest = d.files.find(f => f.name === 'database-viewer-parts-meruhen.json'), before = manifest.text;
+  d.add('database-backup-android-20261014-120000.json', backup([record(600, '2026-10-14')]));
+  d.failApi(403, manifest.name); assert.throws(() => d.sync(), /更新に失敗/); assert.equal(manifest.text, before);
+  d.failApi(200); d.sync(); assert.equal(d.status().remaining, 0);
+  const root = JSON.parse(manifest.text), p = d.files.find(f => f.id === root.parts[0].id); p.trashed = true;
+  d.context.rebuildMeruhenViewerParts(); while (d.status().remaining) d.sync();
+  assert.equal(d.context.vpGet(base, 'meruhen', {}).records.length, 57);
+  const raw = d.files.find(f => f.id === d.doc(manifest.name).cloud_days[0].id); d.replace(raw, '{}');
+  d.add('database-backup-android-20261014-130000.json', backup([rows[0]]));
+  assert.throws(() => d.sync(), /原本が(破損|見つかりません)/);
+});
+
 test('メルヘン差分：2日初回・1日更新・Web再取得・変更なし・PC再出力・出力失敗から復旧', async () => {
   const d = drive({incremental: true});
   const base = d.files[0], original = base.text;
@@ -60,7 +114,7 @@ test('メルヘン差分：2日初回・1日更新・Web再取得・変更なし
   assert.equal(get({}), null); d.sync(); assert.equal(get({}).records.length, 4);
 });
 
-function drive({seed = true, incremental = false} = {}) {
+function drive({seed = true, incremental = false, history = false} = {}) {
   let clock = 1000, serial = 0;
   const files = [], writes = [], logs = [], triggers = [], properties = new Map();
   // Driveへの問い合わせ回数（ファイルごとの読み出し）。入力が増えたときの負荷を確かめる。
@@ -89,6 +143,7 @@ function drive({seed = true, incremental = false} = {}) {
       parent, updated: clock++, trashed: false, reads: 0, readHook: null,
       getId: () => { calls.id++; return file.id; }, getName: () => { calls.name++; return file.name; },
       isTrashed: () => { calls.trashed++; return file.trashed; },
+      setTrashed: value => { file.trashed = value; },
       getLastUpdated: () => { calls.updated++; return new Date(file.updated); },
       getSize: () => { calls.size++; return Buffer.byteLength(file.text); },
       getParents: () => iterator([file.parent]),
@@ -130,7 +185,8 @@ function drive({seed = true, incremental = false} = {}) {
       return {getResponseCode: () => status};
     }},
   };
-  vm.createContext(context); vm.runInContext(source.replace('const MERUHEN_INCREMENTAL_VIEWER = false;', 'let MERUHEN_INCREMENTAL_VIEWER = ' + incremental + ';'), context);
+  vm.createContext(context); vm.runInContext(source.replace('const MERUHEN_INCREMENTAL_VIEWER = false;', 'let MERUHEN_INCREMENTAL_VIEWER = ' + incremental + ';')
+    .replace('const MERUHEN_HISTORY_VIEWER = false;', 'const MERUHEN_HISTORY_VIEWER = ' + history + ';'), context);
   const doc = name => JSON.parse(files.find(f => !f.trashed && f.parent === folder && f.name === name).text);
   const replace = (file, value) => { file.text = typeof value === 'string' ? value : JSON.stringify(value); file.updated = clock++; };
   if (seed) add('database-viewer.json', viewer([record(537, '2026-10-02', {games: 1624, bb: 70, rb: 77, captured_at: '2026-10-02T22:00:00'})]));

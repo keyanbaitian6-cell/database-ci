@@ -53,10 +53,15 @@ try {
         await new Promise((resolve,reject) => {const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put(JSON.stringify(doc),'data');tx.objectStore('kv').put('meruhen','active_source');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
       }, {doc,script});
     }
-    const openToday = async () => {
+    const openToday = async ({refresh = false} = {}) => {
       await page.goto('about:blank');
       await page.goto(url);
       if (kind === 'share') {
+        if (refresh) {
+          await page.locator('#reload').waitFor({state:'visible'});
+          await page.locator('#reload').click();
+          await page.waitForFunction(() => !document.querySelector('#reload').disabled);
+        }
         await page.getByRole('button',{name:'バラエティ🌈',exact:true}).click();
       } else {
         await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
@@ -95,7 +100,7 @@ try {
     // データ取得後も引き継ぐ（未取得の0行や過去の数値を保存していない）。
     doc.records.push({...fixture.records.find(r=>r.rack===1101),day:'2026-10-14',games:4567,rainbow:false,rainbow_at:null});
     doc.header = {...doc.header,exported_at:'2026-10-14T05:00:00Z'};
-    await openToday();
+    await openToday({refresh:true});
     await seen('本日の🌈 2台');
     await seen('本日分 取り込み済み');
     failPosts = true;

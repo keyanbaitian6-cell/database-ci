@@ -1,0 +1,44 @@
+// 公開stageで内容由来の版と正確なファイルURLに置換する。Google通信は保存・中継しない。
+const VERSION = 'development';
+const FILES = ['./index.html', './app.mjs', './data.mjs', './net.mjs', './viewer_parts.mjs', './offline.mjs',
+  './manifest.json', './apple-touch-icon.png', './favicon.png', './icon-192.png', './icon-512.png'];
+const PREFIX = 'database-share-shell-' + new URL(self.registration.scope).pathname + '-';
+const CACHE = PREFIX + VERSION;
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    try {
+      for (const file of FILES) {
+        const response = await fetch(new Request(file, {cache: 'reload'}));
+        if (!response.ok) throw new Error('オフライン用ファイルを取得できませんでした。');
+        if (file === './index.html' && VERSION !== 'development' && !(await response.clone().text()).includes('./app.mjs?v=' + VERSION)) {
+          throw new Error('公開ファイルの版が一致しません。次回再試行します。');
+        }
+        await cache.put(file, response);
+      }
+    } catch (error) { await caches.delete(CACHE); throw error; }
+    await self.skipWaiting();
+  })());
+});
+self.addEventListener('activate', event => {
+  event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith(PREFIX) && k !== CACHE)
+    .map(k => caches.delete(k)))).then(() => self.clients.claim()));
+});
+self.addEventListener('message', event => { if (event.data === 'activate') self.skipWaiting(); });
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url), scope = new URL(self.registration.scope);
+  if (event.request.method !== 'GET' || url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname)) return;
+  if (event.request.mode === 'navigate') {
+    event.respondWith((async () => {
+      try { const response = await fetch(event.request); if (response.ok) return response; } catch { /* 保存済みで起動する */ }
+      return (await caches.open(CACHE)).match(new URL('./index.html', scope).href);
+    })());
+  } else {
+    const file = FILES.find(file => {
+      const saved = new URL(file, scope);
+      return saved.pathname === url.pathname && (!url.search || saved.search === url.search);
+    });
+    if (file) event.respondWith(caches.open(CACHE).then(async cache =>
+      (await cache.match(new URL(file, scope).href)) || fetch(event.request)));
+  }
+});

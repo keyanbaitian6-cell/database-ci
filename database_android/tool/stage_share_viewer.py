@@ -14,7 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 SOURCE = HERE.parent / 'share_viewer'
-TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs'}
+TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js'}
 FILES = TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
 SCRIPT_ID = re.compile(rb'AKfyc[A-Za-z0-9_-]{20,}|/macros/s/[A-Za-z0-9_-]{20,}')
 
@@ -25,6 +25,7 @@ REFERENCES = (
     ('index.html', 'src="./app.mjs"'),
     ('app.mjs', "from './data.mjs'"),
     ('app.mjs', "from './viewer_parts.mjs'"),
+    ('app.mjs', "from './offline.mjs'"),
     ('data.mjs', "from './net.mjs'"),
     ('index.html', 'href="./apple-touch-icon.png"'),
     ('index.html', 'href="./favicon.png"'),
@@ -86,6 +87,11 @@ def main(target):
     for name in sorted(FILES):
         if name in TEXT_FILES:
             text = (SOURCE / name).read_text(encoding='utf-8')
+            if name == 'sw.js':
+                import json
+                shell = ['./index.html'] + [f'./{n}?v={version}' for n in sorted(FILES - {'index.html', 'sw.js'})]
+                text = re.sub(r"const VERSION = '[^']+';", f"const VERSION = '{version}';", text)
+                text = re.sub(r'const FILES = \[.*?\];', 'const FILES = ' + json.dumps(shell) + ';', text, flags=re.S)
             (target / name).write_text(stamped(name, text, version), encoding='utf-8', newline='\n')
         else:
             shutil.copyfile(SOURCE / name, target / name)

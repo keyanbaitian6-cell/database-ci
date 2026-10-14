@@ -53,5 +53,9 @@ function vpGet(latest, site, params) {
       parts: hashes.map(hash => ({hash, text: vpReadPart(site, allowed.get(hash))}))};
   }
   // 更新前のWebページにも従来の全件JSONを返す。
-  return {...manifest.header, records: manifest.parts.flatMap(p => vpRows(vpReadPart(site, p), p))};
+  // 旧クライアントの全件GETを無制限に組み立てない。新版はcheckとパーツを使う。
+  if (manifest.version === 2 && (manifest.count > 100000 || manifest.parts.reduce((n, p) => n + p.bytes, 0) > VP_MAX_BYTES)) {
+    throw new Error('履歴データは新しい閲覧ページで開いてください（全件GETの上限を超えています）。');
+  }
+  return {...manifest.header, ...(manifest.version === 2 ? {history: true} : {}), records: manifest.parts.flatMap(p => vpRows(vpReadPart(site, p), p))};
 }

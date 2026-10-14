@@ -78,6 +78,9 @@ try {
       await page.goto(`${sharePage}#s=${id}`); await page.waitForSelector('.grid');
       assert.deepEqual(calls.slice().sort((a, b) => a.site.localeCompare(b.site)), [{site: 'meruhen', count: 2}, {site: 'pscube', count: 2}]);
       calls.length = 0; generation = 2; await page.reload(); await page.waitForSelector('.grid');
+      assert.equal(calls.length, 0); // 起動時は保存済み。手動更新だけ通信する。
+      await page.locator('#reload').click();
+      await page.waitForFunction(() => !document.querySelector('#reload').disabled);
       assert.deepEqual(calls.slice().sort((a, b) => a.site.localeCompare(b.site)), [{site: 'meruhen', count: 1}, {site: 'pscube', count: 1}]);
       calls.length = 0; await page.reload(); await page.waitForSelector('.grid'); assert.equal(calls.length, 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

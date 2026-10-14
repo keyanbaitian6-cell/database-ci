@@ -22,6 +22,38 @@ const backup = (records, patch = {}) => ({...emptyData(), kind: 'backup', source
   machines: [machine], records, rack_captures: records.filter(r => r.graph?.kind === 'daily').map(recordKey), ...patch});
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('P-STATION履歴：31日以前も保持・全期間ファイルは上書きせず日別原本に完全グラフと取得印を残す', () => {
+  const d = drive({history: true}); d.setup();
+  const baseFile = d.files.find(f => f.name === 'pscube-viewer-drive.json');
+  const doc = () => plain(d.context.vpGet(baseFile, 'pscube', {}));
+  assert.deepEqual(doc().records.map(r => r.day), ['2026-09-01', '2026-10-12']);
+  const root = d.doc('database-viewer-parts-pscube.json');
+  const raw = d.doc(root.cloud_days[0].name);
+  assert.equal(raw.data.records[0].graph.points.length, 60); assert.equal(raw.data.rack_captures.length, 1);
+  d.replace(baseFile, {...backup([record(1, '2026-10-12', {graph: plain(d.context.pscubeCloudThinGraph(graph))})]), kind: 'viewer'});
+  d.sync();
+  const afterPc = d.doc('database-viewer-parts-pscube.json').cloud_days.find(x => x.day === '2026-10-12');
+  assert.equal(d.doc(afterPc.name).data.records[0].graph.points.length, 60, 'PCの軽量出力で完全グラフを縮めない');
+  const writes = d.writes.length; d.sync(); assert.equal(d.writes.length, writes);
+  d.add('pscube-backup-android-20261014-120000.json', backup([record(1, '2026-10-12', {games: 5000, observed_at: '2026-10-14T12:00:00+09:00'})]));
+  d.sync(); assert.equal(doc().records.length, 2); assert.equal(doc().records[1].games, 5000);
+  assert.equal(d.status().incremental.parts, 1);
+  const check = plain(d.context.vpGet(baseFile, 'pscube', {check: '1'}));
+  assert.equal(check.parts.version, 2); assert.ok(!JSON.stringify(check).includes('cloud_days'));
+  assert.ok(!JSON.stringify(check).includes('history_inputs')); assert.ok(!JSON.stringify(check).includes('"id"'));
+});
+
+test('P-STATION履歴：新しい不正入力だけ報告・一時障害は次回再試行・旧入力削除でも履歴保持', () => {
+  const d = drive({history: true}); d.setup();
+  const bad = d.add('pscube-backup-android-20261014-000000.json', '{bad');
+  assert.throws(() => d.sync(), /一部のバックアップ/); const reads = bad.reads;
+  d.sync(); assert.equal(bad.reads, reads);
+  const good = d.add('pscube-backup-android-20261014-120000.json', backup([record(2)]));
+  let once = true; good.readHook = () => { if (once) {once = false; throw new Error('Service error: Drive');} };
+  d.sync(); assert.ok(d.status().remaining > 0); d.sync(); assert.equal(d.status().remaining, 0);
+  good.trashed = true; d.sync(); assert.equal(d.status().viewer_records, 3);
+});
+
 test('P-STATION差分：1日だけ再出力し、PC用全期間バックアップを維持、失敗後も復旧する', () => {
   const d = drive({incremental: true});
   d.replace(d.files.find(f => f.name === 'pscube-backup-auto.json'), backup([record(10, '2026-10-11'), record(11)]));
@@ -47,7 +79,7 @@ test('P-STATION差分：1日だけ再出力し、PC用全期間バックアッ�
   assert.equal(get(), null); d.sync(); assert.equal(get().records.length, 3);
 });
 
-function drive({seed = true, incremental = false} = {}) {
+function drive({seed = true, incremental = false, history = false} = {}) {
   let clock = 1000, serial = 0;
   const files = [], writes = [], logs = [], triggers = [], properties = new Map();
   // Driveへの問い合わせ回数（ファイルごとの読み出し）。入力が増えたときの負荷を確かめる。
@@ -76,6 +108,7 @@ function drive({seed = true, incremental = false} = {}) {
       parent, updated: clock++, trashed: false, reads: 0, readHook: null,
       getId: () => { calls.id++; return file.id; }, getName: () => { calls.name++; return file.name; },
       isTrashed: () => { calls.trashed++; return file.trashed; },
+      setTrashed: value => { file.trashed = value; },
       getLastUpdated: () => { calls.updated++; return new Date(file.updated); },
       getSize: () => { calls.size++; return Buffer.byteLength(file.text); },
       getParents: () => iterator([file.parent]),
@@ -117,7 +150,8 @@ function drive({seed = true, incremental = false} = {}) {
       return {getResponseCode: () => status};
     }},
   };
-  vm.createContext(context); vm.runInContext(source.replace('const PSCUBE_INCREMENTAL_VIEWER = false;', 'let PSCUBE_INCREMENTAL_VIEWER = ' + incremental + ';'), context);
+  vm.createContext(context); vm.runInContext(source.replace('const PSCUBE_INCREMENTAL_VIEWER = false;', 'let PSCUBE_INCREMENTAL_VIEWER = ' + incremental + ';')
+    .replace('const PSCUBE_HISTORY_VIEWER = false;', 'const PSCUBE_HISTORY_VIEWER = ' + history + ';'), context);
   const doc = name => JSON.parse(files.find(f => !f.trashed && f.parent === folder && f.name === name).text);
   const replace = (file, value) => { file.text = typeof value === 'string' ? value : JSON.stringify(value); file.updated = clock++; };
   if (seed) {

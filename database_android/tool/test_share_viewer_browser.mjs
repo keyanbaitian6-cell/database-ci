@@ -170,17 +170,21 @@ try {
     const overflow = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 0, `横にはみ出す（${width}px、${overflow}px）`);
     // 2回目はリンクなしでも開ける（覚えたIDと店）。
+    const beforeReload = urls.length;
     await page.goto(pageUrl);
     await page.waitForSelector('.grid');
     assert.equal(await page.locator('.anchor[aria-pressed="true"]').innerText(), '幸町');
-    assert.ok(urls.slice(4).includes('?u=himawari&check=1&access=1'), 'リンクなしで開き直しても、覚えた呼び名で記録する');
+    assert.equal(urls.length, beforeReload, '保存済みで起動するときはGoogleへ通信しない');
+    await page.locator('#reload').click();
+    await page.waitForFunction(() => !document.querySelector('#reload').disabled);
+    assert.ok(urls.slice(beforeReload).includes('?u=himawari&check=1&access=1'), '手動更新時は覚えた呼び名で記録する');
     assert.deepEqual([...new Set(methods)], ['GET'], '読むだけ（POSTしない）');
     assert.deepEqual(errors, []);
     if (process.env.SHARE_WEB_ROOT || process.env.SHARE_PUBLIC_URL) {
       // 公開するページは、読むファイルすべてに同じ版を付ける（古い版を覚えた端末でも新しい版を読む）。
       const names = [...new Set(modules)].map(m => /\/(\w+\.mjs)\?v=([0-9a-f]{12})$/.exec(m));
-      assert.ok(names.length === 4 && names.every(Boolean), `版の付いていない読み込み：${modules}`);
-      assert.deepEqual(names.map(n => n[1]).sort(), ['app.mjs', 'data.mjs', 'net.mjs', 'viewer_parts.mjs']);
+      assert.ok(names.length === 5 && names.every(Boolean), `版の付いていない読み込み：${modules}`);
+      assert.deepEqual(names.map(n => n[1]).sort(), ['app.mjs', 'data.mjs', 'net.mjs', 'offline.mjs', 'viewer_parts.mjs']);
       assert.equal(new Set(names.map(n => n[2])).size, 1);
     }
     await context.close();

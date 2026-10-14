@@ -7,6 +7,7 @@ performed by the person in the embedded browser; this module reads rendered DOM.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import re
 import secrets
@@ -16,7 +17,7 @@ import sys
 import threading
 import unicodedata
 import time
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -485,9 +486,14 @@ def auto_backup(store: 'PscubeStore', export_path, today: date | None = None) ->
 def is_pscube_backup(path) -> bool:
     """P’s CUBEのバックアップ（format が pscube-viewer）か。先頭だけ読む（メルヘンの全期間は大きいため）。"""
     try:
+        if Path(path).name == 'database-viewer-parts-pscube.json':
+            if Path(path).stat().st_size > 1024 * 1024:
+                return False
+            data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
+            return data.get('format') == 'database-viewer-parts' and data.get('site') == 'pscube' and data.get('version') == 2
         with open(path, 'rb') as f:
             head = f.read(512).decode('utf-8', errors='ignore')
-    except OSError:
+    except (OSError, ValueError, AttributeError):
         return False
     return re.search(r'"format"\s*:\s*"pscube-viewer"', head) is not None
 
@@ -505,12 +511,16 @@ def write_backup(store: 'PscubeStore', path) -> Path:
 def latest_pscube_backup(folder) -> Path | None:
     """同期フォルダの最新のP’s CUBEバックアップ。自分の自動コピーと閲覧用の軽いファイルは除く。"""
     candidates = [p for p in Path(folder).glob('pscube-*.json') if p.name not in (AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME)]
+    history = Path(folder) / 'database-viewer-parts-pscube.json'
+    if history.exists():
+        candidates.append(history)
     for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             payload = json.loads(path.read_text(encoding='utf-8-sig'))
         except (OSError, ValueError):
             continue
-        if isinstance(payload, dict) and payload.get('format') == FORMAT and payload.get('kind') != 'viewer':
+        if isinstance(payload, dict) and ((payload.get('format') == FORMAT and payload.get('kind') != 'viewer') or
+                (payload.get('format') == 'database-viewer-parts' and payload.get('version') == 2 and payload.get('site') == 'pscube')):
             return path
     return None
 
@@ -860,13 +870,17 @@ class PscubeStore:
     def export_viewer(self, path):
         return _write_json(Path(path), self.export_payload('backup'))
 
-    def import_backup(self, source) -> dict:
+    def import_backup(self, source, *, _validate_only=False, _transaction=True) -> dict:
         """他の端末のバックアップ（PC・Android・ブラウザ）を統合する。消す操作はない。
 
         台ごとの統合は取り込みと同じ `_merge`（古い数値で新しい数値を上書きしない）。軽い閲覧用
         ファイル（kind='viewer'）は止める。形式が不正なら1件も保存しない。
         """
         data = json.loads(Path(source).read_text(encoding='utf-8-sig')) if isinstance(source, (str, Path)) else source
+        if isinstance(data, dict) and data.get('format') == 'database-viewer-parts':
+            if not isinstance(source, (str, Path)):
+                raise ValueError('履歴一覧は日別原本と同じフォルダにあるファイルから読み込んでください。')
+            return self._import_cloud_history(Path(source), data)
         if not isinstance(data, dict) or data.get('format') != FORMAT or data.get('version') != 1 \
                 or not isinstance(data.get('machines'), list) or not isinstance(data.get('records'), list):
             raise ValueError('P’s CUBEのバックアップではありません。')
@@ -893,11 +907,13 @@ class PscubeStore:
             captures = [_record_key(r) for r in data['records'] if (r.get('graph') or {}).get('kind') == 'daily']
         wanted = set(captures)
         incoming_events = validate_date_events(data.get('date_events'), data.get('suffix_events'))
+        if _validate_only:
+            return {}
         stored_events = self.date_events()
         merged_events = merge_date_events(stored_events, incoming_events)
         summary = {'added': 0, 'updated': 0, 'unchanged': 0, 'kept_local': 0, 'machines': len(data['machines']),
                    'events': sum(1 for e in merged_events if e not in stored_events)}
-        with self.db:
+        with self.db if _transaction else nullcontext():
             if summary['events']:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('date_events', json.dumps(merged_events, ensure_ascii=False)))
@@ -928,6 +944,62 @@ class PscubeStore:
                     self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (key,))
             if data['records'] and not self._state('last_day'):
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)', ('last_day', max(r['day'] for r in data['records'])))
+        return summary
+
+    def _import_cloud_history(self, source, index):
+        """日別原本を事前検査し、1トランザクションで取り込む。全期間のJSON配列は作らない。"""
+        if index.get('version') != 2 or index.get('site') != 'pscube' or not isinstance(index.get('cloud_days'), list):
+            raise ValueError('P’s CUBEの履歴一覧ではありません。')
+        refs = index['cloud_days']
+        indexed_days = index.get('days')
+        if not isinstance(indexed_days, list) or not all(isinstance(d, str) for d in indexed_days) or len(set(indexed_days)) != len(indexed_days):
+            raise ValueError('履歴の日付一覧が不正です。')
+        if len(refs) > 16384 or index.get('history_progress') or len(refs) != len(indexed_days):
+            raise ValueError('履歴の初回移行が途中です。Google側の同期完了を待ってください。')
+        folder = source.resolve().parent
+        seen = set()
+
+        def read_day(ref):
+            if not isinstance(ref, dict) or not isinstance(ref.get('day'), str) or ref['day'] in seen:
+                raise ValueError('日別原本の一覧が不正です。')
+            name = ref.get('name')
+            match = re.fullmatch(r'database-history-day-pscube-(\d{4}-\d{2}-\d{2})-([0-9a-f]{64})\.json', name or '')
+            if not match or match[1] != ref['day'] or match[2] != ref.get('hash'):
+                raise ValueError('日別原本のファイル名・ハッシュが不正です。')
+            if date.fromisoformat(ref['day']).isoformat() != ref['day'] or ref['day'] not in indexed_days:
+                raise ValueError('日別原本の日付が一覧と一致しません。')
+            path = (folder / name).resolve()
+            if path.parent != folder:
+                raise ValueError('日別原本は同期フォルダ直下に必要です。')
+            if not isinstance(ref.get('bytes'), int) or not 0 < ref['bytes'] <= 48 * 1024 * 1024 or path.stat().st_size != ref['bytes']:
+                raise ValueError('日別原本の容量が一覧と一致しません。')
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != ref['hash']:
+                raise ValueError('日別原本のハッシュが一致しません。記録は変更していません。')
+            value = json.loads(raw)
+            if value.get('site') != 'pscube' or value.get('day') != ref['day'] or not isinstance(value.get('data'), dict):
+                raise ValueError('日別原本の日付・サイトが不正です。')
+            doc = value['data']
+            if not isinstance(doc.get('records'), list) or any(r.get('day') != ref['day'] for r in doc['records'] if isinstance(r, dict)):
+                raise ValueError('日別原本に別の日の記録があります。')
+            if ref.get('count') != len(doc['records']):
+                raise ValueError('日別原本の件数が一覧と一致しません。')
+            return doc
+
+        for ref in refs:
+            self.import_backup(read_day(ref), _validate_only=True)
+            seen.add(ref['day'])
+        if sum(r['count'] for r in refs) != index.get('count'):
+            raise ValueError('履歴の合計件数が一覧と一致しません。')
+        seen.clear()
+        summary = dict.fromkeys(('added', 'updated', 'unchanged', 'kept_local', 'machines', 'events'), 0)
+        with self.db:
+            for ref in refs:
+                # 事前検査後にDrive同期が原本を書き換えても、同じハッシュを再検査して全体を取り消す。
+                result = self.import_backup(read_day(ref), _transaction=False)
+                for key in summary:
+                    summary[key] += result[key]
+                seen.add(ref['day'])
         return summary
 
 

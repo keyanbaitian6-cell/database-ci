@@ -16,7 +16,7 @@ export function buildCloudScript() {
   const runtime = readFileSync(new URL('./pscube_cloud_sync_runtime.js', import.meta.url), 'utf8');
   return '// 生成元: tool/build_pscube_cloud_sync.mjs。共通パーサーの検証・統合規則を使用。\n' +
     '// 初回: 別のApps Scriptプロジェクトに全文を貼り、setupPscubeCloudSync を実行。\n' +
-    '// 既存の閲覧用・共有用スクリプトは変更不要。ウェブ公開も不要。\n\n' + runtime + '\n' + core.trimEnd() + '\n' + ['viewer_parts_core.js', 'viewer_parts_drive.js', 'viewer_parts_publish.js']
+    '// 履歴モードの移行はVIEWER_HISTORY_SYNC.mdを参照。\n\n' + runtime + '\n' + core.trimEnd() + '\n' + ['viewer_parts_core.js', 'viewer_parts_drive.js', 'viewer_parts_publish.js', 'viewer_history_cloud.js', 'viewer_history_adapters.js']
       .map(name => readFileSync(new URL('./' + name, import.meta.url), 'utf8').replaceAll('\r\n', '\n')).join('\n');
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

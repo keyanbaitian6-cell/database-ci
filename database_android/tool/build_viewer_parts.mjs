@@ -5,9 +5,10 @@ import {buildCloudScript} from './build_pscube_cloud_sync.mjs';
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 export const partsCore = () => read('./viewer_parts_core.js');
 export const partsDrive = () => partsCore() + '\n' + read('./viewer_parts_drive.js');
-export const partsPublisher = () => partsDrive() + '\n' + read('./viewer_parts_publish.js');
+export const partsPublisher = () => partsDrive() + '\n' + read('./viewer_parts_publish.js') + '\n' +
+  read('./viewer_history_cloud.js') + '\n' + read('./viewer_history_adapters.js');
 export const partsClient = () => '// 生成元: tool/build_viewer_parts.mjs\n' + partsCore() + '\n' + read('./viewer_parts_client.js') +
-  '\nexport {fetchViewerParts, fetchViewerDocument};\n';
+  '\nexport {fetchViewerParts, fetchViewerDocument, rememberViewerHistory, readViewerHistory};\n';
 const marker = '\n// BEGIN GENERATED VIEWER PARTS\n';
 export function buildPartsFiles() {
   for (const name of ['viewer_drive_script.gs', 'viewer_drive_script_readonly.gs', 'meruhen_cloud_sync.gs']) {

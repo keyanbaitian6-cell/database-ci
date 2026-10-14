@@ -384,9 +384,16 @@ class ViewerData {
     final freshDays = [for (final item in freshRecords) ?dayOf(item)];
     if (freshDays.isEmpty) return (text: incoming, note: null);
     final first = freshDays.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+    final completeDays = fresh['history_days'] is List
+        ? (fresh['history_days'] as List).whereType<String>().toSet()
+        : null;
     final older = [
       for (final item in old['records'] as List)
-        if (dayOf(item) case final day? when day.compareTo(first) < 0) item,
+        if (dayOf(item) case final day?
+            when completeDays != null
+                ? !completeDays.contains(day)
+                : day.compareTo(first) < 0)
+          item,
     ];
     if (older.isEmpty) return (text: incoming, note: null);
     final events = <String, Object?>{};

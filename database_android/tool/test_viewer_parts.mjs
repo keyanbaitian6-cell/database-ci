@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {partsClient, partsDrive, partsPublisher} from './build_viewer_parts.mjs';
-import {fetchViewerParts, fetchViewerDocument} from '../web/viewer_parts.mjs';
+import {fetchViewerParts, fetchViewerDocument, rememberViewerHistory, readViewerHistory} from '../web/viewer_parts.mjs';
 
 const hash = text => createHash('sha256').update(text).digest('hex');
 const plain = x => JSON.parse(JSON.stringify(x));
@@ -39,6 +39,39 @@ function fixture() {
 }
 const row = (day, rack = 1, games = 100) => ({day, rack, games, store: 'saiwaichou', machine: '試験🌈'});
 const storage = () => {const map = new Map(); return {map, get: key => map.get(key), set: (key, value) => map.set(key, value)};};
+
+test('履歴v2：総量50MiB・12万5千件でも日別上限内なら許可、同一日の超過は拒否', () => {
+  const f = fixture(); f.publish([row('2026-10-02')]);
+  const m = f.get({check: '1'}).parts;
+  const parts = Array.from({length: 50}, (_, i) => ({day: new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10),
+    hash: hash(String(i)), count: 2500, bytes: 1048576}));
+  const big = {...m, version: 2, parts, days: parts.map(p => p.day), count: 125000};
+  assert.doesNotThrow(() => f.context.vpValidManifest(big, 'meruhen'));
+  assert.throws(() => f.context.vpValidManifest({...big, version: 1}, 'meruhen'), /不正/);
+  assert.throws(() => f.context.vpValidManifest({...big, parts: parts.map(p => ({...p, day: parts[0].day}))}, 'meruhen'), /不正/);
+});
+
+test('保存済み全期間の移行・期間落ち保持・空の日の明示削除・再起動読み込み', async () => {
+  const f = fixture(), cache = storage(), url = 'https://a.test/exec';
+  await rememberViewerHistory(url, 'meruhen', f.context ? {format: 'database-backup', records: [row('2025-01-01')]} : null, cache);
+  f.publish([row('2026-10-02'), row('2026-10-03')]);
+  let m = f.get({check: '1'}).parts;
+  const first = await fetchViewerParts(url, 'meruhen', {...m, version: 2, days: ['2026-10-02', '2026-10-03']}, f.read, cache);
+  assert.equal(first.records.length, 3);
+  f.publish([row('2026-10-03')]); m = f.get({check: '1'}).parts;
+  const second = await fetchViewerParts(url, 'meruhen', {...m, version: 2, days: ['2026-10-02', '2026-10-03']}, f.read, cache);
+  assert.deepEqual(second.records.map(r => r.day), ['2025-01-01', '2026-10-03']);
+  assert.equal((await readViewerHistory(url, 'meruhen', cache)).records.length, 2);
+});
+
+test('一覧から外れた過去分もハッシュ検査し、破損時には上書きしない', async () => {
+  const f = fixture(), cache = storage(), url = 'https://a.test/exec';
+  f.publish([row('2025-01-01')]); await fetchViewerDocument(url, 'meruhen', f.read, cache);
+  const old = [...cache.map.values()][0]; old.parts[Object.keys(old.parts)[0]] = JSON.stringify([row('2025-01-01', 1, 999)]);
+  f.publish([row('2026-10-02')]); const before = JSON.stringify([...cache.map]);
+  await assert.rejects(fetchViewerDocument(url, 'meruhen', f.read, cache), /過去の履歴が破損/);
+  assert.equal(JSON.stringify([...cache.map]), before);
+});
 
 test('配布版は生成元と一致（両ページ・両Apps Script・メルヘン同期）', () => {
   for (const path of ['../web/viewer_parts.mjs', '../../share_viewer/viewer_parts.mjs']) {
@@ -75,8 +108,8 @@ test('初回・日別修正・期間落ち・日内削除・同一内容で時�
   f.publish([...rows].reverse()); assert.equal(f.get({check: '1'}).version, oldRevision); assert.equal(f.writes.length, writes);
   f.publish([row('2026-10-02', 2, 200)]);
   const updated = await fetchViewerParts('https://a.test/exec', 'meruhen', f.get({check: '1'}).parts, f.read, cache);
-  assert.deepEqual(updated.records, [row('2026-10-02', 2, 200)]);
-  assert.equal(Object.keys([...cache.map.values()][0].parts).length, 1);
+  assert.deepEqual(updated.records, [row('2026-10-01'), row('2026-10-02', 2, 200)]);
+  assert.equal(Object.keys([...cache.map.values()][0].parts).length, 2);
 });
 
 test('共有の閲覧ログは差分有効前も後も1回だけ（確認・パーツ取得では重複しない）', () => {
@@ -102,7 +135,7 @@ test('キャッシュ破損・消失・保存拒否・接続先とサイトの�
   await fetchViewerParts('https://a.test/exec', 'meruhen', m, read, cache); assert.equal(calls, 3);
   cache.map.clear(); await fetchViewerParts('https://a.test/exec', 'meruhen', m, read, cache); assert.equal(calls, 4);
   const noCache = {get() {throw new Error('disabled');}, set() {throw new Error('quota');}};
-  assert.equal((await fetchViewerParts('https://a.test/exec', 'meruhen', m, read, noCache)).records.length, 1);
+  await assert.rejects(fetchViewerParts('https://a.test/exec', 'meruhen', m, read, noCache), /保存データは変更していません/);
   await assert.rejects(fetchViewerParts('https://a.test/exec', 'pscube', m, read, cache), /不正/);
 });
 

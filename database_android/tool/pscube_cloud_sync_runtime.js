@@ -7,6 +7,8 @@ const PSCUBE_CLOUD_BACKUP = 'pscube-backup-cloud.json';
 const PSCUBE_CLOUD_VIEWER = 'pscube-viewer-drive.json';
 // 両ページ用Apps Scriptの更新後にtrueへ変更（VIEWER_INCREMENTAL_SYNC.md）。
 const PSCUBE_INCREMENTAL_VIEWER = false;
+// 両ページと読み取りGSの更新後にtrue（VIEWER_HISTORY_SYNC.md）。
+const PSCUBE_HISTORY_VIEWER = false;
 const PSCUBE_CLOUD_BATCH = 10;
 const PSCUBE_CLOUD_MAX_BYTES = 48 * 1024 * 1024;
 const PSCUBE_CLOUD_HANDLER = 'syncPscubeCloud';
@@ -117,6 +119,7 @@ function showPscubeCloudStatus() {
 
 /** 日別ファイルが消えた・壊れた場合だけ実行。元バックアップは変更しない。 */
 function rebuildPscubeViewerParts() {
+  if (PSCUBE_HISTORY_VIEWER) PropertiesService.getScriptProperties().setProperty('pscubeHistoryRebuild', '1');
   PropertiesService.getScriptProperties().deleteProperty('pscubeCloudInputs');
   return syncPscubeCloud();
 }
@@ -134,6 +137,7 @@ function pscubeCloudRun() {
     if (folder.isTrashed()) throw new PscubeCloudStop('config', '共有フォルダがごみ箱にあります。');
     const backupFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_BACKUP);
     const viewerFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_VIEWER);
+    if (PSCUBE_HISTORY_VIEWER) return vhPscube(folder, viewerFile, props, startedAt);
     const inputs = pscubeCloudListInputs([folder, DriveApp.getRootFolder()]);
     const liveIds = new Set(inputs.map(i => i.id));
     const failures = pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_ERRORS)) || {};
@@ -301,6 +305,7 @@ function pscubeCloudListInputs(folders) {
 
 /** 上限に近づいたときの知らせ（全期間・閲覧用の容量と件数、処理時間、入力の数）。 */
 function pscubeCloudWarnings(s) {
+  if (s.history) return [];
   const out = [];
   const share = (value, limit) => (value || 0) / limit;
   const mb = n => (n / 1048576).toFixed(1) + 'MB';
@@ -324,7 +329,7 @@ function pscubeCloudStatusLines(status, failures, failedCount = failures.length)
   const lines = ['状態：' + label + (status.at ? '（' + status.at + '）' : '') + (status.message ? '・' + status.message : '')];
   if (status.records != null) {
     lines.push('全期間 ' + status.records + '件・' + ((status.backup_bytes || 0) / 1048576).toFixed(1) + 'MB／閲覧用 ' +
-      status.viewer_records + '件・' + ((status.viewer_bytes || 0) / 1048576).toFixed(1) + 'MB（上限48MB）');
+      status.viewer_records + '件・' + ((status.viewer_bytes || 0) / 1048576).toFixed(1) + (status.history ? 'MB（日別履歴・合計48MiB制限なし）' : 'MB（上限48MB）'));
   }
   if (status.incremental) lines.push((['ok', 'partial'].includes(status.result) ? '今回' : '前回確定時') +
     'の差分出力：' + status.incremental.parts + 'パーツ・' + (status.incremental.bytes / 1024).toFixed(1) + 'KB');
@@ -367,7 +372,10 @@ function pscubeCloudRead(file, size) {
   catch (error) { throw new PscubeCloudTransient(String(error && error.message || error).slice(0, 120)); }
   const raw = JSON.parse(text.replace(/^\uFEFF/, ''));
   if (raw.kind === 'viewer') throw new Error('軽量な閲覧用ファイルは全期間バックアップとして使えません。');
-  const data = validateData(raw);
+  const validated = validateData(raw);
+  // バックアップは足し込み。閲覧用の完成日メタデータで保存済み原本を削除しない。
+  const {history_days, history, ...data} = validated;
+  if (data.records.length > PSCUBE_CLOUD_RECORD_LIMIT) throw new Error('入力バックアップの記録が20万件を超えています。期間を分けてください。');
   const keys = new Set(data.records.map(recordKey));
   const captures = raw.rack_captures == null ? data.records.filter(r => r.graph && r.graph.kind === 'daily').map(recordKey) : raw.rack_captures;
   if (!Array.isArray(captures) || captures.some(k => typeof k !== 'string' || !keys.has(k))) throw new Error('取り込み済みの印が不正です。');
