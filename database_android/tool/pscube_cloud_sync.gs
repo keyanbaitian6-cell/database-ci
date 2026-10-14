@@ -879,7 +879,10 @@ function vhSync(folder, base, props, adapter, startedAt) {
   // v1の閲覧パーツも消さずに引き継ぐ。原本が無い日は最初の更新時だけパーツから戻す。
   const m = old ? JSON.parse(JSON.stringify(old)) : {header: adapter.header(), parts: [], count: 0};
   m.format = VP_FORMAT; m.version = 2; m.site = site; m.base = baseVersion;
-  m.history_inputs ||= {}; m.history_progress ||= {}; m.cloud_days ||= [];
+  // Apps Scriptの保存時に解釈できる通常の代入で初期化する。
+  if (!m.history_inputs) m.history_inputs = {};
+  if (!m.history_progress) m.history_progress = {};
+  if (!m.cloud_days) m.cloud_days = [];
   const days = new Map(m.cloud_days.map(d => [d.day, d]));
   const parts = new Map();
   for (const p of m.parts) { if (!parts.has(p.day)) parts.set(p.day, []); parts.get(p.day).push(p); }

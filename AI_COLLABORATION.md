@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 【Google導入中の構文エラー修正】同期GSの論理代入（Codex、2026-10-14）
+
+- 利用者が読み取りGSの1・2と表示確認を完了と報告。その後メルヘンGS保存で「ParseError: Unexpected token = 行774」を提示。導入用GSの同じ行は `m.history_inputs ||= {}; m.history_progress ||= {}; m.cloud_days ||= [];` で、実Googleの保存パーサーが論理代入を拒否した。Node vmによる模擬試験だけでは検出できなかった配布コードの不備。
+- 共通ソース `viewer_history_cloud.js` の初期化を通常のif＋代入へ変更し、`build_viewer_parts.mjs` で両同期GSを再生成。配布4本について同じ論理代入を禁止し構文を検査する回帰試験を追加。修正前のGSで失敗し、修正後に成功することを確認。
+- 関連82件を確認。初回81件PASS／1件はPython実行先未設定で子プロセスを起動できず失敗。正しいPYTHONを指定して失敗した1件だけ再実行PASS（`gas-syntax-after.log`、`gas-syntax-python-recheck.log`）。今回Web・APK・PCビルドは変更不要で実施していない。全体ゲートは前回実装公開時の結果と区別する。
+- `outputs/viewer-history-20261014/google/` の同期2本を履歴trueの修正版へ更新し、コピー用HTMLとSHA-256一覧も更新。**利用者はコピー画面を再読み込みして3・4をコピーし直す。読み取り1・2は変更なし・再貼替不要。** Google側の保存・同期成功はまだ確認できていない。既存メルヘンでは選択関数を `syncMeruhenCloud` にして実行する。
+
 ## 【実装・全体検証・Web公開完了／Google切替・実機確認待ち】日別履歴と共有オフライン（Codex、2026-10-14）
 
 - 利用者の再開指示で下の停止時点から継続。未コミット作業を `a/work/outputs/viewer-history-20261014/before/` へ保護し、最新mainとの差を確認して実装を完成。実装 `3848106`、Android入口との統合 `06f6f67`、他作業の公開記録まで保全したmain `aaadbbc`。reset/clean・force pushなし。`debug.log` は対象外。

@@ -40,6 +40,15 @@ function fixture() {
 const row = (day, rack = 1, games = 100) => ({day, rack, games, store: 'saiwaichou', machine: '試験🌈'});
 const storage = () => {const map = new Map(); return {map, get: key => map.get(key), set: (key, value) => map.set(key, value)};};
 
+test('Apps Script配布4本は保存時に拒否された論理代入構文を使わない', () => {
+  // Nodeのvmは新しい構文も受理するため、実Googleで保存できなかった演算子を別途防ぐ。
+  for (const name of ['viewer_drive_script.gs', 'viewer_drive_script_readonly.gs', 'meruhen_cloud_sync.gs', 'pscube_cloud_sync.gs']) {
+    const source = readFileSync(new URL('./' + name, import.meta.url), 'utf8');
+    assert.equal(/(?:\|\||&&|\?\?)=/.test(source), false, name + ': Apps Script保存時の構文エラーを再発させない');
+    assert.doesNotThrow(() => new vm.Script(source, {filename: name}));
+  }
+});
+
 test('履歴v2：総量50MiB・12万5千件でも日別上限内なら許可、同一日の超過は拒否', () => {
   const f = fixture(); f.publish([row('2026-10-02')]);
   const m = f.get({check: '1'}).parts;
