@@ -354,23 +354,29 @@ def main():
         db = Store(DATA_DIR / 'database.sqlite3')
         try:
             auto_backup(db, DATA_DIR)
+            pending_marks = len(db.pending_rainbow_marks())
         finally:
             db.close()
         tell(f'🌈の付け外し{rainbow_pending[0]}件を、閲覧ページ・共有ページ用のファイルとバックアップに反映しました。\n')
+        if pending_marks:
+            tell('未取り込み日の印はこのPCとバックアップに保存しています。Webへの反映は、その日の数値を取り込んだ後です。\n')
         rainbow_pending[0] = 0
         show_pending()
-    refresh_variety = build_variety_tab(tab_variety, DATA_DIR / 'database.sqlite3', mark_rainbow,
-                                        on_flush=flush_rainbow, pending=pending_text)
+    refresh_variety = None
     # タブを開いたときに読み直す（取り込みで新しい日・入れ替えが入っていれば一覧が変わる）。離れるときは🌈をまとめて反映。
     current_tab = [None]
 
     def open_variety(_event=None):
+        nonlocal refresh_variety
         selected = notebook.select()
         if current_tab[0] == str(tab_variety) and selected != str(tab_variety):
             flush_rainbow()
         current_tab[0] = selected
         if selected == str(tab_variety):
             pull_shared_rainbow_now()   # iPhoneで付けた🌈も入れてから読み直す
+            if refresh_variety is None:
+                refresh_variety = build_variety_tab(tab_variety, DATA_DIR / 'database.sqlite3', mark_rainbow,
+                                                    on_flush=flush_rainbow, pending=pending_text, defer_load=True)
             refresh_variety()
     notebook.bind('<<NotebookTabChanged>>', open_variety, add='+')
 
@@ -909,9 +915,10 @@ def main():
         refresh_days()
         refresh_machines()
         applied = (len(plan['new']) + len(plan['graph_only']) + len(plan['link_only']) + len(plan.get('jo_only', []))
-                   + plan.get('events_added', 0))
+                   + len(plan['setting_only']) + plan.get('events_added', 0) + plan.get('rainbow_added', 0))
         summary = (f'新規{len(plan["new"])}件、グラフ追加{len(plan["graph_only"])}件、リンク補完{len(plan["link_only"])}件、'
                    f'ジャグラーオンラインの差枚{len(plan.get("jo_only", []))}件を取り込みました。'
+                   f'🌈・設定情報{len(plan["setting_only"])}件、未取り込み日の🌈{plan.get("rainbow_added", 0)}件。'
                    f'既に同じ内容{len(plan["unchanged"])}件、要確認{len(plan["conflicts"])}件、'
                    f'イベント反映{plan.get("events_added", 0)}件、イベント名不一致{plan.get("event_conflicts", 0)}件（入力時刻の無い同士は既存名を維持）、'
                    f'対象外{len(plan["skipped"])}件。')
@@ -1002,10 +1009,10 @@ def main():
         folder = current.get('sync_dir')
         if not current.get('auto_sync_on_start', True) or not folder or not Path(folder).is_dir():
             return
-        latest = latest_backup_file(folder)
+        seen = current.get('last_synced') or {}
+        latest = latest_backup_file(folder, seen=seen)
         if latest is None:
             return
-        seen = current.get('last_synced') or {}
         if seen.get('name') == latest.name and seen.get('mtime') == latest.stat().st_mtime:
             return
         logbox.insert('end', f'同期フォルダに新しいバックアップがあります：{latest.name}\n')

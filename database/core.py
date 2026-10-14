@@ -451,6 +451,8 @@ class Store:
         イベント名・台・翌日候補の記録を1回で書くため）。"""
         self._machine_cache = {}
         groups = set()
+        pending = {(m['store'], m['day'], m['rack']): m for m in self.pending_rainbow_marks()}
+        applied_marks = set()
         for row in rows:
             row = dict(row, machine=normalize_machine_name(row.get('machine')))
             if row.get('kind_code') != 21 or row.get('store') not in STORE_NAMES:
@@ -472,6 +474,11 @@ class Store:
                 merged.pop('graph', None)
                 merged.pop('graph_measurement', None)
             rainbow = _newer_rainbow(merged, row)
+            mark_key = (row['store'], row['day'], int(row['rack']))
+            if mark_key in pending:
+                mark = pending[mark_key]
+                rainbow = _newer_rainbow(rainbow, dict(rainbow=mark['on'], rainbow_at=mark['updated_at']))
+                applied_marks.add(mark_key)
             merged.update({k: v for k, v in row.items() if v is not None})
             # 🌈は付け外しした時刻（rainbow_at）の新しい方を残す（RAINBOW.md）。PCで外したあとに、🌈の付いた
             # 古いバックアップ（グラフ追加など）を読み込んでも付き直らない。
@@ -493,6 +500,8 @@ class Store:
             self._log_observation(row)
             self.db.execute('INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) DO UPDATE SET payload=excluded.payload', (*key, json.dumps(merged, ensure_ascii=False)))
             groups.add((key[0], key[2], key[1]))
+        if applied_marks:
+            self._write_pending_rainbow_marks([m for k, m in pending.items() if k not in applied_marks])
         if log_candidates:
             self._log_candidates(groups)
         self._machine_cache = {}
@@ -732,10 +741,59 @@ class Store:
         self._machine_cache = {}
         return cursor.rowcount
 
-    def set_rainbow(self, store, day, rack, on, at=None):
+    def pending_rainbow_marks(self, location=None, day=None):
+        """数値の未取り込み中に保存した印。壊れた控えは上書きせず止める。"""
+        marks = json.loads(self.state('pending_rainbow_marks') or '[]')
+        if not isinstance(marks, list) or any(not _valid_rainbow_mark(m) for m in marks):
+            raise ValueError('未取り込みの🌈の保存内容を読めません。元のDBを残して修復してください。')
+        return [m for m in marks if (location is None or m['store'] == location)
+                and (day is None or m['day'] == day)]
+
+    def _write_pending_rainbow_marks(self, marks):
+        self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)',
+                        ('pending_rainbow_marks', json.dumps(marks, ensure_ascii=False)))
+
+    def _merge_pending_rainbow_marks(self, incoming):
+        """バックアップ復元用。呼び側のトランザクション内で印を統合する。数値行は作らない。"""
+        pending = {(m['store'], m['day'], m['rack']): m for m in self.pending_rainbow_marks()}
+        changed = 0
+        for mark in incoming:
+            if not _valid_rainbow_mark(mark):
+                raise ValueError('未取り込みの🌈の形式が不正です。')
+            key = (mark['store'], mark['day'], mark['rack'])
+            previous = pending.get(key)
+            if previous and _timestamp(previous['updated_at']) > _timestamp(mark['updated_at']):
+                continue
+            found = self.db.execute('SELECT machine, payload FROM days WHERE store=? AND day=? AND rack=?', key).fetchall()
+            if not found:
+                if previous != mark:
+                    pending[key] = mark
+                    changed += 1
+                continue
+            updated = False
+            for machine, raw in found:
+                if is_hidden_machine(mark['store'], machine):
+                    continue
+                payload = json.loads(raw)
+                newest = _newer_rainbow(payload, dict(rainbow=mark['on'], rainbow_at=mark['updated_at']))
+                if newest == _newer_rainbow(payload, {}):
+                    continue
+                payload.pop('rainbow', None)
+                payload.pop('rainbow_at', None)
+                payload.update(newest)
+                self.db.execute('UPDATE days SET payload=? WHERE store=? AND day=? AND rack=? AND machine=?',
+                                (json.dumps(payload, ensure_ascii=False), *key, machine))
+                updated = True
+            changed += int(updated)
+            pending.pop(key, None)
+        self._write_pending_rainbow_marks(list(pending.values()))
+        return changed
+
+    def set_rainbow(self, store, day, rack, on, at=None, allow_missing=False):
         """確定が出た台の印🌈を付ける（on=True）・外す（False）。採点には使わない（RAINBOW.md）。
 
-        店舗・日・台番号で決める（その日のその台は1機種）。保存されていない台には付けられない。
+        店舗・日・台番号で決める（その日のその台は1機種）。通常は保存済みの台だけ。
+        本日のバラエティ画面は allow_missing=True で印だけを別保存し、数値取得時に統合する。
         記録の payload に ``rainbow: true`` を持つので、表を取り込み直しても・バックアップを読み込んでも残る。
         付け外しした時刻を ``rainbow_at`` に残す（外しても残す）。iPhoneの閲覧ページで付け外しした分
         （pull_shared_rainbow）と、時刻の新しい方を残すため。at はその時刻（省略は今）。"""
@@ -747,10 +805,34 @@ class Store:
         found = self.db.execute('SELECT machine, payload FROM days WHERE store=? AND day=? AND rack=?',
                                 (store, day, int(rack))).fetchall()
         found = [(machine, payload) for machine, payload in found if not is_hidden_machine(store, machine)]
-        if not found:
+        if not found and not allow_missing:
             raise ValueError(f'{rack}番台は{day}の記録がありません。先に表を取り込んでください。')
-        at = at or datetime.now().astimezone().isoformat()
+        if at is None:
+            now = datetime.now().astimezone()
+            previous = [m['updated_at'] for m in self.pending_rainbow_marks(store, day) if m['rack'] == int(rack)]
+            previous += [json.loads(raw).get('rainbow_at') for _machine, raw in found]
+            stamps = []
+            for value in previous:
+                try:
+                    if value:
+                        stamps.append(_timestamp(value))
+                except (TypeError, ValueError):
+                    pass
+            latest = max(stamps, default=None)
+            if latest and now <= latest:
+                now = latest + timedelta(milliseconds=1)
+            at = now.isoformat()
+        mark = dict(store=store, day=day, rack=int(rack), on=on, updated_at=at)
+        if not _valid_rainbow_mark(mark):
+            raise ValueError('🌈の指定が不正です。')
         with self.db:
+            if not found:
+                self._merge_pending_rainbow_marks([mark])
+                return 0
+            pending = self.pending_rainbow_marks()
+            if any((m['store'], m['day'], m['rack']) == (store, day, int(rack)) for m in pending):
+                self._write_pending_rainbow_marks([m for m in pending
+                    if (m['store'], m['day'], m['rack']) != (store, day, int(rack))])
             for machine, raw in found:
                 payload = json.loads(raw)
                 if on:
@@ -770,7 +852,8 @@ class Store:
         rows = self.db.execute(
             "SELECT machine, rack FROM days WHERE store=? AND day=? AND json_valid(payload)"
             " AND json_extract(payload, '$.rainbow') = 1", (store, day)).fetchall()
-        return sorted({int(rack) for machine, rack in rows if not is_hidden_machine(store, machine)})
+        return sorted({int(rack) for machine, rack in rows if not is_hidden_machine(store, machine)}
+                      | {m['rack'] for m in self.pending_rainbow_marks(store, day) if m['on']})
 
     def rainbow_counts(self, store, first, last):
         """台番号ごとの、first〜last（両端を含む）に🌈が付いた日数（{台番号: 日数}）。バラエティのタブで使う。"""
@@ -781,6 +864,9 @@ class Store:
         for rack, machine, day in rows:
             if not is_hidden_machine(store, machine):
                 days.setdefault(int(rack), set()).add(day)
+        for mark in self.pending_rainbow_marks(store):
+            if mark['on'] and first <= mark['day'] <= last:
+                days.setdefault(mark['rack'], set()).add(mark['day'])
         return {rack: len(found) for rack, found in days.items()}
 
     def last_rainbow_days(self, store, before):
@@ -793,6 +879,9 @@ class Store:
         for rack, machine, day in rows:
             if not is_hidden_machine(store, machine) and day > last.get(int(rack), ''):
                 last[int(rack)] = day
+        for mark in self.pending_rainbow_marks(store):
+            if mark['on'] and last.get(mark['rack'], '') < mark['day'] < before:
+                last[mark['rack']] = mark['day']
         return last
 
     def set_confirmed_setting(self, store, day, machine, rack, value):
@@ -969,13 +1058,15 @@ def _validate_backup_envelope(payload, allow_viewer=False, elided_candidates=Fal
         raise ValueError('対応していないバックアップのバージョンです。')
     if payload.get('source') == 'pc-viewer' and not allow_viewer:
         raise ValueError('これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。')
-    for key in ('candidate_snapshots', 'date_events'):
+    for key in ('candidate_snapshots', 'date_events', 'rainbow_marks'):
         if key in payload and not isinstance(payload[key], list):
             raise ValueError(f'{key} の形式が不正です。')
     if payload.get('recovery_required', 0) != 0 or 'unreadable_date_events' in payload:
         raise ValueError('読めないデータを含む救出用ファイルです。元のファイルを残して、データの修復を依頼してください。')
     if any(not _valid_date_event(event) for event in payload.get('date_events', [])):
         raise ValueError('イベント情報に読めない項目があります。')
+    if any(not _valid_rainbow_mark(mark) for mark in payload.get('rainbow_marks', [])):
+        raise ValueError('未取り込みの🌈に読めない項目があります。')
     if not elided_candidates:
         for snapshot in payload.get('candidate_snapshots', []):
             if not (isinstance(snapshot, dict) and snapshot.get('store') in STORE_NAMES
@@ -1053,7 +1144,8 @@ def export_viewer(store, path, days=VIEWER_DAYS):
                    if cutoff and event['day'] >= cutoff]
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc-viewer', days=days, date_events=date_events), ensure_ascii=False)[:-1]
+                             source='pc-viewer', days=days, date_events=date_events,
+                             rainbow_marks=store.pending_rainbow_marks()), ensure_ascii=False)[:-1]
     count = 0
     with path.open('w', encoding='utf-8') as out:
         out.write(f'{header}, "records": [')
@@ -1089,7 +1181,8 @@ def export_backup(store, path, location=None, day=None):
     events = store.date_events(location=location, day=day, include_removed=True)
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc', date_events=events), ensure_ascii=False)[:-1]
+                             source='pc', date_events=events,
+                             rainbow_marks=store.pending_rainbow_marks(location, day)), ensure_ascii=False)[:-1]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     query, values = 'SELECT payload FROM days WHERE 1=1', []
@@ -1964,14 +2057,22 @@ def duplicate_warning(store, day, location, machine, rack=None):
     return f'⚠ {text}の数値（回転・BIG・REG）が完全に同じです。台番号のずれがないか確認してください。'
 
 
-def latest_backup_file(folder):
+def latest_backup_file(folder, seen=None):
     """Newest backup JSON in ``folder`` (ignoring this app's own auto copy and
     the light viewer file, which has no graph images and must never be
-    imported as if it were a backup)."""
+    imported as if it were a backup). ``seen`` is the last successfully
+    imported file's name/mtime; unchanged content need not be read again."""
+    # 日別原本・閲覧パーツもGoogle Driveからダウンロードして解析しない。
     # pscube-* はP’s CUBE用（別形式・大きい）。ここで読み込もうとしない。
+    generated_prefixes = ('pscube-', 'database-history-day-',
+                          'database-viewer-part-', 'database-viewer-parts-')
     candidates = [p for p in Path(folder).glob('*.json')
-                  if p.name not in (AUTO_BACKUP_NAME, VIEWER_FILE_NAME) and not p.name.startswith('pscube-')]
+                  if p.name not in (AUTO_BACKUP_NAME, VIEWER_FILE_NAME, 'database-android-cloud.json',
+                                    SHARED_RAINBOW_NAME, SHARED_EVENTS_NAME)
+                  and not p.name.startswith(generated_prefixes)]
     for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
+        if seen and seen.get('name') == path.name and seen.get('mtime') == path.stat().st_mtime:
+            return path
         try:
             payload = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
@@ -2000,6 +2101,7 @@ def import_backup(store, path):
     to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only'] + plan['jo_only']
     # イベント名・台・翌日候補の記録を1回で書く（途中で失敗したら何も残さない）。
     with store.db:
+        plan['rainbow_added'] = store._merge_pending_rainbow_marks(payload['rainbow_marks']) if payload.get('rainbow_marks') else 0
         if plan['events_added']:
             store._write_date_events(store._date_events_payload(merged_events))
         if to_save:

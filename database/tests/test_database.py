@@ -1,9 +1,11 @@
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from urllib.parse import quote
+from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
@@ -742,6 +744,49 @@ class BrowserImportTests(unittest.TestCase):
 
 
 class BackupSharingTests(unittest.TestCase):
+    def test_unchanged_imported_backup_and_new_history_files_need_no_content_reads(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            backup = folder / 'from-phone.json'
+            backup.write_text('{"format":"database-backup"}', encoding='utf-8')
+            seen = dict(name=backup.name, mtime=backup.stat().st_mtime)
+            # 日別移行後は新しい原本・パーツが大量に増える。内容の読込はDriveのダウンロードにもなる。
+            for name in ('database-history-day-meruhen-2026-10-14-hash.json',
+                         'database-viewer-part-meruhen-hash.json',
+                         'database-viewer-parts-meruhen.json',
+                         'database-android-cloud.json',
+                         'database-rainbow-shared.json', 'database-events-shared.json',
+                         'database-viewer-parts-pscube.json'):
+                path = folder / name
+                path.write_text('{"format":"database-backup"}', encoding='utf-8')
+                os.utime(path, (seen['mtime'] + 10, seen['mtime'] + 10))
+            with patch.object(Path, 'read_text', side_effect=AssertionError('読み直してはいけない')):
+                self.assertEqual(latest_backup_file(folder, seen=seen), backup)
+
+    def test_startup_still_discovers_a_new_backup_after_the_last_import(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            previous = folder / 'previous.json'
+            previous.write_text('{"format":"database-backup"}', encoding='utf-8')
+            seen = dict(name=previous.name, mtime=previous.stat().st_mtime)
+            newest = folder / 'new-phone-backup.json'
+            newest.write_text('{"format":"database-backup","records":[]}', encoding='utf-8')
+            os.utime(newest, (seen['mtime'] + 10, seen['mtime'] + 10))
+            self.assertEqual(latest_backup_file(folder, seen=seen), newest)
+            newest.write_text('{broken', encoding='utf-8')
+            self.assertEqual(latest_backup_file(folder, seen=seen), previous)
+
+    def test_replaced_backup_with_same_name_is_validated_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            backup = Path(folder) / 'from-phone.json'
+            backup.write_text('{"format":"database-backup"}', encoding='utf-8')
+            seen = dict(name=backup.name, mtime=backup.stat().st_mtime)
+            backup.write_text('{broken', encoding='utf-8')
+            os.utime(backup, (seen['mtime'] + 10, seen['mtime'] + 10))
+            self.assertIsNone(latest_backup_file(folder, seen=seen))
+            backup.write_text('{"format":"database-backup","records":[]}', encoding='utf-8')
+            self.assertEqual(latest_backup_file(folder, seen=seen), backup)
+
     def test_export_backup_writes_a_readable_round_trip_file(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
             db = Store(Path(folder) / 'test.db')

@@ -7,6 +7,7 @@ import tkinter as tk
 import unittest
 from pathlib import Path
 from tkinter import ttk
+from unittest.mock import patch
 
 from core import Store
 from variety_rainbow import SORTS, build_variety_tab, variety_rows
@@ -35,6 +36,101 @@ class VarietyRainbowTests(unittest.TestCase):
         db.save(rows)
         db.set_rainbow(STORE, '2026-10-09', 50, True)
         db.close()
+
+    def test_deferred_tab_leaves_history_unread_until_opened(self):
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        frame = ttk.Frame(root)
+        with patch('variety_rainbow.Store', side_effect=AssertionError('まだDBを開かない')):
+            refresh = build_variety_tab(frame, self.path, lambda: None, STORE, defer_load=True)
+            root.update_idletasks()
+        self.assertEqual(frame.variety_cells, {})
+        refresh()  # PC本体で🌈タブを開くときと同じ呼び出し。
+        self.assertTrue(frame.variety_cells)
+        db = Store(self.path)
+        try:
+            db.set_rainbow(STORE, '2026-10-10', 50, True)
+        finally:
+            db.close()
+        refresh()  # 再度開いたときも最新の保存済み🌈を反映する。
+        cell = frame.variety_cells[(50, '2026-10-10')]
+        self.assertIn('🌈', cell.cget('text'))
+
+    def test_today_grid_and_list_can_mark_without_creating_numeric_records(self):
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1100x700+-3000+0')
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        changed = []
+        with patch('variety_rainbow.today_jst', return_value='2026-10-11'):
+            refresh = build_variety_tab(frame, self.path, lambda: changed.append(1), STORE)
+            frame.variety_today_button.invoke()
+            root.update()
+            self.assertEqual(frame.variety_day.get(), '2026-10-11')
+            cell = frame.variety_cells[(50, '2026-10-11')]
+            self.assertEqual(cell.cget('text'), '＋')
+            cell.event_generate('<Button-1>', x=5, y=5)
+            root.update()
+            self.assertEqual(cell.cget('text'), '🌈')
+            refresh()
+            self.assertEqual(frame.variety_cells[(50, '2026-10-11')].cget('text'), '🌈')
+            frame.variety_mode.set('list')
+            root.update()
+            table = next(w for child in frame.winfo_children() for w in child.winfo_children() if isinstance(w, ttk.Treeview))
+            first = table.get_children()[0]
+            self.assertEqual(table.item(first, 'values')[3:6], ('—', '—', '—'))
+            x, y, w, h = table.bbox(first, '#1')
+            table.event_generate('<Button-1>', x=x + w // 2, y=y + h // 2)
+            root.update()
+            self.assertEqual(table.item(first, 'values')[0], '＋')
+            db = Store(self.path)
+            try:
+                self.assertEqual(db.days_for(STORE), ['2026-10-10', '2026-10-09'])
+                self.assertEqual(db.rainbow_racks(STORE, '2026-10-11'), [])
+                self.assertFalse(db.pending_rainbow_marks(STORE, '2026-10-11')[0]['on'])
+            finally:
+                db.close()
+            self.assertEqual(changed, [1, 1])
+
+    def test_today_rollover_refreshes_without_marking_the_previous_day(self):
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1100x700+-3000+0')
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        with patch('variety_rainbow.today_jst', return_value='2026-10-11') as today:
+            build_variety_tab(frame, self.path, lambda: self.fail('日付確認前に保存した'), STORE)
+            frame.variety_today_button.invoke()
+            root.update()
+            today.return_value = '2026-10-12'
+            with patch('variety_rainbow.messagebox.showinfo') as info:
+                frame.variety_cells[(50, '2026-10-11')].event_generate('<Button-1>', x=5, y=5)
+                root.update()
+            info.assert_called_once()
+            self.assertEqual(frame.variety_day.get(), '2026-10-12')
+            db = Store(self.path)
+            try:
+                self.assertEqual(db.pending_rainbow_marks(), [])
+            finally:
+                db.close()
+
+    def test_yesterdays_pending_mark_stays_visible_without_numeric_data(self):
+        from variety_rainbow import rotation_cells
+        db = Store(self.path)
+        try:
+            db.set_rainbow(STORE, '2026-10-11', 50, True, allow_missing=True)
+        finally:
+            db.close()
+        with patch('variety_rainbow.today_jst', return_value='2026-10-12'):
+            cells = rotation_cells(self.path, STORE, ['2026-10-11', '2026-10-12'])
+            self.assertTrue(cells['2026-10-11'][50]['rainbow'])
+            self.assertFalse(cells['2026-10-11'][50]['editable'])
+            rows = {r['rack']: r for r in variety_rows(self.path, STORE, '2026-10-11')}
+            self.assertTrue(rows[50]['rainbow'])
+            self.assertIsNone(rows[50]['games'])
+            self.assertEqual(rows[50]['rainbow_count'], 2)
 
     def test_rows_come_from_the_latest_lineup(self):
         latest = variety_rows(self.path, STORE, '2026-10-10')

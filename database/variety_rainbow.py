@@ -5,7 +5,7 @@
 店舗・日付を選ぶと、その日のバラエティ（1〜3台の機種、core.VARIETY_MAX_RACKS）の台を並べ、🌈の列を
 押すと確定が出た台の印を付け外しする。ローテーションを追えるよう、最終🌈と直近30日の🌈回数を出す。
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -47,11 +47,11 @@ LINEUP_LOOKBACK_DAYS = 14
 LINEUP_MIN_SHARE = 0.8
 
 
-def lineup_day(db_path, location):
+def lineup_day(db_path, location, through=None):
     """バラエティ🌈の並べる台を取る日（記録がそろっている最新の日）。記録が無ければ None。共有ページの lineupDay と同じ。"""
     db = Store(db_path)
     try:
-        days = db.days_for(location)[:LINEUP_LOOKBACK_DAYS]
+        days = [d for d in db.days_for(location) if through is None or d <= through][:LINEUP_LOOKBACK_DAYS]
         counts = {day: len(MeruhenEvents(db_path).day_records(location, day)) for day in days}
     finally:
         db.close()
@@ -65,17 +65,19 @@ def variety_rows(db_path, location, day, latest=None):
     """バラエティの台の一覧。並べる台と機種名は、その店の記録がそろっている最新の日 [latest]（lineup_day）のバラエティから取る
     （2026-10-11 利用者「機種一覧名はとりあえず最新の機種一覧からとって表示させておけばいい。入れ替えとかで
     変わったらその都度書き換えて」＝入れ替えは新しい日を取り込めば自動で変わる）。
-    数値・🌈・最終🌈は選んだ日 [day] の、同じ台番号の記録（無ければ数値は None、🌈は付けられない）。
+    数値・🌈・最終🌈は選んだ日 [day] の、同じ台番号の記録。無ければ数値は None。
+    本日は未取り込みでも印を別保存できる。過去の未取得日は編集しない。
     その日は別の機種だった台は `day_machine` にその日の機種名。直近30日（day を含む）の🌈回数 `rainbow_count`。
     表示しない機種・数値異常の台は入れない。"""
     events = MeruhenEvents(db_path)
     if latest is None:
-        latest = lineup_day(db_path, location) or day
+        latest = lineup_day(db_path, location, through=day if day == today_jst() else None) or day
     db = Store(db_path)
     try:
         since = (date.fromisoformat(day) - timedelta(days=RAINBOW_COUNT_DAYS - 1)).isoformat()
         found = db.rainbow_counts(location, since, day)
         previous = db.last_rainbow_days(location, day)
+        pending = {m['rack']: m for m in db.pending_rainbow_marks(location, day)}
     finally:
         db.close()
     lineup = variety_lineup(events.day_records(location, latest), rainbow_variety_max(location))
@@ -85,11 +87,13 @@ def variety_rows(db_path, location, day, latest=None):
         rack = int(current['rack'])
         record = on_day.get(rack)
         row = dict(record) if record else {'rack': rack, 'games': None, 'bb': None, 'rb': None, 'net': None,
-                                           'needs_check': False, 'rainbow': False, 'day': day,
+                                           'needs_check': False, 'rainbow': pending.get(rack, {}).get('on', False), 'day': day,
                                            'prev_rainbow': previous.get(rack)}
         row['machine'] = current['machine']
         row['day_machine'] = record['machine'] if record and record['machine'] != current['machine'] else None
         row['recorded'] = record is not None
+        row['editable'] = record is not None or day == today_jst()
+        row['lineup_day'] = latest
         row['rainbow_count'] = found.get(rack, 0)
         rows.append(row)
     return sorted(rows, key=SORTS['台番順'])
@@ -102,6 +106,10 @@ CELL_ON, CELL_OFF, CELL_NONE, CELL_DAY = '#FAC775', '#EEF0F3', '#FFFFFF', '#0071
 # 見せ方（2026-10-12 利用者「PCにも同じ表は用意しておいて」）：grid＝表、list＝一覧（今までの表）。settings.json に覚える。
 VARIETY_MODES = {'grid': '表', 'list': '一覧'}
 WEEKDAYS = '月火水木金土日'
+
+
+def today_jst():
+    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
 
 
 def window_days(day, n=ROTATION_DAYS):
@@ -125,10 +133,20 @@ def gap_text(days):
 def rotation_cells(db_path, location, days):
     """表のマス：{日: {台番号: その日の台（day_records の行）}}。台番号で見る（入れ替えがあっても同じ台番号の列）。"""
     events = MeruhenEvents(db_path)
-    return {day: {int(r['rack']): r for r in events.day_records(location, day)} for day in days}
+    cells = {day: {int(r['rack']): r for r in events.day_records(location, day)} for day in days}
+    db = Store(db_path)
+    try:
+        for mark in db.pending_rainbow_marks(location):
+            if mark['day'] in cells and mark['rack'] not in cells[mark['day']]:
+                cells[mark['day']][mark['rack']] = dict(rainbow=mark['on'], recorded=False,
+                                                       editable=mark['day'] == today_jst())
+    finally:
+        db.close()
+    return cells
 
 
-def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flush=None, pending=None):
+def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flush=None, pending=None,
+                      defer_load=False):
     """「バラエティ🌈」のタブの中身。押したときは記録への保存だけ（速い）で、on_marked() を呼ぶ。閲覧・共有ページ用の
     ファイルとバックアップの作り直しはまとめて1回（on_flush：「閲覧・共有ページに反映」のボタン。PC版はタブを離れるとき・
     閉じるときにも呼ぶ。2026-10-12 利用者「一個押すたびに保存処理をしているようで数秒かかってしまう。…まとめてつけてから
@@ -200,9 +218,10 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
     table.configure(yscrollcommand=scroll.set)
     table.pack(side='left', fill='both', expand=True)
     scroll.pack(side='left', fill='y')
-    state = {'rows': [], 'cells': {}}
+    state = {'rows': [], 'cells': {}, 'today_mode': False}
     parent.variety_cells = state['cells']   # 試験で押すマス（{(台番号, 日): Label}）
     parent.variety_mode = mode_var
+    parent.variety_day = day_var
 
     def location():
         return next((key for key, label in STORE_NAMES.items() if label == store_var.get()), None)
@@ -211,7 +230,7 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
         net = '—' if r['net'] is None else signed_medals(r['net']) + ('※' if r['needs_check'] else '')
         machine = r['machine'] + (f"（この日：{r['day_machine']}）" if r.get('day_machine') else '')
         dash = lambda value: '—' if value is None else value
-        return (rainbow_cell(r) if r['recorded'] else '—', r['rack'], machine,
+        return (rainbow_cell(r) if r['editable'] or r['rainbow'] else '—', r['rack'], machine,
                 '—' if r['games'] is None else f"{r['games']:,}", dash(r['bb']), dash(r['rb']), net,
                 last_rainbow_text(r), r['rainbow_count'])
 
@@ -223,7 +242,8 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
         rows = state['rows']
         machines = len({r['machine'] for r in rows})
         marked = sum(r['rainbow'] for r in rows)
-        summary.set(f'バラエティ {len(rows)}台（{machines}機種）・この日の{RAINBOW_MARK} {marked}台' if rows
+        reference = f"・台一覧の参照日 {rows[0]['lineup_day']}・当日未取得 {sum(not r['recorded'] for r in rows)}台" if rows and day_var.get() == today_jst() else ''
+        summary.set((f'バラエティ {len(rows)}台（{machines}機種）・この日の{RAINBOW_MARK} {marked}台' + reference) if rows
                     else 'この日はバラエティの台の記録がありません。')
 
     def show():
@@ -233,22 +253,25 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
         if mode_var.get() == 'grid':
             frame.pack_forget()
             grid_frame.pack(fill='both', expand=True)
-            hint.set(f'マスを押すと、その日の{RAINBOW_MARK}を付け外しします（記録の無い日「·」は押せません）。'
+            hint.set(f'マスを押すと、その日の{RAINBOW_MARK}を付け外しします。本日の「＋」は数値の取り込み前でも保存できます。'
+                     f'過去の記録の無い日「·」は押せません。'
                      f'青い枠＝選んだ日。空き＝最後の{RAINBOW_MARK}から何日。並べ方も使えます。')
             show_grid(rows)
             return
         grid_frame.pack_forget()
         frame.pack(fill='both', expand=True)
-        hint.set(f'{RAINBOW_MARK}の列を押すと付け外し。')
+        hint.set(f'{RAINBOW_MARK}の列を押すと付け外し。本日の数値「—」は未取得です。印だけ保存し、あとから取り込んでも残します。')
         table.delete(*table.get_children())
         for i, r in enumerate(rows):
             table.insert('', 'end', iid=str(i), values=values(r), tags=tags(r))
 
     def paint(cell, record, selected):
         on = bool(record and record['rainbow'])
-        cell.configure(text=RAINBOW_MARK if on else ('' if record else '·'),
+        editable = bool(record and record.get('editable', True))
+        cell.configure(text=RAINBOW_MARK if on else ('＋' if record and record.get('recorded') is False and editable
+                                                    else '·' if not record or not editable else ''),
                        background=CELL_ON if on else CELL_OFF if record else CELL_NONE,
-                       cursor='hand2' if record else '',
+                       cursor='hand2' if editable else '',
                        highlightbackground=CELL_DAY if selected else CELL_NONE)
 
     def show_grid(rows):
@@ -261,6 +284,12 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
         days = window_days(day)
         state['window'] = days
         state['by_day'] = rotation_cells(db_path, where, days)
+        if today_jst() in days:
+            pending_today = {r['rack']: r for r in (rows if day == today_jst() else
+                             variety_rows(db_path, where, today_jst(), latest=rows[0]['lineup_day']))}
+            for rack, r in pending_today.items():
+                if not r['recorded']:
+                    state['by_day'][today_jst()][rack] = r
         font, small = ('Yu Gothic UI', 10), ('Yu Gothic UI', 9)
         heads = [('台番', 'w'), ('機種', 'w')] + [
             (f'{int(d[5:7])}/{int(d[8:10])}\n{WEEKDAYS[date.fromisoformat(d).weekday()]}', 'center') for d in days] + [('空き', 'center')]
@@ -292,14 +321,18 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
         return days_since(r.get('prev_rainbow'), day_var.get())
 
     def toggle_cell(rack, d):
-        """表のマス：その日の🌈を付け外しする（その日の記録がある台だけ）。"""
+        """表のマス：記録のある台と、本日の未取得の台の🌈を付け外しする。"""
+        if check_today_rollover():
+            return
         record = state['by_day'].get(d, {}).get(rack)
         if record is None:
+            return
+        if record.get('recorded') is False and d != today_jst():
             return
         on = not record['rainbow']
         db = Store(db_path)
         try:
-            db.set_rainbow(location(), d, rack, on)
+            db.set_rainbow(location(), d, rack, on, allow_missing=d == today_jst())
             previous = db.last_rainbow_days(location(), day_var.get()).get(rack)
         except ValueError as error:
             messagebox.showwarning(RAINBOW_MARK, str(error), parent=parent)
@@ -334,12 +367,38 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
             days = db.days_for(where) if where else []
         finally:
             db.close()
-        day_combo['values'] = days
-        chosen = day_var.get() if day_var.get() in days else (days[0] if days else '')
+        choices = sorted(set(days + [today_jst()]), reverse=True)
+        day_combo['values'] = choices
+        chosen = day_var.get() if day_var.get() in choices else (days[0] if days else today_jst())
         if chosen != day_var.get():
             day_var.set(chosen)   # 日付が変わると load が呼ばれる
         else:
             load()
+
+    def go_today():
+        state['today_mode'] = True
+        state['today_day'] = today_jst()
+        if day_var.get() != today_jst():
+            day_var.set(today_jst())
+        else:
+            load()
+
+    def check_today_rollover():
+        if state['today_mode'] and state['today_day'] != today_jst():
+            go_today()
+            messagebox.showinfo(RAINBOW_MARK, '日付が変わりました。本日の台一覧を確認して、もう一度押してください。', parent=parent)
+            return True
+        return False
+
+    def day_changed(*_args):
+        state['today_mode'] = day_var.get() == today_jst()
+        if state['today_mode']:
+            state['today_day'] = day_var.get()
+        load()
+
+    today_button = ttk.Button(bar, text='本日（取り込み前も🌈）', command=go_today)
+    today_button.grid(row=2, column=1, sticky='w', pady=(4, 0))
+    parent.variety_today_button = today_button
 
     def toggle(event):
         # 🌈の列（いちばん左）を押したときだけ付け外しする。ほかの列は行を選ぶだけ。
@@ -349,14 +408,16 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
         if not iid:
             return None
         row = state['shown'][int(iid)]
-        if not row['recorded']:
+        if check_today_rollover():
+            return 'break'
+        if not row['recorded'] and day_var.get() != today_jst():
             messagebox.showinfo(RAINBOW_MARK, f"{row['rack']}番台は{day_var.get()}の記録がないため、{RAINBOW_MARK}を付けられません。",
                                 parent=parent)
             return 'break'
         on = not row['rainbow']
         db = Store(db_path)
         try:
-            db.set_rainbow(location(), day_var.get(), row['rack'], on)
+            db.set_rainbow(location(), day_var.get(), row['rack'], on, allow_missing=day_var.get() == today_jst())
         except ValueError as error:
             messagebox.showwarning(RAINBOW_MARK, str(error), parent=parent)
             return 'break'
@@ -371,7 +432,7 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
 
     table.bind('<Button-1>', toggle)
     store_var.trace_add('write', refresh_days)
-    day_var.trace_add('write', load)
+    day_var.trace_add('write', day_changed)
     sort_var.trace_add('write', lambda *_a: show())
 
     def change_mode(*_args):
@@ -381,5 +442,7 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
             pass   # 覚えられなくても切り替えは使える
         show()
     mode_var.trace_add('write', change_mode)
-    refresh_days()
+    # PC本体は最初に「取り込み」を開く。表のDB読込・数百個のセル作成はタブを開いたときに行う。
+    if not defer_load:
+        refresh_days()
     return refresh_days
