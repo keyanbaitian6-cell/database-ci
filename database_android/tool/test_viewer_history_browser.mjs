@@ -14,7 +14,7 @@ const server = http.createServer(async (req, res) => {
     res.end(await fs.readFile(file)); } catch { res.writeHead(404).end(); }
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
-const origin = `http://127.0.0.1:${server.address().port}/share/`;
+const origin = process.env.SHARE_HISTORY_PUBLIC_BASE || `http://127.0.0.1:${server.address().port}/share/`;
 const id = 'AKfycbTEST' + 'x'.repeat(40), endpoint = `https://script.google.com/macros/s/${id}/exec`;
 const hash = text => createHash('sha256').update(text).digest('hex');
 const ym = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 7);
@@ -85,6 +85,14 @@ try {
   await page.reload(); await page.waitForSelector('.grid'); assert.equal(requests.length, 0);
   await context.setOffline(true);
   await page.reload(); await page.waitForSelector('.grid'); assert.equal(requests.length, 0);
+  if (await fs.stat(path.join(root, 'android.html')).catch(() => null)) {
+    await page.goto('about:blank'); await page.goto(origin + 'android.html');
+    await page.waitForSelector('.grid');
+    assert.equal(requests.length, 0);
+    assert.match(await page.locator('link[rel="manifest"]').getAttribute('href'), /manifest-android/);
+    assert.equal(await page.evaluate(async () => (await (await fetch(document.querySelector('link[rel="manifest"]').href)).json()).display), 'standalone');
+    await page.goto(origin + 'index.html'); await page.waitForSelector('.grid');
+  }
   // Chromiumのネットワーク遮断と、OSが通知するオフライン状態をそれぞれ再現する。
   await page.evaluate(() => Object.defineProperty(navigator, 'onLine', {get: () => false, configurable: true}));
   await page.locator('#reload').click();

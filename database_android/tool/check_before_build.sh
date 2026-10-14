@@ -13,12 +13,24 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PYTHON=${PYTHON:-'C:\Users\keyan\.codex\.chatgpt-projects\g-p-6a9e28549ca0819184c877c6b3b3749e\database\.runtime\Scripts\python.exe'}
 # 試験の中で `python` を呼ぶもの（メルヘン・P’s CUBEの画面試験など）も同じPythonを使う。PATHの先頭が
 # Windowsストアの入口（WindowsApps\python）だと「Python」とだけ返して4件が失敗した（2026-10-10）。
-PATH="$(dirname "$(cygpath -u "$PYTHON")"):$PATH"
+if command -v cygpath >/dev/null 2>&1; then
+  PYTHON_PATH=$(cygpath -u "$PYTHON")
+else
+  PYTHON_PATH=$PYTHON
+fi
+PATH="$(dirname "$PYTHON_PATH"):$PATH"
 export PATH
 NODE=${NODE:-'C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'}
 export PLAYWRIGHT_MODULE=${PLAYWRIGHT_MODULE:-'file:///C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'}
-WORK="$ROOT/database_android/build/check_before_build"
-rm -rf "$WORK"
+WORK=${CHECK_BUILD_WORK:-"$ROOT/database_android/build/check_before_build"}
+# 同じ確認を重ねて実行するとstage・ログが混ざる。専用の一時フォルダを指定すれば並行作業とも分離できる。
+# 初期化は下で作る確認用ディレクトリだけに限定する。リポジトリや広いディレクトリは拒否する。
+case "$WORK" in
+  ''|'/'|"$ROOT"|"$ROOT/database_android"|"$ROOT/database_android/build")
+    echo '確認用ディレクトリが広すぎます。CHECK_BUILD_WORKを専用ディレクトリにしてください。' >&2
+    exit 1
+    ;;
+esac
 mkdir -p "$WORK/viewer"
 failed=()
 

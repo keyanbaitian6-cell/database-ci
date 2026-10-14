@@ -7,6 +7,7 @@ Usage (from database_android/):
 URL・ID も記録も入れない（IDは渡すリンクの # の後ろだけ）。入っていたら公開しない。
 """
 import hashlib
+import json
 import re
 import shutil
 import sys
@@ -14,8 +15,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 SOURCE = HERE.parent / 'share_viewer'
-TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js'}
-FILES = TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
+SOURCE_TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js'}
+SOURCE_FILES = SOURCE_TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
+# Android入口は共通HTMLとmanifestから生成する。独立したUIやHTMLの二重管理はしない。
+GENERATED_FILES = {'android.html', 'manifest-android.json'}
+TEXT_FILES = SOURCE_TEXT_FILES | GENERATED_FILES
+FILES = SOURCE_FILES | GENERATED_FILES
 SCRIPT_ID = re.compile(rb'AKfyc[A-Za-z0-9_-]{20,}|/macros/s/[A-Za-z0-9_-]{20,}')
 
 # ページが読むファイルの参照（どれも1か所だけ）。公開のたびに中身から作った版 ?v= を付ける。
@@ -32,14 +37,38 @@ REFERENCES = (
     ('index.html', 'href="./manifest.json"'),
     ('manifest.json', '"./icon-192.png"'),
     ('manifest.json', '"./icon-512.png"'),
+    ('android.html', 'src="./app.mjs"'),
+    ('android.html', 'href="./apple-touch-icon.png"'),
+    ('android.html', 'href="./favicon.png"'),
+    ('android.html', 'href="./manifest-android.json"'),
+    ('manifest-android.json', '"./icon-192.png"'),
+    ('manifest-android.json', '"./icon-512.png"'),
 )
 
 
 def version_of(files):
     digest = hashlib.sha256()
     for name in sorted(files):
-        digest.update(name.encode() + b'\0' + (SOURCE / name).read_bytes() + b'\0')
+        digest.update(name.encode() + b'\0' + files[name] + b'\0')
     return digest.hexdigest()[:12]
+
+
+def publication_files():
+    present = {p.name for p in SOURCE.iterdir() if p.is_file()}
+    if present != SOURCE_FILES:
+        sys.exit(f'share_viewer のファイルを確認してください: {sorted(present)}')
+    files = {name: (SOURCE / name).read_bytes() for name in SOURCE_FILES}
+    html = files['index.html'].decode('utf-8')
+    reference = 'href="./manifest.json"'
+    if html.count(reference) != 1:
+        sys.exit('index.html のmanifest参照が1か所ではありません。Android入口を生成できません。')
+    files['android.html'] = html.replace(reference, 'href="./manifest-android.json"').encode('utf-8')
+    manifest = json.loads(files['manifest.json'])
+    if manifest.get('display') != 'browser':
+        sys.exit('既存manifestの起動設定がbrowserではありません。既存設定を確認してから公開してください。')
+    android = {**manifest, 'id': './android.html', 'start_url': './android.html', 'display': 'standalone'}
+    files['manifest-android.json'] = (json.dumps(android, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+    return files
 
 
 def stamped(name, text, version):
@@ -60,6 +89,8 @@ README = """# database カレンダー（閲覧専用）
 - 記録は、受け取ったリンクの接続先（読むだけのGoogle Apps Script）から、開いた端末のブラウザが直接読みます。
 - 書き込むのは🌈（確定が出た台の印）だけです。押したときに、その接続先へ送ります。記録やイベントは書き換えません。
 - 端末には接続先と表示の選択（店舗・回っていない台の期間とゲーム数・バラエティ🌈の並べ方）と、付けた🌈を覚えます。差分読み込みでは接続先ごとに記録のキャッシュも保存します。ブラウザが削除した場合は次回取り直します。
+- Android Chrome用の入口は `android.html`。接続先を設定してChromeのメニューから「アプリをインストール」（表示によっては「ホーム画面に追加」→「インストール」）を選びます。ホーム画面から独立した画面で起動するための専用manifestを使用し、通常ページと同じ設定・🌈・差分キャッシュを使います。元の共有リンクは `#` 以降をAndroid用URLへそのまま付けても使えます。
+- 既存の `index.html` とmanifestの `display: browser` は維持しています。Android用だけ `display: standalone` です。元写真・実記録・接続先IDは配布しません。Android実機のインストール動作は別途確認が必要です。
 """
 
 
@@ -68,12 +99,10 @@ def main(target):
     from stage_viewer import record_probes
 
     target = Path(target)
-    present = {p.name for p in SOURCE.iterdir() if p.is_file()}
-    if present != FILES:
-        sys.exit(f'share_viewer のファイルを確認してください: {sorted(present)}')
+    files = publication_files()
     probes = record_probes()
     for name in sorted(FILES):
-        data = (SOURCE / name).read_bytes()
+        data = files[name]
         if SCRIPT_ID.search(data):
             sys.exit(f'{name} にスクリプトのURL・IDらしい文字列があります。公開しません。')
         if any(p.encode() in data for p in probes):
@@ -83,13 +112,12 @@ def main(target):
         if entry.name == '.git':
             continue
         shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
-    version = version_of(FILES)
+    version = version_of(files)
     for name in sorted(FILES):
         if name in TEXT_FILES:
-            text = (SOURCE / name).read_text(encoding='utf-8')
+            text = files[name].decode('utf-8')
             if name == 'sw.js':
-                import json
-                shell = ['./index.html'] + [f'./{n}?v={version}' for n in sorted(FILES - {'index.html', 'sw.js'})]
+                shell = ['./index.html', './android.html'] + [f'./{n}?v={version}' for n in sorted(FILES - {'index.html', 'android.html', 'sw.js'})]
                 text = re.sub(r"const VERSION = '[^']+';", f"const VERSION = '{version}';", text)
                 text = re.sub(r'const FILES = \[.*?\];', 'const FILES = ' + json.dumps(shell) + ';', text, flags=re.S)
             (target / name).write_text(stamped(name, text, version), encoding='utf-8', newline='\n')

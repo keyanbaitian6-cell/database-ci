@@ -11,7 +11,7 @@ self.addEventListener('install', event => {
       for (const file of FILES) {
         const response = await fetch(new Request(file, {cache: 'reload'}));
         if (!response.ok) throw new Error('オフライン用ファイルを取得できませんでした。');
-        if (file === './index.html' && VERSION !== 'development' && !(await response.clone().text()).includes('./app.mjs?v=' + VERSION)) {
+        if (['./index.html', './android.html'].includes(file) && VERSION !== 'development' && !(await response.clone().text()).includes('./app.mjs?v=' + VERSION)) {
           throw new Error('公開ファイルの版が一致しません。次回再試行します。');
         }
         await cache.put(file, response);
@@ -31,7 +31,8 @@ self.addEventListener('fetch', event => {
   if (event.request.mode === 'navigate') {
     event.respondWith((async () => {
       try { const response = await fetch(event.request); if (response.ok) return response; } catch { /* 保存済みで起動する */ }
-      return (await caches.open(CACHE)).match(new URL('./index.html', scope).href);
+      const page = url.pathname.endsWith('/android.html') ? './android.html' : './index.html';
+      return (await caches.open(CACHE)).match(new URL(page, scope).href);
     })());
   } else {
     const file = FILES.find(file => {
