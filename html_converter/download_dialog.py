@@ -7,6 +7,10 @@ from tkinter import ttk, filedialog, messagebox
 
 from anaslo_index import INDEX_URL, canonical_url, date_range, extract_links
 from anaslo_download import Client, MAX_BYTES, download
+from anaslo_browser import BrowserClient
+
+BROWSER = 'browser'
+DIRECT = 'direct'
 
 
 class DownloadDialog(tk.Toplevel):
@@ -21,6 +25,8 @@ class DownloadDialog(tk.Toplevel):
         self.events = queue.Queue()
         self.cancel = threading.Event()
         self.client = Client(self.cancel)
+        self.browser_factory = BrowserClient
+        self.method = tk.StringVar(value=BROWSER)
         self.busy = False
         self.links = []
         self.scan_key = None
@@ -52,6 +58,13 @@ class DownloadDialog(tk.Toplevel):
         offline = ttk.Checkbutton(frame, text='保存した一覧HTMLを使う（一覧ページへ通信しない）', variable=self.local)
         offline.pack(anchor='w')
         self.inputs.append(offline)
+        method_row = ttk.Frame(frame)
+        method_row.pack(fill='x', pady=(4, 0))
+        ttk.Label(method_row, text='取得方法').pack(side='left', padx=(0, 8))
+        for text, value in [('ブラウザで表示して自動保存', BROWSER), ('直接ダウンロード', DIRECT)]:
+            button = ttk.Radiobutton(method_row, text=text, variable=self.method, value=value)
+            button.pack(side='left', padx=(0, 12))
+            self.inputs.append(button)
         range_row = ttk.Frame(frame)
         range_row.pack(fill='x', pady=8)
         ttk.Label(range_row, text='開始日').pack(side='left')
@@ -61,6 +74,9 @@ class DownloadDialog(tk.Toplevel):
             entry = ttk.Entry(range_row, textvariable=variable, width=14)
             entry.pack(side='left', padx=5)
             self.inputs.append(entry)
+            calendar_button = ttk.Button(range_row, text='カレンダー', command=lambda v=variable: self.choose_date(v))
+            calendar_button.pack(side='left')
+            self.inputs.append(calendar_button)
         ttk.Label(range_row, text='YYYY-MM-DD（両端を含む）').pack(side='left', padx=10)
         row = entry_row('HTML保存先', self.folder)
         choose = ttk.Button(row, text='選ぶ', command=self.choose_folder)
@@ -95,11 +111,27 @@ class DownloadDialog(tk.Toplevel):
         ttk.Button(row, text='閉じる', command=self.close).pack(side='right')
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.after_id = self.after(100, self.poll)
-        for variable in (self.url, self.start_day, self.end_day, self.local, self.saved_index):
+        for variable in (self.url, self.start_day, self.end_day, self.local, self.saved_index, self.method):
             variable.trace_add('write', lambda *args: self.invalidate())
 
     def key(self):
-        return (self.url.get().strip(), self.start_day.get().strip(), self.end_day.get().strip(), self.local.get(), self.saved_index.get().strip())
+        return (self.url.get().strip(), self.start_day.get().strip(), self.end_day.get().strip(), self.local.get(), self.saved_index.get().strip(), self.method.get())
+
+    def choose_date(self, variable):
+        from calendar_picker import CalendarPicker
+        CalendarPicker(self, variable.get(), variable.set)
+
+    def with_client(self, action, method):
+        if method == DIRECT:
+            return action(self.client)
+        if method != BROWSER:
+            raise ValueError('取得方法を選択してください。')
+        engine = self.browser_factory(Path(__file__).parent / 'data' / 'anaslo-webview', cancel=self.cancel,
+                                      progress=lambda text: self.events.put(('log', text)))
+        try:
+            return action(engine)
+        finally:
+            engine.close()
 
     def invalidate(self):
         if not self.busy:
@@ -159,7 +191,7 @@ class DownloadDialog(tk.Toplevel):
                     raise ValueError('一覧HTMLが16MiBを超えています。')
                 raw = Path(key[4]).read_bytes()
             else:
-                raw = self.client.get(url, index=True)
+                raw = self.with_client(lambda engine: engine.get(url, index=True), key[5])
             self.client.check()
             return key, extract_links(raw, url, start, end)
         self.launch(work, 'scan')
@@ -175,7 +207,8 @@ class DownloadDialog(tk.Toplevel):
         links = tuple(self.links)
         self.paths = []
         self.status.set(f'{start}〜{end}の{len(links)}日分を取得します。')
-        self.launch(lambda: download(links, start, end, folder, self.client, lambda text: self.events.put(('log', text))), 'download')
+        self.launch(lambda: self.with_client(lambda engine: download(links, start, end, folder, engine,
+                    lambda text: self.events.put(('log', text))), self.scan_key[5]), 'download')
 
     def stop(self):
         self.cancel.set()

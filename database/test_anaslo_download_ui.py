@@ -26,6 +26,7 @@ class DialogTests(unittest.TestCase):
         self.used = []
         self.dialog = DownloadDialog(self.root, lambda paths: self.used.extend(paths))
         self.dialog.withdraw()
+        self.dialog.method.set('direct')
         self.dialog.folder.set(str(self.folder / 'downloads'))
         self.index = self.folder / 'index.html'
         self.index.write_text(f'<a href="{link("2026-09-15").url}">A</a><a href="{link("2026-09-16").url}">B</a>', encoding='utf-8')

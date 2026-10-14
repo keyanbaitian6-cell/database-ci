@@ -1,0 +1,232 @@
+"""WebView2 child process. All commands come from a local private Pipe.
+
+No js_api is exposed to the website. CAPTCHA/consent is always a human action.
+"""
+import threading
+import time
+from urllib.parse import urlsplit
+
+from anaslo_index import canonical_url
+from anaslo_download import MAX_BYTES
+
+
+class NavigationState:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.expected = None
+        self.index = False
+        self.navigation = None
+        self.status = None
+        self.complete = False
+        self.error = ''
+
+    def target(self, url, index):
+        with self.lock:
+            self.expected = canonical_url(url, index=index)
+            self.index = index
+            self.navigation = None
+            self.status = None
+            self.complete = False
+            self.error = ''
+
+    def same(self, url):
+        try:
+            return canonical_url(url, index=self.index) == self.expected
+        except (ValueError, UnicodeError):
+            return False
+
+    def starting(self, url, identity):
+        with self.lock:
+            if self.expected is None and (url in ('about:blank', 'about:blank#') or urlsplit(url).hostname in ('127.0.0.1', 'localhost')):
+                return True
+            if not self.same(url):
+                self.error = '指定対象外への移動を止めました。'
+                return False
+            self.navigation = identity
+            self.status = None
+            self.complete = False
+            return True
+
+    def response(self, url, status):
+        with self.lock:
+            if self.expected and self.same(url):
+                self.status = int(status)
+
+    def completed(self, identity, success, status=None):
+        with self.lock:
+            if identity != self.navigation or self.navigation is None:
+                return
+            if status and int(status) >= 100:
+                self.status = int(status)
+            self.complete = True
+            if not success and self.status is None:
+                self.error = 'ブラウザのページ読み込みに失敗しました。'
+
+
+def install_handlers(window, state):
+    control = window.native.webview
+    handlers = []
+
+    def starting(sender, args):
+        if not state.starting(str(args.Uri), args.NavigationId):
+            args.Cancel = True
+
+    def completed(sender, args):
+        state.completed(args.NavigationId, args.IsSuccess, getattr(args, 'HttpStatusCode', None))
+
+    def response(sender, args):
+        if args.Response is not None:
+            state.response(str(args.Request.Uri), args.Response.StatusCode)
+
+    def popup(sender, args):
+        args.Handled = True
+
+    def attach(core):
+        core.WebResourceResponseReceived += response
+        core.NewWindowRequested += popup
+
+    def initialized(sender, args):
+        if args.IsSuccess:
+            attach(sender.CoreWebView2)
+        else:
+            state.error = 'WebView2の初期化に失敗しました。'
+
+    handlers.extend([starting, completed, response, popup, initialized])
+    control.NavigationStarting += starting
+    control.NavigationCompleted += completed
+    if control.CoreWebView2 is None:
+        control.CoreWebView2InitializationCompleted += initialized
+    else:
+        attach(control.CoreWebView2)
+    return handlers
+
+
+def run_host(connection, profile):
+    import webview
+    from webview.menu import Menu, MenuAction
+    state = NavigationState()
+    closed = threading.Event()
+    confirmed = threading.Event()
+    handlers = []
+    approved = False
+    shell = '<html lang="ja"><meta charset="utf-8"><body><p>指定したページを表示します。</p><p>表示後、上部メニュー「取得」から「表示を確認して自動取得を開始」を選んでください。</p></body></html>'
+    window = webview.create_window('アナスロ HTML取得：表示確認待ち', html=shell, width=1100, height=800)
+
+    def confirm():
+        with state.lock:
+            ready = state.complete and state.status == 200 and not state.error
+        if ready:
+            confirmed.set()
+        else:
+            window.set_title('読み込み・認証を確認後、メニューから開始してください')
+
+    def install():
+        try:
+            handlers.extend(install_handlers(window, state))
+        except Exception:
+            state.error = 'WebView2の通信状態を確認できないため停止しました。'
+
+    window.events.before_show += install
+    window.events.closed += closed.set
+
+    def send(kind, **data):
+        connection.send({'kind': kind, **data})
+
+    def capture(url, index):
+        nonlocal approved
+        if state.error:
+            raise ValueError(state.error)
+        state.target(url, index)
+        confirmed.clear()
+        window.load_url(url)
+        if not approved:
+            send('progress', text='ブラウザで表示を確認し、上部「取得」→「表示を確認して自動取得を開始」を選んでください。')
+        deadline = time.monotonic() + (300 if not approved else 45)
+        while not closed.wait(0.25) and time.monotonic() < deadline:
+            # A close request interrupts both manual confirmation and load waits.
+            if connection.poll():
+                command = connection.recv()
+                if command.get('kind') == 'close':
+                    window.destroy()
+                    return False
+                raise ValueError('同時に複数ページを要求できません。')
+            with state.lock:
+                error, complete, status = state.error, state.complete, state.status
+            if error:
+                raise ValueError(error)
+            if complete and status is not None and status >= 400 and status not in (401, 403, 429):
+                send('http_error', status=status, text=f'HTTP {status}：この日付は保存しませんでした。')
+                return True
+            if approved and complete and status != 200:
+                raise ValueError(f'HTTP {status or "不明"}：自動取得を停止しました。')
+            # The first page can be inspected by the person; no CAPTCHA is solved in code.
+            if not complete or status != 200 or (not approved and not confirmed.is_set()):
+                continue
+            snapshot = window.evaluate_js('''(() => {
+              const html = document.documentElement.outerHTML;
+              if (new TextEncoder().encode(html).length > 16777216)
+                return JSON.stringify({too_large:true});
+              return JSON.stringify({url:location.href,ready:document.readyState,html});
+            })()''')
+            import json
+            snapshot = json.loads(snapshot) if isinstance(snapshot, str) else snapshot
+            if isinstance(snapshot, dict) and snapshot.get('too_large'):
+                raise ValueError('HTMLが上限16MiBを超えています。')
+            if not isinstance(snapshot, dict) or snapshot.get('ready') != 'complete':
+                continue
+            if canonical_url(snapshot.get('url', ''), index=index) != url:
+                raise ValueError('表示中のページが取得対象と一致しません。')
+            text = snapshot.get('html', '')
+            if not isinstance(text, str) or len(text.encode('utf-8')) > MAX_BYTES:
+                raise ValueError('HTMLを取得できないか、上限16MiBを超えています。')
+            lower = text.lower()
+            if any(marker in lower for marker in ('cf-chl-', 'captcha', 'just a moment...', 'verify you are human')):
+                raise ValueError('認証・アクセス確認ページのため自動取得を停止しました。')
+            with state.lock:
+                if not state.complete or state.status != 200 or state.error:
+                    continue
+            approved = True
+            window.set_title('アナスロ HTML自動取得：停止するにはこの窓を閉じてください')
+            send('snapshot', url=snapshot['url'], html=text, status=200)
+            return True
+        if not closed.is_set():
+            raise ValueError('ブラウザの表示・確認待ち時間を超えました。')
+        return False
+
+    def serve():
+        try:
+            while not closed.is_set():
+                if not connection.poll(0.1):
+                    continue
+                command = connection.recv()
+                if command.get('kind') == 'close':
+                    break
+                if command.get('kind') != 'get':
+                    raise ValueError('ブラウザへの要求が不正です。')
+                index = command.get('index') is True
+                url = canonical_url(command.get('url', ''), index=index)
+                if not capture(url, index):
+                    break
+        except (EOFError, OSError):
+            pass
+        except Exception as exc:
+            try:
+                send('error', text=str(exc))
+            except (EOFError, OSError):
+                pass
+        finally:
+            if not closed.is_set():
+                window.destroy()
+
+    try:
+        webview.start(serve, gui='edgechromium', private_mode=False, storage_path=profile,
+                      menu=[Menu('取得', [MenuAction('表示を確認して自動取得を開始', confirm),
+                                          MenuAction('停止して閉じる', window.destroy)])])
+    except Exception as exc:
+        try:
+            send('error', text='取得ブラウザを起動できませんでした：' + str(exc))
+        except (EOFError, OSError):
+            pass
+    finally:
+        closed.set()
+        connection.close()
