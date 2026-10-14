@@ -40,6 +40,7 @@ class Converter:
         controls = ttk.Frame(frame)
         controls.pack(fill='x')
         ttk.Button(controls, text='HTMLを選ぶ（複数日可）', command=self.load).pack(side='left')
+        ttk.Button(controls, text='一覧から取得', command=self.open_download).pack(side='left', padx=(8, 0))
         ttk.Label(controls, text='貸玉：20円').pack(side='left', padx=20)
         self.status = tk.StringVar(value='HTMLを選ぶと、日付・台数と機種名の対応を表示します。')
         ttk.Label(frame, textvariable=self.status, wraplength=960).pack(anchor='w', pady=12)
@@ -76,6 +77,13 @@ class Converter:
         paths = filedialog.askopenfilenames(parent=self.root, title='保存HTMLを選ぶ', filetypes=[('HTML', '*.html *.htm')])
         if not paths:
             return
+        self.load_paths(paths)
+
+    def open_download(self):
+        from download_dialog import DownloadDialog
+        DownloadDialog(self.root, self.load_paths)
+
+    def load_paths(self, paths):
         try:
             staging = analyze(paths)
             catalog = read_catalog(ROOT / 'database' / 'data' / 'pscube.sqlite3')
