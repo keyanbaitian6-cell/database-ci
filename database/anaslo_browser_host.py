@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlsplit
 
 from anaslo_index import canonical_url
-from anaslo_download import MAX_BYTES
+from anaslo_download import MAX_BYTES, reject_access_check
 
 
 class NavigationState:
@@ -204,9 +204,7 @@ def run_host(connection, profile):
             text = snapshot.get('html', '')
             if not isinstance(text, str) or len(text.encode('utf-8')) > MAX_BYTES:
                 raise ValueError('HTMLを取得できないか、上限16MiBを超えています。')
-            lower = text.lower()
-            if any(marker in lower for marker in ('cf-chl-', 'captcha', 'just a moment...', 'verify you are human')):
-                raise ValueError('認証・アクセス確認ページのため自動取得を停止しました。')
+            reject_access_check(text.encode('utf-8'), url, index=index)
             with state.lock:
                 if not state.complete or state.status != 200 or state.error:
                     continue

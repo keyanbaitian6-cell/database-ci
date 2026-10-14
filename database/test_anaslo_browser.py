@@ -100,6 +100,49 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(result.skipped, 1)
         factory.assert_not_called()
 
+    def test_valid_index_with_captcha_script_is_not_a_challenge(self):
+        from anaslo_index import INDEX_URL
+        raw = ('<h1>P-STATION&amp;IIスロット館 データ一覧</h1>'
+               f'<a href="{link("2026-09-15").url}">9/15</a>'
+               '<script>const captchaEnabled = false;</script>').encode('utf-8')
+        engine, session = self.engine([raw])
+        self.assertEqual(engine.get(INDEX_URL, index=True), raw)
+
+    def test_valid_daily_data_with_challenge_words_in_script_is_allowed(self):
+        raw = html() + b'<script>const labels = ["captcha", "cf-chl-", "verify you are human"];</script>'
+        engine, session = self.engine([raw])
+        self.assertEqual(engine.get(link('2026-09-15').url), raw)
+
+    def test_real_challenge_title_still_stops_even_with_data_links(self):
+        from anaslo_index import INDEX_URL
+        raw = ('<title>Just a moment...</title><h1>P-STATION&amp;IIスロット館 データ一覧</h1>'
+               f'<a href="{link("2026-09-15").url}">9/15</a>').encode('utf-8')
+        engine, session = self.engine([raw])
+        with self.assertRaises(AccessStopped):
+            engine.get(INDEX_URL, index=True)
+
+    def test_incomplete_or_wrong_target_data_does_not_override_challenge_guard(self):
+        from anaslo_index import INDEX_URL
+        for raw, url, index in [
+            (b'<script>captcha</script>', INDEX_URL, True),
+            (f'<h1>another store</h1><a href="{link("2026-09-15").url}">data</a><script>captcha</script>'.encode(), INDEX_URL, True),
+            ('<h1>P-STATION&amp;IIスロット館 データ一覧</h1><script>captcha</script>'.encode(), INDEX_URL, True),
+            (html(day='2026/09/16') + b'<script>captcha</script>', link('2026-09-15').url, False),
+        ]:
+            with self.subTest(index=index, raw=raw[:30]):
+                engine, session = self.engine([raw])
+                with self.assertRaises(AccessStopped):
+                    engine.get(url, index=index)
+
+    def test_direct_transport_uses_the_same_structural_guard(self):
+        from test_anaslo_download import client
+        raw = html() + b'<script>const captcha = false;</script>'
+        engine, opener = client([raw])
+        self.assertEqual(engine.get(link('2026-09-15').url), raw)
+        engine, opener = client([b'<title>CAPTCHA</title>'])
+        with self.assertRaises(AccessStopped):
+            engine.get(link('2026-09-15').url)
+
     def test_range_guard_applies_to_browser_before_start(self):
         engine, session = self.engine([])
         with self.assertRaises(ValueError):

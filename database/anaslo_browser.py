@@ -4,7 +4,7 @@ from pathlib import Path
 import time
 from urllib.error import HTTPError
 
-from anaslo_download import AccessStopped, Client, MAX_BYTES, Stopped, folder_lock
+from anaslo_download import AccessStopped, Client, MAX_BYTES, Stopped, folder_lock, reject_access_check
 from anaslo_index import canonical_url
 
 
@@ -108,9 +108,7 @@ class BrowserClient(Client):
             raw = text.encode('utf-8')
             if len(raw) > MAX_BYTES:
                 raise AccessStopped('HTMLが16MiBを超えたため停止しました。')
-            lower = raw.lower()
-            if any(marker in lower for marker in (b'cf-chl-', b'captcha', b'just a moment...', b'verify you are human')):
-                raise AccessStopped('認証・アクセス確認ページのため自動取得を停止しました。')
+            reject_access_check(raw, target, index=index)
             return raw
         except HTTPError as exc:
             # Keep the visible session for the next selected date; the common

@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
 from http.client import HTTPException
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ from urllib.parse import urljoin
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from anaslo_html import parse_html
-from anaslo_index import canonical_url, date_range, link_day
+from anaslo_index import INDEX_URL, canonical_url, date_range, extract_links, link_day
 
 MAX_BYTES = 16 * 1024 * 1024
 
@@ -26,6 +27,62 @@ class Stopped(Exception):
 
 class AccessStopped(Stopped):
     pass
+
+
+class PageHeadings(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tag = None
+        self.parts = []
+        self.titles = []
+        self.headings = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ('title', 'h1'):
+            self.tag, self.parts = tag, []
+
+    def handle_data(self, text):
+        if self.tag:
+            self.parts.append(text)
+
+    def handle_endtag(self, tag):
+        if tag == self.tag:
+            (self.titles if tag == 'title' else self.headings).append(''.join(self.parts).strip())
+            self.tag = None
+
+
+def reject_access_check(raw, url, *, index=False):
+    """Challenge words in scripts alone do not identify a challenge page.
+
+    HTTP denial is handled separately and is never overridden here.
+    Only fully validated target data can disambiguate a keyword match.
+    """
+    markers = (b'cf-chl-', b'captcha', b'just a moment...', b'verify you are human')
+    lower = raw.lower()
+    matched = [m for m in markers if m in lower]
+    if not matched:
+        return
+    valid = False
+    try:
+        probe = PageHeadings()
+        probe.feed(raw.decode('utf-8-sig', errors='strict'))
+        challenge_title = any(any(word in title.lower() for word in
+                              ('just a moment', 'captcha', 'verify you are human', 'attention required'))
+                              for title in probe.titles)
+        if not challenge_title:
+            if index:
+                canonical_url(url, index=True)
+                valid = (probe.headings == ['P-STATION&IIスロット館 データ一覧'] and
+                         bool(extract_links(raw, INDEX_URL, '0001-01-01', '9999-12-31')))
+            else:
+                day = link_day(url)
+                check_html(raw, day + '.html', day)
+                valid = True
+    except (ValueError, UnicodeError, TypeError):
+        pass
+    if not valid:
+        words = ', '.join(m.decode('ascii') for m in matched)
+        raise AccessStopped('認証・アクセス確認ページの可能性があり、対象データを確認できないため停止しました。判定語: ' + words)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -96,9 +153,7 @@ class Client:
                     length = response.headers.get('Content-Length')
                     if length is not None and (not length.isdigit() or int(length) != size):
                         raise ValueError('受信HTMLの長さが一致しません。')
-                    lower = raw.lower()
-                    if any(marker in lower for marker in (b'cf-chl-', b'captcha', b'just a moment...', b'verify you are human')):
-                        raise AccessStopped('認証・アクセス確認ページのため停止しました。')
+                    reject_access_check(raw, original, index=index)
                     return raw
             except HTTPError as exc:
                 try:
