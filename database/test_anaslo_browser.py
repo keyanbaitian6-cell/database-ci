@@ -3,11 +3,13 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
 
 from anaslo_browser import BrowserClient
-from anaslo_browser_host import NavigationState
+from anaslo_browser_host import NavigationState, install_handlers
 from anaslo_download import AccessStopped, Stopped, download
 from test_anaslo_download import FakeCancel, html, link
 from test_anaslo_download_ui import CONVERTER
@@ -106,6 +108,32 @@ class BrowserTests(unittest.TestCase):
 
 
 class NavigationTests(unittest.TestCase):
+    def test_popup_replaces_backend_handler_before_it_can_open_external_browser(self):
+        class Event:
+            def __init__(self, callbacks=()):
+                self.callbacks = list(callbacks)
+            def __iadd__(self, callback):
+                self.callbacks.append(callback)
+                return self
+            def __isub__(self, callback):
+                self.callbacks.remove(callback)
+                return self
+        external_open = unittest.mock.Mock()
+        core = SimpleNamespace(NewWindowRequested=Event([external_open]),
+                               WebResourceResponseReceived=Event(), WebResourceRequested=Event(),
+                               AddWebResourceRequestedFilter=unittest.mock.Mock())
+        control = SimpleNamespace(CoreWebView2=core, NavigationStarting=Event(), NavigationCompleted=Event())
+        window = SimpleNamespace(native=SimpleNamespace(webview=control,
+                                 browser=SimpleNamespace(on_new_window_request=external_open)))
+        module = SimpleNamespace(CoreWebView2WebResourceContext=SimpleNamespace(Document=0))
+        with patch.dict(sys.modules, {'Microsoft.Web.WebView2.Core': module}):
+            install_handlers(window, NavigationState())
+        args = unittest.mock.Mock()
+        for callback in core.NewWindowRequested.callbacks:
+            callback(core, args)
+        external_open.assert_not_called()
+        args.set_Handled.assert_called_once_with(True)
+
     def test_wrong_day_and_domain_blocked_before_navigation(self):
         for url in (link('2026-09-16').url, 'https://example.com/'):
             state = NavigationState()

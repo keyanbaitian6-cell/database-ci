@@ -14,7 +14,7 @@ DIRECT = 'direct'
 
 
 class DownloadDialog(tk.Toplevel):
-    def __init__(self, parent, on_files):
+    def __init__(self, parent, on_files, *, pacing=None):
         super().__init__(parent)
         self.title('一覧からHTMLを取得')
         self.geometry('1000x740')
@@ -24,7 +24,7 @@ class DownloadDialog(tk.Toplevel):
         self.on_files = on_files
         self.events = queue.Queue()
         self.cancel = threading.Event()
-        self.client = Client(self.cancel)
+        self.client = Client(self.cancel, pacing=pacing)
         self.browser_factory = BrowserClient
         self.method = tk.StringVar(value=BROWSER)
         self.busy = False
@@ -127,6 +127,7 @@ class DownloadDialog(tk.Toplevel):
         if method != BROWSER:
             raise ValueError('取得方法を選択してください。')
         engine = self.browser_factory(Path(__file__).parent / 'data' / 'anaslo-webview', cancel=self.cancel,
+                                      pacing=self.client.pacing,
                                       progress=lambda text: self.events.put(('log', text)))
         try:
             return action(engine)

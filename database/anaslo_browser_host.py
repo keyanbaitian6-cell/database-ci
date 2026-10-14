@@ -99,6 +99,9 @@ def install_handlers(window, state):
 
     def attach(core):
         core.WebResourceResponseReceived += response
+        # pywebview registers its handler before ours. It opens the system
+        # browser before our Handled flag can take effect, so replace it.
+        core.NewWindowRequested -= window.native.browser.on_new_window_request
         core.NewWindowRequested += popup
         core.AddWebResourceRequestedFilter('*', CoreWebView2WebResourceContext.Document)
         core.WebResourceRequested += document_request

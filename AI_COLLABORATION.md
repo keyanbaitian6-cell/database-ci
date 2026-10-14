@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【HTML取得・変換アプリ：レビュー指摘3点の修正】2026-10-15 Codex
+
+- 利用者「第三者目線で確認検討」のレビューで、ポップアップが標準ハンドラーから外部ブラウザを開く、全日付を連結した保存名が31日分で304文字、操作ごとにブラウザクライアントを作り直すことで待機がリセット、の3点を再現。利用者「修正して」で実装。
+- `anaslo_browser_host.install_handlers` は先に登録されるpywebview標準NewWindowRequestedハンドラーを解除して独自抑止へ置換。実WebView2で標準側が起動を試みていた修正前ログと、外部起動API差し替え＋要求0をassertした修正後ローカル試験あり。対象外URL/日付の移動制限は維持。
+- `Converter.save` は単日日付/複数日開始-終了の短い既定ファイル名へ。JSON内容・排他的保存・機種対応・DB取り込みは無変更。
+- `PaceState` をClient間で共有。Converterがアプリの生存期間中に保持し、DownloadDialogを開き直しても引継ぐ。ブラウザ↔直接、一覧↔日別でも開始間隔を維持。Cookieの保持や終了規則は変えない。
+- 再発4試験追加。保存名/操作間待機の2試験は修正前FAIL。ポップアップは修正前の実WebView2で外部起動要求を確認。修正後PCルート159件PASS、GUI_OK。新規試験のfake cancelにsetがない後片付けエラーを直して全件再実行。実WebView2ローカル試験はポップアップ抑止→確認1回→2日status200/capture→close成功。
+- 証跡 `a/work/outputs/anaslo-browser-20261015/`：`review-fixes-before.log`、`review-fixes-tests.log`、`popup-review.log`、`verify_popup_fix.py`、`popup-fix.log`。対象サイトへの通信0、実DB/Cookie/バックアップの変更0、EXE/APK/Webビルド・公開なし。実サイト認証・利用者の取得ボタン時の終了原因が解消したとは扱わない。
+
 ## 【アナスロ：サイト内の日付クリックでブラウザ終了】2026-10-15 Codex
 
 - 利用者の追加確認で、問題の「日付」はカレンダーやTkの対象日表ではなく、内部ブラウザに表示したアナスロサイト内の日付リンクだった。取得ボタンでも閉じるという申告あり、停止メッセージは見えなかった。Cookie対応の経験については専用セッション保持が既に有効であると説明。Cookie・実DBを初期化しない。

@@ -33,13 +33,26 @@ class NoRedirect(HTTPRedirectHandler):
         return None  # Validate BEFORE sending each redirect request.
 
 
+@dataclass
+class PaceState:
+    next_request: float = 0.0
+
+
 class Client:
-    def __init__(self, cancel=None, opener=None, clock=time.monotonic, jitter=None):
+    def __init__(self, cancel=None, opener=None, clock=time.monotonic, jitter=None, pacing=None):
         self.cancel = cancel if cancel is not None else threading.Event()
         self.opener = opener or build_opener(NoRedirect())
         self.clock = clock
         self.jitter = jitter or (lambda: random.uniform(5.0, 8.0))
-        self.next_request = 0.0
+        self.pacing = pacing if pacing is not None else PaceState()
+
+    @property
+    def next_request(self):
+        return self.pacing.next_request
+
+    @next_request.setter
+    def next_request(self, value):
+        self.pacing.next_request = value
 
     def check(self):
         if self.cancel.is_set():

@@ -1,4 +1,5 @@
 import importlib.util
+from datetime import date, timedelta
 from pathlib import Path
 import sys
 import tempfile
@@ -43,6 +44,11 @@ class DialogTests(unittest.TestCase):
             time.sleep(0.005)
         self.assertFalse(self.dialog.busy)
 
+    def poll_once(self):
+        # Manual polling in a test replaces the scheduled callback.
+        self.dialog.after_cancel(self.dialog.after_id)
+        self.dialog.poll()
+
     def test_offline_scan_worker_download_and_handoff_only_selected_day(self):
         engine, opener = client([html()])
         self.dialog.client = engine
@@ -79,7 +85,7 @@ class DialogTests(unittest.TestCase):
     def test_browser_stop_reason_is_shown_and_logged(self):
         self.dialog.events.put(('download', Result(stopped='ブラウザが閉じられました。')))
         with patch('download_dialog.messagebox.showwarning') as warning:
-            self.dialog.poll()
+            self.poll_once()
         warning.assert_called_once()
         self.assertIn('ブラウザが閉じられました。', self.dialog.log.get('1.0', 'end'))
         self.assertFalse(self.dialog.busy)
@@ -87,12 +93,12 @@ class DialogTests(unittest.TestCase):
     def test_scan_error_is_visible_but_user_stop_has_no_warning(self):
         self.dialog.events.put(('error', '起動エラー'))
         with patch('download_dialog.messagebox.showwarning') as warning:
-            self.dialog.poll()
+            self.poll_once()
             warning.assert_called_once()
         self.dialog.cancel.set()
         self.dialog.events.put(('download', Result(stopped='利用者が停止しました。')))
         with patch('download_dialog.messagebox.showwarning') as warning:
-            self.dialog.poll()
+            self.poll_once()
             warning.assert_not_called()
 
     def test_existing_converter_load_path_connection(self):
@@ -109,6 +115,47 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(converter.staging['days'][0]['day'], '2026-09-15')
         # This check only reads/analyzes; it does not save alias tables or JSON.
         self.assertFalse((self.folder / 'downloads').exists())
+
+    def test_month_of_data_has_short_default_json_filename(self):
+        spec = importlib.util.spec_from_file_location('converter_filename_test', CONVERTER / 'app.py')
+        ui = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ui)
+        converter = ui.Converter(self.root)
+        converter.staging = {'days': [{'day': (date(2026, 8, 1) + timedelta(days=i)).isoformat()} for i in range(31)]}
+        with patch.object(ui, 'make_backup', return_value={'records': []}), patch.object(ui.filedialog, 'asksaveasfilename', return_value='') as choose:
+            converter.save()
+        filename = choose.call_args.kwargs['initialfile']
+        self.assertEqual(filename, 'pscube-backup-anaslo-20260801-20260831.json')
+        (self.folder / filename).write_text('{}', encoding='utf-8')
+
+    def test_wait_is_kept_across_browser_operations_and_method_change(self):
+        from anaslo_browser import BrowserClient
+        from test_anaslo_browser import FakeSession
+        engine, opener = client([html()])
+        self.dialog.client = engine
+        self.addCleanup(setattr, self.dialog, 'cancel', self.dialog.cancel)
+        self.dialog.cancel = engine.cancel
+        def factory(profile, **kwargs):
+            return BrowserClient(profile, session_factory=lambda p: FakeSession([html()]),
+                                 clock=engine.clock, jitter=lambda: 6, **kwargs)
+        self.dialog.browser_factory = factory
+        for _ in range(2):
+            self.dialog.with_client(lambda e: e.get(link('2026-09-15').url), 'browser')
+        self.dialog.with_client(lambda e: e.get(link('2026-09-15').url), 'direct')
+        self.assertEqual(engine.cancel.waits, [0, 6, 6])
+
+    def test_reopening_download_dialog_keeps_pacing(self):
+        spec = importlib.util.spec_from_file_location('converter_pacing_test', CONVERTER / 'app.py')
+        ui = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ui)
+        converter = ui.Converter(self.root)
+        converter.download_pacing.next_request = 123.0
+        with patch('download_dialog.DownloadDialog') as create:
+            converter.open_download()
+            converter.open_download()
+        for call in create.call_args_list:
+            self.assertIs(call.kwargs['pacing'], converter.download_pacing)
+            self.assertEqual(call.kwargs['pacing'].next_request, 123.0)
 
 
 if __name__ == '__main__':

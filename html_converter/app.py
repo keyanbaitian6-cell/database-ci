@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / 'database'))
 from app import apply_style
 from anaslo_converter import analyze, make_backup, read_catalog, save_backup, suggestions
 from pscube_import import is_excluded_machine
+from anaslo_download import PaceState
 
 KEEP = 'HTMLの機種名を使う'
 OMIT = '取り込み対象から外す'
@@ -26,6 +27,7 @@ class Converter:
         self.staging = None
         self.catalog = []
         self.mapping = {}
+        self.download_pacing = PaceState()
         self.names = []
         self.alias_file = Path(__file__).parent / 'data' / 'machine_names.json'
         try:
@@ -81,7 +83,7 @@ class Converter:
 
     def open_download(self):
         from download_dialog import DownloadDialog
-        DownloadDialog(self.root, self.load_paths)
+        DownloadDialog(self.root, self.load_paths, pacing=self.download_pacing)
 
     def load_paths(self, paths):
         try:
@@ -158,9 +160,10 @@ class Converter:
         except Exception as exc:
             messagebox.showerror('保存できません', str(exc), parent=self.root)
             return
-        days = [d['day'].replace('-', '') for d in self.staging['days']]
+        days = sorted(d['day'].replace('-', '') for d in self.staging['days'])
+        period = days[0] if len(days) == 1 else f'{days[0]}-{days[-1]}'
         path = filedialog.asksaveasfilename(parent=self.root, title='補完用JSONの保存先',
-                                           initialfile=f"pscube-backup-anaslo-{'-'.join(days)}.json", defaultextension='.json', filetypes=[('JSON', '*.json')])
+                                           initialfile=f'pscube-backup-anaslo-{period}.json', defaultextension='.json', filetypes=[('JSON', '*.json')])
         if not path:
             return
         try:
