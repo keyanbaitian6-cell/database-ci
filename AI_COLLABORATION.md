@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## 【実装・全体検証・Web公開完了／Google切替・実機確認待ち】日別履歴と共有オフライン（Codex、2026-10-14）
+
+- 利用者の再開指示で下の停止時点から継続。未コミット作業を `a/work/outputs/viewer-history-20261014/before/` へ保護し、最新mainとの差を確認して実装を完成。実装 `3848106`、Android入口との統合 `06f6f67`、他作業の公開記録まで保全したmain `aaadbbc`。reset/clean・force pushなし。`debug.log` は対象外。
+- Googleは日別の不変原本＋閲覧パーツ＋最後に確定するv2一覧。中断再開、入力取り外し後の履歴保持、旧原本の7日整理、PCのフルグラフ保持を追加点検。端末は旧保存移行、日別の置換・古い日の保持、同時更新の巻き戻し防止、欠損時の停止／再取得、変更なしの日の書込省略を確認。共有は保存済み起動のGoogle通信0、手動差分、更新失敗時の保持、ページ本体のオフライン起動。
+- 同時作業のAndroid専用入口 `663c103` と公開記録 `7625dcd` をfetch/mergeで保全。`stage_share_viewer.py` は14公開アセット。通常入口とAndroid入口を両方保存し、オフライン時も対応するmanifestを維持する。実装統合後に全体ゲートを再実行。
+- **最終check_before_build.sh ALL PASSED（55項目）**：PC273件＋P’s CUBE関連98件、Flutter590件、JS48本・237件。analyzeエラー／警告0・info21。実保存ページは `PSCUBE_ARCHIVE_DIR` 未指定でSKIP。最初の全体検証では共有の起動時自動取得を期待する旧試験が1件失敗し、手動更新仕様へ修正。Android統合前・統合後の最終ゲートは成功。ログ `full-gate.log`、`checks-final/`。
+- **PC配布EXE3本更新**：`database/bin/`。P-STATIONの日別原本取り込みに新コードが必要なため実施。`smoke_frozen_capture.py` と `smoke_frozen_runtime.py` 成功。埋込コード、DLL、隔離した合成DBでの保存・本体から両補助アプリのローカルGUI起動を確認。EXEのサイズ／SHA-256は `pc-release-verification.json`。通常DB・Cookie・実サイトは操作していない。APK・ZIPは作成していない。
+- **Web公開**：自分用 `8b9b0da1bb542c282388a624072dc062285dbe8d`、共有 `0c4c3f25eca1ba6620fe98c9fa939cbe0657a9f4`。Pages [38504189076](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/38504189076) / [38504192606](https://github.com/keyanbaitian6-cell/database-share/actions/runs/38504192606) が対象commitでsuccess。配信68ファイルのSHA-256一致＋seed／原写真の8パス404、計76検査成功（`release-verification.json`）。公開URLで両ページの差分、共有320/393/1280px、Android入口、完全オフライン再起動の4ブラウザ試験PASS（`public-browser.log`）。Google応答は合成。実Google・実iPhoneではない。
+- **未実施**：実GoogleのGS貼替・履歴移行・実データの完全性照合、実iPhoneのオフライン再起動／速度、実Google原本のPC取り込み。配布元 `HISTORY_VIEWER` はfalseのまま。導入用コピー2本だけtrueにし、読み取り2本と手順を `outputs/viewer-history-20261014/google/` に用意。**Web→読み取りGS2本を同じURLで再デプロイ→同期GS2本** の順。詳細は `database_android/VIEWER_HISTORY_SYNC.md`。
+- **残る限界**：入力1本48MiB、原本1日48MiB、閲覧パーツ1MiB、1日10万件、一覧1MiB／16384パーツ。v2は全期間合計48MiB／10万件制限を外すが、既存UIへ渡す時点では全履歴を組み立てる。範囲だけの遅延読込は未実装、実iPhoneの長期容量・速度は未測定。既知の48MiB超旧入力は未解決で、失敗情報0を見ずに移行完了と言わない。
+
 ## 【履歴：利用者指示で停止した時点】日別履歴・端末蓄積・共有のオフライン起動（Codex、2026-10-14）
 
 - 利用者「すべて実装で」。両サイト・自分用／共有の両ページ。追加指定は共有ページを保存済みデータで起動し、オフライン起動可能にして、右上の手動更新時だけ差分取得すること。

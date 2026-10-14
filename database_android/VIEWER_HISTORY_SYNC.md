@@ -2,7 +2,9 @@
 
 2026-10-14、利用者「すべて実装で」。メルヘン両店・P-STATION、自分用・共有の両ページが対象。
 追加指定：共有ページは起動時に保存済みデータを表示し、右上の手動更新時だけ差分取得。オフラインでもページ本体を起動する。
-利用者の再開指示で実装と全体検証を再開。実Google切替・実データ移行完了・実iPhone確認は別工程。ローカル試験の成功で代用しない。公開と配布の証跡は `../outputs/viewer-history-20261014/`。
+利用者の再開指示で実装と全体検証を完了。実Google切替・実データ移行完了・実iPhone確認は別工程。ローカル試験の成功で代用しない。公開と配布の証跡は `../outputs/viewer-history-20261014/`。
+
+Web公開済み：自分用 `8b9b0da`、共有 `0c4c3f2`。Pages成功、配信68ファイルのSHA-256一致・非公開対象8パス404を確認。公開URLで差分・共有画面・Android入口・完全オフライン起動の4ブラウザ試験PASS。実Googleの応答は合成データへ置換した検証であり、実データの移行完了を意味しない。
 
 ## 追加した実装
 
@@ -11,8 +13,8 @@
 - `viewer_parts_client.js`：旧IndexedDBのsnapshotsを残したまま日別ストアへ移行。接続先URL＋サイトで分離し、期間外の過去分を保持。明示された日の完成版で置換し、空の日は削除として扱う。取得・ハッシュ検査後に保存し、保存失敗は通知して旧保存を維持。
 - 自分用の既存保存データを共通履歴へ移行。P’s CUBEの同日削除を過去のmergeで復活させない。メルヘンのDart統合にも完成日一覧を追加。
 - 共有ページ：保存済み履歴とイベント・🌈のメタデータから起動する。初回だけネット取得、以後は右上の手動更新。更新失敗時は旧画面を維持。`offline.mjs` と `sw.js` でページ本体を保存。Google通信はService Workerのキャッシュ対象外。
-- `stage_share_viewer.py`：12ファイルを許可し、Service Workerの版と事前保存URLを公開用の内容由来の版に合わせる。
-- PC `pscube_import.py`：最新同期ボタンがv2一覧を認識。日別原本の容量・名前・パス・ハッシュ・データ形式を事前検査し、全日を1トランザクションで取り込む。途中の変更・破損は全体取り消し。配布EXEは未ビルド。
+- `stage_share_viewer.py`：14ファイルを許可し、Service Workerの版と事前保存URLを公開用の内容由来の版に合わせる。作業中にmainへ追加されたAndroid入口も保持し、両入口でオフライン起動する。
+- PC `pscube_import.py`：最新同期ボタンがv2一覧を認識。日別原本の容量・名前・パス・ハッシュ・データ形式を事前検査し、全日を1トランザクションで取り込む。途中の変更・破損は全体取り消し。配布EXE3本を更新し、埋込コード・DLL・隔離DBでの起動／保存を確認した。APK・ZIPは作成しない。
 
 ## 導入前に確認すること
 
@@ -50,23 +52,26 @@
 7. 共有ページをオンラインで開いてページ本体の保存完了後、閉じる→機内モード→同じリンクを開く。オンラインへ戻して手動更新も確認する。実iPhoneのこの工程は利用者確認が必要。
 
 導入用4本と操作手順は `../outputs/viewer-history-20261014/google/` に用意する。配布元の履歴フラグはfalseを維持する。Googleの設定を変更済みとは報告しない。
+貼り替える前に、既存GSの設定値と現行デプロイ版を控える。フォルダIDを直接指定していた場合は、その値を導入用コピーへ引き継ぐ。既存プロジェクトのスクリプトプロパティを消さない。
 
 ## PCへの取り込み・障害時の対応
 
-- P-STATION：新しい `database-pscube.exe` で、Google Drive for desktop等から日別原本とv2一覧のダウンロードが完了した同期フォルダを指定し、「最新」で取り込む。手動なら `database-viewer-parts-pscube.json` を選ぶ。原本だけを別フォルダへ移さない。原本のグラフとcaptureを使う。メルヘンPCへの元Androidバックアップ取り込みは従来どおり。
+- P-STATION：新しい `database-pscube.exe` で、Google Drive for desktop等から日別原本とv2一覧のダウンロードが完了した同期フォルダを指定する。初回の過去復元は `database-viewer-parts-pscube.json` を直接選ぶ。「最新」はバックアップと一覧のうち更新日時が新しいものを選ぶため、新しい元バックアップがあればそちらを読む。原本だけを別フォルダへ移さない。原本のグラフとcaptureを使う。メルヘンPCへの元Androidバックアップ取り込みは従来どおり。
 - 閲覧パーツ破損：正常な日別原本があれば `rebuildMeruhenViewerParts` / `rebuildPscubeViewerParts` を実行し、24日単位の修復が終わるまで通常同期を継続する。
 - 日別原本破損：自動で上書きしない。同期を停止して現行一覧と元バックアップを保全する。正常な元バックアップ一式から別の検証用フォルダで再構築し、日付・件数・既知の値を照合してから切り替える。PC閲覧用だけでは元グラフを完全復元できない。
 - 元入力が不正／上限超過：その版を失敗情報へ記録し、正常な他入力は処理を続ける。元入力を修正・期間分割して保存すれば、新しい版として再試行する。
 - 切り戻し：まず同期トリガーを停止し、新Web・読み取りGSと履歴ファイルを保全する。履歴フラグfalseで旧同期へ戻すと旧期間・サイズ制限が再適用される。全履歴をそのまま表示できる切り戻しではない。原本・一覧・端末保存を消して戻さない。
 - 初回オンライン起動とService Workerの保存完了前、ブラウザの保存消失後、新しい接続先の初回はオンラインが必要。今回ページ本体のオフライン起動を追加した対象は共有ページ。
 
-## 個別検証
+## 検証
 
-- 共通差分・両同期GS：70件PASS（旧方式の回帰を含む）。
+- 共通差分・両同期GS：71件PASS（旧方式の回帰を含む）。
 - P’s CUBE JSパーサー15件、共有の既存画面試験1本、履歴／オフライン実ブラウザ試験1本も実施。
 - オフライン実ブラウザ：旧v1 DB移行、起動時Google通信0、Service Workerによる完全オフライン再起動、手動差分、空の日の削除、破損通信時の保存保持を合成データで確認。iPhone実機とは別。
-- PC：`test_pscube_history` と `test_pscube_sync`、計19件PASS（事前検査後のファイル変更でも全体ロールバック）。
+- PC：`test_pscube_history` と `test_pscube_sync`、計20件PASS（事前検査後のファイル変更でも全体ロールバック）。全体ではPC273件＋P’s CUBE関連98件PASS。
 - Flutter：`test/viewer_data_test.dart` 11件PASS。Dart format済み。
+- 全体ゲート：Android入口との統合後も **ALL PASSED（55項目）**。PC273件＋P’s CUBE98件、Flutter全590件、JS48本・237件。analyzeエラー／警告0・info21。実保存ページの検査は `PSCUBE_ARCHIVE_DIR` がなく従来どおりSKIP。最終全体ログは `../outputs/viewer-history-20261014/full-gate.log`。
+- PC配布物：`../database/bin/` の3フォルダを更新。`pc-release-verification.json` にEXEのサイズ・SHA-256・埋込コード・依存DLL・隔離したローカルGUIの確認結果を保存。実GoogleからのPC取り込み、実サイト取得は未確認。
 - ログ：`../outputs/history-target-tests.log`、`history-checkpoint-tests.log`、`history-share-checkpoint.log`、`history-flutter-checkpoint.log`。初回の共有試験は旧「再起動でもGoogle通信」期待で1件失敗、新仕様へ修正して単独再実行PASS。最終のまとめ直しログは `history-checkpoint-final.log`。
 
 再生成：`node database_android/tool/build_viewer_parts.mjs`。GS4本とWebモジュール2本は生成元との一致試験あり。
