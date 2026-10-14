@@ -4,7 +4,7 @@
 追加指定：共有ページは起動時に保存済みデータを表示し、右上の手動更新時だけ差分取得。オフラインでもページ本体を起動する。
 利用者の再開指示で実装と全体検証を完了。実Google切替・実データ移行完了・実iPhone確認は別工程。ローカル試験の成功で代用しない。公開と配布の証跡は `../outputs/viewer-history-20261014/`。
 
-**2026-10-14の導入結果：利用者がGoogle側を切替済み。メルヘンの移行待ち解消を報告し、P-STATIONも正常終了・5,429件・移行待ち表示なしを最終ログで確認。利用者からオフライン表示OKの報告あり。** 端末機種・ブラウザ・確認した入口は明示されていないため、両入口を実iPhoneで試したという意味には広げない。新端末での全過去復元、実Google原本のPC取り込み、全元バックアップとの照合、長期速度は別途未確認。
+**2026-10-14の導入結果：利用者がGoogle側を切替済み。メルヘンの移行待ち解消を報告し、P-STATIONも正常終了・5,429件・移行待ち表示なしを最終ログで確認。利用者からオフライン表示OKの報告あり。PC本体への日別原本取り込みも、新規63件・更新589件・同じ内容4,777件・PCの新しい値を維持0件（計5,429件）で成功。** オフライン確認の端末機種・ブラウザ・入口は明示されていないため、両入口を実iPhoneで試したという意味には広げない。新端末での全過去復元、全元バックアップとの照合、長期速度は別途未確認。
 
 Web公開済み：自分用 `8b9b0da`、共有 `0c4c3f2`。Pages成功、配信68ファイルのSHA-256一致・非公開対象8パス404を確認。公開URLで差分・共有画面・Android入口・完全オフライン起動の4ブラウザ試験PASS。実Googleの応答は合成データへ置換した検証であり、実データの移行完了を意味しない。
 
@@ -58,7 +58,7 @@ Web公開済み：自分用 `8b9b0da`、共有 `0c4c3f2`。Pages成功、配信6
 
 ## PCへの取り込み・障害時の対応
 
-- P-STATION：新しい `database-pscube.exe` で、Google Drive for desktop等から日別原本とv2一覧のダウンロードが完了した同期フォルダを指定する。初回の過去復元は `database-viewer-parts-pscube.json` を直接選ぶ。「最新」はバックアップと一覧のうち更新日時が新しいものを選ぶため、新しい元バックアップがあればそちらを読む。原本だけを別フォルダへ移さない。原本のグラフとcaptureを使う。メルヘンPCへの元Androidバックアップ取り込みは従来どおり。
+- P-STATION：更新済みのPC本体（`database.exe` または正本の `start.cmd`）で「バックアップ・同期」→「バックアップを読み込む」。Google Drive for desktop等から日別原本とv2一覧が届いた同じフォルダの `database-viewer-parts-pscube.json` を直接選ぶ。取り込みブラウザ `database-pscube.exe` ではない。本体の「P’s CUBEの同期フォルダの最新を読み込む」は、バックアップと一覧のうち更新日時が新しいものを選ぶため、新しい元バックアップがあればそちらを読む。原本だけを別フォルダへ移さない。原本のグラフとcaptureを使う。メルヘンPCへの元Androidバックアップ取り込みは従来どおり。
 - 閲覧パーツ破損：正常な日別原本があれば `rebuildMeruhenViewerParts` / `rebuildPscubeViewerParts` を実行し、24日単位の修復が終わるまで通常同期を継続する。
 - 日別原本破損：自動で上書きしない。同期を停止して現行一覧と元バックアップを保全する。正常な元バックアップ一式から別の検証用フォルダで再構築し、日付・件数・既知の値を照合してから切り替える。PC閲覧用だけでは元グラフを完全復元できない。
 - 元入力が不正／上限超過：その版を失敗情報へ記録し、正常な他入力は処理を続ける。元入力を修正・期間分割して保存すれば、新しい版として再試行する。
@@ -73,7 +73,7 @@ Web公開済み：自分用 `8b9b0da`、共有 `0c4c3f2`。Pages成功、配信6
 - PC：`test_pscube_history` と `test_pscube_sync`、計20件PASS（事前検査後のファイル変更でも全体ロールバック）。全体ではPC273件＋P’s CUBE関連98件PASS。
 - Flutter：`test/viewer_data_test.dart` 11件PASS。Dart format済み。
 - 全体ゲート：Android入口との統合後も **ALL PASSED（55項目）**。PC273件＋P’s CUBE98件、Flutter全590件、JS48本・237件。analyzeエラー／警告0・info21。実保存ページの検査は `PSCUBE_ARCHIVE_DIR` がなく従来どおりSKIP。最終全体ログは `../outputs/viewer-history-20261014/full-gate.log`。
-- PC配布物：`../database/bin/` の3フォルダを更新。`pc-release-verification.json` にEXEのサイズ・SHA-256・埋込コード・依存DLL・隔離したローカルGUIの確認結果を保存。実GoogleからのPC取り込み、実サイト取得は未確認。
+- PC配布物：`../database/bin/` の3フォルダを更新。`pc-release-verification.json` にEXEのサイズ・SHA-256・埋込コード・依存DLL・隔離したローカルGUIの確認結果を保存。実Google原本をPC本体のソース実行へ取り込む経路は利用者確認済み。EXEでの実Google取り込み・実サイト取得は別途未確認。
 - ログ：`../outputs/history-target-tests.log`、`history-checkpoint-tests.log`、`history-share-checkpoint.log`、`history-flutter-checkpoint.log`。初回の共有試験は旧「再起動でもGoogle通信」期待で1件失敗、新仕様へ修正して単独再実行PASS。最終のまとめ直しログは `history-checkpoint-final.log`。
 
 再生成：`node database_android/tool/build_viewer_parts.mjs`。GS4本とWebモジュール2本は生成元との一致試験あり。
