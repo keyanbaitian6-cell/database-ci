@@ -234,12 +234,25 @@ class DownloadDialog(tk.Toplevel):
                     self.paths = list(data.paths)
                     self.status.set(f'新規取得{data.downloaded}件・保存済み{data.skipped}件・失敗{data.failed}件。' + data.stopped)
                     self.set_busy(False)
+                    if data.stopped and not self.cancel.is_set():
+                        self.show_stop(data.stopped)
                 elif kind == 'error':
                     self.status.set('処理を停止しました：' + data)
                     self.set_busy(False)
+                    if not self.cancel.is_set():
+                        self.show_stop(data)
         except queue.Empty:
             pass
         self.after_id = self.after(100, self.poll)
+
+    def show_stop(self, reason):
+        self.log.configure(state='normal')
+        self.log.insert('end', '処理を停止しました：' + reason + '\n')
+        self.log.see('end')
+        self.log.configure(state='disabled')
+        self.deiconify()
+        self.lift()
+        messagebox.showwarning('HTML取得を停止しました', reason, parent=self)
 
     def destroy(self):
         self.cancel.set()

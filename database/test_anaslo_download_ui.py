@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from test_anaslo_download import client, html, link
+from anaslo_download import Result
 
 CONVERTER = Path(__file__).resolve().parents[1] / 'html_converter'
 if str(CONVERTER) not in sys.path:
@@ -74,6 +75,25 @@ class DialogTests(unittest.TestCase):
             self.dialog.scan()
             self.assertTrue(error.called)
             launch.assert_not_called()
+
+    def test_browser_stop_reason_is_shown_and_logged(self):
+        self.dialog.events.put(('download', Result(stopped='ブラウザが閉じられました。')))
+        with patch('download_dialog.messagebox.showwarning') as warning:
+            self.dialog.poll()
+        warning.assert_called_once()
+        self.assertIn('ブラウザが閉じられました。', self.dialog.log.get('1.0', 'end'))
+        self.assertFalse(self.dialog.busy)
+
+    def test_scan_error_is_visible_but_user_stop_has_no_warning(self):
+        self.dialog.events.put(('error', '起動エラー'))
+        with patch('download_dialog.messagebox.showwarning') as warning:
+            self.dialog.poll()
+            warning.assert_called_once()
+        self.dialog.cancel.set()
+        self.dialog.events.put(('download', Result(stopped='利用者が停止しました。')))
+        with patch('download_dialog.messagebox.showwarning') as warning:
+            self.dialog.poll()
+            warning.assert_not_called()
 
     def test_existing_converter_load_path_connection(self):
         spec = importlib.util.spec_from_file_location('converter_ui_test', CONVERTER / 'app.py')

@@ -111,7 +111,32 @@ class NavigationTests(unittest.TestCase):
             state = NavigationState()
             state.target(link('2026-09-15').url, False)
             self.assertFalse(state.starting(url, 1))
-            self.assertTrue(state.error)
+            self.assertFalse(state.error)
+            self.assertTrue(state.notice)
+
+    def test_site_date_click_does_not_close_or_invalidate_loaded_index(self):
+        from anaslo_index import INDEX_URL
+        state = NavigationState()
+        state.target(INDEX_URL, True)
+        self.assertTrue(state.starting(INDEX_URL, 1))
+        state.completed(1, True, 200)
+        self.assertFalse(state.starting(link('2026-09-15').url, 2))
+        state.completed(2, False, None)
+        self.assertTrue(state.complete)
+        self.assertEqual(state.status, 200)
+        self.assertEqual(state.navigation, 1)
+        self.assertFalse(state.error)
+        self.assertTrue(state.notice)
+
+    def test_site_next_day_click_keeps_original_target(self):
+        state = NavigationState()
+        state.target(link('2026-09-15').url, False)
+        state.starting(link('2026-09-15').url, 1)
+        state.completed(1, True, 200)
+        self.assertFalse(state.starting(link('2026-09-16').url, 2))
+        self.assertTrue(state.same(link('2026-09-15').url))
+        self.assertFalse(state.error)
+        self.assertTrue(state.complete)
 
     def test_status_is_top_document_only_and_stale_navigation_is_ignored(self):
         state = NavigationState()

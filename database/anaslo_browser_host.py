@@ -19,6 +19,7 @@ class NavigationState:
         self.status = None
         self.complete = False
         self.error = ''
+        self.notice = ''
 
     def target(self, url, index):
         with self.lock:
@@ -28,6 +29,7 @@ class NavigationState:
             self.status = None
             self.complete = False
             self.error = ''
+            self.notice = ''
 
     def same(self, url):
         try:
@@ -40,7 +42,9 @@ class NavigationState:
             if self.expected is None and (url in ('about:blank', 'about:blank#') or urlsplit(url).hostname in ('127.0.0.1', 'localhost')):
                 return True
             if not self.same(url):
-                self.error = '指定対象外への移動を止めました。'
+                # A cancelled click must not terminate the capture session or
+                # invalidate the document that is still displayed.
+                self.notice = 'サイト内リンクへの移動を止めました。日付は取得画面の指定期間で選び、上部「取得」→「表示を確認して自動取得を開始」を押してください。'
                 return False
             self.navigation = identity
             self.status = None
@@ -64,12 +68,13 @@ class NavigationState:
 
 
 def install_handlers(window, state):
+    from Microsoft.Web.WebView2.Core import CoreWebView2WebResourceContext
     control = window.native.webview
     handlers = []
 
     def starting(sender, args):
         if not state.starting(str(args.Uri), args.NavigationId):
-            args.Cancel = True
+            args.set_Cancel(True)
 
     def completed(sender, args):
         state.completed(args.NavigationId, args.IsSuccess, getattr(args, 'HttpStatusCode', None))
@@ -79,11 +84,24 @@ def install_handlers(window, state):
             state.response(str(args.Request.Uri), args.Response.StatusCode)
 
     def popup(sender, args):
-        args.Handled = True
+        args.set_Handled(True)
+
+    def document_request(sender, args):
+        if args.ResourceContext != CoreWebView2WebResourceContext.Document:
+            return
+        with state.lock:
+            allowed = state.expected is None or state.same(str(args.Request.Uri))
+        if not allowed:
+            # Navigation cancellation alone can race with a document request.
+            # Respond locally so a disallowed click never reaches the server.
+            args.Response = sender.Environment.CreateWebResourceResponse(
+                None, 403, 'Blocked', 'Content-Type: text/plain; charset=utf-8')
 
     def attach(core):
         core.WebResourceResponseReceived += response
         core.NewWindowRequested += popup
+        core.AddWebResourceRequestedFilter('*', CoreWebView2WebResourceContext.Document)
+        core.WebResourceRequested += document_request
 
     def initialized(sender, args):
         if args.IsSuccess:
@@ -91,7 +109,7 @@ def install_handlers(window, state):
         else:
             state.error = 'WebView2の初期化に失敗しました。'
 
-    handlers.extend([starting, completed, response, popup, initialized])
+    handlers.extend([starting, completed, response, popup, initialized, document_request])
     control.NavigationStarting += starting
     control.NavigationCompleted += completed
     if control.CoreWebView2 is None:
@@ -152,6 +170,10 @@ def run_host(connection, profile):
                 raise ValueError('同時に複数ページを要求できません。')
             with state.lock:
                 error, complete, status = state.error, state.complete, state.status
+                notice, state.notice = state.notice, ''
+            if notice:
+                send('progress', text=notice)
+                window.set_title('サイト内の日付は開かず、上部「取得」メニューから開始してください')
             if error:
                 raise ValueError(error)
             if complete and status is not None and status >= 400 and status not in (401, 403, 429):
