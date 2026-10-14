@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 【実Google入力修復・再同期確認待ち】P-STATIONの閲覧用JSON切断（Codex、2026-10-14）
+
+- 利用者の実行ログ画像：メルヘンは正常終了・24日更新・21,395件・次回14ファイル。P-STATIONは部分成功・24日更新・5,429件・次回5ファイル、`pscube-viewer-drive.json` のJSON解析がposition 1015004で失敗。1回の実行成功と全履歴移行完了を混同しない。
+- Google Driveスキルでimakurudev@gmail.comの既存ファイルを読み取り確認。Google側は1,048,576 bytes。PC正本 `database/data/pscube-viewer-drive.json` は3,176,294 bytes・5,366件・exported_at 2026-10-14T06:15:06+09:00の正常なJSON。Google側の全バイトが正常PC版の先頭1MiBと完全一致し、同じpositionでJSON解析失敗することを確認。切断された理由は不明で、PC書き出しや同期GSのせいと断定しない。
+- 破損版を `outputs/viewer-history-20261014/psta-input-diagnosis/google-viewer-before.json` に保全し、同一元データと確認した完全版でDrive同期フォルダの閲覧用JSONだけ修復。Google側の同じファイルID・親を維持した更新をメタデータで確認し、Googleから再取得した全バイト・SHA-256一致とJSON解析成功を確認。SHA-256 `00a72a984d166b6ce38fca66978e7ad74663a9efe322e263b1bfee6ae845e819`。診断・修復証跡は同フォルダのdiagnosis.json / repair-receipt.json。これらは私的実データなのでコミット・公開しない。
+- SQLite・元バックアップ・日別原本・v2一覧・スクリプト設定は今回変更していない。P-STATIONのコード貼替は不要。次は利用者が `syncPscubeCloud` を再実行し、失敗入力の解消・残り移行と画面を確認する。メルヘンも残り14ファイルの移行を継続する。今回の再実行結果・全移行完了はまだ未確認。
+
 ## 【Google導入中の構文エラー修正】同期GSの論理代入（Codex、2026-10-14）
 
 - 利用者が読み取りGSの1・2と表示確認を完了と報告。その後メルヘンGS保存で「ParseError: Unexpected token = 行774」を提示。導入用GSの同じ行は `m.history_inputs ||= {}; m.history_progress ||= {}; m.cloud_days ||= [];` で、実Googleの保存パーサーが論理代入を拒否した。Node vmによる模擬試験だけでは検出できなかった配布コードの不備。
