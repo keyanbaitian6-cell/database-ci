@@ -151,6 +151,29 @@ Map<String, List<String>> pscubeEventNames(Iterable<PscubeDateEvent> events) {
 
 /// Convert at the input boundary so both data sites use the same viewer UI.
 /// MY stays in extra['my']; it is never written to Meruhen's max_hold field.
+void validateAnasloRecord(Map<dynamic, dynamic> row) {
+  final url = Uri.tryParse(row['source_url']?.toString() ?? '');
+  if (url == null ||
+      url.scheme != 'https' ||
+      url.host != 'ana-slo.com' ||
+      url.userInfo.isNotEmpty ||
+      url.hasPort ||
+      !url.path.startsWith('/${row['day']}-') ||
+      row['source_sha256'] is! String ||
+      !RegExp(r'^[0-9a-f]{64}$').hasMatch(row['source_sha256']) ||
+      row['source_machine'] is! String ||
+      (row['source_machine'] as String).trim().isEmpty ||
+      [
+        'my',
+        'detail_url',
+        'observed_at',
+        'graph',
+        'net_medals',
+      ].any((k) => !row.containsKey(k) || row[k] != null)) {
+    throw const FormatException('アナスロ履歴の出典または欠損値が不正です。');
+  }
+}
+
 List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
   if (data['format'] != 'pscube-viewer' ||
       data['version'] != 1 ||
@@ -186,7 +209,12 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
     final name = normalizeMachineName(item['machine'] as String);
     // Preserve the existing exclusion chosen by the user.
     if (['沖ドキ', '沖ﾄﾞｷ', 'オキドキ', 'ｵｷﾄﾞｷ'].any(name.contains)) continue;
-    for (final field in ['rack', 'games', 'bb', 'rb', 'at_art', 'my']) {
+    final external = item['source_site'] == 'anaslo';
+    if (external) validateAnasloRecord(item);
+    for (final field
+        in external
+            ? ['rack', 'games', 'bb', 'rb', 'at_art']
+            : ['rack', 'games', 'bb', 'rb', 'at_art', 'my']) {
       final value = item[field];
       if (value is! int || value < (field == 'rack' ? 1 : 0)) {
         throw FormatException('$field の数値が不正です。');
@@ -201,11 +229,12 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
     if (day is! String || !isValidRecordDay(day))
       throw const FormatException('営業日が不正です。');
     final detail = Uri.tryParse(item['detail_url']?.toString() ?? '');
-    if (detail == null ||
-        detail.origin != 'https://www.pscube.jp' ||
-        !detail.path.endsWith('/${item['store']}/cgi-bin/nc-v06-001.php') ||
-        detail.queryParameters['cd_dai'] != '${item['rack']}' ||
-        detail.fragment != day.replaceAll('-', '')) {
+    if (!external &&
+        (detail == null ||
+            detail.origin != 'https://www.pscube.jp' ||
+            !detail.path.endsWith('/${item['store']}/cgi-bin/nc-v06-001.php') ||
+            detail.queryParameters['cd_dai'] != '${item['rack']}' ||
+            detail.fragment != day.replaceAll('-', ''))) {
       throw const FormatException('台番号・営業日とリンクが一致しません。');
     }
     GraphMeasurement? graph;
@@ -257,10 +286,13 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
       bb: item['bb'] as int,
       rb: item['rb'] as int,
       graph: graph,
-      detailUrl: item['detail_url'] as String,
+      detailUrl: item['detail_url'] as String?,
       capturedAt: item['observed_at'] as String?,
       extra: {
         'source': 'pscube',
+        if (external) 'source_site': 'anaslo',
+        if (external) 'source_url': item['source_url'],
+        if (external) 'source_machine': item['source_machine'],
         'source_store': item['store'],
         'rate': item['rate'],
         'my': item['my'],

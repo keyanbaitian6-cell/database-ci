@@ -283,7 +283,8 @@ NextDayEvidence nextDayEvidence(
         r.games >= 500 &&
         r.bb >= 0 &&
         r.rb >= 0 &&
-        !hasImplausibleNumbers(r)) {
+        !hasImplausibleNumbers(r) &&
+        r.extra['source_site'] != 'anaslo') {
       byDay.putIfAbsent(r.day, () => []).add(r);
     }
   }
@@ -628,7 +629,9 @@ String varietyRuleText(String store) {
     for (final r in comparisonPool(record, all))
       if (r.bb >= 0 && r.rb >= 0) metric(r),
   ];
-  if (rates.length < 3 || record.games <= 0) {
+  if (rates.length < 3 ||
+      record.games <= 0 ||
+      record.extra['source_site'] == 'anaslo') {
     return (percent: null, refs: rates.length);
   }
   final rank = percentile(metric(record), rates);

@@ -384,7 +384,7 @@ function pscubeCloudRead(file, size) {
 function pscubeCloudMerge(stored, incoming) {
   const merged = mergeData(stored, incoming);
   const records = new Map(merged.records.map(r => [recordKey(r), r]));
-  const sameNumbers = (a, b) => ['bb', 'rb', 'at_art', 'games', 'my'].every(k => a[k] === b[k]);
+  const sameNumbers = (a, b) => !!b && ['bb', 'rb', 'at_art', 'games', 'my'].every(k => a[k] === b[k]);
   const captures = new Set();
   for (const document of [stored, incoming]) {
     const wanted = new Set(document.rack_captures || []);

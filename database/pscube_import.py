@@ -231,9 +231,10 @@ def _validate_machine(m):
         raise ValueError('店舗・貸玉を確認できません。')
     if not isinstance(m.get('machine'), str) or not m['machine'].strip():
         raise ValueError('機種名を確認できません。')
-    u = site_url(m.get('url'), 'nc-v05-011.php')
-    if parse_qs(u.query).get('bai') != [m['rate']] or parse_qs(u.query).get('cd_ps') not in (None, ['2']):
-        raise ValueError('機種リンクの貸玉が一致しません。')
+    if not (m.get('source_site') == 'anaslo' and m.get('url') is None):
+        u = site_url(m.get('url'), 'nc-v05-011.php')
+        if parse_qs(u.query).get('bai') != [m['rate']] or parse_qs(u.query).get('cd_ps') not in (None, ['2']):
+            raise ValueError('機種リンクの貸玉が一致しません。')
     count = m.get('expected_count')
     if count is not None and (type(count) is not int or not 1 <= count <= 5000):
         raise ValueError('設置台数が不正です。')
@@ -256,10 +257,14 @@ def _validate_record(r):
             raise ValueError
     except (TypeError, ValueError) as e:
         raise ValueError('営業日が不正です。') from e
-    u = site_url(r.get('detail_url'), 'nc-v06-001.php')
-    if parse_qs(u.query).get('cd_dai') != [str(r['rack'])] or u.fragment != r['day'].replace('-', ''):
-        raise ValueError('台番号または日付とリンクが一致しません。')
-    for name in ('bb', 'rb', 'at_art', 'games', 'my'):
+    external = r.get('source_site') == 'anaslo'
+    if external:
+        _validate_external_record(r)
+    else:
+        u = site_url(r.get('detail_url'), 'nc-v06-001.php')
+        if parse_qs(u.query).get('cd_dai') != [str(r['rack'])] or u.fragment != r['day'].replace('-', ''):
+            raise ValueError('台番号または日付とリンクが一致しません。')
+    for name in ('bb', 'rb', 'at_art', 'games') if external else ('bb', 'rb', 'at_art', 'games', 'my'):
         _number(r.get(name), name)
     if r.get('net_medals') is not None and (type(r['net_medals']) is not int or abs(r['net_medals']) > 1000000):
         raise ValueError('差枚の数値が不正です。')
@@ -280,6 +285,16 @@ def _validate_record(r):
             datetime.fromisoformat(r['observed_at'])
         except (TypeError, ValueError) as exc:
             raise ValueError('更新時刻が不正です。') from exc
+
+
+def _validate_external_record(r):
+    url = urlparse(r.get('source_url') or '')
+    if (url.scheme != 'https' or url.netloc != 'ana-slo.com' or
+            not url.path.startswith('/' + r['day'] + '-') or
+            not re.fullmatch(r'[0-9a-f]{64}', str(r.get('source_sha256', ''))) or
+            not isinstance(r.get('source_machine'), str) or not r['source_machine'].strip() or
+            any(k not in r or r[k] is not None for k in ('my', 'detail_url', 'observed_at', 'graph', 'net_medals'))):
+        raise ValueError('アナスロ履歴の出典または欠損値が不正です。')
 
 
 def _instant(text):
@@ -309,6 +324,12 @@ def stale_cutoff(day, fresh_since):
 
 def _merge(old: dict | None, fresh: dict) -> dict:
     if old is None:
+        return fresh
+    # External HTML is fill-only, including later restores of exported backups.
+    # A real capture always replaces a source-only record regardless of game count.
+    if fresh.get('source_site') == 'anaslo':
+        return old
+    if old.get('source_site') == 'anaslo':
         return fresh
     same = all(old[k] == fresh[k] for k in ('bb', 'rb', 'at_art', 'games', 'my'))
     old_time = old.get('observed_at') or ''
@@ -719,7 +740,7 @@ class PscubeStore:
         if active:
             by_key = {_machine_key(m): m for m in machines}
             machines = [by_key[key] for key in json.loads(active) if key in by_key]
-        machines = [m for m in machines if not is_excluded_machine(m['machine'])]
+        machines = [m for m in machines if m.get('url') and not is_excluded_machine(m['machine'])]
         if direction == 'bottom':
             machines.reverse()
         if not machines:
@@ -738,7 +759,7 @@ class PscubeStore:
             if len(rows) != machine.get('expected_count') or (cutoff is not None and oldest is not None and oldest < cutoff):
                 pending.append((index, -1, machine['url']))
             else:
-                pending += [(index, r['rack'], r['detail_url']) for r in rows if _record_key(r) not in captured and not no_hits(r)]
+                pending += [(index, r['rack'], r['detail_url']) for r in rows if r.get('detail_url') and _record_key(r) not in captured and not no_hits(r)]
         if after is not None and pending:
             keys = [_machine_key(m) for m in machines]
             if after[0] in keys:
@@ -914,17 +935,33 @@ class PscubeStore:
         summary = {'added': 0, 'updated': 0, 'unchanged': 0, 'kept_local': 0, 'machines': len(data['machines']),
                    'events': sum(1 for e in merged_events if e not in stored_events)}
         with self.db if _transaction else nullcontext():
+            # Lock before reading occupied racks; a capture may be writing in a
+            # separate process. Protect same rack/day even if aliases differ.
+            if _transaction and not self.db.in_transaction:
+                self.db.execute('BEGIN IMMEDIATE')
+            occupied = {(r['store'], r['rate'], r['rack'], r['day']) for row in
+                        self.db.execute('SELECT payload FROM records') for r in [json.loads(row[0])]}
             if summary['events']:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('date_events', json.dumps(merged_events, ensure_ascii=False)))
             for m in data['machines']:
                 key = _machine_key(m)
                 previous = self._read('machines', key) or {}
+                if previous and data.get('import_mode') == 'fill_missing':
+                    continue
+                if previous and m.get('source_site') == 'anaslo':
+                    continue
                 saved = {**m, 'expected_count': m.get('expected_count') or previous.get('expected_count'),
                          'machine_type': previous.get('machine_type') or m.get('machine_type')}
                 self.db.execute('INSERT OR REPLACE INTO machines VALUES (?,?)', (key, json.dumps(saved, ensure_ascii=False)))
             for r in data['records']:
                 key = _record_key(r)
+                identity = (r['store'], r['rate'], r['rack'], r['day'])
+                if r.get('source_site') == 'anaslo' and identity in occupied:
+                    summary['kept_local'] += 1
+                    summary['unchanged'] += 1
+                    continue
+                occupied.add(identity)
                 previous = self._read('records', key)
                 saved = _merge(previous, r)
                 numbers = ('bb', 'rb', 'at_art', 'games', 'my')

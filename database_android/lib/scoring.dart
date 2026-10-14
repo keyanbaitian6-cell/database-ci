@@ -75,7 +75,8 @@ List<SlotRecord> comparisonPool(SlotRecord row, List<SlotRecord> all) {
             r.day.compareTo(row.day) < 0 &&
             r.games >= lowest &&
             r.games <= highest &&
-            !hasImplausibleNumbers(r),
+            !hasImplausibleNumbers(r) &&
+            r.extra['source_site'] != 'anaslo',
       )
       .toList();
 }
@@ -237,6 +238,14 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
 /// The already published P's CUBE policy, presented by the shared viewer.
 /// The normal profile uses BIG/REG; other machines use MY and the curve.
 ScoreResult _scorePscube(SlotRecord row, List<SlotRecord> all) {
+  if (row.extra['source_site'] == 'anaslo') {
+    return ScoreResult(
+      games: null,
+      provisional: true,
+      referenceCount: 0,
+      reasons: const ['アナスロ補完履歴：MY・信号の対応未確認のため採点対象外'],
+    );
+  }
   if (row.games <= 0 ||
       hasImplausibleNumbers(row) ||
       row.games <= minScoredGames) {

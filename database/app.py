@@ -995,6 +995,9 @@ def main():
                 f'新しい自分の数値を維持{summary["kept_local"]}件（{latest.name}）。')
         logbox.insert('end', text + '\n')
         logbox.see('end')
+        if current_location() == PSCUBE_KEY:
+            refresh_days()
+            refresh_machines()
         if not quiet:
             messagebox.showinfo('読み込みました', text, parent=root)
         return True

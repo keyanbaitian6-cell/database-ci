@@ -174,10 +174,14 @@ class PscubeStore {
 
   static void _machine(Map<String, dynamic> row) {
     _base(row);
-    final uri = _site(row['url'] as String?, 'nc-v05-011.php');
-    if (uri.queryParameters['bai'] != row['rate'] ||
-        (uri.queryParameters.containsKey('cd_ps') &&
-            uri.queryParameters['cd_ps'] != '2')) {
+    final external = row['source_site'] == 'anaslo' && row['url'] == null;
+    final uri = external
+        ? null
+        : _site(row['url'] as String?, 'nc-v05-011.php');
+    if (!external &&
+        (uri!.queryParameters['bai'] != row['rate'] ||
+            (uri.queryParameters.containsKey('cd_ps') &&
+                uri.queryParameters['cd_ps'] != '2'))) {
       throw const FormatException('機種リンクが一致しません。');
     }
     final count = row['expected_count'];
@@ -201,12 +205,20 @@ class PscubeStore {
         DateTime.tryParse(day)?.toIso8601String().substring(0, 10) != day) {
       throw const FormatException('台番号・営業日が不正です。');
     }
-    final uri = _site(row['detail_url'] as String?, 'nc-v06-001.php');
-    if (uri.queryParameters['cd_dai'] != '$rack' ||
-        uri.fragment != day.replaceAll('-', '')) {
+    final external = row['source_site'] == 'anaslo';
+    if (external) validateAnasloRecord(row);
+    final uri = external
+        ? null
+        : _site(row['detail_url'] as String?, 'nc-v06-001.php');
+    if (!external &&
+        (uri!.queryParameters['cd_dai'] != '$rack' ||
+            uri.fragment != day.replaceAll('-', ''))) {
       throw const FormatException('台番号・営業日とリンクが一致しません。');
     }
-    for (final field in ['bb', 'rb', 'at_art', 'games', 'my']) {
+    for (final field
+        in external
+            ? ['bb', 'rb', 'at_art', 'games']
+            : ['bb', 'rb', 'at_art', 'games', 'my']) {
       final value = row[field];
       if (value is! int || value < 0) throw FormatException('$field の数値が不正です。');
     }
@@ -584,6 +596,8 @@ class PscubeStore {
     Map<String, dynamic> fresh,
   ) {
     if (old == null) return fresh;
+    if (fresh['source_site'] == 'anaslo') return old;
+    if (old['source_site'] == 'anaslo') return fresh;
     final same = [
       'bb',
       'rb',
@@ -655,7 +669,9 @@ class PscubeStore {
     }
     machines = [
       for (final machine in machines)
-        if (!isExcludedMachine(machine['machine'] as String?)) machine,
+        if (machine['url'] != null &&
+            !isExcludedMachine(machine['machine'] as String?))
+          machine,
     ];
     if (direction == 'bottom') machines = machines.reversed.toList();
     if (machines.isEmpty) return (url: index, remaining: 0);
@@ -694,7 +710,10 @@ class PscubeStore {
         pending.addAll(
           rows
               .where(
-                (r) => !captured.contains(_key(r, record: true)) && !noHits(r),
+                (r) =>
+                    r['detail_url'] != null &&
+                    !captured.contains(_key(r, record: true)) &&
+                    !noHits(r),
               )
               .map((r) => (index, r['rack'] as int, r['detail_url'] as String)),
         );
@@ -886,9 +905,9 @@ class PscubeStore {
         }
         var time = at;
         if (previous != null) {
-          final after = DateTime.parse(
-            previous.updatedAt,
-          ).toUtc().add(const Duration(milliseconds: 1));
+          final after = DateTime.parse(previous.updatedAt)
+              .toUtc()
+              .add(const Duration(milliseconds: 1));
           if (after.isAfter(time)) time = after;
         }
         events[key] = PscubeDateEvent(
@@ -1041,6 +1060,7 @@ class PscubeStore {
       };
     }
     final incomingEvents = pscubeDateEvents(decoded);
+    final fillMissing = decoded['import_mode'] == 'fill_missing';
     // sqflite はトランザクション中の通常の問い合わせを待たせるので、先に全部読む。
     final storedEvents = await _dateEventsIn(db);
     final mergedEvents = mergePscubeDateEvents(storedEvents, incomingEvents);
@@ -1057,12 +1077,19 @@ class PscubeStore {
         row['key'] as String: _asMap(jsonDecode(row['payload'] as String)),
     };
     const numbers = ['bb', 'rb', 'at_art', 'games', 'my'];
+    String rackDayKey(Map<String, dynamic> r) =>
+        jsonEncode([r['store'], r['rate'], r['rack'], r['day']]);
+    final occupied = oldRecords.values.map(rackDayKey).toSet();
     var added = 0, updated = 0, unchanged = 0, keptLocal = 0;
     await db.transaction((txn) async {
       final batch = txn.batch();
       for (final machine in machines) {
         final key = _key(machine);
         final previous = oldMachines[key];
+        if (previous != null &&
+            (fillMissing || machine['source_site'] == 'anaslo')) {
+          continue;
+        }
         batch.insert('machines', {
           'key': key,
           'payload': jsonEncode({
@@ -1076,6 +1103,13 @@ class PscubeStore {
       }
       for (final record in records) {
         final key = _key(record, record: true);
+        if (record['source_site'] == 'anaslo' &&
+            occupied.contains(rackDayKey(record))) {
+          keptLocal++;
+          unchanged++;
+          continue;
+        }
+        occupied.add(rackDayKey(record));
         final previous = oldRecords[key];
         final saved = _merge(previous, record);
         final numbersChanged =
