@@ -355,6 +355,9 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path)
         self.db.execute('CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, captured_at TEXT NOT NULL, payload TEXT NOT NULL)')
+        # 1行保存するたびの古い行の削除（_log_observation）が、索引なしでは全件（数万行・数十MB）を読んでいた。
+        # 新しいバックアップ551行の取り込みで約21秒画面が止まった主因（2026-10-14 レビュー、専用コピーで計測）。
+        self.db.execute('CREATE INDEX IF NOT EXISTS observations_captured_at ON observations(captured_at)')
         self._ensure_store_schema()
         # 翌日候補（仮）の記録。Android版と同じ形（candidate_log.dart）。
         self.db.execute('CREATE TABLE IF NOT EXISTS candidate_snapshots (store TEXT NOT NULL, day TEXT NOT NULL, '
@@ -446,11 +449,19 @@ class Store:
         with self.db:
             self._save_rows(rows, log_candidates)
 
+    def _begin_write(self):
+        """読んでから一覧全体を書き戻す前に、書き込みロックを取る（呼ぶ側の ``with self.db`` が確定・取り消し）。
+        PC本体と取り込みブラウザは別プロセスで同じDBに書く。ロックの外で読んだ未取り込みの🌈の一覧を
+        書き戻すと、その間に他方が足した印を消していた（2026-10-14 レビュー）。"""
+        if not self.db.in_transaction:
+            self.db.execute('BEGIN IMMEDIATE')
+
     def _save_rows(self, rows, log_candidates):
         """``save`` の中身。トランザクションは呼ぶ側が持つ（バックアップの取り込みは、
         イベント名・台・翌日候補の記録を1回で書くため）。"""
         self._machine_cache = {}
         groups = set()
+        self._begin_write()
         pending = {(m['store'], m['day'], m['rack']): m for m in self.pending_rainbow_marks()}
         applied_marks = set()
         for row in rows:
@@ -755,6 +766,7 @@ class Store:
 
     def _merge_pending_rainbow_marks(self, incoming):
         """バックアップ復元用。呼び側のトランザクション内で印を統合する。数値行は作らない。"""
+        self._begin_write()
         pending = {(m['store'], m['day'], m['rack']): m for m in self.pending_rainbow_marks()}
         changed = 0
         for mark in incoming:
@@ -765,6 +777,8 @@ class Store:
             if previous and _timestamp(previous['updated_at']) > _timestamp(mark['updated_at']):
                 continue
             found = self.db.execute('SELECT machine, payload FROM days WHERE store=? AND day=? AND rack=?', key).fetchall()
+            # 表示しない機種だけの行は無いものとして扱う（set_rainbow・_save_rows と同じ）。捨てずに控えに残す。
+            found = [(machine, raw) for machine, raw in found if not is_hidden_machine(mark['store'], machine)]
             if not found:
                 if previous != mark:
                     pending[key] = mark
@@ -772,8 +786,6 @@ class Store:
                 continue
             updated = False
             for machine, raw in found:
-                if is_hidden_machine(mark['store'], machine):
-                    continue
                 payload = json.loads(raw)
                 newest = _newer_rainbow(payload, dict(rainbow=mark['on'], rainbow_at=mark['updated_at']))
                 if newest == _newer_rainbow(payload, {}):
@@ -802,30 +814,32 @@ class Store:
         date.fromisoformat(day)
         if not isinstance(on, bool):
             raise ValueError('🌈の指定が不正です。')
-        found = self.db.execute('SELECT machine, payload FROM days WHERE store=? AND day=? AND rack=?',
-                                (store, day, int(rack))).fetchall()
-        found = [(machine, payload) for machine, payload in found if not is_hidden_machine(store, machine)]
-        if not found and not allow_missing:
-            raise ValueError(f'{rack}番台は{day}の記録がありません。先に表を取り込んでください。')
-        if at is None:
-            now = datetime.now().astimezone()
-            previous = [m['updated_at'] for m in self.pending_rainbow_marks(store, day) if m['rack'] == int(rack)]
-            previous += [json.loads(raw).get('rainbow_at') for _machine, raw in found]
-            stamps = []
-            for value in previous:
-                try:
-                    if value:
-                        stamps.append(_timestamp(value))
-                except (TypeError, ValueError):
-                    pass
-            latest = max(stamps, default=None)
-            if latest and now <= latest:
-                now = latest + timedelta(milliseconds=1)
-            at = now.isoformat()
-        mark = dict(store=store, day=day, rack=int(rack), on=on, updated_at=at)
-        if not _valid_rainbow_mark(mark):
-            raise ValueError('🌈の指定が不正です。')
         with self.db:
+            # 行・控えを読む前にロックを取る（取り込みブラウザが同時に保存しても、読んだ内容のまま書く）。
+            self._begin_write()
+            found = self.db.execute('SELECT machine, payload FROM days WHERE store=? AND day=? AND rack=?',
+                                    (store, day, int(rack))).fetchall()
+            found = [(machine, payload) for machine, payload in found if not is_hidden_machine(store, machine)]
+            if not found and not allow_missing:
+                raise ValueError(f'{rack}番台は{day}の記録がありません。先に表を取り込んでください。')
+            if at is None:
+                now = datetime.now().astimezone()
+                previous = [m['updated_at'] for m in self.pending_rainbow_marks(store, day) if m['rack'] == int(rack)]
+                previous += [json.loads(raw).get('rainbow_at') for _machine, raw in found]
+                stamps = []
+                for value in previous:
+                    try:
+                        if value:
+                            stamps.append(_timestamp(value))
+                    except (TypeError, ValueError):
+                        pass
+                latest = max(stamps, default=None)
+                if latest and now <= latest:
+                    now = latest + timedelta(milliseconds=1)
+                at = now.isoformat()
+            mark = dict(store=store, day=day, rack=int(rack), on=on, updated_at=at)
+            if not _valid_rainbow_mark(mark):
+                raise ValueError('🌈の指定が不正です。')
             if not found:
                 self._merge_pending_rainbow_marks([mark])
                 return 0
@@ -1144,8 +1158,9 @@ def export_viewer(store, path, days=VIEWER_DAYS):
                    if cutoff and event['day'] >= cutoff]
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc-viewer', days=days, date_events=date_events,
-                             rainbow_marks=store.pending_rainbow_marks()), ensure_ascii=False)[:-1]
+                             source='pc-viewer', days=days, date_events=date_events), ensure_ascii=False)[:-1]
+    # 未取り込み日の🌈（pending_rainbow_marks）は入れない。閲覧ページは rainbow_marks を端末の印として表示・送信し、
+    # 旧形式の同期GSは見出しをそのまま渡すため、取り込み前にWebへ出てしまう。Webへは数値の取り込み後（RAINBOW.md）。
     count = 0
     with path.open('w', encoding='utf-8') as out:
         out.write(f'{header}, "records": [')
@@ -2061,7 +2076,8 @@ def latest_backup_file(folder, seen=None):
     """Newest backup JSON in ``folder`` (ignoring this app's own auto copy and
     the light viewer file, which has no graph images and must never be
     imported as if it were a backup). ``seen`` is the last successfully
-    imported file's name/mtime; unchanged content need not be read again."""
+    imported file's name/mtime; unchanged content need not be read again, and
+    files older than it are not read at all (None: nothing new)."""
     # 日別原本・閲覧パーツもGoogle Driveからダウンロードして解析しない。
     # pscube-* はP’s CUBE用（別形式・大きい）。ここで読み込もうとしない。
     generated_prefixes = ('pscube-', 'database-history-day-',
@@ -2070,9 +2086,19 @@ def latest_backup_file(folder, seen=None):
                   if p.name not in (AUTO_BACKUP_NAME, VIEWER_FILE_NAME, 'database-android-cloud.json',
                                     SHARED_RAINBOW_NAME, SHARED_EVENTS_NAME)
                   and not p.name.startswith(generated_prefixes)]
-    for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
-        if seen and seen.get('name') == path.name and seen.get('mtime') == path.stat().st_mtime:
+    found = []
+    for path in candidates:
+        try:
+            found.append((path.stat().st_mtime, path))
+        except OSError:
+            continue   # 探している間に消えた・読めないファイルは飛ばす（Driveの同期中など）
+    for mtime, path in sorted(found, key=lambda item: item[0], reverse=True):
+        if seen and seen.get('name') == path.name and seen.get('mtime') == mtime:
             return path
+        # 起動時の自動取り込み：前回取り込んだものより古いファイルは「新しいバックアップ」ではない。
+        # 前回のファイルが消えていても、古いバックアップを読み直して取り込み直さない。
+        if seen and isinstance(seen.get('mtime'), (int, float)) and mtime < seen['mtime']:
+            return None
         try:
             payload = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError):

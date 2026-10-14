@@ -888,15 +888,15 @@ def main():
         messagebox.showinfo('書き出しました', f'{target_text}の{count}件のデータを書き出しました。\n{path}', parent=root)
 
     def import_backup_file(path=None, quiet=False):
+        """取り込めたら True。失敗・取り消しは False（自動取り込みは成功したファイルだけを覚える）。"""
         path = path or filedialog.askopenfilename(
             title='取り込むバックアップファイルを選択',
             filetypes=[('JSON', '*.json'), ('すべて', '*.*')])
         if not path:
-            return
+            return False
         if pscube_import.is_pscube_backup(path):
             # P’s CUBEのファイルをメルヘンの読み込みに通すと、全台が「対象外」になって何も入らない。
-            import_pscube_file(path, quiet=quiet)
-            return
+            return import_pscube_file(path, quiet=quiet)
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             plan = import_backup(db, path)
@@ -909,7 +909,7 @@ def main():
             auto_backup(db, DATA_DIR)
         except Exception as exc:
             messagebox.showerror('取り込めません', str(exc), parent=root)
-            return
+            return False
         finally:
             db.close()
         refresh_days()
@@ -925,11 +925,12 @@ def main():
         logbox.insert('end', f'バックアップを読み込みました：{summary}\n')
         logbox.see('end')
         if quiet:
-            return
+            return True
         if applied:
             messagebox.showinfo('読み込みました', summary, parent=root)
         else:
             messagebox.showinfo('反映なし', summary, parent=root)
+        return True
 
     ttk.Button(backup_buttons, text='バックアップを書き出す', command=export_backup_file).pack(side='left')
     ttk.Label(backup_buttons, text='店舗').pack(side='left', padx=(12, 4))
@@ -962,8 +963,9 @@ def main():
             messagebox.showinfo('見つかりません', 'このフォルダにバックアップファイルがありません。', parent=root)
             return
         logbox.insert('end', f'最新のバックアップ：{latest.name}\n')
-        import_backup_file(str(latest))
-        remember_synced(latest)
+        version = synced_version(latest)
+        if import_backup_file(str(latest)) and version:
+            save_settings(DATA_DIR, last_synced=version)
 
     def import_pscube_from_sync():
         """P’s CUBEの最新バックアップ（Android・ブラウザの書き出しなど）を専用の記録へ統合する。"""
@@ -986,7 +988,7 @@ def main():
             pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
         except Exception as exc:
             messagebox.showerror('取り込めません', str(exc), parent=root)
-            return
+            return False
         finally:
             store.close()
         text = (f'P’s CUBE：新規{summary["added"]}件、更新{summary["updated"]}件、同じ内容{summary["unchanged"]}件、'
@@ -995,9 +997,14 @@ def main():
         logbox.see('end')
         if not quiet:
             messagebox.showinfo('読み込みました', text, parent=root)
+        return True
 
-    def remember_synced(latest):
-        save_settings(DATA_DIR, last_synced=dict(name=latest.name, mtime=latest.stat().st_mtime))
+    def synced_version(latest):
+        """取り込む前のファイルの名前・更新時刻。取り込み中にDriveが書き換えても、次回は新しい版として読む。"""
+        try:
+            return dict(name=latest.name, mtime=latest.stat().st_mtime)
+        except OSError:
+            return None
 
     def auto_sync_on_start():
         """Pick up a newer backup from the sync folder without any click.
@@ -1011,13 +1018,13 @@ def main():
             return
         seen = current.get('last_synced') or {}
         latest = latest_backup_file(folder, seen=seen)
-        if latest is None:
-            return
-        if seen.get('name') == latest.name and seen.get('mtime') == latest.stat().st_mtime:
+        version = synced_version(latest) if latest is not None else None
+        if version is None or version == dict(name=seen.get('name'), mtime=seen.get('mtime')):
             return
         logbox.insert('end', f'同期フォルダに新しいバックアップがあります：{latest.name}\n')
-        import_backup_file(str(latest), quiet=True)
-        remember_synced(latest)
+        # 失敗したファイルは覚えない（次の起動でやり直す。Driveの一時的な失敗・DBの使用中など）。
+        if import_backup_file(str(latest), quiet=True):
+            save_settings(DATA_DIR, last_synced=version)
 
     auto_sync = tk.BooleanVar(value=settings.get('auto_sync_on_start', True) is not False)
     ttk.Checkbutton(
