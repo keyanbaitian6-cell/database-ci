@@ -9,6 +9,12 @@ This directory is a local mirror of the ChatGPT project “LINE”.
 
 ## Project instructions
 
+## 取得系アプリの開発メモ（2026-10-15 利用者指定）
+
+- 今後の取得系アプリはこのプロジェクト内で、既存databaseを基盤に開発する。
+- 取得・巡回・HTML変換・取り込みブラウザを追加/修正するときは、着手前に [CAPTURE_APP_DEVELOPMENT.md](CAPTURE_APP_DEVELOPMENT.md) を読む。
+- 今回の対処を他サイトへ無条件にコピーせず、共通部品とサイト固有の条件を確認する。確認済み事項と実サイトでの未確認事項を引き継ぐ。
+
 ## PC版の更新方法（2026-10-14 利用者指示）
 
 - PC版は `database/start.cmd` からソースを起動できればよい。利用者「それもう作らなくていいっていわなかったっけ？」「.cmdから起動できれば問題ないからね」。

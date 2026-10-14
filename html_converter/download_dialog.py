@@ -8,6 +8,7 @@ from tkinter import ttk, filedialog, messagebox
 from anaslo_index import INDEX_URL, canonical_url, date_range, extract_links
 from anaslo_download import Client, MAX_BYTES, download
 from anaslo_browser import BrowserClient
+from html_converter_diagnostics import LOGGER
 
 BROWSER = 'browser'
 DIRECT = 'direct'
@@ -167,8 +168,12 @@ class DownloadDialog(tk.Toplevel):
         self.use_button.configure(state='disabled')
         def run():
             try:
-                self.events.put((kind, work()))
+                LOGGER.info('worker start: %s', kind)
+                result = work()
+                LOGGER.info('worker result ready: %s', kind)
+                self.events.put((kind, result))
             except Exception as exc:
+                LOGGER.exception('worker failed: %s', kind)
                 self.events.put(('error', str(exc)))
         threading.Thread(target=run, daemon=True).start()
 
@@ -185,6 +190,7 @@ class DownloadDialog(tk.Toplevel):
         self.links, self.paths = [], []
         self.table.delete(*self.table.get_children())
         self.status.set('指定期間のリンクを確認しています。')
+        LOGGER.info('scan requested: start=%s end=%s method=%s local=%s', key[1], key[2], key[5], key[3])
         def work():
             self.client.check()
             if key[3]:
@@ -193,8 +199,16 @@ class DownloadDialog(tk.Toplevel):
                 raw = Path(key[4]).read_bytes()
             else:
                 raw = self.with_client(lambda engine: engine.get(url, index=True), key[5])
+            LOGGER.info('index received: bytes=%d', len(raw))
             self.client.check()
-            return key, extract_links(raw, url, start, end)
+            links = extract_links(raw, url, start, end)
+            LOGGER.info('links extracted: selected=%d', len(links))
+            if not links:
+                all_links = extract_links(raw, url, '0001-01-01', '9999-12-31')
+                if not all_links:
+                    raise ValueError('一覧HTMLから対象店舗の日別リンクを確認できませんでした。保存した一覧HTMLでも確認してください。')
+                self.events.put(('log', f'一覧の掲載範囲：{all_links[0].day}〜{all_links[-1].day}。指定期間のリンクは0件です。'))
+            return key, links
         self.launch(work, 'scan')
 
     def start(self):
@@ -219,6 +233,7 @@ class DownloadDialog(tk.Toplevel):
         try:
             while True:
                 kind, data = self.events.get_nowait()
+                LOGGER.info('UI event: %s', kind)
                 if kind == 'log':
                     self.log.configure(state='normal')
                     self.log.insert('end', data + '\n')
@@ -231,6 +246,11 @@ class DownloadDialog(tk.Toplevel):
                         self.table.insert('', 'end', values=(item.day, item.url))
                     self.status.set(f'{key[1]}〜{key[2]}：対象{len(self.links)}日。表示した日付だけを取得します。')
                     self.set_busy(False)
+                    LOGGER.info('UI scan complete: rows=%d', len(self.links))
+                    self.deiconify()
+                    self.lift()
+                    if not self.links:
+                        messagebox.showwarning('指定期間のリンクがありません', '指定期間のリンクは0件です。ログの掲載範囲を確認してください。', parent=self)
                 elif kind == 'download':
                     self.paths = list(data.paths)
                     self.status.set(f'新規取得{data.downloaded}件・保存済み{data.skipped}件・失敗{data.failed}件。' + data.stopped)
@@ -244,7 +264,14 @@ class DownloadDialog(tk.Toplevel):
                         self.show_stop(data)
         except queue.Empty:
             pass
-        self.after_id = self.after(100, self.poll)
+        except Exception as exc:
+            LOGGER.exception('UI result processing failed')
+            self.status.set('画面への反映に失敗しました：' + str(exc))
+            self.set_busy(False)
+            self.show_stop('画面への反映に失敗しました：' + str(exc))
+        finally:
+            if self.winfo_exists():
+                self.after_id = self.after(100, self.poll)
 
     def show_stop(self, reason):
         self.log.configure(state='normal')

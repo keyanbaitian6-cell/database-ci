@@ -11,6 +11,7 @@ from app import apply_style
 from anaslo_converter import analyze, make_backup, read_catalog, save_backup, suggestions
 from pscube_import import is_excluded_machine
 from anaslo_download import PaceState
+from html_converter_diagnostics import LOGGER, setup as setup_diagnostics
 
 KEEP = 'HTMLの機種名を使う'
 OMIT = '取り込み対象から外す'
@@ -184,6 +185,15 @@ class Converter:
 
 def main():
     root = tk.Tk()
+    if '--smoke' not in sys.argv:
+        try:
+            setup_diagnostics()
+        except OSError as exc:
+            messagebox.showwarning('診断ログを保存できません', str(exc), parent=root)
+        def callback_error(kind, value, traceback):
+            LOGGER.error('Tk callback failed', exc_info=(kind, value, traceback))
+            messagebox.showerror('画面処理でエラーが発生しました', str(value), parent=root)
+        root.report_callback_exception = callback_error
     if '--smoke' in sys.argv:
         root.withdraw()
     Converter(root)

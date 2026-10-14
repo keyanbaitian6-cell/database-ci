@@ -101,6 +101,53 @@ class DialogTests(unittest.TestCase):
             self.poll_once()
             warning.assert_not_called()
 
+    def test_zero_dates_has_explicit_warning_and_listing_range(self):
+        self.dialog.start_day.set('2026-08-01')
+        self.dialog.end_day.set('2026-08-31')
+        with patch('download_dialog.messagebox.showwarning') as warning:
+            self.dialog.scan()
+            self.finish()
+        warning.assert_called_once()
+        self.assertIn('対象0日', self.dialog.status.get())
+        self.assertIn('2026-09-15〜2026-09-16', self.dialog.log.get('1.0', 'end'))
+
+    def test_browser_index_result_reaches_table_after_session_closes(self):
+        from anaslo_browser import BrowserClient
+        from test_anaslo_browser import FakeSession
+        self.dialog.local.set(False)
+        self.dialog.method.set('browser')
+        raw = ('<h1>P-STATION&amp;IIスロット館 データ一覧</h1>'
+               f'<a href="{link("2026-09-15").url}">9/15</a>'
+               '<script>const captchaEnabled = false;</script>').encode('utf-8')
+        session = FakeSession([raw])
+        self.dialog.browser_factory = lambda profile, **kwargs: BrowserClient(
+            profile, session_factory=lambda p: session, **kwargs)
+        with patch('download_dialog.messagebox.showwarning') as warning:
+            self.dialog.scan()
+            self.finish()
+        warning.assert_not_called()
+        self.assertTrue(session.closed)
+        self.assertEqual(len(self.dialog.table.get_children()), 1)
+        self.assertIn('対象1日', self.dialog.status.get())
+
+    def test_unrecognized_index_is_not_silent_zero_dates(self):
+        self.index.write_text('<html><h1>unexpected page</h1></html>', encoding='utf-8')
+        with patch('download_dialog.messagebox.showwarning') as warning, patch('download_dialog.LOGGER'):
+            self.dialog.scan()
+            self.finish()
+        warning.assert_called_once()
+        self.assertIn('日別リンクを確認できません', self.dialog.status.get())
+
+    def test_ui_exception_reports_reason_and_keeps_poll_scheduled(self):
+        self.dialog.events.put(('scan', (self.dialog.key(), [link('2026-09-15')])))
+        with patch.object(self.dialog.table, 'insert', side_effect=tk.TclError('test UI error')), patch('download_dialog.messagebox.showwarning') as warning, patch('download_dialog.LOGGER') as logger:
+            self.poll_once()
+        warning.assert_called_once()
+        logger.exception.assert_called_once()
+        self.assertIn('test UI error', self.dialog.status.get())
+        self.assertFalse(self.dialog.busy)
+        self.assertTrue(self.dialog.after_id)
+
     def test_existing_converter_load_path_connection(self):
         spec = importlib.util.spec_from_file_location('converter_ui_test', CONVERTER / 'app.py')
         ui = importlib.util.module_from_spec(spec)
