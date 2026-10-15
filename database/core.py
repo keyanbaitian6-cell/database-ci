@@ -3049,6 +3049,41 @@ def missing_graphs(store, day, location):
     return found
 
 
+SUMMARY_REPORT_CSS = r""":root{--carbon:#1d1d1f;--frost:#f5f5f7;--ash:#707070;--pebble:#e2e2e5;--hairline:#d2d2d7;--blue:#0071e3;--link:#0066cc}
+body{margin:0;background:var(--frost);color:var(--carbon);font-family:-apple-system,BlinkMacSystemFont,Inter,system-ui,"Segoe UI","Yu Gothic UI",sans-serif;font-size:14px}
+main{max-width:720px;margin:auto;padding:32px 16px}
+h1{margin:0 0 4px;font-size:26px;font-weight:600} h2{margin:28px 0 4px;font-size:18px;font-weight:600}
+.sub{color:var(--ash);margin:0 0 10px;line-height:1.6}
+.card{background:#fff;border:1px solid var(--hairline);border-radius:8px;overflow:hidden}
+table{width:100%;border-collapse:collapse} td{padding:12px 14px;border-bottom:1px solid #edeef0}
+tr:last-child td{border-bottom:none} td.rank{width:28px;color:var(--ash)} td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.none{color:var(--ash)}
+.badge{display:inline-block;border-radius:980px;padding:4px 12px;font-weight:600}
+.badge.high{background:var(--blue);color:#fff} .badge.mid{color:var(--link);border:1px solid var(--link)} .badge.low{background:var(--pebble);color:var(--ash)}
+.miss{margin-top:10px;background:#fff;border:1px solid var(--hairline);border-radius:8px;padding:12px 16px}
+.miss summary{cursor:pointer;font-weight:600} .miss ul{margin:10px 0 0;padding-left:18px;line-height:1.7}
+.note{color:var(--ash);font-size:12px}
+div.strip{display:flex;overflow-x:auto;border:1px solid var(--hairline);border-radius:8px;margin-top:6px}
+div.strip figure{margin:0;flex:1 0 96px;text-align:center;font-size:11px;color:var(--ash);border-right:1px solid #edeef0}
+div.strip figure:last-child{border-right:none}
+div.strip .sg svg,div.strip .sg img{width:100%;height:84px;object-fit:fill;background:#0c0c10;display:block;border-radius:0;max-height:none}
+div.strip figcaption{padding:4px 2px}
+table.trend{width:100%;border-collapse:collapse;font-size:13px} table.trend th{text-align:left;color:var(--ash);font-weight:500;padding:4px 6px}
+table.trend td{padding:5px 6px;border-top:1px solid #edeef0} table.trend td.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.pick{cursor:pointer} tr.pick:hover{background:#f4f8fb}
+.tag{display:inline-block;background:var(--pebble);color:var(--ash);border-radius:980px;padding:3px 10px;font-size:12px;margin:2px 4px 2px 0}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}
+.kpi{border:1px solid var(--hairline);border-radius:8px;padding:12px} .kpi b{display:block;font-size:20px;font-weight:600} .kpi span{color:var(--ash);font-size:12px}
+.dsub{color:var(--ash);font-size:13px;margin:4px 0}
+.dgraph svg,.dgraph img{width:100%;height:auto;max-height:320px;object-fit:contain;background:var(--carbon);border-radius:8px}
+.modal{position:fixed;inset:0;background:rgba(29,29,31,.5);display:flex;align-items:center;justify-content:center;padding:20px}
+.modal[hidden]{display:none}
+.modal-card{background:#fff;border-radius:8px;padding:24px;max-width:520px;width:100%;max-height:88vh;overflow:auto;position:relative;border:1px solid var(--hairline)}
+.modal-card h3{margin:0 0 6px;font-size:18px;font-weight:600}
+.modal-close{position:absolute;top:14px;right:16px;border:none;background:none;font-size:20px;cursor:pointer;color:var(--ash)}
+"""
+
+
 def summary_report(store, folder, day, top=5):
     """One-page digest of a day: per store, the best racks and how complete it is."""
     folder = Path(folder)
@@ -3180,39 +3215,7 @@ def summary_report(store, folder, day, top=5):
         raise ValueError(f'{day}の保存データがありません。')
     text = f'''<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>database まとめ</title>
 <style>
-:root{{--carbon:#1d1d1f;--frost:#f5f5f7;--ash:#707070;--pebble:#e2e2e5;--hairline:#d2d2d7;--blue:#0071e3;--link:#0066cc}}
-body{{margin:0;background:var(--frost);color:var(--carbon);font-family:-apple-system,BlinkMacSystemFont,Inter,system-ui,"Segoe UI","Yu Gothic UI",sans-serif;font-size:14px}}
-main{{max-width:720px;margin:auto;padding:32px 16px}}
-h1{{margin:0 0 4px;font-size:26px;font-weight:600}} h2{{margin:28px 0 4px;font-size:18px;font-weight:600}}
-.sub{{color:var(--ash);margin:0 0 10px;line-height:1.6}}
-.card{{background:#fff;border:1px solid var(--hairline);border-radius:8px;overflow:hidden}}
-table{{width:100%;border-collapse:collapse}} td{{padding:12px 14px;border-bottom:1px solid #edeef0}}
-tr:last-child td{{border-bottom:none}} td.rank{{width:28px;color:var(--ash)}} td.num{{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}}
-td.none{{color:var(--ash)}}
-.badge{{display:inline-block;border-radius:980px;padding:4px 12px;font-weight:600}}
-.badge.high{{background:var(--blue);color:#fff}} .badge.mid{{color:var(--link);border:1px solid var(--link)}} .badge.low{{background:var(--pebble);color:var(--ash)}}
-.miss{{margin-top:10px;background:#fff;border:1px solid var(--hairline);border-radius:8px;padding:12px 16px}}
-.miss summary{{cursor:pointer;font-weight:600}} .miss ul{{margin:10px 0 0;padding-left:18px;line-height:1.7}}
-.note{{color:var(--ash);font-size:12px}}
-div.strip{{display:flex;overflow-x:auto;border:1px solid var(--hairline);border-radius:8px;margin-top:6px}}
-div.strip figure{{margin:0;flex:1 0 96px;text-align:center;font-size:11px;color:var(--ash);border-right:1px solid #edeef0}}
-div.strip figure:last-child{{border-right:none}}
-div.strip .sg svg,div.strip .sg img{{width:100%;height:84px;object-fit:fill;background:#0c0c10;display:block;border-radius:0;max-height:none}}
-div.strip figcaption{{padding:4px 2px}}
-table.trend{{width:100%;border-collapse:collapse;font-size:13px}} table.trend th{{text-align:left;color:var(--ash);font-weight:500;padding:4px 6px}}
-table.trend td{{padding:5px 6px;border-top:1px solid #edeef0}} table.trend td.num{{text-align:right;font-variant-numeric:tabular-nums}}
-tr.pick{{cursor:pointer}} tr.pick:hover{{background:#f4f8fb}}
-.tag{{display:inline-block;background:var(--pebble);color:var(--ash);border-radius:980px;padding:3px 10px;font-size:12px;margin:2px 4px 2px 0}}
-.kpis{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}}
-.kpi{{border:1px solid var(--hairline);border-radius:8px;padding:12px}} .kpi b{{display:block;font-size:20px;font-weight:600}} .kpi span{{color:var(--ash);font-size:12px}}
-.dsub{{color:var(--ash);font-size:13px;margin:4px 0}}
-.dgraph svg,.dgraph img{{width:100%;height:auto;max-height:320px;object-fit:contain;background:var(--carbon);border-radius:8px}}
-.modal{{position:fixed;inset:0;background:rgba(29,29,31,.5);display:flex;align-items:center;justify-content:center;padding:20px}}
-.modal[hidden]{{display:none}}
-.modal-card{{background:#fff;border-radius:8px;padding:24px;max-width:520px;width:100%;max-height:88vh;overflow:auto;position:relative;border:1px solid var(--hairline)}}
-.modal-card h3{{margin:0 0 6px;font-size:18px;font-weight:600}}
-.modal-close{{position:absolute;top:14px;right:16px;border:none;background:none;font-size:20px;cursor:pointer;color:var(--ash)}}
-{FLIP7_CSS}</style></head><body><main><div class="f7-brand">{FLIP7_FAN}<h1>{html.escape(day)} のまとめ</h1></div>{event_subtitle}
+{SUMMARY_REPORT_CSS}{FLIP7_CSS}</style></head><body><main><div class="f7-brand">{FLIP7_FAN}<h1>{html.escape(day)} のまとめ</h1></div>{event_subtitle}
 <p class="sub">実績点の上位{top}台（機種横断の記録表示で、狙い台順位ではありません）。台をクリックするとグラフと当たり回数を表示します。独自の結果評価であり、出率・設定を表すものではありません。</p>
 {''.join(sections)}</main>
 <div id="detail-modal" class="modal" hidden><div class="modal-card"><button type="button" class="modal-close" onclick="closeDetail()" aria-label="閉じる">×</button><h3 id="detail-title"></h3><div id="detail-body"></div></div></div>

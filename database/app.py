@@ -478,6 +478,18 @@ def main():
                              'ページの「Googleドライブの自動読み込みを設定」にApps ScriptのURLを入れてください。\n')
         logbox.see('end')
 
+    def open_local_pscube(target, selected_machine=None):
+        from pscube_report import build_report
+        try:
+            output = build_report(DATA_DIR / 'pscube.sqlite3', ROOT / 'reports', target, selected_machine)
+            os.startfile(output)
+        except (ValueError, OSError) as exc:
+            messagebox.showinfo('P’s CUBEの保存データを開けません', str(exc), parent=root)
+
+    def external_pscube_selected():
+        from pscube_report import has_external_day
+        return has_external_day(DATA_DIR / 'pscube.sqlite3', day.get().strip())
+
     def refresh_days(*_args):
         location = current_location()
         if location == PSCUBE_KEY:
@@ -1150,6 +1162,9 @@ def main():
         if not target:
             messagebox.showinfo('まとめを開けません', '保存された日付がありません。', parent=root)
             return
+        if current_location() == PSCUBE_KEY:
+            open_local_pscube(target)
+            return
         db = Store(DATA_DIR / 'database.sqlite3')
         try:
             output = summary_report(db, ROOT / 'reports', target)
@@ -1162,6 +1177,9 @@ def main():
 
     def open_result():
         if current_location() == PSCUBE_KEY:
+            if external_pscube_selected():
+                open_local_pscube(day.get().strip(), machine.get().strip() or None)
+                return
             open_pscube_viewer()
             return
         try:
@@ -1180,6 +1198,9 @@ def main():
 
     def open_history():
         if current_location() == PSCUBE_KEY:
+            if external_pscube_selected():
+                open_local_pscube(day.get().strip())
+                return
             open_pscube_viewer()
             return
         def open_completed(result):
@@ -1395,7 +1416,7 @@ def main():
         except Exception as exc:
             messagebox.showerror('設定情報を保存できません', str(exc), parent=root)
 
-    ttk.Button(results_buttons, text='この日のまとめ（両店舗）', command=open_summary).pack(side='left')
+    ttk.Button(results_buttons, text='この日のまとめ', command=open_summary).pack(side='left')
     ttk.Button(results_buttons, text='選んだ機種の結果を開く', command=open_result).pack(side='left', padx=8)
     ttk.Button(results_buttons, text='過去の記録を見る', command=open_history).pack(side='left')
     ttk.Button(results_buttons, text='台記録を削除', style='Danger.TButton', command=delete_record).pack(side='left', padx=8)
