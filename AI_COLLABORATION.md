@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【一覧から日別へ同一ブラウザ・通常リンクで継続】2026-10-16 Codex
+
+- 実ログでは一覧HTTP200/31日成功、最初の日別8/1はHTTP403。移動拒否noticeは記録されず、拒否理由は不明。同じ8/1の日別データは普段のChromeで表示できると利用者確認。まだ旧版を再操作していた画像には、修正作業中なので再操作不要と説明した。
+- `DownloadDialog` はオンライン一覧で成功したBrowserClientを保持し、そのまま日別downloadへ渡す。プレビュー後55秒、子hostは無要求60秒で閉じる。入力変更・終了・例外でも閉じ、終了処理は別スレッド、次のworkerは終了を待ってから開始。日別完了/停止後はオンライン一覧の再確認が必要。保存一覧モードに勝手な一覧通信は追加しない。
+- hostの初回だけload_url、同一セッション内の次ページは表示中の出典をJS内でも確認して既存リンクを同じタブでクリック。リンクがなければ通常のlocation.assign。対象は既に検証した選択日URLのみ。HTTPヘッダーの偽造、Chrome Cookieの転用、認証の自動解決、403/429後の自動再試行なし。nativeのURL/日付/店舗・iframe制限と5〜8秒待機を維持する。
+- PCルート175件PASS（継続セッション・期限・入力変更・通常遷移の試験を追加/更新）、GUI_OK。旧Dialogで1FAIL/2ERRORを確認。ローカル実WebView2合成サイトではCookieがあっても旧load_urlだと参照元なしで403、新遷移は一覧→9/15→9/16が全て200、Cookie/参照元の条件を満たし、確認メニュー1回、最後にclose。これはアナスロの原因が参照元だったという証明ではない。
+- 証跡 `a/work/outputs/anaslo-browser-20261015/` の `browser-context-before.log`、`browser-context-after.log`、`browser-context-result.json`、`browser-reuse-before.log`、`browser-reuse-tests.log`、`verify_browser_context.py`。対象サイトへのAI通信0、実DB/Cookie無変更。専用プロファイルの保持設定は維持。診断版番号20261016-2。
+- 実サイトで403が解消するかは利用者確認待ち。EXE/APK/Webビルド・公開なし。
+
 ## 【Windows回帰チェック通知への対応】2026-10-15 Codex
 
 - `588d573` の通知ではLinux全体ゲートとLinux/JST・UTCは成功、Windows/JST・UTCは失敗。非公開Actionsの詳細ログは取得できず、通知された失敗との一致は未確定。このセッションにはメール取得ツールも公開されていない。

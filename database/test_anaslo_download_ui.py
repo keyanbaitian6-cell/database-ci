@@ -111,7 +111,7 @@ class DialogTests(unittest.TestCase):
         self.assertIn('対象0日', self.dialog.status.get())
         self.assertIn('2026-09-15〜2026-09-16', self.dialog.log.get('1.0', 'end'))
 
-    def test_browser_index_result_reaches_table_after_session_closes(self):
+    def test_browser_index_session_is_reused_for_daily_download(self):
         from anaslo_browser import BrowserClient
         from test_anaslo_browser import FakeSession
         self.dialog.local.set(False)
@@ -119,16 +119,52 @@ class DialogTests(unittest.TestCase):
         raw = ('<h1>P-STATION&amp;IIスロット館 データ一覧</h1>'
                f'<a href="{link("2026-09-15").url}">9/15</a>'
                '<script>const captchaEnabled = false;</script>').encode('utf-8')
-        session = FakeSession([raw])
-        self.dialog.browser_factory = lambda profile, **kwargs: BrowserClient(
-            profile, session_factory=lambda p: session, **kwargs)
+        session = FakeSession([raw, html()])
+        engines = []
+        def factory(profile, **kwargs):
+            engine = BrowserClient(profile, session_factory=lambda p: session,
+                                   clock=lambda: 100.0 * len(session.calls), **kwargs)
+            engines.append(engine)
+            return engine
+        self.dialog.browser_factory = factory
         with patch('download_dialog.messagebox.showwarning') as warning:
             self.dialog.scan()
             self.finish()
         warning.assert_not_called()
-        self.assertTrue(session.closed)
+        self.assertFalse(session.closed)
         self.assertEqual(len(self.dialog.table.get_children()), 1)
         self.assertIn('対象1日', self.dialog.status.get())
+        self.assertTrue(self.dialog.browser_idle_after)
+        self.dialog.start()
+        self.finish()
+        self.assertEqual(len(engines), 1)
+        self.assertEqual(len(session.calls), 2)
+        self.assertTrue(session.closed)
+        self.assertIsNone(self.dialog.browser_idle_after)
+        self.assertIsNone(self.dialog.scan_key)
+        self.assertEqual(len(self.dialog.paths), 1)
+
+    def test_kept_browser_expires_and_requires_preview_again(self):
+        from unittest.mock import Mock
+        engine = Mock()
+        self.dialog.browser_engine = engine
+        self.dialog.scan_key = self.dialog.key()
+        self.dialog.links = [link('2026-09-15')]
+        self.dialog.expire_browser()
+        self.dialog.browser_cleanup.join(1)
+        engine.close.assert_called_once()
+        self.assertIsNone(self.dialog.browser_engine)
+        self.assertIsNone(self.dialog.scan_key)
+        self.assertEqual(str(self.dialog.start_button['state']), 'disabled')
+
+    def test_input_change_closes_kept_browser(self):
+        from unittest.mock import Mock
+        engine = Mock()
+        self.dialog.browser_engine = engine
+        self.dialog.start_day.set('2026-09-16')
+        self.dialog.browser_cleanup.join(1)
+        engine.close.assert_called_once()
+        self.assertIsNone(self.dialog.browser_engine)
 
     def test_unrecognized_index_is_not_silent_zero_dates(self):
         self.index.write_text('<html><h1>unexpected page</h1></html>', encoding='utf-8')

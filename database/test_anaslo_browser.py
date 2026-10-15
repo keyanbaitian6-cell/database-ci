@@ -9,7 +9,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from anaslo_browser import BrowserClient
-from anaslo_browser_host import NavigationState, install_handlers, is_embedded_document
+from anaslo_browser_host import NavigationState, install_handlers, is_embedded_document, navigate_target
 from anaslo_download import AccessStopped, Stopped, download
 from test_anaslo_download import FakeCancel, html, link
 from test_anaslo_download_ui import CONVERTER
@@ -151,6 +151,19 @@ class BrowserTests(unittest.TestCase):
 
 
 class NavigationTests(unittest.TestCase):
+    def test_navigation_uses_same_tab_after_initial_load_without_retry(self):
+        window = unittest.mock.Mock()
+        target = link('2026-09-15').url
+        self.assertEqual(navigate_target(window, target, None), 'initial')
+        window.load_url.assert_called_once_with(target)
+        for result in ('link', 'location'):
+            window.evaluate_js.return_value = result
+            self.assertEqual(navigate_target(window, target, target), result)
+        window.load_url.assert_called_once()
+        window.evaluate_js.return_value = 'stale'
+        with self.assertRaises(ValueError):
+            navigate_target(window, target, target)
+        window.load_url.assert_called_once()
     def test_native_frame_requests_are_allowed_but_not_whole_window_clicks(self):
         state = NavigationState()
         state.target(link('2026-09-15').url, False)

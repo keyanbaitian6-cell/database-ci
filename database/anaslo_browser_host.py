@@ -4,6 +4,7 @@ No js_api is exposed to the website. CAPTCHA/consent is always a human action.
 """
 import threading
 import time
+import json
 from urllib.parse import urlsplit, unquote
 
 from anaslo_index import canonical_url
@@ -94,6 +95,31 @@ class NavigationState:
             self.web_error = str(web_error)
             if not success and (self.status is None or self.status == 200):
                 self.error = 'ブラウザのページ読み込みに失敗しました。' + (f' ({web_error})' if web_error else '')
+
+
+def navigate_target(window, url, previous):
+    if previous is None:
+        window.load_url(url)
+        return 'initial'
+    request = json.dumps({'before': previous, 'target': url})
+    # Normal same-tab browser navigation retains the page/session context.
+    # No Cookie/User-Agent/Referer headers are forged and no denial is retried.
+    result = window.evaluate_js('''(() => { /* anaslo navigation */
+      const request = ''' + request + ''';
+      const before = new URL(request.before), target = new URL(request.target);
+      const same = (a,b) => a.origin === b.origin && !a.search && !b.search &&
+        decodeURIComponent(a.pathname) === decodeURIComponent(b.pathname);
+      if (!same(new URL(location.href), before)) return 'stale';
+      const link = [...document.querySelectorAll('a[href]')].find(a => {
+        try { return same(new URL(a.href), target); } catch (_) { return false; }
+      });
+      if (link) { link.removeAttribute('target'); link.click(); return 'link'; }
+      location.assign(target.href);
+      return 'location';
+    })()''')
+    if result not in ('link', 'location'):
+        raise ValueError('移動前の表示ページを確認できないため停止しました。')
+    return result
 
 
 def install_handlers(window, state):
@@ -194,9 +220,11 @@ def run_host(connection, profile):
         nonlocal approved
         if state.error:
             raise ValueError(state.error)
+        previous = state.expected
         state.target(url, index)
         confirmed.clear()
-        window.load_url(url)
+        route = navigate_target(window, url, previous)
+        send('progress', text='ページ移動：' + route)
         if not approved:
             send('progress', text='ブラウザで表示を確認し、上部「取得」→「表示を確認して自動取得を開始」を選んでください。')
         deadline = time.monotonic() + (300 if not approved else 45)
@@ -236,7 +264,6 @@ def run_host(connection, profile):
                 return JSON.stringify({too_large:true});
               return JSON.stringify({url:location.href,ready:document.readyState,html});
             })()''')
-            import json
             snapshot = json.loads(snapshot) if isinstance(snapshot, str) else snapshot
             if isinstance(snapshot, dict) and snapshot.get('too_large'):
                 raise ValueError('HTMLが上限16MiBを超えています。')
@@ -260,9 +287,12 @@ def run_host(connection, profile):
         return False
 
     def serve():
+        idle_deadline = time.monotonic() + 60
         try:
             while not closed.is_set():
                 if not connection.poll(0.1):
+                    if time.monotonic() > idle_deadline:
+                        break
                     continue
                 command = connection.recv()
                 if command.get('kind') == 'close':
@@ -273,6 +303,7 @@ def run_host(connection, profile):
                 url = canonical_url(command.get('url', ''), index=index)
                 if not capture(url, index):
                     break
+                idle_deadline = time.monotonic() + 60
         except (EOFError, OSError):
             pass
         except Exception as exc:

@@ -13,5 +13,5 @@ def setup():
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
     LOGGER.addHandler(handler)
     LOGGER.setLevel(logging.INFO)
-    LOGGER.info('app started; diagnostics revision 20261015-1')
+    LOGGER.info('app started; diagnostics revision 20261016-2')
     return LOG_PATH

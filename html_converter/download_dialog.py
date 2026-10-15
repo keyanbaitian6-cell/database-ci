@@ -27,6 +27,9 @@ class DownloadDialog(tk.Toplevel):
         self.cancel = threading.Event()
         self.client = Client(self.cancel, pacing=pacing)
         self.browser_factory = BrowserClient
+        self.browser_engine = None
+        self.browser_cleanup = None
+        self.browser_idle_after = None
         self.method = tk.StringVar(value=BROWSER)
         self.busy = False
         self.links = []
@@ -122,7 +125,29 @@ class DownloadDialog(tk.Toplevel):
         from calendar_picker import CalendarPicker
         CalendarPicker(self, variable.get(), variable.set)
 
-    def with_client(self, action, method):
+    def cancel_browser_idle(self):
+        if self.browser_idle_after:
+            self.after_cancel(self.browser_idle_after)
+            self.browser_idle_after = None
+
+    def close_browser(self):
+        self.cancel_browser_idle()
+        engine, self.browser_engine = self.browser_engine, None
+        if engine:
+            self.browser_cleanup = threading.Thread(target=engine.close, daemon=True)
+            self.browser_cleanup.start()
+
+    def expire_browser(self):
+        self.browser_idle_after = None
+        if self.busy:
+            return
+        self.close_browser()
+        self.scan_key = None
+        self.set_busy(False)
+        self.status.set('待機が55秒を超えたため取得ブラウザを閉じました。「指定期間のリンクを確認」から再開してください。')
+        LOGGER.info('idle browser closed')
+
+    def with_client(self, action, method, *, keep=False):
         if method == DIRECT:
             return action(self.client)
         if method != BROWSER:
@@ -130,16 +155,28 @@ class DownloadDialog(tk.Toplevel):
         def progress(text):
             LOGGER.info('browser: %s', text)
             self.events.put(('log', text))
-        engine = self.browser_factory(Path(__file__).parent / 'data' / 'anaslo-webview', cancel=self.cancel,
+        if self.browser_cleanup:
+            self.browser_cleanup.join(6)
+            if self.browser_cleanup.is_alive():
+                raise ValueError('前のブラウザの終了を待っています。終了後に一覧を確認してください。')
+            self.browser_cleanup = None
+        engine, self.browser_engine = self.browser_engine, None
+        if engine is None:
+            engine = self.browser_factory(Path(__file__).parent / 'data' / 'anaslo-webview', cancel=self.cancel,
                                       pacing=self.client.pacing,
                                       progress=progress)
         try:
-            return action(engine)
+            result = action(engine)
+            if keep and not self.cancel.is_set():
+                self.browser_engine = engine
+            return result
         finally:
-            engine.close()
+            if self.browser_engine is not engine:
+                engine.close()
 
     def invalidate(self):
         if not self.busy:
+            self.close_browser()
             self.start_button.configure(state='disabled')
             self.use_button.configure(state='disabled')
             self.paths = []
@@ -181,6 +218,8 @@ class DownloadDialog(tk.Toplevel):
         threading.Thread(target=run, daemon=True).start()
 
     def scan(self):
+        if self.busy:
+            return
         key = self.key()
         try:
             url = canonical_url(key[0], index=True)
@@ -191,6 +230,7 @@ class DownloadDialog(tk.Toplevel):
             messagebox.showerror('指定を確認してください', str(exc), parent=self)
             return
         self.links, self.paths = [], []
+        self.close_browser()
         self.table.delete(*self.table.get_children())
         self.status.set('指定期間のリンクを確認しています。')
         LOGGER.info('scan requested: start=%s end=%s method=%s local=%s', key[1], key[2], key[5], key[3])
@@ -201,7 +241,7 @@ class DownloadDialog(tk.Toplevel):
                     raise ValueError('一覧HTMLが16MiBを超えています。')
                 raw = Path(key[4]).read_bytes()
             else:
-                raw = self.with_client(lambda engine: engine.get(url, index=True), key[5])
+                raw = self.with_client(lambda engine: engine.get(url, index=True), key[5], keep=True)
             LOGGER.info('index received: bytes=%d', len(raw))
             self.client.check()
             links = extract_links(raw, url, start, end)
@@ -222,6 +262,7 @@ class DownloadDialog(tk.Toplevel):
             messagebox.showerror('保存先を確認してください', 'HTML保存先を指定してください。', parent=self)
             return
         start, end = date_range(self.scan_key[1], self.scan_key[2])
+        self.cancel_browser_idle()
         links = tuple(self.links)
         self.paths = []
         self.status.set(f'{start}〜{end}の{len(links)}日分を取得します。')
@@ -249,20 +290,29 @@ class DownloadDialog(tk.Toplevel):
                         self.table.insert('', 'end', values=(item.day, item.url))
                     self.status.set(f'{key[1]}〜{key[2]}：対象{len(self.links)}日。表示した日付だけを取得します。')
                     self.set_busy(False)
+                    if self.browser_engine and self.links:
+                        self.cancel_browser_idle()
+                        self.browser_idle_after = self.after(55000, self.expire_browser)
+                        self.status.set(self.status.get() + ' 同じブラウザで続行します。55秒以内に取得を開始してください。')
                     LOGGER.info('UI scan complete: rows=%d', len(self.links))
                     self.deiconify()
                     self.lift()
                     if not self.links:
+                        self.close_browser()
                         messagebox.showwarning('指定期間のリンクがありません', '指定期間のリンクは0件です。ログの掲載範囲を確認してください。', parent=self)
                 elif kind == 'download':
                     self.paths = list(data.paths)
+                    if self.scan_key and self.scan_key[5] == BROWSER and not self.scan_key[3]:
+                        self.scan_key = None
                     self.status.set(f'新規取得{data.downloaded}件・保存済み{data.skipped}件・失敗{data.failed}件。' + data.stopped)
                     self.set_busy(False)
                     if data.stopped and not self.cancel.is_set():
                         self.show_stop(data.stopped)
                 elif kind == 'error':
+                    self.scan_key = None
                     self.status.set('処理を停止しました：' + data)
                     self.set_busy(False)
+                    self.close_browser()
                     if not self.cancel.is_set():
                         self.show_stop(data)
         except queue.Empty:
@@ -271,6 +321,7 @@ class DownloadDialog(tk.Toplevel):
             LOGGER.exception('UI result processing failed')
             self.status.set('画面への反映に失敗しました：' + str(exc))
             self.set_busy(False)
+            self.close_browser()
             self.show_stop('画面への反映に失敗しました：' + str(exc))
         finally:
             if self.winfo_exists():
@@ -287,6 +338,9 @@ class DownloadDialog(tk.Toplevel):
 
     def destroy(self):
         self.cancel.set()
+        self.cancel_browser_idle()
+        if not self.busy:
+            self.close_browser()
         if getattr(self, 'after_id', None):
             self.after_cancel(self.after_id)
             self.after_id = None
