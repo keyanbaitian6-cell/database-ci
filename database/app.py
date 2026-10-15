@@ -1455,7 +1455,8 @@ def main():
         closing[0] = True
         # Prevent another edit after the final output snapshot was requested.
         # Timers keep running so completion/error notifications still reach Tk.
-        tag = str(root) + '.closing-input'
+        # A bind tag beginning with '.' is interpreted as a window pathname.
+        tag = 'DatabaseClosingInput'
         root.bind_class(tag, '<ButtonPress>', lambda event: 'break')
         root.bind_class(tag, '<KeyPress>', lambda event: 'break')
         def block_inputs(widget):
