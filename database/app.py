@@ -12,6 +12,7 @@ import tkinter.font as tkfont
 import pscube_import
 from event_calendar import PscubeEvents, open_event_calendar
 from variety_rainbow import build_variety_tab
+from output_worker import OutputWorker, refresh_outputs
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
@@ -309,6 +310,10 @@ def apply_style(root):
 
 
 def main():
+    # Collect old Tk interpreters on their owner thread before starting workers
+    # (also relevant when an embedded caller opens and closes this UI repeatedly).
+    import gc
+    gc.collect()
     root = tk.Tk()
     root.title('database')
     root.geometry('920x780')
@@ -336,6 +341,36 @@ def main():
     # まとめて1回（2026-10-12 利用者「一個押すたびに保存処理をしているようで数秒かかってしまう。…まとめてつけてから
     # 保存処理してほしい」）：バラエティ🌈の「閲覧・共有ページに反映」ボタン、バラエティ🌈のタブを離れるとき、
     # カレンダーを閉じるとき、PC版を閉じるとき。「過去の記録」の作り直し（10秒ほど）は🌈のときはしない。
+    output_worker = OutputWorker(lambda **options: refresh_outputs(
+        DATA_DIR / 'database.sqlite3', DATA_DIR, ROOT / 'reports', **options))
+    output_poll = [None]
+    closing = [False]
+
+    def poll_outputs():
+        output_poll[0] = None
+        for result in output_worker.poll():
+            if result.error:
+                tell(f'記録はPCに保存済みですが、レポート・バックアップの更新に失敗しました：{result.error}\n')
+            else:
+                timings = '、'.join(f'{name} {seconds:.2f}秒' for name, seconds in result.value['timings'].items())
+                tell(f'出力更新が完了しました（{timings}）。\n')
+                for notice in result.value.get('notices', []):
+                    tell(notice + '\n')
+            for callback in result.callbacks:
+                try:
+                    callback(result)
+                except Exception as error:
+                    tell(f'出力後の画面更新に失敗しました：{error}\n')
+        if closing[0] and output_worker.finished:
+            root.destroy()
+        elif output_worker.thread is not None and output_worker.thread.is_alive():
+            output_poll[0] = root.after(50, poll_outputs)
+
+    def schedule_outputs(*, history=False, backup=False, pscube=False, done=None):
+        output_worker.request(history=history, backup=backup, pscube=pscube, done=done)
+        if output_poll[0] is None:
+            output_poll[0] = root.after(50, poll_outputs)
+
     rainbow_pending = [0]
     pending_text = tk.StringVar(value='反映済み')
 
@@ -346,22 +381,28 @@ def main():
         rainbow_pending[0] += 1
         show_pending()
 
+    rainbow_inflight = [False]
+
     def flush_rainbow():
-        if not rainbow_pending[0]:
+        if not rainbow_pending[0] or rainbow_inflight[0]:
             return
+        count = rainbow_pending[0]
+        rainbow_inflight[0] = True
         pending_text.set('反映中…')
-        root.update_idletasks()
-        db = Store(DATA_DIR / 'database.sqlite3')
-        try:
-            auto_backup(db, DATA_DIR)
-            pending_marks = len(db.pending_rainbow_marks())
-        finally:
-            db.close()
-        tell(f'🌈の付け外し{rainbow_pending[0]}件を、閲覧ページ・共有ページ用のファイルとバックアップに反映しました。\n')
-        if pending_marks:
-            tell('未取り込み日の印はこのPCとバックアップに保存しています。Webへの反映は、その日の数値を取り込んだ後です。\n')
-        rainbow_pending[0] = 0
-        show_pending()
+        def complete(result):
+            rainbow_inflight[0] = False
+            if result.error:
+                pending_text.set('反映に失敗（印はPCに保存済み）')
+                return
+            if result.value.get('notices'):
+                pending_text.set('PC内に保存済み（同期フォルダ未設定）')
+                return
+            rainbow_pending[0] = max(0, rainbow_pending[0] - count)
+            tell(f'🌈の付け外し{count}件を、閲覧・共有ページ用のファイルとバックアップに反映しました。\n')
+            if result.value['pending_marks']:
+                tell('未取り込み日の印はPCとバックアップに保存しています。Webへの反映は数値の取り込み後です。\n')
+            show_pending()
+        schedule_outputs(backup=True, done=complete)
     refresh_variety = None
     # タブを開いたときに読み直す（取り込みで新しい日・入れ替えが入っていれば一覧が変わる）。離れるときは🌈をまとめて反映。
     current_tab = [None]
@@ -505,8 +546,8 @@ def main():
         try:
             changed = pull_shared_rainbow(db, folder)
             if changed:
-                auto_backup(db, DATA_DIR)
-                history_report(db, ROOT / 'reports')
+                schedule_outputs(backup=True)
+                schedule_outputs(history=True)
         except Exception as exc:  # noqa: BLE001 - 取り込めなくても画面は動かす（次にまた試す）
             tell(f'iPhoneで付けた🌈を取り込めませんでした：{exc}\n')
             return 0
@@ -566,7 +607,7 @@ def main():
             try:
                 store.set_date_event(selected_day, None if selected == 'イベントなし' else selected)
                 # 閲覧ページ（Googleドライブ経由）とバックアップにも反映する。
-                pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
+                schedule_outputs(pscube=True)
             except ValueError as error:
                 messagebox.showwarning('イベント名', str(error), parent=root)
             finally:
@@ -576,21 +617,21 @@ def main():
         db = Store(ROOT / 'data' / 'database.sqlite3')
         try:
             db.set_date_event(location, selected_day, None if selected == 'イベントなし' else selected)
-            auto_backup(db, DATA_DIR)
-            history_report(db, ROOT / 'reports')
+            schedule_outputs(backup=True)
+            schedule_outputs(history=True)
         finally:
             db.close()
         refresh_event()
 
     def open_events_calendar():
         def changed(db):
-            auto_backup(db, DATA_DIR)
-            history_report(db, ROOT / 'reports')
+            schedule_outputs(backup=True)
+            schedule_outputs(history=True)
             root.after(0, refresh_event)
 
         def pscube_changed(store):
             # 閲覧ページ（Googleドライブ経由）とバックアップにも反映する（イベント欄と同じ）。
-            pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
+            schedule_outputs(pscube=True)
             root.after(0, refresh_event)
 
         pull_shared_events_now()
@@ -826,7 +867,7 @@ def main():
             if not db.rows(target, name, location):
                 return None
             output, results = report(db, target, name, ROOT / 'reports', location)
-            history_report(db, ROOT / 'reports')
+            schedule_outputs(history=True)
         finally:
             db.close()
         done = sum(row['score']['total'] is not None for row in results)
@@ -905,8 +946,8 @@ def main():
                 root.wait_window(dialog)
                 if dialog.selected:
                     db.save(dialog.selected)
-            history_report(db, ROOT / 'reports')
-            auto_backup(db, DATA_DIR)
+            schedule_outputs(history=True)
+            schedule_outputs(backup=True)
         except Exception as exc:
             messagebox.showerror('取り込めません', str(exc), parent=root)
             return False
@@ -947,7 +988,7 @@ def main():
         sync_dir.set(folder)
         db = Store(DATA_DIR / 'database.sqlite3')
         try:
-            auto_backup(db, DATA_DIR)
+            schedule_outputs(backup=True)
         finally:
             db.close()
         logbox.insert('end', f'同期フォルダを設定しました：{folder}\n最新のバックアップを書き出しました。\n')
@@ -985,7 +1026,7 @@ def main():
         store = pscube_import.PscubeStore(DATA_DIR / 'pscube.sqlite3')
         try:
             summary = store.import_backup(latest)
-            pscube_import.auto_backup(store, DATA_DIR / 'pscube-viewer.json')
+            schedule_outputs(pscube=True)
         except Exception as exc:
             messagebox.showerror('取り込めません', str(exc), parent=root)
             return False
@@ -1084,8 +1125,8 @@ def main():
         db = Store(DATA_DIR / 'database.sqlite3')
         try:
             result = restore_backup(db, chosen['path'])
-            history_report(db, ROOT / 'reports')
-            auto_backup(db, DATA_DIR)
+            schedule_outputs(history=True)
+            schedule_outputs(backup=True)
         except Exception as exc:
             messagebox.showerror('戻せません', str(exc), parent=root)
             return
@@ -1141,15 +1182,10 @@ def main():
         if current_location() == PSCUBE_KEY:
             open_pscube_viewer()
             return
-        try:
-            db = Store(ROOT / 'data' / 'database.sqlite3')
-            try:
-                output = history_report(db, ROOT / 'reports')
-            finally:
-                db.close()
-            os.startfile(output)
-        except Exception as exc:
-            messagebox.showerror('過去の記録を開けません', str(exc), parent=root)
+        def open_completed(result):
+            if not result.error:
+                os.startfile(result.value['history'])
+        schedule_outputs(history=True, done=open_completed)
 
     def open_pachinko():
         from pachinko_report import build_report
@@ -1192,8 +1228,8 @@ def main():
                     return
                 db.delete(location, target, name, rack)
                 remaining = db.rows(target, name, location)
-                history_report(db, ROOT / 'reports')
-                auto_backup(db, DATA_DIR)
+                schedule_outputs(history=True)
+                schedule_outputs(backup=True)
             finally:
                 db.close()
             refresh_days()
@@ -1282,8 +1318,9 @@ def main():
                 return
             db = Store(DATA_DIR / 'database.sqlite3')
             try:
-                deleted = delete_records(db, DATA_DIR, target, scope['location'], scope['machine'])
-                history_report(db, ROOT / 'reports')
+                deleted = delete_records(db, DATA_DIR, target, scope['location'], scope['machine'], defer_outputs=True)
+                schedule_outputs(backup=True)
+                schedule_outputs(history=True)
             finally:
                 db.close()
             refresh_days()
@@ -1347,8 +1384,8 @@ def main():
                 if 'value' not in selected:
                     return
                 db.set_confirmed_setting(location, target, name, rack, selected['value'])
-                history_report(db, ROOT / 'reports')
-                auto_backup(db, DATA_DIR)
+                schedule_outputs(history=True)
+                schedule_outputs(backup=True)
             finally:
                 db.close()
             make_report(location, name, target)
@@ -1371,8 +1408,9 @@ def main():
             return
         db = Store(DATA_DIR / 'database.sqlite3')
         try:
-            label = undo_last_save(db, DATA_DIR)
-            history_report(db, ROOT / 'reports')
+            label = undo_last_save(db, DATA_DIR, defer_outputs=True)
+            schedule_outputs(backup=True)
+            schedule_outputs(history=True)
         except ValueError as exc:
             messagebox.showinfo('取り消せません', str(exc), parent=root)
             return
@@ -1387,13 +1425,40 @@ def main():
 
     root.after(400, auto_sync_on_start)
     def close_app():
-        try:
-            flush_rainbow()   # 未反映の🌈があれば、閉じる前にまとめて反映
-        except Exception as exc:  # noqa: BLE001 - 反映できなくても閉じられるように（記録は保存済み）
-            print(f'🌈の反映に失敗しました：{exc}')
-        root.destroy()
+        if closing[0]:
+            return
+        if rainbow_pending[0]:
+            flush_rainbow()
+            # Marks added while an earlier output was running need one final snapshot.
+            schedule_outputs(backup=True)
+        closing[0] = True
+        # Prevent another edit after the final output snapshot was requested.
+        # Timers keep running so completion/error notifications still reach Tk.
+        tag = str(root) + '.closing-input'
+        root.bind_class(tag, '<ButtonPress>', lambda event: 'break')
+        root.bind_class(tag, '<KeyPress>', lambda event: 'break')
+        def block_inputs(widget):
+            for child in widget.winfo_children():
+                child.bindtags((tag, *child.bindtags()))
+                block_inputs(child)
+        block_inputs(root)
+        output_worker.finish()
+        if output_poll[0] is None:
+            poll_outputs()
     root.protocol('WM_DELETE_WINDOW', close_app)
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        output_worker.finish()
+        if output_worker.thread is not None:
+            output_worker.thread.join()
+        # The event loop has ended; release pending Tk callbacks on this thread.
+        list(output_worker.poll())
+        try:
+            for timer in root.tk.call('after', 'info'):
+                root.after_cancel(timer)
+        except tk.TclError:
+            pass
 
 
 if __name__ == '__main__':

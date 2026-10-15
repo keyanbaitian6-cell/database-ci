@@ -1,4 +1,7 @@
 import 'dart:typed_data';
+import 'dart:convert';
+
+import 'package:database_android/record_deletions.dart';
 
 import 'package:database_android/database_service.dart';
 import 'package:database_android/import_service.dart';
@@ -69,6 +72,24 @@ void main() {
   Future<SlotRecord> row(int rack) async =>
       (await fullRows(db)).firstWhere((r) => r.rack == rack);
 
+  Future<void> expectExplicitlyRestored() async {
+    final restored = (await fullRows(db)).single;
+    final operation = restored.extra['record_updated_at'];
+    final marks = readRecordDeletions(
+      jsonDecode((await db.loadState())['record_deletions']!),
+    );
+    expect(
+      recordOperationTime(operation)!.isAfter(marks.single.deletedAt),
+      isTrue,
+    );
+    expect(
+      restored.encode(),
+      old
+          .copyWith(extra: {...old.extra, 'record_updated_at': operation})
+          .encode(),
+    );
+  }
+
   Future<void> save({int games = 3000, int rack = 703}) =>
       app.saveTable(old.store, old.day, old.machine, [
         EditableRow(
@@ -132,9 +153,7 @@ void main() {
     await expectLater(save(), throwsStateError);
     db.failWrite = false;
     await app.undoLastSave();
-    expect((await fullRows(db)).map((r) => r.encode()).toList(), [
-      old.encode(),
-    ]);
+    await expectExplicitlyRestored();
   });
 
   test('取り消しが失敗しても控えを維持し再試行できる', () async {
@@ -144,7 +163,7 @@ void main() {
     expect(await db.loadAll(), isEmpty);
     db.failWrite = false;
     await app.undoLastSave();
-    expect((await fullRows(db)).single.encode(), old.encode());
+    await expectExplicitlyRestored();
     expect(await app.undoLastSave(), contains('ありません'));
   });
 
@@ -180,10 +199,7 @@ void main() {
     // 候補から外れる（その変化は記録する）。
     await save(games: 3500);
     snapshots = await db.loadCandidateSnapshots();
-    expect(
-      [for (final s in snapshots) s.candidates.length]..sort(),
-      [0, 1],
-    );
+    expect([for (final s in snapshots) s.candidates.length]..sort(), [0, 1]);
     // 画面側はグループごとの最新だけを持つ。
     expect(app.candidateSnapshots, hasLength(1));
     expect(app.candidateSnapshots.single.candidates, isEmpty);

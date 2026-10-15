@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {rmSync} from 'node:fs';
 import {dirname} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import http from 'node:http';
+import {readFile} from 'node:fs/promises';
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 const build = `
@@ -26,13 +27,19 @@ print(pachinko_report.build_report(slot, folder / 'reports'))
 const path = execFileSync(process.env.PYTHON || 'python', ['-c', build],
   {cwd: new URL('../../database/', import.meta.url), encoding: 'utf8'}).trim();
 
+// Use HTTP consistently with the other browser tests (managed browsers may forbid file://).
+const server = http.createServer(async (request, response) => {
+  try { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(await readFile(path)); }
+  catch { response.writeHead(404).end(); }
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined});
 try {
   for (const [width, scheme] of [[1200, 'light'], [390, 'dark'], [320, 'light']]) {
     const page = await browser.newPage({viewport: {width, height: 900}, colorScheme: scheme});
     const errors = [];
     page.on('pageerror', e => errors.push(String(e)));
-    await page.goto(pathToFileURL(path).href);
+    await page.goto(`http://127.0.0.1:${server.address().port}/pachinko.html`);
     assert.equal(await page.locator('#day').inputValue(), '2026-10-20', '最新の日から');
     await page.selectOption('#day', '2026-10-10');
     assert.match(await page.locator('#kpis').innerText(), /3台/, '末尾0（80・90・100）だけ');
@@ -60,5 +67,6 @@ try {
   console.log('OK: パチンコ 末尾の記録のページ（月に合わせた末尾から・末尾の切り替え・一覧から台へ・くわしい記録・1200/390/320px）');
 } finally {
   await browser.close();
+  await new Promise(resolve => server.close(resolve));
   rmSync(dirname(dirname(path)), {recursive: true, force: true});
 }

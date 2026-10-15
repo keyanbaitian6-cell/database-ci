@@ -1,6 +1,35 @@
 function vhInput(file, kind) {
   return {file, kind, id: kind + ':' + file.getId(), name: file.getName(), size: file.getSize(), version: vpVersion(file)};
 }
+// A missing day may have aged out of the PC's 60-day view. Only an explicit,
+// timestamped operation can remove a record from the permanent cloud history.
+function vhDeletions(doc) {
+  const marks = doc.record_deletions === undefined ? [] : doc.record_deletions;
+  if (!Array.isArray(marks) || marks.some(m => !m || !MERUHEN_STORES.includes(m.store) ||
+      !meruhenValidDay(m.day) || typeof m.machine !== 'string' || !m.machine.trim() ||
+      !Number.isSafeInteger(m.rack) || m.rack < 1 || meruhenTime(m.deleted_at) === null ||
+      !/(?:Z|[+-]\d{2}:\d{2})$/.test(m.deleted_at))) throw new Error('削除記録が不正です。');
+  return marks;
+}
+function vhNotDeleted(row, deletions) {
+  const mark = deletions.get(meruhenKey(row));
+  return !mark || Math.max(meruhenTime(row.record_updated_at) || 0, meruhenTime(row.captured_at) || 0) > meruhenTime(mark.deleted_at);
+}
+function vhMergeMeruhen(old, fresh, kind) {
+  const marks = new Map(vhDeletions(old).map(m => [meruhenKey(m), m]));
+  for (const m of vhDeletions(fresh)) {
+    const key = meruhenKey(m), prior = marks.get(key);
+    if (!prior || meruhenTime(m.deleted_at) > meruhenTime(prior.deleted_at)) marks.set(key, m);
+  }
+  const android = new Map(old.android.map(r => [meruhenKey(r), r]));
+  if (kind !== 'pc') for (const r of fresh.records) {
+    const key = meruhenKey(r), prior = android.get(key);
+    android.set(key, prior ? meruhenPick(prior, r) : r);
+  }
+  return {...old, record_deletions: [...marks.values()],
+    pc: (kind === 'pc' ? fresh.records : old.pc).filter(r => vhNotDeleted(r, marks)),
+    android: [...android.values()].filter(r => vhNotDeleted(r, marks))};
+}
 function vhGroup(doc, site) {
   const grouped = new Map();
   for (const r of doc.records) {
@@ -8,9 +37,11 @@ function vhGroup(doc, site) {
   }
   // イベントだけのバックアップも日付単位で処理する。
   for (const e of doc.date_events || []) if (!grouped.has(e.day)) grouped.set(e.day, []);
+  if (site === 'meruhen') for (const m of vhDeletions(doc)) if (!grouped.has(m.day)) grouped.set(m.day, []);
   const captures = new Set(doc.rack_captures || []);
   return new Map([...grouped].map(([day, records]) => [day, {...doc, site, day, records,
     ...(doc.date_events ? {date_events: doc.date_events.filter(e => e.day === day)} : {}),
+    ...(site === 'meruhen' ? {record_deletions: vhDeletions(doc).filter(m => m.day === day)} : {}),
     ...(doc.rack_captures ? {rack_captures: records.map(recordKey).filter(k => captures.has(k))} : {})}]));
 }
 function vhMeruhen(folder, base, props, startedAt) {
@@ -23,7 +54,7 @@ function vhMeruhen(folder, base, props, startedAt) {
         ...meruhenListInputs([folder, DriveApp.getRootFolder()]).map(i => vhInput(i.file, 'android'))];
     },
     read: input => {
-      if (input.kind === 'android') return {records: meruhenReadBackup(input.file, input.size)};
+      if (input.kind === 'android') return meruhenReadBackup(input.file, input.size, true);
       if (input.kind === 'legacy') return meruhenReadStore(input.file);
       if (input.size > MERUHEN_CLOUD_MAX_BYTES) throw new Error('PC閲覧用入力が48MiBを超えています。期間を分けてください。');
       let text;
@@ -31,7 +62,7 @@ function vhMeruhen(folder, base, props, startedAt) {
       const doc = JSON.parse(text.replace(/^\uFEFF/, ''));
       if (doc.format !== 'database-backup' || doc.version !== 1 || doc.source !== 'pc-viewer' ||
           !Array.isArray(doc.records) || !doc.records.every(meruhenValidRecord)) throw new Error('PC閲覧用の形式が不正です。');
-      return doc;
+      vhDeletions(doc); return doc;
     },
     group: doc => vhGroup(doc, 'meruhen'),
     fromViewer: (day, header, records) => ({site: 'meruhen', day, pc: records, android: []}),
@@ -39,10 +70,7 @@ function vhMeruhen(folder, base, props, startedAt) {
       if (!Array.isArray(old.pc) || !Array.isArray(old.android) || ![...old.pc, ...old.android].every(meruhenValidRecord)) {
         throw new Error('メルヘンの日別原本が不正です。');
       }
-      if (input.kind === 'pc') return {...old, pc: fresh.records};
-      const byKey = new Map(old.android.map(r => [meruhenKey(r), r]));
-      for (const r of fresh.records) byKey.set(meruhenKey(r), byKey.has(meruhenKey(r)) ? meruhenPick(byKey.get(meruhenKey(r)), r) : r);
-      return {...old, android: [...byKey.values()]};
+      return vhMergeMeruhen(old, fresh, input.kind);
     },
     viewer: value => meruhenApply({records: value.pc}, value.android).records,
     mergeHeader: (old, fresh) => {

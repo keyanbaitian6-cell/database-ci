@@ -1,0 +1,74 @@
+name: Regression checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  pc:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        timezone: [Asia/Tokyo, UTC]
+    env:
+      TZ: ${{ matrix.timezone }}
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: database/requirements.txt
+      - run: python -m pip install -r database/requirements.txt
+      - name: Linux Tk display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+      - name: Python regression suites
+        shell: bash
+        working-directory: database
+        run: |
+          set -euo pipefail
+          display=()
+          if [ "$RUNNER_OS" = Linux ]; then display=(xvfb-run -a); fi
+          "${display[@]}" python -m unittest discover -s tests
+          modules=()
+          for file in test_*.py; do modules+=("${file%.py}"); done
+          "${display[@]}" python -m unittest "${modules[@]}"
+
+  full:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Tokyo
+      DASH__SUPPRESS_ANALYTICS: 'true'
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install pinned development tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv database/.venv
+          database/.venv/bin/python -m pip install -r database/requirements.txt
+          git clone --depth 1 --branch 3.47.1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6655482ec06e547f90abf8ae7590466f4415978d
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          npm install --prefix "$RUNNER_TEMP/browser-tests" playwright@1.62.1
+          node "$RUNNER_TEMP/browser-tests/node_modules/playwright/cli.js" install --with-deps chromium
+          echo "PLAYWRIGHT_MODULE=file://$RUNNER_TEMP/browser-tests/node_modules/playwright/index.mjs" >> "$GITHUB_ENV"
+          cp database_android/assets/database_seed.example.json database_android/assets/database_seed.json
+      - name: Resolve Flutter dependencies without changing the lockfile
+        working-directory: database_android
+        run: flutter pub get --enforce-lockfile
+      - name: Complete pre-build gate
+        run: xvfb-run -a bash database_android/tool/check_before_build.sh

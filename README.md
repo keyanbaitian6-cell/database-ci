@@ -10,6 +10,8 @@
 
 ## 開発時の確認
 
+共通の試験入口とLinux・Windowsの準備は [DEVELOPMENT_CHECKS.md](DEVELOPMENT_CHECKS.md) を参照してください。
+
 PC版:
 
 ```powershell

@@ -1,5 +1,6 @@
 // Live-page extractor smoke test against the three browser archive examples.
 import assert from 'node:assert/strict';
+import test from 'node:test';
 import {existsSync, readFileSync, writeFileSync} from 'node:fs';
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const script = readFileSync(new URL('../assets/pscube_capture.js', import.meta.url), 'utf8');
@@ -10,9 +11,9 @@ const examples = [
 ];
 const archiveRoot = process.env.PSCUBE_ARCHIVE_DIR || '/workspace';
 if (examples.some(([folder]) => !existsSync(`${archiveRoot}/${folder}/main.html`))) {
-  console.log('SKIP: set PSCUBE_ARCHIVE_DIR to the private archive directory');
-  process.exit(0);
-}
+  if (process.env.PSCUBE_ARCHIVE_DIR) assert.fail('指定したPSCUBE_ARCHIVE_DIRに保存ページ3件が揃っていません。');
+  test.skip('実保存ページ3件の取り込み（PSCUBE_ARCHIVE_DIR未指定）');
+} else {
 const browser = await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_PATH || undefined, args:['--no-sandbox']});
 try {
   for (const [folder, suffix, machines, records] of examples) {
@@ -57,3 +58,5 @@ try {
   }
   console.log('PASS: live capture reads machine index, full rack list and seven-day rack archive');
 } finally { await browser.close(); }
+
+}

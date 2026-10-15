@@ -10,18 +10,9 @@
 # PythonとNodeの場所は、この端末の既定値。別の場所なら PYTHON・NODE・PLAYWRIGHT_MODULE で指定する。
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-PYTHON=${PYTHON:-'C:\Users\keyan\.codex\.chatgpt-projects\g-p-6a9e28549ca0819184c877c6b3b3749e\database\.runtime\Scripts\python.exe'}
-# 試験の中で `python` を呼ぶもの（メルヘン・P’s CUBEの画面試験など）も同じPythonを使う。PATHの先頭が
-# Windowsストアの入口（WindowsApps\python）だと「Python」とだけ返して4件が失敗した（2026-10-10）。
-if command -v cygpath >/dev/null 2>&1; then
-  PYTHON_PATH=$(cygpath -u "$PYTHON")
-else
-  PYTHON_PATH=$PYTHON
-fi
-PATH="$(dirname "$PYTHON_PATH"):$PATH"
-export PATH
-NODE=${NODE:-'C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'}
-export PLAYWRIGHT_MODULE=${PLAYWRIGHT_MODULE:-'file:///C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs'}
+source "$ROOT/database_android/tool/dev_env.sh" || exit 1
+LOCAL_ONLY=false
+if [ "${1:-}" = '--local' ]; then LOCAL_ONLY=true; elif [ "$#" -gt 0 ]; then echo 'Usage: check_before_build.sh [--local]' >&2; exit 2; fi
 WORK=${CHECK_BUILD_WORK:-"$ROOT/database_android/build/check_before_build"}
 # 同じ確認を重ねて実行するとstage・ログが混ざる。専用の一時フォルダを指定すれば並行作業とも分離できる。
 # 初期化は下で作る確認用ディレクトリだけに限定する。リポジトリや広いディレクトリは拒否する。
@@ -33,6 +24,7 @@ case "$WORK" in
 esac
 mkdir -p "$WORK/viewer"
 failed=()
+unrun=()
 
 run() {
   local name=$1
@@ -42,6 +34,7 @@ run() {
   else
     echo "FAIL  $name  （記録：$WORK/$name.log）"
     failed+=("$name")
+    return 1
   fi
 }
 
@@ -49,22 +42,39 @@ cd "$ROOT/database"
 run pc-tests "$PYTHON" -m unittest discover -s tests
 run pc-pscube-tests bash -c '"$0" -m unittest $(ls test_*.py | sed "s/\.py$//")' "$PYTHON"
 
+# Timestamp serialization must also work when the host uses UTC.
+run pc-event-timezone-utc bash -c 'TZ=UTC "$0" -m unittest discover -s tests -p test_event_calendar.py' "$PYTHON"
+
 cd "$ROOT/database_android"
-run flutter-test flutter test
-run flutter-analyze flutter analyze --no-fatal-infos
-run viewer-build bash -c 'MSYS_NO_PATHCONV=1 flutter build web -t lib/viewer_main.dart --release --base-href /database-viewer/'
-run viewer-stage "$PYTHON" tool/stage_viewer.py "$WORK/viewer"
+viewer_ready=false
+if ! $LOCAL_ONLY; then
+  run flutter-test flutter test
+  run flutter-analyze flutter analyze --no-fatal-infos
+  if run viewer-build bash -c 'MSYS_NO_PATHCONV=1 flutter build web -t lib/viewer_main.dart --release --base-href /database-viewer/'; then
+    if run viewer-stage "$PYTHON" tool/stage_viewer.py "$WORK/viewer"; then viewer_ready=true; fi
+  else unrun+=(viewer-stage); fi
+else unrun+=(flutter-test flutter-analyze viewer-build viewer-stage); fi
 export VIEWER_WEB_ROOT="$WORK/viewer/"
-# 閲覧専用の共有ページも、公開するのと同じステージ（読むファイルに版 ?v= を付けたもの）で画面試験する。
 run share-stage "$PYTHON" tool/stage_share_viewer.py "$WORK/share"
 export SHARE_WEB_ROOT="$WORK/share/"
 for test in tool/test_*.mjs; do
+  # Never test an old build after a failed build or a local-only invocation.
+  if ! $viewer_ready && "$PYTHON" -c 'import pathlib,sys; t=pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"); sys.exit(0 if "VIEWER_WEB_ROOT" in t or "build/web" in t else 1)' "$test"; then
+    echo "UNRUN $(basename "$test" .mjs) (fresh Flutter build required)"
+    unrun+=("$(basename "$test" .mjs)")
+    continue
+  fi
   run "$(basename "$test" .mjs)" "$NODE" --test "$test"
 done
 
-if [ ${#failed[@]} -eq 0 ]; then
-  echo "ALL PASSED"
-else
-  echo "失敗 ${#failed[@]} 件：${failed[*]} （ビルドしないで原因を調べる）"
+if [ ${#failed[@]} -gt 0 ]; then
+  echo "失敗 ${#failed[@]} 件：${failed[*]} （記録：$WORK、ビルドしないで原因を調べる）"
   exit 1
+elif $LOCAL_ONLY; then
+  echo "LOCAL CHECKS PASSED （未実行 ${#unrun[@]} 件：${unrun[*]}。全体ゲートの成功ではありません）"
+elif [ ${#unrun[@]} -gt 0 ]; then
+  echo "未実行 ${#unrun[@]} 件：${unrun[*]} （ビルドしない）"
+  exit 1
+else
+  echo "ALL PASSED"
 fi

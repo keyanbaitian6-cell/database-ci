@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/scoring.dart';
@@ -42,7 +39,12 @@ void main() {
     expect(spinScore(0), isNull);
   });
   test('サイトの点検中の印（88888888・888）の台は採点せず、比較にも使わない', () {
-    final placeholder = sample(games: 88888888, bb: 888, rb: 888, maxHold: 88888888);
+    final placeholder = sample(
+      games: 88888888,
+      bb: 888,
+      rb: 888,
+      maxHold: 88888888,
+    );
     final score = scoreRecord(placeholder, refs());
     expect(score.total, isNull);
     expect(score.reasons.single, contains('サイトの数値が異常'));
@@ -53,7 +55,12 @@ void main() {
     ]);
     expect(pool.any((r) => r.rack == 99), isFalse);
     expect(hasImplausibleNumbers(placeholder), isTrue);
-    expect(hasImplausibleNumbers(sample(games: 12000, bb: 80, rb: 40, maxHold: 19008)), isFalse);
+    expect(
+      hasImplausibleNumbers(
+        sample(games: 12000, bb: 80, rb: 40, maxHold: 19008),
+      ),
+      isFalse,
+    );
   });
   test('当日500G以下の台は採点しない', () {
     for (final g in [1, 499, 500]) {
@@ -174,16 +181,18 @@ void main() {
     );
     expect(a.total, b.total);
   });
-  test('303番台の確認済みグラフの得点を維持する', () {
-    final decoded =
-        jsonDecode(File('assets/database_seed.json').readAsStringSync()) as Map;
-    final rows = (decoded['rows'] as List)
-        .map((e) => SlotRecord.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    final row = rows.singleWhere(
-      (r) => r.day == '2026-09-15' && r.machine == 'L+防振り+FN' && r.rack == 303,
+  test('確認済みの維持率144/167を合成グラフでも維持する（旧303番台の回帰）', () {
+    // The old assertion depended on an untracked personal seed. Preserve its
+    // expected end/peak ratio with a fixed synthetic graph, not personal data.
+    final row = sample(rack: 303).copyWith(
+      graph: const GraphMeasurement(
+        baselineY: 200,
+        peakY: 33,
+        troughY: 250,
+        endY: 56,
+      ),
     );
-    final score = scoreRecord(row, rows);
+    final score = scoreRecord(row, refs());
     expect(score.positive, 10);
     expect(score.retention, closeTo(8.62275449, .001));
     expect(score.total, isNotNull);

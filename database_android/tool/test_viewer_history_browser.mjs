@@ -34,7 +34,7 @@ function snapshot(site) {
       url: 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?bai=20'}]};
   return {m: {format: 'database-viewer-parts', version: 2, site, days: dayList, revision: hash(JSON.stringify(parts)), header, parts, count: rows.length}, texts};
 }
-const browser = await chromium.launch({headless: true, args: ['--no-sandbox']});
+const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH || undefined, headless: true, args: ['--no-sandbox']});
 try {
   const context = await browser.newContext({viewport: {width: 393, height: 850}}), page = await context.newPage(), errors = [];
   page.on('pageerror', e => errors.push(e.message));

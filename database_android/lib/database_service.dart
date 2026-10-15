@@ -10,6 +10,7 @@ import 'backup_service.dart';
 import 'candidate_log.dart';
 import 'date_events.dart';
 import 'models.dart';
+import 'record_deletions.dart';
 
 /// DBの版。4でグラフの画像・曲線を別の列（graph_blob）へ分け、ゴミ箱を足した。
 /// 5で、バックアップから一時的に取り込んだ古い記録の印（temporary_records）を足した。
@@ -96,6 +97,8 @@ enum TrashKind { delete, overwrite }
 class ChangeSet {
   const ChangeSet({
     this.upserts = const [],
+    this.deletions = const [],
+    this.restoreDeleted = true,
     this.deleteKeys = const [],
     this.trashKeys = const [],
     this.trashLabel = '',
@@ -108,6 +111,8 @@ class ChangeSet {
   /// 保存する台。グラフの画像・曲線を読み込んでいない（軽い）台は、DBに
   /// ある画像・曲線をそのまま残す。
   final List<SlotRecord> upserts;
+  final List<RecordDeletion> deletions;
+  final bool restoreDeleted;
   final List<String> deleteKeys;
 
   /// 書き換える前に、今のDBの内容（画像込み）をゴミ箱へ写す台。
@@ -665,11 +670,40 @@ class DatabaseService {
       }
       await trash.commit(noResult: true);
     }
+    final deletionRows = await txn.query(
+      'app_state',
+      where: 'state_key = ?',
+      whereArgs: ['record_deletions'],
+    );
+    final marks = mergeRecordDeletions([
+      ...readRecordDeletions(
+        deletionRows.isEmpty
+            ? null
+            : jsonDecode(deletionRows.single['value'] as String),
+      ),
+      ...changes.deletions,
+    ]);
+    final removed = await _loadFull(txn, changes.deleteKeys);
+    for (final row in removed.values) {
+      final mark = deletionForRecord(row);
+      marks[mark.key] = mark;
+    }
     final batch = txn.batch();
     for (final key in changes.deleteKeys) {
       batch.delete('records', where: 'record_key = ?', whereArgs: [key]);
     }
-    for (final record in changes.upserts) {
+    // Incoming tombstones remove only rows older than the explicit operation.
+    final affected = await _loadFull(txn, changes.deletions.map((m) => m.key));
+    for (final row in affected.values) {
+      if (!recordSurvivesDeletion(row.toJson(), marks)) {
+        batch.delete('records', where: 'record_key = ?', whereArgs: [row.key]);
+      }
+    }
+    for (var record in changes.upserts) {
+      if (!recordSurvivesDeletion(record.toJson(), marks)) {
+        if (!changes.restoreDeleted) continue;
+        record = restoreDeletedRecord(record, marks[record.key]!);
+      }
       _upsert(batch, record, now);
     }
     for (final id in changes.removeTrashIds) {
@@ -688,6 +722,12 @@ class DatabaseService {
       batch.insert('app_state', {
         'state_key': entry.key,
         'value': entry.value,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    if (marks.isNotEmpty) {
+      batch.insert('app_state', {
+        'state_key': 'record_deletions',
+        'value': jsonEncode([for (final m in marks.values) m.toJson()]),
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -926,11 +966,31 @@ class DatabaseService {
         }
       }
       eventCount = eventData.length;
+      final deletionRows = await db.query(
+        'app_state',
+        columns: ['value'],
+        where: 'state_key = ?',
+        whereArgs: ['record_deletions'],
+      );
+      final deletions =
+          readRecordDeletions(
+                deletionRows.isEmpty
+                    ? null
+                    : jsonDecode(deletionRows.single['value'] as String),
+              )
+              .where(
+                (m) =>
+                    (store == null || m.store == store) &&
+                    (day == null || m.day == day),
+              )
+              .toList();
       final header = jsonEncode({
         'format': backupFormat,
         'version': backupVersion,
         'exported_at': DateTime.now().toIso8601String(),
         'source': source,
+        if (deletions.isNotEmpty)
+          'record_deletions': [for (final m in deletions) m.toJson()],
         if (eventData.isNotEmpty) 'date_events': eventData,
         if (unreadableEvents != null)
           'unreadable_date_events': unreadableEvents,

@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'candidate_log.dart';
 import 'date_events.dart';
+import 'record_deletions.dart';
 import 'models.dart';
 import 'import_spool.dart';
 
@@ -79,10 +80,12 @@ class BackupChunk {
     this.records = const [],
     this.candidates = const [],
     this.events = const [],
+    this.deletions = const [],
   });
   final List<dynamic> records;
   final List<CandidateSnapshot> candidates;
   final List<DateEvent> events;
+  final List<RecordDeletion> deletions;
 }
 
 /// 1行に1台の形ではない（以前のAndroid版の書き出しなど）ファイルは丸ごと
@@ -164,7 +167,8 @@ class BackupService {
         'これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。',
       );
     }
-    for (final key in ['candidate_snapshots', 'date_events']) {
+    readRecordDeletions(decoded['record_deletions']);
+    for (final key in ['candidate_snapshots', 'date_events', 'record_deletions']) {
       if (decoded.containsKey(key) && decoded[key] is! List) {
         throw FormatException('$key の形式が不正です。');
       }
@@ -306,6 +310,7 @@ class BackupService {
         records: records,
         candidates: candidates.sublist(candidateOffset),
         events: events,
+        deletions: readRecordDeletions(envelope['record_deletions']),
       );
       return;
     }
@@ -335,7 +340,10 @@ class BackupService {
       );
     }
     final parsedEvents = _eventsOf(decoded);
-    if (parsedEvents.isNotEmpty) yield BackupChunk(events: parsedEvents);
+    final deletions = readRecordDeletions(decoded['record_deletions']);
+    if (parsedEvents.isNotEmpty || deletions.isNotEmpty) {
+      yield BackupChunk(events: parsedEvents, deletions: deletions);
+    }
   }
 }
 

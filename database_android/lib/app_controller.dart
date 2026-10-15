@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 
 import 'backup_service.dart';
+import 'record_deletions.dart';
 import 'candidate_log.dart';
 import 'csv_export_service.dart';
 import 'data_checks.dart';
@@ -453,10 +454,12 @@ class AppController extends ChangeNotifier {
       // 取り込みの対象外の機種（沖ドキなど）は数えない：サイトからは取らないのに、ジャグラーオンラインの
       // 読み取りで記録ができ、済まない台として残って見えていた（2026-10-12、PC progress_text と同じ規則）。
       final rows = records
-          .where((r) =>
-              r.store == entry.key &&
-              r.day == target &&
-              !isExcludedMachine(r.store, r.machine))
+          .where(
+            (r) =>
+                r.store == entry.key &&
+                r.day == target &&
+                !isExcludedMachine(r.store, r.machine),
+          )
           .toList();
       if (rows.isEmpty) continue;
       final done = rows.where((r) => r.graphDone).length;
@@ -1217,15 +1220,29 @@ class AppController extends ChangeNotifier {
   }) => _write(() async {
     final latestAllowed = _latestAllowedDay();
     final checker = BackupPlanner(records, latestDay: latestAllowed);
+    final incomingDeletions = <RecordDeletion>[];
+    final storedState = await database.loadState();
     var checked = 0;
     await for (final chunk in backupService.readBackupFile(file)) {
+      incomingDeletions.addAll(chunk.deletions);
       if (chunk.records.isEmpty) continue;
       checker.plan(chunk.records);
       checked += chunk.records.length;
       onProgress?.call('中身を確かめています… $checked台');
     }
 
-    final planner = BackupPlanner(records, latestDay: latestAllowed);
+    final deletions = mergeRecordDeletions([
+      ...readRecordDeletions(
+        storedState['record_deletions'] == null
+            ? null
+            : jsonDecode(storedState['record_deletions']!),
+      ),
+      ...incomingDeletions,
+    ]);
+    final remainingRecords = records
+        .where((r) => recordSurvivesDeletion(r.toJson(), deletions))
+        .toList();
+    final planner = BackupPlanner(remainingRecords, latestDay: latestAllowed);
     final result = BackupImportResult();
     final undo = await ImportSpool.create((await database.database).path);
     late final ImportSpool conflicts;
@@ -1247,9 +1264,14 @@ class AppController extends ChangeNotifier {
     var written = 0;
     try {
       await database.writeTransaction((writer) async {
+        await writer.apply(ChangeSet(deletions: incomingDeletions));
         await for (final chunk in backupService.readBackupFile(file)) {
           if (chunk.records.isNotEmpty) {
-            final plan = planner.plan(chunk.records);
+            final allowed = chunk.records
+                .where((r) => recordSurvivesDeletion(r, deletions))
+                .toList();
+            result.skipped += chunk.records.length - allowed.length;
+            final plan = planner.plan(allowed);
             result.add(plan, lightConflicts: true);
             for (final c in plan.conflicts) {
               await conflicts.add(c.incoming.toJson(), key: c.incoming.key);
@@ -1259,7 +1281,9 @@ class AppController extends ChangeNotifier {
               final before = await writer.loadByKeys([
                 for (final r in toSave) r.key,
               ]);
-              await writer.apply(ChangeSet(upserts: toSave));
+              await writer.apply(
+                ChangeSet(upserts: toSave, restoreDeleted: false),
+              );
               for (final r in toSave) {
                 final light = r.lightened();
                 await undo.add({
@@ -1318,7 +1342,7 @@ class AppController extends ChangeNotifier {
       rethrow;
     }
     // ここまで来たら、すべて保存できている。画面用の一覧などを合わせる。
-    if (saved.isNotEmpty) records = _withSaved(records, saved);
+    records = _withSaved(remainingRecords, saved);
     previews.forget([for (final r in saved) r.key]);
     if (freshCandidateCount > 0) {
       _latestCandidates = latestCandidates;

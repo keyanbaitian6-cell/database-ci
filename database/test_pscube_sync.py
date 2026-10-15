@@ -121,7 +121,7 @@ class SyncTests(unittest.TestCase):
 
     def test_backup_failure_never_raises_and_reports(self):
         self.use_sync_dir()
-        with mock.patch.object(pscube_import.shutil, 'copyfile', side_effect=OSError('disk full')):
+        with mock.patch.object(pscube_import, 'atomic_copy', side_effect=OSError('disk full')):
             status = auto_backup(self.store, self.export, today=TODAY)
         self.assertIn('失敗', status)
         self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM records').fetchone()[0], 80)

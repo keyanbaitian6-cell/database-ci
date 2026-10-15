@@ -1,0 +1,133 @@
+"""One background writer; queued refreshes are combined, never run in parallel."""
+from dataclasses import dataclass
+from queue import Empty, Queue
+from threading import Condition, Thread
+
+
+def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, backup=False, pscube=False):
+    """Read isolated SQLite snapshots; serialize both sites' output updates."""
+    import sqlite3
+    import tempfile
+    from contextlib import closing, contextmanager
+    from pathlib import Path
+    from time import perf_counter
+    from core import Store, auto_backup, history_report
+
+    @contextmanager
+    def snapshot_store(path, factory):
+        with tempfile.TemporaryDirectory(prefix='database-output-') as directory:
+            snapshot = Path(directory) / 'snapshot.sqlite3'
+            with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(sqlite3.connect(snapshot)) as destination:
+                source.backup(destination)
+            store = factory(snapshot)
+            try:
+                yield store
+            finally:
+                store.close()
+
+    timings, errors, notices = {}, [], []
+    result = {'timings': timings, 'history': None, 'pending_marks': 0, 'notices': notices}
+    def run(name, task):
+        started = perf_counter()
+        try:
+            return task()
+        except Exception as error:
+            errors.append(f'{name}: {error}')
+        finally:
+            timings[name] = perf_counter() - started
+    if history or backup:
+        with snapshot_store(database_path, Store) as store:
+            if history:
+                result['history'] = run('history', lambda: history_report(store, reports_dir))
+            if backup:
+                value = run('backup', lambda: auto_backup(store, data_dir, strict=True))
+                if value is None and not errors:
+                    notices.append('同期フォルダ未設定：PC内のバックアップのみ更新しました。')
+            result['pending_marks'] = len(store.pending_rainbow_marks())
+    if pscube:
+        import pscube_import
+        def pscube_output():
+            with snapshot_store(Path(data_dir) / 'pscube.sqlite3', pscube_import.PscubeStore) as store:
+                status = pscube_import.auto_backup(store, Path(data_dir) / 'pscube-viewer.json')
+                if '失敗' in status:
+                    raise OSError(status)
+                if '未設定' in status:
+                    notices.append(status)
+        run('pscube_backup', pscube_output)
+    if errors:
+        raise OSError('、'.join(errors))
+    return result
+
+
+@dataclass
+class OutputResult:
+    value: object
+    error: Exception | None
+    callbacks: list
+
+
+class OutputWorker:
+    def __init__(self, run):
+        self.run = run
+        self.condition = Condition()
+        self.pending = {}
+        self.callbacks = []
+        self.callback_map = {}
+        self.callback_serial = 0
+        self.results = Queue()
+        self.thread = None
+        self.closing = False
+
+    def request(self, *, history=False, backup=False, pscube=False, done=None):
+        with self.condition:
+            if self.closing:
+                raise RuntimeError('Output worker is closing')
+            self.pending['history'] = self.pending.get('history', False) or history
+            self.pending['backup'] = self.pending.get('backup', False) or backup
+            if pscube:
+                self.pending['pscube'] = True
+            if done:
+                # Keep Tk closures on the calling thread. Worker results contain
+                # only integer IDs, including after the UI consumes the result.
+                self.callback_serial += 1
+                self.callback_map[self.callback_serial] = done
+                self.callbacks.append(self.callback_serial)
+            if self.thread is None:
+                self.thread = Thread(target=self._work, name='database-output', daemon=True)
+                self.thread.start()
+            self.condition.notify()
+
+    def _work(self):
+        while True:
+            with self.condition:
+                self.condition.wait_for(lambda: self.pending or self.closing)
+                if not self.pending:
+                    return
+                # Combine consecutive UI requests without delaying the UI thread.
+                if not self.closing:
+                    self.condition.wait(timeout=0.05)
+                options, callbacks = self.pending, self.callbacks
+                self.pending, self.callbacks = {}, []
+            try:
+                result = OutputResult(self.run(**options), None, callbacks)
+            except Exception as error:
+                result = OutputResult(None, error, callbacks)
+            self.results.put(result)
+
+    def poll(self):
+        while True:
+            try:
+                result = self.results.get_nowait()
+                callbacks = [self.callback_map.pop(key) for key in result.callbacks]
+                yield OutputResult(result.value, result.error, callbacks)
+            except Empty:
+                return
+
+    def finish(self):
+        with self.condition:
+            self.closing = True
+            self.condition.notify()
+
+    @property
+    def finished(self):
+        return self.closing and (self.thread is None or not self.thread.is_alive())

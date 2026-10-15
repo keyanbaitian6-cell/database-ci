@@ -20,6 +20,30 @@ function record(rack, day = '2026-10-02', patch = {}) {
 const backup = (records, patch = {}) => ({format: 'database-backup', version: 1, source: 'android', records, ...patch});
 const viewer = records => backup(records, {source: 'pc-viewer', days: 60, exported_at: '2026-10-13T09:00:00+09:00', date_events: []});
 
+test('明示削除は最後の1台にも反映し、古いAndroid入力では復活せず、新しい復元は許可', () => {
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0], get = () => plain(d.context.vpGet(base, 'meruhen', {}));
+  const mark = {store: 'saiwaichou', machine: '試験 機種', rack: 537, day: '2026-10-02', deleted_at: '2026-10-15T12:00:00+09:00'};
+  d.replace(base, {...viewer([]), record_deletions: [mark]}); d.sync();
+  assert.equal(get().records.length, 0);
+  assert.ok(d.doc('database-viewer-parts-meruhen.json').days.includes(mark.day));
+  d.add('database-backup-android-20261015-120001.json', backup([record(537), record(538), record(500, '2025-01-01')]));
+  d.sync();
+  assert.deepEqual(get().records.map(r => r.rack).sort(), [500, 538]);
+  d.replace(base, {...viewer([record(537, mark.day, {record_updated_at: '2026-10-15T12:01:00+09:00'})]), record_deletions: [mark]});
+  d.sync(); assert.equal(get().records.filter(r => r.rack === 537).length, 1);
+});
+
+test('不正な削除情報は旧一覧を保持して拒否する', () => {
+  const d = drive({history: true}); d.setup();
+  const before = d.doc('database-viewer-parts-meruhen.json');
+  d.replace(d.files[0], {...viewer([]), record_deletions: [{store: 'saiwaichou', day: '2026-10-02', machine: '試験', rack: 537, deleted_at: 'bad'}]});
+  assert.throws(() => d.sync(), /削除記録/);
+  assert.deepEqual(d.doc('database-viewer-parts-meruhen.json').parts, before.parts);
+  assert.deepEqual(d.doc('database-viewer-parts-meruhen.json').cloud_days, before.cloud_days);
+  assert.equal(d.status().result, 'partial');
+});
+
 test('履歴の旧原本整理は7日超・未参照だけ、移行途中の入力削除でも進捗を解消し記録を保持', () => {
   const d = drive({history: true}); d.setup();
   const before = d.doc('database-viewer-parts-meruhen.json').cloud_days[0];

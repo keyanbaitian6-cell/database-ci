@@ -19,6 +19,7 @@ import unicodedata
 import time
 from contextlib import closing, nullcontext
 from datetime import date, datetime, timedelta, timezone
+from file_io import atomic_copy, atomic_writer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -464,10 +465,8 @@ def validate_date_events(raw, legacy_suffix=None):
 
 
 def _write_json(path: Path, payload: dict) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
-    temporary.replace(path)
+    with atomic_writer(path) as out:
+        json.dump(payload, out, ensure_ascii=False, separators=(',', ':'))
     return path
 
 
@@ -486,7 +485,7 @@ def auto_backup(store: 'PscubeStore', export_path, today: date | None = None) ->
         snapshots = (folder or data_dir) / 'backups'
         snapshot = snapshots / f'pscube-backup-{today.isoformat()}.json'
         snapshots.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(local, snapshot)
+        atomic_copy(local, snapshot)
         for old in snapshots.glob(SNAPSHOT_PATTERN):
             try:
                 stamp = date.fromisoformat(old.stem[len('pscube-backup-'):])
@@ -496,9 +495,9 @@ def auto_backup(store: 'PscubeStore', export_path, today: date | None = None) ->
                 old.unlink(missing_ok=True)
         if folder is None:
             return '同期フォルダ未設定（本体の「バックアップ・同期」で指定）'
-        shutil.copyfile(local, folder / AUTO_BACKUP_NAME)
+        atomic_copy(local, folder / AUTO_BACKUP_NAME)
         light = _write_json(data_dir / VIEWER_DRIVE_NAME, store.export_payload('viewer'))
-        shutil.copyfile(light, folder / VIEWER_DRIVE_NAME)
+        atomic_copy(light, folder / VIEWER_DRIVE_NAME)
         return 'バックアップ済み'
     except (OSError, ValueError, sqlite3.Error):
         return 'バックアップに失敗（取り込みは保存済み）'

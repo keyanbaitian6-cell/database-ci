@@ -11,6 +11,8 @@ import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from file_io import atomic_copy, atomic_writer
+
 from setting_estimate import candidate_label, estimate_setting
 
 VERSION = '2026-09-29-v12'
@@ -40,7 +42,7 @@ VIEWER_KEYS = ('store', 'kind_code', 'day', 'machine', 'rack', 'games', 'bb', 'r
                # 確定が出た台の印🌈（PCで付ける。RAINBOW.md）
                'rainbow', 'rainbow_at',
                # ジャグラーオンラインの差枚（お試し、JUGGLER_ONLINE.md）。閲覧ページは推定差枚より優先する。
-               'jo_net')
+               'jo_net', 'record_updated_at')
 # 取り込みの対象外の機種。次の機種の候補にせず、印は「対象外」にし、表・グラフも保存しない。
 # 長町南店はジャグラーシリーズ、幸町店はブラックボードを公開していない。
 # （幸町のジャグラー、長町南のスーパーブラックジャック等は対象のまま）
@@ -197,6 +199,34 @@ def _timestamp(value):
 EVENT_JST = timezone(timedelta(hours=9))
 # 営業日は日本時間の午前2時で切り替わる（browser_import.BUSINESS_DAY_CUTOFF_HOUR と同じ）。
 EVENT_DAY_START_HOUR = 2
+
+
+def _record_after_deletion(row, mark):
+    stamps = [_record_operation_time(row.get('record_updated_at')), _record_operation_time(row.get('captured_at'))]
+    return any(stamp and stamp > _timestamp(mark['deleted_at']) for stamp in stamps)
+
+
+def _record_operation_time(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=EVENT_JST)
+
+
+def _valid_record_deletion(mark):
+    if not isinstance(mark, dict) or mark.get('store') not in STORE_NAMES:
+        return False
+    try:
+        if date.fromisoformat(mark['day']).isoformat() != mark['day']:
+            return False
+        return (isinstance(mark.get('machine'), str) and bool(mark['machine'].strip())
+                and type(mark.get('rack')) is int and mark['rack'] > 0
+                and _event_time(mark.get('deleted_at')) is not None)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _event_time(value):
@@ -447,6 +477,13 @@ class Store:
         recorded in the same transaction (a backup import passes False: the
         candidates of old days recomputed now are not what was shown then)."""
         with self.db:
+            self._begin_write()
+            # A direct save is an explicit capture/restore. Imported backups use
+            # _save_rows and cannot turn an old record into a new operation.
+            deleted = {self._record_key(m): m for m in self.record_deletions()}
+            rows = [dict(row, record_updated_at=max(datetime.now().astimezone(),
+                        _timestamp(deleted[self._record_key(row)]['deleted_at']) + timedelta(milliseconds=1)).isoformat())
+                    if self._record_key(row) in deleted else row for row in rows]
             self._save_rows(rows, log_candidates)
 
     def _begin_write(self):
@@ -462,6 +499,7 @@ class Store:
         self._machine_cache = {}
         groups = set()
         self._begin_write()
+        deleted = {self._record_key(m): m for m in self.record_deletions()}
         pending = {(m['store'], m['day'], m['rack']): m for m in self.pending_rainbow_marks()}
         applied_marks = set()
         for row in rows:
@@ -472,6 +510,8 @@ class Store:
                 continue
             date.fromisoformat(row['day'])
             key = (row['store'], row['day'], row['machine'], int(row['rack']))
+            if key in deleted and not _record_after_deletion(row, deleted[key]):
+                continue
             old = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?', key).fetchone()
             try:
                 merged = json.loads(old[0]) if old else {}
@@ -649,7 +689,7 @@ class Store:
         same name does not turn an event entered in advance into a late one."""
         cleaned = name.strip() if isinstance(name, str) and name.strip() else None
         events = {(e['store'], e['day']): e for e in self.date_events(include_removed=True)}
-        stamp = (now or datetime.now()).astimezone()
+        stamp = (now or datetime.now()).astimezone(EVENT_JST)
         changed = False
         for day in days:
             previous = events.get((location, day))
@@ -699,10 +739,17 @@ class Store:
         self._machine_cache = {}
         """Put back exact payloads captured by ``payload_map`` (None = the row did not exist)."""
         with self.db:
+            self._begin_write()
             for key, payload in entries:
                 if payload is None:
+                    previous = self.payload_map([key])[0]
+                    if previous:
+                        self._record_deletion(previous)
                     self.db.execute('DELETE FROM days WHERE store=? AND day=? AND machine=? AND rack=?', key)
                 else:
+                    if self.record_is_deleted(payload):
+                        mark = next(m for m in self.record_deletions() if self._record_key(m) == self._record_key(payload))
+                        payload = dict(payload, record_updated_at=max(datetime.now().astimezone(), _timestamp(mark['deleted_at']) + timedelta(milliseconds=1)).isoformat())
                     self.db.execute(
                         'INSERT INTO days VALUES(?,?,?,?,?) ON CONFLICT(store,day,machine,rack) '
                         'DO UPDATE SET payload=excluded.payload',
@@ -717,6 +764,12 @@ class Store:
             raise ValueError('対象店舗が不正です。')
         date.fromisoformat(day)
         with self.db:
+            self._begin_write()
+            raw = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
+                                  (store, day, machine, int(rack))).fetchone()
+            found = self._deletion_source((store, day, machine, int(rack), raw[0])) if raw else None
+            if found:
+                self._record_deletion(found)
             cursor = self.db.execute(
                 'DELETE FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
                 (store, day, machine, int(rack)),
@@ -745,12 +798,67 @@ class Store:
             query += ' AND machine=?'
             values.append(machine)
         with self.db:
+            self._begin_write()
+            removed = self.db.execute(query.replace('DELETE FROM', 'SELECT store, day, machine, rack, payload FROM'), values).fetchall()
+            self._merge_record_deletions([self._deletion_mark(self._deletion_source(row)) for row in removed], apply=False)
             groups = set(self.db.execute(query.replace('DELETE FROM', 'SELECT DISTINCT store, machine, day FROM'),
                                          values).fetchall())
             cursor = self.db.execute(query, values)
             self._log_candidates(groups)
         self._machine_cache = {}
         return cursor.rowcount
+
+    @staticmethod
+    def _record_key(row):
+        return (row['store'], row['day'], normalize_machine_name(row['machine']), int(row['rack']))
+
+    def record_deletions(self, location=None, day=None):
+        marks = json.loads(self.state('record_deletions') or '[]')
+        return [m for m in marks if (location is None or m['store'] == location)
+                and (day is None or m['day'] == day)]
+
+    def record_is_deleted(self, row):
+        try:
+            key = self._record_key(row)
+        except (KeyError, TypeError, ValueError):
+            return False
+        mark = next((m for m in self.record_deletions() if self._record_key(m) == key), None)
+        return bool(mark and not _record_after_deletion(row, mark))
+
+    def _record_deletion(self, row):
+        self._merge_record_deletions([self._deletion_mark(row)], apply=False)
+
+    @staticmethod
+    def _deletion_source(row):
+        location, day, machine, rack, raw = row
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            payload = {}
+        return dict(payload if isinstance(payload, dict) else {}, store=location, day=day, machine=machine, rack=rack)
+
+    def _deletion_mark(self, row):
+        now = datetime.now().astimezone()
+        for value in (row.get('captured_at'), row.get('record_updated_at')):
+            stamp = _record_operation_time(value)
+            if stamp:
+                now = max(now, stamp + timedelta(milliseconds=1))
+        return dict(zip(('store', 'day', 'machine', 'rack'), self._record_key(row)), deleted_at=now.isoformat())
+
+    def _merge_record_deletions(self, incoming, *, apply=True):
+        self._begin_write()
+        marks = {self._record_key(m): m for m in self.record_deletions()}
+        for mark in incoming:
+            key = self._record_key(mark)
+            if key not in marks or _timestamp(mark['deleted_at']) > _timestamp(marks[key]['deleted_at']):
+                marks[key] = mark
+        self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)',
+                        ('record_deletions', json.dumps(list(marks.values()), ensure_ascii=False)))
+        for key, mark in marks.items() if apply else ():
+            found = self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?', key).fetchone()
+            if found and not _record_after_deletion(json.loads(found[0]), mark):
+                self.db.execute('DELETE FROM days WHERE store=? AND day=? AND machine=? AND rack=?', key)
+        self._machine_cache = {}
 
     def pending_rainbow_marks(self, location=None, day=None):
         """数値の未取り込み中に保存した印。壊れた控えは上書きせず止める。"""
@@ -1072,7 +1180,7 @@ def _validate_backup_envelope(payload, allow_viewer=False, elided_candidates=Fal
         raise ValueError('対応していないバックアップのバージョンです。')
     if payload.get('source') == 'pc-viewer' and not allow_viewer:
         raise ValueError('これは閲覧ページ用の軽いファイル（画像なし）です。バックアップとして取り込まないでください。')
-    for key in ('candidate_snapshots', 'date_events', 'rainbow_marks'):
+    for key in ('candidate_snapshots', 'date_events', 'rainbow_marks', 'record_deletions'):
         if key in payload and not isinstance(payload[key], list):
             raise ValueError(f'{key} の形式が不正です。')
     if payload.get('recovery_required', 0) != 0 or 'unreadable_date_events' in payload:
@@ -1081,6 +1189,8 @@ def _validate_backup_envelope(payload, allow_viewer=False, elided_candidates=Fal
         raise ValueError('イベント情報に読めない項目があります。')
     if any(not _valid_rainbow_mark(mark) for mark in payload.get('rainbow_marks', [])):
         raise ValueError('未取り込みの🌈に読めない項目があります。')
+    if any(not _valid_record_deletion(m) for m in payload.get('record_deletions', [])):
+        raise ValueError('削除記録に読めない項目があります。')
     if not elided_candidates:
         for snapshot in payload.get('candidate_snapshots', []):
             if not (isinstance(snapshot, dict) and snapshot.get('store') in STORE_NAMES
@@ -1158,11 +1268,12 @@ def export_viewer(store, path, days=VIEWER_DAYS):
                    if cutoff and event['day'] >= cutoff]
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc-viewer', days=days, date_events=date_events), ensure_ascii=False)[:-1]
+                             source='pc-viewer', days=days, date_events=date_events,
+                             record_deletions=store.record_deletions()), ensure_ascii=False)[:-1]
     # 未取り込み日の🌈（pending_rainbow_marks）は入れない。閲覧ページは rainbow_marks を端末の印として表示・送信し、
     # 旧形式の同期GSは見出しをそのまま渡すため、取り込み前にWebへ出てしまう。Webへは数値の取り込み後（RAINBOW.md）。
     count = 0
-    with path.open('w', encoding='utf-8') as out:
+    with atomic_writer(path) as out:
         out.write(f'{header}, "records": [')
         if latest:
             cutoff = (date.fromisoformat(latest) - timedelta(days=days - 1)).isoformat()
@@ -1197,6 +1308,7 @@ def export_backup(store, path, location=None, day=None):
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
                              source='pc', date_events=events,
+                             record_deletions=store.record_deletions(location, day),
                              rainbow_marks=store.pending_rainbow_marks(location, day)), ensure_ascii=False)[:-1]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1213,7 +1325,7 @@ def export_backup(store, path, location=None, day=None):
     # back line by line (``iter_backup_file``). Payloads are copied verbatim.
     # 読めない行（壊れたJSON）をそのまま書くとファイル全体が読めなくなるので、
     # その行だけ unreadable_record に包む（Android版と同じ。取り込みでは対象外）。
-    with path.open('w', encoding='utf-8') as out:
+    with atomic_writer(path) as out:
         out.write(f'{header}, "records": [')
         for (row_store, row_machine, payload) in store.db.execute(
                 query.replace('SELECT payload', 'SELECT store, machine, payload') + ' ORDER BY day,store,rack', values):
@@ -1404,7 +1516,8 @@ def save_settings(data_dir, **updates):
     settings.update(updates)
     path = Path(data_dir) / SETTINGS_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding='utf-8')
+    with atomic_writer(path) as out:
+        json.dump(settings, out, ensure_ascii=False, indent=2)
     return settings
 
 
@@ -1462,7 +1575,7 @@ def restore_backup(store, path):
     """
     plan = import_backup(store, path)
     existing = {(r['store'], r['day'], r['machine'], int(r['rack'])): r for r in store.rows()}
-    forced = [incoming for _local, incoming in plan['conflicts']]
+    forced = [incoming for _local, incoming in plan['conflicts']] + plan.get('deleted', [])
     for record in plan['unchanged']:
         local = existing.get((record['store'], record['day'], record['machine'], int(record['rack'])))
         wanted = record.get('graph_measurement') or record.get('graph')
@@ -1473,8 +1586,8 @@ def restore_backup(store, path):
     return dict(plan, forced=forced)
 
 
-def auto_backup(store, data_dir):
-    """Refresh the shared-folder backup after data changed; never raises.
+def auto_backup(store, data_dir, *, strict=False):
+    """Refresh backups after data changed; strict=True reports output failures.
 
     Also writes today's dated backup (see ``snapshot_backup``). The shared-folder
     copy is skipped unless a sync folder was configured, because a failed backup
@@ -1484,7 +1597,8 @@ def auto_backup(store, data_dir):
     try:
         snapshot = snapshot_backup(store, data_dir)
     except (OSError, ValueError):
-        pass
+        if strict:
+            raise
     folder = load_settings(data_dir).get('sync_dir')
     if not folder or not Path(folder).is_dir():
         return None
@@ -1492,19 +1606,22 @@ def auto_backup(store, data_dir):
         path = Path(folder) / AUTO_BACKUP_NAME
         if snapshot is not None:
             # 同じ内容なので、全データを2回書き出さず、書き出した1つを複製する。
-            shutil.copyfile(snapshot, path)
+            atomic_copy(snapshot, path)
         else:
             export_backup(store, path)
     except OSError:
+        if strict:
+            raise
         return None
     try:
         # 閲覧ページ用の軽いファイル。ローカルで書いてから同期フォルダへ複製する
         # （書きかけのファイルがDriveへ上がらないように）。
         local = Path(data_dir) / VIEWER_FILE_NAME
         export_viewer(store, local)
-        shutil.copyfile(local, Path(folder) / VIEWER_FILE_NAME)
+        atomic_copy(local, Path(folder) / VIEWER_FILE_NAME)
     except (OSError, ValueError):
-        pass
+        if strict:
+            raise
     return path
 
 
@@ -1530,7 +1647,7 @@ def remember_for_undo(store, data_dir, label, rows, previous=None):
                                     entries=entries), ensure_ascii=False), encoding='utf-8')
 
 
-def delete_records(store, data_dir, day, location=None, machine=None):
+def delete_records(store, data_dir, day, location=None, machine=None, *, defer_outputs=False):
     """機種ごと・日付ごとにまとめて削除する。消した台数を返す。
 
     消す前の内容を「直前の保存を取り消す」の控えに残すので、誤って消しても
@@ -1549,7 +1666,8 @@ def delete_records(store, data_dir, day, location=None, machine=None):
     keep_deleted(data_dir, where, previous)
     count = store.delete_group(day, location, machine)
     remember_for_undo(store, data_dir, f'{where}の削除（{len(rows)}台）', rows, previous=previous)
-    auto_backup(store, data_dir)
+    if not defer_outputs:
+        auto_backup(store, data_dir)
     return count
 
 
@@ -1586,7 +1704,7 @@ def keep_deleted(data_dir, label, payloads, now=None):
     return target
 
 
-def undo_last_save(store, data_dir):
+def undo_last_save(store, data_dir, *, defer_outputs=False):
     """Restore the racks touched by the last save; returns its label."""
     path = Path(data_dir) / UNDO_NAME
     try:
@@ -1596,7 +1714,8 @@ def undo_last_save(store, data_dir):
         raise ValueError('取り消せる保存がありません。') from exc
     store.restore_payloads(entries)
     path.unlink()
-    auto_backup(store, data_dir)
+    if not defer_outputs:
+        auto_backup(store, data_dir)
     return info.get('label', '直前の保存')
 
 
@@ -2109,31 +2228,38 @@ def latest_backup_file(folder, seen=None):
 
 
 def import_backup(store, path):
-    """Apply a backup file's safe records; return the classification plan.
-
-    Only 'new' and 'graph_only' records are written. Conflicts are left for
-    the caller to show the user and, if they choose, apply individually via
-    ``store.save([incoming])``.
-    """
+    """Merge a validated backup atomically; old data cannot undo a deletion."""
     try:
         payload = _read_backup_document(path)
     except (OSError, ValueError) as exc:
         raise ValueError(f'バックアップファイルを読み込めません。{exc}') from exc
-    snapshots = payload.get('candidate_snapshots', [])
-    plan = plan_backup_import(store, payload['records'])
-    # 入力時刻の新しい方が残る（EVENT_CALENDAR.md）。events_added は変わった件数。
-    merged_events, plan['events_added'], plan['event_conflicts'] = merge_date_events(
-        store.date_events(include_removed=True), payload.get('date_events', []))
-    to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only'] + plan['jo_only']
-    # イベント名・台・翌日候補の記録を1回で書く（途中で失敗したら何も残さない）。
     with store.db:
+        store._begin_write()
+        store._merge_record_deletions(payload.get('record_deletions', []))
+        marks = {store._record_key(m): m for m in store.record_deletions()}
+        def deleted(row):
+            try:
+                mark = marks.get(store._record_key(row))
+            except (KeyError, TypeError, ValueError):
+                return False  # The normal classifier reports malformed rows.
+            return bool(mark and not _record_after_deletion(row, mark))
+        records = payload['records']
+        if payload.get('source') == 'pc-deleted':
+            records = [dict(r, record_updated_at=max(datetime.now().astimezone(),
+                _timestamp(marks[store._record_key(r)]['deleted_at']) + timedelta(milliseconds=1)).isoformat())
+                if deleted(r) else r for r in records]
+        plan = plan_backup_import(store, [r for r in records if not deleted(r)])
+        plan['deleted'] = [r for r in records if deleted(r)]
+        merged_events, plan['events_added'], plan['event_conflicts'] = merge_date_events(
+            store.date_events(include_removed=True), payload.get('date_events', []))
         plan['rainbow_added'] = store._merge_pending_rainbow_marks(payload['rainbow_marks']) if payload.get('rainbow_marks') else 0
         if plan['events_added']:
             store._write_date_events(store._date_events_payload(merged_events))
+        to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only'] + plan['jo_only']
         if to_save:
             store._save_rows(to_save, log_candidates=False)
-        if snapshots:
-            store._add_candidate_snapshots(snapshots)
+        if payload.get('candidate_snapshots'):
+            store._add_candidate_snapshots(payload['candidate_snapshots'])
     return plan
 
 
