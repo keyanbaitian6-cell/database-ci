@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 【Claude復帰時の状況把握（読み取りのみ）】2026-10-16 Claude
+
+- 利用者「使用上限でclaude使えなかった」「いっぱい更新したから把握しておいて」。Claudeの最後の作業は10/14の独立レビュー（`3bb0f17` の確認・修正）。それ以降の `d5dac5b`〜`177a0ab`（Codex・dev imakuru）と、このファイルの10/14〜10/16の記録、`CAPTURE_APP_DEVELOPMENT.md`、`REVIEW_FIXES_20261015.md`、`AGENTS.md` の取得系の追記を読んだ。
+- 把握した主な更新：アナスロHTML→P’s CUBE補完の変換アプリ（`html_converter/start.cmd`、期間指定の一覧取得、表示ブラウザでの自動取得、カレンダー、iframe遮断・誤認証判定・日付クリック終了・外部窓の修正、同一ブラウザで一覧→日別の継続）、10/14レビュー5項目（バックアップの安全な置き換え、`record_deletions` による明示削除の同期、PC出力ワーカー、長期履歴の日別読み出し、Linux/Windows・JST/UTCのCI）、Windowsでの試験SQLite閉じ忘れの修正、P’s CUBE補完データのPCローカル表示（`177a0ab`）。
+- 未解決として引き継ぐもの：アナスロ実サイトの日別HTTP403が解消したか（利用者確認待ち）、Windows CIの修正後の結果、Google側の同期スクリプト・Webモジュールへの反映と実機での削除/復元の照合、補完データのPC再起動後の実画面。
+- 作業開始時点で `database/pscube_import.py`・`database/test_anaslo_converter.py`・`database/tests/smoke_pscube_net_capture.py` に未コミットの変更あり（補完専用機種＝URLなしを台数確認から除外する内容）。別セッションの作業中と判断し、触れていない・試験も流していない。`debug.log` も対象外。
+- コード・DB・設定・Google・公開ページの変更なし。試験・ビルドは実施していない。
+
 ## 【PCの補完データ表示・参照先修正】2026-10-16 Codex
 
 - 利用者の8/1「保存データがありません」は、P’s CUBE選択時にも「この日のまとめ」がメルヘン用DBを参照する不具合。実DBをmode=roで確認し、アナスロ補完はP-STATION c740601・20円、8/1〜28の7,874件（8/1は269台）が保存済み。8/29〜31の取り込み完了とは扱わない。再取り込み不要。
