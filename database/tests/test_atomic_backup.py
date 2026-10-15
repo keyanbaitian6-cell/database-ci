@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,18 +40,18 @@ class AtomicBackupTests(unittest.TestCase):
     def test_shared_backup_failure_keeps_last_copy_and_database(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); shared = root / 'shared'; shared.mkdir()
-            data = root / 'data'; store = Store(data / 'database.sqlite3')
-            self.addCleanup(store.close)
-            store.save([dict(store='saiwaichou', kind_code=21, day='2026-10-14', machine='試験', rack=537, games=3000, bb=10, rb=5)])
-            save_settings(data, sync_dir=str(shared))
-            auto_backup(store, data)
-            target = shared / AUTO_BACKUP_NAME; previous = target.read_bytes()
-            def interrupt(source, out):
-                out.write(source.read(30))
-                raise OSError('interrupted')
-            with patch('file_io.shutil.copyfileobj', side_effect=interrupt):
-                self.assertIsNone(auto_backup(store, data))
-                with self.assertRaises(OSError):
-                    auto_backup(store, data, strict=True)
-            self.assertEqual(target.read_bytes(), previous)
-            self.assertEqual(len(store.rows()), 1)
+            data = root / 'data'
+            with closing(Store(data / 'database.sqlite3')) as store:
+                store.save([dict(store='saiwaichou', kind_code=21, day='2026-10-14', machine='試験', rack=537, games=3000, bb=10, rb=5)])
+                save_settings(data, sync_dir=str(shared))
+                auto_backup(store, data)
+                target = shared / AUTO_BACKUP_NAME; previous = target.read_bytes()
+                def interrupt(source, out):
+                    out.write(source.read(30))
+                    raise OSError('interrupted')
+                with patch('file_io.shutil.copyfileobj', side_effect=interrupt):
+                    self.assertIsNone(auto_backup(store, data))
+                    with self.assertRaises(OSError):
+                        auto_backup(store, data, strict=True)
+                self.assertEqual(target.read_bytes(), previous)
+                self.assertEqual(len(store.rows()), 1)

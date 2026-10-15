@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 【Windows回帰チェック通知への対応】2026-10-15 Codex
+
+- `588d573` の通知ではLinux全体ゲートとLinux/JST・UTCは成功、Windows/JST・UTCは失敗。非公開Actionsの詳細ログは取得できず、通知された失敗との一致は未確定。このセッションにはメール取得ツールも公開されていない。
+- 追加したバックアップ1試験・削除同期3試験で、`TemporaryDirectory` の終了後に `addCleanup` でSQLiteを閉じていた。Windowsでは使用中のDBを削除できないため、`contextlib.closing` でフォルダー削除前に閉じるよう修正。アプリの処理は変更していない。
+- `test_sqlite_fixture_cleanup.py` は対象4試験の実接続を追跡し、一時フォルダー削除時に閉じていることを検査。GCに依存せずLinuxでも検出する。旧コードで4箇所を検出、修正後成功。全PC試験の接続寿命監査でも他の閉じ忘れなし。
+- 検証：Linux上でJST・UTCそれぞれ310＋168＝478件成功。Windowsでの修正後CI結果は未確認。APK/EXE/Web公開ビルドは実施していない。
+
 ## 【10月14日レビューの5項目を修正】2026-10-15 Codex
 
 - 利用者「今回の提案すべてをもっといい方が無いか検討しつつ、修正」。バックアップの安全な置き換え、PC/Android/Googleの明示削除、PC両サイトの出力ワーカー、長期履歴の日別読み出し、共通ゲートとCIを実装。詳細・検証・反映手順は `REVIEW_FIXES_20261015.md` と `DEVELOPMENT_CHECKS.md`。

@@ -37,6 +37,8 @@ Flutterのない環境でも `bash database_android/tool/check_before_build.sh -
 
 回帰試験は `database/tests`・`database/test_*.py`・`database_android/test`・`database_android/tool/test_*.mjs` に置く。GitHub ActionsはLinux/Windows、JST/UTCのPC試験と、Linuxの全体ゲートを実行する。実機・実Googleの動作確認とは区別する。
 
+一時フォルダー内のSQLiteは、フォルダーを削除する前に必ず閉じる。`with TemporaryDirectory()` 内で `addCleanup(store.close)` だけを登録すると、接続を閉じるより先にフォルダー削除が走り、Windowsで失敗する。内側の `with closing(Store(...))` または `try/finally` を使う。今回のバックアップ・削除同期の4試験には、Linuxでも同じ寿命違反を検出する `test_sqlite_fixture_cleanup.py` がある。
+
 ## GoogleとWebへの反映
 
 ソースの修正やmainへのpushだけで既存のGoogle Apps Script・公開ページは更新されない。

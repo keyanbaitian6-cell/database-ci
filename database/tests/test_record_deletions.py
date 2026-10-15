@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,32 +30,34 @@ class RecordDeletionTests(unittest.TestCase):
 
     def test_last_row_deletion_is_exported_and_old_backup_cannot_resurrect_it(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory); store = Store(root / 'db.sqlite3'); self.addCleanup(store.close)
-            store.save([ROW]); old = root / 'old.json'; export_backup(store, old)
-            store.delete_group(ROW['day'])
-            light = root / 'viewer.json'; export_viewer(store, light)
-            payload = json.loads(light.read_text()); self.assertEqual(payload['records'], [])
-            self.assertEqual(payload['record_deletions'][0]['rack'], 537)
-            import_backup(store, old); self.assertEqual(store.rows(), [])
-            restore_backup(store, old)
-            self.assertEqual(len(store.rows()), 1)
-            self.assertTrue(store.rows()[0]['record_updated_at'])
+            root = Path(directory)
+            with closing(Store(root / 'db.sqlite3')) as store:
+                store.save([ROW]); old = root / 'old.json'; export_backup(store, old)
+                store.delete_group(ROW['day'])
+                light = root / 'viewer.json'; export_viewer(store, light)
+                payload = json.loads(light.read_text()); self.assertEqual(payload['records'], [])
+                self.assertEqual(payload['record_deletions'][0]['rack'], 537)
+                import_backup(store, old); self.assertEqual(store.rows(), [])
+                restore_backup(store, old)
+                self.assertEqual(len(store.rows()), 1)
+                self.assertTrue(store.rows()[0]['record_updated_at'])
 
     def test_deletion_roundtrip_preserves_unrelated_rows_and_explicit_restore(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory); a = Store(root / 'a.db'); b = Store(root / 'b.db')
-            self.addCleanup(a.close); self.addCleanup(b.close)
-            a.save([ROW]); b.save([ROW, dict(ROW, rack=538)])
-            a.delete(ROW['store'], ROW['day'], ROW['machine'], 537)
-            path = root / 'deleted.json'; export_backup(a, path); import_backup(b, path)
-            self.assertEqual([r['rack'] for r in b.rows()], [538])
-            b.save([ROW]); export_backup(b, path); import_backup(a, path)
-            self.assertEqual(sorted(r['rack'] for r in a.rows()), [537, 538])
+            root = Path(directory)
+            with closing(Store(root / 'a.db')) as a, closing(Store(root / 'b.db')) as b:
+                a.save([ROW]); b.save([ROW, dict(ROW, rack=538)])
+                a.delete(ROW['store'], ROW['day'], ROW['machine'], 537)
+                path = root / 'deleted.json'; export_backup(a, path); import_backup(b, path)
+                self.assertEqual([r['rack'] for r in b.rows()], [538])
+                b.save([ROW]); export_backup(b, path); import_backup(a, path)
+                self.assertEqual(sorted(r['rack'] for r in a.rows()), [537, 538])
 
     def test_invalid_deletion_rejects_whole_input(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory); store = Store(root / 'db.sqlite3'); self.addCleanup(store.close)
-            path = root / 'invalid.json'
-            path.write_text(json.dumps(dict(format='database-backup', version=1, records=[ROW], record_deletions=[dict(ROW, deleted_at='bad')])))
-            with self.assertRaises(ValueError): import_backup(store, path)
-            self.assertEqual(store.rows(), [])
+            root = Path(directory)
+            with closing(Store(root / 'db.sqlite3')) as store:
+                path = root / 'invalid.json'
+                path.write_text(json.dumps(dict(format='database-backup', version=1, records=[ROW], record_deletions=[dict(ROW, deleted_at='bad')])))
+                with self.assertRaises(ValueError): import_backup(store, path)
+                self.assertEqual(store.rows(), [])
