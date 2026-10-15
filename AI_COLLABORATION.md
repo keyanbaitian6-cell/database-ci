@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 【共有ページ「🌈の記録」の青枠＝本日・公開】2026-10-16 Claude
+
+- 利用者「共有カレンダーの、バラエティの虹の記録…青い枠で囲まれてるところが本日みたいな雰囲気でてしまうので、本日＝開いている日、見ている日にしてもらっていいですか。android版iPhoneブラウザ版です」。以前は右端・青枠が「記録のある最新の日」（本日未取得なら前日）。質問で「青枠＝今日（開いた日）」を利用者が選択。グリッドは共有ページ（`share_viewer/`）だけにあり、iPhoneブラウザとAndroid起動入口は同じページ。Flutter閲覧ページ・APK・PCは変更なし（PCの表は依頼範囲外）。
+- `2d4a1b4`：🌈の記録は日本時間の本日を選んだ日にして開く（切り替え時も）。前の日へ送ると青枠もその日へ。見出しに「（本日）」。候補は記録のある日のまま。本日未取得でも幸町は本日の列で取り込み前の印（「本日」と同じ `rainbowTodayRows`）を付け外し、長町南は「·」のまま案内を表示。台番号は前の最新の記録を開く。開いたまま日付が変わった後の押下は送らず新しい本日へ移す。新関数 `varietyRecordRows`。仕様は `RAINBOW.md` 冒頭。
+- 試験：`test_share_viewer.mjs` に1件、`test_share_viewer_rainbow_browser.mjs` に本日シナリオ（既存部分は時計を10/10に固定）。修正前のページでは「10/10で開く」で失敗することを確認。
+- 全体ゲート1回目は6件FAIL：私が使ったPython（Codexランタイム）にseleniumが無い5件＋Windowsの既定cp932で `test_record_deletions`・`test_output_worker` がUTF-8のJSONを読めない。後者は10/15追加の試験側の不具合（本体はutf-8で書き・読む）で、Windows CI失敗の原因の可能性あり（CI結果は未確認）。`read_text(encoding='utf-8')` に修正。PC版のPython（pythoncore-3.14、selenium入り）で **`check_before_build.sh` ALL PASSED（58項目）**：PC 316件・P’s CUBE等177件・UTCイベント27件、Flutter 596件、analyzeエラー0（info21）、JS 50本 247件PASS／1件SKIP（`PSCUBE_ARCHIVE_DIR` 未指定、未確認）。ゲートは `acfd004`（Codex、PC終了処理）取り込み前の作業ツリーで実行。
+- **共有ページ公開**：`keyanbaitian6-cell/database-share` **`5c3adad`**、Pages run 38817222694 success。全体ゲートのstageとバイト一致を確認してから公開。公開URLの app/data/viewer_parts/index のSHA-256が公開commitと一致。公開URLで `test_share_viewer_rainbow_browser.mjs` PASS（合成データ・模擬Google）。前回公開（`06f6f67`）以降の未公開だった `viewer_parts.mjs`（Codex `588d573`、保存履歴の1日ずつ読み出し）も同時に公開された。実iPhone・Android実機での表示は未確認。Google Apps Script・APK・EXEは変更なし。
+
 ## 【PC終了時のbad window path name修正】2026-10-16 Codex
 
 - 利用者画像と「閉じようとしたとき」の回答で確認。`close_app` が入力抑止用のタグを `str(root) + '.closing-input'`（実際は `..closing-input`）にし、Tkのbindが存在しないウィンドウ名と解釈して例外。`closing=True` の後、`output_worker.finish()` の前なので通常の×を再度押しても終了できない。
