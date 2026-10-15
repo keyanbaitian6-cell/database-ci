@@ -6,7 +6,7 @@ import unittest
 
 from anaslo_converter import analyze, make_backup, read_catalog, save_backup, suggestions
 from anaslo_html import parse_html, probability
-from pscube_import import PscubeStore, _record_key, _validate_record, is_pscube_backup
+from pscube_import import PscubeStore, _record_key, _validate_record, is_pscube_backup, installation_count
 from test_pscube_sync import machine, record, put
 
 
@@ -96,6 +96,24 @@ class ConverterTests(unittest.TestCase):
         url, remaining = self.store.next_target('2026-09-15')
         self.assertEqual(remaining, 0)
         self.assertIn('nc-v03-001.php', url)
+
+    def test_source_only_machine_does_not_block_native_installation_count(self):
+        put(self.store, self.m, [record(self.m, 102, '2026-09-16')])
+        payload = make_backup(self.staging, {'マイジャグラーV': '未知の機種'}, [])
+        self.store.import_backup(payload)
+        external = next(m for m in self.store.export_payload()['machines']
+                        if m.get('source_site') == 'anaslo')
+        self.assertIsNone(external['url'])
+        before = self.store.path.read_bytes()
+        self.assertEqual(installation_count(self.store.path, self.m['url']), self.m['expected_count'])
+        self.assertEqual(self.store.path.read_bytes(), before)
+
+    def test_source_only_catalog_does_not_supply_native_installation_count(self):
+        payload = make_backup(self.staging, {'マイジャグラーV': '未知の機種'}, [])
+        self.store.import_backup(payload)
+        before = self.store.path.read_bytes()
+        self.assertIsNone(installation_count(self.store.path, self.m['url']))
+        self.assertEqual(self.store.path.read_bytes(), before)
 
     def test_existing_machine_settings_kept(self):
         put(self.store, {**self.m, 'expected_count': 100, 'machine_type': 'normal'}, [])

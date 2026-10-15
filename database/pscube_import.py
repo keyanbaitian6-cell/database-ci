@@ -561,6 +561,10 @@ def installation_count(db_path, current_url):
         counts = set()
         for row in machines:
             machine = json.loads(row[0])
+            # アナスロだけにある補完機種はP’s CUBEの機種URLを持たない。
+            # 表示中の機種の台数確認へ混ぜず、補完記録はそのまま保持する。
+            if machine.get('source_site') == 'anaslo' and machine.get('url') is None:
+                continue
             stored = site_url(machine['url'])
             if (stored.path, parse_qs(stored.query)) == identity:
                 count = machine.get('expected_count')
