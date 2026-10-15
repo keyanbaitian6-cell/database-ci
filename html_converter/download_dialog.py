@@ -127,9 +127,12 @@ class DownloadDialog(tk.Toplevel):
             return action(self.client)
         if method != BROWSER:
             raise ValueError('取得方法を選択してください。')
+        def progress(text):
+            LOGGER.info('browser: %s', text)
+            self.events.put(('log', text))
         engine = self.browser_factory(Path(__file__).parent / 'data' / 'anaslo-webview', cancel=self.cancel,
                                       pacing=self.client.pacing,
-                                      progress=lambda text: self.events.put(('log', text)))
+                                      progress=progress)
         try:
             return action(engine)
         finally:

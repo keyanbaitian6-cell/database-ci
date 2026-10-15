@@ -21,6 +21,7 @@
 | 長期間分のJSONを保存できない | 全日付をファイル名へ連結しない。単日なら日付、複数日なら開始日-終了日。内容に全日付を保持する。 | [保存画面](html_converter/app.py) |
 | 途中停止後にやり直せない | 検証済みの既存HTMLをスキップし、不正ファイルは上書きしない。一時ファイルと完成ファイルを分離し、SHA・取得記録・OSロックを使う。成功分は再開・変換できるようにする。 | [取得・保存](database/anaslo_download.py) |
 | 取得後にブラウザだけ消える | 窓が閉じた事実だけでクラッシュと断定しない。操作した画面・ボタン、親画面の件数・状態・警告を確認する。一覧読取完了による終了、0件、例外、異常終了を区別する。空欄・無反応は正常完了として扱わずログを取る。 | [取得画面](html_converter/download_dialog.py) |
+| ページが白紙のまま取得できない | トップページ移動制限でiframeまで遮断していないか調べる。WebResourceRequested時にSec-Fetch-Destが未付与のことがあるため、native FrameNavigationStartingで埋め込みを識別する。別日へのトップ移動は引き続き拒否し、iframeの応答を本体HTTP状態へ混ぜない。HTTP状態・完了・WebErrorStatusも記録する。 | [WebView2 host](database/anaslo_browser_host.py)、[Microsoftの仕様](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/frames) |
 
 この表の数値・URL条件はアナスロ版の実装例であり、全サイトへそのままコピーする仕様ではない。URLの正規化、フラグメントの扱い、認証・データ構造はサイトごとに確認する。
 
@@ -49,5 +50,6 @@ Cookieはサイト/アプリ専用の保存先に保持する。既存Chromeや�
 - 外部窓・保存名・待機の対策：[de6cc3c](https://github.com/imakurudev-eng/database/commit/de6cc3c)。
 - 日付クリックによる終了の対策：[a75f05e](https://github.com/imakurudev-eng/database/commit/a75f05e)。
 - 継続中の問題：2026-10-15、利用者から「取得を押すとブラウザが消え、表と状態が空欄のまま」と再申告。原因は未確定。「対象0日だった」とは扱わない。
+- 追記：実ログでは一覧31行の反映に成功し、その後の日別取得で待機していた。新しい画像はブラウザ本体が白紙。iframe遮断の問題はローカルで再現・修正したが、実際の白紙の直接原因・解消はまだ未確認。
 - この症状の診断ログは `html_converter/data/logs/diagnostics.log`（アプリの通常起動時に有効）。受信サイズ→リンク抽出件数→UI反映までの段階・例外を記録し、raw HTML/Cookie/HTTPヘッダーをログへ出さない。1MiBごとに世代交代し、現行＋過去2世代まで保持する。ログ自体はGitへ追加しない。
 - 経緯・検証ログの場所は [AI_COLLABORATION.md](AI_COLLABORATION.md)、アナスロの操作説明は [html_converter/README.md](html_converter/README.md)。

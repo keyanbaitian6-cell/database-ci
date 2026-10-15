@@ -15,6 +15,14 @@
 - Flutterはプロジェクト.metadataと同じ公式3.47.1（Dart3.13.1）をクラウドへ導入。依存定義・ロックファイル・APKの版・採点仕様は変更していない。確認用の閲覧ビルド・ステージは全体ゲート内で生成する。
 - 実Googleへの反映、Web公開、APK/EXE作成、実サイトへのアクセスは行っていない。既存のGoogle設定を保って同期スクリプトとWebモジュールを反映し、実機・実データでの削除/復元を照合する工程が残る。
 
+## 【日別ブラウザ白紙：iframe遮断の修正とHTTP状態診断】2026-10-16 Codex
+
+- 利用者の新しい画像は内部ブラウザ本体が白紙。実診断ログで10/15 23:51の一覧受信989,509 bytes・指定8/1〜8/31の31リンク・Tk表31行反映は成功、その後download開始と確認待ちに入ったことを確認。保存記録では8/1が「取得ブラウザが閉じられました」で停止。誰が閉じたか、白紙の直接原因・HTTPコードは旧ログでは不明。過去の空欄申告を0件だったとは扱わない。
+- Documentのリクエスト制限がiframeにも及ぶことを実WebView2＋ローカルで再現。修正前は/indexとfaviconしか到達せず/frameを遮断。Sec-Fetch-Destだけの判別も要求イベント時にヘッダー未付与で失敗したため、本体はnative FrameNavigationStartingで識別する方式にした。フレームURLと拒否されたトップ移動を分け、拒否したトップ移動をiframe扱いで通さない。対象ページ変更時は状態をクリア。
+- HTTP応答側ではSec-Fetch-Destによってiframeの応答を本体ステータスへ混ぜない。NavigationCompletedのWebErrorStatusも記録し、IsSuccess=False/HTTP200は取得成功にしない。HTTP401/403/429、別日・別店舗のトップ移動拒否、初回本人確認は維持。
+- ページのHTTP状態・完了・WebView2結果を親の診断ログへ送り、未準備の取得操作ではHTTP状態をタイトル/案内にも出す。HTML本文・Cookie・HTTPヘッダーはログへ出さない。実サイトに対する自動再試行やCookie初期化はしない。
+- 新規4試験を含むPCルート172件PASS、GUI_OK。実WebView2ローカルで/frameの到達・一覧取得、別日クリックを通信前に拒否→2日連続取得の両方を確認。実サイトへのAI通信0、実DB/Cookie無変更。今回の利用者の白紙が解消したかは未確認。
+- 証跡 `a/work/outputs/anaslo-browser-20261015/` の `frame-before.log`、`frame-after.log`、`frame-tests.log`、`frame-click-regression.log`。参照：[Microsoftのフレーム仕様](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/frames)、[W3C Fetch Metadata](https://www.w3.org/TR/fetch-metadata/)。ローカル試験スクリプトの初回インデント誤りは本体の不具合ではない。
 
 ## 【取得系開発メモ・結果表示の診断】2026-10-15 Codex
 

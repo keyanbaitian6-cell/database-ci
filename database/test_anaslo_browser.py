@@ -9,7 +9,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from anaslo_browser import BrowserClient
-from anaslo_browser_host import NavigationState, install_handlers
+from anaslo_browser_host import NavigationState, install_handlers, is_embedded_document
 from anaslo_download import AccessStopped, Stopped, download
 from test_anaslo_download import FakeCancel, html, link
 from test_anaslo_download_ui import CONVERTER
@@ -151,6 +151,43 @@ class BrowserTests(unittest.TestCase):
 
 
 class NavigationTests(unittest.TestCase):
+    def test_native_frame_requests_are_allowed_but_not_whole_window_clicks(self):
+        state = NavigationState()
+        state.target(link('2026-09-15').url, False)
+        frame = 'https://example.com/display-frame'
+        self.assertFalse(state.allows_document(frame))
+        state.frame_starting(frame)
+        self.assertTrue(state.allows_document(frame))
+        self.assertFalse(state.starting(frame, 2))
+        self.assertFalse(state.allows_document(frame))
+        state.target(link('2026-09-16').url, False)
+        self.assertFalse(state.allows_document(frame))
+
+    def test_embedded_document_is_distinguished_from_window_navigation(self):
+        for destination in ('iframe', 'frame', 'document', ''):
+            headers = unittest.mock.Mock()
+            headers.Contains.return_value = bool(destination)
+            headers.GetHeader.return_value = destination
+            request = SimpleNamespace(Headers=headers)
+            self.assertEqual(bool(is_embedded_document(request)), destination in ('iframe', 'frame'))
+
+    def test_failed_navigation_with_200_is_not_ready_for_capture(self):
+        state = NavigationState()
+        state.target(link('2026-09-15').url, False)
+        state.starting(link('2026-09-15').url, 1)
+        state.completed(1, False, 200, 'OperationCanceled')
+        self.assertTrue(state.error)
+        self.assertEqual(state.web_error, 'OperationCanceled')
+
+    def test_http_denial_is_preserved_for_manual_inspection(self):
+        state = NavigationState()
+        state.target(link('2026-09-15').url, False)
+        state.starting(link('2026-09-15').url, 1)
+        state.completed(1, False, 403, 'HttpStatusError')
+        self.assertEqual(state.status, 403)
+        self.assertEqual(state.web_error, 'HttpStatusError')
+        self.assertFalse(state.error)
+
     def test_popup_replaces_backend_handler_before_it_can_open_external_browser(self):
         class Event:
             def __init__(self, callbacks=()):
@@ -163,6 +200,7 @@ class NavigationTests(unittest.TestCase):
                 return self
         external_open = unittest.mock.Mock()
         core = SimpleNamespace(NewWindowRequested=Event([external_open]),
+                               FrameNavigationStarting=Event(),
                                WebResourceResponseReceived=Event(), WebResourceRequested=Event(),
                                AddWebResourceRequestedFilter=unittest.mock.Mock())
         control = SimpleNamespace(CoreWebView2=core, NavigationStarting=Event(), NavigationCompleted=Event())

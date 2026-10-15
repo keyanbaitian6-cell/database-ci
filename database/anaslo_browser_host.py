@@ -4,10 +4,21 @@ No js_api is exposed to the website. CAPTCHA/consent is always a human action.
 """
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 
 from anaslo_index import canonical_url
 from anaslo_download import MAX_BYTES, reject_access_check
+
+
+def is_embedded_document(request):
+    headers = request.Headers
+    return (headers.Contains('Sec-Fetch-Dest') and
+            str(headers.GetHeader('Sec-Fetch-Dest')).lower() in ('iframe', 'frame'))
+
+
+def document_identity(url):
+    parts = urlsplit(url)
+    return (parts.scheme.lower(), parts.netloc.lower(), unquote(parts.path), parts.query)
 
 
 class NavigationState:
@@ -20,6 +31,9 @@ class NavigationState:
         self.complete = False
         self.error = ''
         self.notice = ''
+        self.web_error = ''
+        self.frames = set()
+        self.blocked_windows = set()
 
     def target(self, url, index):
         with self.lock:
@@ -30,6 +44,9 @@ class NavigationState:
             self.complete = False
             self.error = ''
             self.notice = ''
+            self.web_error = ''
+            self.frames.clear()
+            self.blocked_windows.clear()
 
     def same(self, url):
         try:
@@ -45,6 +62,7 @@ class NavigationState:
                 # A cancelled click must not terminate the capture session or
                 # invalidate the document that is still displayed.
                 self.notice = 'サイト内リンクへの移動を止めました。日付は取得画面の指定期間で選び、上部「取得」→「表示を確認して自動取得を開始」を押してください。'
+                self.blocked_windows.add(document_identity(url))
                 return False
             self.navigation = identity
             self.status = None
@@ -56,15 +74,26 @@ class NavigationState:
             if self.expected and self.same(url):
                 self.status = int(status)
 
-    def completed(self, identity, success, status=None):
+    def frame_starting(self, url):
+        with self.lock:
+            self.frames.add(document_identity(url))
+
+    def allows_document(self, url):
+        with self.lock:
+            identity = document_identity(url)
+            return (self.expected is None or self.same(url) or
+                    (identity in self.frames and identity not in self.blocked_windows))
+
+    def completed(self, identity, success, status=None, web_error=''):
         with self.lock:
             if identity != self.navigation or self.navigation is None:
                 return
             if status and int(status) >= 100:
                 self.status = int(status)
             self.complete = True
-            if not success and self.status is None:
-                self.error = 'ブラウザのページ読み込みに失敗しました。'
+            self.web_error = str(web_error)
+            if not success and (self.status is None or self.status == 200):
+                self.error = 'ブラウザのページ読み込みに失敗しました。' + (f' ({web_error})' if web_error else '')
 
 
 def install_handlers(window, state):
@@ -77,20 +106,25 @@ def install_handlers(window, state):
             args.set_Cancel(True)
 
     def completed(sender, args):
-        state.completed(args.NavigationId, args.IsSuccess, getattr(args, 'HttpStatusCode', None))
+        state.completed(args.NavigationId, args.IsSuccess, getattr(args, 'HttpStatusCode', None),
+                        getattr(args, 'WebErrorStatus', ''))
 
     def response(sender, args):
-        if args.Response is not None:
+        if args.Response is not None and not is_embedded_document(args.Request):
             state.response(str(args.Request.Uri), args.Response.StatusCode)
 
     def popup(sender, args):
         args.set_Handled(True)
 
+    def frame_starting(sender, args):
+        state.frame_starting(str(args.Uri))
+
     def document_request(sender, args):
         if args.ResourceContext != CoreWebView2WebResourceContext.Document:
             return
-        with state.lock:
-            allowed = state.expected is None or state.same(str(args.Request.Uri))
+        # Sec-Fetch-Dest can still be absent at WebResourceRequested time.
+        # Use native frame navigation events to identify embedded documents.
+        allowed = state.allows_document(str(args.Request.Uri))
         if not allowed:
             # Navigation cancellation alone can race with a document request.
             # Respond locally so a disallowed click never reaches the server.
@@ -99,6 +133,7 @@ def install_handlers(window, state):
 
     def attach(core):
         core.WebResourceResponseReceived += response
+        core.FrameNavigationStarting += frame_starting
         # pywebview registers its handler before ours. It opens the system
         # browser before our Handled flag can take effect, so replace it.
         core.NewWindowRequested -= window.native.browser.on_new_window_request
@@ -112,7 +147,7 @@ def install_handlers(window, state):
         else:
             state.error = 'WebView2の初期化に失敗しました。'
 
-    handlers.extend([starting, completed, response, popup, initialized, document_request])
+    handlers.extend([starting, completed, response, popup, initialized, document_request, frame_starting])
     control.NavigationStarting += starting
     control.NavigationCompleted += completed
     if control.CoreWebView2 is None:
@@ -139,7 +174,9 @@ def run_host(connection, profile):
         if ready:
             confirmed.set()
         else:
-            window.set_title('読み込み・認証を確認後、メニューから開始してください')
+            with state.lock:
+                state.notice = f'まだ取得できません：HTTP {state.status or "未確認"}、読み込み完了={state.complete}。ページの表示・認証を確認してください。'
+            window.set_title(f'HTTP {state.status or "未確認"}：ページの表示・認証を確認してください')
 
     def install():
         try:
@@ -163,6 +200,7 @@ def run_host(connection, profile):
         if not approved:
             send('progress', text='ブラウザで表示を確認し、上部「取得」→「表示を確認して自動取得を開始」を選んでください。')
         deadline = time.monotonic() + (300 if not approved else 45)
+        last_state = None
         while not closed.wait(0.25) and time.monotonic() < deadline:
             # A close request interrupts both manual confirmation and load waits.
             if connection.poll():
@@ -174,9 +212,14 @@ def run_host(connection, profile):
             with state.lock:
                 error, complete, status = state.error, state.complete, state.status
                 notice, state.notice = state.notice, ''
+                diagnostic = (complete, status, state.web_error)
+            if diagnostic != last_state:
+                last_state = diagnostic
+                send('progress', text=f'ページ状態：HTTP {status or "未確認"}、読み込み完了={complete}、WebView2={diagnostic[2] or "待機中"}')
+                if complete and status != 200:
+                    window.set_title(f'HTTP {status or "未確認"}：取得待機中／表示・認証を確認してください')
             if notice:
                 send('progress', text=notice)
-                window.set_title('サイト内の日付は開かず、上部「取得」メニューから開始してください')
             if error:
                 raise ValueError(error)
             if complete and status is not None and status >= 400 and status not in (401, 403, 429):
