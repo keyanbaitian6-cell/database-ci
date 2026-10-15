@@ -25,7 +25,7 @@ class OutputWorkerTests(unittest.TestCase):
             finally: store.close()
             result = refresh_outputs(data / 'database.sqlite3', data, data / 'reports', pscube=True)
             self.assertFalse((data / 'database.sqlite3').exists())
-            self.assertEqual(json.loads((data / 'pscube-viewer.json').read_text())['records'][0]['games'], 3000)
+            self.assertEqual(json.loads((data / 'pscube-viewer.json').read_text(encoding='utf-8'))['records'][0]['games'], 3000)
             self.assertIn('pscube_backup', result['timings'])
             self.assertTrue(result['notices'])
             with patch('pscube_import.auto_backup', return_value='バックアップに失敗（取り込みは保存済み）'):

@@ -408,6 +408,27 @@ export function rainbowTodayRows(byDay, marks, store, day) {
 }
 
 /**
+ * 共有ページ「🌈の記録」（表・空き順）の行（2026-10-16 利用者「青い枠で囲まれてるところが本日みたいな雰囲気でてしまうので、
+ * 本日＝開いている日、見ている日に」）。varietyRainbowRows に、選んだ日 [day] が本日 [today] のときの取り込み前の印
+ * （rainbowTodayRows と同じ。幸町だけ）を足す。mark＝選んだ日に付け外しする相手（その日の記録か、本日の取り込み前の印。
+ * どちらも無ければ null）、open＝台番号を押したときに開く記録（選んだ日に無ければ、それより前の最新の記録）。
+ */
+export function varietyRecordRows(byDay, marks, store, day, today) {
+  const pending = day === today
+    ? new Map(rainbowTodayRows(byDay, marks, store, day).rows.map(x => [x.rack, x.marker])) : new Map();
+  const before = storeDays(byDay, store).filter(d => d <= day);
+  return varietyRainbowRows(byDay, store, day).map(x => {
+    const mark = x.record ?? pending.get(x.rack) ?? null;
+    let open = x.record;
+    for (const d of before) {
+      if (open) break;
+      open = (byDay.get(`${store}|${d}`) ?? []).find(r => r.rack === x.rack) ?? null;
+    }
+    return {...x, mark, open, last: mark?.rainbow ? day : x.last};
+  });
+}
+
+/**
  * 🌈の一覧で「バラエティ」とする台数（2026-10-12 利用者「幸町のバラエティは1台機種限定にして欲しい」）。幸町は1台だけの機種、
  * ほかの店は1〜3台（VARIETY_MAX_RACKS）。回っていない台・翌日候補の「バラエティ」は1〜3台のまま。PC版
  * variety_rainbow.RAINBOW_VARIETY_MAX_RACKS と同じ。

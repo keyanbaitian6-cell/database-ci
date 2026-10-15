@@ -9,7 +9,7 @@ import {
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel, viewerNameFrom,
   calendarDays, idleVarietyRacks, isHiddenMachine, storeDays,
   lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
-  VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows,
+  VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows, varietyRecordRows,
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
   lineupDay, suffixReport, isZorome, hasSuffixSummary,
 } from '../../share_viewer/data.mjs';
@@ -259,6 +259,24 @@ test('バラエティ🌈：幸町は1台だけの機種（2026-10-12）・ロ�
   const rows = varietyRainbowRows(byDay, 'saiwaichou', '2026-10-10');
   assert.deepEqual(byLongestGap(rows, '2026-10-10').map(x => x.rack), [1201, 1202], '空きの長い台（6日）が上');
   assert.deepEqual(byLongestGap([...rows, {rack: 7, last: null}], '2026-10-10').map(x => x.rack), [7, 1201, 1202], '一度も無い台がいちばん上');
+});
+
+test('🌈の記録は本日（開いた日）が選んだ日：取り込み前は幸町だけ印を付け外し、台番号は前の最新の記録を開く（2026-10-16）', () => {
+  const rec = (store, day, rack, machine, extra = {}) => ({store, day, machine, rack, games: 3000, bb: 10, rb: 5, ...extra});
+  const byDay = indexRecords(meruhenRecords({records: [
+    rec('saiwaichou', '2026-10-10', 1201, '無職転生', {rainbow: true}), rec('saiwaichou', '2026-10-10', 1202, '頭文字D'),
+    rec('nagamachiminami', '2026-10-10', 50, 'ハナハナ'),
+  ]}));
+  const marks = [{store: 'saiwaichou', day: '2026-10-11', rack: 1202, on: true, updated_at: '2026-10-11T03:00:00Z'}];
+  const today = varietyRecordRows(byDay, marks, 'saiwaichou', '2026-10-11', '2026-10-11');
+  assert.deepEqual(today.map(x => [x.rack, x.record, x.mark?.day, x.mark?.rainbow, x.open?.day, x.last]),
+    [[1201, null, '2026-10-11', false, '2026-10-10', '2026-10-10'], [1202, null, '2026-10-11', true, '2026-10-10', '2026-10-11']],
+    '本日は未取得：印だけ（他端末の印も）、台番号は10/10の記録、印を付けた台は最後の🌈が本日');
+  assert.deepEqual(varietyRecordRows(byDay, marks, 'nagamachiminami', '2026-10-11', '2026-10-11').map(x => [x.rack, x.mark, x.open?.day]),
+    [[50, null, '2026-10-10']], '長町南は取り込み前の印を作らない（「本日」と同じく幸町だけ）');
+  const past = varietyRecordRows(byDay, marks, 'saiwaichou', '2026-10-10', '2026-10-11');
+  assert.deepEqual(past.map(x => [x.rack, x.mark === x.record, x.open === x.record, x.last]),
+    [[1201, true, true, '2026-10-10'], [1202, true, true, null]], '前の日を見ているときは従来どおりその日の記録');
 });
 
 test('バラエティ🌈の並べる台は、記録のそろった最新の日（一部しか取れていない日は使わない、2026-10-12）', () => {

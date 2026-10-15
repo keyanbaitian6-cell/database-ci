@@ -35,7 +35,7 @@ class RecordDeletionTests(unittest.TestCase):
                 store.save([ROW]); old = root / 'old.json'; export_backup(store, old)
                 store.delete_group(ROW['day'])
                 light = root / 'viewer.json'; export_viewer(store, light)
-                payload = json.loads(light.read_text()); self.assertEqual(payload['records'], [])
+                payload = json.loads(light.read_text(encoding='utf-8')); self.assertEqual(payload['records'], [])
                 self.assertEqual(payload['record_deletions'][0]['rack'], 537)
                 import_backup(store, old); self.assertEqual(store.rows(), [])
                 restore_backup(store, old)

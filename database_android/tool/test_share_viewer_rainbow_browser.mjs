@@ -66,6 +66,8 @@ try {
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
+    // 🌈の記録は本日（開いた日）を右端にして開く（2026-10-16）。ここでは本日＝最新の記録の日（10/10 正午）。
+    await page.clock.setFixedTime(new Date('2026-10-10T03:00:00Z'));
     await page.goto(`${pageUrl}#s=${id}`);
     await page.waitForSelector('.grid');
     const open = async () => {
@@ -82,7 +84,7 @@ try {
 
     // 表（初めは表）：幸町は1台だけの機種の 1201・1202・1203。ハナハナ（2台）・主力は出さない。
     assert.equal(await page.locator('.sheet-head .head-title').innerText(), 'バラエティ🌈一覧');
-    assert.match(await text(), /スーパーメルヘンワールド幸町・記録のそろった最新の日に1台だけの機種の台（入れ替えは自動で変わります）。3台・10月10日（土）の🌈 1台/);
+    assert.match(await text(), /スーパーメルヘンワールド幸町・記録のそろった最新の日に1台だけの機種の台（入れ替えは自動で変わります）。3台・10月10日（土）（本日）の🌈 1台/);
     assert.deepEqual(await sheet.locator('.rotation .who .num').allInnerTexts(), ['1201', '1202', '1203']);
     assert.ok(await cell(1201, '10/9', 'を外す').isVisible(), '10/9に付いている（PC）');
     assert.ok(await cell(1202, '10/10', 'を外す').isVisible(), 'ほかの端末の🌈');
@@ -142,7 +144,69 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log('PASS: share viewer バラエティ🌈 (幸町 1-rack machines, grid 7 days / gap order, remembered), one-tap 🌈 posts, pinned date stepping, rack view toggle, kept on reload, 320/393px');
+
+  // 2026-10-16 利用者「青い枠で囲まれてるところが本日みたいな雰囲気でてしまうので、本日＝開いている日、見ている日に」。
+  // 本日（10/11）の数値が未取得でも、🌈の記録は本日を右端・青枠にして開き、幸町は取り込み前の印を付け外しできる。
+  {
+    const context = await browser.newContext({viewport: {width: 393, height: 860}});
+    const posts = [];
+    await context.route('https://script.google.com/**', route => {
+      const request = route.request();
+      const headers = {'access-control-allow-origin': '*'};
+      if (request.method() === 'POST') {
+        posts.push(JSON.parse(request.postData()));
+        return route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify({ok: true})});
+      }
+      const file = new URL(request.url()).searchParams.get('file') ?? '';
+      route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify(responses[file] ?? {error: 'no'})});
+    });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.clock.setFixedTime(new Date('2026-10-11T03:00:00Z'));
+    await page.goto(`${pageUrl}#s=${id}`);
+    await page.waitForSelector('.grid');
+    await page.getByRole('button', {name: 'バラエティ🌈', exact: true}).click();
+    await page.waitForSelector('.sheet');
+    const sheet = page.locator('.sheet');
+    const text = async () => (await sheet.innerText()).replace(/\s+/g, ' ');
+    const cell = (rack, md, verb) => sheet.getByRole('button', {name: `${rack}番台 ${md}の🌈${verb}`});
+    const day = () => page.locator('select[data-sheet-day]').inputValue();
+    await page.getByRole('button', {name: '🌈の記録', exact: true}).click();
+    assert.equal(await day(), '2026-10-11', '本日（開いた日）で開く');
+    assert.equal(await sheet.locator('.rotation .head .d.today').innerText(), '11', '青枠の列＝本日');
+    assert.match(await text(), /10月11日（日）（本日）の🌈 0台/);
+    assert.match(await text(), /本日分の数値はまだ取り込まれていません。🌈は取り込み前でも付けられ/);
+    assert.match(await cell(1201, '10/11', 'を付ける').getAttribute('class'), /\btoday\b/);
+    await cell(1201, '10/11', 'を付ける').click();
+    for (let i = 0; i < 40 && !posts.length; i++) await page.waitForTimeout(100);
+    assert.deepEqual(posts[0].marks.map(m => [m.rack, m.day, m.on]), [[1201, '2026-10-11', true]]);
+    assert.ok(await cell(1201, '10/11', 'を外す').isVisible());
+    assert.equal(await sheet.locator('.rotation .r').nth(1).locator('.gap').innerText(), '当日');
+    // 台番号は、本日が未取得でもその台の最新の記録（10/10）を開ける。
+    await sheet.locator('.rotation .who', {hasText: '1201'}).click();
+    assert.equal(await page.locator('#sheet-title').innerText(), '1201番台');
+    assert.equal(await day(), '2026-10-10');
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
+    // 前の日へ送ると、青枠もその日（見ている日）へ。
+    await page.getByRole('button', {name: '前の日'}).click();
+    assert.equal(await day(), '2026-10-10');
+    assert.match(await cell(1202, '10/10', 'を外す').getAttribute('class'), /\btoday\b/);
+    // 候補は記録のある日だけ（本日が未取得なら最新の記録の日）。🌈の記録へ戻すと本日。
+    await page.getByRole('button', {name: '候補', exact: true}).click();
+    assert.equal(await day(), '2026-10-10');
+    await page.getByRole('button', {name: '🌈の記録', exact: true}).click();
+    assert.equal(await day(), '2026-10-11');
+    // 開いたまま日付が変わったら、前の日の列に付けずに本日の列を移す。
+    await page.clock.setFixedTime(new Date('2026-10-12T03:00:00Z'));
+    await cell(1202, '10/11', 'を付ける').click();
+    assert.match(await page.locator('.toast').innerText(), /日付が変わりました。表を確認してから押してください。/);
+    assert.equal(await day(), '2026-10-12');
+    assert.equal(posts.length, 1, '日付が変わった後の押下は送らない');
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+  console.log('PASS: share viewer バラエティ🌈 (幸町 1-rack machines, grid 7 days / gap order, remembered), one-tap 🌈 posts, pinned date stepping, rack view toggle, kept on reload, 320/393px, grid opens on today (pending marks, date change)');
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
