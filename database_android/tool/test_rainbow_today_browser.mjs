@@ -1,5 +1,6 @@
 // 合成データ・模擬Googleだけで本日の未取得台への🌈を両Web版で検証する。
 import assert from 'node:assert/strict';
+import test from 'node:test';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -28,8 +29,9 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 const script = `https://script.google.com/macros/s/AKfycbTEST${'x'.repeat(40)}/exec`;
 const browser = await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_PATH || undefined, args:['--no-sandbox']});
 try {
-  for (const kind of ['share', 'viewer']) for (const width of [320,393]) {
+  for (const kind of ['share', 'viewer']) for (const width of [320,393]) await test(`${kind}: 本日の🌈・${width}px`, async t => {
     const context = await browser.newContext({viewport:{width,height:852}});
+    t.after(() => context.close());
     const page = await context.newPage(), posts = [], errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.clock.setFixedTime(new Date('2026-10-14T04:00:00Z'));
@@ -136,7 +138,5 @@ try {
     assert.equal(posts.length,before,'日付跨ぎの最初のクリックは保存しない');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     assert.deepEqual(errors,[]);
-    await context.close();
-  }
-  console.log('PASS: 閲覧・共有の本日、未取得への付け外し、他端末、保存失敗時の端末保持、開き直し、取り込み後引き継ぎ、日付跨ぎ、320/393px');
+  });
 } finally {await browser.close();await new Promise(r=>server.close(r));}

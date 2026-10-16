@@ -33,6 +33,11 @@ run() {
     echo "OK    $name"
   else
     echo "FAIL  $name  （記録：$WORK/$name.log）"
+    # Hosted runners disappear after the job. Keep the actual error in the
+    # Actions output as well as the per-test file, with bounded log volume.
+    echo "::group::$name failure log (last 120 lines)"
+    tail -n 120 "$WORK/$name.log"
+    echo '::endgroup::'
     failed+=("$name")
     return 1
   fi

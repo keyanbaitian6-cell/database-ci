@@ -72,3 +72,11 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Complete pre-build gate
         run: xvfb-run -a bash database_android/tool/check_before_build.sh
+      - name: Preserve failed regression logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-full-logs
+          path: database_android/build/check_before_build/*.log
+          if-no-files-found: ignore
+          retention-days: 7
