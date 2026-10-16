@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 【PC回帰試験の秒境界による誤失敗を修正】Codex
+
+- 利用者画像はUbuntu/UTCのPC基本316件成功、追加188件中 `test_bad_graph_rejects_whole_page_and_keeps_existing_export` 1件失敗。書き出しJSONの時刻を含むバイト比較で失敗していた。
+- 旧試験は不正グラフを拒否した後に自分で再書き出しし、変わるのが正常な `exported_at` を含めて前回と完全一致を要求していた。同じ秒なら成功、秒を跨ぐと失敗する。`_now_text` を1呼び出しずつ1秒進め、旧試験の同じAssertionErrorを決定的に再現した。UTC専用の不具合ではない。
+- 拒否時の試験は再書き出し前の既存ファイルをバイト比較し、DB全テーブルのdump不変も検査。別の新規試験で06:36:04→05の再書き出しを制御し、時刻だけ更新・他の全内容一致を検証。アプリ本体と不正入力の拒否条件は変更していない。
+- 検証：制御時計の対象2件成功、Linux上でJST・UTCそれぞれ316＋189＝505件成功。ログ `/tmp/pc-clock-fix-*.log`、`/tmp/extra-clock-fix-*.log`。試験コードのみの変更のためFlutter・JS・全体ゲートは今回再実行せず、WindowsとGitHubでの修正後結果は未確認。EXE/APK/Webビルド・公開、実サイトアクセスなし。
+
 ## 【CI全体ゲート失敗の診断改善】Codex
 
 - 利用者の新しい通知ではWindows/Linux・JST/UTCのPC全4ジョブは成功、`full` の `test_rainbow_today_browser` だけ失敗。画面にエラー本文はなく、通知された失敗の原因は未確定。最新main `7f40fd5` を取り込んで調査した。

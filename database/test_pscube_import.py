@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -513,11 +514,26 @@ class PscubeImportTests(unittest.TestCase):
         machine, record, _ = self.seed_rack()
         target = self.store.export_viewer(Path(self.tmp.name) / 'viewer.json')
         before = target.read_bytes()
+        database_before = list(self.store.db.iterdump())
         record['graph']['points'] = [[0, 10], [1, float('nan')]]
         with self.assertRaisesRegex(ValueError, '座標'):
             self.store.import_page(self.page(machine['url'], [machine], [record]), machine['url'])
-        self.store.export_viewer(target)
+        # A rejected import must preserve the existing file, without issuing a
+        # new export (whose exported_at legitimately changes across seconds).
         self.assertEqual(target.read_bytes(), before)
+        self.assertEqual(list(self.store.db.iterdump()), database_before)
+
+    def test_reexport_updates_timestamp_without_changing_saved_content(self):
+        self.seed_rack()
+        stamps = ['2026-10-16T06:36:04+00:00', '2026-10-16T06:36:05+00:00']
+        with patch('pscube_import._now_text', side_effect=stamps):
+            target = self.store.export_viewer(Path(self.tmp.name) / 'viewer.json')
+            before = json.loads(target.read_text(encoding='utf-8'))
+            self.store.export_viewer(target)
+            after = json.loads(target.read_text(encoding='utf-8'))
+        self.assertEqual(before.pop('exported_at'), stamps[0])
+        self.assertEqual(after.pop('exported_at'), stamps[1])
+        self.assertEqual(after, before)
 
     def test_reopen_preserves_separate_records_and_pending_status(self):
         _, _, _ = self.seed_rack()
