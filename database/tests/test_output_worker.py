@@ -83,6 +83,64 @@ class OutputWorkerTests(unittest.TestCase):
         worker.thread.join(1); self.assertTrue(worker.finished)
         with self.assertRaises(RuntimeError): worker.request(backup=True)
 
+    def test_close_skips_pending_history_but_keeps_backup_and_callbacks(self):
+        # PC終了時（2026-10-17）：×のあと「過去の記録」（PC内のページ、開くときに作り直す）の作り直しを
+        # 10秒以上待っていた。閉じる途中は作らない。バックアップと完了通知は省かない。
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+        def run(**flags):
+            calls.append(flags)
+            if len(calls) == 1:
+                entered.set(); release.wait(3)
+            return flags
+        done = lambda result: None
+        worker = OutputWorker(run)
+        self.addCleanup(release.set); self.addCleanup(worker.finish)
+        worker.request(backup=True)
+        self.assertTrue(entered.wait(1))
+        worker.request(history=True, backup=True, done=done)
+        worker.finish(); release.set()
+        results = self.wait_results(worker, 2)
+        self.assertEqual(calls[1], {'history': False, 'backup': True})
+        self.assertEqual(results[1].callbacks, [done])
+        worker.thread.join(1); self.assertTrue(worker.finished)
+
+    def test_cancelled_history_writes_nothing_and_backup_still_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); path = root / 'data' / 'database.sqlite3'
+            store = Store(path)
+            store.save([dict(store='saiwaichou', kind_code=21, day='2026-10-14', machine='試験', rack=537,
+                             games=3000, bb=10, rb=5)])
+            store.close()
+            backups = []
+            with patch('core.auto_backup', side_effect=lambda db, data, *, strict: backups.append(len(db.rows()))):
+                result = refresh_outputs(path, root / 'data', root / 'reports', history=True, backup=True,
+                                         cancelled=lambda: True)
+            self.assertTrue(result['history_cancelled'])
+            self.assertIsNone(result['history'])
+            self.assertFalse((root / 'reports' / 'database-history.html').exists())
+            self.assertEqual(backups, [1], 'backup is written in full from the same snapshot')
+
+    def test_history_report_stops_between_machines_without_writing(self):
+        from core import HistoryReportCancelled, history_report
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = Store(root / 'database.sqlite3')
+            try:
+                store.save([dict(store='saiwaichou', kind_code=21, day='2026-10-14', machine=f'試験{n}', rack=500 + n,
+                                 games=3000, bb=10, rb=5) for n in range(5)])
+                checks = []
+                def cancelled():
+                    checks.append(1)
+                    return len(checks) > 3
+                with self.assertRaises(HistoryReportCancelled):
+                    history_report(store, root / 'reports', cancelled=cancelled)
+                self.assertEqual(len(checks), 4, 'checked before reading and between machines')
+                self.assertFalse((root / 'reports' / 'database-history.html').exists())
+                self.assertTrue(history_report(store, root / 'reports').exists(), 'without cancel it is written')
+            finally:
+                store.close()
+
     def test_snapshot_output_does_not_skip_backup_when_report_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); path = root / 'data' / 'database.sqlite3'

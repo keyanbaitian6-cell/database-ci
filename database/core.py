@@ -2910,7 +2910,11 @@ document.getElementById('graph-modal').addEventListener('click',e=>{{if(e.target
     return output, results
 
 
-def history_report(store, folder, days=HISTORY_REPORT_DAYS):
+class HistoryReportCancelled(Exception):
+    """The PC app is closing; the history page is rebuilt when it is next opened."""
+
+
+def history_report(store, folder, days=HISTORY_REPORT_DAYS, cancelled=None):
     """Build one offline page that groups saved records by date and machine.
 
     Only the most recent ``days`` dates are drawn. Each rack carries its graph
@@ -2918,9 +2922,18 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
     0.4MB per day of capture and the browser slower to open it every day.
     Nothing is deleted -- older dates stay in the database and are shown by
     the result and summary pages.
+
+    ``cancelled`` is checked between machines. When it returns true, nothing is
+    written and ``HistoryReportCancelled`` is raised (PC終了時、2026-10-17：
+    実データ規模で10秒以上かかり、×を押してから閉じるまで待たせていた)。
     """
+    def stop_if_cancelled():
+        if cancelled is not None and cancelled():
+            raise HistoryReportCancelled()
+
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
+    stop_if_cancelled()
     all_rows = store.rows()
     all_dates = sorted({r['day'] for r in all_rows}, reverse=True)
     dates = all_dates[:days]
@@ -2931,6 +2944,7 @@ def history_report(store, folder, days=HISTORY_REPORT_DAYS):
     machines = sorted({machine for _day, _location, machine in keys})
     groups = []
     for index, (day, location, machine) in enumerate(keys):
+        stop_if_cancelled()
         day_events = store.date_events(location, day)
         event_html = (f'<span class="event">{html.escape(day_events[0]["name"])}</span>'
                       if day_events else '')
@@ -3025,6 +3039,7 @@ function showGraph(btn){{document.getElementById('graph-modal-title').textConten
 function closeGraph(){{document.getElementById('graph-modal').hidden=true}}
 document.getElementById('graph-modal').addEventListener('click',e=>{{if(e.target.id==='graph-modal')closeGraph()}});
 </script></body></html>'''
+    stop_if_cancelled()
     output = folder / 'database-history.html'
     output.write_text(text, encoding='utf-8')
     return output

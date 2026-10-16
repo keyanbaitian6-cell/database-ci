@@ -341,8 +341,9 @@ def main():
     # まとめて1回（2026-10-12 利用者「一個押すたびに保存処理をしているようで数秒かかってしまう。…まとめてつけてから
     # 保存処理してほしい」）：バラエティ🌈の「閲覧・共有ページに反映」ボタン、バラエティ🌈のタブを離れるとき、
     # カレンダーを閉じるとき、PC版を閉じるとき。「過去の記録」の作り直し（10秒ほど）は🌈のときはしない。
+    # 閉じる途中は「過去の記録」（PC内のページ、開くときに作り直す）を作らず、バックアップだけ待つ（2026-10-17）。
     output_worker = OutputWorker(lambda **options: refresh_outputs(
-        DATA_DIR / 'database.sqlite3', DATA_DIR, ROOT / 'reports', **options))
+        DATA_DIR / 'database.sqlite3', DATA_DIR, ROOT / 'reports', cancelled=lambda: output_worker.closing, **options))
     output_poll = [None]
     closing = [False]
 
@@ -1204,7 +1205,8 @@ def main():
             open_pscube_viewer()
             return
         def open_completed(result):
-            if not result.error:
+            # 開く前に閉じた場合は作っていない（閉じる途中は作らない）。
+            if not result.error and result.value.get('history'):
                 os.startfile(result.value['history'])
         schedule_outputs(history=True, done=open_completed)
 

@@ -4,14 +4,17 @@ from queue import Empty, Queue
 from threading import Condition, Thread
 
 
-def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, backup=False, pscube=False):
-    """Read isolated SQLite snapshots; serialize both sites' output updates."""
+def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, backup=False, pscube=False, cancelled=None):
+    """Read isolated SQLite snapshots; serialize both sites' output updates.
+
+    ``cancelled`` (PC版を閉じている途中なら true) stops the local history page;
+    backups and the viewer files are still written in full."""
     import sqlite3
     import tempfile
     from contextlib import closing, contextmanager
     from pathlib import Path
     from time import perf_counter
-    from core import Store, auto_backup, history_report
+    from core import HistoryReportCancelled, Store, auto_backup, history_report
 
     @contextmanager
     def snapshot_store(path, factory):
@@ -38,7 +41,12 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
     if history or backup:
         with snapshot_store(database_path, Store) as store:
             if history:
-                result['history'] = run('history', lambda: history_report(store, reports_dir))
+                def build_history():
+                    try:
+                        return history_report(store, reports_dir, cancelled=cancelled)
+                    except HistoryReportCancelled:
+                        result['history_cancelled'] = True
+                result['history'] = run('history', build_history)
             if backup:
                 value = run('backup', lambda: auto_backup(store, data_dir, strict=True))
                 if value is None and not errors:
@@ -108,6 +116,11 @@ class OutputWorker:
                     self.condition.wait(timeout=0.05)
                 options, callbacks = self.pending, self.callbacks
                 self.pending, self.callbacks = {}, []
+                if self.closing:
+                    # 「過去の記録」はPC内だけのページで、開くときに必ず作り直す。閉じる途中では作らない
+                    # （実データ規模で10秒以上、×を押してから閉じるまで待たせていた。2026-10-17）。
+                    # バックアップ・閲覧用ファイルは省かない。
+                    options['history'] = False
             try:
                 result = OutputResult(self.run(**options), None, callbacks)
             except Exception as error:
