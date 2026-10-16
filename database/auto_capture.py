@@ -234,6 +234,23 @@ AUTO_CAPTURE_JS = r'''
     return null;
   };
   window.__databaseAutoWaitReason = autoWaitReason;
+  // 台ページは曲線を先に描き、グラフ内の数字（総回転数・BIG・REG・最大持玉）を少し遅れて
+  // 入れることがある（2026-10-16、空のまま読んだ送信データを確認。曲線は後の保存と同じ）。
+  // 幸町は一覧に最大持玉が無いので、空のまま送ると「N番台の数値を確認できません」で止まる。
+  // 数字がすべて空のあいだは送らずに待つ。入らないままの台で止まり続けないよう、
+  // 同じページで GRAPH_NUMBERS_WAIT_MS 待っても空なら、これまでどおり送る。
+  const GRAPH_NUMBERS_WAIT_MS = 20000;
+  let graphNumbersEmpty = null;
+  const graphNumbersPending = payload => {
+    const values = Object.values(payload.info || {});
+    if (!values.length || values.some(value => String(value).trim() !== '')) {
+      graphNumbersEmpty = null;
+      return false;
+    }
+    if (!graphNumbersEmpty || graphNumbersEmpty.url !== location.href)
+      graphNumbersEmpty = {url: location.href, since: Date.now()};
+    return Date.now() - graphNumbersEmpty.since < GRAPH_NUMBERS_WAIT_MS;
+  };
   window.__databaseAutoProbe = () => {
     if (autoCancelled || autoChanging) return {error: '切り替え待ち'};
     const waiting = autoWaitReason();
@@ -253,6 +270,8 @@ AUTO_CAPTURE_JS = r'''
     else return {error: 'ON・対象ページ待ち（確認操作は行いません）'};
     const payload = JSON.parse(raw);
     if (payload.error) return {error: payload.error};
+    if (kind === 'graph' && graphNumbersPending(payload))
+      return {error: '台の数値（総回転数・最大持玉など）の表示待ち'};
     return {kind, raw, url: location.href};
   };
   window.__databaseAutoMoveMachine = revision => {

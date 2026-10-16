@@ -723,6 +723,22 @@ class BrowserImportTests(unittest.TestCase):
             self.assertEqual(context['updated_fields'], {'games': (3500, 999)})
             db.close()
 
+    def test_build_graph_context_explains_numbers_not_shown_yet(self):
+        # 2026-10-16 幸町：台ページの数字が4つとも空のまま読まれ、一覧に最大持玉が無いので止まった。
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            db = Store(Path(folder) / 'test.db')
+            db.save([{**row(rack=734), 'store': 'saiwaichou', 'max_hold': None}])
+            payload = dict(store='saiwaichou', target_date='2026-09-13', rack=734,
+                          points=[[0, 50], [10, 10]], baseline_y=50,
+                          games=None, bb=None, rb=None, max_hold=None)
+            with self.assertRaisesRegex(GraphExtractionError, '734番台：グラフ内の数値.*まだ表示されていません'):
+                build_graph_context(payload, db)
+            # 数字が入れば、一覧に無い最大持玉は台ページの値で保存できる。
+            context = build_graph_context({**payload, 'games': 3500, 'bb': 20, 'rb': 10,
+                                           'max_hold': 859}, db)
+            self.assertEqual(context['max_hold'], 859)
+            db.close()
+
     def test_auto_four_points_from_svg_style_coordinates(self):
         points = [(0, 50), (10, 10), (20, 80), (30, 40)]
         auto = auto_four_points(points, baseline_y=50, width=30)

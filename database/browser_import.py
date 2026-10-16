@@ -294,6 +294,12 @@ def build_graph_context(payload, store):
             return value
         if match.get(field) is not None:
             return int(match[field])
+        if all(payload.get(name) is None for name in ('games', 'bb', 'rb', 'max_hold')):
+            # 台ページは曲線を先に描き、グラフ内の数字を少し遅れて入れることがある
+            # （2026-10-16、幸町で多発。一覧に最大持玉が無いので補えない）。
+            raise GraphExtractionError(
+                f'{rack}番台：グラフ内の数値（総回転数・最大持玉など）がまだ表示されていません。'
+                '数値が表示されてから取り込み直してください。')
         raise GraphExtractionError(f'{rack}番台の数値を確認できません。')
 
     games = resolve_number('games')
