@@ -7,7 +7,7 @@
 - ②グラフ：`anaslo_converter.graph_measurement_from_source`。アナスロのグラフ（片側1000）をメルヘンのSVGの座標（ゼロ線200.5・片側180px）へ線形に移し、`baseline/peak/trough/end` と `curve`、`method: 'anaslo-source-graph'` を `graph_measurement` に入れる。最大持玉が無いので、PC・Android・共有ページの推定差枚はどれも None のまま（試験で確認）。変換時に付け、保存済みの分は `fix_anaslo_saved.py`（`fix_anaslo_names.py` から改名、機種名の修正＋グラフの追加）で足す。1点だけのグラフ（未稼働1,357台など）は作らない。
 - 一致の確認（9/15〜10/15、G数・BB・RBが同じでメルヘンのグラフもある9,172台）：採点の終点の点が同じ9,134台（99.6%）、維持の点の差1点以内 9,125/9,134、バラエティの終わり方（3000G以上）3,381/3,389。
 - **実DBに適用**（PC版・変換アプリが動いていないことを確認）：グラフを足した行9,730件、機種名0件、再実行で0件。複製 `database/data/database.pre-anaslo-fix-20261017-012424.sqlite3`、出力（レポート・バックアップ・閲覧用・同期フォルダ）更新。効果の例（幸町9/10）：採点の評価できる配点が60→80/100（386台）、バラエティの翌日候補 0→5台。翌日候補（通常機種）はG数・BB・RBだけなので変化なし。
-- 試験：Python `test_anaslo_saiwaichou.py` 17件（今回2件追加）、Flutter `meruhen_anaslo_test.dart` 4件。全体ゲートは下に追記。APKはビルドしていない（Androidの変更は次のAPKから。利用者の指示があるまで作らない）。
+- 試験：Python `test_anaslo_saiwaichou.py` 17件（今回2件追加）、Flutter `meruhen_anaslo_test.dart` 4件。全体ゲート（`be6a991`）：1回目は60項目中 `test_viewer_rainbow_browser` だけ失敗。原因は `page.goto: net::ERR_NETWORK_IO_SUSPENDED`（利用者の就寝中にPCがスリープし、手元のページを読み込めなかった）で、判定の失敗ではない。同じ試験の単独再実行はPASS。最初から再実行して **ALL PASSED（61項目）**：PC 323件・P’s CUBE等195件・UTCイベント27件、Flutter 603件、JS試験（`test_pscube_capture` の実保存ページ検査は `PSCUBE_ARCHIVE_DIR` 未指定でSKIP＝未確認）。APKはビルドしていない（Androidの変更は次のAPKから。利用者の指示があるまで作らない）。
 
 ## 【PC版を閉じるのに10〜15秒かかる】2026-10-17 Claude
 
