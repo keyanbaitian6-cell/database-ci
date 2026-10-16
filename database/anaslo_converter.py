@@ -7,6 +7,7 @@ from contextlib import closing
 from datetime import datetime
 from difflib import SequenceMatcher
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -197,6 +198,39 @@ class MeruhenCatalog:
         return {'automatic': automatic, 'candidates': list(dict.fromkeys([*matched, *by_rack, *similar]))[:8]}
 
 
+# メルヘンのグラフの座標（core.py の推定差枚と同じ）：ゼロ線200.5、片側180px＝軸の段階 R 枚。
+_MERUHEN_ZERO_Y, _MERUHEN_HALF = 200.5, 180.0
+# アナスロのグラフは同じホールのグラフを片側1000に引き伸ばしたもの（2026-10-17、ジャグラー
+# オンラインの差枚で8日分4,000台中3,821台が「終点×R÷1000」と一致）。
+_ANASLO_HALF = 1000.0
+
+
+def graph_measurement_from_source(graph):
+    """アナスロのグラフ → メルヘンと同じ座標の測定値（max_hold が無いので差枚は推定されない）。
+
+    縮尺 R が分からなくても、終点のプラス・マイナス、維持率（終点÷山）、バラエティの終わり方は
+    メルヘンと同じに決まる（2026-10-17：重なる日でそれぞれ728/728・728/728・315/317台一致）。"""
+    if not isinstance(graph, dict) or graph.get('kind') != 'source_coordinates':
+        return None
+    try:
+        zero = float(graph.get('zero_y', 0.0))
+        points = [(float(x), float(y) - zero) for x, y in graph['points']]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if len(points) < 2 or any(not (math.isfinite(x) and math.isfinite(y)) for x, y in points):
+        return None
+    if any(abs(y) > _ANASLO_HALF * 1.05 for _, y in points):
+        return None  # 枠の外の値は想定外（推測で縮めない）
+    to_px = lambda y: round(_MERUHEN_ZERO_Y - y * _MERUHEN_HALF / _ANASLO_HALF, 3)
+    start = (points[0][0], 0.0)
+    peak = max([start, *points], key=lambda p: p[1])
+    trough = min([start, *points], key=lambda p: p[1])
+    return {'baseline_x': points[0][0], 'baseline_y': _MERUHEN_ZERO_Y,
+            'peak_x': peak[0], 'peak_y': to_px(peak[1]), 'trough_x': trough[0], 'trough_y': to_px(trough[1]),
+            'end_x': points[-1][0], 'end_y': to_px(points[-1][1]),
+            'curve': [[x, to_px(y)] for x, y in points], 'method': 'anaslo-source-graph'}
+
+
 def make_meruhen_backup(staging, mapping, catalog):
     """Meruhen backup that only fills (day, rack) slots missing in the DB.
 
@@ -242,6 +276,9 @@ def make_meruhen_backup(staging, mapping, catalog):
                       'source_site': 'anaslo', 'source_url': d['source']['url'],
                       'source_sha256': d['source']['sha256'], 'source_machine': name,
                       'source_probabilities': source['probabilities'], 'source_graph': source['graph']}
+            measurement = graph_measurement_from_source(source['graph'])
+            if measurement:
+                record['graph_measurement'] = measurement
             if not _valid_backup_record(record):
                 raise ValueError(f'{source["rack"]}番台の数値を確認してください。')
             records.append(record)

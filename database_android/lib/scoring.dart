@@ -55,6 +55,11 @@ Map<String, List<SlotRecord>> _byMachine(List<SlotRecord> all) {
   return byMachine;
 }
 
+/// 採点・翌日候補の比較から外すアナスロ補完。P’s CUBEの店だけ（MY・信号の対応が未確認）。
+/// メルヘン（幸町）の補完は通常の記録として使う（2026-10-16 利用者決定、PC版 core.py と同じ）。
+bool isExcludedSupplement(SlotRecord r) =>
+    r.extra['source_site'] == 'anaslo' && isPscubeStore(r.store);
+
 List<SlotRecord> comparisonPool(SlotRecord row, List<SlotRecord> all) {
   // 日付は必ず 'YYYY-MM-DD' なので、文字列の大小がそのまま日付の前後になる。
   // 比較のたびに日付を解析すると、台数の二乗だけ解析が走って重くなる
@@ -76,7 +81,7 @@ List<SlotRecord> comparisonPool(SlotRecord row, List<SlotRecord> all) {
             r.games >= lowest &&
             r.games <= highest &&
             !hasImplausibleNumbers(r) &&
-            r.extra['source_site'] != 'anaslo',
+            !isExcludedSupplement(r),
       )
       .toList();
 }

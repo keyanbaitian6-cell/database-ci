@@ -205,10 +205,10 @@ class MeruhenBackupTests(unittest.TestCase):
 
 
 class SavedNameFixTests(unittest.TestCase):
-    """fix_anaslo_names.py：対応表の誤りで保存した補完の機種名を付け直す（2026-10-17）。"""
+    """fix_anaslo_saved.py：対応表の誤りで保存した補完の機種名を付け直す（2026-10-17）。"""
 
     def setUp(self):
-        from fix_anaslo_names import apply_name_fixes, plan_name_fixes
+        from fix_anaslo_saved import apply_name_fixes, plan_name_fixes
         self.plan, self.apply = plan_name_fixes, apply_name_fixes
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -270,6 +270,58 @@ class SavedNameFixTests(unittest.TestCase):
         fixes, skipped = self.plan(self.db, {})
         self.assertEqual(fixes, [])
         self.assertEqual(skipped['no_mapping'], 3)
+
+
+class AnasloGraphTests(unittest.TestCase):
+    """アナスロのグラフ（片側1000に引き伸ばしたもの）→ メルヘンの座標の測定値（2026-10-17）。"""
+
+    def graph(self, ys):
+        return {'kind': 'source_coordinates', 'points': [[0.5 + 10 * i, y] for i, y in enumerate(ys)],
+                'zero_y': 0.0, 'y_increases_downward': True}
+
+    def test_shape_scores_and_variety_without_a_net_estimate(self):
+        from anaslo_converter import graph_measurement_from_source
+        from core import measurement_metrics, meruhen_net_estimate_detail, rack_net, variety_state
+        up = graph_measurement_from_source(self.graph([0, 300, 1000, 500]))
+        self.assertEqual((up['baseline_y'], up['peak_y'], up['end_y']), (200.5, 20.5, 110.5))
+        self.assertEqual(up['curve'][2], [20.5, 20.5])
+        metrics = measurement_metrics(up)
+        self.assertEqual((metrics['positive_score'], metrics['retention_score']), (10.0, 5.0))
+        down = graph_measurement_from_source(self.graph([0, 200, -400]))
+        self.assertEqual(measurement_metrics(down)['positive_score'], 0.0)
+        self.assertEqual(variety_state(dict(games=3500, bb=5, rb=5, graph_measurement=up)), 'plus')
+        self.assertEqual(variety_state(dict(games=3500, bb=5, rb=5, graph_measurement=down)), 'dented')
+        # No max_hold, so the scale (and the net) stays unknown on every platform's estimator.
+        self.assertEqual(meruhen_net_estimate_detail(up, None, 3500), (None, False))
+        self.assertEqual(rack_net(dict(store='saiwaichou', day='2026-09-01', games=3500, graph_measurement=up)),
+                         (None, False, False))
+        self.assertIsNone(graph_measurement_from_source(self.graph([0])))  # unplayed rack
+        self.assertIsNone(graph_measurement_from_source(self.graph([0, 1500])))  # outside the frame
+        self.assertIsNone(graph_measurement_from_source(None))
+
+    def test_converter_and_saved_rows_get_the_measurement(self):
+        from fix_anaslo_saved import apply_graph_fills, plan_graph_fills
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        html = Path(tmp.name) / '2026_09_01.html'
+        html.write_bytes(saiwai_html())
+        catalog = MeruhenCatalog('saiwaichou', [('2026-09-15', 'SネオアイムジャグラーEX−KK', 779)])
+        payload = make_meruhen_backup(analyze([html]), {'ネオアイムジャグラーEX': 'SネオアイムジャグラーEX−KK',
+                                                         'マイジャグラーV': None}, catalog)
+        self.assertEqual(payload['records'][0]['graph_measurement']['method'], 'anaslo-source-graph')
+        db = Store(Path(tmp.name) / 'database.sqlite3')
+        self.addCleanup(db.close)
+        old = dict(meruhen_row('2026-09-01', 779, 'SネオアイムジャグラーEX−KK'), source_site='anaslo',
+                   source_graph=self.graph([0, 100, -50]))
+        native = meruhen_row('2026-09-02', 779, 'SネオアイムジャグラーEX−KK')
+        db.save([old, native])
+        fills = plan_graph_fills(db)
+        self.assertEqual([key[1] for key, _ in fills], ['2026-09-01'])
+        self.assertEqual(apply_graph_fills(db, fills), 1)
+        rows = {r['day']: r for r in db.rows()}
+        self.assertEqual(rows['2026-09-01']['graph_measurement']['end_y'], 209.5)
+        self.assertNotIn('graph_measurement', rows['2026-09-02'])
+        self.assertEqual(plan_graph_fills(db), [])
 
 
 class ConverterScreenTests(unittest.TestCase):
