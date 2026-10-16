@@ -2078,15 +2078,19 @@ const _extractGraphScript = r'''
       const text = svgText(selector).replace(/,/g, '');
       return /^\d+$/.test(text) ? Number(text) : null;
     };
+    // グラフ内に数字の欄があるときはその欄だけを読む。欄が空のとき本文から探すと、
+    // 7セグ表示の背景の「88888888」を拾うことがある（PC版は欄だけを読む）。
+    const svgOrBody = (selector, labels) =>
+      svg.querySelector(selector) ? svgNumber(selector) : numberAfter(labels);
     const store = location.pathname.startsWith('/saiwaichou/') ? 'saiwaichou' :
       location.pathname.startsWith('/nagamachiminami/') ? 'nagamachiminami' : null;
     return JSON.stringify({
       format: 'svg', body: clean(body), store, day, machine: readMachine(),
       rack: urlRack ?? (rackMatch ? Number(rackMatch[1]) : null),
-      games: svgNumber('.info_soukaiten') ?? numberAfter(['総回転数?', '総回転']),
-      bb: svgNumber('.info_big') ?? numberAfter(['BIG', 'BB']),
-      rb: svgNumber('.info_reg') ?? numberAfter(['REG', 'RB']),
-      max_hold: svgNumber('.info_max_mochidama') ?? numberAfter(['最大持玉', '最大持ち玉']),
+      games: svgOrBody('.info_soukaiten', ['総回転数?', '総回転']),
+      bb: svgOrBody('.info_big', ['BIG', 'BB']),
+      rb: svgOrBody('.info_reg', ['REG', 'RB']),
+      max_hold: svgOrBody('.info_max_mochidama', ['最大持玉', '最大持ち玉']),
       width, height, baseline_y: Number.isFinite(baseline) ? baseline : null, points,
       auto_points: Number.isFinite(baseline) && points.length >= 2
         ? [[width * .85, baseline], peak, trough, end]
@@ -2517,6 +2521,21 @@ const _autoProbeScript = r'''
     return JSON.stringify({ready:false, reason:'表の表示待ち', url});
   if (target === 'graph' && curves.length === 0 && images.length === 0)
     return JSON.stringify({ready:false, reason:'グラフの表示待ち', url});
+  // 曲線が描けていても、グラフ内の数字（class が info_ で始まるもの）が4つとも空のあいだは待つ
+  // （2026-10-16、PCの幸町で多発）。入らないままの台で止まり続けないよう、同じページで20秒
+  // たっても空なら進む。PC版（auto_capture.py の graphNumbersPending）と同じ規則。
+  if (target === 'graph') {
+    const svg = document.querySelector('svg.today');
+    const numbers = svg ? Array.from(svg.querySelectorAll('[class*="info_"]')) : [];
+    if (!numbers.length || numbers.some(e => (e.textContent || '').trim() !== '')) {
+      window.__databaseGraphNumbersEmpty = null;
+    } else {
+      const since = window.__databaseGraphNumbersEmpty;
+      if (!since || since.url !== url) window.__databaseGraphNumbersEmpty = {url, since: Date.now()};
+      if (Date.now() - window.__databaseGraphNumbersEmpty.since < 20000)
+        return JSON.stringify({ready:false, reason:'台の数値（総回転数・最大持玉など）の表示待ち', url});
+    }
+  }
   const signature = JSON.stringify([url, rows, curves, images, words]);
   return JSON.stringify({ready:true, url, signature});
 })()

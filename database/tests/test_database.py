@@ -739,6 +739,26 @@ class BrowserImportTests(unittest.TestCase):
             self.assertEqual(context['max_hold'], 859)
             db.close()
 
+    def test_prune_import_payloads_keeps_newest_and_ignores_other_files(self):
+        # 2026-10-17：保存用プロセスへ渡す一時ファイルが消されず約9,700件溜まっていた。
+        from browser_import import prune_import_payloads
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            folder = Path(folder)
+            payloads = []
+            for i in range(6):
+                path = folder / f'database-import-{i:032x}.json'
+                path.write_text('{}', encoding='utf-8')
+                os.utime(path, (1_000_000 + i, 1_000_000 + i))
+                payloads.append(path)
+            others = [folder / 'database-import-notes.json', folder / 'database-advance-x.json',
+                      folder / f'database-import-{0:032x}.json.bak']
+            for path in others:
+                path.write_text('keep', encoding='utf-8')
+            self.assertEqual(prune_import_payloads(folder, keep=2), 4)
+            self.assertEqual([p.exists() for p in payloads], [False] * 4 + [True] * 2)
+            self.assertTrue(all(p.exists() for p in others))
+            self.assertEqual(prune_import_payloads(folder, keep=2), 0)
+
     def test_auto_four_points_from_svg_style_coordinates(self):
         points = [(0, 50), (10, 10), (20, 80), (30, 40)]
         auto = auto_four_points(points, baseline_y=50, width=30)

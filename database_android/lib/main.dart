@@ -18,6 +18,7 @@ import 'date_events.dart';
 import 'event_calendar_page.dart';
 import 'database_service.dart';
 import 'graph_preview.dart';
+import 'import_service.dart' show graphNumbersNotShown;
 import 'gradient_button.dart';
 import 'juggler_capture_page.dart';
 import 'list_views.dart';
@@ -1614,6 +1615,13 @@ class ImportPage extends StatelessWidget {
           onGraph: (browserContext, captured) async {
             final analysis = controller.resolveWebGraph(captured);
             if (!browserContext.mounted) return false;
+            final notShown = graphNumbersNotShown(captured, analysis);
+            if (notShown != null) {
+              ScaffoldMessenger.of(
+                browserContext,
+              ).showSnackBar(SnackBar(content: Text(notShown)));
+              return false;
+            }
             final graph = analysis.graph;
             if (graph == null ||
                 graph.points.length != 4 ||

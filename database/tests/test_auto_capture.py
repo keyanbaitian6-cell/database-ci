@@ -325,5 +325,30 @@ class BridgeAutoCaptureTests(unittest.TestCase):
         self.assertTrue(self.bridge.get_auto_capture()['enabled'])
 
 
+class PayloadCleanupTests(unittest.TestCase):
+    def test_each_submission_prunes_old_payload_files(self):
+        # 2026-10-17：送るたびに作る一時ファイルが消されず約9,700件溜まっていた。
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import browser_import
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            bridge = _Bridge('unused.db', 'unused-reports', 'unused.py')
+            bridge._window = Mock()
+            bridge._window.get_current_url.return_value = 'about:blank'
+            with patch.object(tempfile, 'gettempdir', return_value=folder), \
+                    patch.object(browser_import, 'IMPORT_PAYLOAD_KEEP', 3), \
+                    patch('subprocess.Popen') as popen:
+                popen.return_value.poll.return_value = 0
+                for i in range(5):
+                    bridge._spawn_unlocked('graph', json.dumps({'n': i}))
+            left = sorted(Path(folder).glob('database-import-*.json'))
+            self.assertEqual(len(left), 3)
+            self.assertEqual(popen.call_count, 5)
+            # 直前に送ったもの（保存用プロセスが読むもの）は必ず残る。
+            sent = popen.call_args.args[0][popen.call_args.args[0].index('--confirm-graph') + 1]
+            self.assertTrue(Path(sent).exists())
+
+
 if __name__ == '__main__':
     unittest.main()

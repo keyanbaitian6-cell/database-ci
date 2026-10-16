@@ -1087,6 +1087,38 @@ def _next_step(store, day, machine, location, current_rack=None):
                 text=f'次：{rack}番台（残り{remaining}台）')
 
 
+# 読み取った内容を保存用のプロセスへ渡す一時ファイル（database-import-<32桁>.json）。
+# 使い終わっても消していなかったため、2026-10-17に約9,700件（82MB）溜まっていた。
+# 不具合の調査に使えるよう新しいものだけ残し、それより古いものは送るたびに消す。
+IMPORT_PAYLOAD_KEEP = 500
+IMPORT_PAYLOAD_NAME = re.compile(r'database-import-[0-9a-f]{32}\.json')
+
+
+def prune_import_payloads(folder, keep=IMPORT_PAYLOAD_KEEP, protect=None):
+    """Delete all but the newest ``keep`` payload files in ``folder``; return how many.
+
+    ``protect`` (the file just written for the save process) always stays and
+    counts toward ``keep``, even when several files share one modification time.
+    """
+    files = []
+    for path in Path(folder).glob('database-import-*.json'):
+        if not IMPORT_PAYLOAD_NAME.fullmatch(path.name) or path == protect:
+            continue
+        try:
+            files.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    files.sort(key=lambda item: item[0], reverse=True)
+    removed = 0
+    for _mtime, path in files[max(0, keep - (protect is not None)):]:
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def _advance_signal_path():
     import os
     import tempfile
@@ -1889,6 +1921,7 @@ class _Bridge:
 
         payload_path = Path(tempfile.gettempdir()) / f'database-import-{uuid.uuid4().hex}.json'
         payload_path.write_text(raw if isinstance(raw, str) else json.dumps(raw), encoding='utf-8')
+        prune_import_payloads(payload_path.parent, IMPORT_PAYLOAD_KEEP, protect=payload_path)
         print(f'browser_import: received a {kind!r} submission, opening a review window...',
               flush=True)
         command = [sys.executable]

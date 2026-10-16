@@ -113,6 +113,24 @@ class CaptureAnalysis {
   final GraphDetection? graph;
 }
 
+/// 台ページは曲線を先に描き、グラフ内の数字（総回転数・BIG・REG・最大持玉）を少し遅れて
+/// 入れることがある（2026-10-16、PCの幸町で多発）。4つとも空のまま読み、一覧の記録でも
+/// 最大持玉を補えないときは保存しない（幸町は一覧に最大持玉が無い）。PC版
+/// `build_graph_context` と同じ条件・文。[resolved] は一覧の記録を引き継いだ後の値。
+String? graphNumbersNotShown(
+  CaptureAnalysis captured,
+  CaptureAnalysis resolved,
+) {
+  final empty =
+      captured.games == null &&
+      captured.bb == null &&
+      captured.rb == null &&
+      captured.maxHold == null;
+  if (!empty || resolved.maxHold != null) return null;
+  return '${captured.rack}番台：グラフ内の数値（総回転数・最大持玉など）がまだ表示されていません。'
+      '数値が表示されてから取り込み直してください。';
+}
+
 class PlatformImageBridge {
   static const _channel = MethodChannel('database/share');
 
