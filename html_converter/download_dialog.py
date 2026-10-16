@@ -5,13 +5,19 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-from anaslo_index import INDEX_URL, canonical_url, date_range, extract_links
+from anaslo_index import HALLS, P_STATION, canonical_url, date_range, extract_links
 from anaslo_download import Client, MAX_BYTES, download
 from anaslo_browser import BrowserClient
 from html_converter_diagnostics import LOGGER
 
 BROWSER = 'browser'
 DIRECT = 'direct'
+DOWNLOADS = Path(__file__).parent / 'data' / 'downloaded_htmls'
+
+
+def default_folder(hall):
+    # P-STATION keeps the original folder so its saved HTML is reused.
+    return DOWNLOADS if hall is P_STATION else DOWNLOADS / hall.key
 
 
 class DownloadDialog(tk.Toplevel):
@@ -35,12 +41,13 @@ class DownloadDialog(tk.Toplevel):
         self.links = []
         self.scan_key = None
         self.paths = []
-        self.url = tk.StringVar(value=INDEX_URL)
+        self.hall = tk.StringVar(value=P_STATION.key)
+        self.url = tk.StringVar(value=P_STATION.index_url)
         self.start_day = tk.StringVar()
         self.end_day = tk.StringVar()
         self.local = tk.BooleanVar(value=False)
         self.saved_index = tk.StringVar()
-        self.folder = tk.StringVar(value=str(Path(__file__).parent / 'data' / 'downloaded_htmls'))
+        self.folder = tk.StringVar(value=str(default_folder(P_STATION)))
         self.status = tk.StringVar(value='開始日・終了日を必ず指定してください。範囲内の日別HTMLだけを取得します。')
         frame = ttk.Frame(self, padding=20)
         frame.pack(fill='both', expand=True)
@@ -54,6 +61,14 @@ class DownloadDialog(tk.Toplevel):
             entry.pack(side='left', fill='x', expand=True)
             self.inputs.append(entry)
             return row
+        hall_row = ttk.Frame(frame)
+        hall_row.pack(fill='x', pady=4)
+        ttk.Label(hall_row, text='店舗', width=13).pack(side='left')
+        for hall in HALLS:
+            button = ttk.Radiobutton(hall_row, text=hall.label, variable=self.hall, value=hall.key,
+                                     command=self.choose_hall)
+            button.pack(side='left', padx=(0, 12))
+            self.inputs.append(button)
         entry_row('一覧URL', self.url)
         row = entry_row('保存した一覧HTML', self.saved_index)
         choose = ttk.Button(row, text='選ぶ', command=self.choose_index)
@@ -115,11 +130,22 @@ class DownloadDialog(tk.Toplevel):
         ttk.Button(row, text='閉じる', command=self.close).pack(side='right')
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.after_id = self.after(100, self.poll)
-        for variable in (self.url, self.start_day, self.end_day, self.local, self.saved_index, self.method):
+        for variable in (self.hall, self.url, self.start_day, self.end_day, self.local, self.saved_index, self.method):
             variable.trace_add('write', lambda *args: self.invalidate())
 
     def key(self):
         return (self.url.get().strip(), self.start_day.get().strip(), self.end_day.get().strip(), self.local.get(), self.saved_index.get().strip(), self.method.get())
+
+    def selected_hall(self):
+        return next(h for h in HALLS if h.key == self.hall.get())
+
+    def choose_hall(self):
+        """Switch the index URL, and the folder only while it is still a default one."""
+        hall = self.selected_hall()
+        defaults = {str(default_folder(h)) for h in HALLS}
+        if self.folder.get().strip() in defaults:
+            self.folder.set(str(default_folder(hall)))
+        self.url.set(hall.index_url)
 
     def choose_date(self, variable):
         from calendar_picker import CalendarPicker
@@ -222,7 +248,7 @@ class DownloadDialog(tk.Toplevel):
             return
         key = self.key()
         try:
-            url = canonical_url(key[0], index=True)
+            url = canonical_url(key[0], index=True, hall=self.selected_hall())
             start, end = date_range(key[1], key[2])
             if key[3] and not Path(key[4]).is_file():
                 raise ValueError('保存した一覧HTMLを選んでください。')

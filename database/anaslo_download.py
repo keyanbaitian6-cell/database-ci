@@ -16,7 +16,7 @@ from urllib.parse import urljoin
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from anaslo_html import parse_html
-from anaslo_index import INDEX_URL, canonical_url, date_range, extract_links, link_day
+from anaslo_index import HALLS, P_STATION, canonical_url, date_range, extract_links, hall_of, link_day
 
 MAX_BYTES = 16 * 1024 * 1024
 
@@ -27,6 +27,10 @@ class Stopped(Exception):
 
 class AccessStopped(Stopped):
     pass
+
+
+class OtherHall(ValueError):
+    """A valid page of another supported hall (e.g. in a shared folder)."""
 
 
 class PageHeadings(HTMLParser):
@@ -71,12 +75,12 @@ def reject_access_check(raw, url, *, index=False):
                               for title in probe.titles)
         if not challenge_title:
             if index:
-                canonical_url(url, index=True)
-                valid = (probe.headings == ['P-STATION&IIスロット館 データ一覧'] and
-                         bool(extract_links(raw, INDEX_URL, '0001-01-01', '9999-12-31')))
+                hall = hall_of(canonical_url(url, index=True), index=True)
+                valid = (probe.headings == [hall.index_heading] and
+                         bool(extract_links(raw, hall.index_url, '0001-01-01', '9999-12-31')))
             else:
                 day = link_day(url)
-                check_html(raw, day + '.html', day)
+                check_html(raw, day + '.html', day, hall_of(url))
                 valid = True
     except (ValueError, UnicodeError, TypeError):
         pass
@@ -179,17 +183,22 @@ class Client:
         raise AccessStopped('転送回数の上限に達しました。')
 
 
-def check_html(raw, filename, day):
+def check_html(raw, filename, day, hall=P_STATION):
     data = parse_html(raw, filename)
-    if data['day'] != day or data['store']['source_name'] != 'P-STATION&IIスロット館':
+    name = data['store']['source_name']
+    if name != hall.source_name and any(h.source_name == name for h in HALLS):
+        raise OtherHall('別の店舗のHTMLです。')
+    if data['day'] != day or name != hall.source_name:
         raise ValueError('指定した日付・店舗とHTMLの内容が一致しません。')
-    if link_day(data['source']['url']) != day:
+    url = data['source']['url'] or ''
+    if hall_of(url) != hall or link_day(url) != day:
         raise ValueError('日別HTMLの出典URLを確認できません。')
     return data
 
 
 def cache_name(item):
-    return f'{item.day}-p-station-{hashlib.sha256(item.url.encode()).hexdigest()[:12]}.html'
+    # P-STATION keeps its original prefix so existing downloads are reused.
+    return f'{item.day}-{hall_of(item.url).key}-{hashlib.sha256(item.url.encode()).hexdigest()[:12]}.html'
 
 
 @contextmanager
@@ -279,6 +288,7 @@ def download(links, start, end, folder, client, progress=lambda message: None):
         for position, item in enumerate(sorted(links, key=lambda x: x.day), 1):
             entry = {**manifest['entries'].get(item.url, {}), 'day': item.day, 'url': item.url}
             try:
+                hall = hall_of(item.url)
                 client.check()
                 path = folder / cache_name(item)
                 candidates = sorted(existing.get(item.day, []))
@@ -291,24 +301,26 @@ def download(links, start, end, folder, client, progress=lambda message: None):
                         if candidate.stat().st_size > MAX_BYTES:
                             raise ValueError('既存HTMLが大きすぎます。')
                         candidate_raw = candidate.read_bytes()
-                        check_html(candidate_raw, candidate.name, item.day)
+                        check_html(candidate_raw, candidate.name, item.day, hall)
                         prior = manifest['entries'].get(item.url, {})
                         digest = hashlib.sha256(candidate_raw).hexdigest()
                         if prior.get('file') == candidate.name and prior.get('sha256') and prior['sha256'] != digest:
                             raise ValueError('取得記録と既存HTMLのハッシュが一致しません。')
                         valid = candidate
                         break
+                    except OtherHall:
+                        pass  # Same date in a shared folder, but another hall's page.
                     except (OSError, ValueError, UnicodeError) as exc:
                         errors.append(str(exc))
                 if valid is not None:
                     path = valid
                     status = 'existing'
-                elif candidates:
+                elif errors:
                     raise ValueError('既存HTMLが不正です。上書きせず保留します：' + '; '.join(errors))
                 else:
                     raw = client.get(item.url)
                     client.check()
-                    check_html(raw, path.name, item.day)
+                    check_html(raw, path.name, item.day, hall)
                     write_atomic(path, raw)
                     digest = hashlib.sha256(raw).hexdigest()
                     status = 'downloaded'

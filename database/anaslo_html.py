@@ -71,6 +71,8 @@ class Document(HTMLParser):
 
 
 COLUMNS = ['機種名', '台番号', 'G数', 'BB', 'RB', 'ART', '合成確率', 'BB確率', 'RB確率', 'ART確率']
+# 幸町店の表にはART・ART確率の列がない（2026-10-16 保存HTMLで確認）。ARTは不明（None）のまま保持する。
+COLUMNS_WITHOUT_ART = ['機種名', '台番号', 'G数', 'BB', 'RB', '合成確率', 'BB確率', 'RB確率']
 
 
 def integer(text):
@@ -107,21 +109,25 @@ def parse_html(raw, filename):
         if match and '-'.join(match.groups()) != day:
             raise ValueError('Heading/date metadata mismatch')
     tables = [t for t in doc.tables if t['id'] == 'all_data_table']
-    if len(tables) != 1 or not tables[0]['rows'] or tables[0]['rows'][0] != COLUMNS:
+    if len(tables) != 1 or not tables[0]['rows'] or tables[0]['rows'][0] not in (COLUMNS, COLUMNS_WITHOUT_ART):
         raise ValueError('Unexpected all_data_table structure')
+    columns = tables[0]['rows'][0]
     records = []
     racks = set()
     for cells in tables[0]['rows'][1:]:
-        if len(cells) != len(COLUMNS) or not cells[0]:
+        if len(cells) != len(columns) or not cells[0]:
             raise ValueError('Incomplete table row')
-        name, rack, games, bb, rb, art, *rates = cells
-        rack = integer(rack)
+        row = dict(zip(columns, cells))
+        rack = integer(row['台番号'])
         if rack <= 0 or rack in racks:
             raise ValueError(f'Duplicate/invalid rack: {rack}')
         racks.add(rack)
-        records.append({'machine': name, 'rack': rack, 'games': integer(games),
-                        'bb': integer(bb), 'rb': integer(rb), 'at_art': integer(art),
-                        'probabilities': dict(zip(('combined', 'bb', 'rb', 'at_art'), map(probability, rates))),
+        records.append({'machine': row['機種名'], 'rack': rack, 'games': integer(row['G数']),
+                        'bb': integer(row['BB']), 'rb': integer(row['RB']),
+                        'at_art': integer(row['ART']) if 'ART' in row else None,
+                        'probabilities': {key: probability(row[col]) for col, key in
+                                          (('合成確率', 'combined'), ('BB確率', 'bb'), ('RB確率', 'rb'), ('ART確率', 'at_art'))
+                                          if col in row},
                         'my': None, 'net_medals': None, 'graph': None})
     if not records:
         raise ValueError('Empty all-data table')
@@ -147,10 +153,10 @@ def parse_html(raw, filename):
             if '機種名' in mapping and mapping['機種名'] != r['machine']:
                 raise ValueError(f'Detail machine mismatch: {rack}')
             for col, key in (('G数', 'games'), ('BB', 'bb'), ('RB', 'rb'), ('ART', 'at_art')):
-                if col in mapping and integer(mapping[col]) != r[key]:
+                if col in mapping and (r[key] is None or integer(mapping[col]) != r[key]):
                     raise ValueError(f'Detail mismatch: {rack} {col}')
             for col, key in (('合成確率', 'combined'), ('BB確率', 'bb'), ('RB確率', 'rb'), ('ART確率', 'at_art')):
-                if col in mapping and probability(mapping[col]) != r['probabilities'][key]:
+                if col in mapping and probability(mapping[col]) != r['probabilities'].get(key):
                     raise ValueError(f'Detail probability mismatch: {rack} {col}')
             checked.add(rack)
     if checked != racks:

@@ -192,8 +192,9 @@ class DialogTests(unittest.TestCase):
         converter.aliases = {}
         path = self.folder / '2026-09-15.html'
         path.write_bytes(html())
-        with patch.object(ui, 'read_catalog', return_value=[]):
+        with patch('anaslo_converter.read_catalog', return_value=[]):
             converter.load_paths([path])
+        self.assertEqual(converter.target.hall.key, 'p-station')
         self.assertEqual(len(converter.names), 1)
         self.assertEqual(converter.staging['days'][0]['day'], '2026-09-15')
         # This check only reads/analyzes; it does not save alias tables or JSON.
@@ -205,7 +206,9 @@ class DialogTests(unittest.TestCase):
         spec.loader.exec_module(ui)
         converter = ui.Converter(self.root)
         converter.staging = {'days': [{'day': (date(2026, 8, 1) + timedelta(days=i)).isoformat()} for i in range(31)]}
-        with patch.object(ui, 'make_backup', return_value={'records': []}), patch.object(ui.filedialog, 'asksaveasfilename', return_value='') as choose:
+        with patch('anaslo_converter.read_catalog', return_value=[]):
+            converter.target = ui.PscubeTarget(self.folder)
+        with patch.object(converter.target, 'make_backup', return_value={'records': []}), patch.object(ui.filedialog, 'asksaveasfilename', return_value='') as choose:
             converter.save()
         filename = choose.call_args.kwargs['initialfile']
         self.assertEqual(filename, 'pscube-backup-anaslo-20260801-20260831.json')

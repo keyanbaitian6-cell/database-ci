@@ -8,8 +8,7 @@ from tkinter import ttk, filedialog, messagebox
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'database'))
 from app import apply_style
-from anaslo_converter import analyze, make_backup, read_catalog, save_backup, suggestions
-from pscube_import import is_excluded_machine
+from anaslo_converter import TARGETS, PscubeTarget, analyze, save_backup
 from anaslo_download import PaceState
 from html_converter_diagnostics import LOGGER, setup as setup_diagnostics
 
@@ -26,25 +25,23 @@ class Converter:
         root.minsize(800, 600)
         apply_style(root)
         self.staging = None
-        self.catalog = []
+        self.target = None
+        self.racks = {}
         self.mapping = {}
         self.download_pacing = PaceState()
         self.names = []
-        self.alias_file = Path(__file__).parent / 'data' / 'machine_names.json'
-        try:
-            aliases = json.loads(self.alias_file.read_text(encoding='utf-8'))
-            self.aliases = aliases if isinstance(aliases, dict) else {}
-        except (OSError, ValueError):
-            self.aliases = {}
+        self.aliases = {}
+        self.alias_file = None
         frame = ttk.Frame(root, padding=22)
         frame.pack(fill='both', expand=True)
         ttk.Label(frame, text='HTMLデータ変換', style='Title.TLabel').pack(anchor='w')
-        ttk.Label(frame, text='P-STATIONの保存HTML → databaseで読み込める補完用JSON', style='Sub.TLabel').pack(anchor='w', pady=(0, 16))
+        ttk.Label(frame, text='P-STATION・幸町の保存HTML → databaseで読み込める補完用JSON', style='Sub.TLabel').pack(anchor='w', pady=(0, 16))
         controls = ttk.Frame(frame)
         controls.pack(fill='x')
         ttk.Button(controls, text='HTMLを選ぶ（複数日可）', command=self.load).pack(side='left')
         ttk.Button(controls, text='一覧から取得', command=self.open_download).pack(side='left', padx=(8, 0))
-        ttk.Label(controls, text='貸玉：20円').pack(side='left', padx=20)
+        self.hall_text = tk.StringVar(value='店舗はHTMLの見出しで判定します。')
+        ttk.Label(controls, textvariable=self.hall_text).pack(side='left', padx=20)
         self.status = tk.StringVar(value='HTMLを選ぶと、日付・台数と機種名の対応を表示します。')
         ttk.Label(frame, textvariable=self.status, wraplength=960).pack(anchor='w', pady=12)
         table = ttk.Frame(frame)
@@ -73,8 +70,8 @@ class Converter:
         ttk.Button(footer, text='未対応はHTMLの機種名を使う', command=self.keep_remaining).pack(side='left')
         self.save_button = ttk.Button(footer, text='補完用JSONを保存', style='Accent.TButton', command=self.save, state='disabled')
         self.save_button.pack(side='right')
-        ttk.Label(frame, text='既存の日付・台の記録を優先します。MY・差枚は不明のまま保存します。\n沖ドキは既存ルールに従い対象外です。実DBへの反映はdatabaseの「バックアップを読み込む」で行います。',
-                  style='Sub.TLabel', wraplength=960).pack(anchor='w', pady=(12, 0))
+        self.notice = tk.StringVar(value=PscubeTarget.notice)
+        ttk.Label(frame, textvariable=self.notice, style='Sub.TLabel', wraplength=960).pack(anchor='w', pady=(12, 0))
 
     def load(self):
         paths = filedialog.askopenfilenames(parent=self.root, title='保存HTMLを選ぶ', filetypes=[('HTML', '*.html *.htm')])
@@ -89,17 +86,30 @@ class Converter:
     def load_paths(self, paths):
         try:
             staging = analyze(paths)
-            catalog = read_catalog(ROOT / 'database' / 'data' / 'pscube.sqlite3')
+            target = TARGETS[staging['hall']](ROOT / 'database' / 'data')
         except Exception as exc:
             messagebox.showerror('読み取れません', str(exc), parent=self.root)
             return
-        self.staging, self.catalog = staging, catalog
+        self.staging, self.target = staging, target
+        self.hall_text.set(f'店舗：{target.hall.label}　{target.rate_text}')
+        self.notice.set(target.notice)
+        # Aliases are per hall: the two databases spell machine names differently.
+        self.alias_file = Path(__file__).parent / 'data' / target.alias_file
+        try:
+            aliases = json.loads(self.alias_file.read_text(encoding='utf-8'))
+            self.aliases = aliases if isinstance(aliases, dict) else {}
+        except (OSError, ValueError):
+            self.aliases = {}
         self.mapping = {}
-        self.names = sorted({r['machine'] for d in staging['days'] for r in d['records']})
+        self.racks = {}
+        for d in staging['days']:
+            for r in d['records']:
+                self.racks.setdefault(r['machine'], set()).add(r['rack'])
+        self.names = sorted(self.racks)
         self.tree.delete(*self.tree.get_children())
         for i, name in enumerate(self.names):
-            proposed = suggestions(name, catalog)['automatic']
-            if is_excluded_machine(name):
+            proposed = target.suggestions(name, self.racks[name])['automatic']
+            if target.excluded(name):
                 self.mapping[name] = None
             elif name in self.aliases and (self.aliases[name] is None or isinstance(self.aliases[name], str)):
                 self.mapping[name] = self.aliases[name]
@@ -126,8 +136,8 @@ class Converter:
             return
         name = self.names[int(selected[0])]
         self.selected_label.set(name)
-        candidates = suggestions(name, self.catalog)['candidates']
-        all_names = sorted({m['machine'] for m in self.catalog if m['store'] == 'c740601' and m['rate'] == '20'})
+        candidates = self.target.suggestions(name, self.racks[name])['candidates']
+        all_names = self.target.names()
         self.combo['values'] = [PENDING, KEEP, OMIT, *candidates, *[n for n in all_names if n not in candidates]]
         self.choice.set(PENDING if name not in self.mapping else OMIT if self.mapping[name] is None else KEEP if self.mapping[name] == name else self.mapping[name])
 
@@ -157,14 +167,14 @@ class Converter:
         if not self.staging:
             return
         try:
-            payload = make_backup(self.staging, self.mapping, self.catalog)
+            payload = self.target.make_backup(self.staging, self.mapping)
         except Exception as exc:
             messagebox.showerror('保存できません', str(exc), parent=self.root)
             return
         days = sorted(d['day'].replace('-', '') for d in self.staging['days'])
         period = days[0] if len(days) == 1 else f'{days[0]}-{days[-1]}'
         path = filedialog.asksaveasfilename(parent=self.root, title='補完用JSONの保存先',
-                                           initialfile=f'pscube-backup-anaslo-{period}.json', defaultextension='.json', filetypes=[('JSON', '*.json')])
+                                           initialfile=self.target.file_name(period), defaultextension='.json', filetypes=[('JSON', '*.json')])
         if not path:
             return
         try:
@@ -180,7 +190,11 @@ class Converter:
             self.alias_file.write_text(json.dumps(self.aliases, ensure_ascii=False, indent=2), encoding='utf-8')
         except OSError:
             warning = '\n機種名の対応表は保存できませんでした。次回は再確認してください。'
-        messagebox.showinfo('保存しました', f"{len(payload['records'])}件の補完用JSONを保存しました。\n{path}\n\ndatabase → バックアップ・同期 → バックアップを読み込む、から選択してください。" + warning, parent=self.root)
+        skipped = payload['conversion_summary']['skipped']
+        detail = ''.join(f'\n{label}：{skipped[key]}件' for key, label in
+                         (('existing', 'databaseに保存済みの日付・台'), ('unknown_rack', 'databaseに記録のない台番号'),
+                          ('excluded', '対象外の機種'), ('manual', '取り込み対象から外した機種')) if skipped.get(key))
+        messagebox.showinfo('保存しました', f"{len(payload['records'])}件の補完用JSONを保存しました。{detail}\n{path}\n\ndatabase → バックアップ・同期 → バックアップを読み込む、から選択してください。" + warning, parent=self.root)
 
 
 def main():
