@@ -1,5 +1,11 @@
 # database AI共同作業メモ
 
+## 【Android APK 0.5.38 ビルド（台ページの数字の表示待ち）】2026-10-17 Claude
+
+- 利用者「Android版のAPKを作ってください」。最新main（`4b6101a`、origin/mainと差分なし）から、`pubspec.yaml` を 0.5.38+2026101701 にして `check_before_build.sh` **ALL PASSED（61項目）**。その後、通常版をビルドした。同じ実装のまま versionCode だけ 2026101702 に上げ、`DATABASE_ANDROID_CLONE=pscube` でP’s CUBE版をビルドした（各ビルド前に `app-release.apk` を削除）。
+- **APK**（`a/work/outputs/android-graph-numbers-20261017/`）：通常版 `database-0.5.38-2026101701.apk`（com.keyan.database_android、94,614,569 bytes、SHA-256 `875769d4…7048`）、P’s CUBE版 `database-pscube-clone-0.5.38-2026101702.apk`（com.keyan.database_android.pscube、94,614,597 bytes、SHA-256 `f5eeb2a0…ca4f`）。aaptで版・ID・表示名、apksignerで証明書 `4332fcb9…a047`（従来と同じ）。両APKのarm64 AOTに今回の待機処理・文言が含まれることを確認。同フォルダに `RELEASE.md`（cmd用インストールコマンド）・ゲートとビルドのログ。
+- 古いAPK（0.5.36の2件、0.5.37の2件）はごみ箱へ移動した。ビルド時は端末が未接続だったため、入っている版は未確認。**インストール・実機起動・実サイトでの効果は未確認**。
+
 ## 【検討のみ】アナスロ補完を採点・翌日候補に使えるか（2026-10-17 Claude）
 
 - 利用者「1月とか8月とか9/1-9/20までのデータ取り込んだんだけど、採点、翌日候補への学習に使えるかどうかを検討してください」→途中で「アナスロの取り込みだと差枚がわかんないんだよね」。コード・DBの変更なし（実DBは `mode=ro` だけ。作業用スクリプトはscratchpad）。
