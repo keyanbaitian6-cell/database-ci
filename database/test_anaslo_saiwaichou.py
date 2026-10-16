@@ -191,6 +191,86 @@ class MeruhenBackupTests(unittest.TestCase):
         with self.assertRaises(ValueError):  # Nothing left to add.
             make_meruhen_backup(self.staging, {'ネオアイムジャグラーEX': None, 'マイジャグラーV': None}, self.catalog)
 
+    def test_rack_keeps_meruhens_own_star_spelling(self):
+        # 2026-10-17：海門決戦はメルヘンで1278番台だけ★付き。対応表の1つの名前を全台に付けると履歴が分かれた。
+        catalog = MeruhenCatalog('saiwaichou', [('2026-09-15', '★SネオアイムジャグラーEX−KK', 779),
+                                                ('2026-09-15', 'SネオアイムジャグラーEX−KK', 781),
+                                                ('2026-09-14', '★SネオアイムジャグラーEX−KK', 781, 'anaslo')])
+        payload = make_meruhen_backup(self.staging, {'ネオアイムジャグラーEX': 'SネオアイムジャグラーEX−KK',
+                                                     'マイジャグラーV': None}, catalog)
+        self.assertEqual({r['rack']: r['machine'] for r in payload['records']},
+                         {779: '★SネオアイムジャグラーEX−KK', 781: 'SネオアイムジャグラーEX−KK'})
+        # A different machine on the rack is never taken as a spelling.
+        self.assertEqual(catalog.rack_spelling(779, 'マイジャグラーV'), 'マイジャグラーV')
+
+
+class SavedNameFixTests(unittest.TestCase):
+    """fix_anaslo_names.py：対応表の誤りで保存した補完の機種名を付け直す（2026-10-17）。"""
+
+    def setUp(self):
+        from fix_anaslo_names import apply_name_fixes, plan_name_fixes
+        self.plan, self.apply = plan_name_fixes, apply_name_fixes
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.db = Store(self.root / 'database.sqlite3')
+        self.addCleanup(self.db.close)
+        anaslo = dict(source_site='anaslo', source_url=DAILY.format(day='2026-09-01'))
+        self.db.save([
+            # 初代を「Ⅱ」の名前で保存してしまった補完と、メルヘンが初代に付けている名前。
+            dict(meruhen_row('2026-09-01', 518, 'L／ソードアート・オンラインⅡ'), source_machine='ソードアート・オンライン', **anaslo),
+            meruhen_row('2026-09-21', 518, 'Lソードアート・オンラインB2'),
+            # 正しい補完（Ⅱ）はそのまま。
+            dict(meruhen_row('2026-09-01', 584, 'L／ソードアート・オンラインⅡ'), source_machine='ソードアート・オンラインII', **anaslo),
+            meruhen_row('2026-09-18', 584, 'L／ソードアート・オンラインⅡ'),
+            # ★の台。
+            dict(meruhen_row('2026-09-01', 1278, 'L 甲鉄城のカバネリ 海門決戦 XX'), source_machine='甲鉄城のカバネリ 海門(うなと)決戦', **anaslo),
+            meruhen_row('2026-09-22', 1278, '★L 甲鉄城のカバネリ 海門決戦 XX'),
+            # メルヘンで取った行は、対応表と違っても変えない。
+            dict(meruhen_row('2026-09-02', 518, 'L／ソードアート・オンラインⅡ'), source_machine='ソードアート・オンライン'),
+        ])
+        self.aliases = {'ソードアート・オンライン': 'Lソードアート・オンラインB2',
+                        'ソードアート・オンラインII': 'L／ソードアート・オンラインⅡ',
+                        '甲鉄城のカバネリ 海門(うなと)決戦': 'L 甲鉄城のカバネリ 海門決戦 XX'}
+
+    def names(self):
+        return {(r['day'], r['rack']): r['machine'] for r in self.db.rows() if r['store'] == 'saiwaichou'}
+
+    def test_renames_only_wrong_anaslo_rows_and_old_backup_cannot_restore_them(self):
+        fixes, _ = self.plan(self.db, self.aliases)
+        self.assertEqual(sorted((old[3], new) for old, new, _ in fixes),
+                         [(518, 'Lソードアート・オンラインB2'), (1278, '★L 甲鉄城のカバネリ 海門決戦 XX')])
+        before = {k: v for k, v in self.names().items()}
+        self.assertEqual(dict(self.apply(self.db, fixes)), {'renamed': 2})
+        after = self.names()
+        self.assertEqual(after[('2026-09-01', 518)], 'Lソードアート・オンラインB2')
+        self.assertEqual(after[('2026-09-01', 1278)], '★L 甲鉄城のカバネリ 海門決戦 XX')
+        self.assertEqual(after[('2026-09-01', 584)], before[('2026-09-01', 584)])
+        self.assertEqual(after[('2026-09-02', 518)], 'L／ソードアート・オンラインⅡ')  # not anaslo
+        moved = next(r for r in self.db.rows() if (r['day'], r['rack']) == ('2026-09-01', 518))
+        self.assertEqual((moved['games'], moved['source_machine']), (3000, 'ソードアート・オンライン'))
+        self.assertEqual(self.plan(self.db, self.aliases)[0], [])
+        # The old-name row is marked deleted: re-reading the earlier anaslo JSON does not bring it back.
+        old = self.root / 'old.json'
+        old.write_text(json.dumps({'format': 'database-backup', 'version': 1, 'records': [
+            dict(meruhen_row('2026-09-01', 518, 'L／ソードアート・オンラインⅡ'), source_machine='ソードアート・オンライン',
+                 source_site='anaslo')]}, ensure_ascii=False), encoding='utf-8')
+        self.assertEqual(len(import_backup(self.db, old)['new']), 0)
+        self.assertEqual(sum(1 for k in self.names() if k == ('2026-09-01', 518)), 1)
+        self.assertEqual(len([r for r in self.db.rows() if (r['day'], r['rack']) == ('2026-09-01', 518)]), 1)
+
+    def test_existing_row_under_new_name_is_kept(self):
+        self.db.save([dict(meruhen_row('2026-09-01', 518, 'Lソードアート・オンラインB2'), games=4321)])
+        fixes, _ = self.plan(self.db, self.aliases)
+        self.assertEqual(self.apply(self.db, [f for f in fixes if f[0][3] == 518])['kept_existing'], 1)
+        rows = [r for r in self.db.rows() if (r['day'], r['rack']) == ('2026-09-01', 518)]
+        self.assertEqual([(r['machine'], r['games']) for r in rows], [('Lソードアート・オンラインB2', 4321)])
+
+    def test_unmapped_rows_are_left_alone(self):
+        fixes, skipped = self.plan(self.db, {})
+        self.assertEqual(fixes, [])
+        self.assertEqual(skipped['no_mapping'], 3)
+
 
 class ConverterScreenTests(unittest.TestCase):
     def test_saiwaichou_html_uses_meruhen_target_and_own_alias_file(self):

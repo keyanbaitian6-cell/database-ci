@@ -151,19 +151,30 @@ def read_meruhen_catalog(path, store=MERUHEN_STORE):
     if not path.is_file():
         return MeruhenCatalog(store, [])
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
-        rows = db.execute('SELECT day, machine, rack FROM days WHERE store=?', (store,)).fetchall()
-    return MeruhenCatalog(store, [(d, normalize_machine_name(m), int(r)) for d, m, r in rows
+        rows = db.execute("SELECT day, machine, rack, json_extract(payload, '$.source_site') FROM days WHERE store=?",
+                          (store,)).fetchall()
+    return MeruhenCatalog(store, [(d, normalize_machine_name(m), int(r), site) for d, m, r, site in rows
                                   if not is_hidden_machine(store, m)])
 
 
 class MeruhenCatalog:
     def __init__(self, store, rows):
+        """``rows``: (day, machine, rack[, source_site]) of saved records."""
         self.store = store
-        self.occupied = {(day, rack) for day, _, rack in rows}
-        self.names = sorted({name for _, name, _ in rows})
+        self.occupied = {(day, rack) for day, _, rack, *_ in rows}
+        self.names = sorted({name for _, name, _, *_ in rows})
         self.racks = {}
-        for _, name, rack in rows:
+        self.native = {}  # Names the meruhen site itself gave each rack.
+        for _, name, rack, *site in rows:
             self.racks.setdefault(rack, Counter())[name] += 1
+            if not site or site[0] != 'anaslo':
+                self.native.setdefault(rack, Counter())[name] += 1
+
+    def rack_spelling(self, rack, name):
+        """Meruhen marks some racks of a machine with ★ (2026-10-17：海門決戦は1278番台だけ★).
+        Use the spelling meruhen itself saved on this rack, or the history splits."""
+        same = [(count, n) for n, count in self.native.get(rack, {}).items() if _plain(n) == _plain(name)]
+        return max(same)[1] if same else name
 
     def suggestions(self, name, racks=()):
         """Name candidates; names saved on the same racks come first.
@@ -225,7 +236,8 @@ def make_meruhen_backup(staging, mapping, catalog):
                 raise ValueError('同じ日付・台番号が重複しています。')
             occupied.add(identity)
             record = {'store': store, 'kind_code': 21, 'day': d['day'],
-                      'machine': normalize_machine_name(target), 'rack': source['rack'],
+                      'machine': catalog.rack_spelling(source['rack'], normalize_machine_name(target)),
+                      'rack': source['rack'],
                       'games': source['games'], 'bb': source['bb'], 'rb': source['rb'], 'max_hold': None,
                       'source_site': 'anaslo', 'source_url': d['source']['url'],
                       'source_sha256': d['source']['sha256'], 'source_machine': name,
