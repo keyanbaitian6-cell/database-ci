@@ -95,7 +95,10 @@ class BrowserClient(Client):
         try:
             if self.session is None:
                 self.session = self.session_factory(self.profile)
-            snapshot = self.session.request(target, index, self.cancel, self.progress)
+            try:
+                snapshot = self.session.request(target, index, self.cancel, self.progress)
+            finally:
+                self._rest()  # 表示し終えた時刻から次まで5〜8秒（Client._rest）
             if not isinstance(snapshot, dict):
                 raise AccessStopped('ブラウザからの読み取り結果が不正です。')
             if snapshot.get('status') != 200:

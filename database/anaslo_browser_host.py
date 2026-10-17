@@ -17,6 +17,30 @@ def is_embedded_document(request):
             str(headers.GetHeader('Sec-Fetch-Dest')).lower() in ('iframe', 'frame'))
 
 
+# 画像・広告を読み込まない（2026-10-17 利用者「画像、広告を読み込まない設定にしてみようか」）。
+# 1ページを開くたびにサイトへ出る通信と表示の時間を減らす。保存するHTML（表とグラフの数値は
+# HTMLとページ内のスクリプトの文字）は変わらない。確認画面（CAPTCHA）は人が通すので、その配信元は止めない。
+SITE_HOST = 'ana-slo.com'
+CHALLENGE_HOSTS = ('challenges.cloudflare.com',)
+
+
+def blocks_resource(url, *, light=False, document=False):
+    """WebView2が読み込もうとしているものを、サーバーへ送らずに止めるか。
+
+    ``light`` は画像・動画・フォント。``document`` は枠の中のページ（広告の枠など）。表示中の
+    日別ページ・一覧そのものは ``allows_document`` が別に決める。止めるのは、ほかのサイトの
+    すべてと、このサイトの画像・動画・フォント。このサイトのスクリプト・CSS・通信は止めない。"""
+    parts = urlsplit(url)
+    if parts.scheme not in ('http', 'https'):
+        return False   # data: / blob: / about:blank はサーバーへ行かない
+    host = (parts.hostname or '').lower()
+    if host in CHALLENGE_HOSTS or host in ('127.0.0.1', 'localhost'):
+        return False   # 確認画面の配信元と、pywebviewが手元で出す案内の画面
+    if host == SITE_HOST or host.endswith('.' + SITE_HOST):
+        return light and not document
+    return True
+
+
 def document_identity(url):
     parts = urlsplit(url)
     return (parts.scheme.lower(), parts.netloc.lower(), unquote(parts.path), parts.query)
@@ -145,12 +169,21 @@ def install_handlers(window, state):
     def frame_starting(sender, args):
         state.frame_starting(str(args.Uri))
 
+    light = {getattr(CoreWebView2WebResourceContext, name) for name in ('Image', 'Media', 'Font')
+             if hasattr(CoreWebView2WebResourceContext, name)}
+
     def document_request(sender, args):
+        url = str(args.Request.Uri)
         if args.ResourceContext != CoreWebView2WebResourceContext.Document:
+            # 画像・広告など（blocks_resource）は、サーバーへ送らずにここで断る。
+            if blocks_resource(url, light=args.ResourceContext in light):
+                args.Response = sender.Environment.CreateWebResourceResponse(
+                    None, 403, 'Blocked', 'Content-Type: text/plain; charset=utf-8')
             return
         # Sec-Fetch-Dest can still be absent at WebResourceRequested time.
         # Use native frame navigation events to identify embedded documents.
-        allowed = state.allows_document(str(args.Request.Uri))
+        # 表示中のページ以外の、ほかのサイトの枠（広告の枠など）も止める。
+        allowed = state.allows_document(url) and (state.same(url) or not blocks_resource(url, document=True))
         if not allowed:
             # Navigation cancellation alone can race with a document request.
             # Respond locally so a disallowed click never reaches the server.
@@ -165,6 +198,8 @@ def install_handlers(window, state):
         core.NewWindowRequested -= window.native.browser.on_new_window_request
         core.NewWindowRequested += popup
         core.AddWebResourceRequestedFilter('*', CoreWebView2WebResourceContext.Document)
+        if hasattr(CoreWebView2WebResourceContext, 'All'):
+            core.AddWebResourceRequestedFilter('*', CoreWebView2WebResourceContext.All)
         core.WebResourceRequested += document_request
 
     def initialized(sender, args):

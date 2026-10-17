@@ -188,6 +188,18 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(len(opener.calls), 4)
         self.assertEqual(engine.cancel.waits, [0, 6.0, 6.0, 6.0])
 
+    def test_next_page_waits_from_when_the_page_finished(self):
+        # 2026-10-17：読み終えた時刻から5〜8秒あける（開始から数えると、読むのに時間がかかった分だけ詰まる）。
+        engine, opener = client([html(), html(day='2026/09/16')])
+        clock = engine.cancel.clock
+        opened = opener.open
+        def slow(request, timeout):
+            clock[0] += 4.0
+            return opened(request, timeout)
+        opener.open = slow
+        self.assertEqual(self.run_download([self.a, self.b], engine).downloaded, 2)
+        self.assertEqual(engine.cancel.waits, [0, 6.0])
+
     def test_cancel_keeps_successful_file_and_resumes(self):
         engine, opener = client([html(), html(day='2026/09/16')])
         def progress(message):

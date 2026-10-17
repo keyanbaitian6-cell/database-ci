@@ -126,6 +126,12 @@ class Client:
             self.check()
         self.next_request = self.clock() + max(5.0, min(8.0, self.jitter()))
 
+    def _rest(self):
+        """次の通信は、このページを読み終えた時刻から5〜8秒あける（2026-10-17 利用者「今のペースだとすぐ
+        切られちゃうので5秒くらいあけてくようにしてみようか」）。開始から数えるだけだと、ブラウザ方式は
+        表示に約3.5秒かかり、表示し終えてから次まで2.5〜4秒しか空いていなかった。"""
+        self.next_request = max(self.next_request, self.clock() + max(5.0, min(8.0, self.jitter())))
+
     def get(self, url, *, index=False):
         original = canonical_url(url, index=index)
         current = original
@@ -180,6 +186,8 @@ class Client:
                     raise
                 finally:
                     exc.close()
+            finally:
+                self._rest()  # 成功・失敗・転送のどれでも、読み終えた時刻から数える
         raise AccessStopped('転送回数の上限に達しました。')
 
 

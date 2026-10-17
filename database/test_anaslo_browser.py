@@ -58,6 +58,28 @@ class BrowserTests(unittest.TestCase):
         engine.close()
         self.assertTrue(session.closed)
 
+    def test_next_page_waits_from_when_the_page_finished(self):
+        # 2026-10-17 利用者「今のペースだとすぐ切られちゃうので5秒くらいあけてく」。表示に3.5秒かかっても、
+        # 表示し終えてから次まで6秒（試験の揺らぎ）あける。開始から数えると2.5秒しか空かなかった。
+        engine, session = self.engine([html(), html(day='2026/09/16'), html(day='2026/09/17')])
+        clock = engine.cancel.clock
+        request = session.request
+        def slow(*args):
+            clock[0] += 3.5
+            return request(*args)
+        session.request = slow
+        days = [link('2026-09-15'), link('2026-09-16'), link('2026-09-17')]
+        result = download(days, '2026-09-15', '2026-09-17', self.folder, engine)
+        self.assertEqual(result.downloaded, 3)
+        self.assertEqual(engine.cancel.waits, [0, 6, 6])
+        # 失敗したページのあとも同じ（拒否で止まるまでの間隔を詰めない）。
+        engine, session = self.engine([HTTPError(link('2026-09-15').url, 404, 'missing', None, None), html(day='2026/09/16')])
+        clock = engine.cancel.clock
+        request = session.request
+        session.request = slow
+        download(days[:2], '2026-09-15', '2026-09-16', self.folder / 'b', engine)
+        self.assertEqual(engine.cancel.waits, [0, 6])
+
     def test_http_denial_stops_before_next_day_and_closes(self):
         for code in (401, 403, 429):
             engine, session = self.engine([{'url':link('2026-09-15').url,'html':'denied','status':code}, html(day='2026/09/16')])
@@ -175,6 +197,59 @@ class NavigationTests(unittest.TestCase):
         self.assertFalse(state.allows_document(frame))
         state.target(link('2026-09-16').url, False)
         self.assertFalse(state.allows_document(frame))
+
+    def test_images_and_other_sites_are_not_loaded(self):
+        # 2026-10-17 利用者「画像、広告を読み込まない設定にしてみようか」。
+        from anaslo_browser_host import blocks_resource
+        site = 'https://ana-slo.com/wp-content/uploads/'
+        self.assertTrue(blocks_resource(site + 'logo.png', light=True))
+        self.assertTrue(blocks_resource(site + 'font.woff2', light=True))
+        self.assertFalse(blocks_resource(site + 'theme.js'))
+        self.assertFalse(blocks_resource('https://ana-slo.com/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1'))
+        for url in ('https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',
+                    'https://securepubads.g.doubleclick.net/tag/js/gpt.js', 'https://cdn.example.net/jquery.js'):
+            self.assertTrue(blocks_resource(url))
+            self.assertTrue(blocks_resource(url, document=True))   # 広告の枠も
+        # 人が通す確認画面と、手元の案内画面・ブラウザ内のデータは止めない。
+        self.assertFalse(blocks_resource('https://challenges.cloudflare.com/turnstile/v0/api.js'))
+        self.assertFalse(blocks_resource('https://challenges.cloudflare.com/x.png', light=True))
+        self.assertFalse(blocks_resource('http://127.0.0.1:8123/index.html', document=True))
+        self.assertFalse(blocks_resource('data:image/png;base64,AAAA', light=True))
+        self.assertFalse(blocks_resource('about:blank', document=True))
+
+    def test_handler_answers_blocked_requests_locally(self):
+        class Event:
+            def __init__(self):
+                self.callbacks = []
+            def __iadd__(self, callback):
+                self.callbacks.append(callback)
+                return self
+            def __isub__(self, callback):
+                return self
+        contexts = SimpleNamespace(Document='document', Image='image', Media='media', Font='font', Script='script', All='all')
+        core = SimpleNamespace(NewWindowRequested=Event(), FrameNavigationStarting=Event(),
+                               WebResourceResponseReceived=Event(), WebResourceRequested=Event(),
+                               AddWebResourceRequestedFilter=unittest.mock.Mock())
+        control = SimpleNamespace(CoreWebView2=core, NavigationStarting=Event(), NavigationCompleted=Event())
+        window = SimpleNamespace(native=SimpleNamespace(webview=control, browser=SimpleNamespace(on_new_window_request=None)))
+        state = NavigationState()
+        state.target(link('2026-09-15').url, False)
+        with patch.dict(sys.modules, {'Microsoft.Web.WebView2.Core': SimpleNamespace(CoreWebView2WebResourceContext=contexts)}):
+            install_handlers(window, state)
+        core.AddWebResourceRequestedFilter.assert_any_call('*', 'all')
+        sender = SimpleNamespace(Environment=SimpleNamespace(CreateWebResourceResponse=lambda *a: ('blocked', a[1])))
+        def request(url, context):
+            args = SimpleNamespace(Request=SimpleNamespace(Uri=url), ResourceContext=context, Response=None)
+            for callback in core.WebResourceRequested.callbacks:
+                callback(sender, args)
+            return args.Response
+        self.assertEqual(request('https://ana-slo.com/a.png', 'image'), ('blocked', 403))
+        self.assertEqual(request('https://googleads.g.doubleclick.net/ad', 'script'), ('blocked', 403))
+        self.assertIsNone(request('https://ana-slo.com/theme.js', 'script'))
+        self.assertIsNone(request(link('2026-09-15').url, 'document'))   # 表示するページそのもの
+        frame = 'https://googleads.g.doubleclick.net/frame'
+        state.frame_starting(frame)
+        self.assertEqual(request(frame, 'document'), ('blocked', 403))   # 広告の枠
 
     def test_embedded_document_is_distinguished_from_window_navigation(self):
         for destination in ('iframe', 'frame', 'document', ''):

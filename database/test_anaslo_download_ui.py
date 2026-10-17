@@ -1,3 +1,4 @@
+import itertools
 import importlib.util
 from datetime import date, timedelta
 from pathlib import Path
@@ -121,9 +122,11 @@ class DialogTests(unittest.TestCase):
                '<script>const captchaEnabled = false;</script>').encode('utf-8')
         session = FakeSession([raw, html()])
         engines = []
+        # 時計を読むたびに100秒進める（間隔は読み終えた時刻から数えるので、本当に待たないように）。
+        ticks = itertools.count()
         def factory(profile, **kwargs):
             engine = BrowserClient(profile, session_factory=lambda p: session,
-                                   clock=lambda: 100.0 * len(session.calls), **kwargs)
+                                   clock=lambda: 100.0 * next(ticks), **kwargs)
             engines.append(engine)
             return engine
         self.dialog.browser_factory = factory
