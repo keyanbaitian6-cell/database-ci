@@ -8,6 +8,7 @@ import 'list_views.dart';
 import 'graph_preview.dart';
 import 'models.dart';
 import 'normal_day_context.dart';
+import 'normal_next_day_model.dart';
 import 'normal_day_context_note.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
@@ -935,6 +936,13 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             const SizedBox(height: 10),
             if (dayContext != null)
               NormalDayContextNote(contextInfo: dayContext),
+            if (regular.any(
+              (c) => normalModelApplies(c.record.store, c.record.machine),
+            ))
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(normalModelNote, style: note),
+              ),
             if (regular.isEmpty)
               const Text(
                 'まだ判定できる機種（4台以上）がありません。同じ台・同じ機種のデータが'

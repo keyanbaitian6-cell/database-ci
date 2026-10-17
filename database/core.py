@@ -1917,9 +1917,12 @@ def variety_range(location):
 
 def candidate_method_version(location, machine):
     # 幸町のバラエティの母集団変更を旧記録と区別する。通常機種の固定検証方式は維持。
-    return ('2026-10-13-saiwaichou-variety-2'
-            if location == 'saiwaichou' and machine == VARIETY_GROUP_NAME
-            else NEXT_DAY_METHOD_VERSION)
+    # 幸町のジャグラー・ハナハナは予想の式で並べる（2026-10-17）ので、旧記録と区別する。
+    if location == 'saiwaichou' and machine == VARIETY_GROUP_NAME:
+        return '2026-10-13-saiwaichou-variety-2'
+    if normal_model_applies(location, machine):
+        return '2026-10-17-saiwaichou-normal-model-1'
+    return NEXT_DAY_METHOD_VERSION
 
 VARIETY_GROUP_NAME = 'バラエティ'
 # バラエティで「よく回った」とみなす回転数（4時間ほど打たれた台の目安。プロの経験則で、
@@ -2108,10 +2111,25 @@ def provisional_next_day_candidates(store, day, machine, location='nagamachimina
             today_score = score(row, store._machine_rows(row['machine'], row['store']))['total']
             eligible.append(dict(row=row, variety=False, today_score=today_score,
                                  focus=next_day_focus(tendency, today_score), **tendency))
-    eligible.sort(key=next_day_sort_key)
+    if eligible and normal_model_applies(location, machine):
+        # 幸町のジャグラー・ハナハナは、14か月分から作った予想の式の点の高い順（2026-10-17、
+        # normal_next_day_model.py）。候補に入りうる台と台数は同じで、並べる順だけが違う。
+        import normal_next_day_model as model
+        per_rack = model.history_values(store._machine_rows(machine, location), day)
+        for item in eligible:
+            item['model_score'] = model.score(model.features(per_rack, item['row'], item['raw_index']))
+        eligible.sort(key=lambda item: (-round(item['model_score'], 9), -int(item['row'].get('games') or 0),
+                                        int(item['row']['rack'])))
+    else:
+        eligible.sort(key=next_day_sort_key)
     count = math.ceil(len(eligible) * .25) if len(eligible) >= 4 else 0
     return dict(total=len(rows), eligible=len(eligible), count=count,
                 candidates=eligible[:count])
+
+
+def normal_model_applies(location, machine):
+    """幸町のジャグラー・ハナハナ（翌日候補を予想の式で並べる対象）。Android `normalModelApplies` と同じ。"""
+    return location == 'saiwaichou' and any(word in str(machine or '') for word in ('ジャグラー', 'ハナハナ'))
 
 
 def variety_next_day_candidates(store, day, location='nagamachiminami'):
@@ -2805,6 +2823,11 @@ def report(store, day, machine, folder, location='nagamachiminami'):
                           f'まとめて選びます。{html.escape(SHORT_STORE_NAMES.get(location, location))}の狙い方：'
                           f'{html.escape(variety_rule_text(location))}。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
+    elif normal_model_applies(location, machine):
+        import normal_next_day_model
+        candidate_lead = ('<p class="candidate-lead">この機種で、翌日の当たりの軽さを予想の式で見積もった上位の台です。'
+                          '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>'
+                          f'<p class="candidate-lead">{html.escape(normal_next_day_model.NOTE)}</p>')
     else:
         candidate_lead = ('<p class="candidate-lead">この機種で、過去に当たりが周りの台より軽かった台です。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')

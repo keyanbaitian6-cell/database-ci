@@ -110,6 +110,14 @@ String foldHalfWidthKana(String text) {
   return name;
 }
 
+/// 機種表（[settingModelForMachine] の名前）の、設定ごとの (BBの分母, RBの分母)。低い設定から。
+/// 翌日候補の「明らかに高い」の判定（normal_next_day_model.dart）に使う。
+List<(double, double)>? settingTable(String key) {
+  final spec = _specs[key];
+  if (spec == null) return null;
+  return [for (var i = 0; i < spec.bb.length; i++) (spec.bb[i], spec.rb[i])];
+}
+
 String? settingModelForMachine(String machine) {
   var name = machine.toUpperCase().replaceAll(RegExp(r'[\s\-−‐‑–—~〜～_・]+'), '');
   // The site mixes full-width/half-width katakana and Roman numerals.

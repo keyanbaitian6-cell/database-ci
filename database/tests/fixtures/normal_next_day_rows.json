@@ -1,0 +1,1693 @@
+{
+"note": "翌日候補の予想の式の試験用（PC tests/test_normal_next_day_model.py・Android test/normal_next_day_model_test.dart）。作り直したら expected も作り直す。",
+"rows": [
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-01",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 4200,
+"bb": 11,
+"rb": 14
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-01",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 2600,
+"bb": 7,
+"rb": 8
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-01",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 8300,
+"bb": 39,
+"rb": 40
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-01",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 2600,
+"bb": 10,
+"rb": 12
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-01",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 8300,
+"bb": 51,
+"rb": 28
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-01",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 2600,
+"bb": 10,
+"rb": 7
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-01",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 4200,
+"bb": 14,
+"rb": 17
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-02",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 2600,
+"bb": 7,
+"rb": 8
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-02",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 2600,
+"bb": 10,
+"rb": 5
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-02",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 5100,
+"bb": 17,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-02",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 8300,
+"bb": 27,
+"rb": 34
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-02",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 6200,
+"bb": 24,
+"rb": 17
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-02",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 4200,
+"bb": 15,
+"rb": 16
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-02",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 6200,
+"bb": 21,
+"rb": 25
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-03",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 4200,
+"bb": 20,
+"rb": 11
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-03",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 2600,
+"bb": 15,
+"rb": 10
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-03",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 5100,
+"bb": 19,
+"rb": 23
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-03",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-03",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 4200,
+"bb": 14,
+"rb": 14
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-03",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 6200,
+"bb": 34,
+"rb": 18
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-03",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 2600,
+"bb": 14,
+"rb": 8
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-04",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 4200,
+"bb": 16,
+"rb": 19
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-04",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 5100,
+"bb": 22,
+"rb": 12
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-04",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 1500,
+"bb": 7,
+"rb": 5
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-04",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 5100,
+"bb": 14,
+"rb": 16
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-04",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 2600,
+"bb": 9,
+"rb": 6
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-04",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 7400,
+"bb": 32,
+"rb": 17
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-04",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 6200,
+"bb": 23,
+"rb": 13
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-05",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 2600,
+"bb": 10,
+"rb": 12
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-05",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 8300,
+"bb": 32,
+"rb": 17
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-05",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 3400,
+"bb": 16,
+"rb": 16
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-05",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 8300,
+"bb": 51,
+"rb": 28
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-05",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-05",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 1500,
+"bb": 6,
+"rb": 3
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-05",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 8300,
+"bb": 31,
+"rb": 38
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-06",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 4200,
+"bb": 14,
+"rb": 14
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-06",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 7400,
+"bb": 25,
+"rb": 30
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-06",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-06",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 5100,
+"bb": 21,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-06",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 1500,
+"bb": 4,
+"rb": 5
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-06",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 3400,
+"bb": 13,
+"rb": 10
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-06",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 8300,
+"bb": 25,
+"rb": 30
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-08",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 4200,
+"bb": 16,
+"rb": 9
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-08",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 300,
+"bb": 1,
+"rb": 2
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-08",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-08",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 6200,
+"bb": 21,
+"rb": 15
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-08",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-08",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 7400,
+"bb": 28,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-08",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 7400,
+"bb": 46,
+"rb": 24
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-09",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 5100,
+"bb": 25,
+"rb": 24
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-09",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 6200,
+"bb": 23,
+"rb": 29
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-09",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 5100,
+"bb": 19,
+"rb": 23
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-09",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 7400,
+"bb": 36,
+"rb": 26
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-09",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 8300,
+"bb": 27,
+"rb": 34
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-09",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 8300,
+"bb": 22,
+"rb": 27
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-09",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 8300,
+"bb": 40,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-10",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 300,
+"bb": 1,
+"rb": 2
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-10",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 5100,
+"bb": 19,
+"rb": 19
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-10",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 5100,
+"bb": 19,
+"rb": 23
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-10",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 6200,
+"bb": 26,
+"rb": 26
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-10",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 1500,
+"bb": 6,
+"rb": 4
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-10",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 4200,
+"bb": 26,
+"rb": 14
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-10",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 1500,
+"bb": 6,
+"rb": 8
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-11",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 6200,
+"bb": 27,
+"rb": 19
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-11",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 7400,
+"bb": 36,
+"rb": 19
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-11",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 7400,
+"bb": 32,
+"rb": 38
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-11",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 6200,
+"bb": 23,
+"rb": 29
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-11",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 7400,
+"bb": 25,
+"rb": 30
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-11",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 2600,
+"bb": 13,
+"rb": 9
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-11",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 1500,
+"bb": 6,
+"rb": 5
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-12",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 8300,
+"bb": 40,
+"rb": 29
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-12",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 3400,
+"bb": 14,
+"rb": 14
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-12",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 2600,
+"bb": 10,
+"rb": 12
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-12",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 6200,
+"bb": 18,
+"rb": 23
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-12",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 5100,
+"bb": 25,
+"rb": 24
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-12",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 6200,
+"bb": 30,
+"rb": 16
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-12",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 7400,
+"bb": 25,
+"rb": 30
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 6200,
+"bb": 34,
+"rb": 18
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 3400,
+"bb": 18,
+"rb": 10
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 7400,
+"bb": 20,
+"rb": 24
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 5100,
+"bb": 28,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 6200,
+"bb": 16,
+"rb": 20
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-13",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 8300,
+"bb": 28,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 3400,
+"bb": 14,
+"rb": 14
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 7400,
+"bb": 26,
+"rb": 18
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 8300,
+"bb": 35,
+"rb": 34
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 7400,
+"bb": 22,
+"rb": 22
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 7400,
+"bb": 22,
+"rb": 27
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 8300,
+"bb": 27,
+"rb": 34
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 8300,
+"bb": 32,
+"rb": 17
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-14",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 7400,
+"bb": 25,
+"rb": 30
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 3400,
+"bb": 21,
+"rb": 11
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 3400,
+"bb": 10,
+"rb": 10
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 6200,
+"bb": 21,
+"rb": 15
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 6200,
+"bb": 23,
+"rb": 23
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 5100,
+"bb": 28,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 4200,
+"bb": 18,
+"rb": 13
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 4200,
+"bb": 16,
+"rb": 9
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-15",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 1500,
+"bb": 8,
+"rb": 4
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 3400,
+"bb": 13,
+"rb": 10
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 6200,
+"bb": 23,
+"rb": 29
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 5100,
+"bb": 28,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 6200,
+"bb": 23,
+"rb": 13
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 2600,
+"bb": 10,
+"rb": 5
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 300,
+"bb": 1,
+"rb": 2
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 6200,
+"bb": 23,
+"rb": 23
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-16",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 7400,
+"bb": 25,
+"rb": 24
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 8300,
+"bb": 27,
+"rb": 28
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 6200,
+"bb": 23,
+"rb": 23
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 2600,
+"bb": 8,
+"rb": 9
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 7400,
+"bb": 20,
+"rb": 24
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 5100,
+"bb": 25,
+"rb": 13
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 2600,
+"bb": 16,
+"rb": 9
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 1500,
+"bb": 4,
+"rb": 5
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-17",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 7400,
+"bb": 26,
+"rb": 18
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 3400,
+"bb": 15,
+"rb": 10
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 5100,
+"bb": 25,
+"rb": 13
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 2600,
+"bb": 7,
+"rb": 8
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 8300,
+"bb": 40,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 5100,
+"bb": 19,
+"rb": 19
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 2600,
+"bb": 9,
+"rb": 8
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 7400,
+"bb": 28,
+"rb": 34
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-18",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 3400,
+"bb": 19,
+"rb": 13
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 8300,
+"bb": 40,
+"rb": 21
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 5100,
+"bb": 32,
+"rb": 17
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 8300,
+"bb": 32,
+"rb": 17
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 2600,
+"bb": 11,
+"rb": 6
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 3400,
+"bb": 11,
+"rb": 12
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 300,
+"bb": 1,
+"rb": 1
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-19",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 5100,
+"bb": 24,
+"rb": 18
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 700,
+"games": 7400,
+"bb": 25,
+"rb": 30
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 701,
+"games": 7400,
+"bb": 36,
+"rb": 26
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 702,
+"games": 6200,
+"bb": 27,
+"rb": 32
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 703,
+"games": 7400,
+"bb": 28,
+"rb": 34
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 704,
+"games": 6200,
+"bb": 16,
+"rb": 20
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 705,
+"games": 2600,
+"bb": 11,
+"rb": 8
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 706,
+"games": 8300,
+"bb": 46,
+"rb": 33
+},
+{
+"store": "saiwaichou",
+"kind_code": 21,
+"day": "2026-09-20",
+"machine": "SマイジャグラーVKD",
+"rack": 707,
+"games": 7400,
+"bb": 26,
+"rb": 18
+}
+],
+"expected": [
+{
+"day": "2026-09-03",
+"candidates": [
+705,
+706
+],
+"scores": {
+"700": -1.65350995,
+"701": -0.517410249,
+"702": 0.36941636,
+"704": -3.77829616,
+"705": 3.278990955,
+"706": 2.47314958
+}
+},
+{
+"day": "2026-09-04",
+"candidates": [
+705,
+702
+],
+"scores": {
+"700": -1.597740681,
+"701": 0.506938902,
+"702": 2.86761872,
+"703": -0.99802026,
+"704": -2.544704629,
+"705": 3.182204054,
+"706": 0.239730594
+}
+},
+{
+"day": "2026-09-05",
+"candidates": [
+703,
+702
+],
+"scores": {
+"700": -0.811976018,
+"701": 0.281810927,
+"702": 2.484938107,
+"703": 2.789438895,
+"704": -2.938189397,
+"705": 1.626564871,
+"706": -1.606059274
+}
+},
+{
+"day": "2026-09-06",
+"candidates": [
+702,
+705
+],
+"scores": {
+"700": -1.062297392,
+"701": -0.042035008,
+"702": 2.858568168,
+"703": 1.810314421,
+"704": -3.185881631,
+"705": 2.62217197,
+"706": -1.613531116
+}
+},
+{
+"day": "2026-09-08",
+"candidates": [
+702,
+705
+],
+"scores": {
+"700": -0.529704074,
+"701": -0.17723141,
+"702": 2.830040774,
+"703": 0.704333033,
+"704": -2.938189397,
+"705": 2.112437625,
+"706": 0.010376273
+}
+},
+{
+"day": "2026-09-09",
+"candidates": [
+703,
+702
+],
+"scores": {
+"700": -1.57716966,
+"701": -0.682422756,
+"702": 1.368245473,
+"703": 3.179554517,
+"704": -3.721529155,
+"705": 0.87028733,
+"706": 1.072224291
+}
+},
+{
+"day": "2026-09-10",
+"candidates": [
+705,
+703
+],
+"scores": {
+"700": -0.286887576,
+"701": -1.434680584,
+"702": -0.497102608,
+"703": 1.187673967,
+"704": -3.556399982,
+"705": 3.586276996,
+"706": -0.917713718
+}
+},
+{
+"day": "2026-09-11",
+"candidates": [
+702,
+703
+],
+"scores": {
+"700": -2.041105956,
+"701": 1.167827058,
+"702": 2.668014828,
+"703": 1.437975625,
+"704": -3.393604518,
+"705": 1.06164029,
+"706": -0.917713718
+}
+},
+{
+"day": "2026-09-12",
+"candidates": [
+702,
+700
+],
+"scores": {
+"700": 1.523508246,
+"701": -0.96534678,
+"702": 2.651857633,
+"703": -0.126388583,
+"704": -3.051846531,
+"705": 1.313409688,
+"706": -1.116203585
+}
+},
+{
+"day": "2026-09-13",
+"candidates": [
+702,
+700
+],
+"scores": {
+"700": 1.293511176,
+"701": -1.132437693,
+"702": 2.244970972,
+"703": 1.236505816,
+"704": -1.93815056,
+"705": 0.612083509,
+"706": -3.761915476
+}
+},
+{
+"day": "2026-09-14",
+"candidates": [
+702,
+703
+],
+"scores": {
+"700": -0.515233673,
+"701": -0.326353432,
+"702": 3.552866666,
+"703": 1.120624627,
+"704": -0.079386602,
+"705": 0.17303587,
+"706": -1.634313364
+}
+},
+{
+"day": "2026-09-15",
+"candidates": [
+702,
+705
+],
+"scores": {
+"700": 0.394624922,
+"701": -2.437063894,
+"702": 1.989439973,
+"703": -0.526183969,
+"704": -0.872305112,
+"705": 0.568959152,
+"706": -1.97658492
+}
+},
+{
+"day": "2026-09-16",
+"candidates": [
+702,
+705
+],
+"scores": {
+"700": 0.040548808,
+"701": -3.054301669,
+"702": 2.469678813,
+"703": 0.140023852,
+"704": 0.011254572,
+"705": 0.975109648,
+"706": -3.137865804,
+"707": 0.386326517
+}
+},
+{
+"day": "2026-09-17",
+"candidates": [
+704,
+702
+],
+"scores": {
+"700": -0.408676795,
+"701": -2.300408267,
+"702": 1.390423806,
+"703": -1.32722616,
+"704": 2.276737739,
+"705": 1.358980797,
+"706": -2.634257345,
+"707": -0.027615508
+}
+},
+{
+"day": "2026-09-18",
+"candidates": [
+701,
+702
+],
+"scores": {
+"700": 0.441342116,
+"701": 1.010541248,
+"702": 0.886402211,
+"703": -0.693748839,
+"704": 0.091506718,
+"705": 0.283749517,
+"706": -2.096490304,
+"707": -0.983181611
+}
+},
+{
+"day": "2026-09-19",
+"candidates": [
+702,
+704
+],
+"scores": {
+"700": -0.060039052,
+"701": 0.0967563,
+"702": 3.46899797,
+"703": -1.312091621,
+"704": 0.297158054,
+"705": -0.700009364,
+"706": -1.607819036,
+"707": -0.351078049
+}
+},
+{
+"day": "2026-09-20",
+"candidates": [
+702,
+707
+],
+"scores": {
+"700": -1.113116447,
+"701": 0.725081418,
+"702": 1.599941959,
+"703": -2.95585186,
+"704": -1.26091862,
+"705": 0.60759685,
+"706": 0.686627815,
+"707": 1.455867906
+}
+}
+]
+}

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'models.dart';
+import 'normal_next_day_model.dart';
 import 'scoring.dart';
 
 /// Racks of one machine whose games/BIG/REG are all identical (games > 0).
@@ -102,6 +103,9 @@ String varietyRangeFor(String store) => '1〜${varietyMaxRacksFor(store)}台';
 String candidateMethodVersion(String store, String machine) =>
     store == 'saiwaichou' && machine == varietyGroupName
     ? '2026-10-13-saiwaichou-variety-2'
+    // 幸町のジャグラー・ハナハナは予想の式で並べる（2026-10-17、PC版と同じ）。
+    : normalModelApplies(store, machine)
+    ? normalModelMethodVersion
     : nextDayMethodVersion;
 
 /// バラエティで「よく回った」とみなす回転数。4時間ほど打たれた台の目安で、
@@ -629,9 +633,7 @@ String varietyRuleText(String store) {
     for (final r in comparisonPool(record, all))
       if (r.bb >= 0 && r.rb >= 0) metric(r),
   ];
-  if (rates.length < 3 ||
-      record.games <= 0 ||
-      isExcludedSupplement(record)) {
+  if (rates.length < 3 || record.games <= 0 || isExcludedSupplement(record)) {
     return (percent: null, refs: rates.length);
   }
   final rank = percentile(metric(record), rates);
@@ -678,12 +680,40 @@ provisionalNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
       ));
     }
   }
-  eligible.sort((a, b) {
-    return compareNextDayEvidence(
-      evidence[a.record.rack]!,
-      evidence[b.record.rack]!,
+  if (eligible.isNotEmpty &&
+      normalModelApplies(rows.first.store, rows.first.machine)) {
+    // 幸町のジャグラー・ハナハナは、14か月分から作った予想の式の点の高い順
+    // （2026-10-17、normal_next_day_model.dart）。候補に入りうる台と台数は同じ。
+    final perRack = normalHistoryValues(
+      machineHistory(all, rows.first.store, rows.first.machine),
+      rows.first.day,
     );
-  });
+    final score = {
+      for (final c in eligible)
+        c.record.rack: double.parse(
+          normalModelScore(
+            normalModelFeatures(
+              perRack,
+              c.record,
+              evidence[c.record.rack]!.rawIndex!,
+            ),
+          ).toStringAsFixed(9),
+        ),
+    };
+    eligible.sort((a, b) {
+      final byScore = score[b.record.rack]!.compareTo(score[a.record.rack]!);
+      if (byScore != 0) return byScore;
+      final byGames = b.record.games.compareTo(a.record.games);
+      return byGames != 0 ? byGames : a.record.rack.compareTo(b.record.rack);
+    });
+  } else {
+    eligible.sort((a, b) {
+      return compareNextDayEvidence(
+        evidence[a.record.rack]!,
+        evidence[b.record.rack]!,
+      );
+    });
+  }
   if (eligible.length < 4) {
     return (
       total: rows.length,
