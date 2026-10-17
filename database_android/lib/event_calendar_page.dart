@@ -5,7 +5,7 @@ import 'daily_net_page.dart' show DayNet;
 import 'date_events.dart';
 import 'event_name_dialog.dart';
 import 'list_views.dart';
-import 'models.dart' show SlotRecord, signedMedals;
+import 'models.dart' show SlotRecord, signedMedals, winRateLabel;
 import 'shared_widgets.dart';
 import 'theme.dart';
 
@@ -47,8 +47,14 @@ String eventCellLabel(DateEvent? event) => event == null || event.removed
 
 /// カレンダーの1日に出す差枚（その日の総差枚）。メルヘンはほぼ毎日、要確認（※）の推定差枚の台を
 /// 含むので、マスには※を付けない（下の説明に書く、PC `event_calendar.net_text` と同じ）。
-String? dayNetCellLabel(DayNet? net) =>
-    net?.total == null ? null : signedMedals(net!.total!);
+/// 差枚の分かる台が半分に満たない日は、代わりに勝率（[DayNet.showsWinRate]、2026-10-17）。
+String? dayNetCellLabel(DayNet? net) => net == null
+    ? null
+    : net.showsWinRate
+    ? winRateLabel(net.won, net.judged)
+    : net.total == null
+    ? null
+    : signedMedals(net.total!);
 
 /// イベントカレンダー（メルヘン2店舗・P’s CUBE。Android版・閲覧ページ共通、`EVENT_CALENDAR.md`）。
 /// 先の日にもイベント名を入れられる。保存は [onSave]（名前 null は消す）。
@@ -247,11 +253,12 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
                       style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w700,
-                        color: net!.total! > 0
+                        // 勝率は差枚ではないので色を付けない。
+                        color: net!.showsWinRate || net.total == 0
+                            ? AppColors.ash
+                            : net.total! > 0
                             ? AppColors.linkBlue
-                            : net.total! < 0
-                            ? const Color(0xFFC62828)
-                            : AppColors.ash,
+                            : const Color(0xFFC62828),
                       ),
                     ),
                   ),

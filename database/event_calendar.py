@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from core import (RAINBOW_MARK, STORE_NAMES, Store, date_event_in_advance, implausible_numbers, is_hidden_machine,
-                  rack_net, signed_medals)
+                  rack_net, rack_won, show_win_rate, signed_medals, win_rate_text)
 
 WEEKDAYS = '日月火水木金土'
 # 「期間でまとめて入力」で一度に付けられる日数。
@@ -65,18 +65,25 @@ def net_text(net):
         return ''
     if 'by_rate' in net:
         return '\n'.join(f'{rate}スロ {text}' for rate, part in net['by_rate'].items() if (text := net_text(part)))
+    if show_win_rate(net.get('captured', 0), net.get('judged', 0)):
+        return win_rate_text(net['won'], net['judged'])
     if net['total'] is None:
         return ''
     return signed_medals(net['total'])
 
 
 def net_color(net):
+    if net and 'by_rate' not in net and show_win_rate(net.get('captured', 0), net.get('judged', 0)):
+        return ZERO_COLOR  # 勝率は差枚ではないので色を付けない
     total = (net or {}).get('total')
     return ZERO_COLOR if not total else PLUS_COLOR if total > 0 else MINUS_COLOR
 
 
-def _add_net(totals, day, net, needs_check=False):
-    entry = totals.setdefault(day, {'total': None, 'captured': 0, 'needs_check': 0})
+def _add_net(totals, day, net, needs_check=False, won=None):
+    entry = totals.setdefault(day, {'total': None, 'captured': 0, 'needs_check': 0, 'judged': 0, 'won': 0})
+    if won is not None:
+        entry['judged'] += 1
+        entry['won'] += won
     if net is None:
         return
     entry['total'] = (entry['total'] or 0) + net
@@ -102,9 +109,10 @@ def meruhen_day_nets(db, location, first, last):
         except ValueError:
             measurement = None
         # ジャグラーオンラインの差枚があれば優先（お試し、JUGGLER_ONLINE.md）。
-        net, needs_check, _site = rack_net({'jo_net': jo_net, 'graph_measurement': measurement,
-                                            'max_hold': max_hold, 'games': games, 'store': location, 'day': day})
-        _add_net(totals, day, net, needs_check)
+        row = {'jo_net': jo_net, 'graph_measurement': measurement, 'max_hold': max_hold, 'games': games,
+               'bb': bb, 'rb': rb, 'store': location, 'day': day}
+        net, needs_check, _site = rack_net(row)
+        _add_net(totals, day, net, needs_check, rack_won(row))
     return totals
 
 
@@ -200,6 +208,11 @@ def open_day_summary(parent, title, store_label, rows, net_label, event_text, on
         tk.Label(total, text=signed_medals(sum(nets)), font=('Yu Gothic UI', 10, 'bold'),
                  fg=net_color({'total': sum(nets)})).pack(side='left')
         ttk.Label(total, text=f'（{net_label}がわかった台 {len(nets)}/{len(rows)}台）').pack(side='left')
+    judged = [r['won'] for r in rows if r.get('won') is not None]
+    if show_win_rate(len(nets), len(judged)):
+        ttk.Label(body, text=f'この日は{net_label}の分からない台が多いため勝率：'
+                             f'{len(judged)}台中{sum(judged)}台プラス（{win_rate_text(sum(judged), len(judged))}）',
+                  wraplength=700).pack(anchor='w')
 
     tabs = ttk.Notebook(body)
     tabs.pack(fill='both', expand=True, pady=(12, 2))
@@ -357,7 +370,8 @@ class MeruhenEvents:
         finally:
             db.close()
 
-    net_note = '差枚＝その日の総差枚（推定。グラフと最大持玉から計算できた台の合計で、確定値ではありません。要確認の台も含みます）。'
+    net_note = ('差枚＝その日の総差枚（推定。グラフと最大持玉から計算できた台の合計で、確定値ではありません。要確認の台も含みます）。'
+                '差枚の分かる台が半分に満たない日（アナスロ補完の日など）は、代わりに勝率＝プラスで終わった台の割合（グラフの終点で判定）。')
 
     def nets(self, location, first, last):
         db = Store(self.db_path)
@@ -391,10 +405,11 @@ class MeruhenEvents:
                 measurement = json.loads(measurement) if measurement else None
             except ValueError:
                 measurement = None
-            net, needs_check, _site = rack_net({'jo_net': jo_net, 'graph_measurement': measurement,
-                                                'max_hold': max_hold, 'games': games, 'store': location, 'day': day})
+            row = {'jo_net': jo_net, 'graph_measurement': measurement, 'max_hold': max_hold, 'games': games,
+                   'bb': bb, 'rb': rb, 'store': location, 'day': day}
+            net, needs_check, _site = rack_net(row)
             result.append({'rack': rack, 'machine': machine, 'games': games or 0, 'bb': bb, 'rb': rb,
-                           'net': net, 'needs_check': bool(needs_check), 'rainbow': rainbow == 1,
+                           'net': net, 'needs_check': bool(needs_check), 'won': rack_won(row), 'rainbow': rainbow == 1,
                            'day': day, 'prev_rainbow': previous.get(int(rack))})
         return result
 

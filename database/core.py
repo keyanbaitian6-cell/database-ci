@@ -1497,6 +1497,43 @@ def rack_net(row):
     return net, needs_check, False
 
 
+def rack_won(row):
+    """その台がプラスで終わったか（True/False）、分からなければ None（勝率に数えない）。
+
+    差枚があればその符号。無ければグラフの終点がゼロ線より上か（採点の終点と同じく1ピクセル以内は
+    プラスにしない）。アナスロ補完はグラフの形だけが分かり差枚が出ないので、こちらで決まる
+    （2026-10-17、ジャグラーオンラインの差枚と4,086台すべてで符号が一致）。大当たり0回でグラフを
+    取らない台はマイナス。未稼働の台と [MERUHEN_NET_HIDDEN_DAYS] の店・日は None。
+    Android `SlotRecord.won`・共有ページ `rackWon` と同じ。"""
+    if not row.get('games'):
+        return None
+    net = rack_net(row)[0]
+    if net is not None:
+        return net > 0
+    if meruhen_net_hidden(row.get('store'), row.get('day')):
+        return None
+    measurement = row.get('graph_measurement')
+    if isinstance(measurement, dict):
+        try:
+            end = float(measurement['baseline_y']) - float(measurement['end_y'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return end > 1 if math.isfinite(end) else None
+    return False if no_hits(row) else None
+
+
+def show_win_rate(captured, judged):
+    """カレンダーの1日に総差枚の代わりに勝率を出すか：差枚の分かる台が、勝ち負けの分かる台の
+    半分に満たない日（2026-10-17 利用者「差枚を出せないところについては勝率を書いてほしい」）。
+    一部の台だけの総差枚は店全体より小さく見えるため。"""
+    return judged > 0 and captured * 2 < judged
+
+
+def win_rate_text(won, judged):
+    """「勝率48%」。整数で四捨五入（0.5は切り上げ）し、Android `winRateLabel`・共有ページ `winRateText` とそろえる。"""
+    return f'勝率{(200 * won + judged) // (2 * judged)}%'
+
+
 SETTINGS_NAME = 'settings.json'
 # Fixed file name so the shared folder always holds exactly one auto-written
 # copy (overwritten each time) instead of piling up timestamped files.

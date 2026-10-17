@@ -14,8 +14,16 @@ class DayNet {
     required this.captured,
     required this.racks,
     this.needsCheck = 0,
+    this.judged = 0,
+    this.won = 0,
   });
   final String day;
+
+  /// 勝ち負けの分かる台数と、そのうちプラスで終わった台数（[SlotRecord.won]）。
+  final int judged, won;
+
+  /// このマスに総差枚の代わりに勝率を出すか（[showWinRate]）。
+  bool get showsWinRate => showWinRate(captured, judged);
 
   /// 合計に入っている推定差枚のうち、要確認（※）の台数（[SlotRecord.netNeedsCheck]）。
   final int needsCheck;
@@ -55,6 +63,8 @@ List<DayNet> dailyNet(Iterable<SlotRecord> records, String store) {
           needsCheck: byDay[day]!
               .where((r) => r.netValue != null && r.netNeedsCheck)
               .length,
+          judged: byDay[day]!.where((r) => r.won != null).length,
+          won: byDay[day]!.where((r) => r.won == true).length,
         );
       }(),
   ];
@@ -74,7 +84,8 @@ DayNet? Function(String store, String day) dailyNetLookup(
 String dailyNetNote(String store) => isPscubeStore(store)
     ? '差枚＝その日の総差枚（元グラフの差枚がわかった台の合計）。'
     : '差枚＝その日の総差枚（推定。グラフと最大持玉から計算できた台の合計で、確定値ではありません。'
-          '要確認の台も含みます。ジャグラーオンラインから取り込んだ台は、その差枚）。';
+          '要確認の台も含みます。ジャグラーオンラインから取り込んだ台は、その差枚）。'
+          '差枚の分かる台が半分に満たない日（アナスロ補完の日など）は、代わりに勝率＝プラスで終わった台の割合（グラフの終点で判定）。';
 
 /// 月（`2026-10`）ごとの日別の差枚。日付をタップすると、その日を選んでホームへ戻る。
 /// P’s CUBEとメルヘンで同じ画面。メルヘンは推定差枚であることを見出しと注記で示す。

@@ -12,6 +12,7 @@ import {
   VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows, varietyRecordRows,
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
   lineupDay, suffixReport, isZorome, hasSuffixSummary,
+  rackWon, showWinRate, winRateText,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -79,8 +80,8 @@ test('台の読み込み：数値異常の台は数えず、差枚の無い日�
     {store: 'elsewhere', day: '2026-10-05', machine: 'x', rack: 1},
   ]});
   const byDay = indexRecords(m);
-  assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-04')), {total: 1422, captured: 1, racks: 1});
-  assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-05')), {total: null, captured: 0, racks: 1});
+  assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-04')), {total: 1422, captured: 1, racks: 1, judged: 1, won: 1, winRate: false});
+  assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-05')), {total: null, captured: 0, racks: 1, judged: 0, won: 0, winRate: false});
   const jo = meruhenRecords({records: [{store: 'saiwaichou', day: '2026-10-06', machine: '北斗', rack: 7, games: 3000, bb: 10, rb: 5,
     max_hold: 2376, graph_measurement: measurement([0, -63, 40, 147, 128]), jo_net: -280}]});
   assert.deepEqual([jo[0].net, jo[0].estimated], [-280, false], 'ジャグラーオンラインの差枚を優先');
@@ -328,4 +329,36 @@ test('P-STATION（P’s CUBE）の末尾別データまとめ（2026-10-12「共
   assert.equal(report.summaries.find(s => s.label === 'ゾロ目').records, 1, '1011番台だけ（1044番台は入らない）');
   assert.ok(!isZorome(1044, store) && isZorome(1044, 'saiwaichou'));
   assert.equal(report.records, 3, '末尾4の1044番台は数えない');
+});
+
+test('勝率：差枚の分からない日は「何台中何台プラス」から（PC test_win_rate.py・Flutter win_rate_test.dart と同じ例）', () => {
+  // 2026-10-17 利用者「差枚を出せないところについては勝率を書いてほしい」。アナスロ補完はグラフの終点だけが分かる。
+  const rack = (n, extra) => ({store: 'saiwaichou', day: '2026-09-10', machine: 'M', rack: n, games: 3000, bb: 5, rb: 2, ...extra});
+  const racks = meruhenRecords({records: [
+    rack(1, {graph_measurement: measurement([0, 80, 50])}),        // 終点+50px → プラス
+    rack(2, {graph_measurement: measurement([0, 20, -30])}),       // マイナス
+    rack(3, {graph_measurement: measurement([0, 40, 0.5])}),       // 1px以内 → プラスにしない
+    rack(4, {games: 2000, bb: 0, rb: 0}),                          // 大当たり0回 → マイナス
+    rack(5, {games: 0, bb: 0, rb: 0}),                             // 未稼働 → 数えない
+    rack(6, {}),                                                   // グラフ無し → 数えない
+  ]});
+  assert.deepEqual(racks.map(rackWon), [true, false, false, false, null, null]);
+  const day = dayNet(racks);
+  assert.deepEqual([day.captured, day.judged, day.won, day.winRate, day.total], [0, 4, 1, true, null]);
+  assert.equal(winRateText(day.won, day.judged), '勝率25%');
+  assert.equal(winRateText(255, 532), '勝率48%');
+  assert.equal(winRateText(1, 8), '勝率13%', '0.5は切り上げ');
+  // 差枚の分かる台が半分以上なら今までどおり総差枚。
+  assert.equal(showWinRate(1, 4), true);
+  assert.equal(showWinRate(2, 4), false);
+  assert.equal(showWinRate(0, 0), false);
+  // 推定差枚を出さない店・日（長町南10/7）はグラフも信用しないので数えない。
+  const hidden = meruhenRecords({records: [{store: 'nagamachiminami', day: '2026-10-07', machine: 'M', rack: 1, games: 3000,
+    bb: 5, rb: 2, graph_measurement: measurement([0, 80, 50])}]});
+  assert.equal(rackWon(hidden[0]), null);
+  // P’s CUBEの差枚のない台（アナスロ補完）は数えない（幸町だけの扱い）。
+  const p = pscubeRecords({format: 'pscube-viewer', records: [
+    {store: 'c740601', rate: '20', day: '2026-10-04', machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 1, games: 3000, bb: 10, rb: 5, my: 1000, net_medals: 300},
+  ]});
+  assert.equal(rackWon(p[0]), true);
 });

@@ -115,6 +115,11 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
       for (final r in usable)
         if (r.netValue != null) r.netValue!,
     ];
+    final judged = [
+      for (final r in usable)
+        if (r.won != null) r.won!,
+    ];
+    final won = judged.where((w) => w).length;
     final event = eventCellLabel(widget.eventFor());
     const heading = TextStyle(fontSize: 16, fontWeight: FontWeight.w800);
     return Scaffold(
@@ -164,6 +169,12 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                     ),
                   ],
                 ),
+              ),
+            if (showWinRate(nets.length, judged.length))
+              Text(
+                'この日は$netLabelの分からない台が多いため勝率：'
+                '${judged.length}台中$won台プラス（${winRateLabel(won, judged.length)}）',
+                key: const ValueKey('calendar-day-win-rate'),
               ),
             const SizedBox(height: 16),
             Text('TOP10（$netLabelの多い順）', style: heading),

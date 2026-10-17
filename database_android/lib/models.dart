@@ -13,6 +13,16 @@ const storeNames = <String, String>{
 bool isPscubeStore(String value) =>
     RegExp(r'^pscube:c\d+:\d+(?:\.\d+)?$').hasMatch(value);
 
+/// カレンダーの1日に総差枚の代わりに勝率を出すか：差枚の分かる台が、勝ち負けの分かる台の半分に
+/// 満たない日（2026-10-17 利用者「差枚を出せないところについては勝率を書いてほしい」。一部の台だけの
+/// 総差枚は店全体より小さく見えるため）。PC `core.show_win_rate`・共有ページ `showWinRate` と同じ。
+bool showWinRate(int captured, int judged) =>
+    judged > 0 && captured * 2 < judged;
+
+/// 「勝率48%」。整数で四捨五入（0.5は切り上げ）。PC `core.win_rate_text` と同じ。
+String winRateLabel(int won, int judged) =>
+    '勝率${(200 * won + judged) ~/ (2 * judged)}%';
+
 String signedMedals(int value) {
   final digits = value.abs().toString();
   final chunks = <String>[];
@@ -361,6 +371,23 @@ class SlotRecord {
 
   /// [netValue] の呼び方。メルヘンは推定であることを必ず添える。
   String get netLabel => isPscube || joNet != null ? '差枚' : '推定差枚';
+
+  /// その台がプラスで終わったか。分からなければ null（勝率に数えない）。差枚があればその符号、
+  /// 無ければグラフの終点がゼロ線より上か（採点の終点と同じく1ピクセル以内はプラスにしない。
+  /// アナスロ補完はこちらで決まる）。大当たり0回でグラフを取らない台はマイナス。PC `core.rack_won` と同じ。
+  bool? get won {
+    if (games <= 0) return null;
+    final net = netValue;
+    if (net != null) return net > 0;
+    if (isPscube || meruhenNetHidden(store, day)) return null;
+    final g = graph;
+    if (g != null) {
+      final end = g.baselineY - g.endY;
+      return end.isFinite ? end > 1 : null;
+    }
+    return bb + rb == 0 ? false : null;
+  }
+
   int get atArt => isPscube ? (extra['at_art'] as num?)?.toInt() ?? 0 : 0;
   int? get outputValue => isPscube ? my : maxHold;
   String get outputLabel => isPscube ? 'MY' : '最大持玉';

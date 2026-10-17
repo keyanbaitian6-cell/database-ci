@@ -128,10 +128,12 @@ try {
   await back();
 
   // カレンダー：前日までに入力した日は印なし、当日以降・時刻不明は＊、先の日も出る。
+  // この記録はグラフの高さが400でないため推定差枚が出ず、終点はどの台もプラス。差枚の分かる台が半分に
+  // 満たない日は総差枚の代わりに勝率（2026-10-17）なので、記録のある10/1〜10/5は「勝率100%」。
   await calendarOctober();
-  for(const [day,label] of [['3','半列＊'],['4','4台構成'],['5','コンパス導入＊'],['20','超探す楽しみ']])
+  for(const [day,label] of [['3','半列＊\\s*勝率100%'],['4','4台構成\\s*勝率100%'],['5','コンパス導入＊\\s*勝率100%'],['20','超探す楽しみ']])
     assert.ok(await seen(new RegExp(`^${day}\\s*${label}$`)),`calendar shows ${label} on ${day}`);
-  assert.ok(await seen(/^2$/),'the removed day has no name');
+  assert.ok(await seen(/^2\s*勝率100%$/),'the removed day has no name');
   assert.equal(await seen(/他店舗のイベント/),false);
   for(const width of [320,393,768]){
     await page.setViewportSize({width,height:852});await page.waitForTimeout(250);
@@ -160,7 +162,7 @@ try {
 
   // 消す：10/03 の「半列」をイベントなしにすると、日別の差枚からも消え、消した印が残る。
   // 記録のある日は、押すとその日のまとめ（TOP10・強かった機種5選、2026-10-09）が開き、そこから編集する。
-  await page.getByText(/^3\s*半列＊$/).first().click();
+  await page.getByText(/^3\s*半列＊\s*勝率100%$/).first().click();
   await page.getByRole('button',{name:'イベントを編集',exact:true}).waitFor({timeout:20000});
   await waitFor(async()=>(await page.getByText(/強かった機種5選/).count())>0,'day summary');
   await page.getByRole('button',{name:'イベントを編集',exact:true}).click();
