@@ -17,33 +17,39 @@ from datetime import date
 from core import implausible_numbers, percentile
 from setting_estimate import SPECS, model_for_machine
 
-METHOD_VERSION = '2026-10-17-saiwaichou-normal-model-1'
+METHOD_VERSION = '2026-10-18-saiwaichou-normal-model-2'
 STORE = 'saiwaichou'
 SERIES = ('ジャグラー', 'ハナハナ')
 SHRINK_GAMES = 2000
-# 生の重み（標準化を戻した値）。2026-10-16 までの全データ 41,690 件で作った（coefficients.json）。
+# 式を使うのは、選ぶ日がこの日以降の候補だけ。それより前の日は今までの選び方（過去の日の答え合わせに、
+# 後の結果で作った式を混ぜない。2026-10-18 Codex の指摘）。
+AVAILABLE_FROM = '2026-10-17'
+# 台の長期の癖は直近60日（アプリのDBにある範囲。2026-10-18 改訂、Codex の指摘「検証と実運用の履歴範囲が異なる」）。
+LONG_DAYS = 60
+# 生の重み（標準化を戻した値）。翌日が 2026-10-16 までのデータ 53,454 件で作った（claude-v11/result.json）。
 WEIGHTS = {
-    'v0': 0.027311058,
-    's': 0.040769933,
-    'r': -0.061517979,
-    's_last3': 0.011048230,
-    's_28': -0.006871832,
-    's_long': 0.553817886,
-    'r_28': 0.019004669,
-    'high_d': -0.440139493,
-    'high_12': -0.224611027,
-    'since_4_9': -0.256742786,
-    'since_10_23': -0.377331771,
-    'log_games': -0.153899838,
-    'long_play': 0.832684670,
+    'v0': 0.023660703,
+    's': 0.041100879,
+    'r': -0.061499909,
+    's_last3': 0.011417444,
+    's_28': 0.024624829,
+    's_long': 0.331663748,
+    'r_28': 0.023369600,
+    'high_d': -0.431953077,
+    'high_12': -0.238242452,
+    'since_4_9': -0.252953453,
+    'since_10_23': -0.370217296,
+    'log_games': -0.164622000,
+    'long_play': 0.801754507,
 }
 
+NOTE = '幸町のジャグラー・ハナハナは、2026年10月17日以降、過去の記録から作った予想の式（台の直近60日の当たりの軽さ、当日の当たりとREG、回転数、直近に明らかに高かったかなど）の点の高い順に選んでいます。表示の数字は過去の当たりの軽さで、並び順とは違うことがあります。過去に当てはめた確認では、選んだ台の翌日の当たりの軽さ（同じ機種の中の順位）は、今までの選び方より平均で約0.7高い程度でした（2026年9〜10月だけでは差が見えていません）。翌日の設定や勝ち負けを示すものではありません。'
 
-NOTE = '幸町のジャグラー・ハナハナは、14か月分（2025年9月〜2026年10月）から作った予想の式（台の長い期間の当たりの軽さ、当日の当たりとREG、回転数、直近に明らかに高かったかなど）の点の高い順に選んでいます。表示の数字は過去の当たりの軽さで、並び順とは違うことがあります。過去に当てはめた確認では、選んだ台の翌日の当たりの軽さ（同じ機種の中の順位）は、今までの選び方より平均で約1高い程度でした。翌日の設定や勝ち負けを示すものではありません。'
 
-
-def applies(location, machine):
-    return location == STORE and any(word in str(machine or '') for word in SERIES)
+def applies(location, machine, day=None):
+    """幸町のジャグラー・ハナハナで、選ぶ日が AVAILABLE_FROM 以降（day を省くと日付は見ない）。"""
+    return (location == STORE and any(word in str(machine or '') for word in SERIES)
+            and (day is None or day >= AVAILABLE_FROM))
 
 
 def _spec(machine):
@@ -138,7 +144,8 @@ def features(per_rack, row, v0_raw):
         if ago == 0:
             today_s, today_r = s, reg
         if s is not None:
-            s_all.append(s)
+            if ago < LONG_DAYS:
+                s_all.append(s)
             if ago < 7 and len(recent3) < 3:
                 recent3.append(s)
             if ago < 28:

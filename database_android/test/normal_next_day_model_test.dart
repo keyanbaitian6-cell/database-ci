@@ -21,17 +21,37 @@ void main() {
       SlotRecord.fromJson(Map<String, dynamic>.from(r as Map)),
   ];
 
-  test('幸町のジャグラー・ハナハナだけ。記録に残す選び方の名前も変わる', () {
-    expect(normalModelApplies('saiwaichou', 'SマイジャグラーVKD'), isTrue);
-    expect(normalModelApplies('saiwaichou', 'SキングハナハナSP−30'), isTrue);
-    expect(normalModelApplies('nagamachiminami', 'SマイジャグラーVKD'), isFalse);
-    expect(normalModelApplies('saiwaichou', 'L ゴッドイーター'), isFalse);
+  test('幸町のジャグラー・ハナハナだけ、10/17以降だけ。選び方の名前も変わる', () {
     expect(
-      candidateMethodVersion('saiwaichou', 'SマイジャグラーVKD'),
+      normalModelApplies('saiwaichou', 'SマイジャグラーVKD', '2026-10-17'),
+      isTrue,
+    );
+    expect(
+      normalModelApplies('saiwaichou', 'SマイジャグラーVKD', '2026-10-16'),
+      isFalse,
+    );
+    expect(
+      normalModelApplies('saiwaichou', 'SキングハナハナSP−30', '2026-11-01'),
+      isTrue,
+    );
+    expect(
+      normalModelApplies('nagamachiminami', 'SマイジャグラーVKD', '2026-11-01'),
+      isFalse,
+    );
+    expect(
+      normalModelApplies('saiwaichou', 'L ゴッドイーター', '2026-11-01'),
+      isFalse,
+    );
+    expect(
+      candidateMethodVersion('saiwaichou', 'SマイジャグラーVKD', '2026-10-17'),
       normalModelMethodVersion,
     );
     expect(
-      candidateMethodVersion('nagamachiminami', 'SマイジャグラーVKD'),
+      candidateMethodVersion('saiwaichou', 'SマイジャグラーVKD', '2026-10-16'),
+      nextDayMethodVersion,
+    );
+    expect(
+      candidateMethodVersion('nagamachiminami', 'SマイジャグラーVKD', '2026-10-17'),
       nextDayMethodVersion,
     );
   });
@@ -69,7 +89,7 @@ void main() {
     Widget card(String store) {
       final record = SlotRecord(
         store: store,
-        day: '2026-09-20',
+        day: '2026-10-20',
         machine: 'SマイジャグラーVKD',
         rack: 702,
         games: 6000,

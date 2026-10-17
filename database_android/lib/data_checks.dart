@@ -100,11 +100,11 @@ int varietyMaxRacksFor(String store) =>
 String varietyRangeFor(String store) => '1〜${varietyMaxRacksFor(store)}台';
 
 /// 幸町のバラエティの母集団変更を旧候補の記録と区別する。通常機種の固定方式は維持。
-String candidateMethodVersion(String store, String machine) =>
+String candidateMethodVersion(String store, String machine, [String? day]) =>
     store == 'saiwaichou' && machine == varietyGroupName
     ? '2026-10-13-saiwaichou-variety-2'
     // 幸町のジャグラー・ハナハナは予想の式で並べる（2026-10-17、PC版と同じ）。
-    : normalModelApplies(store, machine)
+    : normalModelApplies(store, machine, day)
     ? normalModelMethodVersion
     : nextDayMethodVersion;
 
@@ -681,7 +681,11 @@ provisionalNextDayCandidates(List<SlotRecord> rows, List<SlotRecord> all) {
     }
   }
   if (eligible.isNotEmpty &&
-      normalModelApplies(rows.first.store, rows.first.machine)) {
+      normalModelApplies(
+        rows.first.store,
+        rows.first.machine,
+        rows.first.day,
+      )) {
     // 幸町のジャグラー・ハナハナは、14か月分から作った予想の式の点の高い順
     // （2026-10-17、normal_next_day_model.dart）。候補に入りうる台と台数は同じ。
     final perRack = normalHistoryValues(

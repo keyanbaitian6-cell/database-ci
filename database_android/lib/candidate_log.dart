@@ -137,7 +137,7 @@ CandidateSnapshot candidateSnapshot({
     day: day,
     machine: machine,
     takenAt: timestampWithOffset(now),
-    method: candidateMethodVersion(store, machine),
+    method: candidateMethodVersion(store, machine, day),
     total: result.total,
     eligible: result.eligible,
     candidates: [

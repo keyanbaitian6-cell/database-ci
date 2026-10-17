@@ -1144,7 +1144,7 @@ def candidate_snapshot(store, location, day, machine, now=None):
               else provisional_next_day_candidates(store, day, machine, location))
     return dict(store=location, day=day, machine=machine,
                 taken_at=(now or datetime.now().astimezone()).isoformat(),
-                method=candidate_method_version(location, machine),
+                method=candidate_method_version(location, machine, day),
                 total=result['total'], eligible=result['eligible'],
                 candidates=[dict(rack=int(c['row']['rack']), index=c['index'], days=c['days'])
                             for c in result['candidates']])
@@ -1915,13 +1915,14 @@ def variety_range(location):
     return f'1〜{variety_max_racks(location)}台'
 
 
-def candidate_method_version(location, machine):
+def candidate_method_version(location, machine, day=None):
     # 幸町のバラエティの母集団変更を旧記録と区別する。通常機種の固定検証方式は維持。
     # 幸町のジャグラー・ハナハナは予想の式で並べる（2026-10-17）ので、旧記録と区別する。
     if location == 'saiwaichou' and machine == VARIETY_GROUP_NAME:
         return '2026-10-13-saiwaichou-variety-2'
-    if normal_model_applies(location, machine):
-        return '2026-10-17-saiwaichou-normal-model-1'
+    if normal_model_applies(location, machine, day):
+        import normal_next_day_model
+        return normal_next_day_model.METHOD_VERSION
     return NEXT_DAY_METHOD_VERSION
 
 VARIETY_GROUP_NAME = 'バラエティ'
@@ -2111,7 +2112,7 @@ def provisional_next_day_candidates(store, day, machine, location='nagamachimina
             today_score = score(row, store._machine_rows(row['machine'], row['store']))['total']
             eligible.append(dict(row=row, variety=False, today_score=today_score,
                                  focus=next_day_focus(tendency, today_score), **tendency))
-    if eligible and normal_model_applies(location, machine):
+    if eligible and normal_model_applies(location, machine, day):
         # 幸町のジャグラー・ハナハナは、14か月分から作った予想の式の点の高い順（2026-10-17、
         # normal_next_day_model.py）。候補に入りうる台と台数は同じで、並べる順だけが違う。
         import normal_next_day_model as model
@@ -2127,9 +2128,11 @@ def provisional_next_day_candidates(store, day, machine, location='nagamachimina
                 candidates=eligible[:count])
 
 
-def normal_model_applies(location, machine):
-    """幸町のジャグラー・ハナハナ（翌日候補を予想の式で並べる対象）。Android `normalModelApplies` と同じ。"""
-    return location == 'saiwaichou' and any(word in str(machine or '') for word in ('ジャグラー', 'ハナハナ'))
+def normal_model_applies(location, machine, day=None):
+    """幸町のジャグラー・ハナハナで、選ぶ日が式の使用開始日以降（翌日候補を予想の式で並べる対象）。
+    day を省くと日付は見ない（説明文を出すかの判定など）。Android `normalModelApplies` と同じ。"""
+    import normal_next_day_model
+    return normal_next_day_model.applies(location, machine, day)
 
 
 def variety_next_day_candidates(store, day, location='nagamachiminami'):
@@ -2823,7 +2826,7 @@ def report(store, day, machine, folder, location='nagamachiminami'):
                           f'まとめて選びます。{html.escape(SHORT_STORE_NAMES.get(location, location))}の狙い方：'
                           f'{html.escape(variety_rule_text(location))}。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
-    elif normal_model_applies(location, machine):
+    elif normal_model_applies(location, machine, day):
         import normal_next_day_model
         candidate_lead = ('<p class="candidate-lead">この機種で、翌日の当たりの軽さを予想の式で見積もった上位の台です。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>'

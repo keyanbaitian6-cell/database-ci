@@ -937,7 +937,11 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             if (dayContext != null)
               NormalDayContextNote(contextInfo: dayContext),
             if (regular.any(
-              (c) => normalModelApplies(c.record.store, c.record.machine),
+              (c) => normalModelApplies(
+                c.record.store,
+                c.record.machine,
+                c.record.day,
+              ),
             ))
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),

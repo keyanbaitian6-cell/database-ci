@@ -10,33 +10,42 @@ import 'setting_estimate.dart'
 /// 当たりの軽さ（同じ機種で回転数が近い台の中の順位）を予想し、その点の高い順に並べる。
 /// 候補に入りうる台と台数は今の選び方と同じで、変えるのは並べる順だけ。
 /// PC版 `database/normal_next_day_model.py` と同じ材料・同じ重み。
-const normalModelMethodVersion = '2026-10-17-saiwaichou-normal-model-1';
+const normalModelMethodVersion = '2026-10-18-saiwaichou-normal-model-2';
 const _shrinkGames = 2000;
 
-/// 生の重み（標準化を戻した値）。2026-10-16 までの全データ 41,690 件で作った。
+/// 式を使うのは、選ぶ日がこの日以降の候補だけ（PC `AVAILABLE_FROM` と同じ）。
+const normalModelAvailableFrom = '2026-10-17';
+
+/// 台の長期の癖は直近60日（PC `LONG_DAYS` と同じ）。
+const _longDays = 60;
+
+/// 生の重み（標準化を戻した値）。翌日が 2026-10-16 までのデータ 53,454 件で作った。
 const normalModelWeights = <String, double>{
-  'v0': 0.027311058,
-  's': 0.040769933,
-  'r': -0.061517979,
-  's_last3': 0.011048230,
-  's_28': -0.006871832,
-  's_long': 0.553817886,
-  'r_28': 0.019004669,
-  'high_d': -0.440139493,
-  'high_12': -0.224611027,
-  'since_4_9': -0.256742786,
-  'since_10_23': -0.377331771,
-  'log_games': -0.153899838,
-  'long_play': 0.832684670,
+  'v0': 0.023660703,
+  's': 0.041100879,
+  'r': -0.061499909,
+  's_last3': 0.011417444,
+  's_28': 0.024624829,
+  's_long': 0.331663748,
+  'r_28': 0.023369600,
+  'high_d': -0.431953077,
+  'high_12': -0.238242452,
+  'since_4_9': -0.252953453,
+  'since_10_23': -0.370217296,
+  'log_games': -0.164622000,
+  'long_play': 0.801754507,
 };
 
 /// 候補のカードに出す説明（PC `NOTE` と同じ文）。
 const normalModelNote =
-    '幸町のジャグラー・ハナハナは、14か月分（2025年9月〜2026年10月）から作った予想の式（台の長い期間の当たりの軽さ、当日の当たりとREG、回転数、直近に明らかに高かったかなど）の点の高い順に選んでいます。表示の数字は過去の当たりの軽さで、並び順とは違うことがあります。過去に当てはめた確認では、選んだ台の翌日の当たりの軽さ（同じ機種の中の順位）は、今までの選び方より平均で約1高い程度でした。翌日の設定や勝ち負けを示すものではありません。';
+    '幸町のジャグラー・ハナハナは、2026年10月17日以降、過去の記録から作った予想の式（台の直近60日の当たりの軽さ、当日の当たりとREG、回転数、直近に明らかに高かったかなど）の点の高い順に選んでいます。表示の数字は過去の当たりの軽さで、並び順とは違うことがあります。過去に当てはめた確認では、選んだ台の翌日の当たりの軽さ（同じ機種の中の順位）は、今までの選び方より平均で約0.7高い程度でした（2026年9〜10月だけでは差が見えていません）。翌日の設定や勝ち負けを示すものではありません。';
 
-bool normalModelApplies(String store, String machine) =>
+/// 幸町のジャグラー・ハナハナで、選ぶ日が [normalModelAvailableFrom] 以降
+/// （[day] を省くと日付は見ない）。PC `applies` と同じ。
+bool normalModelApplies(String store, String machine, [String? day]) =>
     store == 'saiwaichou' &&
-    (machine.contains('ジャグラー') || machine.contains('ハナハナ'));
+    (machine.contains('ジャグラー') || machine.contains('ハナハナ')) &&
+    (day == null || day.compareTo(normalModelAvailableFrom) >= 0);
 
 String? _spec(String machine) {
   final key = settingModelForMachine(machine);
@@ -190,7 +199,7 @@ Map<String, double> normalModelFeatures(
       todayR = v.r;
     }
     if (v.s != null) {
-      sAll.add(v.s!);
+      if (ago < _longDays) sAll.add(v.s!);
       if (ago < 7 && recent3.length < 3) recent3.add(v.s!);
       if (ago < 28) s28.add(v.s!);
     }
