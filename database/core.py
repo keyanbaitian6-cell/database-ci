@@ -14,6 +14,7 @@ from pathlib import Path
 from file_io import atomic_copy, atomic_writer
 
 from setting_estimate import candidate_label, estimate_setting
+from normal_day_context import normal_day_context_html
 
 VERSION = '2026-09-29-v12'
 MIN_REFERENCE_ROWS = 20  # Initial operational default, not statistical confidence.
@@ -2807,6 +2808,7 @@ def report(store, day, machine, folder, location='nagamachiminami'):
     else:
         candidate_lead = ('<p class="candidate-lead">この機種で、過去に当たりが周りの台より軽かった台です。'
                           '明日どの台から見るかの参考用で、今日の合計点には影響しません。</p>')
+    candidate_lead += normal_day_context_html(location, day, [machine])
     if candidate_info['count']:
         # 素の「63/100」では50が中立であることも上下どちらが良いのかも読めないので、
         # 差分（平均より+13。バラエティは普段より+13）で出す。
@@ -3196,6 +3198,7 @@ def summary_report(store, folder, day, top=5):
                 forecast_html += (f'<div class="dsub"><b>{mark}</b><br>{html.escape(next_day_reason(item))}<br>'
                                   f'安定性 z={evidence["stability_z"]:.2f}（基準1.96。高設定の確率や検定の有意性ではありません）。'
                                   '当日88点以上は★注目から除外し、☆長期傾向には残します。</div>')
+            forecast_html += normal_day_context_html(location, day, [r['machine']])
             strip_html = slump_strip_html(store, r)
             if len(trend) > 1:
                 totals = [t['total'] for t in trend if t['total'] is not None]

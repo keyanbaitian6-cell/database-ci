@@ -8,6 +8,8 @@ import 'graph_preview.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
+import 'normal_day_context.dart';
+import 'normal_day_context_note.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
 import 'setting_estimate_presentation.dart';
@@ -494,6 +496,9 @@ class RackTrend extends StatelessWidget {
     // 1〜3台の機種（バラエティ）は、回転数と終わり方で見る（過去傾向の指数は無い）。
     final variety = isVarietyRecord(record, all);
     final forecast = nextDayIndex(record, all);
+    final dayContext = normalDayContext(record.store, record.day, [
+      record.machine,
+    ]);
     final evidence = nextDayEvidence(record, all);
     final totals = trend.map((e) => e.$2.total).whereType<double>().toList();
     final average = totals.isEmpty
@@ -625,6 +630,8 @@ class RackTrend extends StatelessWidget {
                   height: 1.45,
                 ),
               ),
+              if (dayContext != null)
+                NormalDayContextNote(contextInfo: dayContext),
               if (!variety)
                 ExpansionTile(
                   tilePadding: EdgeInsets.zero,

@@ -7,6 +7,8 @@ import 'data_checks.dart';
 import 'list_views.dart';
 import 'graph_preview.dart';
 import 'models.dart';
+import 'normal_day_context.dart';
+import 'normal_day_context_note.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
 import 'setting_estimate_presentation.dart';
@@ -833,6 +835,7 @@ class NextDayCandidatesCard extends StatefulWidget {
   const NextDayCandidatesCard({
     super.key,
     required this.day,
+    this.store = '',
     required this.candidates,
     required this.machines,
     required this.judged,
@@ -840,6 +843,9 @@ class NextDayCandidatesCard extends StatefulWidget {
     this.allRecords = const [],
   });
   final String day;
+
+  /// 曜日傾向の補足（[normalDayContext]）を出す店。空なら出さない。
+  final String store;
   final List<ProvisionalCandidate> candidates;
   final List<SlotRecord> allRecords;
 
@@ -874,6 +880,13 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
         if (!candidateIsFocus(c, widget.allRecords)) c,
     ];
     final next = nextDayLabel(widget.day);
+    final dayContext = normalDayContext(
+      widget.store,
+      widget.day,
+      widget.allRecords
+          .where((r) => r.store == widget.store && r.day == widget.day)
+          .map((r) => r.machine),
+    );
     const note = TextStyle(color: AppColors.ash, fontSize: 12, height: 1.45);
     return Card(
       child: Padding(
@@ -920,6 +933,8 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               ),
             ),
             const SizedBox(height: 10),
+            if (dayContext != null)
+              NormalDayContextNote(contextInfo: dayContext),
             if (regular.isEmpty)
               const Text(
                 'まだ判定できる機種（4台以上）がありません。同じ台・同じ機種のデータが'

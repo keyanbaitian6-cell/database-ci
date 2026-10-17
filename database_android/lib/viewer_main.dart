@@ -1072,6 +1072,7 @@ class _ViewerHomeState extends State<ViewerHome> {
           )
         else ...[
           NextDayCandidatesCard(
+            store: store,
             allRecords: all,
             day: day,
             candidates: _candidates!.candidates,

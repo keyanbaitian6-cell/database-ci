@@ -1369,6 +1369,7 @@ class _ResultsPageState extends State<ResultsPage> {
                       )
                     else ...[
                       NextDayCandidatesCard(
+                        store: store!,
                         allRecords: widget.controller.records,
                         day: day!,
                         candidates: candidates.candidates,

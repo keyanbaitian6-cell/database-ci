@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 【翌日候補に曜日傾向の補足（幸町ノーマル）を仕上げ・追加2か月での確認】2026-10-17 Claude
+
+- 利用者「作業途中でastraだから使用上限すぐきちゃった」「仕上げた後にこれでよかったかどうかを確認してもらうためのプロンプトを作成しておけば問題ないかと」「数か月分はさらにたしてあるから同じように分析しておいて」。Codex（6 Astra）が分析のあと、利用者の了承で始めた実装が、コミット前に止まっていた。Codexの方針（止まる前の発言、利用者が貼った）：幸町のジャグラー・ハナハナについて、翌日が土日なら「過去傾向では平日より低め」を候補画面に表示する。点数には換算しない。PC・Android・閲覧ページの候補一覧と台詳細。過去の予測画面に後から得た知識を混ぜないため、表示開始日を設ける。
+- Codexの途中の変更（そのまま採用）：`database/normal_day_context.py`（`normal_day_context`・`normal_day_context_html`、`AVAILABLE_FROM = 2026-10-17`）、`core.report`・`core.summary_report` に表示、`database_android/lib/normal_day_context.dart`・`normal_day_context_note.dart`、`NextDayCandidatesCard`（Android・閲覧ページ）と `RackTrend`（台の詳細）に表示。
+- Claudeの手直し：`NextDayCandidatesCard.store` を省略可（既存の試験5か所が渡しておらず動かなかった）。根拠の文（PC・Dartで同じ）に追加2か月の結果と「土日に設定が低いのか、混雑で長く打たれる台が増えるためかはわからない」を足した。`dart format` で `main.dart` の関係ない3か所が変わったので戻した。試験 `database/tests/test_normal_day_context.py`（4件。PCとDartの文・表示開始日の一致も見る）、`database_android/test/normal_day_context_test.dart`（2件）。全体ゲート `check_before_build.sh`：**ALL PASSED**（62項目。PC 329件・P’s CUBE 203件・時差27件・Flutter 607件・analyze）。
+- 追加2か月の確認（`outputs/normal-trends-20261017/claude-v2/`。結果を見る前に `計画.md` で4仮説を決め、Codex v1 の関数をそのまま使った）：2025-12-29〜2026-02-28の62日（抜けなし、2,000G以上6,354台×日）。**土日は低い：勝率 平日−土日 +6.43ポイント［+3.81, +8.70］、Holm補正 p=0.00045。合算位置 +0.112、p=0.0002。** 「過去28日上位25%」の台は翌日 −1.14ポイントで確認できず（v1の確認側の+6.0は再現しなかった）。年末年始・祝日は低めに見えるが各1回で、記述だけ。
+- Codexに確認してもらう依頼文：`outputs/normal-trends-20261017/確認依頼文.md`。iPhone版（閲覧ページ）の公開は、確認が済むまでしていない（表示が変わるので、確認後に公開が必要）。APKも作っていない。
+
 ## 【アナスロ取得：読み終えてから5〜8秒あける・ブラウザ方式は画像と広告を読み込まない】2026-10-17 Claude
 
 - 利用者「取り込むペース早すぎるのかな？今のペースだとすぐ切られちゃうので5秒くらいあけてくようにしてみようか」「画像、広告を読み込まない設定にしてみようか」。
