@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:database_android/data_checks.dart';
+import 'package:database_android/list_views.dart';
 import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/normal_next_day_model.dart';
@@ -126,5 +127,99 @@ void main() {
     expect(find.text(normalModelNote), findsOneWidget);
     await tester.pumpWidget(card('nagamachiminami'));
     expect(find.text(normalModelNote), findsNothing);
+  });
+
+  group('ジャグラー・ハナハナのおすすめを別ページに分ける（2026-10-18 利用者指定）', () {
+    // 同じ日に、ジャグラー（試験用の記録）と、ほかの機種4台をそろえる。
+    List<SlotRecord> withOther(String store) => [
+      for (final r in rows)
+        SlotRecord.fromJson({...r.toJson(), 'store': store}),
+      for (final r in rows)
+        if (r.rack < 704)
+          SlotRecord.fromJson({
+            ...r.toJson(),
+            'store': store,
+            'machine': 'L ゴッドイーター',
+            'rack': r.rack + 100,
+          }),
+    ];
+    const day = '2026-10-20';
+
+    test('今までの候補から外し、おすすめにはそれだけを出す（幸町だけ）', () {
+      final all = withOther('saiwaichou');
+      final dayRows = [
+        for (final r in all)
+          if (r.day == day) r,
+      ];
+      final mixed = dayCandidates(dayRows, all).candidates;
+      final regular = dayCandidates(dayRows, all, excludeNormal: true);
+      final normal = normalDayCandidates(dayRows, all);
+      expect(mixed.any((c) => c.record.machine == 'SマイジャグラーVKD'), isTrue);
+      expect(
+        regular.candidates.any((c) => c.record.machine.contains('ジャグラー')),
+        isFalse,
+      );
+      expect(regular.candidates, isNotEmpty);
+      expect(normal.candidates, isNotEmpty);
+      expect(
+        normal.candidates.every((c) => c.record.machine == 'SマイジャグラーVKD'),
+        isTrue,
+      );
+      // おすすめの並びは、その機種の候補の順（式の点の高い順）のまま。
+      final machineRows = [
+        for (final r in dayRows)
+          if (r.machine == 'SマイジャグラーVKD') r,
+      ];
+      expect(
+        [for (final c in normal.candidates) c.record.rack],
+        [
+          for (final c in provisionalNextDayCandidates(machineRows, [
+            for (final r in all)
+              if (r.machine == 'SマイジャグラーVKD') r,
+          ]).candidates)
+            c.record.rack,
+        ],
+      );
+      // 長町南は分けない。
+      final other = withOther('nagamachiminami');
+      final otherDay = [
+        for (final r in other)
+          if (r.day == day) r,
+      ];
+      expect(
+        dayCandidates(
+          otherDay,
+          other,
+          excludeNormal: true,
+        ).candidates.any((c) => c.record.machine.contains('ジャグラー')),
+        isTrue,
+      );
+      expect(normalDayCandidates(otherDay, other).candidates, isEmpty);
+      expect(hasNormalRecommendations('saiwaichou'), isTrue);
+      expect(hasNormalRecommendations('nagamachiminami'), isFalse);
+    });
+
+    testWidgets('おすすめのページ：見出し・説明・一覧', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(393, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final all = withOther('saiwaichou');
+      final picked = <int>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: NormalRecommendationsPage(
+            store: 'saiwaichou',
+            day: day,
+            records: all,
+            onPick: (r) => picked.add(r.rack),
+          ),
+        ),
+      );
+      expect(find.textContaining('ジャグラー・ハナハナのおすすめ'), findsWidgets);
+      expect(find.text(normalModelNote), findsOneWidget);
+      expect(find.textContaining('おすすめ（'), findsOneWidget);
+      expect(find.textContaining('★ 翌日向けに注目'), findsNothing);
+      expect(find.text(nextDayValidationNote), findsNothing);
+    });
   });
 }

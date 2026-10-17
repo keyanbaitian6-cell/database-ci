@@ -1368,7 +1368,29 @@ class _ResultsPageState extends State<ResultsPage> {
                         body: '「取り込み」から一覧スクリーンショットを追加します。',
                       )
                     else ...[
+                      if (hasNormalRecommendations(store!)) ...[
+                        FilledButton.tonalIcon(
+                          key: const ValueKey('open-normal-recommendations'),
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => NormalRecommendationsPage(
+                                store: store!,
+                                day: day!,
+                                records: widget.controller.records,
+                                onPick: (record) => _openRecord(
+                                  record,
+                                  _scoredByKey[record.key]?.$2,
+                                ),
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.recommend_outlined),
+                          label: const Text('ジャグラー・ハナハナのおすすめ'),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                       NextDayCandidatesCard(
+                        normalSeparated: true,
                         store: store!,
                         allRecords: widget.controller.records,
                         day: day!,

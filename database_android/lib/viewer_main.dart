@@ -862,7 +862,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     final key = (_dataVersion, store, day);
     if (_scoredFor != key) {
       _digest = [for (final r in dayRows) (r, scoreRecord(r, all))];
-      _candidates = dayCandidates(dayRows, all);
+      _candidates = dayCandidates(dayRows, all, excludeNormal: true);
       _scoredFor = key;
     }
     // 1〜3台の機種は「バラエティ」1つにまとめる。
@@ -1071,7 +1071,26 @@ class _ViewerHomeState extends State<ViewerHome> {
             body: '別の店舗を選ぶか、新しいバックアップを読み込んでください。',
           )
         else ...[
+          if (hasNormalRecommendations(store)) ...[
+            FilledButton.tonalIcon(
+              key: const ValueKey('open-normal-recommendations'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => NormalRecommendationsPage(
+                    store: store,
+                    day: day,
+                    records: all,
+                    onPick: (record) => _openRecord(record, null),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.recommend_outlined),
+              label: const Text('ジャグラー・ハナハナのおすすめ'),
+            ),
+            const SizedBox(height: 10),
+          ],
           NextDayCandidatesCard(
+            normalSeparated: true,
             store: store,
             allRecords: all,
             day: day,

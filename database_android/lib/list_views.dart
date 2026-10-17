@@ -1,5 +1,7 @@
 import 'data_checks.dart';
 import 'models.dart';
+import 'scoring.dart';
+import 'normal_next_day_model.dart';
 import 'setting_estimate.dart' show foldHalfWidthKana;
 
 /// 一覧で使う短い店舗名。正式名は長く、スマホの幅では「…」で切れるため。
@@ -363,15 +365,23 @@ RackAverages rackAverages(List<(SlotRecord, ScoreResult)> all) {
 /// 比べる相手は同じ機種の台なので、機種をまたいだ順位は目安にとどまる。
 /// [machines] は判定の単位の数（4台以上の機種の数＋バラエティがあれば1）、
 /// [judged] はそのうち候補を出せた数。
+///
+/// [excludeNormal] のときは、別ページ「ジャグラー・ハナハナのおすすめ」
+/// （[normalDayCandidates]）に出す機種（幸町のジャグラー・ハナハナ、4台以上）を
+/// 入れない（2026-10-18 利用者「従来の翌日候補にノーマルタイプは表示しないでほしい。別ページ希望」）。
 ({List<ProvisionalCandidate> candidates, int machines, int judged})
-dayCandidates(List<SlotRecord> dayRows, List<SlotRecord> all) {
+dayCandidates(
+  List<SlotRecord> dayRows,
+  List<SlotRecord> all, {
+  bool excludeNormal = false,
+}) {
   final variety = varietyMachines(dayRows);
   final byMachine = <String, List<SlotRecord>>{};
   final varietyRows = <SlotRecord>[];
   for (final r in dayRows) {
     if (variety.contains(r.machine)) {
       varietyRows.add(r);
-    } else {
+    } else if (!(excludeNormal && isNormalPageMachine(r.store, r.machine))) {
       byMachine.putIfAbsent(r.machine, () => []).add(r);
     }
   }
@@ -409,4 +419,36 @@ dayCandidates(List<SlotRecord> dayRows, List<SlotRecord> all) {
     machines: byMachine.length + (varietyRows.isEmpty ? 0 : 1),
     judged: judged,
   );
+}
+
+/// 別ページ「ジャグラー・ハナハナのおすすめ」に出す機種：幸町のジャグラー・ハナハナ。
+/// バラエティ（1〜2台の機種）はバラエティの候補のまま。
+bool isNormalPageMachine(String store, String machine) =>
+    normalModelApplies(store, machine);
+
+/// 「ジャグラー・ハナハナのおすすめ」：幸町のジャグラー・ハナハナ（4台以上の機種）を、機種ごとに
+/// [provisionalNextDayCandidates] で選んだ台（上位4分の1）。2026-10-17以降の日は予想の式の点の
+/// 高い順（normal_next_day_model.dart）、それより前の日は今までの選び方の順。機種は名前の順。
+({List<ProvisionalCandidate> candidates, int machines, int judged})
+normalDayCandidates(List<SlotRecord> dayRows, List<SlotRecord> all) {
+  final variety = varietyMachines(dayRows);
+  final byMachine = <String, List<SlotRecord>>{};
+  for (final r in dayRows) {
+    if (!variety.contains(r.machine) &&
+        isNormalPageMachine(r.store, r.machine)) {
+      byMachine.putIfAbsent(r.machine, () => []).add(r);
+    }
+  }
+  final candidates = <ProvisionalCandidate>[];
+  var judged = 0;
+  for (final machine in byMachine.keys.toList()..sort()) {
+    final rows = byMachine[machine]!;
+    final result = provisionalNextDayCandidates(
+      rows,
+      machineHistory(all, rows.first.store, machine),
+    );
+    if (result.candidates.isNotEmpty) judged++;
+    candidates.addAll(result.candidates);
+  }
+  return (candidates: candidates, machines: byMachine.length, judged: judged);
 }

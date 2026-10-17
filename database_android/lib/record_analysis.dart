@@ -26,7 +26,7 @@ DayView calculateDay((List<SlotRecord>, String, String) input) {
   ];
   return (
     scored: {for (final r in rows) r.key: (r, scoreRecord(r, all))},
-    candidates: dayCandidates(rows, all),
+    candidates: dayCandidates(rows, all, excludeNormal: true),
   );
 }
 

@@ -842,11 +842,19 @@ class NextDayCandidatesCard extends StatefulWidget {
     required this.judged,
     required this.onPick,
     this.allRecords = const [],
+    this.normalPage = false,
+    this.normalSeparated = false,
   });
   final String day;
 
   /// 曜日傾向の補足（[normalDayContext]）を出す店。空なら出さない。
   final String store;
+
+  /// 別ページ「ジャグラー・ハナハナのおすすめ」として表示する（[normalDayCandidates] の候補）。
+  final bool normalPage;
+
+  /// ジャグラー・ハナハナを別ページへ分けた、今までの翌日候補（曜日・式の説明は別ページ側に出す）。
+  final bool normalSeparated;
   final List<ProvisionalCandidate> candidates;
   final List<SlotRecord> allRecords;
 
@@ -881,13 +889,15 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
         if (!candidateIsFocus(c, widget.allRecords)) c,
     ];
     final next = nextDayLabel(widget.day);
-    final dayContext = normalDayContext(
-      widget.store,
-      widget.day,
-      widget.allRecords
-          .where((r) => r.store == widget.store && r.day == widget.day)
-          .map((r) => r.machine),
-    );
+    final dayContext = widget.normalSeparated
+        ? null
+        : normalDayContext(
+            widget.store,
+            widget.day,
+            widget.allRecords
+                .where((r) => r.store == widget.store && r.day == widget.day)
+                .map((r) => r.machine),
+          );
     const note = TextStyle(color: AppColors.ash, fontSize: 12, height: 1.45);
     return Card(
       child: Padding(
@@ -899,7 +909,13 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               children: [
                 Expanded(
                   child: Text(
-                    next.isEmpty ? '参考候補・長期傾向' : '$next の参考候補・長期傾向',
+                    widget.normalPage
+                        ? (next.isEmpty
+                              ? 'ジャグラー・ハナハナのおすすめ'
+                              : '$next のジャグラー・ハナハナのおすすめ')
+                        : next.isEmpty
+                        ? '参考候補・長期傾向'
+                        : '$next の参考候補・長期傾向',
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
@@ -924,9 +940,14 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             ),
             const SizedBox(height: 6),
             Text(
-              '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
-              '${next.isEmpty ? '翌日' : next}向けの★注目と、☆長期傾向を分けています。'
-              '印は下の表・グラフと共通です。この日の点数には影響しません。',
+              widget.normalPage
+                  ? '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
+                        '${next.isEmpty ? '翌日' : next}向けに、幸町のジャグラー・ハナハナを機種ごとに選んでいます'
+                        '（同じ機種の上位4分の1、機種の中はおすすめの順）。この日の点数には影響しません。'
+                  : '${next.isEmpty ? '選択日' : '${shortDayLabel(widget.day)}（選択日）'}までの記録から、'
+                        '${next.isEmpty ? '翌日' : next}向けの★注目と、☆長期傾向を分けています。'
+                        '印は下の表・グラフと共通です。この日の点数には影響しません。'
+                        '${widget.normalSeparated && widget.store == 'saiwaichou' ? 'ジャグラー・ハナハナは「ジャグラー・ハナハナのおすすめ」に分けています。' : ''}',
               style: const TextStyle(
                 color: AppColors.ash,
                 fontSize: 13,
@@ -936,23 +957,49 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             const SizedBox(height: 10),
             if (dayContext != null)
               NormalDayContextNote(contextInfo: dayContext),
-            if (regular.any(
-              (c) => normalModelApplies(
-                c.record.store,
-                c.record.machine,
-                c.record.day,
-              ),
-            ))
+            if (!widget.normalSeparated &&
+                regular.any(
+                  (c) => normalModelApplies(
+                    c.record.store,
+                    c.record.machine,
+                    c.record.day,
+                  ),
+                ))
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
                 child: Text(normalModelNote, style: note),
               ),
-            if (regular.isEmpty)
-              const Text(
-                'まだ判定できる機種（4台以上）がありません。同じ台・同じ機種のデータが'
-                '3日分たまり、1機種で4台以上判定できると表示します。'
-                '候補がないことは、不調を意味しません。',
-                style: TextStyle(
+            if (widget.normalPage &&
+                widget.day.compareTo(normalModelAvailableFrom) < 0)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  '2026年10月16日以前の日は、予想の式を使う前の選び方（過去の当たりの軽さの順）で選んでいます。',
+                  style: note,
+                ),
+              ),
+            if (widget.normalPage && regular.isNotEmpty) ...[
+              Text(
+                'おすすめ（${regular.length}台）',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              for (final (i, c) in regular.indexed) _row(i + 1, c),
+              const SizedBox(height: 6),
+              Text(
+                '判定できた機種：${widget.judged} / ${widget.machines}機種。'
+                '「平均より」は過去の当たりの軽さ（同じ日・同じ機種で回転数が近い台との当たり頻度の差の積み重ね）で、'
+                'おすすめの順とは違うことがあります。',
+                style: note,
+              ),
+            ] else if (regular.isEmpty)
+              Text(
+                widget.normalPage
+                    ? 'この日はジャグラー・ハナハナで判定できる機種（4台以上）がありません。'
+                          '候補がないことは、不調を意味しません。'
+                    : 'まだ判定できる機種（4台以上）がありません。同じ台・同じ機種のデータが'
+                          '3日分たまり、1機種で4台以上判定できると表示します。'
+                          '候補がないことは、不調を意味しません。',
+                style: const TextStyle(
                   color: AppColors.ash,
                   fontSize: 13,
                   height: 1.45,
@@ -1021,14 +1068,15 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               for (final (i, c) in variety.indexed) _varietyRow(i + 1, c),
             ],
             const SizedBox(height: 6),
-            const Text(
-              nextDayValidationNote,
-              style: TextStyle(
-                color: AppColors.ash,
-                fontSize: 12,
-                height: 1.45,
+            if (!widget.normalPage)
+              const Text(
+                nextDayValidationNote,
+                style: TextStyle(
+                  color: AppColors.ash,
+                  fontSize: 12,
+                  height: 1.45,
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -1458,3 +1506,52 @@ class ReconstructedGraphPainter extends CustomPainter {
       oldDelegate.sourceHeight != sourceHeight ||
       oldDelegate.background != background;
 }
+
+/// 別ページ「ジャグラー・ハナハナのおすすめ」（幸町。2026-10-18 利用者「わかりやすく候補をわけるために、
+/// ジャグラーハナハナシリーズのおすすめ。っていう候補でそれ以外の機種とわけてページをつくってほしい」
+/// 「従来の翌日候補にノーマルタイプは表示しないでほしい。別ページ希望」）。今までの翌日候補と同じカードを使う。
+class NormalRecommendationsPage extends StatelessWidget {
+  const NormalRecommendationsPage({
+    super.key,
+    required this.store,
+    required this.day,
+    required this.records,
+    required this.onPick,
+  });
+  final String store, day;
+  final List<SlotRecord> records;
+  final void Function(SlotRecord record) onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final dayRows = [
+      for (final r in records)
+        if (r.store == store && r.day == day) r,
+    ];
+    final result = normalDayCandidates(dayRows, records);
+    return Scaffold(
+      appBar: AppBar(title: const Text('ジャグラー・ハナハナのおすすめ')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: [
+            NextDayCandidatesCard(
+              key: const ValueKey('normal-recommendations'),
+              normalPage: true,
+              store: store,
+              day: day,
+              allRecords: records,
+              candidates: result.candidates,
+              machines: result.machines,
+              judged: result.judged,
+              onPick: onPick,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 「ジャグラー・ハナハナのおすすめ」へのボタンを出す店（予想の式がある幸町だけ）。
+bool hasNormalRecommendations(String store) => store == 'saiwaichou';
