@@ -1,4 +1,4 @@
-// Build viewer_main.dart and stage_viewer.py before this browser test.
+// 閲覧ページをビルドし、stage_viewer.pyを通してから実行する。
 // イベントカレンダー（EVENT_CALENDAR.md、2026-10-07）と、メルヘンの「日別の差枚（推定）」に
 // イベント名が出ること（86eb7f8 で一度消えた不具合の再発確認も兼ねる）。
 import assert from 'node:assert/strict';
@@ -6,6 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {enterEventName} from './browser_event_input.mjs';
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = process.env.VIEWER_WEB_ROOT || fileURLToPath(new URL('../build/web/', import.meta.url));
 const prefix = '/database-viewer/';
@@ -48,6 +49,9 @@ const meruhen={header:{format:'database-backup',version:1,source:'pc',exported_a
 const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || undefined,args:['--no-sandbox']});
 const context=await browser.newContext({viewport:{width:393,height:852},acceptDownloads:true});
 const page=await context.newPage();
+// 未来の日の保存やカレンダーの初期月を、実行日・端末の時差に依存させない。
+const testNow=new Date('2026-10-17T03:00:00Z');
+await page.clock.setFixedTime(testNow);
 const errors=[];
 page.on('pageerror',e=>{errors.push(e.message);console.error('pageerror',e.message);});
 
@@ -68,23 +72,9 @@ async function waitSeen(pattern){
   for(let i=0;i<60;i++){if(await seen(pattern))return;await page.waitForTimeout(250);}
   assert.fail(`not shown: ${pattern}`);
 }
-// 名前を入れて保存する。Flutterの入力欄は、まとめて流し込むより実際のキー入力の方が確実。
+// 文字列の一致と保存の有効化を確認してから保存する。
 async function enterName(name){
-  const box=page.getByRole('textbox',{name:/イベント名（自由記入）/});
-  await box.waitFor();await box.click();
-  // 入力欄に入力の焦点が移ってから打つ（早すぎると最初の文字が落ちる。例：「末尾イベ」→「尾イベ」）。
-  for(let i=0;i<40&&!(await page.evaluate(()=>['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)));i++)await page.waitForTimeout(50);
-  // それでも最初の文字が落ちることがある（2026-10-11、「半列」→「列」）。入力欄の中身が違えば消して打ち直す（3回まで）。
-  for(let attempt=0;attempt<3;attempt++){
-    await page.keyboard.type(name);
-    for(let i=0;i<40&&(await box.inputValue().catch(()=>name))!==name;i++)await page.waitForTimeout(50);
-    if((await box.inputValue().catch(()=>name))===name)break;
-    await box.click();await page.keyboard.press('Control+A');await page.keyboard.press('Backspace');
-    await page.waitForTimeout(200);
-  }
-  const save=page.getByRole('button',{name:'保存',exact:true});
-  for(let i=0;i<20&&await save.isDisabled();i++)await page.waitForTimeout(100);
-  await save.click();
+  await enterEventName(page,name);
 }
 async function waitFor(check,what){
   for(let i=0;i<80;i++){if(await check())return;await page.waitForTimeout(250);}
@@ -99,7 +89,7 @@ async function dailyNet(){
 }
 async function calendarOctober(){
   await page.getByRole('button',{name:'イベントカレンダー',exact:true}).click();
-  const now=new Date();
+  const now=testNow;
   for(let i=(now.getFullYear()*12+now.getMonth())-(2026*12+9);i>0;i--)
     await page.getByRole('button',{name:'前の月',exact:true}).click();
   for(let i=(now.getFullYear()*12+now.getMonth())-(2026*12+9);i<0;i++)
@@ -192,7 +182,7 @@ try {
     assert.ok(await seen(new RegExp(`^${day}\\s*${name}$`)),`after reload daily net shows ${name}`);
   assert.ok(await seen(/^10\/3（土）$/),'removed event is gone');
   assert.deepEqual(errors,[]);
-  console.log('PASS: meruhen daily net events, event calendar (marks, future day, range, remove, export), 320/393/768px');
+  console.log('成功: 日別差枚のイベント名、カレンダーの印・未来日・期間入力・削除・書き出し、320/393/768px');
 } finally {
   await browser.close();
   await new Promise(resolve=>server.close(resolve));
