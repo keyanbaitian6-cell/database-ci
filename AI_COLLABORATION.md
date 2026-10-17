@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【変換画面に「ノーマルタイプの分析用に保存」（幸町、databaseに読み込まない）】2026-10-17 Claude
+
+- 利用者「帰ったらHTMLダウンロードしてまとめます。古い記録は今からやってもらうデータ処理用で、jsonファイルを作る際にノーマルタイプのジャグラーシリーズハナハナシリーズしか作成せず、共有に載せない処理をしてほしい」「HTMLダウンロードはするけどその後の処理をノーマルタイプ専用で処理するみたいなボタンを作ればいいのかな」。利用者の選択：置き場所は分析用のファイルだけ（databaseに読み込まない）、店は幸町だけ。
+- `anaslo_converter.make_normal_analysis`・`save_normal_analysis`・`is_normal_type`：機種名（NFKC）に「ジャグラー」「ハナハナ」を含む台だけ。保存済み・記録のない台番号も除かない。対応表で決まっていればdatabaseの機種名を `machine` に入れ、元の名前は `source_machine`。グラフは `graph_measurement`（anaslo-source-graph）。形式 `database-normal-analysis`、保存先 `html_converter/data/normal_analysis/saiwaichou/normal-analysis-saiwaichou-期間.json`（Git対象外、同じ期間は上書き）。
+- 変換画面（`html_converter/app.py`）：**ノーマルタイプの分析用に保存** ボタン。幸町のHTMLを読んだときだけ押せる。機種名の対応が残っていても押せ、対応表は書き換えない。
+- databaseに入らないこと：`import_backup` は形式違いで断る、`latest_backup_file` は対象にしない、`is_pscube_backup` も偽（試験あり）。
+- 試験：`test_anaslo_saiwaichou.py` に4件（全21件OK）。PC全試験 tests 325件・test_*.py 199件OK、変換画面 `--smoke` GUI_OK。ビルド・公開は無し（全体ゲートは流していない）。コミット `c81aa1b`。
+- 今後：利用者が1年分のHTMLを取得して分析用に保存 → AIが `normal_analysis` のファイルと、databaseの幸町8/1以降の記録を合わせて、曜日などの傾向を確かめる（下の検討の続き）。
+
 ## 【イベントカレンダーの自動入力試験を安定化】Codex
 
 - 利用者から `5749ba4` のCI失敗ログを受領し、「修正して良さそうなら修正push」で実装。期間入力の「半列」の後に保存ボタンが無効のまま30秒待っていた。勝率表示の検査は通過しており、今回の変更は試験用の入力処理に限定する。
