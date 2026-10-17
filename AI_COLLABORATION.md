@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【メルヘン同期GS：PC入力に記録0件の日があると、その日のPCの記録が消える不具合を修正】2026-10-17 Claude
+
+- 利用者「このタスクをここで実行してください：メルヘン同期GS：記録0件の日にPCの記録が消える不具合」。同日、8/1〜8/17を足すときに30日分が消えた件（下の項目）の原因を直した。
+- 原因：履歴モードの `vhGroup` は、削除印（`record_deletions`）やイベントのある日も「記録0件の日」として作る。`vhMergeMeruhen` は、種類 `pc` の入力ならその日の `pc` を `fresh.records` で置き換えていた。PCの `export_viewer` は60日より前の日の削除印も出すので、普段の運用でも、削除印のある日が60日の期間から外れると、Google側の履歴からPCの記録が消える（9/1〜9/20の名前修正の削除印は11月中ごろに期間外になる）。
+- 修正（`database_android/tool/viewer_history_adapters.js` → `node build_viewer_parts.mjs` で `meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs` を作り直し）：PC入力のその日の記録が0件なら `old.pc` を残し、削除印（`vhNotDeleted`）だけを当てる。PCが本当に消した台は、削除印で今までどおり消える。P’s CUBEは `pscubeCloudMerge`（`mergeData` で足し合わせる）なので、同じ不具合は無い。`pscube_cloud_sync.gs` は共通部品として同じ関数を含むだけで、P’s CUBEの動きは変わらない。読み取り用GS2本と、共有ページ・iPhone版の `viewer_parts.mjs` は変わらない（改行コードの差だけだったので戻した）。
+- 試験：`test_meruhen_cloud_sync.mjs` に、今日の再現（9/14の削除印・10/3のイベントだけ入った8/1のPC入力で、9/14・10/2・10/3の記録が残る。新しい削除印は当たる）を追加した。修正前の処理では失敗し（pass 27・fail 1）、修正後は28件すべて通った。全体ゲート `check_before_build.sh`：**ALL PASSED**（62項目。PC 325件・P’s CUBE 199件・時差27件・Flutter 605件・analyze・JS試験）。
+- Google側への反映は利用者の作業：`outputs/meruhen-sync-fix-20261017/`（`meruhen_cloud_sync.gs`＝配布元の `MERUHEN_HISTORY_VIEWER` だけ `true`、SHA-256 `df0b570d…`、`スクリプトをコピー.html`、`手順.md`）。メルヘンの同期プロジェクトに1本だけ貼る。デプロイ不要、トリガー・プロパティはそのまま。10/14の導入用コピーとの差は、削除印の同期（`588d573`）・`record_updated_at`・今回の修正。今日の消え方から、Google側にはすでに `588d573` 以降が入っていると見られる（未確認）。
+- 未確認：Googleでの保存・実行（利用者の貼り替え待ち）。
+
 ## 【変換画面に「ノーマルタイプの分析用に保存」（幸町、databaseに読み込まない）】2026-10-17 Claude
 
 - 利用者「帰ったらHTMLダウンロードしてまとめます。古い記録は今からやってもらうデータ処理用で、jsonファイルを作る際にノーマルタイプのジャグラーシリーズハナハナシリーズしか作成せず、共有に載せない処理をしてほしい」「HTMLダウンロードはするけどその後の処理をノーマルタイプ専用で処理するみたいなボタンを作ればいいのかな」。利用者の選択：置き場所は分析用のファイルだけ（databaseに読み込まない）、店は幸町だけ。

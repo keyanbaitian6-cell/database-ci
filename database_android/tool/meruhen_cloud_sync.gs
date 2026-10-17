@@ -925,8 +925,12 @@ function vhMergeMeruhen(old, fresh, kind) {
     const key = meruhenKey(r), prior = android.get(key);
     android.set(key, prior ? meruhenPick(prior, r) : r);
   }
+  // PCの閲覧用入力に記録が1件も無い日（削除印・イベントだけの日。60日より前の削除印の日など）は、
+  // その日の記録を出していないだけ。置き換えると、残っているPCの記録が消える（2026-10-17、8/1〜8/17だけの
+  // 入力で9/14〜9/20などの30日が消えた）。残した記録にも削除印を当てるので、本当に消した台は消える。
+  const pc = kind === 'pc' && fresh.records.length ? fresh.records : old.pc;
   return {...old, record_deletions: [...marks.values()],
-    pc: (kind === 'pc' ? fresh.records : old.pc).filter(r => vhNotDeleted(r, marks)),
+    pc: pc.filter(r => vhNotDeleted(r, marks)),
     android: [...android.values()].filter(r => vhNotDeleted(r, marks))};
 }
 function vhGroup(doc, site) {

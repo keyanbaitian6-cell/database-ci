@@ -34,6 +34,35 @@ test('明示削除は最後の1台にも反映し、古いAndroid入力では復
   d.sync(); assert.equal(get().records.filter(r => r.rack === 537).length, 1);
 });
 
+test('PC入力に記録の無い日（削除印・イベントだけ・60日より前）は、残っているPCの記録を消さない', () => {
+  // 2026-10-17：8/1〜8/17だけのPC入力に、全期間の削除印と期間内のイベントが入っていたため、
+  // その日のPCの記録が丸ごと置き換えられて消えた（9/14が0台など）。普段の60日分でも、
+  // 削除印のある日が60日から外れると同じことが起きる。
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0], get = () => plain(d.context.vpGet(base, 'meruhen', {}));
+  const racks = day => get().records.filter(r => r.day === day).map(r => r.rack).sort();
+  const mark = (rack, day, at) => ({store: 'saiwaichou', machine: '試験 機種', rack, day, deleted_at: at});
+  const event = {store: 'saiwaichou', day: '2026-10-03', name: '試験イベント', updated_at: '2026-10-03T09:00:00+09:00'};
+  const old = mark(601, '2026-09-14', '2026-10-01T12:00:00+09:00');
+  d.replace(base, {...viewer([record(600, '2026-09-14'), record(601, '2026-09-14'), record(537), record(538, '2026-10-03')]),
+    record_deletions: [old], date_events: [event]});
+  d.sync();
+  assert.deepEqual(racks('2026-09-14'), [600]);
+  // 8/1だけの入力。9/14の削除印と10/3のイベントは入っているが、その日の記録は入っていない。
+  d.replace(base, {...viewer([record(700, '2026-08-01')]), record_deletions: [old], date_events: [event]});
+  while (d.sync().pending) { /* 24日ずつ */ }
+  assert.deepEqual(racks('2026-08-01'), [700]);
+  assert.deepEqual(racks('2026-09-14'), [600]);
+  assert.deepEqual(racks('2026-10-02'), [537]);
+  assert.deepEqual(racks('2026-10-03'), [538]);
+  // 記録の無い日でも、新しい削除印は当てる（本当に消した台は消える）。
+  d.replace(base, {...viewer([record(700, '2026-08-01')]),
+    record_deletions: [old, mark(600, '2026-09-14', '2026-10-17T12:00:00+09:00')], date_events: [event]});
+  while (d.sync().pending) { /* 24日ずつ */ }
+  assert.deepEqual(racks('2026-09-14'), []);
+  assert.deepEqual(racks('2026-10-02'), [537]);
+});
+
 test('不正な削除情報は旧一覧を保持して拒否する', () => {
   const d = drive({history: true}); d.setup();
   const before = d.doc('database-viewer-parts-meruhen.json');
