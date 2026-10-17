@@ -1,12 +1,60 @@
 import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/normal_day_context.dart';
+import 'package:database_android/shared_widgets.dart';
 import 'package:database_android/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 翌日の曜日傾向の補足（幸町のジャグラー・ハナハナ、表示専用）。PC tests/test_normal_day_context.py と同じ例。
 void main() {
+  testWidgets('台詳細の曜日補足は履歴0・1・2日でも同じ対象に一度だけ出る', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(393, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SlotRecord record(String store, String day, String machine) => SlotRecord(
+      store: store,
+      day: day,
+      machine: machine,
+      rack: 700,
+      games: 4000,
+      bb: 15,
+      rb: 12,
+    );
+    Future<void> show(SlotRecord r, List<SlotRecord> all) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: RackTrend(record: r, all: all),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+
+    final r = record('saiwaichou', '2026-10-23', 'SマイジャグラーVKD');
+    for (final all in <List<SlotRecord>>[
+      [],
+      [r],
+      [record(r.store, '2026-10-22', r.machine), r],
+    ]) {
+      await show(r, all);
+      expect(find.text('10/24（土）の曜日傾向：土日'), findsOneWidget);
+      expect(find.text('曜日傾向の根拠と限界'), findsOneWidget);
+    }
+    for (final excluded in [
+      record('nagamachiminami', r.day, r.machine),
+      record('saiwaichou', r.day, 'L ゴッドイーター'),
+      record('saiwaichou', '2026-10-16', r.machine),
+    ]) {
+      await show(excluded, [excluded]);
+      expect(find.textContaining('曜日傾向'), findsNothing);
+    }
+  });
+
   test('翌日が土日か平日か。幸町のジャグラー・ハナハナだけ、確定日以降だけ', () {
     final friday = normalDayContext('saiwaichou', '2026-10-23', [
       'SマイジャグラーVKD',

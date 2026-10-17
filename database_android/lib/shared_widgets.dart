@@ -484,21 +484,29 @@ class RackTrend extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final trend = rackTrend(record, all);
+    final dayContext = normalDayContext(record.store, record.day, [
+      record.machine,
+    ]);
     if (trend.length < 2) {
-      return const Padding(
-        padding: EdgeInsets.only(top: 12),
-        child: Text(
-          'この台の過去データ（同じ機種）はまだありません。',
-          style: TextStyle(color: AppColors.ash, fontSize: 13),
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'この台の過去データ（同じ機種）はまだありません。',
+              style: TextStyle(color: AppColors.ash, fontSize: 13),
+            ),
+            // 曜日の補足は機種全体の傾向なので、この台の履歴日数を問わない。
+            if (dayContext != null)
+              NormalDayContextNote(contextInfo: dayContext),
+          ],
         ),
       );
     }
     // 1〜3台の機種（バラエティ）は、回転数と終わり方で見る（過去傾向の指数は無い）。
     final variety = isVarietyRecord(record, all);
     final forecast = nextDayIndex(record, all);
-    final dayContext = normalDayContext(record.store, record.day, [
-      record.machine,
-    ]);
     final evidence = nextDayEvidence(record, all);
     final totals = trend.map((e) => e.$2.total).whereType<double>().toList();
     final average = totals.isEmpty
