@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 【差枚の分からない日は勝率を表示・閲覧ページと共有カレンダーを公開】2026-10-17 Claude
+
+- 利用者「差枚を出せないところについては勝率を書いてほしい 何台中何台プラスってところから割り出して」「あと共有カレンダー、iPhoneブラウザ版への反映」「公開までお願いします」。
+- 台ごとの勝ち負け：差枚があればその符号、無ければグラフの終点がゼロ線より1pxを超えて上か（採点と同じ許容）。大当たり0回の台は負け。未稼働の台と、推定差枚を出さない日（長町南10/7）は数えない。
+- 勝ち負けの分かる台のうち差枚の分かる台が半分に満たない日（アナスロ補完の日など）は、カレンダーのマスに総差枚の代わりに「勝率NN%」（灰色）を出し、日の画面に「X台中Y台プラス（勝率NN%）」を添える。四捨五入は整数計算でPC・Flutter・共有ページをそろえた（PC `core.rack_won`・`event_calendar`、Flutter `SlotRecord.won`・`DayNet`、共有ページ `rackWon`・`dayNet`）。同じ例の試験を3つに置いた（`database/tests/test_win_rate.py`・`database_android/test/win_rate_test.dart`・`tool/test_share_viewer.mjs`）。コミット `9c8482d`。
+- 途中の失敗と対処：PCの `net_text` に captured の無い辞書が渡り KeyError → `.get` に。閲覧ページのカレンダー試験の期待値を「3 半列＊ 勝率100%」に更新。
+- 公開前ゲート `check_before_build.sh`：**ALL PASSED**（PC 325件・P’s CUBE 195件・時差27件・Flutter 605件・analyze・JS試験53本）。
+- 公開：閲覧ページ（iPhoneブラウザ版）`keyanbaitian6-cell/database-viewer` `4349487`、共有ページ `keyanbaitian6-cell/database-share` `7990ae9`（どちらも source 9c8482d、`stage_viewer.py`・`stage_share_viewer.py` 経由、ゲートで作った配置と差分なし）。Pagesの公開処理は2つとも成功。公開されたファイル（main.dart.js・app.mjs など8本）が手元と一致し、`database_seed.json` は404。前回の公開（閲覧06f6f67・共有2d4a1b4）以降の変更（幸町アナスロ補完のグラフなど）も一緒に公開された。
+- 未確認：利用者のiPhone・Androidでの実際の表示。APKは利用者指示により作っていない。
+
 ## 【検討のみ】ジャグラー・ハナハナは回転数・BIG・REGで縮尺を決めれば差枚が読める（2026-10-17 Claude）
 
 - 利用者「回転数と当たり回数からジャグラーやハナハナシリーズは採点できるのでは？」。コード・DBの変更なし（実DBは mode=ro、スクリプトはscratchpad `atype_check.py`）。
