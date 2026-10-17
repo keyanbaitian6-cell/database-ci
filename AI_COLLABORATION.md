@@ -7,6 +7,7 @@
 - **結果：式で選んだ台は今の選び方より翌日の順位 +0.96（p=0.0005、前半・後半とも上）、翌日に明らかに高い割合 4.6%（今 4.1%）→ 採用。** 詳細は計画の文書の「結果」と `outputs/normal-trends-20261017/claude-v10/`。
 - 実装：PC `database/normal_next_day_model.py`（`core.provisional_next_day_candidates` で、幸町のジャグラー・ハナハナだけ並べる順を式の点にする。台の集まり・台数は今と同じ。`candidate_method_version` は `2026-10-17-saiwaichou-normal-model-1`）、Android／閲覧ページ `database_android/lib/normal_next_day_model.dart`（`provisionalNextDayCandidates`・`candidateMethodVersion`）、`setting_estimate.dart` に `settingTable`。日ごとの順位は覚えて使い回す（PCで160機種×日：9.0秒、今までの選び方 7.7秒）。PCの機種ページの説明文と、Android／閲覧ページの候補カードに説明（`NOTE`／`normalModelNote`）。
 - 検証：PCの材料は検証スクリプトと6,861台×日で一致。共通の試験用の記録 `database/tests/fixtures/normal_next_day_rows.json` でPC・Android同じ候補・同じ点。試験 `database/tests/test_normal_next_day_model.py`（5件）・`database_android/test/normal_next_day_model_test.dart`（3件）。
+- 全体ゲート **ALL PASSED**（62項目。PC 335件・P’s CUBE 203件・Flutter 612件・analyze ほか）。公開：閲覧ページ（iPhoneブラウザ版）`database-viewer` `aa030d0`（source e40864e）。Pages成功、公開ファイルが手元と一致、`database_seed.json` は404。APKは作っていない。PC版は次に `start.cmd` から起動したとき反映。未確認：利用者の画面での表示。
 - これからの確認：翌日が2026-10-18以降のデータで、式と今までの選び方を比べる（2027-02-01以降に一度）。直近に高かった台を外す計画（`NEXT_DAY_RECENT_HIGH_PLAN_20261017.md`）は、今までの選び方どうしの比べ方として残す。
 
 ## 【翌日候補の見直し ステップ1：直近に明らかに高かった台の食い違い・前向きの確認計画を固定】2026-10-17 Claude
