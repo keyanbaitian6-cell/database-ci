@@ -7,6 +7,8 @@ class SettingEstimateTests(unittest.TestCase):
     def test_saved_machine_names_match_distinct_manufacturer_tables(self):
         names = {
             'SマイジャグラーVKD': 'my_juggler_v',
+            'SマイジャグラーⅥKK': 'my_juggler_vi',   # 幸町の保存名（2026-10-05から）
+            'SマイジャグラーVIKK': 'my_juggler_vi',
             'SネオアイムジャグラーEX−KK': 'neo_im_juggler',
             'Sハナハナホウオウ〜天翔〜EX−30': 'houou_tensho',
             'SキングハナハナSP−30': 'king_2023',
@@ -23,6 +25,16 @@ class SettingEstimateTests(unittest.TestCase):
         self.assertIsNone(model_for_machine('SBニューキングハナハナVIPA-30'))
         self.assertIsNone(model_for_machine('SマイジャグラーVXKD'))
         self.assertIsNone(model_for_machine('SネオアイムジャグラーEX2−KK'))
+
+    def test_my_juggler_vi_uses_its_own_official_table(self):
+        # 北電子の公式表はⅤと同じ数値なので、同じ数値なら同じ答え。機種はⅤと別に名乗る。
+        row = {'games': 10000, 'bb': 44, 'rb': 43}
+        five = estimate_setting({**row, 'machine': 'SマイジャグラーVKD'})
+        six = estimate_setting({**row, 'machine': 'SマイジャグラーⅥKK'})
+        self.assertEqual(six['model'], 'マイジャグラーⅥ')
+        self.assertEqual(six['source'], 'https://www.kitadenshi.co.jp/slot/myjuggler6/')
+        self.assertEqual((six['setting'], six['support'], six['range80']),
+                         (five['setting'], five['support'], five['range80']))
 
     def test_bb_rb_are_separate_and_low_games_show_uncertainty(self):
         row = {'machine': 'SマイジャグラーVKD', 'games': 10000, 'bb': 44, 'rb': 43}

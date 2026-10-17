@@ -22,6 +22,14 @@ const _specs = <String, _Spec>{
     [409.6, 385.5, 336.1, 290.0, 268.6, 229.1],
     _six,
   ),
+  // 北電子の公式表はⅤと同じ数値。機種の平均・台の履歴をⅤと混ぜないよう別に持つ（PCと同じ、2026-10-17）。
+  'my_juggler_vi': _Spec(
+    'マイジャグラーⅥ',
+    'https://www.kitadenshi.co.jp/slot/myjuggler6/',
+    [273.1, 270.8, 266.4, 254.0, 240.1, 229.1],
+    [409.6, 385.5, 336.1, 290.0, 268.6, 229.1],
+    _six,
+  ),
   'neo_im_juggler': _Spec(
     'ネオアイムジャグラーEX',
     'https://www.kitadenshi.co.jp/slot/neoimjugglerex/',
@@ -109,6 +117,9 @@ String? settingModelForMachine(String machine) {
   name = name.replaceAll('Ⅴ', 'V').replaceAll('Ⅵ', 'VI').replaceAll('ｖ', 'V');
   if (name == 'SマイジャグラーVKD') {
     return 'my_juggler_v';
+  }
+  if (name == 'SマイジャグラーVIKK') {
+    return 'my_juggler_vi';
   }
   if (name == 'SネオアイムジャグラーEXKK') {
     return 'neo_im_juggler';

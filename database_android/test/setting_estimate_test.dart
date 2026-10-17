@@ -16,6 +16,9 @@ SlotRecord record(String machine, int games, int bb, int rb) => SlotRecord(
 void main() {
   test('保存済みの型式名は正しい機種表に対応する', () {
     expect(settingModelForMachine('SマイジャグラーVKD'), 'my_juggler_v');
+    // 幸町の保存名（2026-10-05から）。PC tests/test_setting_estimate.py と同じ。
+    expect(settingModelForMachine('SマイジャグラーⅥKK'), 'my_juggler_vi');
+    expect(settingModelForMachine('SマイジャグラーVIKK'), 'my_juggler_vi');
     expect(settingModelForMachine('SネオアイムジャグラーEX−KK'), 'neo_im_juggler');
     expect(settingModelForMachine('Sハナハナホウオウ〜天翔〜EX−30'), 'houou_tensho');
     expect(settingModelForMachine('SｷﾝｸﾞﾊﾅﾊﾅSP-30'), 'king_2023');
@@ -26,6 +29,16 @@ void main() {
     expect(settingModelForMachine('SBニューキングハナハナVIPA-30'), isNull);
     expect(settingModelForMachine('SマイジャグラーVXKD'), isNull);
     expect(settingModelForMachine('SネオアイムジャグラーEX2−KK'), isNull);
+  });
+
+  test('マイジャグラーⅥは自分の公式表（数値はⅤと同じ）', () {
+    final five = estimateSetting(record('SマイジャグラーVKD', 10000, 44, 43))!;
+    final six = estimateSetting(record('SマイジャグラーⅥKK', 10000, 44, 43))!;
+    expect(six.model, 'マイジャグラーⅥ');
+    expect(six.source, 'https://www.kitadenshi.co.jp/slot/myjuggler6/');
+    expect(six.setting, five.setting);
+    expect(six.support, five.support);
+    expect(six.range80, five.range80);
   });
 
   test('BBとRBを別々に比較し、低Gでは範囲が広がる', () {
