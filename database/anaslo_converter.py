@@ -289,6 +289,77 @@ def make_meruhen_backup(staging, mapping, catalog):
             'conversion_summary': {'records': len(records), 'skipped': dict(skipped)}}
 
 
+# --- 幸町のノーマルタイプ分析用（2026-10-17）---------------------------------------
+# 利用者「古い記録は今からやってもらうデータ処理用で、jsonファイルを作る際にノーマルタイプの
+# ジャグラーシリーズハナハナシリーズしか作成せず、共有に載せない処理をしてほしい」。
+# databaseには読み込まない別の形式にする（バックアップの読み込み・同期フォルダの自動取り込みは
+# format が違うと拒否する）。共有・閲覧・採点・翌日候補には一切入らず、AIの傾向分析だけが読む。
+
+NORMAL_ANALYSIS_FORMAT = 'database-normal-analysis'
+NORMAL_SERIES = ('ジャグラー', 'ハナハナ')
+
+
+def is_normal_type(name):
+    """ジャグラーシリーズ・ハナハナシリーズ（半角・全角の違いは無視）。"""
+    text = unicodedata.normalize('NFKC', str(name or ''))
+    return any(word in text for word in NORMAL_SERIES)
+
+
+def make_normal_analysis(staging, mapping=None):
+    """幸町のHTMLから、ジャグラー・ハナハナの台だけを分析用に取り出す。
+
+    databaseの保存済みの日付・台や、記録のない台番号も除かない（分析には全台が要る）。
+    機種名は、対応表で決まっていればdatabaseの表記も添える（設定推定の機種の判定に使う）。
+    対応を決めていない機種があっても作れる。"""
+    from core import normalize_machine_name
+    if staging.get('format') != 'anaslo-hall-staging' or staging.get('version') != 1:
+        raise ValueError('解析結果の形式が違います。')
+    mapping = mapping or {}
+    records, days, others = [], [], 0
+    for d in staging['days']:
+        if d['store']['source_name'] != SAIWAICHOU.source_name:
+            raise ValueError('ノーマルタイプの分析用は、幸町のHTMLだけに対応しています。')
+        days.append(d['day'])
+        for source in d['records']:
+            name = source['machine']
+            target = mapping.get(name)
+            if not (is_normal_type(name) or is_normal_type(target)):
+                others += 1
+                continue
+            record = {'store': MERUHEN_STORE, 'day': d['day'], 'rack': source['rack'],
+                      'machine': normalize_machine_name(target) if isinstance(target, str) and target.strip() else name,
+                      'source_machine': name, 'games': source['games'], 'bb': source['bb'], 'rb': source['rb'],
+                      'source_probabilities': source['probabilities'],
+                      'source_url': d['source']['url'], 'source_sha256': d['source']['sha256']}
+            measurement = graph_measurement_from_source(source['graph'])
+            if measurement:
+                record['graph_measurement'] = measurement
+            records.append(record)
+    if not records:
+        raise ValueError('ジャグラー・ハナハナの台がありませんでした。')
+    return {'format': NORMAL_ANALYSIS_FORMAT, 'version': 1, 'store': MERUHEN_STORE,
+            'note': '分析用（ジャグラー・ハナハナだけ）。databaseには読み込まず、共有・採点・翌日候補には使わない。',
+            'exported_at': datetime.now().astimezone().isoformat(timespec='seconds'),
+            'days': sorted(days), 'records': records,
+            'summary': {'records': len(records), 'days': len(days), 'other_machines': others}}
+
+
+def normal_analysis_name(payload):
+    days = [d.replace('-', '') for d in payload['days']]
+    period = days[0] if len(days) == 1 else f'{days[0]}-{days[-1]}'
+    return f'normal-analysis-{payload["store"]}-{period}.json'
+
+
+def save_normal_analysis(folder, payload):
+    """分析用ファイルを決まったフォルダへ保存する。同じ期間は作り直し（HTMLから毎回同じ内容になる）。"""
+    from file_io import atomic_writer
+    path = Path(folder) / normal_analysis_name(payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with atomic_writer(path) as stream:
+        stream.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + '\n')
+    return path
+
+
 # --- 変換画面が店舗ごとに切り替える部分 --------------------------------------------
 
 class PscubeTarget:

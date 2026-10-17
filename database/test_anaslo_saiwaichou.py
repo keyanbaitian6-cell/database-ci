@@ -355,5 +355,84 @@ class ConverterScreenTests(unittest.TestCase):
         self.assertFalse((folder / 'aliases.json').exists())
 
 
+class NormalAnalysisTests(unittest.TestCase):
+    """幸町のジャグラー・ハナハナだけの分析用ファイル（2026-10-17 利用者「ノーマルタイプのジャグラーシリーズ
+    ハナハナシリーズしか作成せず、共有に載せない処理をしてほしい」）。databaseには読み込めない形式。"""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.folder = Path(tmp.name)
+        html = self.folder / '2026_09_01.html'
+        html.write_bytes(saiwai_html())
+        self.staging = analyze([html])
+
+    def test_only_juggler_and_hanahana_and_every_rack(self):
+        from anaslo_converter import is_normal_type, make_normal_analysis
+        payload = make_normal_analysis(self.staging, {'ネオアイムジャグラーEX': 'SネオアイムジャグラーEX−KK',
+                                                      'Sブラックボード': None})
+        self.assertEqual(payload['format'], 'database-normal-analysis')
+        self.assertEqual([(r['rack'], r['machine'], r['source_machine']) for r in payload['records']],
+                         [(779, 'SネオアイムジャグラーEX−KK', 'ネオアイムジャグラーEX'),
+                          (781, 'SネオアイムジャグラーEX−KK', 'ネオアイムジャグラーEX'),
+                          (900, 'マイジャグラーV', 'マイジャグラーV')])  # 対応を決めていない機種はHTMLの名前
+        self.assertEqual(payload['summary'], {'records': 3, 'days': 1, 'other_machines': 2})
+        first = payload['records'][0]
+        self.assertEqual((first['day'], first['games'], first['bb'], first['rb']), ('2026-09-01', 5650, 17, 16))
+        self.assertEqual(first['graph_measurement']['method'], 'anaslo-source-graph')
+        self.assertTrue(all(is_normal_type(n) for n in ('ｷﾝｸﾞﾊﾅﾊﾅ-30', 'ゴーゴージャグラー3', 'SハナハナホウオウEX')))
+        self.assertFalse(is_normal_type('沖ドキ!DUO アンコール'))
+
+    def test_only_saiwaichou(self):
+        from anaslo_converter import make_normal_analysis
+        other = json.loads(json.dumps(self.staging))
+        other['days'][0]['store']['source_name'] = P_STATION.source_name
+        with self.assertRaises(ValueError):
+            make_normal_analysis(other)
+
+    def test_saved_file_is_never_read_as_a_backup(self):
+        from anaslo_converter import make_normal_analysis, save_normal_analysis
+        from core import latest_backup_file
+        from pscube_import import is_pscube_backup
+        payload = make_normal_analysis(self.staging)
+        path = save_normal_analysis(self.folder / 'normal', payload)
+        self.assertEqual(path.name, 'normal-analysis-saiwaichou-20260901.json')
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['records'], payload['records'])
+        self.assertEqual(save_normal_analysis(self.folder / 'normal', payload), path)  # 作り直しは上書き
+        db = Store(self.folder / 'database.sqlite3')
+        self.addCleanup(db.close)
+        with self.assertRaises(ValueError):
+            import_backup(db, path)
+        self.assertEqual(db.rows(), [])
+        self.assertIsNone(latest_backup_file(path.parent))
+        self.assertFalse(is_pscube_backup(path))
+
+    def test_converter_button_saves_without_resolving_names(self):
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        converter_dir = Path(__file__).resolve().parents[1] / 'html_converter'
+        if str(converter_dir) not in sys.path:
+            sys.path.append(str(converter_dir))
+        spec = importlib.util.spec_from_file_location('converter_normal_test', converter_dir / 'app.py')
+        ui = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ui)
+        converter = ui.Converter(root)
+        self.assertEqual(str(converter.normal_button['state']), 'disabled')
+        catalog = MeruhenCatalog('saiwaichou', [('2026-09-15', 'SネオアイムジャグラーEX−KK', 779)])
+        with patch('anaslo_converter.read_meruhen_catalog', return_value=catalog), \
+                patch.object(MeruhenTarget, 'alias_file', str(self.folder / 'aliases.json')):
+            converter.load_paths([self.folder / '2026_09_01.html'])
+        self.assertEqual(str(converter.save_button['state']), 'disabled')  # マイジャグラーVが未確認
+        self.assertEqual(str(converter.normal_button['state']), 'normal')
+        with patch.object(ui, 'NORMAL_ANALYSIS_DIR', self.folder / 'normal'), \
+                patch.object(ui.messagebox, 'showinfo') as shown:
+            converter.save_normal()
+        saved = self.folder / 'normal' / 'saiwaichou' / 'normal-analysis-saiwaichou-20260901.json'
+        self.assertEqual(len(json.loads(saved.read_text(encoding='utf-8'))['records']), 3)
+        self.assertIn('databaseに読み込みません', shown.call_args.args[1])
+        self.assertFalse((self.folder / 'aliases.json').exists())  # 対応表は変えない
+
+
 if __name__ == '__main__':
     unittest.main()
