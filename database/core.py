@@ -1296,7 +1296,7 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     return count
 
 
-def export_backup(store, path, location=None, day=None):
+def export_backup(store, path, location=None, day=None, since=None):
     """Write saved records as a portable JSON file (share via Drive, USB, etc.).
 
     The format is shared with the Android app's own backup export, so either
@@ -1304,11 +1304,16 @@ def export_backup(store, path, location=None, day=None):
     (store/day/machine/rack/games/bb/rb/max_hold/graph_measurement/...).
     ``day`` narrows the export to one date (across every machine/store), for
     when a full-database export would be too many machines to review at once.
+    ``since`` keeps only the records (and events / candidate records) dated on or after
+    that day: the small "recent" backup Android reads day to day (RECENT_BACKUP_NAME).
+    Deletion marks and pending 🌈 are always written in full (they are small, and an
+    older record deleted on the PC must disappear on Android too).
     """
-    events = store.date_events(location=location, day=day, include_removed=True)
+    events = [e for e in store.date_events(location=location, day=day, include_removed=True)
+              if since is None or e['day'] >= since]
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc', date_events=events,
+                             source='pc', date_events=events, **({'since': since} if since else {}),
                              record_deletions=store.record_deletions(location, day),
                              rainbow_marks=store.pending_rainbow_marks(location, day)), ensure_ascii=False)[:-1]
     path = Path(path)
@@ -1320,6 +1325,9 @@ def export_backup(store, path, location=None, day=None):
     if day:
         query += ' AND day=?'
         values.append(day)
+    if since:
+        query += ' AND day>=?'
+        values.append(since)
     count = 0
     # One record per line, written as read: the whole database is never held
     # as one string (this runs after every save), and the file can be read
@@ -1341,6 +1349,8 @@ def export_backup(store, path, location=None, day=None):
             count += 1
         out.write('\n]')
         snapshots = store.candidate_snapshots(day=day, location=location)
+        if since:
+            snapshots = [x for x in snapshots if json.loads(x).get('day', '') >= since]
         if snapshots:
             out.write(', "candidate_snapshots": [\n' + ',\n'.join(snapshots) + '\n]')
         out.write('}')
@@ -1539,6 +1549,11 @@ SETTINGS_NAME = 'settings.json'
 # Fixed file name so the shared folder always holds exactly one auto-written
 # copy (overwritten each time) instead of piling up timestamped files.
 AUTO_BACKUP_NAME = 'database-backup-auto.json'
+# Androidがふだん読み込む小さいバックアップ：直近 RECENT_BACKUP_DAYS 日分（最新の記録日から数える）。
+# 全期間の database-backup-auto.json は127MBほどあり、読み込みに約2分かかる（2026-10-18 利用者
+# 「アプリ版も差分処理っていけないのだろうか」→ 案1「PCが直近の分だけのバックアップも書き出す」）。
+RECENT_BACKUP_NAME = 'database-backup-recent.json'
+RECENT_BACKUP_DAYS = 7
 
 
 def load_settings(data_dir):
@@ -1652,6 +1667,11 @@ def auto_backup(store, data_dir, *, strict=False):
             raise
         return None
     try:
+        export_recent_backup(store, data_dir, folder)
+    except (OSError, ValueError):
+        if strict:
+            raise
+    try:
         # 閲覧ページ用の軽いファイル。ローカルで書いてから同期フォルダへ複製する
         # （書きかけのファイルがDriveへ上がらないように）。
         local = Path(data_dir) / VIEWER_FILE_NAME
@@ -1661,6 +1681,18 @@ def auto_backup(store, data_dir, *, strict=False):
         if strict:
             raise
     return path
+
+
+def export_recent_backup(store, data_dir, folder):
+    """直近 RECENT_BACKUP_DAYS 日分のバックアップを、ローカルで書いてから同期フォルダへ複製する
+    （書きかけのファイルがDriveへ上がらないように）。記録が無ければ書かない。"""
+    latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0]
+    if not latest:
+        return None
+    since = (date.fromisoformat(latest) - timedelta(days=RECENT_BACKUP_DAYS - 1)).isoformat()
+    local = Path(data_dir) / RECENT_BACKUP_NAME
+    export_backup(store, local, since=since)
+    return atomic_copy(local, Path(folder) / RECENT_BACKUP_NAME)
 
 
 UNDO_NAME = 'last_save.json'
@@ -2261,7 +2293,7 @@ def latest_backup_file(folder, seen=None):
     generated_prefixes = ('pscube-', 'database-history-day-',
                           'database-viewer-part-', 'database-viewer-parts-')
     candidates = [p for p in Path(folder).glob('*.json')
-                  if p.name not in (AUTO_BACKUP_NAME, VIEWER_FILE_NAME, 'database-android-cloud.json',
+                  if p.name not in (AUTO_BACKUP_NAME, RECENT_BACKUP_NAME, VIEWER_FILE_NAME, 'database-android-cloud.json',
                                     SHARED_RAINBOW_NAME, SHARED_EVENTS_NAME)
                   and not p.name.startswith(generated_prefixes)]
     found = []

@@ -1,0 +1,24 @@
+{"format": "database-backup", "version": 1, "exported_at": "2026-10-18T09:26:57.780446+09:00", "source": "pc", "date_events": [], "since": "2026-10-04", "record_deletions": [{"store": "saiwaichou", "day": "2026-10-01", "machine": "SマイジャグラーVKD", "rack": 701, "deleted_at": "2026-10-18T09:26:57.772023+09:00"}], "rainbow_marks": [], "records": [
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-04", "machine": "SマイジャグラーVKD", "rack": 700, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764567+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-04", "machine": "SマイジャグラーVKD", "rack": 701, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764612+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-05", "machine": "SマイジャグラーVKD", "rack": 700, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764658+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-05", "machine": "SマイジャグラーVKD", "rack": 701, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764703+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-06", "machine": "SマイジャグラーVKD", "rack": 700, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764749+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-06", "machine": "SマイジャグラーVKD", "rack": 701, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764794+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-07", "machine": "SマイジャグラーVKD", "rack": 700, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764839+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-07", "machine": "SマイジャグラーVKD", "rack": 701, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764884+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-08", "machine": "SマイジャグラーVKD", "rack": 700, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764930+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-08", "machine": "SマイジャグラーVKD", "rack": 701, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.764974+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-09", "machine": "SマイジャグラーVKD", "rack": 700, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.765043+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-09", "machine": "SマイジャグラーVKD", "rack": 701, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.765110+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-10", "machine": "SマイジャグラーVKD", "rack": 700, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.765156+09:00"},
+{"store": "saiwaichou", "kind_code": 21, "day": "2026-10-10", "machine": "SマイジャグラーVKD", "rack": 701, "games": 4000, "bb": 15, "rb": 12, "first_captured_at": "2026-10-18T09:26:57.765216+09:00"}
+], "candidate_snapshots": [
+{"store": "saiwaichou", "day": "2026-10-04", "machine": "バラエティ", "taken_at": "2026-10-18T09:26:57.765477+09:00", "method": "2026-10-13-saiwaichou-variety-2", "total": 2, "eligible": 0, "candidates": []},
+{"store": "saiwaichou", "day": "2026-10-05", "machine": "バラエティ", "taken_at": "2026-10-18T09:26:57.765477+09:00", "method": "2026-10-13-saiwaichou-variety-2", "total": 2, "eligible": 0, "candidates": []},
+{"store": "saiwaichou", "day": "2026-10-06", "machine": "バラエティ", "taken_at": "2026-10-18T09:26:57.765477+09:00", "method": "2026-10-13-saiwaichou-variety-2", "total": 2, "eligible": 0, "candidates": []},
+{"store": "saiwaichou", "day": "2026-10-07", "machine": "バラエティ", "taken_at": "2026-10-18T09:26:57.765477+09:00", "method": "2026-10-13-saiwaichou-variety-2", "total": 2, "eligible": 0, "candidates": []},
+{"store": "saiwaichou", "day": "2026-10-08", "machine": "バラエティ", "taken_at": "2026-10-18T09:26:57.765477+09:00", "method": "2026-10-13-saiwaichou-variety-2", "total": 2, "eligible": 0, "candidates": []},
+{"store": "saiwaichou", "day": "2026-10-09", "machine": "バラエティ", "taken_at": "2026-10-18T09:26:57.765477+09:00", "method": "2026-10-13-saiwaichou-variety-2", "total": 2, "eligible": 0, "candidates": []},
+{"store": "saiwaichou", "day": "2026-10-10", "machine": "バラエティ", "taken_at": "2026-10-18T09:26:57.765477+09:00", "method": "2026-10-13-saiwaichou-variety-2", "total": 2, "eligible": 0, "candidates": []}
+]}

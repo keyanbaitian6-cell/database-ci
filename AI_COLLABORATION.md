@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 【PCが直近7日分のバックアップ（database-backup-recent.json）も書き出す：Androidの読み込みを速く】2026-10-18 Claude
+
+- 利用者「今読み込んでるけど、読み込み保存まで約2分。アプリ版も差分処理っていけないのだろうか」→ Claude の案1（PCが直近の分だけのバックアップも書き出す）／案2（AndroidもiPhone版のようにGoogleから差分を読む）→「案１で細かく読み込んでいけば問題なさそうだね」。日数は7日（利用者の指定なし、Claude が提案）。
+- PC `core.auto_backup` が `database-backup-auto.json`（全期間、127MBほど）の後に `export_recent_backup` で `database-backup-recent.json` を書く（ローカルで書いてから同期フォルダへ複製）。中身は `export_backup(since=最新の記録日−6日)`：その日以降の記録・イベント・翌日候補の記録、削除の印と未取り込みの🌈は全期間分。見出しに `since`。PCの起動時の自動取り込み（`latest_backup_file`）は自分の書き出しとして除外。メルヘン同期GSは `database-backup-android` だけを読むので影響なし。Androidは足し合わせで読む（記録は消えない）。Androidアプリの変更・APKは不要。
+- 試験：`database/tests/test_recent_backup.py`（3件：直近だけ・削除の印・PCが読み直さない・取り込みは足すだけ）、`database_android/test/recent_backup_test.dart`（PCの書き出しで作った `database/tests/fixtures/recent_backup.json` をAndroidが読める）。PC全試験 OK。`database/README.md` に追記。P’s CUBEの全期間（18.9MB）は今回そのまま。
+- 次にPC版を `start.cmd` から起動して記録を保存（内部ブラウザを閉じたとき）すると作られる。未確認：実際の同期フォルダでの作成とAndroidでの読み込み時間。
+
 ## 【翌日候補：Codexの確認を受けた直し（60日・使用開始日・日付の上限）・ジャグラー/ハナハナのおすすめを別ページ・iPhone版公開・APK 0.5.39】2026-10-18 Claude
 
 - Codex の確認（`outputs/normal-trends-20261017/codex-v5/報告.md`）：私の+0.96は再現。ただし①検証は2025-09からの履歴、アプリのDBは2026-08以降で候補38台中10〜17台が違う、②過去の日にも10/16までの係数を使い答え合わせに未来が混ざる、③スクリプトに日付の上限なし、④文書の「同じ縮め方」は定数が1500と2000で違う、⑤最近（9/1〜10/17）の差は+0.25で未確認。利用者「2、3は直して下さい。1については、Aでお願いしたい」「分析用データだけならアプリに入れた方がいいのかの検討も」。
