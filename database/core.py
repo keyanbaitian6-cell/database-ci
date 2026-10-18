@@ -1267,10 +1267,15 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     # 先の日に入力したイベントも渡す（イベントカレンダー）。消した印も含める。
     date_events = [event for event in store.date_events(include_removed=True)
                    if cutoff and event['day'] >= cutoff]
+    # 保存したアナスロのHTMLからの日ごとの「何台中何台プラス」（台の数値は無い。共有ページのカレンダーが
+    # 台データの無い日にだけ使う。2026-10-18、html_day_summary.py）。DBの隣のファイルが無ければ載せない。
+    import html_day_summary
+    summaries = html_day_summary.load_days(Path(store.path).parent / html_day_summary.SUMMARY_NAME)
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
                              source='pc-viewer', days=days, date_events=date_events,
-                             record_deletions=store.record_deletions()), ensure_ascii=False)[:-1]
+                             record_deletions=store.record_deletions(),
+                             **({'day_summaries': summaries} if summaries else {})), ensure_ascii=False)[:-1]
     # 未取り込み日の🌈（pending_rainbow_marks）は入れない。閲覧ページは rainbow_marks を端末の印として表示・送信し、
     # 旧形式の同期GSは見出しをそのまま渡すため、取り込み前にWebへ出てしまう。Webへは数値の取り込み後（RAINBOW.md）。
     count = 0

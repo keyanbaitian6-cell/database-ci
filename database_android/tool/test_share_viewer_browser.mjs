@@ -28,6 +28,8 @@ const pageUrl = process.env.SHARE_PUBLIC_URL || `${origin}/share/index.html`;
 const now = new Date(Date.now() + 9 * 3600000);
 const ym = now.toISOString().slice(0, 7);
 const d1 = `${ym}-01`, d2 = `${ym}-02`, d3 = `${ym}-03`;
+// 先月の15日（保存したHTMLからの集計だけがある日。2026-10-18 day_summaries）。
+const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15)).toISOString().slice(0, 10);
 const curve = (heights) => {
   const c = heights.map((h, i) => [i * 10 + 0.5, 200.5 - h]);
   const ys = c.map(p => p[1]);
@@ -42,7 +44,14 @@ const meruhen = {format: 'database-backup', version: 1, exported_at: '2026-10-09
   ...Array.from({length: 14}, (_, k) => ({store: 'nagamachiminami', day: d3, machine: 'ネオアイム', rack: 201 + k,
     games: 1000 * (k + 1), bb: 11 + k, rb: k + 6, max_hold: 1500, jo_net: (k - 6) * 100})),
   {store: 'saiwaichou', day: d2, machine: '幸町の機種', rack: 5, games: 3000, bb: 9, rb: 9, max_hold: 2376, graph_measurement: curve([0, -63, 40, 147, 128])},
-], date_events: [{store: 'nagamachiminami', day: d1, name: '半列<b>', updated_at: '2026-09-01T00:00:00Z'}]};
+], date_events: [{store: 'nagamachiminami', day: d1, name: '半列<b>', updated_at: '2026-09-01T00:00:00Z'}],
+// 保存したアナスロのHTMLからの日ごとの集計（台の数値は無い）。台データのある日（幸町の2日）には使わない。形のおかしい日は捨てる。
+day_summaries: [
+  {store: 'saiwaichou', day: d2, racks: 999, judged: 999, won: 0},
+  {store: 'saiwaichou', day: d3, racks: 532, judged: 513, won: 190},
+  {store: 'saiwaichou', day: prev, racks: 536, judged: 534, won: 201},
+  {store: 'saiwaichou', day: `${ym}-04`, racks: 10, judged: 5, won: 6},
+]};
 const pscube = {format: 'pscube-viewer', version: 1, exported_at: '2026-10-09T06:40:00+09:00', machines: [], records: [
   {store: 'c740601', rate: '20', day: d2, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 1, games: 5000, bb: 20, rb: 10, my: 3000, net_medals: 4321},
   {store: 'c740601', rate: '20', day: d2, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 2, games: 2000, bb: 5, rb: 3, my: 1000, net_medals: -1200},
@@ -162,6 +171,24 @@ try {
     // 幸町は選んだまま次に開いても残る。月の切り替え。
     await page.getByRole('button', {name: '幸町'}).click();
     assert.match(await page.locator(`[data-open="${d2}"]`).innerText(), /\+1,422/);
+    // 台データの無い日：保存したHTMLからの勝率。押すと「何台中何台プラス」。日付送りは集計のある日どうし。
+    assert.equal(await page.locator('[data-summary-open]').count(), 1, '台データのある日・形のおかしい日には出さない');
+    const sumCell = page.locator(`[data-summary-open="${d3}"]`);
+    assert.match(await sumCell.innerText(), /勝率37%/);
+    assert.match(await sumCell.getAttribute('aria-label'), /513台中190台プラス、勝率37%/);
+    await sumCell.click();
+    await page.waitForSelector('.sheet');
+    let sumSheet = await page.locator('.sheet').innerText();
+    assert.match(sumSheet, /勝率\s*勝率37%\s*513台中190台プラス/);
+    assert.match(sumSheet, /この日の台 532台/);
+    assert.equal(await page.locator('.sheet .list').count(), 0, '台の一覧は無い');
+    assert.ok(await page.locator('.sheet').evaluate(e => e.scrollWidth - e.clientWidth) <= 0, `集計のシートが横にはみ出す（${width}px）`);
+    await page.getByRole('button', {name: '前の日'}).click();
+    sumSheet = await page.locator('.sheet').innerText();
+    assert.match(sumSheet, /534台中201台プラス/);
+    assert.match(sumSheet, /勝率38%/);
+    await page.getByRole('button', {name: '閉じる'}).click();
+    await page.waitForSelector('.sheet', {state: 'detached'});
     await page.getByRole('button', {name: '次の月'}).click();
     assert.equal(await page.locator('[data-open]').count(), 0);
     await page.getByRole('button', {name: '今月'}).click();

@@ -12,7 +12,7 @@ import {
   VARIETY_SORTS, applyRainbowMarks, isoTime, markTime, mergeMarks, varietyRainbowRows, varietyRecordRows,
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
   lineupDay, suffixReport, isZorome, hasSuffixSummary,
-  rackWon, showWinRate, winRateText,
+  rackWon, showWinRate, winRateText, daySummaries, calendarDay,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -361,4 +361,30 @@ test('勝率：差枚の分からない日は「何台中何台プラス」か�
     {store: 'c740601', rate: '20', day: '2026-10-04', machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 1, games: 3000, bb: 10, rb: 5, my: 1000, net_medals: 300},
   ]});
   assert.equal(rackWon(p[0]), true);
+});
+
+test('保存したHTMLからの日ごとの集計（day_summaries）：台データの無い日だけ勝率、形のおかしい日は捨てる', () => {
+  // 2026-10-18 利用者「各日の勝率、何台中何台プラスで終わったかをそれだけを乗せて欲しい」。PC html_day_summary.py と同じ形。
+  const map = daySummaries({day_summaries: [
+    {store: 'saiwaichou', day: '2025-09-15', racks: 536, judged: 534, won: 201},
+    {store: 'saiwaichou', day: '2025-09-16', racks: 10, judged: 5, won: 6},       // won > judged
+    {store: 'saiwaichou', day: '2025-09-17', racks: 4, judged: 5, won: 1},        // judged > racks
+    {store: 'saiwaichou', day: '2025-9-18', racks: 5, judged: 5, won: 1},         // 日付の形
+    {store: 'unknown', day: '2025-09-19', racks: 5, judged: 5, won: 1},
+    {store: 'saiwaichou', day: '2025-09-20', racks: 5, judged: 5.5, won: 1},
+    null,
+  ]});
+  assert.deepEqual([...map], [['saiwaichou|2025-09-15', {racks: 536, judged: 534, won: 201}]]);
+  assert.equal(daySummaries({}).size, 0);
+  assert.equal(daySummaries(null).size, 0);
+  const summary = map.get('saiwaichou|2025-09-15');
+  const day = calendarDay([], summary);
+  assert.deepEqual([day.winRate, day.judged, day.won, day.total, day.summary], [true, 534, 201, null, summary]);
+  assert.equal(winRateText(day.won, day.judged), '勝率38%');
+  // 台データのある日はその日の台から（集計は使わない）。
+  const racks = meruhenRecords({records: [{store: 'saiwaichou', day: '2025-09-15', machine: 'M', rack: 1, games: 3000, bb: 5, rb: 2,
+    max_hold: 2376, graph_measurement: measurement([0, -63, 40, 147, 128])}]});
+  assert.deepEqual(calendarDay(racks, summary), {...dayNet(racks), summary: null});
+  // 勝ち負けの分かる台が0台の集計は出さない。
+  assert.equal(calendarDay([], {racks: 3, judged: 0, won: 0}).winRate, false);
 });
