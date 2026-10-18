@@ -83,7 +83,10 @@ function vhMeruhen(folder, base, props, startedAt) {
         const key = e.store + '|' + e.day, prior = events.get(key);
         if (!prior || !prior.updated_at || Date.parse(e.updated_at) >= Date.parse(prior.updated_at)) events.set(key, e);
       }
-      return {...old, date_events: [...events.values()]};
+      // PCの閲覧用の日ごとの「何台中何台プラス」（day_summaries、2026-10-18 html_day_summary.py）は、
+      // PCの最新の出力のものに置き換える。Androidのバックアップには無いので前のまま。
+      const summaries = Array.isArray(fresh.day_summaries) ? {day_summaries: fresh.day_summaries} : {};
+      return {...old, ...summaries, date_events: [...events.values()]};
     },
     failures: () => ({reasons: meruhenParse(props.getProperty(MERUHEN_CLOUD_ERRORS)) || {},
       versions: meruhenParse(props.getProperty(MERUHEN_CLOUD_FAILED)) || {}}),

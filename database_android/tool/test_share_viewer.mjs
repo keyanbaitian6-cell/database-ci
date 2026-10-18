@@ -13,6 +13,7 @@ import {
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
   lineupDay, suffixReport, isZorome, hasSuffixSummary,
   rackWon, showWinRate, winRateText, daySummaries, calendarDay,
+  monthDayList, periodWinRate, winRateYears, yearWinRates,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -387,4 +388,32 @@ test('保存したHTMLからの日ごとの集計（day_summaries）：台デー
   assert.deepEqual(calendarDay(racks, summary), {...dayNet(racks), summary: null});
   // 勝ち負けの分かる台が0台の集計は出さない。
   assert.equal(calendarDay([], {racks: 3, judged: 0, won: 0}).winRate, false);
+});
+
+test('月間・年間の勝率：日ごとの台数を足して割る（日の勝率の平均ではない）。台データの日とHTMLの集計の日を合わせる', () => {
+  // 2026-10-18 利用者「月ごとに月間の勝率出すのと、年間でも見れるページつくっておいてね」。
+  assert.equal(monthDayList(2026, 2).length, 28);
+  assert.equal(monthDayList(2024, 2).at(-1), '2024-02-29');
+  assert.deepEqual([monthDayList(2026, 10)[0], monthDayList(2026, 10).at(-1)], ['2026-10-01', '2026-10-31']);
+  const byDay = indexRecords(meruhenRecords({records: [
+    // 10/2：台データ2台（プラス1・マイナス1）。この日の集計（999台中0台）は使わない。
+    {store: 'saiwaichou', day: '2026-10-02', machine: 'M', rack: 1, games: 3000, bb: 5, rb: 2, graph_measurement: measurement([0, 80, 50])},
+    {store: 'saiwaichou', day: '2026-10-02', machine: 'M', rack: 2, games: 3000, bb: 5, rb: 2, graph_measurement: measurement([0, 20, -30])},
+    {store: 'nagamachiminami', day: '2026-10-02', machine: 'M', rack: 1, games: 3000, bb: 5, rb: 2, graph_measurement: measurement([0, 80, 50])},
+  ]}));
+  const summaries = daySummaries({day_summaries: [
+    {store: 'saiwaichou', day: '2026-10-02', racks: 999, judged: 999, won: 0},
+    {store: 'saiwaichou', day: '2026-10-03', racks: 110, judged: 100, won: 10},
+    {store: 'saiwaichou', day: '2026-09-15', racks: 536, judged: 534, won: 201},
+    {store: 'saiwaichou', day: '2025-12-31', racks: 536, judged: 523, won: 204},
+  ]});
+  const october = periodWinRate(byDay, summaries, 'saiwaichou', monthDayList(2026, 10));
+  assert.deepEqual(october, {judged: 102, won: 11, days: 2});
+  assert.equal(winRateText(october.won, october.judged), '勝率11%', '日の勝率の平均（30%）ではない');
+  const year = yearWinRates(byDay, summaries, 'saiwaichou', 2026);
+  assert.deepEqual(year.months.filter(m => m.judged).map(m => [m.month, m.judged, m.won, m.days]), [[9, 534, 201, 1], [10, 102, 11, 2]]);
+  assert.deepEqual(year.total, {judged: 636, won: 212, days: 3});
+  assert.deepEqual(winRateYears(byDay, summaries, 'saiwaichou'), [2026, 2025]);
+  assert.deepEqual(winRateYears(byDay, summaries, 'nagamachiminami'), [2026]);
+  assert.deepEqual(yearWinRates(byDay, summaries, 'saiwaichou', 2024).total, {judged: 0, won: 0, days: 0});
 });

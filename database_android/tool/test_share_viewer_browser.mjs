@@ -189,6 +189,27 @@ try {
     assert.match(sumSheet, /勝率38%/);
     await page.getByRole('button', {name: '閉じる'}).click();
     await page.waitForSelector('.sheet', {state: 'detached'});
+    // 月間の勝率（2日の台1台プラス＋3日の集計513台中190台）＝514台中191台、2日分。
+    assert.match(await page.locator('[data-month-rate]').innerText(), /月間の勝率37%\s*2日・514台中191台プラス/);
+    // 月別・年間の勝率：月を押すとその月のカレンダーへ。
+    await page.getByRole('button', {name: '月別・年間の勝率'}).click();
+    await page.waitForSelector('.sheet');
+    const yearText = await page.locator('.sheet').innerText();
+    assert.match(yearText, new RegExp(`${now.getUTCFullYear()}年`));
+    const thisMonth = now.getUTCMonth() + 1, prevMonth = Number(prev.slice(5, 7));
+    assert.match(await page.locator(`.sheet [data-month-jump="${thisMonth}"]`).innerText(), /2日・514台中191台プラス\s*勝率37%/);
+    if (prev.slice(0, 4) === ym.slice(0, 4)) {
+      assert.match(yearText, /年間の勝率\s*勝率37%\s*3日・1,048台中392台プラス/);
+      assert.ok(await page.locator('.sheet').evaluate(e => e.scrollWidth - e.clientWidth) <= 0, `年のシートが横にはみ出す（${width}px）`);
+      await page.locator(`.sheet [data-month-jump="${prevMonth}"]`).click();
+      await page.waitForSelector('.sheet', {state: 'detached'});
+      assert.match(await page.locator('.headline').innerText(), new RegExp(`${prevMonth}月`));
+      assert.match(await page.locator('[data-month-rate]').innerText(), /月間の勝率38%\s*1日・534台中201台プラス/);
+      await page.getByRole('button', {name: '今月'}).click();
+    } else {
+      await page.getByRole('button', {name: '閉じる'}).click();
+      await page.waitForSelector('.sheet', {state: 'detached'});
+    }
     await page.getByRole('button', {name: '次の月'}).click();
     assert.equal(await page.locator('[data-open]').count(), 0);
     await page.getByRole('button', {name: '今月'}).click();

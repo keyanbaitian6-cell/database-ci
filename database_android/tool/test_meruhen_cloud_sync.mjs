@@ -109,6 +109,22 @@ test('メルヘン履歴：60日以前も蓄積・変更日だけ原本更新・
   assert.equal(d.doc('database-viewer-parts-meruhen.json').version, 2);
 });
 
+test('メルヘン履歴：PCの日ごとの集計（day_summaries）を一覧の見出しへ引き継ぎ、Android入力では消さない', () => {
+  // 2026-10-18：共有カレンダーの「台データの無い日の勝率」。日別の一覧は見出しのイベントしか引き継がず、集計が落ちていた。
+  const d = drive({history: true}), base = d.files[0];
+  d.setup();
+  const get = () => plain(d.context.vpGet(base, 'meruhen', {}));
+  const first = [{store: 'saiwaichou', day: '2025-09-15', racks: 536, judged: 534, won: 201}];
+  d.replace(base, {...viewer([record(600, '2026-10-14')]), day_summaries: first}); d.sync();
+  assert.deepEqual(get().day_summaries, first);
+  assert.deepEqual(d.doc('database-viewer-parts-meruhen.json').header.day_summaries, first);
+  d.add('database-backup-android-20261018-120000.json', backup([record(601, '2026-10-14')])); d.sync();
+  assert.deepEqual(get().day_summaries, first, 'Androidのバックアップでは消さない');
+  const next = [...first, {store: 'saiwaichou', day: '2025-09-16', racks: 530, judged: 520, won: 190}];
+  d.replace(base, {...viewer([record(600, '2026-10-14')]), day_summaries: next}); d.sync();
+  assert.deepEqual(get().day_summaries, next, 'PCの最新の出力に置き換える');
+});
+
 test('メルヘン履歴：24日ずつ再開・一覧書込失敗は旧世代保持・破損原本は停止・閲覧パーツ復旧', () => {
   const d = drive({history: true}), base = d.files[0];
   const rows = Array.from({length: 55}, (_, i) => record(500, new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10)));
