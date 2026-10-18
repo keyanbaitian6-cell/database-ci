@@ -646,6 +646,7 @@ Future<void> _importPickedBackup(
             '${result.historyWeekConflicts > 0 ? '週構成の不一致${result.historyWeekConflicts}件（取り込まず、既存を維持）。' : ''}'
             '${result.historyRejected > 0 ? '基準に合わない履歴${result.historyRejected}件を除外。' : ''}'
             '${result.historyConflicts > 0 ? '履歴の不一致${result.historyConflicts}件は入力時刻の新しい方を採りました。' : ''}'
+            '${result.historyError ?? ''}'
             '${result.dateEventConflicts > 0 ? 'イベント名の不一致${result.dateEventConflicts}件は既存値を維持。' : ''}'
             '（要確認${result.conflicts.length}件、対象外${result.skipped}件）。'
             '${result.temporary > 0 ? '$retentionDays日より前の${result.temporary}台は一時的な取り込みで、次にアプリを開いたときに片付けます。' : ''}',

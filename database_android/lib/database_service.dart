@@ -993,8 +993,7 @@ class DatabaseService {
       );
       final history = historyRows.isEmpty
           ? null
-          : jsonDecode(historyRows.single['value'] as String);
-      if (history != null) validateHistoryEnvelope(history);
+          : historyForBackup(historyRows.single['value'] as String?);
       final header = jsonEncode({
         'event_history_edits': ?history,
         'format': backupFormat,

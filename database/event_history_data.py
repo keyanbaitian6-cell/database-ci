@@ -215,8 +215,19 @@ def merge_edits(stored, incoming, base):
                 entries[key] = c
                 changed += 1
         # 保存済みの基準外の編集は、表示からは除いてもバックアップには残す。
-        out[group] = [entries[k] for k in sorted(entries)] + orphans.get(group, [])
+        # ただし同じ場所により新しい正しい編集があれば、古い方は役目を終えたので捨てる（警告が残り続けないように）。
+        out[group] = [entries[k] for k in sorted(entries)] + [
+            o for o in orphans.get(group, []) if not superseded(group, o, entries)]
     return out, changed, conflicts, old_bad + bad_weeks + new_bad, skipped_weeks
+
+
+def superseded(group, orphan, entries):
+    """基準外の編集 orphan と同じ場所に、同時刻以降の正しい編集があるか。場所を読めない原文は残す。"""
+    try:
+        valid = entries.get(edit_key(group, orphan))
+        return valid is not None and stamp(valid['updated_at']) >= stamp(orphan['updated_at'])
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
 
 
 def materialize(base, edits):
@@ -290,3 +301,21 @@ def variety_week_lineup(records, monday):
             peak[name] = max(peak.get(name, 0), count)
     doubtful = [m['name'] for m in machines if peak.get(m['name'], 0) > 3]
     return candidates[0], machines, doubtful
+
+
+SHORTFALL_DAYS = 30
+
+
+def capture_shortfall(records, lineup_day):
+    """分類日の保存台数が、前後 SHORTFALL_DAYS 日で最も多い日の8割に届かなければ (分類日の台数, その最多) を返す。
+
+    variety_week_lineup の8割は「週と前13日」の中での比較なので、その期間がまるごと取り込み不足
+    （例：2026-09-14〜21 は1日14〜68台、9/22以降は372台）だと素通りする。届いていれば None。"""
+    center = day(lineup_day)
+    counts = {}
+    for r in records:
+        if r['store'] == STORE and abs((day(r['day']) - center).days) <= SHORTFALL_DAYS:
+            counts.setdefault(r['day'], set()).add((r['machine'], r['rack']))
+    usual = max((len(v) for v in counts.values()), default=0)
+    found = len(counts.get(lineup_day, ()))
+    return (found, usual) if found < usual * .8 else None

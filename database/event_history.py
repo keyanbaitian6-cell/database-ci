@@ -7,7 +7,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
 from event_history_data import (ASSET, KINDS, STORE, load_base, empty_edits, materialize,
-    clean_edits, edit_key, saved_name, machine_candidates, variety_week_lineup, stamp)
+    clean_edits, edit_key, saved_name, machine_candidates, variety_week_lineup, capture_shortfall, stamp,
+    SHORTFALL_DAYS)
 
 HISTORY_FILE = ASSET
 EVENT_TYPES = KINDS
@@ -113,7 +114,11 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         def accept():
             if value.get() not in names:
                 return
-            save('links', dict(store=STORE, machine=item['name'], record_name=value.get()))
+            try:
+                save('links', dict(store=STORE, machine=item['name'], record_name=value.get()))
+            except Exception as error:
+                messagebox.showerror('保存できません', str(error), parent=dialog)
+                return
             dialog.destroy()
             render()
         ttk.Button(dialog, text='この保存名に対応付ける', command=accept).pack(pady=(0,12))
@@ -168,9 +173,15 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             all_weeks,_=materialize(base,edits[0])
             if any(w['from']==value for w in all_weeks): raise ValueError('この週のイベント表は既にあります。')
             lineup,machines,doubtful=variety_week_lineup(records,value)
-            if doubtful and not messagebox.askyesno('機種台数の確認',
-                    '次の機種は周辺の日に4台以上あり、取り込み不足の可能性があります。\n'
-                    + '\n'.join(doubtful) + '\n\nこの構成で週表を作成しますか？', parent=window):
+            notes=[]
+            shortfall=capture_shortfall(records,lineup)
+            if shortfall:
+                notes.append(f'分類日（{lineup}）の保存台数は{shortfall[0]}台で、前後{SHORTFALL_DAYS}日で最も多い日（{shortfall[1]}台）の8割に届きません。'
+                             'この時期は取り込みが少なく、4台以上の機種が1〜3台に見えている可能性があります。')
+            if doubtful:
+                notes.append('次の機種は周辺の日に4台以上あり、取り込み不足の可能性があります。\n' + '\n'.join(doubtful))
+            if notes and not messagebox.askyesno('機種台数の確認',
+                    '\n\n'.join(notes) + '\n\nこの構成で週表を作成しますか？', parent=window):
                 return
             save('weeks',dict(store=STORE,type='バラエティ',week=value,lineup_day=lineup,machines=machines,removed=False))
             kind.set('バラエティ'); chosen.set(f"{value}〜{(date.fromisoformat(value)+timedelta(days=6)).isoformat()}")

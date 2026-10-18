@@ -249,6 +249,91 @@ void main() {
       await Directory(path).parent.delete(recursive: true);
     }
   });
+  // 2026-10-19 Claudeレビュー中1：外枠の壊れた履歴をそのまま書くと、バックアップ全体が取り込めなくなる。
+  test('外枠の壊れた履歴でも、取り込めるバックアップを書き出す', () async {
+    final path = await newDatabasePath();
+    final db = realDatabase(path);
+    try {
+      await db.applyChanges(
+        ChangeSet(state: {'event_history_edits': '{"cells":"壊れた"}'}),
+      );
+      final file = File('$path.broken.json');
+      await db.exportBackup(file);
+      final history = jsonDecode(
+        await file.readAsString(),
+      )['event_history_edits'];
+      validateHistoryEnvelope(history);
+      expect(history['unreadable_raw'], '{"cells":"壊れた"}');
+      expect(historyForBackup(null), isNull);
+      expect(historyForBackup('[1]')!['unreadable_raw'], '[1]');
+    } finally {
+      await db.close();
+      await Directory(path).parent.delete(recursive: true);
+    }
+  });
+  // 2026-10-19 Claudeレビュー中2：基準外の古い編集は、同じセルを正しく直したら消える。
+  test('同じセルの新しい正しい編集で、基準外の古い編集を捨てる', () async {
+    final base = await loadHistoryBase();
+    final removed = jsonDecode(jsonEncode(base)) as Map<String, dynamic>;
+    removed['symbols'] = [
+      for (final s in removed['symbols'])
+        if (s != '😇') s,
+    ];
+    for (final w in removed['weeks']) {
+      for (final m in w['machines']) {
+        m['results'] = [for (final v in m['results']) v == '😇' ? '' : v];
+      }
+    }
+    final old = emptyHistoryEdits(), fresh = emptyHistoryEdits();
+    old['cells'] = [
+      edit(base, value: '😇', at: '2026-10-19T01:00:00Z', device: 'pc'),
+    ];
+    fresh['cells'] = [
+      edit(removed, value: '😀', at: '2026-10-19T02:00:00Z', device: 'pc'),
+    ];
+    final merged = mergeHistoryEdits(old, fresh, removed);
+    expect(merged.rejected, 1);
+    expect([for (final c in merged.edits['cells']) c['value']], ['😀']);
+    expect(
+      mergeHistoryEdits(merged.edits, emptyHistoryEdits(), removed).rejected,
+      0,
+    );
+    final older = emptyHistoryEdits();
+    older['cells'] = [
+      edit(base, value: '😇', at: '2026-10-19T03:00:00Z', device: 'pc'),
+    ];
+    final kept = mergeHistoryEdits(older, emptyHistoryEdits(), removed);
+    expect([for (final c in kept.edits['cells']) c['value']], ['😇']);
+  });
+  // 2026-10-19 Claudeレビュー中4：履歴が合流できなくても台データの取り込みは続ける（PCの history_error と同じ）。
+  test('端末の履歴が読めなくても、台データを取り込んで理由を返す', () async {
+    final path = await newDatabasePath();
+    final db = realDatabase(path);
+    final controller = AppController(database: db);
+    try {
+      await db.applyChanges(
+        ChangeSet(state: {'event_history_edits': '{"cells":"壊れた"}'}),
+      );
+      await controller.initialize();
+      final file = File('$path.import.json');
+      await file.writeAsString(
+        jsonEncode({
+          'format': 'database-backup',
+          'version': 1,
+          'records': [record('2026-10-18', '通常', 1).toJson()],
+          'event_history_edits': emptyHistoryEdits(),
+        }),
+      );
+      final result = await controller.importBackup(file);
+      expect(result.added, 1);
+      expect(result.historyError, contains('履歴は取り込めませんでした'));
+      expect((await db.loadState())['event_history_edits'], '{"cells":"壊れた"}');
+    } finally {
+      controller.dispose();
+      await db.close();
+      await Directory(path).parent.delete(recursive: true);
+    }
+  });
   testWidgets('Androidの保存期間外と除外件数を表示', (tester) async {
     final base = (await tester.runAsync(loadHistoryBase))!;
     final raw = emptyHistoryEdits();

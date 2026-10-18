@@ -1258,17 +1258,33 @@ class AppController extends ChangeNotifier {
       onProgress?.call('中身を確かめています… $checked台');
     }
 
-    final historyMerge = incomingHistory == null
-        ? null
-        : mergeHistoryEdits(
-            storedState['event_history_edits'] == null
-                ? emptyHistoryEdits()
-                : Map<String, dynamic>.from(
-                    jsonDecode(storedState['event_history_edits']!) as Map,
-                  ),
-            incomingHistory,
-            await loadHistoryBase(),
-          );
+    // 履歴が合流できなくても台データの取り込みは続ける（PC `import_backup` の history_error と同じ）。
+    // 端末の履歴はそのまま残し、理由を結果に出す。
+    ({
+      Map<String, dynamic> edits,
+      int changed,
+      int conflicts,
+      int rejected,
+      int weekConflicts,
+    })?
+    historyMerge;
+    String? historyError;
+    if (incomingHistory != null) {
+      try {
+        historyMerge = mergeHistoryEdits(
+          storedState['event_history_edits'] == null
+              ? emptyHistoryEdits()
+              : Map<String, dynamic>.from(
+                  jsonDecode(storedState['event_history_edits']!) as Map,
+                ),
+          incomingHistory,
+          await loadHistoryBase(),
+        );
+      } on Object catch (error) {
+        historyError = '履歴は取り込めませんでした（端末の履歴はそのまま残しています）：$error';
+      }
+    }
+    final historyResult = historyMerge;
     final deletions = mergeRecordDeletions([
       ...readRecordDeletions(
         storedState['record_deletions'] == null
@@ -1357,8 +1373,8 @@ class AppController extends ChangeNotifier {
             state: {
               if (eventsAdded > 0)
                 'date_events': _encodeDateEvents(events.values),
-              if (historyMerge != null)
-                'event_history_edits': jsonEncode(historyMerge.edits),
+              if (historyResult != null)
+                'event_history_edits': jsonEncode(historyResult.edits),
             },
           ),
         );
@@ -1392,16 +1408,17 @@ class AppController extends ChangeNotifier {
       dateEvents = events;
       appState = {...appState, 'date_events': _encodeDateEvents(events.values)};
     }
-    if (historyMerge != null) {
+    if (historyResult != null) {
       appState = {
         ...appState,
-        'event_history_edits': jsonEncode(historyMerge.edits),
+        'event_history_edits': jsonEncode(historyResult.edits),
       };
-      result.historyAdded = historyMerge.changed;
-      result.historyConflicts = historyMerge.conflicts;
-      result.historyRejected = historyMerge.rejected;
-      result.historyWeekConflicts = historyMerge.weekConflicts;
+      result.historyAdded = historyResult.changed;
+      result.historyConflicts = historyResult.conflicts;
+      result.historyRejected = historyResult.rejected;
+      result.historyWeekConflicts = historyResult.weekConflicts;
     }
+    result.historyError = historyError;
     result.candidates = freshCandidateCount;
     result.dateEventsAdded = eventsAdded;
     result.temporary = temporary.length;

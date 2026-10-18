@@ -564,6 +564,9 @@ class BackupImportResult {
   int historyConflicts = 0;
   int historyRejected = 0;
   int historyWeekConflicts = 0;
+
+  /// 履歴だけ合流できなかったときの理由（台データの取り込みは続けている）。
+  String? historyError;
   int dateEventsAdded = 0;
   int dateEventConflicts = 0;
 

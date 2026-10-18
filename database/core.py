@@ -651,12 +651,15 @@ class Store:
 
     def history_edits_raw(self):
         """バックアップ用。基準に合わなくなった編集も保存した文書のまま返す。"""
-        from event_history_data import empty_edits
+        from event_history_data import empty_edits, validate_envelope
         raw = self.state('event_history_edits')
         if not raw:
             return empty_edits()
         try:
-            return json.loads(raw)
+            doc = json.loads(raw)
+            # 外枠が壊れた文書をそのまま書くと、バックアップ全体が取り込み・復元できなくなる。
+            validate_envelope(doc)
+            return doc
         except (TypeError, ValueError):
             # 通常の台データのバックアップを妨げず、読めない原文も控えに残す。
             return dict(empty_edits(), unreadable_raw=raw)

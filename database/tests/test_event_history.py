@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from core import Store, export_backup, import_backup, auto_backup, save_settings
 from event_history_data import (load_base, validate_base, empty_edits, merge_edits,
-    materialize, saved_name, variety_week_lineup, FILE_NAME)
+    materialize, saved_name, variety_week_lineup, capture_shortfall, FILE_NAME)
 
 
 def cell(base, value='😀', at='2026-10-19T00:00:00Z', device='android'):
@@ -218,6 +218,47 @@ class HistoryTests(unittest.TestCase):
                     self.assertTrue(notices)
                     self.assertTrue((sync/VIEWER_FILE_NAME).exists())
             finally:db.close()
+
+    def test_broken_history_envelope_still_exports_an_importable_backup(self):
+        # 外枠の壊れた履歴をそのまま書くと、バックアップ全体が取り込み・復元できなくなる（2026-10-19 Claudeレビュー中1）。
+        record=dict(store='nagamachiminami',kind_code=21,day='2026-10-18',machine='通常',rack=1,games=1000,bb=4,rb=2,max_hold=100)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);db=Store(root/'a.db');other=Store(root/'b.db')
+            try:
+                db.save([record])
+                with db.db: db.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)',('event_history_edits','{"cells":"壊れた"}'))
+                backup=root/'broken.json';export_backup(db,backup)
+                exported=json.loads(backup.read_text('utf-8'))['event_history_edits']
+                self.assertEqual(exported['unreadable_raw'],'{"cells":"壊れた"}')
+                plan=import_backup(other,backup)
+                self.assertEqual(len(other.rows()),1)
+                self.assertIn('history_error',plan)
+            finally:
+                db.close();other.close()
+
+    def test_superseded_orphan_is_dropped(self):
+        # 基準から消えた記号の古い編集は、同じセルを正しく直したら消える（2026-10-19 Claudeレビュー中2）。
+        removed=copy.deepcopy(self.base);removed['symbols']=[s for s in removed['symbols'] if s!='😇']
+        for w in removed['weeks']:
+            for m in w['machines']: m['results']=['' if v=='😇' else v for v in m['results']]
+        old=empty_edits();old['cells']=[cell(self.base,'😇','2026-10-19T01:00:00+09:00','pc')]
+        fresh=empty_edits();fresh['cells']=[cell(removed,'😀','2026-10-19T02:00:00+09:00','pc')]
+        merged,_,_,rejected,_=merge_edits(old,fresh,removed)
+        self.assertEqual(rejected,1)
+        self.assertEqual([c['value'] for c in merged['cells']],['😀'])
+        _,_,_,rejected,_=merge_edits(merged,empty_edits(),removed)
+        self.assertEqual(rejected,0)
+        older=empty_edits();older['cells']=[cell(self.base,'😇','2026-10-19T03:00:00+09:00','pc')]
+        kept,*_=merge_edits(older,empty_edits(),removed)
+        self.assertEqual([c['value'] for c in kept['cells']],['😇'])
+
+    def test_thin_capture_period_is_reported(self):
+        # 週と前13日がまるごと取り込み不足だと、週内の8割判定は素通りする（2026-10-19 Claudeレビュー中3。実例 9/14〜21）。
+        rows=lambda d,n:[dict(store='nagamachiminami',day=d,machine=f'機種{i//4}',rack=i) for i in range(n)]
+        records=rows('2026-09-15',60)+rows('2026-09-22',372)
+        self.assertEqual(capture_shortfall(records,'2026-09-15'),(60,372))
+        self.assertIsNone(capture_shortfall(records,'2026-09-22'))
+        self.assertIsNone(capture_shortfall(rows('2026-08-01',372)+rows('2026-09-15',60),'2026-09-15'))
 
     def test_viewer_stage_excludes_private_history_asset(self):
         import importlib.util

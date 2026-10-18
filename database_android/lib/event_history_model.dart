@@ -156,6 +156,19 @@ void validateHistoryEnvelope(dynamic raw) {
   }
 }
 
+/// バックアップに書く履歴。外枠が壊れた文書をそのまま書くとバックアップ全体が取り込めなくなるので、
+/// 正しい空の外枠に包んで原文だけ残す（PC `Store.history_edits_raw` と同じ）。
+Map<String, dynamic>? historyForBackup(String? raw) {
+  if (raw == null || raw.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(raw);
+    validateHistoryEnvelope(decoded);
+    return Map<String, dynamic>.from(decoded as Map);
+  } on Object {
+    return {...emptyHistoryEdits(), 'unreadable_raw': raw};
+  }
+}
+
 ({Map<String, dynamic> edits, int rejected, Map<String, List<dynamic>> orphans})
 cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
   validateHistoryEnvelope(raw);
@@ -373,7 +386,9 @@ mergeHistoryEdits(
     }
     out[group] = [
       for (final k in entries.keys.toList()..sort()) entries[k],
-      ...current.orphans[group] ?? [],
+      // 同じ場所により新しい正しい編集がある基準外の編集は捨てる（PC `superseded` と同じ）。
+      for (final o in current.orphans[group] ?? [])
+        if (!_superseded(group, o, entries)) o,
     ];
   }
   return (
@@ -383,6 +398,18 @@ mergeHistoryEdits(
     rejected: current.rejected + proposed.rejected + fresh.rejected,
     weekConflicts: skippedWeeks,
   );
+}
+
+/// 基準外の編集 [orphan] と同じ場所に、同時刻以降の正しい編集があるか。場所を読めない原文は残す。
+bool _superseded(String group, dynamic orphan, Map<String, dynamic> entries) {
+  try {
+    final valid = entries[historyKey(group, orphan)];
+    return valid != null &&
+        !historyStamp(valid['updated_at'])
+            .isBefore(historyStamp(orphan['updated_at']));
+  } on Object {
+    return false;
+  }
 }
 
 List<Map<String, dynamic>> historyWeeks(
