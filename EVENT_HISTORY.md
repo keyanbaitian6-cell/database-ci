@@ -56,3 +56,11 @@
 Claudeの修正依頼に対応。Python・Dart・JSで `database_android/test/fixtures/event_history_cases.json` を共通利用し、週・記号・対応先・除外件数を比較する。JSの時刻比較はDate.parseに依存せず、時差付きマイクロ秒を整数で比較する。共有画面の履歴からの日付送りは保存名の完全一致にそろえる。
 
 続けてClaudeが再レビューの中1〜中4を修正（壊れた外枠のバックアップ、基準外の古い編集の残り続け、期間全体の取り込み不足の警告、Androidの取り込み継続）。再発を捕まえる試験をPC（`database/tests/test_event_history.py`）とAndroid（`database_android/test/event_history_test.dart`）に足した。
+
+## 反映と公開（2026-10-19、Claude）
+
+- 本体 `main`：`c82aa7e`（Codex実装をそのまま）→ `b6db5c3`（Claude修正：中1〜中4・対応付けダイアログのエラー表示、再発防止の試験6件）→ `b109f2c`（共有ページの画面試験が読むモジュール6つを期待するよう修正）。
+- 手元の全体ゲート（Python 3.12・Flutter 3.47.1・Playwright 1.62.1・日本時間）：70項目成功。失敗した1件（`test_share_viewer_browser`、stageしたページでだけ動く「読むモジュールは5つ」の確認が古かった）を直し、同じstageで成功。CI #89（`b109f2c`）は pc（Ubuntu・Windows）と full（全体ゲート）がすべて成功。
+- 公開物は全体ゲートのstageから作成（共有ページ：`event_history.mjs` 追加と版 `4a9874df7a03` の付け替え。閲覧ページ：`main.dart.js`・アセット一覧・アイコンフォント・`shared_events.mjs`・README。`NOTICES` と `flutter_bootstrap.js` はビルド環境の違いだけなので公開中のまま）。機種名・記号・接続先IDが公開物に無いことを確認。
+- **公開は未完了**：Claudeの作業環境から `keyanbaitian6-cell/database-share`・`database-viewer` へのpushがGitHubの権限（403）で拒否された。公開リポジトリへのpushは、権限を直してClaudeが行うか、PCから行う。
+- Apps Script（自分用・共有用）は利用者が `?file=event-history` 入りの版へ更新済み。2本とも `?file=event-history` で PC の共有用文書（2026-10-19 07:00 出力、基準4週76行、編集0件・除外0件）が返ることを利用者が確認。
