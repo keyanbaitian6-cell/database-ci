@@ -30,6 +30,7 @@ function drive(source) {
     makeFile('pscube-viewer-drive.json', '{"format":"pscube-viewer","records":[2]}'),
     makeFile('database-events-shared.json', '{"format":"database-events","version":1,"kind":"meruhen","events":[{"day":"2026-10-04"}]}'),
   );
+  files.push(makeFile('database-event-history.json', JSON.stringify({format:'database-event-history',version:1,cells:[],weeks:[],links:[]})));
   const old = makeFile('database-viewer.json', '{"old":true}');
   old.updated = 1; // 古い同名ファイルは選ばない
   const trashed = makeFile('database-viewer.json', '{"trashed":true}');
@@ -59,7 +60,7 @@ function drive(source) {
 test('自分用スクリプトと同じ中身を返す（記録・P’s CUBE・共有カレンダー・更新の目印・断る名前）', async () => {
   const mine = drive(await load('viewer_drive_script.gs'));
   const shared = drive(await load('viewer_drive_script_readonly.gs'));
-  for (const parameter of [{}, {file: 'pscube'}, {file: 'events'}, {check: '1'}, {file: 'pscube', check: '1'}, {file: '../etc'}]) {
+  for (const parameter of [{}, {file: 'pscube'}, {file: 'events'}, {file: 'event-history'}, {check: '1'}, {file: 'pscube', check: '1'}, {file: '../etc'}]) {
     assert.equal(shared.get(parameter), mine.get(parameter), JSON.stringify(parameter));
   }
   // まだ無い共有カレンダーは空の一覧（時刻だけ違うので形で比べる）。
@@ -111,4 +112,13 @@ test('アクセスの記録：最初の読み込み（u=付き）だけ「実行
   d.get({u: '<script>'});
   assert.deepEqual(d.logs, ['閲覧：名前なし', '閲覧：himawari', '閲覧：名前なし']);
   assert.deepEqual(d.writes, []);
+});
+
+ test('履歴は両スクリプトでGETだけを許可し、POSTでは保存しない', async () => {
+  for (const name of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {
+    const d=drive(await load(name));
+    assert.equal(JSON.parse(d.get({file:'event-history'})).format,'database-event-history');
+    assert.ok(d.post({file:'event-history',cells:[]}).error);
+    assert.deepEqual(d.writes,[]);
+  }
 });

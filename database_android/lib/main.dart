@@ -16,6 +16,7 @@ import 'data_checks.dart';
 import 'daily_net_page.dart';
 import 'date_events.dart';
 import 'event_calendar_page.dart';
+import 'event_history.dart';
 import 'database_service.dart';
 import 'graph_preview.dart';
 import 'import_service.dart' show graphNumbersNotShown;
@@ -641,7 +642,10 @@ Future<void> _importPickedBackup(
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '新規${result.added}件、グラフ追加${result.graphOnly}件、設定情報追加${result.settingOnly}件、イベント${result.dateEventsAdded}件を取り込みました'
+            '新規${result.added}件、グラフ追加${result.graphOnly}件、設定情報追加${result.settingOnly}件、イベント${result.dateEventsAdded}件、履歴${result.historyAdded}件を取り込みました'
+            '${result.historyWeekConflicts > 0 ? '週構成の不一致${result.historyWeekConflicts}件（取り込まず、既存を維持）。' : ''}'
+            '${result.historyRejected > 0 ? '基準に合わない履歴${result.historyRejected}件を除外。' : ''}'
+            '${result.historyConflicts > 0 ? '履歴の不一致${result.historyConflicts}件は入力時刻の新しい方を採りました。' : ''}'
             '${result.dateEventConflicts > 0 ? 'イベント名の不一致${result.dateEventConflicts}件は既存値を維持。' : ''}'
             '（要確認${result.conflicts.length}件、対象外${result.skipped}件）。'
             '${result.temporary > 0 ? '$retentionDays日より前の${result.temporary}台は一時的な取り込みで、次にアプリを開いたときに片付けます。' : ''}',
@@ -995,8 +999,10 @@ class _ResultsPageState extends State<ResultsPage> {
         onDayChanged: (changed) => setState(() => day = changed),
         onOpenRecord: (context, record) => Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) =>
-                AndroidRecordPage(controller: widget.controller, record: record),
+            builder: (_) => AndroidRecordPage(
+              controller: widget.controller,
+              record: record,
+            ),
           ),
         ),
       ),
@@ -1010,6 +1016,27 @@ class _ResultsPageState extends State<ResultsPage> {
               AndroidRecordPage(controller: widget.controller, record: record),
         ),
       );
+
+  void _openEventHistory() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => EventHistoryPage(
+        data: ViewerData(
+          records: widget.controller.records,
+          dateEvents: widget.controller.dateEvents,
+        ),
+        recordCutoff: widget.controller.records.isEmpty
+            ? null
+            : retentionCutoff(
+                widget.controller.records
+                    .map((r) => r.day)
+                    .fold<String>('', (a, b) => a.compareTo(b) > 0 ? a : b),
+                DateTime.now().toIso8601String().substring(0, 10),
+              ),
+        edits: widget.controller.historyEdits,
+        onSave: widget.controller.saveHistoryEdits,
+      ),
+    ),
+  );
 
   /// カレンダーの差枚（その店・その日の総差枚）。記録が変わったときだけ数え直す。
   List<SlotRecord>? _netRecords;
@@ -1361,6 +1388,14 @@ class _ResultsPageState extends State<ResultsPage> {
                       ],
                     ),
                     const SizedBox(height: 14),
+                    if (store == 'nagamachiminami') ...[
+                      OutlinedButton.icon(
+                        onPressed: _openEventHistory,
+                        icon: const Icon(Icons.history),
+                        label: const Text('長町南のイベント履歴'),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     if (dayRows.isEmpty)
                       const EmptyState(
                         icon: Icons.inbox_outlined,
@@ -1640,9 +1675,8 @@ class ImportPage extends StatelessWidget {
             if (!browserContext.mounted) return false;
             final notShown = graphNumbersNotShown(captured, analysis);
             if (notShown != null) {
-              ScaffoldMessenger.of(
-                browserContext,
-              ).showSnackBar(SnackBar(content: Text(notShown)));
+              ScaffoldMessenger.of(browserContext)
+                  .showSnackBar(SnackBar(content: Text(notShown)));
               return false;
             }
             final graph = analysis.graph;
@@ -1764,7 +1798,8 @@ class ImportPage extends StatelessWidget {
                   child: OutlinedButton.icon(
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => JugglerCapturePage(controller: controller),
+                        builder: (_) =>
+                            JugglerCapturePage(controller: controller),
                       ),
                     ),
                     icon: const Icon(Icons.document_scanner_outlined),

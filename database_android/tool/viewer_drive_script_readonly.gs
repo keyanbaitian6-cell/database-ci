@@ -49,6 +49,11 @@ const EVENT_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d
 function doGet(e) {
   const key = (e && e.parameter && e.parameter.file) || '';
   if (key === '' && !(e && e.parameter && (e.parameter.parts || e.parameter.check))) logAccess(e && e.parameter && e.parameter.u);
+  // 履歴の書き手はPCだけ。公開共有URLからも読み取りだけを許可する。
+  if (key === 'event-history') {
+    const file = latestFile('database-event-history.json');
+    return respond(file ? file.getBlob().getDataAsString('UTF-8') : JSON.stringify({error: 'PCでイベント履歴を共有へ反映してください。'}));
+  }
   if (key === 'rainbow') {
     const file = latestFile(RAINBOW_FILE.name);
     return respond(file ? file.getBlob().getDataAsString('UTF-8') : JSON.stringify(rainbowDocument([])));

@@ -11,10 +11,11 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
 import pscube_import
 from event_calendar import PscubeEvents, open_event_calendar
+from event_history import open_event_history as show_event_history
 from variety_rainbow import build_variety_tab
 from output_worker import OutputWorker, refresh_outputs
 
-from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup,
+from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup, normalize_machine_name,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
                   summary_report, undo_last_save, pull_shared_events, pull_shared_rainbow)
 
@@ -424,6 +425,8 @@ def main():
 
     ttk.Label(tab_results, text='見たい台を選ぶ', style='H2.TLabel').pack(anchor='w')
     ttk.Label(tab_results, text='保存済みの店舗・日付・機種だけ選べます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 10))
+    ttk.Button(tab_results, text='長町南のイベント履歴', style='Link.TButton',
+               command=lambda: open_event_history_page()).pack(anchor='w', pady=(0, 8))
     startup_notes = []
     identity = ttk.Frame(tab_results)
     identity.pack(fill='x')
@@ -969,12 +972,16 @@ def main():
         refresh_days()
         refresh_machines()
         applied = (len(plan['new']) + len(plan['graph_only']) + len(plan['link_only']) + len(plan.get('jo_only', []))
-                   + len(plan['setting_only']) + plan.get('events_added', 0) + plan.get('rainbow_added', 0))
+                   + len(plan['setting_only']) + plan.get('events_added', 0) + plan.get('rainbow_added', 0) + plan.get('history_added', 0))
         summary = (f'新規{len(plan["new"])}件、グラフ追加{len(plan["graph_only"])}件、リンク補完{len(plan["link_only"])}件、'
                    f'ジャグラーオンラインの差枚{len(plan.get("jo_only", []))}件を取り込みました。'
                    f'🌈・設定情報{len(plan["setting_only"])}件、未取り込み日の🌈{plan.get("rainbow_added", 0)}件。'
                    f'既に同じ内容{len(plan["unchanged"])}件、要確認{len(plan["conflicts"])}件、'
                    f'イベント反映{plan.get("events_added", 0)}件、イベント名不一致{plan.get("event_conflicts", 0)}件（入力時刻の無い同士は既存名を維持）、'
+                   f'履歴反映{plan.get("history_added", 0)}件、不一致{plan.get("history_conflicts", 0)}件、'
+                   f'週構成の不一致{plan.get("history_week_conflicts", 0)}件（取り込まず、既存を維持）、'
+                   f'履歴の除外{plan.get("history_rejected", 0)}件。'
+                   f'{plan.get("history_error", "")}'
                    f'対象外{len(plan["skipped"])}件。')
         logbox.insert('end', f'バックアップを読み込みました：{summary}\n')
         logbox.see('end')
@@ -1196,6 +1203,33 @@ def main():
                 parent=root)
             return
         os.startfile(output)
+
+    def open_event_history_page():
+        for child in root.winfo_children():
+            if hasattr(child, 'flush_history'):
+                child.lift()
+                child.focus_set()
+                return
+        def open_machine(machine_name, target_day):
+            store_name.set(STORE_NAMES['nagamachiminami'])
+            refresh_days()
+            if target_day not in day_combo.cget('values'):
+                messagebox.showinfo('記録がありません', f'{target_day}の長町南の保存済みデータがありません。', parent=root)
+                return
+            day.set(target_day)
+            refresh_machines()
+            saved_machine = next((name for name in machine_combo.cget('values')
+                                  if normalize_machine_name(name) == normalize_machine_name(machine_name)), None)
+            if saved_machine is None:
+                messagebox.showinfo('記録がありません',
+                                    f'{target_day}\n{machine_name}\nの保存済みデータがありません。', parent=root)
+                return
+            machine.set(saved_machine)
+            remember_selection()
+            notebook.select(tab_results)
+            open_result()
+        show_event_history(root, open_machine, db_path=DATA_DIR / 'database.sqlite3',
+                           on_changed=lambda: schedule_outputs(backup=True))
 
     def open_history():
         if current_location() == PSCUBE_KEY:
@@ -1450,6 +1484,9 @@ def main():
     def close_app():
         if closing[0]:
             return
+        for child in root.winfo_children():
+            if hasattr(child, 'flush_history'):
+                child.flush_history()
         if rainbow_pending[0]:
             flush_rainbow()
             # Marks added while an earlier output was running need one final snapshot.

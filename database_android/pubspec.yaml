@@ -72,6 +72,7 @@ flutter:
   assets:
     - assets/database_seed.json
     - assets/character_birthdays.json
+    - assets/event_history.json
     - assets/pscube_capture.js
     - assets/pscube_auto_probe.js
 

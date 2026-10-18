@@ -11,6 +11,7 @@ import 'models.dart';
 import 'daily_net_page.dart';
 import 'date_events.dart';
 import 'event_calendar_page.dart';
+import 'event_history.dart';
 import 'event_name_dialog.dart';
 import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'pscube_suffix_page.dart';
@@ -670,6 +671,15 @@ class _ViewerHomeState extends State<ViewerHome> {
     ),
   );
 
+  void _openEventHistory() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => EventHistoryPage(
+        data: _data ?? const ViewerData(records: []),
+        remoteUrl: _remote,
+      ),
+    ),
+  );
+
   void _openMachine(String machine) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -960,6 +970,14 @@ class _ViewerHomeState extends State<ViewerHome> {
             label: const Text('イベントカレンダー'),
           ),
           const SizedBox(height: 8),
+          if (store == 'nagamachiminami') ...[
+            OutlinedButton.icon(
+              onPressed: _openEventHistory,
+              icon: const Icon(Icons.history),
+              label: const Text('長町南のイベント履歴'),
+            ),
+            const SizedBox(height: 8),
+          ],
         ],
         // メルヘンは保存したグラフと最大持玉からの推定差枚（P’s CUBEと同じ画面）。
         if (!isPscubeStore(store) && day != null) ...[

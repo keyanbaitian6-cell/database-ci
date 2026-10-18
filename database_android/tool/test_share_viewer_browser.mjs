@@ -97,7 +97,7 @@ try {
     assert.equal(new URL(page.url()).hash, '', 'リンクのIDと呼び名はアドレス欄から消す');
     const storage = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
     assert.deepEqual(storage, {'database-viewer-remote': 'mine', 'database-share-script-id': id, 'database-share-name': 'himawari'});
-    assert.deepEqual(urls.slice().sort(), ['?file=events', '?file=pscube&check=1', '?file=pscube-events', '?file=rainbow', '?u=himawari&check=1&access=1'], '呼び名は最初の読み込みにだけ付ける（🌈のファイルも読む、2026-10-11）');
+    assert.deepEqual(urls.slice().sort(), ['?file=event-history', '?file=events', '?file=pscube&check=1', '?file=pscube-events', '?file=rainbow', '?u=himawari&check=1&access=1'], '呼び名は最初の読み込みにだけ付ける（🌈のファイルも読む、2026-10-11）');
     // 長町南：1日は +1422-1111 = +311、イベント（HTMLとして解釈しない）。
     const cell = page.locator(`[data-open="${d1}"]`);
     assert.match(await cell.innerText(), /半列<b>/);

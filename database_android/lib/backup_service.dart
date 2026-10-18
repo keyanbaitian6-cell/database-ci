@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'candidate_log.dart';
 import 'date_events.dart';
+import 'event_history_model.dart';
 import 'record_deletions.dart';
 import 'models.dart';
 import 'import_spool.dart';
@@ -81,7 +82,9 @@ class BackupChunk {
     this.candidates = const [],
     this.events = const [],
     this.deletions = const [],
+    this.historyEdits,
   });
+  final Map<String, dynamic>? historyEdits;
   final List<dynamic> records;
   final List<CandidateSnapshot> candidates;
   final List<DateEvent> events;
@@ -168,7 +171,14 @@ class BackupService {
       );
     }
     readRecordDeletions(decoded['record_deletions']);
-    for (final key in ['candidate_snapshots', 'date_events', 'record_deletions']) {
+    if (decoded.containsKey('event_history_edits')) {
+      validateHistoryEnvelope(decoded['event_history_edits']);
+    }
+    for (final key in [
+      'candidate_snapshots',
+      'date_events',
+      'record_deletions',
+    ]) {
       if (decoded.containsKey(key) && decoded[key] is! List) {
         throw FormatException('$key の形式が不正です。');
       }
@@ -311,6 +321,9 @@ class BackupService {
         candidates: candidates.sublist(candidateOffset),
         events: events,
         deletions: readRecordDeletions(envelope['record_deletions']),
+        historyEdits: envelope['event_history_edits'] == null
+            ? null
+            : Map<String, dynamic>.from(envelope['event_history_edits'] as Map),
       );
       return;
     }
@@ -341,8 +354,16 @@ class BackupService {
     }
     final parsedEvents = _eventsOf(decoded);
     final deletions = readRecordDeletions(decoded['record_deletions']);
-    if (parsedEvents.isNotEmpty || deletions.isNotEmpty) {
-      yield BackupChunk(events: parsedEvents, deletions: deletions);
+    if (parsedEvents.isNotEmpty ||
+        deletions.isNotEmpty ||
+        decoded['event_history_edits'] != null) {
+      yield BackupChunk(
+        events: parsedEvents,
+        deletions: deletions,
+        historyEdits: decoded['event_history_edits'] == null
+            ? null
+            : Map<String, dynamic>.from(decoded['event_history_edits'] as Map),
+      );
     }
   }
 }
@@ -539,6 +560,10 @@ class BackupImportResult {
   int unchanged = 0;
   int skipped = 0;
   int candidates = 0;
+  int historyAdded = 0;
+  int historyConflicts = 0;
+  int historyRejected = 0;
+  int historyWeekConflicts = 0;
   int dateEventsAdded = 0;
   int dateEventConflicts = 0;
 

@@ -9,6 +9,7 @@ import 'package:sqflite/sqflite.dart';
 import 'backup_service.dart';
 import 'candidate_log.dart';
 import 'date_events.dart';
+import 'event_history_model.dart';
 import 'models.dart';
 import 'record_deletions.dart';
 
@@ -984,7 +985,18 @@ class DatabaseService {
                     (day == null || m.day == day),
               )
               .toList();
+      final historyRows = await db.query(
+        'app_state',
+        columns: ['value'],
+        where: 'state_key = ?',
+        whereArgs: ['event_history_edits'],
+      );
+      final history = historyRows.isEmpty
+          ? null
+          : jsonDecode(historyRows.single['value'] as String);
+      if (history != null) validateHistoryEnvelope(history);
       final header = jsonEncode({
+        'event_history_edits': ?history,
         'format': backupFormat,
         'version': backupVersion,
         'exported_at': DateTime.now().toIso8601String(),

@@ -649,6 +649,42 @@ class Store:
         found = self.db.execute('SELECT value FROM app_state WHERE state_key=?', (key,)).fetchone()
         return found[0] if found else None
 
+    def history_edits_raw(self):
+        """バックアップ用。基準に合わなくなった編集も保存した文書のまま返す。"""
+        from event_history_data import empty_edits
+        raw = self.state('event_history_edits')
+        if not raw:
+            return empty_edits()
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            # 通常の台データのバックアップを妨げず、読めない原文も控えに残す。
+            return dict(empty_edits(), unreadable_raw=raw)
+
+    def history_edits_status(self):
+        from event_history_data import clean_edits, load_base
+        raw = self.history_edits_raw()
+        clean, rejected = clean_edits(raw, load_base())
+        return clean, rejected + int('unreadable_raw' in raw)
+
+    def history_edits(self):
+        """表示・共有用。原文の保持は history_edits_raw を使う。"""
+        return self.history_edits_status()[0]
+
+    def _write_history_edits(self, edits):
+        self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)',
+                        ('event_history_edits', json.dumps(edits, ensure_ascii=False)))
+
+    def merge_history_edits(self, incoming):
+        from event_history_data import merge_edits, load_base
+        raw = self.history_edits_raw()
+        if 'unreadable_raw' in raw:
+            raise ValueError('履歴の原文が読めません。台データの保存・バックアップは続けられます。')
+        merged, changed, conflicts, rejected, skipped_weeks = merge_edits(raw, incoming, load_base())
+        with self.db:
+            self._write_history_edits(merged)
+        return changed, conflicts, rejected, skipped_weeks
+
     def date_events(self, location=None, day=None, include_removed=False):
         """Events with a name. ``include_removed`` also returns the removal marks
         (name None) that backups and merging need."""
@@ -1192,6 +1228,9 @@ def _validate_backup_envelope(payload, allow_viewer=False, elided_candidates=Fal
         raise ValueError('未取り込みの🌈に読めない項目があります。')
     if any(not _valid_record_deletion(m) for m in payload.get('record_deletions', [])):
         raise ValueError('削除記録に読めない項目があります。')
+    if 'event_history_edits' in payload:
+        from event_history_data import validate_envelope
+        validate_envelope(payload['event_history_edits'])
     if not elided_candidates:
         for snapshot in payload.get('candidate_snapshots', []):
             if not (isinstance(snapshot, dict) and snapshot.get('store') in STORE_NAMES
@@ -1320,7 +1359,8 @@ def export_backup(store, path, location=None, day=None, since=None):
                              exported_at=datetime.now().astimezone().isoformat(),
                              source='pc', date_events=events, **({'since': since} if since else {}),
                              record_deletions=store.record_deletions(location, day),
-                             rainbow_marks=store.pending_rainbow_marks(location, day)), ensure_ascii=False)[:-1]
+                             rainbow_marks=store.pending_rainbow_marks(location, day),
+                             event_history_edits=store.history_edits_raw()), ensure_ascii=False)[:-1]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     query, values = 'SELECT payload FROM days WHERE 1=1', []
@@ -1680,6 +1720,16 @@ def auto_backup(store, data_dir, *, strict=False, notices=None):
     except (OSError, ValueError):
         if strict:
             raise
+    # 履歴の基準・個別項目が読めなくても、通常のバックアップとAndroid出力は続ける。
+    try:
+        from event_history_data import FILE_NAME, load_base
+        clean, rejected = store.history_edits_status()
+        with atomic_writer(Path(folder) / FILE_NAME) as out:
+            json.dump(dict(clean, base=load_base(), rejected=rejected,
+                           updated_at=datetime.now().astimezone().isoformat()), out, ensure_ascii=False)
+    except (OSError, ValueError) as error:
+        if notices is not None:
+            notices.append(f'イベント履歴の共有用出力は更新できませんでした：{error}')
     # Android用の直近7日分は最後に、失敗してもほかの書き出しを止めない（strict でも知らせるだけ）。
     # 先に書くと、ここでの失敗で閲覧用（iPhone版・共有ページ）の更新まで止まる（2026-10-18 確認）。
     try:
@@ -2354,6 +2404,18 @@ def import_backup(store, path):
         plan['rainbow_added'] = store._merge_pending_rainbow_marks(payload['rainbow_marks']) if payload.get('rainbow_marks') else 0
         if plan['events_added']:
             store._write_date_events(store._date_events_payload(merged_events))
+        plan['history_added'] = plan['history_conflicts'] = plan['history_rejected'] = plan['history_week_conflicts'] = 0
+        if 'event_history_edits' in payload:
+            from event_history_data import merge_edits, load_base
+            try:
+                raw = store.history_edits_raw()
+                if 'unreadable_raw' in raw or 'unreadable_raw' in payload['event_history_edits']:
+                    raise ValueError('履歴の原文に読めない項目があります。原本とバックアップを保持しています。')
+                merged, plan['history_added'], plan['history_conflicts'], plan['history_rejected'], plan['history_week_conflicts'] = merge_edits(
+                    raw, payload['event_history_edits'], load_base())
+                store._write_history_edits(merged)
+            except ValueError as error:
+                plan['history_error'] = str(error)
         to_save = plan['new'] + plan['graph_only'] + plan['link_only'] + plan['setting_only'] + plan['jo_only']
         if to_save:
             store._save_rows(to_save, log_candidates=False)

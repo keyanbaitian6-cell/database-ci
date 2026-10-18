@@ -14,6 +14,7 @@ import 'csv_export_service.dart';
 import 'data_checks.dart';
 import 'database_service.dart';
 import 'date_events.dart';
+import 'event_history_model.dart';
 import 'graph_preview.dart';
 import 'import_day.dart' show meruhenMachineListUrl;
 import 'import_service.dart';
@@ -176,6 +177,30 @@ class AppController extends ChangeNotifier {
   /// 店舗・日付ごとのイベント名。台の採点や候補計算には使わない。
   /// 「イベントを消した」印（[DateEvent.removed]）も、バックアップと統合のために含む。
   Map<String, DateEvent> dateEvents = {};
+
+  Map<String, dynamic> get historyEdits =>
+      appState['event_history_edits'] == null
+      ? emptyHistoryEdits()
+      : Map<String, dynamic>.from(
+          jsonDecode(appState['event_history_edits']!) as Map,
+        );
+
+  Future<Map<String, dynamic>> saveHistoryEdits(
+    Map<String, dynamic> incoming,
+  ) => _write(() async {
+    final base = await loadHistoryBase();
+    final merged = mergeHistoryEdits(historyEdits, incoming, base);
+    final encoded = jsonEncode(merged.edits);
+    await database.applyChanges(
+      ChangeSet(state: {'event_history_edits': encoded}),
+    );
+    appState = {...appState, 'event_history_edits': encoded};
+    if (merged.conflicts > 0) {
+      onNotice?.call('履歴の不一致${merged.conflicts}件は、入力時刻の新しい方を採りました。');
+    }
+    notifyListeners();
+    return merged.edits;
+  });
 
   DateEvent? dateEventFor(String? store, String? day) {
     final event = store == null || day == null
@@ -1223,7 +1248,9 @@ class AppController extends ChangeNotifier {
     final incomingDeletions = <RecordDeletion>[];
     final storedState = await database.loadState();
     var checked = 0;
+    Map<String, dynamic>? incomingHistory;
     await for (final chunk in backupService.readBackupFile(file)) {
+      if (chunk.historyEdits != null) incomingHistory = chunk.historyEdits;
       incomingDeletions.addAll(chunk.deletions);
       if (chunk.records.isEmpty) continue;
       checker.plan(chunk.records);
@@ -1231,6 +1258,17 @@ class AppController extends ChangeNotifier {
       onProgress?.call('中身を確かめています… $checked台');
     }
 
+    final historyMerge = incomingHistory == null
+        ? null
+        : mergeHistoryEdits(
+            storedState['event_history_edits'] == null
+                ? emptyHistoryEdits()
+                : Map<String, dynamic>.from(
+                    jsonDecode(storedState['event_history_edits']!) as Map,
+                  ),
+            incomingHistory,
+            await loadHistoryBase(),
+          );
     final deletions = mergeRecordDeletions([
       ...readRecordDeletions(
         storedState['record_deletions'] == null
@@ -1319,6 +1357,8 @@ class AppController extends ChangeNotifier {
             state: {
               if (eventsAdded > 0)
                 'date_events': _encodeDateEvents(events.values),
+              if (historyMerge != null)
+                'event_history_edits': jsonEncode(historyMerge.edits),
             },
           ),
         );
@@ -1351,6 +1391,16 @@ class AppController extends ChangeNotifier {
     if (eventsAdded > 0) {
       dateEvents = events;
       appState = {...appState, 'date_events': _encodeDateEvents(events.values)};
+    }
+    if (historyMerge != null) {
+      appState = {
+        ...appState,
+        'event_history_edits': jsonEncode(historyMerge.edits),
+      };
+      result.historyAdded = historyMerge.changed;
+      result.historyConflicts = historyMerge.conflicts;
+      result.historyRejected = historyMerge.rejected;
+      result.historyWeekConflicts = historyMerge.weekConflicts;
     }
     result.candidates = freshCandidateCount;
     result.dateEventsAdded = eventsAdded;

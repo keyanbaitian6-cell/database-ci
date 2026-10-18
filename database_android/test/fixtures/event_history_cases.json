@@ -1,0 +1,154 @@
+{
+  "format": "database-event-history",
+  "version": 1,
+  "base": {
+    "version": 2,
+    "store": "nagamachiminami",
+    "symbols": [
+      "😀",
+      "😍",
+      "😌"
+    ],
+    "user_blank_days": [],
+    "weeks": [
+      {
+        "type": "4台構成",
+        "from": "2026-10-05",
+        "to": "2026-10-11",
+        "machines": [
+          {
+            "name": "機種A",
+            "record_name": null,
+            "count": 4,
+            "results": [
+              "😀",
+              "😀",
+              "😀",
+              "😀",
+              "😀",
+              "😀",
+              "😀"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "weeks": [
+    null,
+    {
+      "store": "nagamachiminami",
+      "type": "バラエティ",
+      "week": "2026-10-12",
+      "lineup_day": "2026-10-13",
+      "machines": [
+        {
+          "name": "機種A",
+          "record_name": null,
+          "count": 2
+        }
+      ],
+      "updated_at": "2026-10-19T00:00:00.123456Z",
+      "removed": false
+    }
+  ],
+  "cells": [
+    {
+      "store": "nagamachiminami",
+      "type": "4台構成",
+      "week": "2026-10-05",
+      "day": "2026-10-05",
+      "machine": "機種A",
+      "value": "😍",
+      "updated_at": "2026-10-19T09:00:00.123456+09:00"
+    },
+    {
+      "store": "nagamachiminami",
+      "type": "4台構成",
+      "week": "2026-10-05",
+      "day": "2026-10-05",
+      "machine": "機種A",
+      "value": "😌",
+      "updated_at": "2026-10-19T00:00:00.123457Z"
+    },
+    null,
+    {
+      "store": "nagamachiminami",
+      "type": "4台構成",
+      "week": "2026-10-05",
+      "day": "2026-10-05",
+      "machine": "機種A",
+      "value": "×",
+      "updated_at": "2026-10-19T09:00:00.123456+09:00"
+    }
+  ],
+  "links": [
+    {
+      "store": "nagamachiminami",
+      "machine": "機種A",
+      "record_name": "保存名A",
+      "updated_at": "2026-10-19T00:00:00.123456Z"
+    },
+    {
+      "store": "nagamachiminami",
+      "machine": "機種A",
+      "record_name": "週の保存名",
+      "updated_at": "2026-10-19T00:00:00.123456Z",
+      "type": "バラエティ",
+      "week": "2026-10-12"
+    },
+    {
+      "store": "nagamachiminami",
+      "machine": "存在しない",
+      "record_name": "保存名A",
+      "updated_at": "2026-10-19T00:00:00.123456Z"
+    },
+    {
+      "store": "nagamachiminami",
+      "machine": "機種A",
+      "record_name": "保存名A",
+      "updated_at": "2026-10-19T25:00:00Z"
+    }
+  ],
+  "expected": {
+    "rejected": 5,
+    "weeks": [
+      {
+        "type": "バラエティ",
+        "from": "2026-10-12",
+        "results": [
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        ],
+        "links": [
+          "週の保存名"
+        ]
+      },
+      {
+        "type": "4台構成",
+        "from": "2026-10-05",
+        "results": [
+          [
+            "😌",
+            "😀",
+            "😀",
+            "😀",
+            "😀",
+            "😀",
+            "😀"
+          ]
+        ],
+        "links": [
+          "保存名A"
+        ]
+      }
+    ]
+  }
+}

@@ -15,7 +15,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 SOURCE = HERE.parent / 'share_viewer'
-SOURCE_TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js'}
+SOURCE_TEXT_FILES = {'index.html', 'app.mjs', 'event_history.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js'}
 SOURCE_FILES = SOURCE_TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
 # Android入口は共通HTMLとmanifestから生成する。独立したUIやHTMLの二重管理はしない。
 GENERATED_FILES = {'android.html', 'manifest-android.json', 'character_birthdays.json'}
@@ -40,6 +40,7 @@ REFERENCES = (
     ('manifest.json', '"./icon-192.png"'),
     ('manifest.json', '"./icon-512.png"'),
     ('app.mjs', "'./character_birthdays.json'"),
+    ('app.mjs', "from './event_history.mjs'"),
     ('android.html', 'src="./app.mjs"'),
     ('android.html', 'href="./apple-touch-icon.png"'),
     ('android.html', 'href="./favicon.png"'),
@@ -94,6 +95,7 @@ README = """# database カレンダー（閲覧専用）
 
 - このリポジトリには、ページのファイルだけが入っています。記録のデータや接続先は入っていません。
 - カレンダーの🎂（キャラ誕生日）は `character_birthdays.json` を読みます。公開されている誕生日一覧から作った名前・作品・月日だけです。
+- 長町南の週イベント履歴は、台データと同じ接続先の `?file=event-history` から読みます。履歴JSONを公開ファイルには含めません。履歴は閲覧のみで、編集はPC・Androidから行います。
 - 記録は、受け取ったリンクの接続先（読むだけのGoogle Apps Script）から、開いた端末のブラウザが直接読みます。
 - 書き込むのは🌈（確定が出た台の印）だけです。押したときに、その接続先へ送ります。記録やイベントは書き換えません。
 - 端末には接続先と表示の選択（店舗・回っていない台の期間とゲーム数・バラエティ🌈の並べ方）と、付けた🌈を覚えます。差分読み込みでは接続先ごとに記録のキャッシュも保存します。ブラウザが削除した場合は次回取り直します。
