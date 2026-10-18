@@ -62,11 +62,25 @@ async function home(){
   if(await placeholder.count())await placeholder.evaluate(e=>e.click());
   await page.getByText('database 閲覧',{exact:true}).waitFor({timeout:60000});
 }
+// マスのキャラ誕生日（「🎂 名前…」の行、EVENT_CALENDAR.md「キャラ誕生日」）。イベント名と差枚の間に入る。
+// 10月はほぼ毎日あるので、マスの文字はこの行があっても合うように比べる（2026-10-18、CIで落ちた）。
+const BIRTHDAY='(?:\\s*🎂[^\\n]*)?';
 // 画面の読み上げ情報（Flutterは日付と名前を1つのまとまりにする）に [pattern] があるか。
 async function seen(pattern){
   const labels=await page.evaluate(()=>[...document.querySelectorAll('flt-semantics')]
     .map(e=>e.getAttribute('aria-label')||e.textContent||''));
   return labels.some(label=>pattern.test(label));
+}
+// その日のマスを押す。マスの文字は日付で始まり、イベント名・誕生日・差枚が続くことがあるので、
+// 文字の完全一致ではなく「先頭が日付」で探す（誕生日のある日は '21' だけのマスにならない）。
+async function clickDay(day){
+  const box=await page.evaluate(source=>{
+    const re=new RegExp(source);
+    const el=[...document.querySelectorAll('flt-semantics')].find(e=>re.test(e.getAttribute('aria-label')||e.textContent||''));
+    if(!el)return null;const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};
+  },`^${day}(?:\\s|$)`);
+  assert.ok(box,'no calendar day '+day);
+  await page.mouse.click(box.x,box.y);
 }
 async function waitSeen(pattern){
   for(let i=0;i<60;i++){if(await seen(pattern))return;await page.waitForTimeout(250);}
@@ -121,9 +135,11 @@ try {
   // この記録はグラフの高さが400でないため推定差枚が出ず、終点はどの台もプラス。差枚の分かる台が半分に
   // 満たない日は総差枚の代わりに勝率（2026-10-17）なので、記録のある10/1〜10/5は「勝率100%」。
   await calendarOctober();
-  for(const [day,label] of [['3','半列＊\\s*勝率100%'],['4','4台構成\\s*勝率100%'],['5','コンパス導入＊\\s*勝率100%'],['20','超探す楽しみ']])
-    assert.ok(await seen(new RegExp(`^${day}\\s*${label}$`)),`calendar shows ${label} on ${day}`);
-  assert.ok(await seen(/^2\s*勝率100%$/),'the removed day has no name');
+  // 誕生日はアセットから後で読む。読み終わるまで待ち、閲覧ページ（Web）でも出ることを確かめる。
+  await waitSeen(/^7\s[\s\S]*🎂 キリト/);
+  for(const [day,event,net] of [['3','半列＊','\\s*勝率100%'],['4','4台構成','\\s*勝率100%'],['5','コンパス導入＊','\\s*勝率100%'],['20','超探す楽しみ','']])
+    assert.ok(await seen(new RegExp(`^${day}\\s*${event}${BIRTHDAY}${net}$`)),`calendar shows ${event} on ${day}`);
+  assert.ok(await seen(new RegExp(`^2${BIRTHDAY}\\s*勝率100%$`)),'the removed day has no name');
   assert.equal(await seen(/他店舗のイベント/),false);
   for(const width of [320,393,768]){
     await page.setViewportSize({width,height:852});await page.waitForTimeout(250);
@@ -133,7 +149,7 @@ try {
   await page.setViewportSize({width:393,height:852});
 
   // 先の日に入れる：自由記入で保存すると、その時刻（前日まで）で端末に残る。
-  await page.getByText('25',{exact:true}).first().click();
+  await clickDay(25);
   await enterName('周年');
   await page.waitForTimeout(500);
   assert.ok(await seen(/^25\s*周年$/),'saved name is shown with no late mark');
@@ -143,8 +159,8 @@ try {
 
   // 期間でまとめて入力：10/21〜10/22 に同じ名前。
   await page.getByRole('switch',{name:/期間でまとめて入力/}).or(page.getByRole('checkbox',{name:/期間でまとめて入力/})).first().click();
-  await page.getByText('21',{exact:true}).first().click();
-  await page.getByText('22',{exact:true}).first().click();
+  await clickDay(21);
+  await clickDay(22);
   await enterName('半列');
   await page.waitForTimeout(500);
   const ranged=(await storedEvents()).filter(e=>e.day==='2026-10-21'||e.day==='2026-10-22');
@@ -152,7 +168,7 @@ try {
 
   // 消す：10/03 の「半列」をイベントなしにすると、日別の差枚からも消え、消した印が残る。
   // 記録のある日は、押すとその日のまとめ（TOP10・強かった機種5選、2026-10-09）が開き、そこから編集する。
-  await page.getByText(/^3\s*半列＊\s*勝率100%$/).first().click();
+  await clickDay(3);
   await page.getByRole('button',{name:'イベントを編集',exact:true}).waitFor({timeout:20000});
   await waitFor(async()=>(await page.getByText(/強かった機種5選/).count())>0,'day summary');
   await page.getByRole('button',{name:'イベントを編集',exact:true}).click();

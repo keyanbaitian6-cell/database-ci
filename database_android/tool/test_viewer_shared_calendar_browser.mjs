@@ -89,6 +89,9 @@ async function stored(name,store){
     db.close();return value;
   },{name,store});
 }
+// マスのキャラ誕生日（「🎂 名前…」の行、EVENT_CALENDAR.md「キャラ誕生日」）。イベント名と差枚の間に入る。
+// 10月はほぼ毎日あるので、マスの文字はこの行があっても合うように比べる（2026-10-18、CIで落ちた）。
+const BIRTHDAY='(?:\\s*🎂[^\\n]*)?';
 // ラベルがちょうど合うマス（日付と差枚がまとまった1つの部品）の真ん中を押す。
 async function clickLabel(pattern){
   const box=await page.evaluate(source=>{
@@ -98,6 +101,11 @@ async function clickLabel(pattern){
   },pattern.source);
   assert.ok(box,'no element for '+pattern);
   await page.mouse.click(box.x,box.y);
+}
+// その日のマスを押す。マスの文字は日付で始まり、イベント名・誕生日・差枚が続くことがあるので、
+// 文字の完全一致ではなく「先頭が日付」で探す（誕生日のある日は '21' だけのマスにならない）。
+async function clickDay(day){
+  await clickLabel(new RegExp(`^${day}(?:\\s|$)`));
 }
 async function enterName(name){
   const box=page.getByRole('textbox',{name:/イベント名（自由記入）/});
@@ -139,7 +147,9 @@ try {
   await waitFor(async()=>(await labels()).some(l=>/^24\s*ほかの端末で入力＊?$/.test(l)),'shared event in calendar');
 
   // 保存すると、端末の入力時刻つきイベントを合言葉なしでPOSTする。
-  await page.getByText('27',{exact:true}).first().click();
+  await clickDay(27);
+  // 記録の無い日は誕生日の画面を挟まずにすぐ入力。その日のキャラ誕生日は入力画面に「名前（作品）」で出る。
+  await waitFor(async()=>(await labels()).some(l=>/🎂 半間修二（東京リベンジャーズ）/.test(l)),'birthday in the event name dialog');
   await enterName('iPhoneで入力');
   await waitFor(async()=>posts.length>0,'meruhen POST');
   assert.equal(posts[0].file,'events');
@@ -163,19 +173,23 @@ try {
   // P’s CUBEのイベントカレンダー（2026-10-08）：各日に総差枚（4台で -50+50+150+250 = +400）、先の日にも入れて送る。
   await page.getByRole('button',{name:'イベントカレンダー',exact:true}).click();
   for(let i=(now.getFullYear()*12+now.getMonth())-(2026*12+9);i>0;i--)await page.getByRole('button',{name:'前の月',exact:true}).click();
-  await waitFor(async()=>(await labels()).some(l=>/^4\s*\+400$/.test(l)),'pscube daily net in calendar');
-  await waitFor(async()=>(await labels()).some(l=>/^5\s*末尾イベ＊\s*\+400$/.test(l)),'event and net in one day');
+  // 誕生日はアセットから後で読む。読み終わってから押す（読み終わる前のマスを押す前に文字が変わり、押せなかった）。
+  await waitFor(async()=>(await labels()).some(l=>/^7\s[\s\S]*🎂 キリト/.test(l)),'character birthdays in calendar');
+  const day4=new RegExp(`^4${BIRTHDAY}\\s*\\+400$`);
+  await waitFor(async()=>(await labels()).some(l=>day4.test(l)),'pscube daily net in calendar');
+  await waitFor(async()=>(await labels()).some(l=>new RegExp(`^5\\s*末尾イベ＊${BIRTHDAY}\\s*\\+400$`).test(l)),'event and net in one day');
   await waitFor(async()=>(await labels()).some(l=>/^26\s*共有のP’s CUBE/.test(l)),'shared pscube event in calendar');
   await waitFor(async()=>(await labels()).some(l=>/元グラフの差枚がわかった台の合計/.test(l)),'net note');
   // 記録のある日を押すと、その日のTOP10（差枚の多い順）と強かった機種5選（2026-10-09）。
-  await clickLabel(/^4\s*\+400$/);
+  await clickLabel(day4);
   await waitFor(async()=>(await labels()).some(l=>/TOP10（差枚の多い順）/.test(l)),'day summary');
+  await waitFor(async()=>(await labels()).some(l=>/🎂 シリカ（ソードアート・オンライン）/.test(l)),'birthday in the day summary');
   await waitFor(async()=>(await labels()).some(l=>/^1\s*4番\s*マイジャグラーV/.test(l)),'top rack');
   await waitFor(async()=>(await labels()).some(l=>/強かった機種5選/.test(l)),'strong machines');
   await page.getByRole('button',{name:/^(Back|戻る)$/}).click();
-  await waitFor(async()=>(await labels()).some(l=>/^4\s*\+400$/.test(l)),'back to calendar');
+  await waitFor(async()=>(await labels()).some(l=>day4.test(l)),'back to calendar');
   const before=posts.length;
-  await page.getByText('28',{exact:true}).first().click();
+  await clickDay(28);
   await enterName('先の日イベ');
   // 前の操作の送信が後から届くことがあるので、最後の1件ではなく、保存後に届いた送信から探す（2026-10-11、たまに失敗した）。
   const isFuture=p=>p.file==='pscube-events' && p.events.some(e=>e.day==='2026-10-28' && e.name==='先の日イベ' && e.rate==='20');
