@@ -8,6 +8,7 @@ import calendar
 from datetime import date, timedelta
 import json
 import math
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -29,6 +30,66 @@ DAY_TOP = 50
 # 🌈の列（押すと付け外し）。付いていない台は「＋」。
 RAINBOW_OFF = '＋'
 RAINBOW_BG = '#FFF4DC'
+BIRTHDAY_DATA = Path(__file__).resolve().parents[1] / 'database_android' / 'assets' / 'character_birthdays.json'
+# マスのキャラ誕生日は先頭の名前だけ、この文字数まで（イベント名の8文字と同じく、長い名前で7列とも広がらないように。
+# 列は同じ幅にそろうので、1日でも長いと月全体が横に伸びた。2026-10-18）。全員は日を押した先で「名前（作品）」。
+BIRTHDAY_CELL_CHARS = 5
+
+
+def load_character_birthdays(path=BIRTHDAY_DATA):
+    """キャラ誕生日（EVENT_CALENDAR.md「キャラ誕生日」）を月日ごとに読む。値は (名前, 作品) の名前順で、同じものは1つ。
+    ファイルが無い・壊れている・形が違うときは空にする（カレンダーもPCアプリの起動も止めない）。"""
+    try:
+        with Path(path).open(encoding='utf-8') as source:
+            data = json.load(source)
+    except (OSError, ValueError):
+        return {}
+    entries = data.get('entries') if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return {}
+    result = {}
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        month, day, name, work = (item.get(key) for key in ('month', 'day', 'name', 'work'))
+        if type(month) is not int or type(day) is not int or not isinstance(name, str) or not name.strip():
+            continue
+        try:
+            date(2024, month, day)   # 実在する月日だけ（うるう年なので2/29も入る）
+        except ValueError:
+            continue
+        result.setdefault((month, day), set()).add((name.strip(), work.strip() if isinstance(work, str) else ''))
+    return {key: sorted(people) for key, people in result.items()}
+
+
+CHARACTER_BIRTHDAYS = load_character_birthdays()
+
+
+def birthday_label(name, work, note=''):
+    """一覧に出す「名前（作品）」。"""
+    inside = '、'.join(part for part in (work, note) if part)
+    return f'{name}（{inside}）' if inside else name
+
+
+def character_birthdays(day, birthdays=None):
+    """その日のキャラ誕生日 [(名前, 「名前（作品）」)]。うるう年でない年は、2/29生まれを3/1に
+    「名前（作品、2/29生まれ）」で出す（2026-10-18 利用者指定）。"""
+    birthdays = CHARACTER_BIRTHDAYS if birthdays is None else birthdays
+    people = [(name, birthday_label(name, work)) for name, work in birthdays.get((day.month, day.day), [])]
+    if (day.month, day.day) == (3, 1) and not calendar.isleap(day.year):
+        people += [(name, birthday_label(name, work, '2/29生まれ')) for name, work in birthdays.get((2, 29), [])]
+    return people
+
+
+def character_birthday_cell_label(people):
+    """マスの「🎂先頭の名前＋残りの人数」。名前は [BIRTHDAY_CELL_CHARS] 文字まで。"""
+    if not people:
+        return ''
+    name = people[0][0]
+    if len(name) > BIRTHDAY_CELL_CHARS:
+        name = name[:BIRTHDAY_CELL_CHARS - 1] + '…'
+    more = f'＋{len(people) - 1}' if len(people) > 1 else ''
+    return f'🎂{name}{more}'
 
 
 def month_weeks(year, month):
@@ -177,7 +238,8 @@ def last_rainbow_text(row):
     return f'{int(last[5:7])}/{int(last[8:10])}（{days}日前）'
 
 
-def open_day_summary(parent, title, store_label, rows, net_label, event_text, on_edit, on_open=None, on_rainbow=None):
+def open_day_summary(parent, title, store_label, rows, net_label, event_text, on_edit, on_open=None, on_rainbow=None,
+                     birthdays=()):
     """その日・その店の差枚・回転数ランキング（TOP50、タブで切り替え）と強かった機種5選の窓。
     on_edit(この窓) はイベント名を入れ直し、新しい表示を返す（やめたら None）。
     on_open(row) があれば、ランキングの行をダブルクリック（Enter）で結果を開く。
@@ -194,6 +256,9 @@ def open_day_summary(parent, title, store_label, rows, net_label, event_text, on
     line.pack(fill='x', pady=(8, 4))
     event_var = tk.StringVar(value=f'イベント：{event_text or "なし"}')
     ttk.Label(line, textvariable=event_var).pack(side='left')
+    if birthdays:
+        ttk.Label(body, text='キャラ誕生日\n' + '\n'.join(f'🎂 {label}' for _name, label in birthdays),
+                  wraplength=700, foreground='#9A4D00').pack(anchor='w', pady=(3, 6))
 
     def edit():
         text = on_edit(window)
@@ -315,14 +380,18 @@ def open_day_summary(parent, title, store_label, rows, net_label, event_text, on
     return window
 
 
-def ask_event_name(parent, title, current, names):
-    """Free text with the past names as a drop-down. '' removes, None cancels."""
+def ask_event_name(parent, title, current, names, birthdays=()):
+    """Free text with the past names as a drop-down. '' removes, None cancels.
+    birthdays（「名前（作品）」）があれば、イベントとは別にその日のキャラ誕生日を出す。"""
     dialog = tk.Toplevel(parent)
     dialog.title(title)
     dialog.transient(parent)
     dialog.resizable(False, False)
     result = [None]
     ttk.Label(dialog, text=title, style='H2.TLabel').pack(anchor='w', padx=20, pady=(18, 2))
+    if birthdays:
+        ttk.Label(dialog, text='キャラ誕生日（イベントとは別）\n' + '\n'.join(f'🎂 {label}' for label in birthdays),
+                  wraplength=420, justify='left', foreground='#9A4D00').pack(anchor='w', padx=20, pady=(4, 6))
     ttk.Label(dialog, text='今までの名前から選ぶか、自由に入力します（60文字まで）。',
               style='Sub.TLabel').pack(anchor='w', padx=20)
     value = tk.StringVar(value=current or '')
@@ -519,6 +588,8 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
         '日を押すとイベント名を入れられます。先の日にも入れられ、入力した時刻を残します。'
         '閲覧ページで入れたイベントは共有カレンダーから、Androidとはバックアップで受け渡し、'
         '新しく入れた方が残ります。')).pack(anchor='w', pady=(0, 10))
+    ttk.Label(body, text='🎂はキャラ誕生日です。イベント名とは別に表示します。',
+              style='Sub.TLabel').pack(anchor='w', pady=(0, 8))
     bar = ttk.Frame(body)
     bar.pack(fill='x', pady=(0, 8))
     ttk.Combobox(bar, textvariable=store_name, values=labels, state='readonly', width=28).pack(side='left')
@@ -577,12 +648,13 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             return
         location = current_location()
         title = f'{day.month}/{day.day}（{WEEKDAYS[(day.weekday() + 1) % 7]}）'
+        birthdays = character_birthdays(day)
         try:
             rows = events.day_records(location, day.isoformat())
         except Exception as error:  # 台が読めなくてもイベントは入れられる
             status.set(f'その日の台を読めませんでした：{error}')
             rows = []
-        if not rows:
+        if not rows:   # 今までどおりすぐイベント名の入力（キャラ誕生日はその窓に出す）
             edit_one(window, location, day, title)
             render()
             return
@@ -600,13 +672,15 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             event_label(entries.get(day.isoformat())),
             lambda parent: edit_one(parent, location, day, title),
             None if on_open_record is None else lambda row: on_open_record(location, day.isoformat(), row),
-            rainbow if hasattr(events, 'set_rainbow') else None)
+            rainbow if hasattr(events, 'set_rainbow') else None,
+            birthdays=birthdays)
 
     def edit_one(parent, location, day, title):
         """1日のイベント名を入れる・変える・消す。カレンダーを描き直し、新しい表示（＊つき）を返す。"""
         entries, names = events.load(location)
         current = entries.get(day.isoformat())
-        name = ask_event_name(parent, f'{title}のイベント', current['name'] if current else None, names)
+        name = ask_event_name(parent, f'{title}のイベント', current['name'] if current else None, names,
+                              [label for _name, label in character_birthdays(day)])
         if name is None:
             return None
         save([day.isoformat()], name)
@@ -628,7 +702,8 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
             grid.rowconfigure(row, weight=1, uniform='week')
             for column, day in enumerate(week):
                 if day is not None:
-                    day_cell(day, entries.get(day.isoformat()), nets.get(day.isoformat())).grid(
+                    day_cell(day, entries.get(day.isoformat()), nets.get(day.isoformat()),
+                             character_birthdays(day)).grid(
                         row=row, column=column, sticky='nsew', padx=1, pady=1)
 
     def month_nets():
@@ -644,8 +719,8 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
                 net_cache[key] = {}
         return net_cache[key]
 
-    def day_cell(day, event, net):
-        """1日のマス：日付・イベント名（＊）・総差枚（プラスは青、マイナスは赤）。押すとイベントを入れる。"""
+    def day_cell(day, event, net, birthdays=()):
+        """1日のマス：イベント・キャラ誕生日・総差枚を別々に表示する。"""
         is_picked, is_today = day == picked[0], day == today
         background = PICKED_BG if is_picked else DAY_BG
         frame = tk.Frame(grid, bg=background, cursor='hand2', highlightthickness=2 if is_today else 1,
@@ -656,6 +731,9 @@ def open_event_calendar(root, db_path, location=None, on_changed=None, today=Non
                           font=bold if is_today or is_picked else ('Yu Gothic UI', 9))]
         if name:
             parts.append(tk.Label(frame, text=name, bg=background, anchor='w', font=('Yu Gothic UI', 9)))
+        if birthday_text := character_birthday_cell_label(birthdays):
+            parts.append(tk.Label(frame, text=birthday_text, bg=background, anchor='w',
+                                  font=('Yu Gothic UI', 8), fg='#9A4D00'))
         if text := net_text(net):
             parts.append(tk.Label(frame, text=text, bg=background, anchor='w', justify='left', font=bold,
                                   fg=net_color(net)))

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'calendar_day_page.dart';
+import 'character_birthdays.dart';
 import 'daily_net_page.dart' show DayNet;
 import 'date_events.dart';
 import 'event_name_dialog.dart';
@@ -74,6 +75,7 @@ class EventCalendarPage extends StatefulWidget {
     this.netNote,
     this.recordsFor,
     this.onOpenRecord,
+    this.loadBirthdays = loadCharacterBirthdays,
   });
 
   final Map<String, String> stores;
@@ -101,6 +103,9 @@ class EventCalendarPage extends StatefulWidget {
   /// まとめの台を押したとき（台の詳細）。
   final void Function(SlotRecord record)? onOpenRecord;
 
+  /// キャラ誕生日の読み込み（ふつうはアセット。試験で差し替える）。失敗してもカレンダーは使える。
+  final Future<Map<String, List<CharacterBirthday>>> Function() loadBirthdays;
+
   @override
   State<EventCalendarPage> createState() => _EventCalendarPageState();
 }
@@ -114,6 +119,25 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
   bool _picking = false;
   String? _picked;
   String? _error;
+  Map<String, List<CharacterBirthday>> _birthdays = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBirthdays();
+  }
+
+  Future<void> _loadBirthdays() async {
+    try {
+      final value = await widget.loadBirthdays();
+      if (mounted) setState(() => _birthdays = value);
+    } catch (_) {
+      // 誕生日一覧の読み込みに失敗しても、イベントカレンダーは引き続き使える。
+    }
+  }
+
+  List<({String name, String label})> _birthdaysFor(String day) =>
+      characterBirthdaysOn(_birthdays, DateTime.parse(day));
 
   void _move(int months) =>
       setState(() => _month = DateTime.utc(_month.year, _month.month + months));
@@ -161,6 +185,7 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
             store: store,
             day: day,
             records: records,
+            birthdays: [for (final b in _birthdaysFor(day)) b.label],
             eventFor: () => widget.eventFor(store, day),
             onEditEvent: () => _editOne(store, day),
             onOpenRecord: widget.onOpenRecord,
@@ -170,6 +195,7 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
       if (mounted) setState(() {});
       return;
     }
+    // 記録の無い日は今までどおりすぐイベント名の入力（キャラ誕生日はその画面に出す）。
     await _editOne(_store, day);
   }
 
@@ -181,6 +207,7 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
       title: '${dayWithWeekday(day)} のイベント',
       current: current == null || current.removed ? null : current.name,
       names: widget.namesFor(store),
+      birthdays: [for (final b in _birthdaysFor(day)) b.label],
     );
     if (name == null || !mounted) return;
     await _save([day], name.isEmpty ? null : name, store: store);
@@ -190,6 +217,9 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
     if (date == null) return const SizedBox.shrink();
     final day = _iso(date);
     final label = eventCellLabel(widget.eventFor(_store, day));
+    final birthdayLabel = characterBirthdayCellLabel([
+      for (final b in _birthdaysFor(day)) b.name,
+    ]);
     final net = widget.netFor?.call(_store, day);
     final netLabel = dayNetCellLabel(net);
     final today =
@@ -208,7 +238,7 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
           onTap: () => _tap(day),
           child: Container(
             constraints: BoxConstraints(
-              minHeight: widget.netFor == null ? 58 : 70,
+              minHeight: widget.netFor == null ? 66 : 78,
             ),
             padding: const EdgeInsets.fromLTRB(4, 3, 4, 3),
             decoration: BoxDecoration(
@@ -239,6 +269,19 @@ class _EventCalendarPageState extends State<EventCalendarPage> {
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 10, height: 1.2),
+                  ),
+                if (birthdayLabel.isNotEmpty)
+                  Text(
+                    birthdayLabel,
+                    key: ValueKey('event-birthday-$day'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 9,
+                      height: 1.15,
+                      color: Color(0xFF9A4D00),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 if (netLabel != null) ...[
                   const Spacer(),

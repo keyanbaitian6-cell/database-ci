@@ -83,6 +83,7 @@ class CalendarDayPage extends StatefulWidget {
     required this.store,
     required this.day,
     required this.records,
+    this.birthdays = const [],
     required this.eventFor,
     required this.onEditEvent,
     this.onOpenRecord,
@@ -90,6 +91,7 @@ class CalendarDayPage extends StatefulWidget {
 
   final String store, day;
   final List<SlotRecord> records;
+  final List<String> birthdays;
   final DateEvent? Function() eventFor;
   final Future<void> Function() onEditEvent;
 
@@ -151,6 +153,19 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                 ),
               ],
             ),
+            if (widget.birthdays.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'キャラ誕生日',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              for (final name in widget.birthdays)
+                Text(
+                  '🎂 $name',
+                  key: ValueKey('calendar-day-birthday-$name'),
+                  style: const TextStyle(color: Color(0xFF9A4D00)),
+                ),
+            ],
             if (nets.isNotEmpty)
               Text.rich(
                 TextSpan(

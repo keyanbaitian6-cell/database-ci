@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:database_android/calendar_day_page.dart';
+import 'package:database_android/character_birthdays.dart';
 import 'package:database_android/daily_net_page.dart';
 import 'package:database_android/date_events.dart';
 import 'package:database_android/event_calendar_page.dart';
@@ -807,6 +808,186 @@ void main() {
       expect(find.text('華の日'), findsOneWidget, reason: 'カレンダーにも出る');
       // 記録の無い先の日は、今までどおりイベント名の入力。
       await tester.ensureVisible(find.byKey(const ValueKey('event-day-2026-10-30')));
+      await tester.tap(find.byKey(const ValueKey('event-day-2026-10-30')));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  // PC `tests/test_character_birthdays.py` と同じ規則（EVENT_CALENDAR.md「キャラ誕生日」、2026-10-18）。
+  group('キャラ誕生日', () {
+    Map<String, Object?> entry(
+      int month,
+      Object day,
+      Object name, [
+      Object? work = '作品',
+    ]) => {'month': month, 'day': day, 'name': name, 'work': work};
+    final sample = parseCharacterBirthdays(
+      jsonEncode({
+        'entries': [
+          entry(2, 29, 'カイン・ドレッセル', '革命機ヴァルヴレイヴ'),
+          entry(3, 1, 'ムーンライトルナシー', 'ウマ娘'),
+          entry(10, 30, '天猛星ワイバーンのラダマンティス', '聖闘士星矢'),
+        ],
+      }),
+    );
+
+    test('壊れた形は読まず、おかしな項目・無い日は飛ばし、同じ人は1つにする', () {
+      for (final bad in ['[1]', '{"entries": {}}', 'null']) {
+        expect(() => parseCharacterBirthdays(bad), throwsFormatException);
+      }
+      final loaded = parseCharacterBirthdays(
+        jsonEncode({
+          'entries': [
+            'x',
+            null,
+            entry(2, 30, '無い日'),
+            entry(4, 31, '無い日'),
+            entry(13, 1, '無い月'),
+            entry(0, 1, '無い月'),
+            entry(1, 1.5, '小数'),
+            entry(1, 1, '  '),
+            entry(1, 1, 5),
+            entry(2, 29, 'うるう日'),
+            entry(1, 1, ' 元日 ', 3),
+            entry(5, 5, '同じ人'),
+            entry(5, 5, '同じ人'),
+          ],
+        }),
+      );
+      expect(loaded.keys, unorderedEquals(['02-29', '01-01', '05-05']));
+      expect(loaded['05-05'], [const CharacterBirthday('同じ人', '作品')]);
+      expect(loaded['01-01'], [const CharacterBirthday('元日', '')]);
+    });
+
+    test('一覧は「名前（作品）」、2/29生まれはうるう年以外3/1に出す', () {
+      List<String> labels(DateTime d) => [
+        for (final b in characterBirthdaysOn(sample, d)) b.label,
+      ];
+      expect(labels(DateTime(2026, 10, 30)), ['天猛星ワイバーンのラダマンティス（聖闘士星矢）']);
+      expect(characterBirthdayLabel('名無し', ''), '名無し');
+      expect(labels(DateTime(2027, 3, 1)), [
+        'ムーンライトルナシー（ウマ娘）',
+        'カイン・ドレッセル（革命機ヴァルヴレイヴ、2/29生まれ）',
+      ]);
+      expect(
+        labels(DateTime(2100, 3, 1)).last,
+        'カイン・ドレッセル（革命機ヴァルヴレイヴ、2/29生まれ）',
+        reason: '100で割れて400で割れない年もうるう年でない',
+      );
+      expect(labels(DateTime(2028, 3, 1)), ['ムーンライトルナシー（ウマ娘）']);
+      expect(labels(DateTime(2028, 2, 29)), ['カイン・ドレッセル（革命機ヴァルヴレイヴ）']);
+      expect(labels(DateTime(2027, 2, 28)), isEmpty);
+    });
+
+    test('収録データ：全件を読み、利用者の決めた日付・そろえた作品名のまま', () {
+      final source = File('assets/character_birthdays.json').readAsStringSync();
+      final all = parseCharacterBirthdays(source);
+      final raw = (jsonDecode(source) as Map)['entries'] as List;
+      expect(all.values.fold<int>(0, (n, v) => n + v.length), raw.length);
+      expect(raw.length, greaterThanOrEqualTo(573));
+      List<String> daysOf(String name) => [
+        for (final MapEntry(:key, :value) in all.entries)
+          if (value.any((b) => b.name == name)) key,
+      ];
+      expect(daysOf('柴大寿'), ['07-24'], reason: '一覧には12/15もあるが、利用者の指定で7/24だけ');
+      expect(daysOf('リカード・ウェルキン'), ['01-12']);
+      final works = {
+        for (final v in all.values)
+          for (final b in v) b.work,
+      };
+      for (final variant in [
+        'Re：ゼロから始める異世界生活',
+        'ソードアートオンライン',
+        '東京卍リベンジャーズ',
+        'エヴァンゲリオンシリーズ',
+        '快盗天使ツインエンジェル',
+        '大都技研オリキャラ',
+        '',
+      ]) {
+        expect(works, isNot(contains(variant)));
+      }
+    });
+
+    Future<List<(String, List<String>, String?)>> pumpCalendar(
+      WidgetTester tester,
+      DateTime today, {
+      Future<Map<String, List<CharacterBirthday>>> Function()? load,
+    }) async {
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final saved = <(String, List<String>, String?)>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EventCalendarPage(
+            stores: storeNames,
+            initialStore: 'saiwaichou',
+            today: today,
+            eventFor: (_, _) => null,
+            namesFor: (_) => dateEventOptions,
+            onSave: (store, days, name) async => saved.add((store, days, name)),
+            loadBirthdays: load ?? () async => sample,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return saved;
+    }
+
+    testWidgets('記録の無い日は1回押せば入力でき、誕生日はその画面に出る', (tester) async {
+      final saved = await pumpCalendar(tester, DateTime(2026, 10, 7));
+      expect(
+        find.byKey(const ValueKey('event-birthday-2026-10-30')),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('event-day-2026-10-30')),
+      );
+      await tester.tap(find.byKey(const ValueKey('event-day-2026-10-30')));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsOneWidget, reason: '誕生日の一覧を挟まずにすぐ入力');
+      expect(find.text('🎂 天猛星ワイバーンのラダマンティス（聖闘士星矢）'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '華の日');
+      await tester.pump();
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(saved, hasLength(1));
+      expect(saved.single.$2, ['2026-10-30']);
+      expect(
+        (saved.single.$1, saved.single.$3),
+        ('saiwaichou', '華の日'),
+        reason: '保存するのはイベント名だけ（誕生日は入らない）',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('うるう年でない年の3/1に2/29生まれが出る', (tester) async {
+      await pumpCalendar(tester, DateTime(2027, 3, 10));
+      expect(
+        find.byKey(const ValueKey('event-birthday-2027-03-01')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('event-day-2027-03-01')));
+      await tester.pumpAndSettle();
+      expect(find.text('🎂 カイン・ドレッセル（革命機ヴァルヴレイヴ、2/29生まれ）'), findsOneWidget);
+      expect(find.text('🎂 ムーンライトルナシー（ウマ娘）'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('読み込みに失敗してもカレンダーと入力は使える', (tester) async {
+      await pumpCalendar(
+        tester,
+        DateTime(2026, 10, 7),
+        load: () async => throw const FormatException('壊れた'),
+      );
+      expect(
+        find.byKey(const ValueKey('event-birthday-2026-10-30')),
+        findsNothing,
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('event-day-2026-10-30')),
+      );
       await tester.tap(find.byKey(const ValueKey('event-day-2026-10-30')));
       await tester.pumpAndSettle();
       expect(find.byType(TextField), findsOneWidget);
