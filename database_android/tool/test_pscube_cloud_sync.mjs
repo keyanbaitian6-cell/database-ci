@@ -595,3 +595,46 @@ test('先頭にBOMが付いたバックアップも読める（配布用スク�
   assert.equal(d.sync().viewerRecords, 2);
   assert.ok(!source.includes(String.fromCharCode(0xfeff)), '配布用スクリプトに見えない文字（BOM）をそのまま入れない');
 });
+
+// アナスロ履歴（PCで取り込んだ過去分）の台。リンクは ana-slo.com、MY・グラフ・差枚は無い。
+const anasloMachine = {store: machine.store, rate: machine.rate, machine: 'アナスロ試験機種', expected_count: null, url: null,
+  machine_type: null, source_site: 'anaslo'};
+const anasloRecord = (rack, day) => ({store: machine.store, rate: machine.rate, machine: anasloMachine.machine, rack, day,
+  bb: 3, rb: 1, at_art: 0, games: 1000, my: null, detail_url: null, observed_at: null, net_medals: null, graph: null,
+  source_site: 'anaslo', source_url: `https://ana-slo.com/${day}-p-stationii%e3%82%b9%e3%83%ad-data/`, source_sha256: 'a'.repeat(64),
+  source_machine: 'アナスロ試験機種', source_probabilities: null, source_graph: null});
+
+test('アナスロ履歴を含むPCの閲覧用ファイルも取り込み、その日以降の記録が共有に届く（再発防止 2026-10-18）', () => {
+  // Apps ScriptのURLの代わりがP’s CUBEのリンクしか読めず、アナスロの出典で「不正」として
+  // PCの閲覧用ファイル全体を捨てていた。共有カレンダーにP-STATIONの10/17が出なかった。
+  const d = drive({history: true}); d.setup();
+  const baseFile = d.files.find(f => f.name === 'pscube-viewer-drive.json');
+  d.replace(baseFile, {...backup([record(1, '2026-10-17'), anasloRecord(7, '2026-09-25')]), machines: [machine, anasloMachine], kind: 'viewer'});
+  d.sync();
+  assert.deepEqual(d.failures(), []);
+  const records = plain(d.context.vpGet(baseFile, 'pscube', {})).records;
+  assert.ok(records.some(r => r.day === '2026-10-17' && r.rack === 1));
+  const old = records.find(r => r.day === '2026-09-25' && r.rack === 7);
+  assert.equal(old.source_site, 'anaslo'); assert.equal(old.net_medals, null);
+  // P’s CUBEのページ以外のリンクは、今までどおり台のリンクとして通さない。
+  d.replace(baseFile, {...backup([record(2, '2026-10-17', {detail_url: 'https://ana-slo.com/2026-10-17-x/'})]), kind: 'viewer'});
+  assert.throws(() => d.sync(), /対象のP’s CUBEページではありません/);
+});
+
+test('取り込みの規則を直した版を貼ったら、前に取り込めなかった版も一度だけ読み直す（2026-10-18）', () => {
+  const d = drive({history: true}); d.setup();
+  const version = f => `${f.id}:${f.updated}-${Buffer.byteLength(f.text)}`;
+  const earlier = d.add('pscube-backup-android-20261014-000000.json', backup([record(3, '2026-10-14')]));
+  // 古い規則のときに「取り込めない」と記録された版（ファイルは変わっていない）。
+  d.properties.set('pscubeCloudFailed', JSON.stringify({['backup:' + earlier.id]: version(earlier)}));
+  d.properties.set('pscubeCloudRules', '2026-10-13');
+  d.sync();
+  const baseFile = d.files.find(f => f.name === 'pscube-viewer-drive.json');
+  assert.ok(plain(d.context.vpGet(baseFile, 'pscube', {})).records.some(r => r.rack === 3), '規則が変わったので読み直す');
+  // 規則が同じなら、今までどおり同じ版を読み直さない（毎回の通知を防ぐ）。
+  const later = d.add('pscube-backup-android-20261014-010000.json', backup([record(4, '2026-10-14')]));
+  d.properties.set('pscubeCloudFailed', JSON.stringify({['backup:' + later.id]: version(later)}));
+  d.sync();
+  assert.equal(later.reads, 0);
+  assert.ok(!plain(d.context.vpGet(baseFile, 'pscube', {})).records.some(r => r.rack === 4));
+});

@@ -25,6 +25,9 @@ const PSCUBE_CLOUD_STATUS = 'pscubeCloudStatus';
 // 毎回「新しい失敗」として知らせないため（2026-10-13 再発防止）。1件約60バイトで、プロパティ1つ（約9KB）に120件まで。
 const PSCUBE_CLOUD_FAILED = 'pscubeCloudFailed';
 const PSCUBE_CLOUD_FAILED_MAX = 120;
+// 取り込みの規則の版。規則を直して貼り替えた最初の実行で、前に取り込めなかった入力をもう一度読む
+// （2026-10-18、アナスロの出典リンクを拒んでPCの閲覧用ファイルが処理されないままだった。版が同じだと再試行されない）。
+const PSCUBE_CLOUD_RULES = '2026-10-18-anaslo-url';
 // 書き出しの一時的な失敗（429・5xx・通信の例外）は、同じ実行の中でこの回数まで少し待って試す（1秒・2秒）。
 const PSCUBE_CLOUD_WRITE_TRIES = 3;
 
@@ -32,12 +35,15 @@ const PSCUBE_CLOUD_WRITE_TRIES = 3;
 class PscubeCloudTransient extends Error {}
 
 // Google Apps ScriptにはブラウザのURLクラスがないため、共通パーサーが使う部分を実装する。
+// P’s CUBEのページと、アナスロ履歴の出典（`validateAnasloRecord` が見る ana-slo.com）だけを読む。
+// 出典を拒むと、アナスロの記録を含むPCの閲覧用ファイル全体が取り込めなくなる（2026-10-18、10/17以降が共有に出なかった）。
 class PscubeCloudUrl {
   constructor(raw) {
     if (typeof raw !== 'string') throw new Error('P’s CUBEのリンクが不正です。');
-    const match = raw.match(/^https:\/\/www\.pscube\.jp(\/dedamajyoho-P-townDMMpachi\/c\d+\/cgi-bin\/nc-v(?:03-001|05-011|06-001)\.php)(?:\?([^#]*))?(#.*)?$/);
+    const anaslo = raw.match(/^https:\/\/ana-slo\.com(\/[^?#\s]*)(?:\?([^#]*))?(#.*)?$/);
+    const match = anaslo || raw.match(/^https:\/\/www\.pscube\.jp(\/dedamajyoho-P-townDMMpachi\/c\d+\/cgi-bin\/nc-v(?:03-001|05-011|06-001)\.php)(?:\?([^#]*))?(#.*)?$/);
     if (!match) throw new Error('P’s CUBEのリンクが不正です。');
-    this.origin = 'https://www.pscube.jp';
+    this.origin = anaslo ? 'https://ana-slo.com' : 'https://www.pscube.jp';
     this.username = this.password = '';
     this.pathname = match[1]; this.hash = match[3] || ''; this.href = raw;
     const params = new Map();
@@ -130,6 +136,11 @@ function pscubeCloudRun() {
   const props = PropertiesService.getScriptProperties();
   const startedAt = Date.now();
   const previous = pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_STATUS)) || {};
+  if (props.getProperty('pscubeCloudRules') !== PSCUBE_CLOUD_RULES) {
+    // 規則が変わったら、取り込めなかった版の記録と「変更なし」の目印を捨て、全入力をもう一度確かめる。
+    for (const key of [PSCUBE_CLOUD_FAILED, PSCUBE_CLOUD_ERRORS, 'pscubeCloudInputs']) props.deleteProperty(key);
+    props.setProperty('pscubeCloudRules', PSCUBE_CLOUD_RULES);
+  }
   try {
     const id = props.getProperty('pscubeCloudFolder');
     if (!id) throw new PscubeCloudStop('config', '最初に setupPscubeCloudSync を実行してください。');

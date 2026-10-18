@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## 【共有カレンダーにP-STATIONの10/17が出ない：Google同期がアナスロの出典リンクを読めずPCの出力を飛ばしていた】2026-10-18 Claude
+
+- 利用者「共有カレンダーでP-stationの10/17の差枚出てこない。PCだとでてる」。
+- 確認したこと（同期フォルダは読むだけ）：PCの閲覧用ファイル `pscube-viewer-drive.json`（10:37）には10/17が206台ある。Driveの日別一覧 `database-viewer-parts-pscube.json`（10:57）は台のある日が10/16まで。PCの入力の処理済みの版は10/15 07:16、途中の印は10/16 00:27の版のままで、それより新しいPCの出力が一度も処理されていない。10/14に貼った導入用コピー（`outputs/viewer-history-20261014/google/pscube_cloud_sync.gs`、たぶん今Googleに入っているもの。未確認）にはアナスロ対応自体が無い。
+- 原因：Apps Scriptにはブラウザの `URL` が無く、代わりの `PscubeCloudUrl`（`tool/pscube_cloud_sync_runtime.js`）がP’s CUBEのページしか読めない。10/16からPCの出力にアナスロの過去分（9月の72台など、出典 `https://ana-slo.com/…`）が入り、`validateAnasloRecord` の `new URL` が必ず失敗して、PCの閲覧用ファイルと全期間バックアップ（`pscube-backup-auto.json`）がまるごと「取り込めないファイル」になっていた。実際の同期フォルダのファイルを模擬Driveに載せてリポジトリの版を動かし、「アナスロ履歴の出典が不正です。」で2本とも飛ばし10/16で止まる（今のDriveと同じ状態）ことを再現した。
+- 直し：`PscubeCloudUrl` が `https://ana-slo.com/…` も読む（台・機種のリンクは今までどおり `siteUrl` がP’s CUBEだけ通す）。`PSCUBE_CLOUD_RULES`（取り込みの規則の版）を足し、プロパティ `pscubeCloudRules` と違う最初の実行で失敗の記録と「変更なし」の目印を消して全入力を読み直す（失敗した版は同じ版のままだと直しても読み直されないため）。`node build_pscube_cloud_sync.mjs` で `.gs` を作り直した。直した版の模擬では1回目で10/17まで入り、4回目で処理待ち0。
+- 試験：`test_pscube_cloud_sync.mjs` に2件（アナスロの記録を含むPCの出力を取り込み10/17が届く・P’s CUBE以外の台のリンクは今までどおり拒む／規則が変わったら前の失敗を読み直し、同じ規則なら読み直さない）。直す前は34件成功・2件失敗、直した後は36件すべて成功。ビルド・公開はしないので全体ゲートは流していない。共有ページ・閲覧ページ・読み取りGSは変えていない。
+- **Google側は利用者の貼り替えが必要**：`outputs/pscube-sync-anaslo-20261018/gs/`（`pscube_cloud_sync.gs`＝配布元の `PSCUBE_HISTORY_VIEWER` だけ true、SHA-256 `e7a4b4ef…0d1f`、`スクリプトをコピー.html`、`手順.md`）。P-STATIONの同期プロジェクトに1本だけ貼り、`syncPscubeCloud` を実行。PCの書き出しは要らない。
+- 貼ったあとの変化：全期間バックアップも取り込まれるので、PCに入れたアナスロの過去分（2026年1月・8月・9月）も共有・閲覧ページのP-STATIONに出る（差枚・グラフは無い）。模擬では閲覧用が約3.6MBから約18.5MBに増える（端末は一度読んだ日を覚えるので、重いのは初回だけ）。
+- 未確認：Googleの実環境での貼り替え・実行と、共有カレンダーに10/17の差枚が出るか。
+
 ## 【共有ページ・閲覧ページ：P-STATIONの「履歴を端末に保存できませんでした」が毎回出る不具合を修正】2026-10-18 Claude
 
 - 利用者「P-statioinの履歴を端末に保存できませんでしたとでました」（前の版で出した失敗の理由）。
