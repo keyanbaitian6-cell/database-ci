@@ -237,6 +237,31 @@ try {
     }
     await context.close();
   }
+  {
+    // 更新の失敗：どの店が何で失敗したかを知らせに出す（2026-10-18）。
+    const context = await browser.newContext({viewport: {width: 393, height: 860}});
+    let failing = {};
+    await context.route('https://script.google.com/**', route => {
+      const file = new URL(route.request().url()).searchParams.get('file') ?? '';
+      if (failing[file] === 500) return route.fulfill({status: 500, body: ''});
+      route.fulfill({status: 200, contentType: 'application/json', headers: {'access-control-allow-origin': '*'},
+        body: JSON.stringify(failing[file] ?? responses[file] ?? {error: 'no'})});
+    });
+    const page = await context.newPage();
+    await page.goto(`${pageUrl}#s=${id}`);
+    await page.waitForSelector('.grid');
+    failing = {pscube: {error: '閲覧用の日別ファイルが見つかりません。同期を再実行してください。'}};
+    await page.locator('#reload').click();
+    await page.waitForFunction(() => !document.querySelector('#reload').disabled);
+    assert.match(await page.locator('.legend[role="status"]').innerText(),
+      /一部の更新に失敗しました（P-STATION：閲覧用の日別ファイルが見つかりません。同期を再実行してください。）/);
+    failing = {'': 500, pscube: {error: '閲覧用が更新されました。もう一度読み込んでください。'}};
+    await page.locator('#reload').click();
+    await page.waitForFunction(() => !document.querySelector('#reload').disabled, null, {timeout: 30000});
+    assert.match(await page.locator('.legend[role="status"]').innerText(),
+      /更新できませんでした（メルヘン：読み込めませんでした（500）、P-STATION：閲覧用が更新されました。もう一度読み込んでください。）/);
+    await context.close();
+  }
   // リンク無し：貼り付けの画面。形の違うものは断り、正しいリンクで開く。
   const context = await browser.newContext({viewport: {width: 393, height: 860}});
   await context.route('https://script.google.com/**', route => route.fulfill({status: 200, contentType: 'application/json',

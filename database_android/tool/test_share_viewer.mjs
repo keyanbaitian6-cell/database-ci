@@ -13,7 +13,7 @@ import {
   byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
   lineupDay, suffixReport, isZorome, hasSuffixSummary,
   rackWon, showWinRate, winRateText, daySummaries, calendarDay,
-  monthDayList, periodWinRate, winRateYears, yearWinRates,
+  monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureReason, loadFailureText,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -416,4 +416,22 @@ test('月間・年間の勝率：日ごとの台数を足して割る（日の�
   assert.deepEqual(winRateYears(byDay, summaries, 'saiwaichou'), [2026, 2025]);
   assert.deepEqual(winRateYears(byDay, summaries, 'nagamachiminami'), [2026]);
   assert.deepEqual(yearWinRates(byDay, summaries, 'saiwaichou', 2024).total, {judged: 0, won: 0, days: 0});
+});
+
+test('読み込みの失敗の理由：どの店が何で失敗したかを短く出す', () => {
+  // 2026-10-18 利用者「最新を読み込んでも毎回一部の更新に失敗しましたと出る」。理由が出ず、原因を決められなかった。
+  const ok = {status: 'fulfilled', value: {records: []}};
+  const timeout = {status: 'rejected', reason: Object.assign(new Error('This operation was aborted'), {name: 'AbortError'})};
+  const offline = {status: 'rejected', reason: new TypeError('Failed to fetch')};
+  const http = {status: 'rejected', reason: new Error('読み込めませんでした（500）')};
+  const script = {status: 'fulfilled', value: {error: '閲覧用の日別ファイルが見つかりません。同期を再実行してください。'}};
+  assert.equal(loadFailureReason(ok), '');
+  assert.equal(loadFailureReason(timeout), '時間切れ（30秒）');
+  assert.equal(loadFailureReason(offline), '通信できませんでした');
+  assert.equal(loadFailureReason(http), '読み込めませんでした（500）');
+  assert.equal(loadFailureReason({status: 'fulfilled', value: null}), '中身が空でした');
+  assert.equal(loadFailureText([['メルヘン', timeout], ['P-STATION', script]]),
+    'メルヘン：時間切れ（30秒）、P-STATION：閲覧用の日別ファイルが見つかりません。同期を再実行してください。');
+  assert.equal(loadFailureText([['メルヘン', ok], ['P-STATION', http]]), 'P-STATION：読み込めませんでした（500）');
+  assert.equal(loadFailureReason({status: 'rejected', reason: new Error('x'.repeat(200))}).length, 80);
 });
