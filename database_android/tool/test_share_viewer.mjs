@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {meruhenNetDetail} from '../../share_viewer/net.mjs';
+import {readFileSync} from 'node:fs';
 import {
   compactSigned, dayNet, daySummary, displayMachineName, enteredInAdvance, eventLabel, indexRecords,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel, viewerNameFrom,
@@ -14,6 +15,7 @@ import {
   lineupDay, suffixReport, isZorome, hasSuffixSummary,
   rackWon, showWinRate, winRateText, daySummaries, calendarDay,
   monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureReason, loadFailureText,
+  characterBirthdayCellLabel, characterBirthdayLabel, characterBirthdaysOn, parseCharacterBirthdays,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -434,4 +436,50 @@ test('読み込みの失敗の理由：どの店が何で失敗したかを短�
     'メルヘン：時間切れ（30秒）、P-STATION：閲覧用の日別ファイルが見つかりません。同期を再実行してください。');
   assert.equal(loadFailureText([['メルヘン', ok], ['P-STATION', http]]), 'P-STATION：読み込めませんでした（500）');
   assert.equal(loadFailureReason({status: 'rejected', reason: new Error('x'.repeat(200))}).length, 80);
+});
+
+// キャラ誕生日（EVENT_CALENDAR.md「キャラ誕生日」、2026-10-18）。PC tests/test_character_birthdays.py・
+// Flutter test/event_calendar_test.dart「キャラ誕生日」と同じ例で同じ答え。
+const entry = (month, day, name, work = '作品') => ({month, day, name, work});
+const sampleBirthdays = parseCharacterBirthdays({entries: [
+  entry(2, 29, 'カイン・ドレッセル', '革命機ヴァルヴレイヴ'),
+  entry(3, 1, 'ムーンライトルナシー', 'ウマ娘'),
+  entry(10, 30, '天猛星ワイバーンのラダマンティス', '聖闘士星矢'),
+]});
+const labelsOn = (day) => characterBirthdaysOn(sampleBirthdays, day).map(b => b.label);
+
+test('キャラ誕生日：壊れた形は空、おかしな項目・無い日は飛ばし、同じ人は1つ', () => {
+  for (const bad of [null, [1], {entries: {}}, 'x']) assert.equal(parseCharacterBirthdays(bad).size, 0);
+  const loaded = parseCharacterBirthdays({entries: [
+    'x', null, [1], entry(2, 30, '無い日'), entry(4, 31, '無い日'), entry(13, 1, '無い月'), entry(0, 1, '無い月'),
+    entry(1, 1.5, '小数'), {month: '1', day: 1, name: '文字の月'}, entry(1, 1, '  '), entry(1, 1, 5),
+    entry(2, 29, 'うるう日'), entry(1, 1, ' 元日 ', 3), entry(5, 5, '同じ人'), entry(5, 5, '同じ人'),
+  ]});
+  assert.deepEqual([...loaded.keys()].sort(), ['01-01', '02-29', '05-05']);
+  assert.deepEqual(loaded.get('05-05'), [{name: '同じ人', work: '作品'}]);
+  assert.deepEqual(loaded.get('01-01'), [{name: '元日', work: ''}]);
+});
+
+test('キャラ誕生日：一覧は「名前（作品）」、2/29生まれはうるう年以外3/1に出す', () => {
+  assert.deepEqual(labelsOn('2026-10-30'), ['天猛星ワイバーンのラダマンティス（聖闘士星矢）']);
+  assert.equal(characterBirthdayLabel('名無し', ''), '名無し');
+  assert.deepEqual(labelsOn('2027-03-01'), ['ムーンライトルナシー（ウマ娘）', 'カイン・ドレッセル（革命機ヴァルヴレイヴ、2/29生まれ）']);
+  assert.equal(labelsOn('2100-03-01').at(-1), 'カイン・ドレッセル（革命機ヴァルヴレイヴ、2/29生まれ）', '100で割れて400で割れない年もうるう年でない');
+  assert.deepEqual(labelsOn('2028-03-01'), ['ムーンライトルナシー（ウマ娘）']);
+  assert.deepEqual(labelsOn('2028-02-29'), ['カイン・ドレッセル（革命機ヴァルヴレイヴ）']);
+  assert.deepEqual(labelsOn('2027-02-28'), []);
+  assert.equal(characterBirthdayCellLabel([]), '');
+  assert.equal(characterBirthdayCellLabel(['キリト']), '🎂 キリト');
+  assert.equal(characterBirthdayCellLabel(['a', 'b', 'c', 'd']), '🎂 a・b ほか2名');
+});
+
+test('キャラ誕生日：収録データを全件読み、PC・Flutterと同じ並び', () => {
+  const doc = JSON.parse(readFileSync(new URL('../assets/character_birthdays.json', import.meta.url), 'utf-8'));
+  const all = parseCharacterBirthdays(doc);
+  assert.equal([...all.values()].reduce((n, v) => n + v.length, 0), doc.entries.length);
+  assert.ok(doc.entries.length >= 573);
+  const daysOf = (name) => [...all].filter(([, v]) => v.some(b => b.name === name)).map(([k]) => k);
+  assert.deepEqual(daysOf('柴大寿'), ['07-24'], '一覧には12/15もあるが、利用者の指定で7/24だけ');
+  assert.deepEqual(characterBirthdaysOn(all, '2026-10-20').map(b => b.name), ['天秤座の童虎', '灰谷竜胆', '無名'],
+    '名前順（PCの sorted・Dartの compareTo と同じ並び）');
 });

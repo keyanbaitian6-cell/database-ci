@@ -18,7 +18,9 @@ SOURCE = HERE.parent / 'share_viewer'
 SOURCE_TEXT_FILES = {'index.html', 'app.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js'}
 SOURCE_FILES = SOURCE_TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
 # Android入口は共通HTMLとmanifestから生成する。独立したUIやHTMLの二重管理はしない。
-GENERATED_FILES = {'android.html', 'manifest-android.json'}
+GENERATED_FILES = {'android.html', 'manifest-android.json', 'character_birthdays.json'}
+# キャラ誕生日（EVENT_CALENDAR.md「キャラ誕生日」）。PC・Flutterと同じアセット1つから作り、二重に持たない。
+BIRTHDAYS = HERE / 'assets' / 'character_birthdays.json'
 TEXT_FILES = SOURCE_TEXT_FILES | GENERATED_FILES
 FILES = SOURCE_FILES | GENERATED_FILES
 SCRIPT_ID = re.compile(rb'AKfyc[A-Za-z0-9_-]{20,}|/macros/s/[A-Za-z0-9_-]{20,}')
@@ -37,6 +39,7 @@ REFERENCES = (
     ('index.html', 'href="./manifest.json"'),
     ('manifest.json', '"./icon-192.png"'),
     ('manifest.json', '"./icon-512.png"'),
+    ('app.mjs', "'./character_birthdays.json'"),
     ('android.html', 'src="./app.mjs"'),
     ('android.html', 'href="./apple-touch-icon.png"'),
     ('android.html', 'href="./favicon.png"'),
@@ -68,6 +71,10 @@ def publication_files():
         sys.exit('既存manifestの起動設定がbrowserではありません。既存設定を確認してから公開してください。')
     android = {**manifest, 'id': './android.html', 'start_url': './android.html', 'display': 'standalone'}
     files['manifest-android.json'] = (json.dumps(android, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+    birthdays = json.loads(BIRTHDAYS.read_text(encoding='utf-8'))
+    if not isinstance(birthdays, dict) or not isinstance(birthdays.get('entries'), list) or not birthdays['entries']:
+        sys.exit('キャラ誕生日のファイルの形が違います。公開しません。')
+    files['character_birthdays.json'] = (json.dumps(birthdays, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     return files
 
 
@@ -86,6 +93,7 @@ README = """# database カレンダー（閲覧専用）
 イベントカレンダー（各日のイベント・総差枚、日付を押すと差枚TOP50と強かった機種10選、台を押すとその機種の台一覧と台のデータ）と、バラエティの回っていない台・バラエティ🌈（確定が出た台の印）を見るページです。
 
 - このリポジトリには、ページのファイルだけが入っています。記録のデータや接続先は入っていません。
+- カレンダーの🎂（キャラ誕生日）は `character_birthdays.json` を読みます。公開されている誕生日一覧から作った名前・作品・月日だけです。
 - 記録は、受け取ったリンクの接続先（読むだけのGoogle Apps Script）から、開いた端末のブラウザが直接読みます。
 - 書き込むのは🌈（確定が出た台の印）だけです。押したときに、その接続先へ送ります。記録やイベントは書き換えません。
 - 端末には接続先と表示の選択（店舗・回っていない台の期間とゲーム数・バラエティ🌈の並べ方）と、付けた🌈を覚えます。差分読み込みでは接続先ごとに記録のキャッシュも保存します。ブラウザが削除した場合は次回取り直します。

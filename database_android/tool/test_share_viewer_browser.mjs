@@ -58,6 +58,13 @@ const pscube = {format: 'pscube-viewer', version: 1, exported_at: '2026-10-09T06
 ]};
 const shared = {format: 'database-events', version: 1, kind: 'pscube', events: [
   {store: 'c740601', rate: '20', day: d2, name: '末尾イベ', updated_at: '2026-09-01T00:00:00Z'}]};
+// キャラ誕生日：ページと一緒に置くファイルの読み込みを、決まった中身に差し替える（1日：2人、5日：台の無い日に3人）。
+const [yy, mm] = ym.split('-').map(Number);
+const birthdays = {entries: [
+  {month: mm, day: 1, name: 'テスト<i>太郎', work: '作品A'},
+  {month: mm, day: 1, name: 'アイウ', work: '作品B'},
+  ...['カ', 'キ', 'ク'].map(name => ({month: mm, day: 5, name, work: '作品C'})),
+]};
 const responses = {'': meruhen, pscube, events: {format: 'database-events', version: 1, kind: 'meruhen', events: []}, 'pscube-events': shared};
 const id = 'AKfycbTEST' + 'x'.repeat(40);
 
@@ -75,6 +82,8 @@ try {
       route.fulfill({status: 200, contentType: 'application/json', headers: {'access-control-allow-origin': '*'},
         body: JSON.stringify(responses[file] ?? {error: 'no'})});
     });
+    await context.route('**/character_birthdays.json*', route => route.fulfill({status: 200, contentType: 'application/json',
+      body: JSON.stringify(birthdays)}));
     const page = await context.newPage();
     const errors = [];
     const modules = [];
@@ -94,9 +103,17 @@ try {
     assert.match(await cell.innerText(), /半列<b>/);
     assert.match(await cell.innerText(), /\+311/);
     assert.equal(await page.locator('b').count(), 0);
+    // キャラ誕生日：マスはイベント名と別に「🎂 名前2人＋ほか○名」。台の無い日でも押せる（2026-10-18）。
+    const birthdayOnly = page.locator(`[data-birthday-open="${ym}-05"]`);
+    await birthdayOnly.waitFor();
+    assert.match(await birthdayOnly.innerText(), /🎂 カ・キ ほか1名/);
+    assert.match(await cell.locator('.birthday').innerText(), /^🎂 アイウ・テスト<i>太郎$/, '名前順・HTMLとして解釈しない');
+    assert.equal(await page.locator('i').count(), 0);
+    assert.match(await cell.getAttribute('aria-label'), /キャラ誕生日 アイウ（作品B）、テスト<i>太郎（作品A）/);
     await cell.click();
     await page.waitForSelector('.sheet');
     const sheet = await page.locator('.sheet').innerText();
+    assert.match(sheet, /キャラ誕生日（イベントとは別）\s*🎂 アイウ（作品B）\s*🎂 テスト<i>太郎（作品A）/);
     assert.match(sheet, /総推定差枚\s*\+311/);
     assert.match(sheet, /推定差枚がわかった台 2\/2台/, '数値異常の台は数えない');
     assert.match(sheet, /101番\s*ゴーゴージャグラー3\s*\+1,422/);
@@ -104,6 +121,13 @@ try {
     assert.ok(!/script/.test(await page.locator('.sheet .list').first().innerText()), '数値異常の台はTOP10に入れない');
     await page.keyboard.press('Escape');
     await page.waitForSelector('.sheet', {state: 'detached'});
+    await birthdayOnly.click();
+    await page.waitForSelector('.sheet');
+    assert.equal(await page.locator('.sheet .head-title').innerText(), 'キャラ誕生日');
+    assert.match(await page.locator('.sheet').innerText(), /🎂 カ（作品C）\s*🎂 キ（作品C）\s*🎂 ク（作品C）\s*この日は台のデータがありません。/);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.sheet', {state: 'detached'});
+    assert.equal(await page.locator(`[data-birthday-open="${ym}-06"]`).count(), 0, '誕生日も台も無い日は押せない');
     // 3日：はじめの10位までが見え、11〜15位は折りたたみ。台を押す→その機種の台一覧→台のデータ→戻る。
     await page.locator(`[data-open="${d3}"]`).click();
     const rows = page.locator('.sheet .list .row');
