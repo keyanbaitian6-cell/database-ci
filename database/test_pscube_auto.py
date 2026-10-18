@@ -1,3 +1,4 @@
+import gc
 import json
 import sys
 import tempfile
@@ -44,6 +45,13 @@ class FakeWindow:
 
 def page(signature, kind='全台一覧'):
     return {'ready': True, 'kind': kind, 'signature': signature, 'busy': False}
+
+
+def setUpModule():
+    # この試験は問い合わせを別スレッド（pscube-eval）で動かす。前に流れた変換画面の試験のTkが循環参照で残っていると、
+    # そのスレッドでGCが走ったときに片付けられ「Tcl_AsyncDelete: async handler deleted by the wrong thread」で
+    # プロセスごと落ちる（2026-10-18、まとめて流したときだけ再現）。始める前にメインスレッドで片付けておく。
+    gc.collect()
 
 
 class AutoPilotTests(unittest.TestCase):

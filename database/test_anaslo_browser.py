@@ -1,4 +1,5 @@
 from datetime import date
+import gc
 from pathlib import Path
 import tempfile
 import threading
@@ -357,7 +358,14 @@ class NavigationTests(unittest.TestCase):
 
 
 class CalendarTests(unittest.TestCase):
+    # Tkは作ったスレッド（メインスレッド）で片付ける。循環参照のまま残すと、後の試験の別スレッドでGCが走ったときに
+    # 「Tcl_AsyncDelete: async handler deleted by the wrong thread」でプロセスごと落ちる（2026-10-18）。
+    @classmethod
+    def tearDownClass(cls):
+        gc.collect()  # 最後の試験のTkを、次の試験へ移る前に片付ける
+
     def setUp(self):
+        gc.collect()  # 前の試験のTkをここで片付ける
         self.root = tk.Tk()
         self.root.withdraw()
         self.addCleanup(self.root.destroy)

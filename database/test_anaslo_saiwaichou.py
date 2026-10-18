@@ -1,4 +1,5 @@
 """幸町店のアナスロ取り込み（2026-10-16）。P-STATIONと同じ部品で、変換先だけメルヘン用DB。"""
+import gc
 import importlib.util
 import json
 from pathlib import Path
@@ -334,6 +335,9 @@ class ConverterScreenTests(unittest.TestCase):
         catalog = MeruhenCatalog('saiwaichou', [('2026-09-15', 'SネオアイムジャグラーEX−KK', 779)])
         root = tk.Tk()
         root.withdraw()
+        # 壊したあと、このスレッド（メインスレッド）で片付ける。残すと後の試験の別スレッドのGCで片付けられ、
+        # Tcl_AsyncDelete でプロセスごと落ちる（2026-10-18）。後片付けは逆順に動く。
+        self.addCleanup(gc.collect)
         self.addCleanup(root.destroy)
         converter_dir = Path(__file__).resolve().parents[1] / 'html_converter'
         if str(converter_dir) not in sys.path:
@@ -410,6 +414,9 @@ class NormalAnalysisTests(unittest.TestCase):
     def test_converter_button_saves_without_resolving_names(self):
         root = tk.Tk()
         root.withdraw()
+        # 壊したあと、このスレッド（メインスレッド）で片付ける。残すと後の試験の別スレッドのGCで片付けられ、
+        # Tcl_AsyncDelete でプロセスごと落ちる（2026-10-18）。後片付けは逆順に動く。
+        self.addCleanup(gc.collect)
         self.addCleanup(root.destroy)
         converter_dir = Path(__file__).resolve().parents[1] / 'html_converter'
         if str(converter_dir) not in sys.path:

@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【PC試験をまとめて流すと Tcl_AsyncDelete で落ちる件：原因と試験側の修正】2026-10-18 Claude
+
+- 共有カレンダーの作業中、いつもの作業フォルダでだけ pc-pscube-tests が test_pscube_auto の途中で「Tcl_AsyncDelete: async handler deleted by the wrong thread」と出てプロセスごと落ちた（終了コード3）。別セッションからの依頼で原因を調べた。
+- **原因（確認済み）**：`-X faulthandler` で、落ちたのは `pscube-eval` スレッド（`AutoPilot` の問い合わせ用）の「Garbage-collecting」中。変換画面の試験で作ったTkが、`root.destroy()` の後も循環参照のまま残り、そのスレッドでたまたまGCが走って片付けられていた。Tkは作ったスレッド以外で片付けるとTclがプロセスを止める。GCでしか片付かないTkを残していたのは `test_anaslo_browser` CalendarTests（2件）、`test_anaslo_saiwaichou` の変換画面の試験2件、Codexの `test_other_analysis` の変換ボタンの試験。GCがいつ走るかはメモリの使われ方しだいなので、作業フォルダによって起きたり起きなかったりした（短い場所では通った理由はこれと考えるが、場所ごとの違いまでは確かめていない）。
+- 別に、`test_anaslo_download_ui` などのTk（17個）はTcl側から参照されたまま最後まで解放されない。解放されないので落ちる原因にはならない（直していない）。
+- **修正（試験だけ、アプリ本体は変えていない）**：CalendarTests・DialogTests は setUp の最初と tearDownClass で `gc.collect()`（前の試験のTkをメインスレッドで片付ける。DialogTests は取得を別スレッドで動かすため）。saiwaichou の2件は `addCleanup(gc.collect)` を `root.destroy` の前に登録（逆順に動くので、壊した後に片付く）。`test_pscube_auto` に `setUpModule` で `gc.collect()`（直していない試験が残したTkも、pscube-eval が動く前に片付ける）。Codexの `test_other_analysis.py` は変えていない（同じ形なので、同じ1行を入れるとよい。今は test_pscube_auto 側の片付けで守られる）。
+- **再発の試験** `database/test_tk_threads.py`（2件）：別プロセスで browser・download_ui・saiwaichou・pscube_auto を流し、各試験の本体の直前に別スレッドでGCを走らせ、Tkが別スレッドで片付けられたら失敗。修正前の4ファイル（HEAD）では Tcl_AsyncDelete で失敗、修正後は通ることを確かめた。未修正の `test_other_analysis` だけを流すと同じく落ちる（検出できる）。もう1件は、循環参照で残したTkを test_pscube_auto の setUpModule がメインスレッドで片付けること。
+- 確認：いつもの作業フォルダで pc-pscube-tests と同じ命令を3回続けて実行し、3回とも 212件 OK。全体ゲート：**ALL PASSED（62項目、PC 342件・pc-pscube-tests 212件〈Codexの未コミットの変更・未追跡の試験を含む〉・Flutter 615件）**。ビルド・公開はしていない（試験だけの変更のため）。コミットは試験4本＋新しい試験＋この記録だけで、Codexの未コミットの変更は含めていない。
+
 ## 【共有カレンダー：台データの無い日に、保存したHTMLからの勝率（何台中何台プラス）】2026-10-18 Claude
 
 - 利用者「台のデータ入れると重くなってしまうので、共有カレンダーへのデータに載せてほしいものがあって、各日の勝率、何台中何台プラスで終わったかをそれだけを乗せて欲しい」「あっ、今回のHTML分ってことね」。途中で「差枚の読み込みについてはジャグラーオンラインからの取り込みが最優先ってのは変わらない」→ 勝ち負けは `core.rack_won`（jo_net が最優先）のまま。

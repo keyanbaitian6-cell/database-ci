@@ -1,3 +1,4 @@
+import gc
 import itertools
 import importlib.util
 from datetime import date, timedelta
@@ -19,10 +20,17 @@ from download_dialog import DownloadDialog
 
 
 class DialogTests(unittest.TestCase):
+    # Tkは作ったスレッド（メインスレッド）で片付ける。循環参照のまま残すと、後の試験の別スレッドでGCが走ったときに
+    # 「Tcl_AsyncDelete: async handler deleted by the wrong thread」でプロセスごと落ちる（2026-10-18）。
+    @classmethod
+    def tearDownClass(cls):
+        gc.collect()  # 最後の試験のTkを、次の試験へ移る前に片付ける
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.folder = Path(self.temp.name)
+        gc.collect()  # 前の試験のTkをここで片付ける（この試験は別スレッドで取得を動かす）
         self.root = tk.Tk()
         self.root.withdraw()
         self.addCleanup(self.root.destroy)
