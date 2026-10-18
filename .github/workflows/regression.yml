@@ -1,8 +1,14 @@
 name: Regression checks
+# Minutes come from the free plan (2,000/month; Windows counts double). See AGENTS.md "GitHub Actions".
+# A push or PR that only changes Markdown docs (AI_COLLABORATION.md, plans, specs) runs nothing:
+# no test, build or stage script reads a .md from the repository, so the result would equal the
+# previous commit's. Any change that also touches another file runs everything as before.
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
 permissions:
   contents: read
 
@@ -11,9 +17,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Asia/Tokyo is covered on Linux by the full job (same Python 3.12, requirements, xvfb, TZ and
+      # both PC suites through check_before_build.sh). Windows Python ignores TZ=Asia/Tokyo (an IANA
+      # name the C runtime cannot read) and keeps the runner's UTC, so the Windows Tokyo job was a
+      # second Windows UTC run at double cost (checked 2026-10-18: TZ=America/New_York changes nothing).
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        timezone: [Asia/Tokyo, UTC]
+        include:
+          - {os: ubuntu-latest, timezone: UTC}
+          - {os: windows-latest, timezone: UTC}
     env:
       TZ: ${{ matrix.timezone }}
       PYTHONUTF8: '1'
