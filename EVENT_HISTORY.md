@@ -62,5 +62,5 @@ Claudeの修正依頼に対応。Python・Dart・JSで `database_android/test/fi
 - 本体 `main`：`c82aa7e`（Codex実装をそのまま）→ `b6db5c3`（Claude修正：中1〜中4・対応付けダイアログのエラー表示、再発防止の試験6件）→ `b109f2c`（共有ページの画面試験が読むモジュール6つを期待するよう修正）。
 - 手元の全体ゲート（Python 3.12・Flutter 3.47.1・Playwright 1.62.1・日本時間）：70項目成功。失敗した1件（`test_share_viewer_browser`、stageしたページでだけ動く「読むモジュールは5つ」の確認が古かった）を直し、同じstageで成功。CI #89（`b109f2c`）は pc（Ubuntu・Windows）と full（全体ゲート）がすべて成功。
 - 公開物は全体ゲートのstageから作成（共有ページ：`event_history.mjs` 追加と版 `4a9874df7a03` の付け替え。閲覧ページ：`main.dart.js`・アセット一覧・アイコンフォント・`shared_events.mjs`・README。`NOTICES` と `flutter_bootstrap.js` はビルド環境の違いだけなので公開中のまま）。機種名・記号・接続先IDが公開物に無いことを確認。
-- **公開は未完了**：Claudeの作業環境から `keyanbaitian6-cell/database-share`・`database-viewer` へのpushがGitHubの権限（403）で拒否された。公開リポジトリへのpushは、権限を直してClaudeが行うか、PCから行う。
+- 公開：Claudeの作業環境からはGitHubの権限（403）で公開リポジトリへpushできなかったため、Codexが公開した。共有ページ `keyanbaitian6-cell/database-share` `c6f4215`、閲覧ページ `keyanbaitian6-cell/database-viewer` `9d758b0`（どちらも source `b109f2c`）。Claudeが全体ゲートのstageから用意した公開用コミットとファイルの中身が一致することを確認（コミットした人・時刻だけ違う）。公開URLでの表示はClaudeの作業環境から接続できず未確認。
 - Apps Script（自分用・共有用）は利用者が `?file=event-history` 入りの版へ更新済み。2本とも `?file=event-history` で PC の共有用文書（2026-10-19 07:00 出力、基準4週76行、編集0件・除外0件）が返ることを利用者が確認。
