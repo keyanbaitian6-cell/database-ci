@@ -255,8 +255,8 @@ try {
     if (process.env.SHARE_WEB_ROOT || process.env.SHARE_PUBLIC_URL) {
       // 公開するページは、読むファイルすべてに同じ版を付ける（古い版を覚えた端末でも新しい版を読む）。
       const names = [...new Set(modules)].map(m => /\/(\w+\.mjs)\?v=([0-9a-f]{12})$/.exec(m));
-      assert.ok(names.length === 5 && names.every(Boolean), `版の付いていない読み込み：${modules}`);
-      assert.deepEqual(names.map(n => n[1]).sort(), ['app.mjs', 'data.mjs', 'net.mjs', 'offline.mjs', 'viewer_parts.mjs']);
+      assert.ok(names.length === 6 && names.every(Boolean), `版の付いていない読み込み：${modules}`);
+      assert.deepEqual(names.map(n => n[1]).sort(), ['app.mjs', 'data.mjs', 'event_history.mjs', 'net.mjs', 'offline.mjs', 'viewer_parts.mjs']);
       assert.equal(new Set(names.map(n => n[2])).size, 1);
     }
     await context.close();
