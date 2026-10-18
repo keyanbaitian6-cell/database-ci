@@ -1639,7 +1639,7 @@ def restore_backup(store, path):
     return dict(plan, forced=forced)
 
 
-def auto_backup(store, data_dir, *, strict=False):
+def auto_backup(store, data_dir, *, strict=False, notices=None):
     """Refresh backups after data changed; strict=True reports output failures.
 
     Also writes today's dated backup (see ``snapshot_backup``). The shared-folder
@@ -1667,11 +1667,6 @@ def auto_backup(store, data_dir, *, strict=False):
             raise
         return None
     try:
-        export_recent_backup(store, data_dir, folder)
-    except (OSError, ValueError):
-        if strict:
-            raise
-    try:
         # 閲覧ページ用の軽いファイル。ローカルで書いてから同期フォルダへ複製する
         # （書きかけのファイルがDriveへ上がらないように）。
         local = Path(data_dir) / VIEWER_FILE_NAME
@@ -1680,6 +1675,14 @@ def auto_backup(store, data_dir, *, strict=False):
     except (OSError, ValueError):
         if strict:
             raise
+    # Android用の直近7日分は最後に、失敗してもほかの書き出しを止めない（strict でも知らせるだけ）。
+    # 先に書くと、ここでの失敗で閲覧用（iPhone版・共有ページ）の更新まで止まる（2026-10-18 確認）。
+    try:
+        export_recent_backup(store, data_dir, folder)
+    except (OSError, ValueError) as error:
+        if notices is not None:
+            notices.append(f'Android用の直近7日分（{RECENT_BACKUP_NAME}）を書き出せませんでした（{error}）。'
+                           '全期間のバックアップと閲覧用は更新済みです。次の保存でもう一度書き出します。')
     return path
 
 

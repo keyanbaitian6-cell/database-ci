@@ -60,6 +60,19 @@ class RecentBackupTests(unittest.TestCase):
         self.assertIn(self.days[3], days)                       # 直近より前の記録は残る
         self.assertNotIn((self.days[0], 701), {(r['day'], int(r['rack'])) for r in other.rows()})  # 削除は伝わる
 
+    def test_a_failure_here_does_not_stop_the_viewer_file(self):
+        # 直近の分の書き出しに失敗しても、閲覧用（iPhone版・共有ページ）と全期間は更新し、知らせるだけ。
+        from unittest.mock import patch
+        from core import VIEWER_FILE_NAME
+        notices = []
+        with patch('core.export_recent_backup', side_effect=OSError('使用中')):
+            auto_backup(self.db, self.data, strict=True, notices=notices)
+        self.assertTrue((self.sync / VIEWER_FILE_NAME).exists())
+        self.assertTrue((self.sync / AUTO_BACKUP_NAME).exists())
+        self.assertFalse((self.sync / RECENT_BACKUP_NAME).exists())
+        self.assertEqual(len(notices), 1)
+        self.assertIn('全期間のバックアップと閲覧用は更新済み', notices[0])
+
 
 if __name__ == '__main__':
     unittest.main()

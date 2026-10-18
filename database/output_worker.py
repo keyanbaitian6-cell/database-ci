@@ -48,7 +48,7 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
                         result['history_cancelled'] = True
                 result['history'] = run('history', build_history)
             if backup:
-                value = run('backup', lambda: auto_backup(store, data_dir, strict=True))
+                value = run('backup', lambda: auto_backup(store, data_dir, strict=True, notices=notices))
                 if value is None and not errors:
                     notices.append('同期フォルダ未設定：PC内のバックアップのみ更新しました。')
             result['pending_marks'] = len(store.pending_rainbow_marks())

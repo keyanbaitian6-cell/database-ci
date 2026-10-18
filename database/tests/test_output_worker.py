@@ -113,7 +113,7 @@ class OutputWorkerTests(unittest.TestCase):
                              games=3000, bb=10, rb=5)])
             store.close()
             backups = []
-            with patch('core.auto_backup', side_effect=lambda db, data, *, strict: backups.append(len(db.rows()))):
+            with patch('core.auto_backup', side_effect=lambda db, data, *, strict, notices=None: backups.append(len(db.rows()))):
                 result = refresh_outputs(path, root / 'data', root / 'reports', history=True, backup=True,
                                          cancelled=lambda: True)
             self.assertTrue(result['history_cancelled'])
@@ -146,7 +146,7 @@ class OutputWorkerTests(unittest.TestCase):
             root = Path(directory); path = root / 'data' / 'database.sqlite3'
             store = Store(path); store.close()
             snapshots = []
-            def backup(db, data, *, strict):
+            def backup(db, data, *, strict, notices=None):
                 snapshots.append(db.path)
                 self.assertTrue(strict)
                 self.assertNotEqual(db.path, path)

@@ -5,6 +5,8 @@
 - 利用者「今読み込んでるけど、読み込み保存まで約2分。アプリ版も差分処理っていけないのだろうか」→ Claude の案1（PCが直近の分だけのバックアップも書き出す）／案2（AndroidもiPhone版のようにGoogleから差分を読む）→「案１で細かく読み込んでいけば問題なさそうだね」。日数は7日（利用者の指定なし、Claude が提案）。
 - PC `core.auto_backup` が `database-backup-auto.json`（全期間、127MBほど）の後に `export_recent_backup` で `database-backup-recent.json` を書く（ローカルで書いてから同期フォルダへ複製）。中身は `export_backup(since=最新の記録日−6日)`：その日以降の記録・イベント・翌日候補の記録、削除の印と未取り込みの🌈は全期間分。見出しに `since`。PCの起動時の自動取り込み（`latest_backup_file`）は自分の書き出しとして除外。メルヘン同期GSは `database-backup-android` だけを読むので影響なし。Androidは足し合わせで読む（記録は消えない）。Androidアプリの変更・APKは不要。
 - 試験：`database/tests/test_recent_backup.py`（3件：直近だけ・削除の印・PCが読み直さない・取り込みは足すだけ）、`database_android/test/recent_backup_test.dart`（PCの書き出しで作った `database/tests/fixtures/recent_backup.json` をAndroidが読める）。PC全試験 OK。`database/README.md` に追記。P’s CUBEの全期間（18.9MB）は今回そのまま。
+- 同日、利用者「これによる不具合が起きる可能性について考えて」→ **不具合1件を直した**：はじめは全期間→直近→閲覧用の順で、直近の書き出しに失敗すると（strict で例外）閲覧用（iPhone版・共有ページ）の更新まで止まる作りだった。直近の分を最後に回し、失敗しても例外にせず `notices` で知らせるだけにした（`auto_backup(notices=)`、`output_worker` が渡す。試験 `test_a_failure_here_does_not_stop_the_viewer_file`、`tests/test_output_worker.py` の差し替えを `notices` に対応）。PC全試験 tests 339件・test_*.py 203件 OK。
+- 残る注意（利用者の判断待ち）：直近のファイルは「最新の記録日から7日以内の日の記録」だけなので、7日より前の日への変更（過去の日のアナスロ補完、あとからのジャグラーオンラインの差枚、機種名の直し、古いイベントの変更）は入らない。そのときは全期間を読み込む必要がある。Claude の提案：「7日前の日付入りの控えと比べて、増えた・変わった記録を入れる」形にすれば漏れない（書き出しが数秒〜十数秒延びる）。
 - 次にPC版を `start.cmd` から起動して記録を保存（内部ブラウザを閉じたとき）すると作られる。未確認：実際の同期フォルダでの作成とAndroidでの読み込み時間。
 
 ## 【翌日候補：Codexの確認を受けた直し（60日・使用開始日・日付の上限）・ジャグラー/ハナハナのおすすめを別ページ・iPhone版公開・APK 0.5.39】2026-10-18 Claude
