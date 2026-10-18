@@ -137,5 +137,33 @@ try {
   assert.equal(requests.length, 0); assert.match(await page.locator('[role=status]').innerText(), /保存データを開けません/);
   assert.deepEqual(errors, []);
   await context.close();
+  {
+    // 2026-10-18 利用者「P-stationの履歴を端末に保存できませんでしたとでました」：日別一覧が古い間に閲覧用ファイル全体
+    // （PCの書き出し時刻は一覧の時刻より新しい）を保存すると、その後の一覧を「古い通信」と見なして毎回保存を断っていた。
+    // 一覧の時刻は、一覧どうしでだけ比べる。
+    const ctx = await browser.newContext(), pg = await ctx.newPage();
+    await pg.goto(origin + 'index.html');
+    generation = 1; const {m, texts} = snapshot('pscube');
+    const result = await pg.evaluate(async ({endpoint, m, texts}) => {
+      const {fetchViewerParts, rememberViewerHistory} = await import('./viewer_parts.mjs');
+      const full = {...m.header, exported_at: '2026-10-18T10:37:52+09:00', records: texts.flatMap(t => JSON.parse(t))};
+      await rememberViewerHistory(endpoint, 'pscube', full, undefined, true);
+      const getJson = async url => ({format: m.format, revision: m.revision, parts: new URL(url).searchParams.get('parts').split(',')
+        .map(h => ({hash: h, text: texts[m.parts.findIndex(p => p.hash === h)]}))});
+      try {
+        const first = await fetchViewerParts(endpoint, 'pscube', m, getJson);
+        const again = await fetchViewerParts(endpoint, 'pscube', m, getJson);
+        // 一覧どうしでは、今までどおり古い一覧で巻き戻さない。
+        const older = {...m, header: {...m.header, exported_at: '2026-10-14T11:00:00Z'}};
+        const newer = {...m, header: {...m.header, exported_at: '2026-10-14T13:00:00Z'}};
+        await fetchViewerParts(endpoint, 'pscube', newer, getJson);
+        let refused = false;
+        try { await fetchViewerParts(endpoint, 'pscube', older, getJson); } catch { refused = true; }
+        return [first.records.length, again.records.length, refused];
+      } catch (e) { return String(e.message); }
+    }, {endpoint, m, texts});
+    assert.deepEqual(result, [2, 2, true], '全体を読んだ後も、時刻の古い日別一覧を保存できる');
+    await ctx.close();
+  }
   console.log('PASS: 旧DB移行・起動時通信0・完全オフライン再起動・手動差分・日削除・破損通信時の保存保持');
 } finally { await browser.close(); await new Promise(r => server.close(r)); }
