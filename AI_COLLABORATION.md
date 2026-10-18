@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【共有ページ：月間・年間の勝率／Google同期（履歴モード）が日ごとの集計を落とす件を修正】2026-10-18 Claude
+
+- 利用者「では公開までお願いします」「月ごとに月間の勝率出すのと、年間でも見れるページつくっておいてね。これがあればいい。っていう機能あれば提示してください」。
+- **公開を止めていた点**：Driveの日別分割の一覧は v2（履歴モード、`MERUHEN_HISTORY_VIEWER` true）。その見出しはイベントしか引き継がず、PCが閲覧用ファイルに載せた `day_summaries` が共有ページまで届かない作りだった（Driveの一覧の見出しの項目を読んで確認）。`viewer_history_adapters.js` のメルヘンの `mergeHeader` で、PC入力の `day_summaries` を引き継ぐ（Androidのバックアップでは前のまま）。`node build_viewer_parts.mjs` で `meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs` を作り直した（4行の差だけ。作り直しで改行だけ変わった読み取りGS2本・viewer_parts.mjs 2本は戻した）。試験 `test_meruhen_cloud_sync.mjs` に1件：直す前 28成功・1失敗、直した後 29件成功。
+- **Google側は利用者の貼り替えが必要**：`outputs/share-day-summary-20261018/gs/`（`meruhen_cloud_sync.gs`＝配布元の履歴フラグだけ true、SHA-256 `106863ec…ab0b`、10/17に貼ったものとの差は4行だけ、`スクリプトをコピー.html`、`手順.md`）。順番は 貼り替え → PCの閲覧用ファイルの書き出し → `syncMeruhenCloud`（先に書き出すと古いスクリプトが処理済みにして集計を落とすため）。PCの書き出しは、貼り替えの連絡を受けてから行う（未実施）。
+- **月間・年間の勝率**（共有ページ）：月の見出しの下に「月間の勝率○%（○日・○台中○台プラス）」、ボタン「月別・年間の勝率」で年間と1〜12月（年は ‹ › と選択欄、月を押すとその月へ）。日ごとにカレンダーと同じ元（台データ、無い日はHTMLの集計）の台数を足して割る。`data.mjs` の `monthDayList`・`periodWinRate`・`yearWinRates`・`winRateYears`。試験：`test_share_viewer.mjs`（足して割る・年・店）、`test_share_viewer_browser.mjs`（見出し・年のシート・月へ移る、320/393/1280px）。393pxの画面写真で見た目を確認。
+- 全体ゲート：いつもの作業フォルダで **ALL PASSED**（62項目、PC 342件・P’s CUBE 212件・Flutter 615件。0d7aeb4 の試験の直しのあと）。コミット `f6ebfa1`。共有ページ公開 `database-share` `aaade79`（source f6ebfa1）：Pages成功、版 `834715ce0ca8`、ゲートのステージと版番号・改行以外一致、公開ページで画面試験 PASS、seed 404。
+- 未確認：Google側の貼り替えと、実データでの共有ページの表示。
+
 ## 【PC試験をまとめて流すと Tcl_AsyncDelete で落ちる件：原因と試験側の修正】2026-10-18 Claude
 
 - 共有カレンダーの作業中、いつもの作業フォルダでだけ pc-pscube-tests が test_pscube_auto の途中で「Tcl_AsyncDelete: async handler deleted by the wrong thread」と出てプロセスごと落ちた（終了コード3）。別セッションからの依頼で原因を調べた。
