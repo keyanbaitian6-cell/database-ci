@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【Android：補完機種のある端末で全台一覧が保存できない件の修正と 0.5.41】2026-10-20 Claude
+
+- 経緯：クラウドのClaudeの引き継ぎで、PCを `main=3277043` にそろえた（`EVENT_HISTORY.md` の未コミットの追記だけを退避し、早送りのあと `stash pop`。3方向で衝突なし、Codexの追記は残した）。CIは `imakurudev-eng` の枠切れのため `keyanbaitian6-cell/database-ci` へ `3277043` を1回push（run 39277197904、pc Ubuntu・Windows・full すべて成功）。PCは `start.cmd` で起動し、利用者の取り込みは止まらず進んだ。
+- 不具合：Androidで「保存できませんでした：FormatException: 対象のP’s CUBEページではありません。」。P’s CUBE版（0.5.39）でも通常版（0.5.40、Codexが10/20 01:50に `3277043` から作成。中の `pscube_capture.js` は main と一致）でも同じ。原因：全台一覧を読む前の台数確認 `PscubeStore.installationCount` が、保存済みの全機種のURLを `_site` で検査していた。アナスロの補完機種（`source_site: anaslo`、`url: null`、d5dac5b 以降）があると、どの全台一覧でも例外になる。PCの `installation_count` は同じ機種を飛ばしており、Androidだけ抜けていた。PCのDBには補完機種が9件ある。端末内のDBは読めないので、端末に補完機種があることは確かめていない（試験で同じ文が出ることは確認）。
+- 修正：`installationCount` で `source_site == 'anaslo' && url == null` の機種を飛ばす（`_machine` の検査・PCと同じ条件）。補完機種そのものは消さない。試験：`anaslo_import_test.dart` に1件（補完機種と通常の機種を入れ、台数24・別の貸玉はnull・機種2件のまま）。修正を外すと同じ FormatException で落ちることを確認。
+- 版：`0.5.41+2026102002`。全体ゲート **ALL PASSED**（65項目。Flutter 637件・PC 369件・P’s CUBEほか207件・UTCイベント27件、`TZ=JST-9`、Python 3.14）。別のセッションが本体フォルダで多数のファイルを編集中だったため、`C:\w\anfix`（ゲート）と `C:\w\anapk`（ビルド、同じ差分）の別の作業ツリーで行った。
+- APK：通常版 `com.keyan.database_android` 0.5.41 / 2026102002、SHA-256 `3b12bf91dfb1756b7ef55d8c1d1f8593a2376ee1349b9c922a682c591551fbc5`、署名は既存と同じ（`4332fcb9…a047`）。RFGL146LVVW へ `install -r` 成功、初回インストール日時 2026-09-16 07:52:31 は変わらず。控え：`../review_packages/android-apk-20261020b/`。P’s CUBE版（`.pscube`、0.5.39）は作り直していない。
+- 未確認：実機での取り込み（利用者が操作）。本体フォルダの `main` は、Codexの未コミットの `pubspec.yaml`（0.5.40）とぶつかるため、このコミットへ進めていない。
+
 ## 【GitHub Actions の利用分数を減らす：文書だけの変更では動かさない・重複ジョブをやめる】2026-10-18 Claude
 
 - 利用者：無料枠の注意（1,802/2,000分）。「品質や安全性は維持したまま、無関係なテストの繰り返しや重複するビルド・確認があれば減らして」「ルールが定まったら共同プロジェクトのルールとして記しておいて」。利用者が見せた利用レポートは `keyanbaitian6-cell` の分（閲覧ページ・共有ページなど計288分）で、本体 `imakurudev-eng/database` の分は入っていない。

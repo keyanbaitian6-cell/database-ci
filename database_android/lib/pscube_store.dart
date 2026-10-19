@@ -162,6 +162,12 @@ class PscubeStore {
     final counts = <int>{};
     for (final row in await db.query('machines', columns: ['payload'])) {
       final machine = _asMap(jsonDecode(row['payload'] as String));
+      // アナスロだけにある補完機種はP’s CUBEの機種URLを持たない（_machine と同じ扱い）。台数確認へ
+      // 混ぜない。住所の検査で止めると、補完機種を取り込んだ端末ではどの全台一覧も「対象のP’s CUBE
+      // ページではありません」で保存できなかった（2026-10-20）。PC版 installation_count と同じ。
+      if (machine['source_site'] == 'anaslo' && machine['url'] == null) {
+        continue;
+      }
       final stored = _site(machine['url'] as String?, 'nc-v05-011.php');
       if (queryIdentity(stored) == query) {
         final count = machine['expected_count'];
