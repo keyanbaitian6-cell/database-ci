@@ -41,6 +41,8 @@ FORMAT = 'pscube-viewer'
 # 営業日の切り替わり時刻。日本時間の午前2時まではまだ前日の営業日（利用者の指定、2026-10-04）。
 BUSINESS_DAY_CUTOFF_HOUR = 2
 DIRECTIONS = ('top', 'bottom')
+# 取り込み日の日付タブがサイトに無かった機種と日（新台・入れ替え）。その日の未取得に数えない（2026-10-19）。
+ABSENT_DAYS_KEY = 'absent_table_days'
 PACKAGE_ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
 CAPTURE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_capture.js'
 PROBE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_auto_probe.js'
@@ -159,6 +161,23 @@ def same_page(first, second) -> bool:
         return unquote(parsed.geturl(), errors='surrogateescape')
 
     return key(first) == key(second)
+
+
+def same_machine_url(first, second) -> bool:
+    """同じ機種の全台一覧の住所か（#以降は比べない）。機種名の%は、保存した一覧のリンクでは二重
+    （`%25E9…`）、WebViewの住所では一重や元の文字のことがあるので、戻しきってから比べる（2026-10-19）。"""
+    def key(raw):
+        parsed = urlparse(raw)
+        def plain(value):
+            for _ in range(4):
+                decoded = unquote(value)
+                if decoded == value:
+                    break
+                value = decoded
+            return value
+        query = sorted((k, tuple(plain(v) for v in values)) for k, values in parse_qs(parsed.query).items())
+        return parsed.path, query
+    return isinstance(first, str) and isinstance(second, str) and key(first) == key(second)
 
 
 def table_url_for_day(url, day):
@@ -606,6 +625,9 @@ class PscubeStore:
         if direction not in DIRECTIONS:
             raise ValueError('取り込みの向きが不正です。')
         data = json.loads(raw) if isinstance(raw, str) else raw
+        skipped = self._skip_absent_day(data, current_url, expected_day, direction, manual, fresh_since)
+        if skipped:
+            return skipped
         if not isinstance(data, dict) or data.get('error'):
             raise ValueError(data.get('error', 'ページを読めませんでした。') if isinstance(data, dict) else 'ページの形式が不正です。')
         if data.get('format') != FORMAT or data.get('version') != 1 or not isinstance(data.get('machines'), list) or not isinstance(data.get('records'), list):
@@ -728,6 +750,52 @@ class PscubeStore:
             result['net_warning'] = data['net_warning'][:200]
         return result
 
+    def _absent_days(self):
+        """取り込み日の日付タブがサイトに無かった機種と日（{(機種のキー, 日付)}）。"""
+        try:
+            return {tuple(e) for e in json.loads(self._state(ABSENT_DAYS_KEY) or '[]')}
+        except (TypeError, ValueError):
+            return set()
+
+    def _skip_absent_day(self, data, current_url, expected_day, direction, manual, fresh_since):
+        """取り込み日を指定して開いた全台一覧に、その日の日付タブが無ければ、その機種のその日を「サイトに記録なし」
+        として覚え、保存せずに次へ進む。入れ替えで入った新台はその日からのタブしか無く、前日を指定するとサイトは
+        最新のタブを選ぶ。以前は未取得の先頭に残り続け、取り込みが先へ進まなかった（2026-10-19）。
+
+        飛ばすのは、指定日がタブの範囲より前か、範囲の中で抜けている日だけ。タブより新しい日（その日のタブが
+        まだ出ていない早朝など）は飛ばさない。取り込める数値はもともと無いので、飛ばしても記録は減らない。"""
+        if not expected_day or not isinstance(data, dict):
+            return None
+        days = data.get('available_days')
+        try:
+            actual = site_url(current_url)
+        except ValueError:
+            return None
+        if (not actual.path.endswith('nc-v05-011.php') or not isinstance(days, list) or not days or
+                any(not isinstance(d, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', d) for d in days) or
+                expected_day in days or expected_day > max(days)):
+            return None
+        if not same_page(current_url, data.get('source_url')):
+            raise ValueError('表示中のページと読み取り結果が違います。')
+        machine = next((m for m in (json.loads(row[0]) for row in self.db.execute('SELECT payload FROM machines'))
+                        if m.get('url') and same_machine_url(m['url'], current_url)), None)
+        shown = '・'.join(f'{int(d[5:7])}/{int(d[8:])}' for d in sorted(days))
+        if machine is None:
+            raise ValueError(f'取り込み日{expected_day}の日付タブがこの機種にありません（タブ：{shown}）。'
+                             '先に設置機種一覧を取り込んでください。保存しませんでした。')
+        key = _machine_key(machine)
+        absent = self._absent_days() | {(key, expected_day)}
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                            (ABSENT_DAYS_KEY, json.dumps(sorted(absent), ensure_ascii=False)))
+        fresh_since = dict(fresh_since or {})
+        next_url, remaining = self.next_target(expected_day, direction, (key, None) if manual else None,
+                                               fresh_since.get(expected_day))
+        return {'saved': 0, 'day': expected_day, 'next_url': table_url_for_day(next_url, expected_day),
+                'remaining': remaining, 'kind': '全台一覧', 'fresh_since': fresh_since,
+                'skipped': f'{machine["machine"]}は{int(expected_day[5:7])}/{int(expected_day[8:])}の日付タブがサイトに'
+                           f'ありません（タブ：{shown}。新台・入れ替えの可能性）。保存せずに飛ばしました'}
+
     def next_target(self, day=None, direction='top', after=None, fresh_since=None):
         """次に開くページ。direction='bottom' なら機種を一覧の下から数える。
 
@@ -754,7 +822,11 @@ class PscubeStore:
         all_rows = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM records')]
         captured = {row[0] for row in self.db.execute('SELECT key FROM rack_captures')}
         cutoff = stale_cutoff(day, fresh_since)
+        absent = self._absent_days()
         for index, machine in enumerate(machines):
+            # その日の日付タブがサイトに無かった機種（新台・入れ替え）は、その日の未取得に数えない。
+            if (_machine_key(machine), day) in absent:
+                continue
             rows = sorted((r for r in all_rows if _machine_key(r) == _machine_key(machine) and r['day'] == day), key=lambda r: r['rack'])
             # 一番古い数値で判断する（台別ページは1台ずつしか新しくならない）。更新時刻が分からない台は判断に使わない
             # （分からないまま「古い」とすると、同じ全台一覧を取り直し続けてしまう）。
@@ -1405,7 +1477,7 @@ def overlay_script(capture_script, index_url):
       window.pscubeCaptureComplete = result => {
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
         const way = result.direction === 'bottom' ? '下から' : result.direction === 'top' ? '上から' : '';
-        idle(`${result.kind}を保存 · 残り${result.remaining}${way ? '（' + way + '）' : ''}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
+        idle(`${result.skipped || result.kind + 'を保存'} · 残り${result.remaining}${way ? '（' + way + '）' : ''}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
         capturedUrl = null;
         if (result.next_url) location.href = result.next_url;
       };

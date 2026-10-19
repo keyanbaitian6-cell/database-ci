@@ -295,7 +295,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           },
           netFor: dailyNetLookup(records),
           netNote: dailyNetNote(stores.keys.first),
-          note: 'ここで入れたイベントは、記録のある貸玉すべてに付きます。PC・閲覧ページへは'
+          note:
+              'ここで入れたイベントは、記録のある貸玉すべてに付きます。PC・閲覧ページへは'
               'P’s CUBEのバックアップで届きます。同じ日は、あとから入れた方が残ります。',
         ),
       ),
@@ -676,7 +677,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _remaining = result.remaining;
         _status =
             _connection.failure?.message ??
-            '${result.kind}を保存しました。残り ${result.remaining} 件。'
+            '${result.skipped ?? '${result.kind}を保存しました'}。残り ${result.remaining} 件。'
                 '${netWarning == null ? '' : '（$netWarning）'}';
       });
       if (autoSignature != null) {
@@ -692,7 +693,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           );
         } else if (_auto.enabled) {
           _autoMessage(
-            'ON・${result.kind}を保存・残り${result.remaining}件・次のページへ'
+            'ON・${result.skipped ?? '${result.kind}を保存'}・残り${result.remaining}件・次のページへ'
             '${netWarning == null ? '' : '（差枚は未取得）'}',
           );
         }

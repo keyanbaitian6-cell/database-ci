@@ -56,6 +56,47 @@ String pscubeTableUrlForDay(String url, String? day) {
       .toString();
 }
 
+/// 同じ機種の全台一覧の住所か（#以降は比べない）。機種名の%は、保存した一覧のリンクでは二重
+/// （`%25E9…`）、WebViewの住所では一重や元の文字のことがあるので、戻しきってから比べる
+/// （2026-10-19。PC版 `same_machine_url` と同じ）。
+bool pscubeSameMachineUrl(String first, String second) {
+  String plain(String value) {
+    for (var i = 0; i < 4; i++) {
+      final String decoded;
+      try {
+        decoded = Uri.decodeComponent(value);
+      } catch (_) {
+        return value;
+      }
+      if (decoded == value) break;
+      value = decoded;
+    }
+    return value;
+  }
+
+  String key(String raw) {
+    final uri = Uri.parse(raw);
+    final query = <String>[
+      for (final part in uri.query.split('&'))
+        if (part.isNotEmpty)
+          [
+            for (final piece in part.split('='))
+              plain(piece.replaceAll('+', ' ')),
+          ].join('='),
+    ]..sort();
+    return jsonEncode([uri.path, query]);
+  }
+
+  try {
+    return key(first) == key(second);
+  } catch (_) {
+    return false;
+  }
+}
+
+/// 取り込み日の日付タブがサイトに無かった機種と日（新台・入れ替え）。その日の未取得に数えない。
+const pscubeAbsentDaysKey = 'absent_table_days';
+
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
   PscubeStore._(this.db);
@@ -292,7 +333,10 @@ class PscubeStore {
   /// [freshSince]：{日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は
   /// 全台一覧から取り直す（数値が変わった台だけ台別ページも）。このページで分かった分をここに足す
   /// （呼び出し側が持ち続けて、次の保存でも渡す）。
-  Future<({int saved, int remaining, String kind, String? nextUrl})> importPage(
+  Future<
+    ({int saved, int remaining, String kind, String? nextUrl, String? skipped})
+  >
+  importPage(
     String raw,
     String? currentUrl, {
     String? expectedDay,
@@ -310,7 +354,9 @@ class PscubeStore {
     ),
   );
 
-  Future<({int saved, int remaining, String kind, String? nextUrl})>
+  Future<
+    ({int saved, int remaining, String kind, String? nextUrl, String? skipped})
+  >
   _importPage(
     String raw,
     String? currentUrl,
@@ -323,6 +369,15 @@ class PscubeStore {
       throw const FormatException('取り込みの向きが不正です。');
     }
     final data = _asMap(jsonDecode(raw));
+    final skipped = await _skipAbsentDay(
+      data,
+      currentUrl,
+      expectedDay,
+      direction,
+      manual,
+      freshSince,
+    );
+    if (skipped != null) return skipped;
     if (data['error'] != null) throw FormatException('${data['error']}');
     if (data['format'] != 'pscube-viewer' ||
         data['version'] != 1 ||
@@ -588,6 +643,111 @@ class PscubeStore {
       nextUrl: next.url == null
           ? null
           : pscubeTableUrlForDay(next.url!, expectedDay),
+      skipped: null,
+    );
+  }
+
+  Future<Set<String>> _absentDays() async {
+    final rows = await db.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: [pscubeAbsentDaysKey],
+    );
+    try {
+      return rows.isEmpty
+          ? <String>{}
+          : {
+              for (final e in jsonDecode(rows.first['value'] as String) as List)
+                jsonEncode(e),
+            };
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  /// 取り込み日を指定して開いた全台一覧に、その日の日付タブが無ければ、その機種のその日を「サイトに記録なし」
+  /// として覚え、保存せずに次へ進む。入れ替えで入った新台はその日からのタブしか無く、前日を指定するとサイトは
+  /// 最新のタブを選ぶ。以前は未取得の先頭に残り続け、取り込みが先へ進まなかった（2026-10-19。PC版
+  /// `_skip_absent_day` と同じ）。飛ばすのは、指定日がタブの範囲より前か、範囲の中で抜けている日だけ。
+  /// タブより新しい日（その日のタブがまだ出ていない早朝など）は飛ばさない。
+  Future<
+    ({int saved, int remaining, String kind, String? nextUrl, String? skipped})?
+  >
+  _skipAbsentDay(
+    Map<String, dynamic> data,
+    String? currentUrl,
+    String? expectedDay,
+    String direction,
+    bool manual,
+    Map<String, String> freshSince,
+  ) async {
+    final days = data['available_days'];
+    final current = Uri.tryParse(currentUrl ?? '');
+    if (expectedDay == null ||
+        current == null ||
+        !current.path.endsWith('nc-v05-011.php') ||
+        days is! List ||
+        days.isEmpty ||
+        days.any(
+          (d) => d is! String || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(d),
+        )) {
+      return null;
+    }
+    final tabs = days.cast<String>().toList()..sort();
+    if (tabs.contains(expectedDay) || expectedDay.compareTo(tabs.last) > 0) {
+      return null;
+    }
+    _site(currentUrl, 'nc-v05-011.php');
+    final reported = Uri.tryParse(data['source_url']?.toString() ?? '');
+    if (reported == null || !pscubeSamePage(current, reported)) {
+      throw const FormatException('表示中のURLと読み取り結果が一致しません。');
+    }
+    Map<String, dynamic>? machine;
+    for (final row in await db.query('machines', columns: ['payload'])) {
+      final m = _asMap(jsonDecode(row['payload'] as String));
+      final url = m['url'];
+      if (url is String && pscubeSameMachineUrl(url, currentUrl!)) {
+        machine = m;
+        break;
+      }
+    }
+    String label(String d) =>
+        '${int.parse(d.substring(5, 7))}/${int.parse(d.substring(8))}';
+    final shown = tabs.map(label).join('・');
+    if (machine == null) {
+      throw FormatException(
+        '取り込み日$expectedDayの日付タブがこの機種にありません（タブ：$shown）。'
+        '先に設置機種一覧を取り込んでください。保存しませんでした。',
+      );
+    }
+    final key = _key(machine);
+    final absent = {
+      ...await _absentDays(),
+      jsonEncode([key, expectedDay]),
+    };
+    await db.insert('state', {
+      'key': pscubeAbsentDaysKey,
+      'value': jsonEncode([
+        for (final e in absent.toList()..sort()) jsonDecode(e),
+      ]),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    final next = await _nextTarget(
+      expectedDay,
+      direction,
+      manual ? (key, null) : null,
+      freshSince[expectedDay],
+    );
+    return (
+      saved: 0,
+      remaining: next.remaining,
+      kind: '全台一覧',
+      nextUrl: next.url == null
+          ? null
+          : pscubeTableUrlForDay(next.url!, expectedDay),
+      skipped:
+          '${machine['machine']}は${label(expectedDay)}の日付タブがサイトにありません'
+          '（タブ：$shown。新台・入れ替えの可能性）。保存せずに飛ばしました',
     );
   }
 
@@ -689,7 +849,10 @@ class PscubeStore {
     // (機種の並び順, 台番号（全台一覧は-1）, URL)
     final pending = <(int, int, String)>[];
     final cutoff = pscubeStaleCutoff(day, freshSince);
+    final absent = await _absentDays();
     for (final (index, machine) in machines.indexed) {
+      // その日の日付タブがサイトに無かった機種（新台・入れ替え）は、その日の未取得に数えない。
+      if (absent.contains(jsonEncode([_key(machine), day]))) continue;
       final rows =
           records
               .where((r) => _key(r) == _key(machine) && r['day'] == day)

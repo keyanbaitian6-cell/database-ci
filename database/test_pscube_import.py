@@ -88,6 +88,34 @@ class PscubeImportTests(unittest.TestCase):
         fresh = self.store.import_page(self.page(self.index_url, self.machines), self.index_url, expected_day=yesterday, direction='bottom')
         self.assertEqual(fresh['next_url'], self.machines[-1]['url'] + '#0;0;20261003;0;cd_dai;1;0;0')
 
+    def test_machine_without_the_chosen_day_tab_is_skipped_only_for_that_day(self):
+        # 2026-10-19 入れ替えの日に前日（10/18）を指定すると、新台は10/19のタブしか無く、サイトは10/19を選ぶ。
+        # 以前は「対象のP’s CUBEページではありません」で止まり、新台が未取得の先頭に残り続けた。
+        yesterday, today = '2026-10-18', '2026-10-19'
+        new, old = self.machines
+        self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        # WebViewの住所は機種名の%が保存したリンクと違う形（ここでは二重）で、#以降はサイトが選んだ10/19。
+        shown = new['url'].replace('L東京喰種', 'L%25E6%259D%25B1%25E4%25BA%25AC%25E5%2596%25B0%25E7%25A8%25AE') + '#3;0;20261019;0;cd_dai;1;0;664'
+        page = {'error': '1526番台の台別ページへのリンクがありません。', 'source_url': shown, 'available_days': [today]}
+        result = self.store.import_page(json.dumps(page), shown, expected_day=yesterday)
+        self.assertEqual(result['saved'], 0)
+        self.assertIn('L東京喰種は10/18の日付タブがサイトにありません（タブ：10/19', result['skipped'])
+        self.assertEqual(result['next_url'], old['url'] + '#0;0;20261018;0;cd_dai;1;0;0')
+        self.assertEqual(self.store.days(), [], '何も保存しない')
+        self.assertEqual(self.store.next_target(yesterday), (old['url'], 1), '10/18の未取得から外れる')
+        self.assertEqual(self.store.next_target(today)[1], 2, 'ほかの日は今までどおり')
+        reopened = PscubeStore(Path(self.tmp.name) / 'pscube.sqlite3')
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.next_target(yesterday)[1], 1, '開き直しても覚えている')
+        # 飛ばさない場合：取り込み日のタブがある／タブより新しい日（早朝でタブがまだ出ていない）は、今までどおり理由を出して止める。
+        for tabs, day in (([yesterday, today], yesterday), (['2026-10-12', yesterday], today)):
+            with self.subTest(tabs=tabs, day=day), self.assertRaisesRegex(ValueError, '台別ページへのリンクがありません'):
+                self.store.import_page(json.dumps(dict(page, available_days=tabs)), shown, expected_day=day)
+        # 保存した機種一覧に無い機種は、飛ばさずに理由を出す。
+        unknown = ROOT_URL + 'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=X#3;0;20261019;0;cd_dai;1;0;0'
+        with self.assertRaisesRegex(ValueError, '日付タブがこの機種にありません（タブ：10/19）'):
+            self.store.import_page(json.dumps(dict(page, source_url=unknown)), unknown, expected_day=yesterday)
+
     def test_date_events_free_names_shared_by_backup_with_newest_winning(self):
         # P’s CUBEのイベント名（自由記入、2026-10-06）。Android pscube_store_test と同じ規則。
         from datetime import timezone

@@ -721,8 +721,16 @@ void main() {
     test('イベントカレンダー：先の日・期間に全貸玉で付け、同じ名前は時刻を変えず、何も無い日に消した印を作らない', () async {
       await seedRack();
       final at = DateTime.utc(2026, 10, 8, 12);
-      await store.setDateEventDays(['2026-10-20', '2026-10-21'], ' 華の日 ', now: at);
-      expect(await store.dateEventFor('2026-10-20'), '華の日', reason: '記録の無い先の日にも入る');
+      await store.setDateEventDays(
+        ['2026-10-20', '2026-10-21'],
+        ' 華の日 ',
+        now: at,
+      );
+      expect(
+        await store.dateEventFor('2026-10-20'),
+        '華の日',
+        reason: '記録の無い先の日にも入る',
+      );
       expect(await store.dateEventFor('2026-10-21'), '華の日');
       await store.setDateEventDays(
         ['2026-10-20', '2026-10-22'],
@@ -738,9 +746,17 @@ void main() {
         for (final e in (await exported())['date_events'] as List)
           (e as Map)['day']: e,
       };
-      expect(events['2026-10-20']!['updated_at'], '2026-10-08T12:00:00.000Z', reason: '同じ名前は時刻そのまま');
+      expect(
+        events['2026-10-20']!['updated_at'],
+        '2026-10-08T12:00:00.000Z',
+        reason: '同じ名前は時刻そのまま',
+      );
       expect(events['2026-10-22']!['updated_at'], '2026-10-08T13:00:00.000Z');
-      expect(events.containsKey('2026-10-25'), isFalse, reason: '何も無い日の「イベントなし」は印を作らない');
+      expect(
+        events.containsKey('2026-10-25'),
+        isFalse,
+        reason: '何も無い日の「イベントなし」は印を作らない',
+      );
       // カレンダーの元データ：閲覧ページと同じ形（記録とイベント）。
       final data = await store.calendarData();
       expect(data['format'], 'pscube-viewer');
@@ -756,7 +772,10 @@ void main() {
         factory: databaseFactoryFfi,
       );
       addTearDown(empty.close);
-      expect(empty.setDateEventDays(['2026-10-20'], '華の日'), throwsFormatException);
+      expect(
+        empty.setDateEventDays(['2026-10-20'], '華の日'),
+        throwsFormatException,
+      );
     });
 
     test('ファイル名はメルヘンと重ならず、書き出しには種別・出どころ・時刻・取り込み済みの印が付く', () async {
@@ -1122,6 +1141,81 @@ void main() {
       throwsFormatException,
     );
     await store.importPage(rack, rackUrl, expectedDay: yesterday);
+  });
+
+  // 2026-10-19 入れ替えの日に前日（10/18）を指定すると、新台は10/19のタブしか無く、サイトは10/19を選ぶ。
+  // 以前は「対象のP’s CUBEページではありません」で止まり、新台が未取得の先頭に残り続けた（PC版と同じ試験）。
+  test('取り込み日の日付タブが無い機種は、その日だけ飛ばして次へ進む', () async {
+    const yesterday = '2026-10-18', today = '2026-10-19';
+    final fresh = {
+      ...machine,
+      'machine': 'L魔法少女にあこがれて',
+      'url': '${machine['url']}&nmk_kisyu=L魔法少女にあこがれて',
+    };
+    final second = {
+      ...machine,
+      'machine': '二つ目',
+      'url': '${machine['url']}&nmk_kisyu=second',
+    };
+    await store.importPage(
+      page(PscubeStore.index, [fresh, second]),
+      PscubeStore.index,
+    );
+    // WebViewの住所は機種名の%が保存したリンクと違う形（二重）で、#以降はサイトが選んだ10/19。
+    final shown =
+        '${machine['url']}&nmk_kisyu=${Uri.encodeComponent(Uri.encodeComponent('L魔法少女にあこがれて'))}'
+        '#3;0;20261019;0;cd_dai;1;0;664';
+    String failed(List<String> tabs, [String? url]) => jsonEncode({
+      'error': '1526番台の台別ページへのリンクがありません。',
+      'source_url': url ?? shown,
+      'available_days': tabs,
+    });
+    final result = await store.importPage(
+      failed([today]),
+      shown,
+      expectedDay: yesterday,
+    );
+    expect(result.saved, 0);
+    expect(
+      result.skipped,
+      contains('L魔法少女にあこがれては10/18の日付タブがサイトにありません（タブ：10/19'),
+    );
+    expect(result.nextUrl, '${second['url']}#0;0;20261018;0;cd_dai;1;0;0');
+    expect((await exported())['records'], isEmpty, reason: '何も保存しない');
+    expect((await store.nextTarget(yesterday)).remaining, 1);
+    expect((await store.nextTarget(today)).remaining, 2, reason: 'ほかの日は今までどおり');
+    // 飛ばさない：取り込み日のタブがある／タブより新しい日（早朝でタブがまだ出ていない）。
+    for (final (tabs, target) in [
+      ([yesterday, today], yesterday),
+      (['2026-10-12', yesterday], today),
+    ]) {
+      expect(
+        () => store.importPage(failed(tabs), shown, expectedDay: target),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('台別ページへのリンクがありません'),
+          ),
+        ),
+      );
+    }
+    // 保存した機種一覧に無い機種は、飛ばさずに理由を出す。
+    final unknown = '${machine['url']}&nmk_kisyu=X#3;0;20261019;0;cd_dai;1;0;0';
+    expect(
+      () => store.importPage(
+        failed([today], unknown),
+        unknown,
+        expectedDay: yesterday,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('日付タブがこの機種にありません（タブ：10/19）'),
+        ),
+      ),
+    );
   });
 
   test('取り込み日を指定すると、全台一覧はその日の日付タブで開く（サイトは#以降の日付でタブを選ぶ）', () {

@@ -92,6 +92,18 @@ function siteUrl(raw, base) {
   return u;
 }
 function storeOf(url) { return url.pathname.match(/\/(c\d+)\//)[1]; }
+/** 全台一覧に並ぶ日付タブ（YYYY-MM-DD、古い順）。読めなければ空。保存の判定には使わず、取り込み日の
+ * タブが無い機種（入れ替えで入った新台など）を見分けるためだけに返す。新台はその日からのタブしか無く、
+ * 前日を指定して開くとサイトは最新のタブを選ぶ（2026-10-19 利用者が実サイトで確認）。 */
+function tableDays(root) {
+  try {
+    const days = [...root.querySelectorAll('[data-ymd]')].map(n => n.getAttribute('data-ymd'))
+      .filter(v => /^\d{8}$/.test(v || '')).map(v => `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6)}`).filter(validDay);
+    return [...new Set(days)].sort();
+  } catch {
+    return [];
+  }
+}
 function sameStore(raw, store) {
   const u = siteUrl(raw);
   if (storeOf(u) !== store) fail('店舗が異なるリンクが含まれています。');
@@ -175,7 +187,11 @@ function parsePage(page) {
     for (const card of dom.querySelectorAll('li[id^="li-"]')) {
       const rack = numberText(card.id.slice(3));
       const rows = Object.fromEntries([...card.querySelectorAll('tr[data-key]')].map(row => [row.dataset.key, text(row.querySelector('td:last-child'))]));
-      const link = siteUrl(card.querySelector('a[href*="nc-v06-001.php"]')?.getAttribute('href') || '', url);
+      // リンクが無いときに空の値から全台一覧の住所を作らない（台別ページの住所として保存の検査で
+      // 「対象のP’s CUBEページではありません」になり、理由が分からなかった。2026-10-19）。
+      const href = card.querySelector('a[href*="nc-v06-001.php"]')?.getAttribute('href');
+      if (!href) fail(`${rack}番台の台別ページへのリンクがありません。数値が表示されてから保存してください。`);
+      const link = siteUrl(href, url);
       data.records.push({ store, rate, machine, rack, day, observed_at,
         bb: numberText(rows['toku1-count']), rb: numberText(rows['toku5-count']),
         at_art: numberText(rows['toku4-count']), games: numberText(rows.sum_game), my: numberText(rows.sadama_s),
