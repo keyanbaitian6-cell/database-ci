@@ -1218,6 +1218,80 @@ void main() {
     );
   });
 
+  // 増台（4台→6台）の翌日に前日を取り込む：過去の日の全台一覧にも今の6台が並び、増えた2台はその日の
+  // 数値もリンクも無い（2026-10-19 利用者「前の日の台数が出てくることはない」）。0で埋めず残り4台を保存する。
+  test('過去の日の全台一覧で、数値もリンクも無い台（増台）を除いて保存する', () async {
+    const yesterday = '2026-10-18', today = '2026-10-19';
+    final six = {...machine, 'expected_count': 6};
+    await store.importPage(page(PscubeStore.index, [six]), PscubeStore.index);
+    Map<String, dynamic> rack(int number, String date) => {
+      ...record(date),
+      'rack': number,
+      'detail_url':
+          '${PscubeStore.root}cgi-bin/nc-v06-001.php?cd_dai=$number#${date.replaceAll('-', '')}',
+    };
+    String table(String date, List<int> numbers, List<int> missing) =>
+        jsonEncode({
+          ...jsonDecode(
+            page(
+              six['url'],
+              [
+                {...six, 'expected_count': null},
+              ],
+              [for (final n in numbers) rack(n, date)],
+            ),
+          ) as Map,
+          'missing_racks': missing,
+          'available_days': [yesterday, today],
+        });
+    final result = await store.importPage(
+      table(yesterday, [1, 2, 3, 4], [5, 6]),
+      six['url'],
+      expectedDay: yesterday,
+    );
+    expect(result.saved, 4);
+    expect(result.kind, '全台一覧（5・6番台はこの日の数値なし）');
+    expect(result.nextUrl, rack(1, yesterday)['detail_url']);
+    final next = await store.nextTarget(yesterday);
+    expect((next.url, next.remaining), (rack(1, yesterday)['detail_url'], 4));
+    // 今動いている日（タブの最新）では受け付けない。台数が合わなければ今までどおり止める。
+    expect(
+      () => store.importPage(
+        table(today, [1, 2, 3, 4], [5, 6]),
+        six['url'],
+        expectedDay: today,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('5・6番台に数値と台別ページへのリンクがありません'),
+        ),
+      ),
+    );
+    expect(
+      () => store.importPage(
+        table(yesterday, [1, 2, 3, 4], [5]),
+        six['url'],
+        expectedDay: yesterday,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('表示 5 台、設置 6 台'),
+        ),
+      ),
+    );
+    // 6台そろった一覧を取り直したら、その日に無かった台の記録は消える（6台とも台別ページが未取得になる）。
+    await store.importPage(
+      table(yesterday, [1, 2, 3, 4, 5, 6], []),
+      six['url'],
+      expectedDay: yesterday,
+    );
+    expect((await store.nextTarget(yesterday)).remaining, 6);
+  });
+
   test('取り込み日を指定すると、全台一覧はその日の日付タブで開く（サイトは#以降の日付でタブを選ぶ）', () {
     final table = machine['url'] as String;
     expect(

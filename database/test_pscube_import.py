@@ -116,6 +116,35 @@ class PscubeImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '日付タブがこの機種にありません（タブ：10/19）'):
             self.store.import_page(json.dumps(dict(page, source_url=unknown)), unknown, expected_day=yesterday)
 
+    def test_racks_added_later_are_left_out_of_a_past_day_table(self):
+        # 増台（4台→6台）の翌日に前日を取り込む：過去の日の全台一覧にも今の6台が並び、増えた2台はその日の
+        # 数値もリンクも無い（2026-10-19 利用者「前の日の台数が出てくることはない」）。0で埋めず、残り4台を保存する。
+        yesterday, today = '2026-10-18', '2026-10-19'
+        machine = dict(self.machines[0], expected_count=6)
+        self.store.import_page(self.page(self.index_url, [machine]), self.index_url)
+        records = [self.record(machine, rack, yesterday) for rack in (1, 2, 3, 4)]
+        table = dict(self.page(machine['url'], [dict(machine, expected_count=None)], records),
+                     missing_racks=[5, 6], available_days=[yesterday, today])
+        result = self.store.import_page(table, machine['url'], expected_day=yesterday)
+        self.assertEqual(result['saved'], 4)
+        self.assertEqual(result['kind'], '全台一覧（5・6番台はこの日の数値なし）')
+        self.assertEqual(result['next_url'], records[0]['detail_url'], '全台一覧は済み。次は台別ページ')
+        reopened = PscubeStore(Path(self.tmp.name) / 'pscube.sqlite3')
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.next_target(yesterday), (records[0]['detail_url'], 4), '開き直しても一覧を取り直さない')
+        # 今動いている日（タブの最新）では、数値もリンクも無い台を受け付けない（読み込み途中かもしれない）。
+        today_table = dict(table, records=[self.record(machine, rack, today) for rack in (1, 2, 3, 4)])
+        with self.assertRaisesRegex(ValueError, '5・6番台に数値と台別ページへのリンクがありません'):
+            self.store.import_page(today_table, machine['url'], expected_day=today)
+        # 台数が合わなければ、今までどおり止める。
+        with self.assertRaisesRegex(ValueError, '表示は5台、設置台数は6台'):
+            self.store.import_page(dict(table, missing_racks=[5]), machine['url'], expected_day=yesterday)
+        # 6台そろった一覧を取り直したら、その日に無かった台の記録は消える。
+        full = self.page(machine['url'], [dict(machine, expected_count=None)],
+                         [self.record(machine, rack, yesterday) for rack in range(1, 7)])
+        self.store.import_page(dict(full, available_days=[yesterday, today]), machine['url'], expected_day=yesterday)
+        self.assertEqual(self.store._absent_racks(), {})
+
     def test_date_events_free_names_shared_by_backup_with_newest_winning(self):
         # P’s CUBEのイベント名（自由記入、2026-10-06）。Android pscube_store_test と同じ規則。
         from datetime import timezone

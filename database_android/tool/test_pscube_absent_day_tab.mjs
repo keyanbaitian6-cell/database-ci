@@ -10,6 +10,9 @@ const url = `${base}nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L%25E6%2596%25B0%25E
 const rows = Object.entries({'toku1-count': 0, 'toku5-count': 0, 'toku4-count': 0, sum_game: 0, sadama_s: 0})
   .map(([key, value]) => `<tr data-key="${key}"><td>${key}</td><td>${value}</td></tr>`).join('');
 const card = (rack, link, day = '20261019') => `<li id="li-${rack}">${link ? `<a href="${base}nc-v06-001.php?cd_dai=${rack}#${day}">${rack}</a>` : rack}<table>${rows}</table></li>`;
+// 増台した台：その日の数値もリンクも無い（数値の欄は「-」）。
+const blankCard = rack => `<li id="li-${rack}">${rack}<table>${['toku1-count', 'toku5-count', 'toku4-count', 'sum_game', 'sadama_s']
+  .map(key => `<tr data-key="${key}"><td>${key}</td><td>-</td></tr>`).join('')}</table></li>`;
 const html = (tabs, cards, selected = '20261019') => `<html><head><title>P'sCUBE｜L新台</title></head><body><h1>SLOT</h1>
   <ul>${tabs.map(d => `<li data-ymd="${d}"${d === selected && !seen.has(d) && seen.add(d) ? ' class="selected"' : ''}>${d}</li>`).join('')}</ul>
   <ul>${cards.join('')}</ul></body></html>`;
@@ -40,6 +43,17 @@ try {
     ['2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17', '2026-10-18', '2026-10-19']);
   assert.deepEqual(normal.records.map(r => [r.rack, r.day, new URL(r.detail_url).pathname.endsWith('nc-v06-001.php')]),
     [[1526, '2026-10-18', true]]);
+  // 増台の翌日に前日：増えた台は数値もリンクも無い。0で埋めず missing_racks として返す（保存してよいかは保存側が決める）。
+  const grown = await capture(tabs, [card(1526, true, '20261018'), blankCard(1530), blankCard(1531)], '20261018');
+  assert.equal(grown.error, undefined, grown.error);
+  assert.deepEqual(grown.records.map(r => r.rack), [1526]);
+  assert.deepEqual(grown.missing_racks, [1530, 1531]);
+  // 数値があるのにリンクが無い台は、今までどおり理由を出して止める。
+  const half = await capture(tabs, [card(1526, false, '20261018')], '20261018');
+  assert.match(half.error, /1526番台の台別ページへのリンクがありません/);
+  // 数値のある台が1台も無いページは止める（読み込み途中かもしれない）。
+  const empty = await capture(tabs, [blankCard(1530)], '20261018');
+  assert.match(empty.error, /台の数値がありません/);
   console.log('OK pscube absent day tab capture');
 } finally {
   await browser.close();

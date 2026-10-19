@@ -97,6 +97,9 @@ bool pscubeSameMachineUrl(String first, String second) {
 /// 取り込み日の日付タブがサイトに無かった機種と日（新台・入れ替え）。その日の未取得に数えない。
 const pscubeAbsentDaysKey = 'absent_table_days';
 
+/// 過去の日の全台一覧で、その日の数値もリンクも無かった台（増台した台）。台数の確認と未取得の数え方に足す。
+const pscubeAbsentRacksKey = 'absent_table_racks';
+
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
   PscubeStore._(this.db);
@@ -437,6 +440,7 @@ class PscubeStore {
       );
     }
     String? day;
+    var missingRacks = <int>[];
     if (tablePage) {
       if ((current.queryParameters.containsKey('cd_ps') &&
               current.queryParameters['cd_ps'] != '2') ||
@@ -445,17 +449,19 @@ class PscubeStore {
           records.any((r) => _key(r) != _key(machines.single))) {
         throw const FormatException('全台一覧が揃っていません。');
       }
-      final known = await _get('machines', _key(machines.single));
-      if (known == null ||
-          known['expected_count'] == null ||
-          records.length != known['expected_count']) {
-        throw FormatException(
-          '全台を表示してください。表示 ${records.length} 台、設置 ${known?['expected_count'] ?? '?'} 台。',
-        );
-      }
       day = records.first['day'] as String;
       if (records.any((r) => r['day'] != day)) {
         throw const FormatException('営業日が一致しません。');
+      }
+      missingRacks = _missingRacksOf(data, records, day);
+      final known = await _get('machines', _key(machines.single));
+      final shown = records.length + missingRacks.length;
+      if (known == null ||
+          known['expected_count'] == null ||
+          shown != known['expected_count']) {
+        throw FormatException(
+          '全台を表示してください。表示 $shown 台、設置 ${known?['expected_count'] ?? '?'} 台。',
+        );
       }
     }
     if (rackPage) {
@@ -537,6 +543,7 @@ class PscubeStore {
       final key = _key(record, record: true);
       oldRecords[key] = await _get('records', key);
     }
+    final oldAbsentRacks = await _absentRacks();
     await db.transaction((txn) async {
       for (final machine in machines) {
         final key = _key(machine);
@@ -575,6 +582,21 @@ class PscubeStore {
         await txn.insert('state', {
           'key': 'last_day',
           'value': day,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      if (tablePage) {
+        // その日に無かった台（増台した台）を覚える。全部そろった一覧を取り直したら消す。
+        final place = jsonEncode([_key(machines.single), day]);
+        final absent = {...oldAbsentRacks}..remove(place);
+        if (missingRacks.isNotEmpty) absent[place] = missingRacks;
+        await txn.insert('state', {
+          'key': pscubeAbsentRacksKey,
+          'value': jsonEncode([
+            for (final e
+                in (absent.entries.toList()
+                  ..sort((a, b) => a.key.compareTo(b.key))))
+              [...jsonDecode(e.key) as List, e.value],
+          ]),
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
       if (indexPage) {
@@ -636,7 +658,9 @@ class PscubeStore {
       kind: indexPage
           ? '機種一覧'
           : tablePage
-          ? '全台一覧'
+          ? (missingRacks.isEmpty
+                ? '全台一覧'
+                : '全台一覧（${missingRacks.join('・')}番台はこの日の数値なし）')
           : records.length < 7
           ? '台別履歴（${records.length}日分）'
           : '台別7日分',
@@ -645,6 +669,59 @@ class PscubeStore {
           : pscubeTableUrlForDay(next.url!, expectedDay),
       skipped: null,
     );
+  }
+
+  /// その日に無かった台（{jsonEncode([機種のキー, 日付]): [台番号]}）。増台した台は、過去の日の全台一覧に
+  /// 数値もリンクも無く並ぶ（PC版 `_absent_racks` と同じ）。
+  Future<Map<String, List<int>>> _absentRacks() async {
+    final rows = await db.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: [pscubeAbsentRacksKey],
+    );
+    try {
+      return rows.isEmpty
+          ? <String, List<int>>{}
+          : {
+              for (final e in jsonDecode(rows.first['value'] as String) as List)
+                jsonEncode([e[0], e[1]]): (e[2] as List).cast<int>(),
+            };
+    } catch (_) {
+      return <String, List<int>>{};
+    }
+  }
+
+  /// 全台一覧の「その日に数値もリンクも無い台」（共通JSの missing_racks）を確かめて返す。今動いている日（日付タブの
+  /// 最新）では受け付けない。数値のある台が1台も無いページは共通JSが止める（読み込み途中かもしれない。2026-10-19、
+  /// PC版 `_missing_racks_of` と同じ）。
+  static List<int> _missingRacksOf(
+    Map<String, dynamic> data,
+    List<Map<String, dynamic>> records,
+    String day,
+  ) {
+    final missing = data['missing_racks'];
+    if (missing == null || (missing is List && missing.isEmpty)) return [];
+    final racks = records.map((r) => r['rack']).toSet();
+    if (missing is! List ||
+        missing.any((r) => r is! int || r < 1 || racks.contains(r)) ||
+        missing.toSet().length != missing.length) {
+      throw const FormatException('数値の無い台の情報が不正です。');
+    }
+    final list = missing.cast<int>().toList()..sort();
+    final days = data['available_days'];
+    if (days is! List ||
+        days.isEmpty ||
+        days.any((d) => d is! String) ||
+        day.compareTo(
+              days.cast<String>().reduce((a, b) => a.compareTo(b) > 0 ? a : b),
+            ) >=
+            0) {
+      throw FormatException(
+        '${list.join('・')}番台に数値と台別ページへのリンクがありません。数値が表示されてから保存してください。',
+      );
+    }
+    return list;
   }
 
   Future<Set<String>> _absentDays() async {
@@ -850,6 +927,7 @@ class PscubeStore {
     final pending = <(int, int, String)>[];
     final cutoff = pscubeStaleCutoff(day, freshSince);
     final absent = await _absentDays();
+    final absentRacks = await _absentRacks();
     for (final (index, machine) in machines.indexed) {
       // その日の日付タブがサイトに無かった機種（新台・入れ替え）は、その日の未取得に数えない。
       if (absent.contains(jsonEncode([_key(machine), day]))) continue;
@@ -866,7 +944,12 @@ class PscubeStore {
       final oldest = times.isEmpty
           ? null
           : times.reduce((a, b) => a < b ? a : b);
-      if (rows.length != machine['expected_count'] ||
+      final racks = rows.map((r) => r['rack']).toSet();
+      final missing =
+          (absentRacks[jsonEncode([_key(machine), day])] ?? const []).where(
+            (r) => !racks.contains(r),
+          );
+      if (rows.length + missing.length != machine['expected_count'] ||
           (cutoff != null && oldest != null && oldest < cutoff)) {
         pending.add((index, -1, machine['url'] as String));
       } else {

@@ -43,6 +43,8 @@ BUSINESS_DAY_CUTOFF_HOUR = 2
 DIRECTIONS = ('top', 'bottom')
 # 取り込み日の日付タブがサイトに無かった機種と日（新台・入れ替え）。その日の未取得に数えない（2026-10-19）。
 ABSENT_DAYS_KEY = 'absent_table_days'
+# 過去の日の全台一覧で、その日の数値もリンクも無かった台（増台した台）。台数の確認と未取得の数え方に足す（2026-10-19）。
+ABSENT_RACKS_KEY = 'absent_table_racks'
 PACKAGE_ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
 CAPTURE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_capture.js'
 PROBE = PACKAGE_ROOT / 'database_android' / 'assets' / 'pscube_auto_probe.js'
@@ -661,8 +663,10 @@ class PscubeStore:
             old = self._read('machines', _machine_key(data['machines'][0]))
             if not old or not old.get('expected_count'):
                 raise ValueError('先に設置機種一覧を取り込んでください。')
-            if len(data['records']) != old['expected_count']:
-                raise ValueError(f'表示は{len(data["records"])}台、設置台数は{old["expected_count"]}台です。全台を表示してから取り込んでください。')
+            missing_racks = self._missing_racks_of(data)
+            shown = len(data['records']) + len(missing_racks)
+            if shown != old['expected_count']:
+                raise ValueError(f'表示は{shown}台、設置台数は{old["expected_count"]}台です。全台を表示してから取り込んでください。')
             if any(_machine_key(r) != _machine_key(old) for r in data['records']):
                 raise ValueError('機種と台の情報が一致しません。')
         if is_rack and (len(data['machines']) != 1 or not 1 <= len(data['records']) <= 7):
@@ -717,6 +721,13 @@ class PscubeStore:
                 self.db.execute('INSERT OR REPLACE INTO records VALUES (?,?)', (key, json.dumps(saved, ensure_ascii=False)))
             if day:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)', ('last_day', day))
+            if is_table:
+                # その日に無かった台（増台した台）を覚える。全部そろった一覧を取り直したら消す。
+                absent = {k: v for k, v in self._absent_racks().items() if k != (_machine_key(old), day)}
+                if missing_racks:
+                    absent[(_machine_key(old), day)] = missing_racks
+                self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                                (ABSENT_RACKS_KEY, json.dumps([[k, d, r] for (k, d), r in sorted(absent.items())], ensure_ascii=False)))
             if is_index:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('active_machine_keys', json.dumps([_machine_key(m) for m in data['machines']], ensure_ascii=False)))
@@ -742,13 +753,39 @@ class PscubeStore:
             next_url, remaining = self.next_target(target_day, direction, after, fresh_since.get(target_day))
         next_url = table_url_for_day(next_url, expected_day)
         result = {'saved': len(data['records']), 'day': day, 'next_url': next_url, 'remaining': remaining,
-                  'kind': '機種一覧' if is_index else '全台一覧' if is_table else
+                  'kind': '機種一覧' if is_index else
+                  (f'全台一覧（{"・".join(map(str, missing_racks))}番台はこの日の数値なし）' if missing_racks else '全台一覧') if is_table else
                   f'台別履歴（{len(data["records"])}日分）' if len(data['records']) < 7 else '台別7日分',
                   'fresh_since': fresh_since}
         if is_rack and isinstance(data.get('net_warning'), str):
             # 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
             result['net_warning'] = data['net_warning'][:200]
         return result
+
+    def _absent_racks(self):
+        """その日に無かった台（{(機種のキー, 日付): [台番号]}）。増台した台は、過去の日の全台一覧に数値もリンクも無く並ぶ。"""
+        try:
+            return {(k, d): list(r) for k, d, r in json.loads(self._state(ABSENT_RACKS_KEY) or '[]')}
+        except (TypeError, ValueError):
+            return {}
+
+    def _missing_racks_of(self, data):
+        """全台一覧の「その日に数値もリンクも無い台」（共通JSの missing_racks）を確かめて返す。今動いている日（日付タブの
+        最新）や、ほかの台がすべて空のページ（読み込み途中かもしれない）では受け付けない（2026-10-19）。"""
+        missing = data.get('missing_racks', [])
+        if not missing:
+            return []
+        racks = {r['rack'] for r in data['records']}
+        days = data.get('available_days')
+        day = data['records'][0]['day'] if data['records'] else None
+        if (not isinstance(missing, list) or any(type(r) is not int or r < 1 for r in missing) or
+                len(set(missing)) != len(missing) or racks.intersection(missing)):
+            raise ValueError('数値の無い台の情報が不正です。')
+        if (not isinstance(days, list) or not days or any(not isinstance(d, str) for d in days) or
+                not day or day >= max(days)):
+            raise ValueError(f'{"・".join(map(str, sorted(missing)))}番台に数値と台別ページへのリンクがありません。'
+                             '数値が表示されてから保存してください。')
+        return sorted(missing)
 
     def _absent_days(self):
         """取り込み日の日付タブがサイトに無かった機種と日（{(機種のキー, 日付)}）。"""
@@ -823,6 +860,7 @@ class PscubeStore:
         captured = {row[0] for row in self.db.execute('SELECT key FROM rack_captures')}
         cutoff = stale_cutoff(day, fresh_since)
         absent = self._absent_days()
+        absent_racks = self._absent_racks()
         for index, machine in enumerate(machines):
             # その日の日付タブがサイトに無かった機種（新台・入れ替え）は、その日の未取得に数えない。
             if (_machine_key(machine), day) in absent:
@@ -831,7 +869,8 @@ class PscubeStore:
             # 一番古い数値で判断する（台別ページは1台ずつしか新しくならない）。更新時刻が分からない台は判断に使わない
             # （分からないまま「古い」とすると、同じ全台一覧を取り直し続けてしまう）。
             oldest = min((_instant(r.get('observed_at')) for r in rows if _instant(r.get('observed_at'))), default=None)
-            if len(rows) != machine.get('expected_count') or (cutoff is not None and oldest is not None and oldest < cutoff):
+            missing = [r for r in absent_racks.get((_machine_key(machine), day), []) if r not in {row['rack'] for row in rows}]
+            if len(rows) + len(missing) != machine.get('expected_count') or (cutoff is not None and oldest is not None and oldest < cutoff):
                 pending.append((index, -1, machine['url']))
             else:
                 pending += [(index, r['rack'], r['detail_url']) for r in rows if r.get('detail_url') and _record_key(r) not in captured and not no_hits(r)]
