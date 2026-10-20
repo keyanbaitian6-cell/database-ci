@@ -360,6 +360,67 @@ def save_normal_analysis(folder, payload):
     return path
 
 
+OTHER_ANALYSIS_FORMAT = 'database-other-analysis'
+
+
+def make_other_analysis(staging, mapping=None):
+    """幸町のジャグラー・ハナハナ以外を分析専用に保存する。厳密なAT/ART分類ではない。
+
+    通常の補完から除外した台・未登録の台も保持する。ART回数や縮尺不明の原グラフを残し、
+    MY・差枚・最大持玉・観測時刻・貸玉は推測しない。既存のノーマル用JSONは変更しない。"""
+    from core import normalize_machine_name
+    if staging.get('format') != 'anaslo-hall-staging' or staging.get('version') != 1:
+        raise ValueError('解析結果の形式が違います。')
+    mapping = mapping or {}
+    records, days, sources, normal_count = [], [], [], 0
+    for d in staging['days']:
+        if d['store']['source_name'] != SAIWAICHOU.source_name:
+            raise ValueError('その他機種の分析用は、幸町のHTMLだけに対応しています。')
+        days.append(d['day'])
+        sources.append(dict(d['source'], day=d['day']))
+        for source in d['records']:
+            name = source['machine']
+            target = mapping.get(name)
+            if is_normal_type(name) or is_normal_type(target):
+                normal_count += 1
+                continue
+            record = {'store': MERUHEN_STORE, 'day': d['day'], 'rack': source['rack'],
+                      'machine': normalize_machine_name(target) if isinstance(target, str) and target.strip() else name,
+                      'source_machine': name, 'games': source['games'], 'bb': source['bb'], 'rb': source['rb'],
+                      'at_art': source.get('at_art'), 'my': source.get('my'), 'net_medals': source.get('net_medals'),
+                      'max_hold': source.get('max_hold'), 'rate': d['store'].get('rate'),
+                      'observed_at': d['source'].get('observed_at'), 'source_site': 'anaslo',
+                      'source_probabilities': source['probabilities'], 'source_graph': source.get('graph'),
+                      'source_url': d['source']['url'], 'source_sha256': d['source']['sha256']}
+            measurement = graph_measurement_from_source(source.get('graph'))
+            if measurement:
+                record['graph_measurement'] = measurement
+            records.append(record)
+    if not records:
+        raise ValueError('ジャグラー・ハナハナ以外の台がありませんでした。')
+    return {'format': OTHER_ANALYSIS_FORMAT, 'version': 1, 'store': MERUHEN_STORE,
+            'import_ready': False,
+            'note': '分析用（ジャグラー・ハナハナ以外。他のAタイプも含む）。database・共有・採点・翌日候補には取り込まない。',
+            'classification': 'source_machine または対応先の名称にジャグラー・ハナハナを含む台を除外。AT/ARTの確定分類ではない。',
+            'exported_at': datetime.now().astimezone().isoformat(timespec='seconds'),
+            'days': sorted(set(days)), 'sources': sources, 'records': records,
+            'summary': {'records': len(records), 'days': len(set(days)), 'normal_records_excluded': normal_count}}
+
+
+def save_other_analysis(folder, payload):
+    """通常バックアップと別の名前・形式・保存先。出力は一時ファイルから置き換える。"""
+    from file_io import atomic_writer
+    if payload.get('format') != OTHER_ANALYSIS_FORMAT or payload.get('version') != 1:
+        raise ValueError('その他機種の分析用ファイルの形式が違います。')
+    days = sorted({d.replace('-', '') for d in payload['days']})
+    period = days[0] if len(days) == 1 else f'{days[0]}-{days[-1]}'
+    path = Path(folder) / f'other-analysis-{payload["store"]}-{period}.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with atomic_writer(path) as stream:
+        stream.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + '\n')
+    return path
+
+
 # --- 変換画面が店舗ごとに切り替える部分 --------------------------------------------
 
 class PscubeTarget:

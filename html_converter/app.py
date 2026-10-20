@@ -8,7 +8,8 @@ from tkinter import ttk, filedialog, messagebox
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'database'))
 from app import apply_style
-from anaslo_converter import TARGETS, MeruhenTarget, PscubeTarget, analyze, make_normal_analysis, save_backup, save_normal_analysis
+from anaslo_converter import (TARGETS, MeruhenTarget, PscubeTarget, analyze, make_normal_analysis,
+                              make_other_analysis, save_backup, save_normal_analysis, save_other_analysis)
 from anaslo_download import PaceState
 from html_converter_diagnostics import LOGGER, setup as setup_diagnostics
 
@@ -17,6 +18,7 @@ OMIT = '取り込み対象から外す'
 PENDING = '対応する機種を選択'
 # 幸町のジャグラー・ハナハナだけの分析用ファイル（databaseに読み込まない、2026-10-17）。
 NORMAL_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'normal_analysis'
+OTHER_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'other_analysis'
 
 
 class Converter:
@@ -67,13 +69,17 @@ class Converter:
         self.combo = ttk.Combobox(row, textvariable=self.choice, state='readonly', width=65)
         self.combo.pack(side='left', fill='x', expand=True)
         ttk.Button(row, text='この対応を確定', command=self.assign).pack(side='left', padx=(8, 0))
+        analysis_footer = ttk.Frame(frame)
+        analysis_footer.pack(fill='x', pady=(0, 8))
+        self.normal_button = ttk.Button(analysis_footer, text='ノーマルタイプの分析用に保存', command=self.save_normal, state='disabled')
+        self.normal_button.pack(side='left')
+        self.other_button = ttk.Button(analysis_footer, text='その他機種の分析用に保存', command=self.save_other, state='disabled')
+        self.other_button.pack(side='left', padx=(8, 0))
         footer = ttk.Frame(frame)
         footer.pack(fill='x')
         ttk.Button(footer, text='未対応はHTMLの機種名を使う', command=self.keep_remaining).pack(side='left')
         self.save_button = ttk.Button(footer, text='補完用JSONを保存', style='Accent.TButton', command=self.save, state='disabled')
         self.save_button.pack(side='right')
-        self.normal_button = ttk.Button(footer, text='ノーマルタイプの分析用に保存', command=self.save_normal, state='disabled')
-        self.normal_button.pack(side='right', padx=(0, 8))
         self.notice = tk.StringVar(value=PscubeTarget.notice)
         ttk.Label(frame, textvariable=self.notice, style='Sub.TLabel', wraplength=960).pack(anchor='w', pady=(12, 0))
 
@@ -135,6 +141,7 @@ class Converter:
         self.save_button.configure(state='disabled' if unresolved else 'normal')
         # 分析用は機種名の対応が済んでいなくても作れる（幸町だけ）。
         self.normal_button.configure(state='normal' if isinstance(self.target, MeruhenTarget) else 'disabled')
+        self.other_button.configure(state='normal' if isinstance(self.target, MeruhenTarget) else 'disabled')
 
     def select(self, event=None):
         selected = self.tree.selection()
@@ -215,6 +222,23 @@ class Converter:
         summary = payload['summary']
         messagebox.showinfo('分析用に保存しました',
                             f"{summary['days']}日分・ジャグラー/ハナハナ{summary['records']}台を分析用に保存しました。\n{path}\n\n"
+                            'このファイルはdatabaseに読み込みません（共有ページ・iPhone版・Android・採点・翌日候補には出ません）。'
+                            '「バックアップを読み込む」で選んでも読み込めない形式です。', parent=self.root)
+
+
+    def save_other(self):
+        """ジャグラー・ハナハナ以外を、通常の記録と別の分析用に保存する。"""
+        if not self.staging or not isinstance(self.target, MeruhenTarget):
+            return
+        try:
+            payload = make_other_analysis(self.staging, self.mapping)
+            path = save_other_analysis(OTHER_ANALYSIS_DIR / payload['store'], payload)
+        except Exception as exc:
+            messagebox.showerror('保存できません', str(exc), parent=self.root)
+            return
+        summary = payload['summary']
+        messagebox.showinfo('分析用に保存しました',
+                            f"{summary['days']}日分・ジャグラー/ハナハナ以外{summary['records']}台を分析用に保存しました。\n{path}\n\n"
                             'このファイルはdatabaseに読み込みません（共有ページ・iPhone版・Android・採点・翌日候補には出ません）。'
                             '「バックアップを読み込む」で選んでも読み込めない形式です。', parent=self.root)
 
