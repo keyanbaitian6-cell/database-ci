@@ -324,6 +324,21 @@ def pull_shared_events(store, folder):
 # iPhoneの閲覧ページで付け外しした🌈（RAINBOW.md「iPhoneから付ける」、2026-10-11）。Apps Script が同期フォルダに書く。
 SHARED_RAINBOW_NAME = 'database-rainbow-shared.json'
 
+SHARED_HISTORY_NAME = 'database-event-history-shared.json'
+
+
+def pull_shared_history(store, folder):
+    """共有で編集した結果記号を合流する。週・機種対応は共有から作らない。"""
+    path = Path(folder) / SHARED_HISTORY_NAME if folder else None
+    if path is None or not path.is_file():
+        return 0, 0, 0, 0
+    from event_history_data import validate_envelope
+    raw = json.loads(path.read_text(encoding='utf-8-sig'))
+    validate_envelope(raw)
+    if raw.get('weeks') or raw.get('links'):
+        raise ValueError('共有の履歴では週の構成・機種対応は変更できません。')
+    return store.merge_history_edits(raw)
+
 
 def _valid_rainbow_mark(mark):
     try:
@@ -680,11 +695,15 @@ class Store:
 
     def merge_history_edits(self, incoming):
         from event_history_data import merge_edits, load_base
-        raw = self.history_edits_raw()
-        if 'unreadable_raw' in raw:
-            raise ValueError('履歴の原文が読めません。台データの保存・バックアップは続けられます。')
-        merged, changed, conflicts, rejected, skipped_weeks = merge_edits(raw, incoming, load_base())
         with self.db:
+            # GUI保存と共有取り込みが並行しても、古い原文で別の編集を上書きしない。
+            # 読む前に書き込み権を確保し、合流と保存を一つの操作にする。
+            if not self.db.in_transaction:
+                self.db.execute('BEGIN IMMEDIATE')
+            raw = self.history_edits_raw()
+            if 'unreadable_raw' in raw:
+                raise ValueError('履歴の原文が読めません。台データの保存・バックアップは続けられます。')
+            merged, changed, conflicts, rejected, skipped_weeks = merge_edits(raw, incoming, load_base())
             self._write_history_edits(merged)
         return changed, conflicts, rejected, skipped_weeks
 
@@ -1694,6 +1713,14 @@ def auto_backup(store, data_dir, *, strict=False, notices=None):
     copy is skipped unless a sync folder was configured, because a failed backup
     must never get in the way of saving the record itself.
     """
+    folder = load_settings(data_dir).get('sync_dir')
+    try:
+        _changed, _conflicts, rejected, _skipped = pull_shared_history(store, folder)
+        if rejected and notices is not None:
+            notices.append(f'共有のイベント履歴は形式が合わない編集{rejected}件を除外しました。')
+    except (OSError, ValueError, sqlite3.Error) as error:
+        if notices is not None:
+            notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
     snapshot = None
     try:
         snapshot = snapshot_backup(store, data_dir)

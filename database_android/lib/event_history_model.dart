@@ -252,7 +252,9 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
             group == 'cells' || c.containsKey('week') || c.containsKey('type');
         final entry = <String, dynamic>{
           for (final k in ['store', 'machine', 'updated_at']) k: c[k],
-          'device': c['device'] == 'android' ? 'android' : 'pc',
+          'device': ['pc', 'android', 'shared'].contains(c['device'])
+              ? c['device']
+              : 'pc',
         };
         DateTime? first;
         if (scoped) {

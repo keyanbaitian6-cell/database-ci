@@ -26,23 +26,24 @@ try {
   let content = empty;
   await page.route('**/*', route => route.fulfill({status: 200, contentType: 'text/html; charset=utf-8',
     body: `<html><head><meta charset="utf-8"></head><body>${content}</body></html>`}));
-  const open = async (url, auto) => {
+  const open = async (url, auto, tablesOnly=false) => {
     await page.goto(url);
-    await page.evaluate(auto => {
+    await page.evaluate(({auto,tablesOnly}) => {
       window.__skipped = null;
       window.pywebview = {api: {
         retry_page: async () => {}, progress: async () => JSON.stringify({text: ''}),
         machine_status: async () => JSON.stringify({status: []}), save_overlay_layout: async () => true,
         get_auto_capture: async () => ({enabled: auto, seconds: 3.5, revision: 1, message: auto ? 'ON' : '停止中',
-          days: [], target_day: '2026-10-10', direction: 'bottom', manual_continuation: false}),
+          days: [], target_day: '2026-10-10', direction: 'bottom', manual_continuation: false,tables_only:tablesOnly}),
         submit_table: async () => { window.__submitted = true; },
+        next_ungraphed_rack: async () => JSON.stringify({url:'https://meruhenworld.pt.teramoba2.com/nagamachiminami/rack_info_kt/?kind_code=21',reason:'tables_only',message:'表だけ取り込みます。'}),
         skip_machine_without_racks: async raw => {
           window.__skipped = JSON.parse(raw);
           return JSON.stringify({url: 'https://meruhenworld.pt.teramoba2.com/nagamachiminami/rack_info_kt/?kind_code=21#database_next_machine=1&database_day=2026-10-10',
             message: '10/10のSﾊｲﾊﾟｰﾗｯｼｭSLC8は、サイトに台情報がありません（該当する台情報が見つかりませんでした）。この日は飛ばして、次の機種へ進みます。'});
         },
       }};
-    }, auto);
+    }, {auto,tablesOnly});
     await page.evaluate(overlay);
     await page.waitForFunction(() => document.getElementById('database-auto-toggle'));
   };
@@ -75,6 +76,18 @@ try {
   content = table + '<p>該当する台情報がありません</p>';
   await open(tableUrl('2026-10-07'), true);
   assert.equal((await page.evaluate(() => window.__databaseAutoProbe())).kind, 'table');
+  // 表だけモードでも機種の表は読み、台のグラフページでは抽出せず一覧へ戻る。
+  await open(tableUrl('2026-10-07'), true, true);
+  await page.waitForFunction(()=>document.getElementById('database-tables-only').checked);
+  assert.equal((await page.evaluate(() => window.__databaseAutoProbe())).kind,'table');
+  const graphUrl=HOST+'/nagamachiminami/standgraph/?rack_no=660&target_date=2026-10-07';
+  await open(graphUrl,true,true);
+  await page.waitForFunction(()=>document.getElementById('database-tables-only').checked);
+  assert.equal((await page.evaluate(() => window.__databaseAutoProbe())).kind,'table_only_return');
+  await open(graphUrl,false,true);
+  await page.waitForFunction(()=>document.getElementById('database-tables-only').checked);
+  await capture.evaluate(button=>{button.disabled=false;});
+  await Promise.all([page.waitForURL(/rack_info_kt/),capture.click()]);
   assert.deepEqual(errors, []);
   console.log('PASS: Meruhen PC skips a machine whose table says 該当する台情報が見つかりませんでした (auto probe, manual button), keeps normal tables');
 } finally {

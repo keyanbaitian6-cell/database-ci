@@ -163,7 +163,7 @@ def clean_edits(raw, base, rejected_items=None):
                     if c.get('record_name') is not None and not text(c['record_name']):
                         raise ValueError()
                     entry['record_name'] = c.get('record_name')
-                entry['device'] = c.get('device') if c.get('device') in ('pc', 'android') else 'pc'
+                entry['device'] = c.get('device') if c.get('device') in ('pc', 'android', 'shared') else 'pc'
                 key = edit_key(group, entry)
                 if key not in entries or stamp(entry['updated_at']) >= stamp(entries[key]['updated_at']):
                     entries[key] = entry

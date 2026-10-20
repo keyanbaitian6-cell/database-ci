@@ -54,9 +54,11 @@ const browser=await chromium.launch({headless:true,executablePath:process.env.CH
 const context=await browser.newContext({viewport:{width:393,height:852}});
 const page=await context.newPage();
 const errors=[];
+const scriptRequests=[];
 page.on('pageerror',e=>{errors.push(e.message);console.error('pageerror',e.message);});
 await context.route('https://script.google.com/**',route=>{
   const request=route.request(), url=new URL(request.url());
+  scriptRequests.push({method:request.method(),file:url.searchParams.get('file')});
   const headers={'access-control-allow-origin':'*'};
   if(request.method()==='POST'){
     posts.push(JSON.parse(request.postData()));
@@ -80,6 +82,8 @@ async function labels(){
 }
 async function waitFor(check,what){
   for(let i=0;i<80;i++){if(await check())return;await page.waitForTimeout(250);}
+  console.error('共有カレンダー試験の診断',JSON.stringify({what,scriptRequests,errors,labels:await labels(),
+    remote:await page.evaluate(()=>localStorage.getItem('database-viewer-remote'))}));
   assert.fail('timed out: '+what);
 }
 async function stored(name,store){

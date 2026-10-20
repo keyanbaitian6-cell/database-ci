@@ -128,6 +128,13 @@ AUTO_CAPTURE_JS = r'''
   autoDay.setAttribute('aria-label', '日付指定取り込み（取り込む日）');
   autoDay.style.cssText = 'width:100%;margin-top:4px;padding:4px;font-size:12px';
   autoDayBox.append(autoDayText, autoDay);
+  const tablesOnlyBox = document.createElement('label');
+  tablesOnlyBox.style.cssText = 'font-size:12px;display:flex;align-items:center;gap:5px';
+  const tablesOnlyInput = document.createElement('input');
+  tablesOnlyInput.type = 'checkbox';
+  tablesOnlyInput.id = 'database-tables-only';
+  tablesOnlyInput.disabled = true;
+  tablesOnlyBox.append(tablesOnlyInput, document.createTextNode('表だけ取り込む（グラフを省略）'));
   const autoStartRow = document.createElement('div');
   autoStartRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px';
   const makeStart = (id, text) => {
@@ -142,12 +149,14 @@ AUTO_CAPTURE_JS = r'''
   card.insertBefore(autoButton, captureBtn);
   card.insertBefore(autoLabel, captureBtn);
   card.insertBefore(autoDayBox, captureBtn);
+  card.insertBefore(tablesOnlyBox, captureBtn);
   card.insertBefore(autoStartRow, captureBtn);
   card.insertBefore(autoStatus, captureBtn);
   let autoEnabled = false;
   let autoChanging = false;
   let autoRevision = -1;
   let autoCancelled = false;
+  let tablesOnly = false;
   window.__databaseRenderAuto = state => {
     if (state.revision < autoRevision) return;
     autoRevision = state.revision;
@@ -157,6 +166,11 @@ AUTO_CAPTURE_JS = r'''
     autoButton.setAttribute('aria-pressed', String(autoEnabled));
     autoButton.disabled = autoChanging;
     autoSeconds.disabled = autoEnabled || autoChanging;
+    const modeChanged = tablesOnly !== !!state.tables_only;
+    tablesOnly = !!state.tables_only;
+    tablesOnlyInput.checked = tablesOnly;
+    tablesOnlyInput.disabled = autoEnabled || autoChanging;
+    if (modeChanged) { refreshProgress(); markMachines(); }
     autoSeconds.value = String(state.seconds);
     autoValue.textContent = '間隔：' + Number(state.seconds).toFixed(1) + '秒';
     // 取り込み日の選択肢は、午前2時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
@@ -220,6 +234,28 @@ AUTO_CAPTURE_JS = r'''
     try { window.__databaseRenderAuto(await window.pywebview.api.set_target_day(autoDay.value, null)); }
     catch (error) { autoStatus.textContent = '取り込み日を変えられませんでした：' + String(error && error.message || error); }
   };
+  tablesOnlyInput.onchange = async () => {
+    if (autoChanging || autoEnabled) { tablesOnlyInput.checked = tablesOnly; return; }
+    const enabled = tablesOnlyInput.checked;
+    autoChanging = true;
+    tablesOnlyInput.disabled = true;
+    autoButton.disabled = autoTop.disabled = autoBottom.disabled = true;
+    try {
+      const state = await window.pywebview.api.set_tables_only(enabled);
+      moveEpoch++;
+      moveCommitted = false;
+      pendingMachineFallback = null;
+      autoChanging = false;
+      window.__databaseRenderAuto(state);
+      status.textContent = state.tables_only ? '表だけ取り込みます。表を保存したら次の機種へ進みます。' : '表とグラフを取り込みます。';
+    } catch (error) {
+      autoChanging = false;
+      tablesOnlyInput.checked = tablesOnly;
+      try { window.__databaseRenderAuto(await window.pywebview.api.get_auto_capture()); }
+      catch (_) { autoButton.disabled = tablesOnlyInput.disabled = false; autoTop.disabled = autoBottom.disabled = false; }
+      status.textContent = '取り込みモードを変えられませんでした：' + String(error && error.message || error);
+    }
+  };
   const autoWaitReason = () => {
     if (document.readyState !== 'complete') return {error: 'ON・読み込み完了待ち'};
     if (window.jQuery && window.jQuery.active) return {error: 'ON・通信完了待ち'};
@@ -257,6 +293,7 @@ AUTO_CAPTURE_JS = r'''
     if (waiting) return waiting;
     const id = pageIdentity();
     let kind, raw;
+    if (id.rack !== null && tablesOnly) return {kind: 'table_only_return', url: location.href, ...id};
     if (id.rack !== null) { kind = 'graph'; raw = extractGraph(); }
     else if (id.machine) {
       // サイトに台情報が無い機種の表（「該当する台情報が見つかりませんでした」）は飛ばす。
@@ -328,6 +365,7 @@ AUTO_CAPTURE_JS = r'''
   card.insertBefore(autoButton, switchBtn);
   card.insertBefore(autoLabel, switchBtn);
   card.insertBefore(autoDayBox, switchBtn);
+  card.insertBefore(tablesOnlyBox, switchBtn);
   card.insertBefore(autoStartRow, switchBtn);
   window.addEventListener('resize', fitCard);
   new ResizeObserver(fitCard).observe(card);

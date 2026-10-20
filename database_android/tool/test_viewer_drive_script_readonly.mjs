@@ -30,7 +30,7 @@ function drive(source) {
     makeFile('pscube-viewer-drive.json', '{"format":"pscube-viewer","records":[2]}'),
     makeFile('database-events-shared.json', '{"format":"database-events","version":1,"kind":"meruhen","events":[{"day":"2026-10-04"}]}'),
   );
-  files.push(makeFile('database-event-history.json', JSON.stringify({format:'database-event-history',version:1,cells:[],weeks:[],links:[]})));
+  files.push(makeFile('database-event-history.json', JSON.stringify({format:'database-event-history',version:1,cells:[],weeks:[],links:[],base:{version:2,store:'nagamachiminami',symbols:['😀'],weeks:[]}})));
   const old = makeFile('database-viewer.json', '{"old":true}');
   old.updated = 1; // 古い同名ファイルは選ばない
   const trashed = makeFile('database-viewer.json', '{"trashed":true}');
@@ -76,15 +76,17 @@ test('イベントの書き込み（POST）は断り、Googleドライブに何�
   assert.deepEqual(shared.writes, []);
 });
 
-test('書けるのは🌈のファイルだけ（2026-10-11、RAINBOW.md「共有ページから付ける」）', async () => {
+test('書けるのは🌈と履歴記号のファイルだけ', async () => {
   const source = await load('viewer_drive_script_readonly.gs');
   const code = source.replace(/\/\/.*$/gm, '');
   for (const word of ['PropertiesService', 'setTrashed', 'removeFile']) assert.ok(!code.includes(word), word);
   // 書く先の名前は🌈のファイルだけ（setContent・createFile は postRainbow の中にしか無い）。
   const writer = code.slice(code.indexOf('function postRainbow'), code.indexOf('function rainbowDocument'));
-  assert.equal(code.split('setContent').length - 1, writer.split('setContent').length - 1);
-  assert.equal(code.split('createFile').length - 1, writer.split('createFile').length - 1);
+  const historyWriter=code.slice(code.indexOf('function postEventHistory'));
+  assert.equal(code.split('setContent').length - 1, writer.split('setContent').length + historyWriter.split('setContent').length - 2);
+  assert.equal(code.split('createFile').length - 1, writer.split('createFile').length + historyWriter.split('createFile').length - 2);
   assert.match(writer, /RAINBOW_FILE\.name/);
+  assert.match(historyWriter, /HISTORY_SHARED_NAME/);
 });
 
 test('🌈：自分用スクリプトと同じ足し込み・同じ読み出し。形の違う印は断る', async () => {
@@ -114,7 +116,7 @@ test('アクセスの記録：最初の読み込み（u=付き）だけ「実行
   assert.deepEqual(d.writes, []);
 });
 
- test('履歴は両スクリプトでGETだけを許可し、POSTでは保存しない', async () => {
+ test('履歴は両スクリプトで読み、空の保存要求では書き換えない', async () => {
   for (const name of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {
     const d=drive(await load(name));
     assert.equal(JSON.parse(d.get({file:'event-history'})).format,'database-event-history');
