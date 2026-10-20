@@ -14,9 +14,11 @@
 
 PC版:
 
+Windowsでは初回に `database/setup_python.cmd` を実行して専用Pythonを用意します。通常の起動は `database/start.cmd` のままです。
+
 ```powershell
 cd database
-python -m unittest discover -s tests
+.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
 Android版:

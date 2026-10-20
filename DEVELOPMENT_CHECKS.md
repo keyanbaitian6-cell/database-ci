@@ -4,22 +4,38 @@
 
 ## 共通の入口
 
-Python 3.12、Node.js 24、Flutter 3.47.1（`.metadata` の6655482ec0、Dart 3.13.1）を使用する。
-Python依存は `database/requirements.txt`、Flutter依存は `pubspec.lock` のまま導入する。
+クラウド・CIではPython 3.12、Node.js 24、Flutter 3.47.1（`.metadata` の6655482ec0、Dart 3.13.1）を使用する。
+デスクトップでは既存のPythonからプロジェクト専用の `database/.venv` を作り、その実行ファイルを使い続ける。Pythonは3.10以上、Windowsは64ビット版。既存の3.14を3.12へ入れ替える必要はない。
+Python依存は `database/requirements.txt` の固定版、Flutter依存は `pubspec.lock` のまま導入する。
 空の環境では `database_android/assets/database_seed.example.json` を同じ場所の `database_seed.json` へコピーする。既存ファイルを上書きしない。
 
 ```bash
-python3 -m venv database/.venv
-database/.venv/bin/python -m pip install -r database/requirements.txt
+python3 database/setup_python.py
 cd database_android
 flutter pub get --enforce-lockfile
 cd ..
 bash database_android/tool/check_before_build.sh
 ```
 
-Windowsでは `py -3 -m venv database/.venv`、`database/.venv/Scripts/python.exe` を使い、確認スクリプトはGit Bashで実行する。通常のPC版の起動方法は変わらない。
+### Windowsで一度だけ行う準備
 
-`tool/dev_env.sh` がリポジトリのPython環境、Node、Playwrightを検出する。別の場所を使う場合は `PYTHON`、`NODE`、`PLAYWRIGHT_MODULE`（index.mjsのfile URL）、`CHROMIUM_PATH` を指定できる。Playwrightと対応Chromiumの導入は利用する開発環境で行う。LinuxのTk試験にはXサーバーが必要で、画面のない環境では `xvfb-run -a bash database_android/tool/check_before_build.sh` を使う。
+正本を更新して `database/setup_python.cmd` をダブルクリックする。既存の `.runtime`、なければ `py -3` を作成元にして `.venv` を作り、固定版の依存を入れ、`pip check` と実際のライブラリ読み込みを確認する。既存の `.venv` があれば作り直さず再利用する。セットアップをもう一度実行するときも同じ入口を使う。DB・設定・同期先・既存の `.runtime` は変更しない。
+
+以後は普段どおり `database/start.cmd` から起動する。起動とビルド前チェックは `.venv` を優先し、まだ作成していない既存環境では `.runtime` を引き継ぐ。`.venv` が存在するのに壊れているときは、別のPythonへ自動で切り替えず停止する。無関係なシステムの `python` や `python3` は自動で選ばない。
+
+AIがPCでPythonを直接実行するときも `database/.venv/Scripts/python.exe` を指定する。クラウドの実行ファイルや「Python 3.12を使う」という記述を、デスクトップの実行先として扱わない。Pythonの不調時は、再インストールや版の変更を始める前に、次の検査で選んだ実行ファイルと不足項目を確認する。
+
+```powershell
+database\.venv\Scripts\python.exe database\setup_python.py --check
+```
+
+ビルド前チェックはGit Bashで実行する。必要なパッケージの固定版・Tkinter・SQLite・SSLと実際のライブラリ読み込みを試験の前に確認し、不足時はセットアップの入口を案内して停止する。毎回の起動・ビルドで依存をインストールし直さない。
+
+`tool/dev_env.sh` がリポジトリのPython環境、Node、Playwrightを選ぶ。意図的に別の場所を使う場合は `PYTHON`、`NODE`、`PLAYWRIGHT_MODULE`（index.mjsのfile URL）、`CHROMIUM_PATH` を指定できる。明示した `PYTHON` が使えなくても別のものへは切り替えない。
+
+Flutterは既存のSDKを使う。`FLUTTER_ROOT` にSDKの場所（`bin` の親）を指定できる。未指定のWindowsでは、以前確認した `%USERPROFILE%/flutter/bin` にSDKがあればそこを優先する。通常のビルド前チェックはFlutterコマンドの有無も試験の前に確認する。この処理はSDKのインストールや版の変更を行わない。
+
+Playwrightと対応Chromiumの導入は利用する開発環境で行う。LinuxのTk試験にはXサーバーが必要で、画面のない環境では `xvfb-run -a bash database_android/tool/check_before_build.sh` を使う。
 
 クラウドでは `source /workspace/.cloud-setup/env.sh` で導入済みツールを有効化できる。ホームが読み取り専用の場合、`PUB_CACHE`、`XDG_CONFIG_HOME`、`ANALYZER_STATE_LOCATION_OVERRIDE` を書き込み可能な作業用ディレクトリへ向ける。`DASH__SUPPRESS_ANALYTICS=true` はDartがホームへ分析設定を書こうとするのを抑止する。証明書・チェックサムの検証は無効化しない。
 

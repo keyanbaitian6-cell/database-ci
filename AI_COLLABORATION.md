@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 【デスクトップの専用Pythonを指定し、ビルド前に環境不足を確認する】2026-10-20 Codex
+
+- 利用者：朝、デスクトップでFlutterやPythonの環境確認に約40分かかり、ビルドできないまま出勤。「このプロジェクトにおける専用python構築とかできるってこと？それ指定しておいてほしい」。その朝の実行ログはクラウドからは未確認。過去のFlutterの誤検出（0バイトの別ファイル）・SeleniumのないPythonを選んだ記録と区別する。10/15の `588d573` で検証用Pythonが固定パスから自動検出へ変わっていたが、今回の失敗原因とは断定していない。
+- 新しい専用環境は `database/.venv`。Windowsは `database/setup_python.cmd` を一度実行し、既存の `.runtime`（なければ `py -3`）を作成元にする。Linuxは `python3 database/setup_python.py`。固定版の `requirements.txt` を専用環境へ入れ、`pip check` と実際のimportを確認する。既存の `.venv` は再利用し、関係のないディレクトリを上書きしない。既存の `.runtime`・DB・設定・同期先は変更しない。
+- `database/start.cmd` と `tool/dev_env.sh` は `.venv` を優先する。作成前の旧環境では `.runtime` を使える。専用環境がない／壊れている場合は、無関係なシステムPythonへ黙って切り替えない。ビルド前はPythonの場所・版、依存の固定版、Tkinter・SQLite・SSLとネイティブライブラリを確認し、不足なら試験を始めずセットアップを案内する。明示した `PYTHON` は引き続き優先する。毎回インストールはしない。
+- Flutterは明示した `FLUTTER_ROOT`、未指定のWindowsでは確認済みの `%USERPROFILE%/flutter/bin` を優先する。SDKのインストールや版変更は行わない。通常のゲートでFlutterが見つからない場合は、長いPC試験を始める前に停止する。`--local` の意味・既存の試験項目・CIジョブは変更していない。
+- AIはWindowsで `database/.venv/Scripts/python.exe` を直接指定する。クラウド・CIのPython 3.12指定を、既存デスクトップのPythonを入れ替える指示と扱わない。起動・開発手順を `DEVELOPMENT_CHECKS.md` と両READMEに記した。
+- 検証：クラウドで専用Python 3.12.14を実際に構築し、同じ入口からの再実行・依存確認に成功。Xvfbを作業領域へ展開してPC 381件（今回追加の環境検証12件を含む）・P’s CUBE等207件成功。ゲートのログ・早期停止3件、stageした共有ページの画面試験2本（320/393/1280px）も成功。最初のPC試験は仮想画面がなく失敗し、画面を用意して再実行した。Flutter不足時の実ゲートの早期停止も確認。試験が生成した `:memory:.ses` は除去した。
+- 未確認：利用者のWindows上の `.cmd` 実行と専用環境構築、朝のビルド失敗原因。クラウドの環境構築を利用者のPCの設定完了とは扱わない。Windows側は更新を取り込んで `database/setup_python.cmd` を一度実行する必要がある。Flutter全試験・全体ゲート・APK/Web/EXEのビルドと公開は今回は行っていない。
+
 ## 【GitHub Actions の利用分数を減らす：文書だけの変更では動かさない・重複ジョブをやめる】2026-10-18 Claude
 
 - 利用者：無料枠の注意（1,802/2,000分）。「品質や安全性は維持したまま、無関係なテストの繰り返しや重複するビルド・確認があれば減らして」「ルールが定まったら共同プロジェクトのルールとして記しておいて」。利用者が見せた利用レポートは `keyanbaitian6-cell` の分（閲覧ページ・共有ページなど計288分）で、本体 `imakurudev-eng/database` の分は入っていない。

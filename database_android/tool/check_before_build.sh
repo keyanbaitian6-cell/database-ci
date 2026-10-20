@@ -13,6 +13,11 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 source "$ROOT/database_android/tool/dev_env.sh" || exit 1
 LOCAL_ONLY=false
 if [ "${1:-}" = '--local' ]; then LOCAL_ONLY=true; elif [ "$#" -gt 0 ]; then echo 'Usage: check_before_build.sh [--local]' >&2; exit 2; fi
+# 長い試験の後でSDK不足に気づかないよう、先に確認する。ローカル限定の試験では不要。
+if ! $LOCAL_ONLY && ! command -v flutter >/dev/null 2>&1; then
+  echo 'Flutterが見つかりません。FLUTTER_ROOTに既存SDKの場所（binの親）を指定してください。' >&2
+  exit 1
+fi
 WORK=${CHECK_BUILD_WORK:-"$ROOT/database_android/build/check_before_build"}
 # 同じ確認を重ねて実行するとstage・ログが混ざる。専用の一時フォルダを指定すれば並行作業とも分離できる。
 # 初期化は下で作る確認用ディレクトリだけに限定する。リポジトリや広いディレクトリは拒否する。
