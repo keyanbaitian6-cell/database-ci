@@ -50,3 +50,11 @@ python database/calibrate_meruhen_net.py --baseline-ref e2731af --report calibra
 ```
 
 今回の私用の調査記録は `../review_packages/meruhen-net-20261020/`。公開Webページに実記録やこの調査入力を含めない。
+
+## 検証・公開（2026-10-21）
+
+最終の全体ゲート68項目が `ALL PASSED`（Python383＋214＋27件、Flutter640件、JS60スクリプト。保存ページ3件の取り込み試験1件は資料未指定でSKIP）。保存済みグラフ22,538件でPython・Dart・JavaScriptの値と要確認印が一致した。
+
+コード `9622267`、共有の公開 `11959c0`、閲覧の公開 `fdff106`。両方のPagesが当該コミットでbuilt。変更13ファイルの配信ハッシュがGitと一致し、データ用の5パスが両サイトで404。公開URLでも閲覧の数値試験320/393px、共有の画面試験320/393/1280pxが成功した。
+
+Androidはソースまで反映し、APKは利用者指定で作らない。PCは次回起動から反映。実機のAndroid・iPhone Safariでの操作は未確認。

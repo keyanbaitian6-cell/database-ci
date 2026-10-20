@@ -10,7 +10,9 @@
 - 全体ゲート最終 **ALL PASSED（68項目）**：Python383件＋追加214件＋UTC時刻27件、Flutter640件、JS60スクリプト、analyzeエラー・警告なし（既存info21件）。最初のゲートでは日別集計の旧期待値2,500枚が残って失敗し、2,489枚・平均1,245枚へ直したうえで最終ゲート成功。保存ページ3件の取り込み試験だけは `PSCUBE_ARCHIVE_DIR` 未指定で1件SKIP。専用Temp・Python3.14・`TZ=JST-9`。
 - 公開準備：`stage_share_viewer.py` と `stage_viewer.py` を通した生成物。実データ文字列90種類・スクリプトIDの混入なし。共有の版は `8f05657e84f3`。閲覧は現行0.5.41からのビルドで、前回公開0.5.39以降の既存P’s CUBE過去日取り込み修正も含む。
 - 控え：`../review_packages/meruhen-net-20261020/`（calibration.json、parity.log、gate-final、公開専用クローン）。既存の未追跡 `debug.log`・`rows.json` はコミットに含めない。
-- 配布範囲：PCは次の起動から新しいソースを使用する。利用者が取り込み中のため再起動操作はしない。Androidはソース更新・試験まででAPK作成・インストールなし。Android実機・iPhone Safariの実操作、実Google同期は未確認。ソースのpush先は月後半の `database-ci`。公開コミットと公開後の確認結果は続報へ記載する。
+- 配布範囲：PCは次の起動から新しいソースを使用する。利用者が取り込み中のため再起動操作はしない。Androidはソース更新・試験まででAPK作成・インストールなし。Android実機・iPhone Safariの実操作、実Google同期は未確認。
+- 公開：コード `9622267` から共有 `11959c0`、閲覧 `fdff106` を各mainへ1回push。両方のPages latest buildが当該コミットで **built**、エラーなし。Git内の内容を基準に変更ファイル13個（共有8・閲覧5）を配信URLのSHA-256と照合し、全件一致。`database_seed.json`・`assets/assets/database_seed.json`・`event_history.json`・`assets/assets/event_history.json`・`database-backup.json` は両サイトで404（計10パス）。
+- 公開後の画面：閲覧の新規数値試験（320/393px）と共有の画面試験（320/393/1280px）を公開URLに対して実行し成功。データは隔離ブラウザの合成記録。控え `public-verification.json`・`viewer-public-browser.log`・`share-public-browser.log`・Pages状態JSON。ソースはコードとこの公開記録をまとめ、月後半の `keyanbaitian6-cell/database-ci` へ1回pushする。CIの確認結果は最終報告と私用控えへ残す。
 
 ## 【イベント履歴の指摘修正をClaudeが再確認・1件追加修正し、database-ciへpush・共有ページを公開】2026-10-20 Claude
 
