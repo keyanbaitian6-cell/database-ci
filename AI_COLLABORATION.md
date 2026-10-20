@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 【CIを動かすGitHubを月の前半・後半で使い分けるルール】2026-10-20 Claude
+
+- 利用者「この感じだと月半分ずつわけたら無難そうだね。毎月15日23時59分を境目に使い分けよう。共同ルールでお願いします。今は月後半だからciの方」。きっかけの質問：「このgithubを二つ使いこなすっていうのはcodexにも伝わってる？共同ルールに書き込んでる？」→ 確かめた結果、`AGENTS.md` にも本体フォルダの作業記録にも `database-ci` の記載は無く、Codexには伝わっていなかった（記載があったのは、`database-ci` と手元ブランチにだけあるこの作業記録の1節）。
+- 決まり：毎月1日0:00〜15日23:59（日本時間）は `imakurudev-eng/database`（`origin`、正本）、16日0:00〜月末は `keyanbaitian6-cell/database-ci` へpushする。期間外の側へはpushしない。期間が替わったら最新の `main` を新しい側へ1回pushして追いつかせ、履歴は1本に保つ。`.md` だけの変更はCIが動かない。詳しくは `AGENTS.md`「CI を動かす GitHub を月の前半・後半で使い分ける」。
+- `AGENTS.md` へ追記した（コード・試験は変更なし）。ルールの文は、`database-ci` へpushしたコミットと、本体フォルダの `AGENTS.md`（Codexが読む場所）の両方に入れた。
+- `database-ci` にだけあるコミット（2026-10-20時点）：`988267b`（Android 0.5.41）と、このルールのコミット。正本の `main`（`3277043`）にはまだ無い。本体フォルダにはCodexの未コミットの変更（`pubspec.yaml` の版など）があり、`988267b` と重なるので、Codexの作業が済んでから正本へ取り込む。
+- 未確認：Codexがこのルールを実際に読んで守るか。次にCodexが作業を始めたときに `AGENTS.md` を読むはず。
+
 ## 【Android：補完機種のある端末で全台一覧が保存できない件の修正と 0.5.41】2026-10-20 Claude
 
 - 経緯：クラウドのClaudeの引き継ぎで、PCを `main=3277043` にそろえた（`EVENT_HISTORY.md` の未コミットの追記だけを退避し、早送りのあと `stash pop`。3方向で衝突なし、Codexの追記は残した）。CIは `imakurudev-eng` の枠切れのため `keyanbaitian6-cell/database-ci` へ `3277043` を1回push（run 39277197904、pc Ubuntu・Windows・full すべて成功）。PCは `start.cmd` で起動し、利用者の取り込みは止まらず進んだ。
