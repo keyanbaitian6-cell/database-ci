@@ -26,31 +26,41 @@ function measurement(heights, withCurve = true) {
 const net = (heights, maxHold, games) => meruhenNetDetail(measurement(heights), maxHold, games);
 const down = [0, 0, 0, -5, -17, -17, -18, -36, -40, -55, -75, -89, -87, -109, -106, -105, -116, -139, -156, -161, -161];
 
+test('終点の半px補正：正負共通、全座標と4点、ゼロ線へ戻る日と一日中ゼロ', () => {
+  for (const [heights, expected] of [[[0, 60, 30], 164], [[0, 60, -30], -169]]) {
+    for (const withCurve of [true, false]) {
+      assert.equal(meruhenNetDetail(measurement(heights, withCurve), 400).value, expected);
+    }
+  }
+  assert.equal(net([0, 60, 0], 400).value, -3);
+  assert.equal(net([0, 0, 0], 0).value, 0);
+});
+
 test('推定差枚：PC・Androidと同じ例で同じ値（段階の選び方・回転数での選び直し・決められない台）', () => {
-  assert.equal(net([0, -63, 40, 147, 128], 2376).value, 1422);
-  assert.equal(net([0, -8, 163, 97], 1982).value, 1078);
-  assert.equal(net([0, 60, 30], 400).value, 167);
-  assert.equal(net([0, 120, 40, -50], 2900).value, -1111);
+  assert.equal(net([0, -63, 40, 147, 128], 2376).value, 1417);
+  assert.equal(net([0, -8, 163, 97], 1982).value, 1072);
+  assert.equal(net([0, 60, 30], 400).value, 164);
+  assert.equal(net([0, 120, 40, -50], 2900).value, -1122);
   assert.equal(net([0, 50, 20], null).value, null);
   assert.equal(net([0, 50, 20], 88888888).value, null);
   assert.equal(net([0, 0, 0], 0).value, 0);
   assert.equal(net([0, -40, -80], 0).value, null);
   assert.equal(meruhenNetDetail({baseline_y: 150.5, peak_y: 100, trough_y: 160, end_y: 120}, 500).value, null);
   assert.equal(meruhenNetDetail(null, 500).value, null);
-  assert.deepEqual(net(down, 234), {value: -8944, needsCheck: false});
-  assert.deepEqual(net(down, 234, 1634), {value: -1789, needsCheck: true});
-  assert.equal(net([0, 0, 0, -4, -4, -13, -21, -21, -26, -26, -28, -73, -69, -70, -77, -77, -95, -95, -112, -145, -161, -161], 293, 790).value, -894);
-  assert.equal(net([0, 0, 0, -1, -24, -44, -41, -48, -48, -64, -81, -80, -72, -92, -98, -98, -98], 279, 1228).value, -1089);
+  assert.deepEqual(net(down, 234), {value: -8972, needsCheck: false});
+  assert.deepEqual(net(down, 234, 1634), {value: -1794, needsCheck: true});
+  assert.equal(net([0, 0, 0, -4, -4, -13, -21, -21, -26, -26, -28, -73, -69, -70, -77, -77, -95, -95, -112, -145, -161, -161], 293, 790).value, -897);
+  assert.equal(net([0, 0, 0, -1, -24, -44, -41, -48, -48, -64, -81, -80, -72, -92, -98, -98, -98], 279, 1228).value, -1094);
   assert.deepEqual(net([0, 0, 0, -136, -133, -133], 113, 168), {value: null, needsCheck: false});
-  assert.deepEqual(net([0, 0, 0, -136, -133, -133], 113, 300), {value: -739, needsCheck: true});
-  assert.deepEqual(net([0, -63, 40, 147, 128], 2376, 8584), {value: 1422, needsCheck: false});
+  assert.deepEqual(net([0, 0, 0, -136, -133, -133], 113, 300), {value: -742, needsCheck: true});
+  assert.deepEqual(net([0, -63, 40, 147, 128], 2376, 8584), {value: 1417, needsCheck: false});
   // 4点だけ（曲線なし）。
   const known = {baseline_y: 200.5, peak_y: 200.5 - 147, trough_y: 200.5 + 63, end_y: 200.5 - 128, peak_x: 300, trough_x: 100, end_x: 356};
-  assert.equal(meruhenNetDetail(known, 2376).value, 1422);
+  assert.equal(meruhenNetDetail(known, 2376).value, 1417);
   const ambiguous = {baseline_y: 200.5, peak_y: 100.5, trough_y: 370.5, end_y: 360.5, peak_x: 100, trough_x: 300, end_x: 356};
   assert.equal(meruhenNetDetail(ambiguous, 1500).value, null);
   const noX = {baseline_y: 200.5, peak_y: 200.5 - 147, trough_y: 200.5 + 63, end_y: 200.5 - 128};
-  assert.equal(meruhenNetDetail(noX, 2376).value, 1422);
+  assert.equal(meruhenNetDetail(noX, 2376).value, 1417);
 });
 
 test('TOP10は差枚の多い順（同じ差枚は回転数の多い方）、5選は2台以上の機種の平均回転数（Flutter・PCと同じ例）', () => {
@@ -83,7 +93,7 @@ test('台の読み込み：数値異常の台は数えず、差枚の無い日�
     {store: 'elsewhere', day: '2026-10-05', machine: 'x', rack: 1},
   ]});
   const byDay = indexRecords(m);
-  assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-04')), {total: 1422, captured: 1, racks: 1, judged: 1, won: 1, winRate: false});
+  assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-04')), {total: 1417, captured: 1, racks: 1, judged: 1, won: 1, winRate: false});
   assert.deepEqual(dayNet(byDay.get('saiwaichou|2026-10-05')), {total: null, captured: 0, racks: 1, judged: 0, won: 0, winRate: false});
   const jo = meruhenRecords({records: [{store: 'saiwaichou', day: '2026-10-06', machine: '北斗', rack: 7, games: 3000, bb: 10, rb: 5,
     max_hold: 2376, graph_measurement: measurement([0, -63, 40, 147, 128]), jo_net: -280}]});
@@ -302,8 +312,8 @@ test('長町南10/7は推定差枚を出さない（グラフが直線だけの�
     rec('nagamachiminami', '2026-10-08'), rec('saiwaichou', '2026-10-07')]});
   assert.equal(hidden.net, null);
   assert.equal(joDay.net, -280);
-  assert.equal(otherDay.net, 1422);
-  assert.equal(otherStore.net, 1422);
+  assert.equal(otherDay.net, 1417);
+  assert.equal(otherStore.net, 1417);
 });
 
 test('末尾別データまとめ（幸町、2026-10-12）：平均差枚の順・表示と同じ整数で同順位・差枚の無い台は平均に入れない・ゾロ目は44・99も', () => {

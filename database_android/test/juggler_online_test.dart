@@ -767,8 +767,8 @@ void main() {
         rec('nagamachiminami', '2026-10-07', {'jo_net': -280}).netValue,
         -280,
       );
-      expect(rec('nagamachiminami', '2026-10-08').netValue, 1422);
-      expect(rec('saiwaichou', '2026-10-07').netValue, 1422);
+      expect(rec('nagamachiminami', '2026-10-08').netValue, 1417);
+      expect(rec('saiwaichou', '2026-10-07').netValue, 1417);
     });
   });
 }

@@ -2661,6 +2661,9 @@ def measurement_preview(row):
 # 照合、実機での高さ変更）。確定差枚ではないので「推定」と表示し、決められない台は None。
 MERUHEN_AXIS_STEPS = (1000,) + tuple(range(2000, 40001, 2000))
 _MERUHEN_ZERO_Y, _MERUHEN_TOP_Y = 200.5, 20.5
+# 幸町の正確なjo_netと照合し、旧推定の誤差100枚以上を除いた6,875組で確認した終点の偏り。
+# 9/30〜10/9で決めた半px補正は10/10〜19でも改善。段階を選んだ後の終点だけに適用する。
+_MERUHEN_END_PIXEL_CORRECTION = 0.5
 # 線が下がった分の合計（その日に使った枚数の目安）の、1回転あたりの上限。グラフの形と最大持玉だけでは
 # 段階が決まらない台で、いちばん大きい段階を選ぶと、1回転に3枚しか入らないのに −8,944枚（1,634回転）
 # のような値になっていた（2026-10-06、幸町 東京リベンジャーズ517・北斗637）。段階が1つに決まる3,755台
@@ -2745,7 +2748,7 @@ def meruhen_net_estimate_detail(measurement, max_hold, games=None):
             chosen = feasible[0]
     if chosen is None:
         return None, False
-    value = end * chosen / half
+    value = (end - _MERUHEN_END_PIXEL_CORRECTION) * chosen / half
     rounded = int(value + 0.5) if value >= 0 else -int(-value + 0.5)  # Dartの round と同じ（0から遠い側）
     return rounded, needs_check
 
