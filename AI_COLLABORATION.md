@@ -8,7 +8,9 @@
 - 追加修正2：Codexの新規試験 `test_event_history_recovery_browser.mjs` が、このPCの全体ゲートで失敗（WindowsのPython標準出力cp932で `OVERLAY_JS` の🌈を出せない。製品コードではなく試験の問題）。既存試験と同じく `json.dumps` で受け取る形に直した。単独17件成功。
 - 全体ゲート（`check_before_build.sh`、Python 3.14・Flutter・Playwright、日本時間）：1回目は上記1件のみ失敗（66成功）、修正後の2回目は **67項目ALL PASSED**（PC382件・P’s CUBE等214件・UTC27件・Flutter639件・JS59本、Flutter analyzeはエラー・警告なし・既存info21件）。P’s CUBE等の件数には未コミットの別作業 `database/test_other_analysis.py` も含む（手元だけ。CIでは流れない）。
 - コミット：今回の修正と試験、`EVENT_HISTORY_REVIEW_FIXES_20261020.md`、この作業記録のうちCodexの今回の節とこの節だけ。先行の未コミット追記（10/18〜10/20の各節）・アナスロ分析・HTML変換・未追跡ファイルは含めていない。10/20は月後半なので `database-ci` へpush（正本originへはpushしない）。
-- 共有ページ：表示・操作が変わるため公開（結果は下に追記）。閲覧ページ（iPhone）は、Dartの変更が30,000件超過時のエラー文だけで通常の表示は変わらないため再公開しない。APKは作っていない（Androidの上限保護は次のAPKから）。Apps Scriptの貼り替えは不要。
+- push：`database-ci/main` へ `fb361c3..8e78d82` を1回。CI run 39416154391 は pc（Ubuntu・Windows、UTC）と full がすべて success。正本 `imakurudev-eng/database` へは月前半（11/1以降）に追いつかせる。`database-ci` にだけあるコミット：`988267b`・`e7069c7`・`fb361c3`・`8e78d82`（とこの記録のコミット）。
+- 共有ページを公開：`keyanbaitian6-cell/database-share/main` へ [4376404](https://github.com/keyanbaitian6-cell/database-share/commit/4376404)（source 8e78d82、版 `320ece4acd51`、`app.mjs` と版番号の付け替え7ファイル）。全体ゲートのstageと16ファイルが改行以外一致、記録の文字列・接続先IDの検査は該当なし。Pages built、公開URLの `sw.js` の版と `app.mjs` がコミットと一致。公開URLで `test_event_history_browser`・`test_share_viewer_browser` 成功（Google通信は模擬応答）。新しい `test_event_history_recovery_browser` は公開URLに未対応のため手元のstageでのみ確認。
+- 閲覧ページ（iPhone）は、Dartの変更が30,000件超過時のエラー文だけで通常の表示は変わらないため再公開しない。APKは作っていない（Androidの上限保護は次のAPKから）。Apps Scriptの貼り替えは不要。
 - 未確認：実Googleの一往復、実iPhone・Android・WebView2での動作、実DBの現在の状態。PCは更新したソースで再起動すると反映。
 
 ## 【CIを動かすGitHubを月の前半・後半で使い分けるルール】2026-10-20 Claude
