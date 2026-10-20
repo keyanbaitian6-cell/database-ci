@@ -602,7 +602,7 @@ OVERLAY_JS = (
     "        let text, bg, fg;\n"
     "        if (s && s.excluded) { text = '対象外'; bg = 'transparent'; fg = '#8a94a6'; }\n"
     "        else if (!s) { text = md + '未取込'; bg = '#e2e2e5'; fg = '#707070'; }\n"
-    "        else if (s.tables_only) { text = md + '表 済 ' + s.total + '台'; bg = '#0d8b74'; fg = '#fff'; }\n"
+    "        else if (s.tables_only) { text = md + '表 ' + s.total + '台保存'; bg = '#0d8b74'; fg = '#fff'; }\n"
     "        else if (s.done >= s.total) { text = md + '済 ' + s.done + '/' + s.total; bg = '#0d8b74'; fg = '#fff'; }\n"
     "        else { text = md + s.done + '/' + s.total; bg = '#f5a623'; fg = '#1d1d1f'; }\n"
     "        badge.textContent = text;\n"

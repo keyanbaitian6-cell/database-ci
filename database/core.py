@@ -337,7 +337,20 @@ def pull_shared_history(store, folder):
     validate_envelope(raw)
     if raw.get('weeks') or raw.get('links'):
         raise ValueError('共有の履歴では週の構成・機種対応は変更できません。')
-    return store.merge_history_edits(raw)
+    # 「共有の編集」の除外数に、PCに保存済みの基準外原文を混ぜない。
+    return store.merge_history_edits(raw, count_stored_rejected=False)
+
+
+def sync_shared_history(store, data_dir, notices=None):
+    """本体DBに共有編集を取り込む。失敗時も既存のバックアップ出力は続ける。"""
+    try:
+        folder = load_settings(data_dir).get('sync_dir')
+        _changed, _conflicts, rejected, _skipped = pull_shared_history(store, folder)
+        if rejected and notices is not None:
+            notices.append(f'共有のイベント履歴は形式が合わない編集{rejected}件を除外しました。')
+    except (OSError, ValueError, sqlite3.Error) as error:
+        if notices is not None:
+            notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
 
 
 def _valid_rainbow_mark(mark):
@@ -690,10 +703,13 @@ class Store:
         return self.history_edits_status()[0]
 
     def _write_history_edits(self, edits):
+        from event_history_data import validate_envelope
+        # 合流後に上限を超えた文書を書き込むと、次回の読み取りで全履歴が読めなくなる。
+        validate_envelope(edits)
         self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)',
                         ('event_history_edits', json.dumps(edits, ensure_ascii=False)))
 
-    def merge_history_edits(self, incoming):
+    def merge_history_edits(self, incoming, *, count_stored_rejected=True):
         from event_history_data import merge_edits, load_base
         with self.db:
             # GUI保存と共有取り込みが並行しても、古い原文で別の編集を上書きしない。
@@ -703,7 +719,8 @@ class Store:
             raw = self.history_edits_raw()
             if 'unreadable_raw' in raw:
                 raise ValueError('履歴の原文が読めません。台データの保存・バックアップは続けられます。')
-            merged, changed, conflicts, rejected, skipped_weeks = merge_edits(raw, incoming, load_base())
+            merged, changed, conflicts, rejected, skipped_weeks = merge_edits(
+                raw, incoming, load_base(), count_stored_rejected=count_stored_rejected)
             self._write_history_edits(merged)
         return changed, conflicts, rejected, skipped_weeks
 
@@ -1706,21 +1723,15 @@ def restore_backup(store, path):
     return dict(plan, forced=forced)
 
 
-def auto_backup(store, data_dir, *, strict=False, notices=None):
+def auto_backup(store, data_dir, *, strict=False, notices=None, import_shared=True):
     """Refresh backups after data changed; strict=True reports output failures.
 
     Also writes today's dated backup (see ``snapshot_backup``). The shared-folder
     copy is skipped unless a sync folder was configured, because a failed backup
     must never get in the way of saving the record itself.
     """
-    folder = load_settings(data_dir).get('sync_dir')
-    try:
-        _changed, _conflicts, rejected, _skipped = pull_shared_history(store, folder)
-        if rejected and notices is not None:
-            notices.append(f'共有のイベント履歴は形式が合わない編集{rejected}件を除外しました。')
-    except (OSError, ValueError, sqlite3.Error) as error:
-        if notices is not None:
-            notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
+    if import_shared:
+        sync_shared_history(store, data_dir, notices)
     snapshot = None
     try:
         snapshot = snapshot_backup(store, data_dir)

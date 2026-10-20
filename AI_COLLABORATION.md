@@ -1,5 +1,16 @@
 # database AI共同作業メモ
 
+## 【イベント履歴の指摘修正をClaudeが再確認・1件追加修正し、database-ciへpush・共有ページを公開】2026-10-20 Claude
+
+- 経緯：Claudeが `fb361c3` を読み取りレビューして7件を指摘（本体DBに共有の記号が入らない、未来時刻の同一セル再編集、除外件数の混同、30,000件超過、POST全体拒否、「表 済」表示、端末保存失敗の表示）。Codexが検証・修正し、報告書 `../review_packages/event-history-review-fixes-20261020/Claudeへの報告.md` を作成。利用者「問題があればclaudeで修正してOK」「修正完了したら公開pushまでしてOK」。
+- 再確認：報告書の5点（本体合流→写しの順序とロック、未来時刻の未送信だけの置き換え、PC・Androidの上限検査で原文保持・台データ取り込み継続〔PC `import_backup` は `history_error`、Androidは `on Object catch`〕、端末保存失敗で再送を止める、残る制約の書き方）をコードで確認し、いずれも妥当と判断。
+- 追加修正1：`database/output_worker.py`。本体DBを開くこと自体が失敗すると（ロック中など）、出力（バックアップ）全体が止まっていた。共有の取り込みだけ諦めて注意を出し、写しからのバックアップは続ける。再発試験 `test_backup_still_runs_when_the_live_database_cannot_be_opened`（`database/tests/test_output_worker.py`）。try句だけ外した写しでは「database is locked」で失敗、修正後は成功を確認。
+- 追加修正2：Codexの新規試験 `test_event_history_recovery_browser.mjs` が、このPCの全体ゲートで失敗（WindowsのPython標準出力cp932で `OVERLAY_JS` の🌈を出せない。製品コードではなく試験の問題）。既存試験と同じく `json.dumps` で受け取る形に直した。単独17件成功。
+- 全体ゲート（`check_before_build.sh`、Python 3.14・Flutter・Playwright、日本時間）：1回目は上記1件のみ失敗（66成功）、修正後の2回目は **67項目ALL PASSED**（PC382件・P’s CUBE等214件・UTC27件・Flutter639件・JS59本、Flutter analyzeはエラー・警告なし・既存info21件）。P’s CUBE等の件数には未コミットの別作業 `database/test_other_analysis.py` も含む（手元だけ。CIでは流れない）。
+- コミット：今回の修正と試験、`EVENT_HISTORY_REVIEW_FIXES_20261020.md`、この作業記録のうちCodexの今回の節とこの節だけ。先行の未コミット追記（10/18〜10/20の各節）・アナスロ分析・HTML変換・未追跡ファイルは含めていない。10/20は月後半なので `database-ci` へpush（正本originへはpushしない）。
+- 共有ページ：表示・操作が変わるため公開（結果は下に追記）。閲覧ページ（iPhone）は、Dartの変更が30,000件超過時のエラー文だけで通常の表示は変わらないため再公開しない。APKは作っていない（Androidの上限保護は次のAPKから）。Apps Scriptの貼り替えは不要。
+- 未確認：実Googleの一往復、実iPhone・Android・WebView2での動作、実DBの現在の状態。PCは更新したソースで再起動すると反映。
+
 ## 【CIを動かすGitHubを月の前半・後半で使い分けるルール】2026-10-20 Claude
 
 - 利用者「この感じだと月半分ずつわけたら無難そうだね。毎月15日23時59分を境目に使い分けよう。共同ルールでお願いします。今は月後半だからciの方」。きっかけの質問：「このgithubを二つ使いこなすっていうのはcodexにも伝わってる？共同ルールに書き込んでる？」→ 確かめた結果、`AGENTS.md` にも本体フォルダの作業記録にも `database-ci` の記載は無く、Codexには伝わっていなかった（記載があったのは、`database-ci` と手元ブランチにだけあるこの作業記録の1節）。
@@ -2949,3 +2960,15 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 共有ページ：`keyanbaitian6-cell/database-share/main` へ [8805ddf](https://github.com/keyanbaitian6-cell/database-share/commit/8805ddfbe21c6fa63e94cb617f42973b1addfdcd) を1回push。Pages built、公開7ファイルはコミットと一致、履歴・記録6パスは404。公開URLで履歴・カレンダーの試験成功。閲覧ページの再公開、APK作成・インストールは行わない。
 - 利用者から共有ページ「動作確認OK」の申告あり。端末の種類とPC同期の詳細は不明。今回の確認は一時SQLite・模擬Google・隔離ブラウザで、実データへ試験結果は書かない。
 - 詳細：EVENT_HISTORY_SELF_REVIEW_20261020.md、検証控え `../review_packages/event-history-self-review-20261020/`。
+
+## 【イベント履歴の第三者指摘を再検証して修正】2026-10-20 Codex
+
+- 利用者「2のあと修正可能であれば3」により、添付レビュー7件を `main=fb361c3` の現行コードで検証した。再発試験を先に追加し、本体DBへの共有記号未保存、未来時刻の同一セル再編集、除外件数の混同、PC・Dartの件数超過保存、共有保存後の端末保存失敗の表示を確認・修正した。
+- 通常出力は、共有編集を本体DBへ合流して確定してから写しを作る。写しでの再取り込みは止めた。元DBが無いときに空DBを作らない。共有の除外件数にはPC保存済みの基準外原文を含めず、その原文は保持する。
+- 件数上限は各一覧30,000件のまま、合流後・保存前に検査して既存履歴を保持する。PCとAndroidに同じ保護を入れた。上限で既存セルの置き換えは可能だが、新しいセルの追加はできない。
+- 共有ページでは自分の未来時刻の未送信を同じセルで選び直して復帰できる。すでに共有済みの大幅な未来時刻は、端末間の新旧採用規則に関わるため自動修復せず理由を表示する。保存済み原文は保持。POST拒否時に「最新を読む」後の再送を案内し、共有保存後の端末保存失敗は共有保存の成功と区別する。PCの札は「表 N台保存」にした。
+- 最終確認：PC全381件・Flutter全639件成功。JS関連36件を確認して成功（新規ブラウザ17件を含む。重複分は加算しない）。320/393/1280px、送信中の同一セル再編集、端末保存の前後失敗、模擬Driveでの一括拒否を確認。Flutter analyzeは既存info21件のみ、エラー・警告なし。実Google・実端末・実WebView2は未確認。全体ビルドゲート・APK作成・公開は行っていない。
+- 旧コミットfb361c3のCI run 39410201375は、1回の読み取りでcompleted/successを確認。今回の未コミット修正のCI結果とは区別する。今回新しいCIは起動していない。
+- アナスロ分析・HTML変換・未追跡のレビューなど、先行する7ファイルは作業前後のSHA-256不変。先行するこの文書の未コミット追記も保持。実DB・実Driveを試験に使わず、履歴基準JSON・記録・バックアップ・Cookieを変更していない。
+- 今回はローカル修正・試験まで。未コミット・未push・未公開。PCはソースから再起動後に反映、共有ページとAndroidは今後の公開・APK更新後に反映する。Apps Scriptのソース・生成済み2ファイルは変更なし。
+- 詳細：`EVENT_HISTORY_REVIEW_FIXES_20261020.md`。再現・検証ログと保護ハッシュ：`../review_packages/event-history-review-fixes-20261020/`。

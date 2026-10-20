@@ -5,7 +5,7 @@ from threading import Condition, Thread
 
 
 def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, backup=False, pscube=False, cancelled=None):
-    """Read isolated SQLite snapshots; serialize both sites' output updates.
+    """共有編集を本体DBへ取り込み、隔離したSQLiteの写しから出力する。
 
     ``cancelled`` (PC版を閉じている途中なら true) stops the local history page;
     backups and the viewer files are still written in full."""
@@ -14,7 +14,7 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
     from contextlib import closing, contextmanager
     from pathlib import Path
     from time import perf_counter
-    from core import HistoryReportCancelled, Store, auto_backup, history_report
+    from core import HistoryReportCancelled, Store, auto_backup, sync_shared_history, history_report
 
     @contextmanager
     def snapshot_store(path, factory):
@@ -39,6 +39,16 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
         finally:
             timings[name] = perf_counter() - started
     if history or backup:
+        if backup:
+            # 共有の取り込みは必ず本体へ保存してから写す。写しだけへの合流は次回の出力で失われる。
+            if not Path(database_path).is_file():
+                raise FileNotFoundError(database_path)
+            # 本体DBを開けない（ロック中など）ときも、取り込みだけ諦めてバックアップは書く。
+            try:
+                with closing(Store(database_path)) as source:
+                    sync_shared_history(source, data_dir, notices)
+            except (OSError, sqlite3.Error) as error:
+                notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
         with snapshot_store(database_path, Store) as store:
             if history:
                 def build_history():
@@ -48,7 +58,7 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
                         result['history_cancelled'] = True
                 result['history'] = run('history', build_history)
             if backup:
-                value = run('backup', lambda: auto_backup(store, data_dir, strict=True, notices=notices))
+                value = run('backup', lambda: auto_backup(store, data_dir, strict=True, notices=notices, import_shared=False))
                 if value is None and not errors:
                     notices.append('同期フォルダ未設定：PC内のバックアップのみ更新しました。')
             result['pending_marks'] = len(store.pending_rainbow_marks())

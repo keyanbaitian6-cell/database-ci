@@ -20,6 +20,38 @@ class HistoryTests(unittest.TestCase):
     def setUp(self):
         self.base = load_base()
 
+    def test_capacity_rejects_growth_without_losing_saved_history_and_allows_replacement(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db = Store(Path(folder)/'test.db')
+            try:
+                full = dict(empty_edits(), cells=[{'orphan': i} for i in range(29999)] + [cell(self.base)])
+                with db.db:
+                    db._write_history_edits(full)
+                before = db.state('event_history_edits')
+                incoming = dict(empty_edits(), cells=[dict(cell(self.base), day=self.base['weeks'][0]['to'])])
+                with self.assertRaisesRegex(ValueError, '上限'):
+                    db.merge_history_edits(incoming)
+                self.assertEqual(db.state('event_history_edits'), before)
+                self.assertNotIn('unreadable_raw', db.history_edits_raw())
+                replacement = dict(empty_edits(), cells=[cell(self.base, '😍', '2026-10-20T00:00:00Z')])
+                db.merge_history_edits(replacement)
+                self.assertEqual(len(db.history_edits_raw()['cells']), 30000)
+                self.assertEqual(db.history_edits()['cells'][0]['value'], '😍')
+            finally:
+                db.close()
+
+    def test_direct_history_write_rejects_an_unreadable_envelope_before_saving(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db = Store(Path(folder)/'test.db')
+            try:
+                before = db.state('event_history_edits')
+                with self.assertRaises(ValueError):
+                    with db.db:
+                        db._write_history_edits(dict(empty_edits(), cells=[None] * 30001))
+                self.assertEqual(db.state('event_history_edits'), before)
+            finally:
+                db.close()
+
     def test_reject_invalid_week_symbol_and_duplicate(self):
         for change in ('monday', 'symbol', 'duplicate'):
             base = copy.deepcopy(self.base)

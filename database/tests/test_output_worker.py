@@ -9,6 +9,33 @@ from output_worker import OutputWorker, refresh_outputs
 
 
 class OutputWorkerTests(unittest.TestCase):
+    def test_backup_does_not_create_an_empty_database_when_source_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root/'missing.sqlite3'
+            with self.assertRaises((FileNotFoundError, OSError)):
+                refresh_outputs(path, root, root/'reports', backup=True)
+            self.assertFalse(path.exists())
+
+    def test_backup_still_runs_when_the_live_database_cannot_be_opened(self):
+        # 共有の取り込みのために本体DBを開けなくても、写しからのバックアップは止めない。
+        import sqlite3
+        import core
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); path = root / 'data' / 'database.sqlite3'
+            store = Store(path); store.close()
+            real_store, backups = core.Store, []
+            def opened(target):
+                if Path(target) == path:
+                    raise sqlite3.OperationalError('database is locked')
+                return real_store(target)
+            def backup(db, data, *, strict, notices=None, import_shared=True):
+                backups.append(db.path)
+            with patch('core.Store', side_effect=opened), patch('core.auto_backup', side_effect=backup):
+                result = refresh_outputs(path, root / 'data', root / 'reports', backup=True)
+            self.assertEqual(len(backups), 1)
+            self.assertTrue(any('取り込めませんでした' in n and 'locked' in n for n in result['notices']))
+
     def test_pscube_output_uses_its_snapshot_without_creating_a_meruhen_database(self):
         import json
         from pscube_import import PscubeStore, ROOT_URL
@@ -113,7 +140,7 @@ class OutputWorkerTests(unittest.TestCase):
                              games=3000, bb=10, rb=5)])
             store.close()
             backups = []
-            with patch('core.auto_backup', side_effect=lambda db, data, *, strict, notices=None: backups.append(len(db.rows()))):
+            with patch('core.auto_backup', side_effect=lambda db, data, *, strict, notices=None, import_shared=True: backups.append(len(db.rows()))):
                 result = refresh_outputs(path, root / 'data', root / 'reports', history=True, backup=True,
                                          cancelled=lambda: True)
             self.assertTrue(result['history_cancelled'])
@@ -146,9 +173,10 @@ class OutputWorkerTests(unittest.TestCase):
             root = Path(directory); path = root / 'data' / 'database.sqlite3'
             store = Store(path); store.close()
             snapshots = []
-            def backup(db, data, *, strict, notices=None):
+            def backup(db, data, *, strict, notices=None, import_shared=True):
                 snapshots.append(db.path)
                 self.assertTrue(strict)
+                self.assertFalse(import_shared, '共有取り込みは写しでは繰り返さない')
                 self.assertNotEqual(db.path, path)
             with patch('core.history_report', side_effect=OSError('report unavailable')), patch('core.auto_backup', side_effect=backup):
                 with self.assertRaisesRegex(OSError, 'history: report unavailable'):

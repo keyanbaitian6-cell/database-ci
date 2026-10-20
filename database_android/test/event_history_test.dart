@@ -45,6 +45,37 @@ SlotRecord record(String day, String machine, int rack) => SlotRecord(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('件数上限では追加を拒否して原文を保持し、既存セルの置き換えは許可する', () async {
+    final base = await loadHistoryBase();
+    final full = {
+      ...emptyHistoryEdits(),
+      'cells': [
+        for (var i = 0; i < 29999; i++) {'orphan': i},
+        edit(base),
+      ],
+    };
+    final before = jsonEncode(full);
+    final incoming = {
+      ...emptyHistoryEdits(),
+      'cells': [
+        {...edit(base), 'day': base['weeks'][0]['to']},
+      ],
+    };
+    expect(() {
+      mergeHistoryEdits(full, incoming, base);
+    }, throwsA(isA<FormatException>()));
+    expect(jsonEncode(full), before);
+    final replacement = mergeHistoryEdits(full, {
+      ...emptyHistoryEdits(),
+      'cells': [edit(base, value: '😍', at: '2026-10-20T00:00:00Z')],
+    }, base);
+    validateHistoryEnvelope(replacement.edits);
+    expect(replacement.edits['cells'], hasLength(30000));
+    expect(
+      parseHistoryEdits(replacement.edits, base)['cells'][0]['value'],
+      '😍',
+    );
+  });
   test('共有ページの編集元をバックアップの合流でも保持する', () async {
     final base = await loadHistoryBase();
     final incoming = emptyHistoryEdits();

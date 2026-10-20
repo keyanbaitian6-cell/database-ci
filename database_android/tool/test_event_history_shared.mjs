@@ -79,6 +79,9 @@ for(const script of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']
     for(const cells of [[],Array(101).fill(entry()),[{...entry(),machine:'別機種'}],[{...entry(),value:'未知'}],[entry('😀','9999-01-01T00:00:00Z')]])
       assert.ok(d.post(cells).error);
     assert.deepEqual(d.writes,[]);
+    const mixed=d.post([entry(),{...entry(),machine:'今の週表にない機種'}]);
+    assert.match(mixed.error,/対象の週・機種・日付/);
+    assert.deepEqual(d.writes,[],'一部不正の一括送信は勝手に一部だけ保存しない');
     assert.equal(d.post([entry()]).ok,true);
     const shared=d.files.get('database-event-history-shared.json');shared.text='{壊れた';
     const before=d.writes.length;
