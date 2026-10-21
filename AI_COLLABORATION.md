@@ -1,5 +1,12 @@
 # database AI共同作業メモ
 
+## 【Windows CI：専用Python試験がWSLのbash.exeを選ぶ問題】2026-10-21 Codex
+
+- 利用者提示の失敗通知を確認。実行 `39562304448`（`3b70a54`）はfull・Ubuntu成功、Windowsのみ専用Python関連5件が失敗。ログは `Windows Subsystem for Linux has no installed distributions`。新しい実行 `39563859900`（`f5856f7`）でもWindowsの失敗を確認。CI再実行はしていない。
+- `test_project_python.py` が文字列 `bash` をsubprocessへ渡し、WindowsのPATH上のWSL入口を選んでいた。WindowsではPATH上のGitと同じインストール先の `bin/bash.exe` / `usr/bin/bash.exe` を絶対パスで選び、Linuxの選択は従来どおりにした。試験項目数・CIジョブ・アプリ本体は変更なし。
+- 既存の未コミット作業を保護し、CI先端 `f5856f7` から `../ci-bash-fix-20261021` に隔離。Windows・Python 3.14で `python -m unittest discover -s tests -p test_project_python.py -v` の12件が3.8秒で成功。GitHub側のPython 3.12での修正後実行は未確認。今回の変更について全体ゲート・APKビルドは不要として未実行。
+- 修正はまだpushしていない。共有mainへのpushは利用者の明示確認後、10月後半の送り先 `keyanbaitian6-cell/database-ci` へこの修正だけを1回送る。
+
 ## 【CIへの接続復旧と、正本・CIの履歴の統合】2026-10-21 Codex
 
 - 利用者がCIリポジトリへ `imakurudev-eng` を招待し、その後に招待を承認したことで、このクラウドのGitからCI先端 `d92f56bb848af370308942954a9a397fa21dd3eb` を取得できた。APIでも読み取り・書き込み権限を確認。APIの通信先 `api.github.com` は先に環境下書きへ追加し、利用者の反映後にAPI接続と認証先 `imakurudev-eng` が確認できていた。接続復旧前の「Primary」「i」などの表示から認証先を推測した案内は根拠が不十分だった。

@@ -17,6 +17,24 @@ import setup_python
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def find_test_bash():
+    if os.name != 'nt':
+        return shutil.which('bash')
+    # WindowsのPATH上のbash.exeは、Git BashではなくWSLの入口の場合がある。
+    # PATH上のGitと同じインストール先にあるBashを絶対パスで起動する。
+    git = shutil.which('git')
+    if git:
+        for root in list(Path(git).resolve().parents)[:3]:
+            for relative in ('bin/bash.exe', 'usr/bin/bash.exe'):
+                candidate = root / relative
+                if candidate.is_file():
+                    return str(candidate)
+    return None
+
+
+TEST_BASH = find_test_bash()
+
+
 class DependencyCheckTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='python-check-')
@@ -65,7 +83,7 @@ class DependencyCheckTests(unittest.TestCase):
         self.assertEqual(keep.read_text(encoding='utf-8'), 'keep')
 
 
-@unittest.skipUnless(shutil.which('bash'), 'Git BashまたはBashが必要')
+@unittest.skipUnless(TEST_BASH, 'Git BashまたはBashが必要')
 class InterpreterSelectionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='project Python test ')
@@ -97,7 +115,7 @@ class InterpreterSelectionTests(unittest.TestCase):
             env['PYTHON'] = str(python).replace('\\', '/')
         if flutter_root is not None:
             env['FLUTTER_ROOT'] = str(flutter_root).replace('\\', '/')
-        return subprocess.run(['bash', '-c',
+        return subprocess.run([TEST_BASH, '-c',
                                'source database_android/tool/dev_env.sh || exit 1; '
                                '"$PYTHON" -c "import sys; print(\'SELECTED=\' + sys.prefix)"; '
                                'if [ -n "${FLUTTER_ROOT:-}" ]; then command -v flutter; fi'],
