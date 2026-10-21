@@ -40,7 +40,7 @@ This directory is a local mirror of the ChatGPT project “LINE”.
 | 毎月 **16日 0:00 〜 月末** | `keyanbaitian6-cell/database-ci` |
 
 - **push の前に、今日の日付（日本時間）でどちらの期間かを確かめる。** 期間外の側へは push しない（CIが動いて枠を使う）。例：10/20は後半なので `database-ci`。
-- 後半に `database-ci` へ送るコマンド（認証は `gh` に入っている `keyanbaitian6-cell` のアカウント。1回だけ送り、CIが失敗しても原因を調べずに再実行しない）：
+- 後半に `database-ci` へ送るコマンド（既存の認証を使う。デスクトップでは `gh` の `keyanbaitian6-cell`、クラウドでは利用者が共同作業者として招待・承認した `imakurudev-eng` の接続で書き込み可能と確認済み。CI利用枠は操作アカウントではなくリポジトリ所有者側に計上される。1回だけ送り、CIが失敗しても原因を調べずに再実行しない）：
   `git push https://github.com/keyanbaitian6-cell/database-ci <コミット>:refs/heads/main`
 - **履歴は1本に保つ。** 2つのリポジトリは同じ `main` の履歴を持つ。作業はこの手元の `main` で続け、期間が替わったら、その時点の最新の `main` を、新しく使う側へ1回push して追いつかせる（このpushでCIが1回動くのは正しい）。片方にだけあるコミットを、別の系統として育てない。
 - 正本は `imakurudev-eng/database` の `main` のまま。`database-ci` にだけあるコミットは、前半に正本へ送るときに一緒に入る。取り込み前に、作業記録（`AI_COLLABORATION.md`）にどのコミットが `database-ci` にだけあるかを書く。2026-10-20時点：`988267b`（Android 0.5.41、補完機種の台数確認の修正）が `database-ci` と手元のブランチ `fix/pscube-anaslo-count` にあり、正本の `main`（`3277043`）にはまだ無い。

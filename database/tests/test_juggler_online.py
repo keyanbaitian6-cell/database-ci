@@ -93,8 +93,8 @@ class JugglerOnlineTests(unittest.TestCase):
         row = {'graph_measurement': graph, 'max_hold': 2376, 'games': 3000}
         self.assertEqual(rack_net(dict(row, store='nagamachiminami', day='2026-10-07')), (None, False, False))
         self.assertEqual(rack_net(dict(row, store='nagamachiminami', day='2026-10-07', jo_net=-280)), (-280, False, True))
-        self.assertEqual(rack_net(dict(row, store='nagamachiminami', day='2026-10-08'))[0], 1422)
-        self.assertEqual(rack_net(dict(row, store='saiwaichou', day='2026-10-07'))[0], 1422)
+        self.assertEqual(rack_net(dict(row, store='nagamachiminami', day='2026-10-08'))[0], 1417)
+        self.assertEqual(rack_net(dict(row, store='saiwaichou', day='2026-10-07'))[0], 1417)
         self.assertEqual(rack_net({'graph_measurement': None, 'max_hold': 10, 'games': 100}), (None, False, False))
         self.assertEqual(rack_net({'jo_net': True})[2], False, '真偽値は差枚にしない')
 

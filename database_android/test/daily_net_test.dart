@@ -180,7 +180,7 @@ void main() {
     final days = dailyNet(rows, 'nagamachiminami');
     expect(
       (days.single.total, days.single.captured, days.single.racks),
-      (2500, 2, 3),
+      (2489, 2, 3),
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -193,8 +193,8 @@ void main() {
     );
     expect(find.text('日別の差枚（推定）'), findsOneWidget);
     expect(find.text('メルヘンワールド長町南店　2026年10月のデータ'), findsOneWidget);
-    expect(find.text('+2,500'), findsNWidgets(2), reason: '当日と期間累計');
-    expect(find.text('+1,250'), findsNWidgets(2));
+    expect(find.text('+2,489'), findsNWidgets(2), reason: '当日と期間累計');
+    expect(find.text('+1,245'), findsNWidgets(2));
     expect(find.text('2/3'), findsOneWidget);
     expect(find.textContaining('推定差枚です'), findsOneWidget);
   });
@@ -241,7 +241,7 @@ void main() {
     final days = dailyNet(rows, 'nagamachiminami');
     expect(
       (days.single.total, days.single.captured, days.single.needsCheck),
-      (1422 - 1789, 2, 1),
+      (1417 - 1794, 2, 1),
     );
     await tester.pumpWidget(
       MaterialApp(

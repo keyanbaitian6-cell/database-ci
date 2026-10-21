@@ -5,8 +5,9 @@
 /// 1,000・2,000・4,000・6,000…（以降2,000刻み）のうち、その日の振れ幅が収まる最小の段階で、
 /// 最大持玉は「谷から山までの最大の上がり幅」。保存済み約6,200件の統計、BIG・REG・回転数との
 /// 照合（ジャグラーで R²0.97）、実機での高さ変更で確かめた推定（2026-10-03、
-/// outputs/meruhen-investigation/REPORT_20261003_claude.md）。サイトのコードでの証明や
-/// 正解の差枚との照合はないため、確定差枚（P’s CUBEの net_medals）とは分けて「推定」とする。
+/// outputs/meruhen-investigation/REPORT_20261003_claude.md）。サーバー側の描画処理は未確認。
+/// 幸町の正確な差枚との照合で終点を半px補正（2026-10-20）。長町南の正確値との照合はないため、
+/// 確定差枚（P’s CUBEの net_medals）とは分けて「推定」とする。
 /// 誤差は1ピクセル分の丸め（±R/360枚）。R を1つに決められない台は null（0にしない）。
 /// PC版 `core.meruhen_net_estimate` と同じ規則。
 library;
@@ -58,6 +59,8 @@ const meruhenMaxUsePerGame = 3.0;
 
 /// サイトのSVG（高さ400）のゼロ線と上端。
 const _zeroY = 200.5, _topY = 20.5;
+// 旧推定とjo_netの誤差100枚以上を除いた6,875組で確認。段階を選んだ後の終点だけに適用する。
+const _endPixelCorrection = 0.5;
 
 double _rise(Iterable<double> values) {
   var low = 0.0, rise = 0.0;
@@ -192,5 +195,8 @@ int? meruhenNetEstimate({
     if (feasible.length == 1) chosen = feasible.single;
   }
   if (chosen == null) return none;
-  return (value: (end * chosen / half).round(), needsCheck: needsCheck);
+  return (
+    value: ((end - _endPixelCorrection) * chosen / half).round(),
+    needsCheck: needsCheck,
+  );
 }

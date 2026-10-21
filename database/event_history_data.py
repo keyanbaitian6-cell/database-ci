@@ -97,8 +97,10 @@ def validate_envelope(raw):
     """バックアップの外枠だけを検証する。個別の古い編集で台データを止めない。"""
     if not isinstance(raw, dict) or raw.get('format') != FORMAT or raw.get('version') != 1:
         raise ValueError('履歴編集の形式が違います。')
-    if any(not isinstance(raw.get(k, []), list) or len(raw.get(k, [])) > 30000 for k in ('cells', 'weeks', 'links')):
+    if any(not isinstance(raw.get(k, []), list) for k in ('cells', 'weeks', 'links')):
         raise ValueError('履歴編集の一覧が読めません。')
+    if any(len(raw.get(k, [])) > 30000 for k in ('cells', 'weeks', 'links')):
+        raise ValueError('履歴編集の保存件数の上限（各30,000件）を超えるため保存できません。')
 
 
 def clean_edits(raw, base, rejected_items=None):
@@ -163,7 +165,7 @@ def clean_edits(raw, base, rejected_items=None):
                     if c.get('record_name') is not None and not text(c['record_name']):
                         raise ValueError()
                     entry['record_name'] = c.get('record_name')
-                entry['device'] = c.get('device') if c.get('device') in ('pc', 'android') else 'pc'
+                entry['device'] = c.get('device') if c.get('device') in ('pc', 'android', 'shared') else 'pc'
                 key = edit_key(group, entry)
                 if key not in entries or stamp(entry['updated_at']) >= stamp(entries[key]['updated_at']):
                     entries[key] = entry
@@ -180,7 +182,7 @@ def edit_key(group, c):
     return tuple(c[k] for k in fields)
 
 
-def merge_edits(stored, incoming, base):
+def merge_edits(stored, incoming, base, *, count_stored_rejected=True):
     """固定済みの週の食い違いは除外し、ほかの台データの取り込みを妨げない。"""
     validate_envelope(incoming)
     orphans = {}
@@ -218,7 +220,9 @@ def merge_edits(stored, incoming, base):
         # ただし同じ場所により新しい正しい編集があれば、古い方は役目を終えたので捨てる（警告が残り続けないように）。
         out[group] = [entries[k] for k in sorted(entries)] + [
             o for o in orphans.get(group, []) if not superseded(group, o, entries)]
-    return out, changed, conflicts, old_bad + bad_weeks + new_bad, skipped_weeks
+    validate_envelope(out)
+    rejected = (old_bad if count_stored_rejected else 0) + bad_weeks + new_bad
+    return out, changed, conflicts, rejected, skipped_weeks
 
 
 def superseded(group, orphan, entries):

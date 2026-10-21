@@ -147,12 +147,19 @@ void validateHistoryEnvelope(dynamic raw) {
   if (raw is! Map ||
       raw['format'] != historyFormat ||
       raw['version'] != 1 ||
-      ['cells', 'weeks', 'links'].any(
-        (k) =>
-            raw.containsKey(k) &&
-            (raw[k] is! List || (raw[k] as List).length > 30000),
-      )) {
+      [
+        'cells',
+        'weeks',
+        'links',
+      ].any((k) => raw.containsKey(k) && raw[k] is! List)) {
     throw const FormatException('履歴編集の形式が不正です。');
+  }
+  if ([
+    'cells',
+    'weeks',
+    'links',
+  ].any((k) => raw.containsKey(k) && (raw[k] as List).length > 30000)) {
+    throw const FormatException('履歴編集の保存件数の上限（各30,000件）を超えるため保存できません。');
   }
 }
 
@@ -252,7 +259,9 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
             group == 'cells' || c.containsKey('week') || c.containsKey('type');
         final entry = <String, dynamic>{
           for (final k in ['store', 'machine', 'updated_at']) k: c[k],
-          'device': c['device'] == 'android' ? 'android' : 'pc',
+          'device': ['pc', 'android', 'shared'].contains(c['device'])
+              ? c['device']
+              : 'pc',
         };
         DateTime? first;
         if (scoped) {
@@ -391,6 +400,8 @@ mergeHistoryEdits(
         if (!_superseded(group, o, entries)) o,
     ];
   }
+  // 合流結果も読み取り側の上限内に保ち、保存済みの履歴を読めなくしない。
+  validateHistoryEnvelope(out);
   return (
     edits: out,
     changed: changed,

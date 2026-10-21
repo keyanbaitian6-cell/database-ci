@@ -98,10 +98,10 @@ try {
     const storage = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
     assert.deepEqual(storage, {'database-viewer-remote': 'mine', 'database-share-script-id': id, 'database-share-name': 'himawari'});
     assert.deepEqual(urls.slice().sort(), ['?file=event-history', '?file=events', '?file=pscube&check=1', '?file=pscube-events', '?file=rainbow', '?u=himawari&check=1&access=1'], '呼び名は最初の読み込みにだけ付ける（🌈のファイルも読む、2026-10-11）');
-    // 長町南：1日は +1422-1111 = +311、イベント（HTMLとして解釈しない）。
+    // 長町南：半px補正後は +1417-1122 = +295、イベント（HTMLとして解釈しない）。
     const cell = page.locator(`[data-open="${d1}"]`);
     assert.match(await cell.innerText(), /半列<b>/);
-    assert.match(await cell.innerText(), /\+311/);
+    assert.match(await cell.innerText(), /\+295/);
     assert.equal(await page.locator('b').count(), 0);
     // キャラ誕生日：マスはイベント名と別に「🎂 名前2人＋ほか○名」。台の無い日でも押せる（2026-10-18）。
     const birthdayOnly = page.locator(`[data-birthday-open="${ym}-05"]`);
@@ -114,9 +114,9 @@ try {
     await page.waitForSelector('.sheet');
     const sheet = await page.locator('.sheet').innerText();
     assert.match(sheet, /キャラ誕生日（イベントとは別）\s*🎂 アイウ（作品B）\s*🎂 テスト<i>太郎（作品A）/);
-    assert.match(sheet, /総推定差枚\s*\+311/);
+    assert.match(sheet, /総推定差枚\s*\+295/);
     assert.match(sheet, /推定差枚がわかった台 2\/2台/, '数値異常の台は数えない');
-    assert.match(sheet, /101番\s*ゴーゴージャグラー3\s*\+1,422/);
+    assert.match(sheet, /101番\s*ゴーゴージャグラー3\s*\+1,417/);
     assert.match(sheet, /ゴーゴージャグラー3\s*5,000G\s*2台/);
     assert.ok(!/script/.test(await page.locator('.sheet .list').first().innerText()), '数値異常の台はTOP10に入れない');
     await page.keyboard.press('Escape');
@@ -194,7 +194,7 @@ try {
     await page.getByRole('button', {name: '閉じる'}).click();
     // 幸町は選んだまま次に開いても残る。月の切り替え。
     await page.getByRole('button', {name: '幸町'}).click();
-    assert.match(await page.locator(`[data-open="${d2}"]`).innerText(), /\+1,422/);
+    assert.match(await page.locator(`[data-open="${d2}"]`).innerText(), /\+1,417/);
     // 台データの無い日：保存したHTMLからの勝率。押すと「何台中何台プラス」。日付送りは集計のある日どうし。
     assert.equal(await page.locator('[data-summary-open]').count(), 1, '台データのある日・形のおかしい日には出さない');
     const sumCell = page.locator(`[data-summary-open="${d3}"]`);

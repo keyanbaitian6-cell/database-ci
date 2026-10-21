@@ -324,6 +324,34 @@ def pull_shared_events(store, folder):
 # iPhoneの閲覧ページで付け外しした🌈（RAINBOW.md「iPhoneから付ける」、2026-10-11）。Apps Script が同期フォルダに書く。
 SHARED_RAINBOW_NAME = 'database-rainbow-shared.json'
 
+SHARED_HISTORY_NAME = 'database-event-history-shared.json'
+
+
+def pull_shared_history(store, folder):
+    """共有で編集した結果記号を合流する。週・機種対応は共有から作らない。"""
+    path = Path(folder) / SHARED_HISTORY_NAME if folder else None
+    if path is None or not path.is_file():
+        return 0, 0, 0, 0
+    from event_history_data import validate_envelope
+    raw = json.loads(path.read_text(encoding='utf-8-sig'))
+    validate_envelope(raw)
+    if raw.get('weeks') or raw.get('links'):
+        raise ValueError('共有の履歴では週の構成・機種対応は変更できません。')
+    # 「共有の編集」の除外数に、PCに保存済みの基準外原文を混ぜない。
+    return store.merge_history_edits(raw, count_stored_rejected=False)
+
+
+def sync_shared_history(store, data_dir, notices=None):
+    """本体DBに共有編集を取り込む。失敗時も既存のバックアップ出力は続ける。"""
+    try:
+        folder = load_settings(data_dir).get('sync_dir')
+        _changed, _conflicts, rejected, _skipped = pull_shared_history(store, folder)
+        if rejected and notices is not None:
+            notices.append(f'共有のイベント履歴は形式が合わない編集{rejected}件を除外しました。')
+    except (OSError, ValueError, sqlite3.Error) as error:
+        if notices is not None:
+            notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
+
 
 def _valid_rainbow_mark(mark):
     try:
@@ -675,16 +703,24 @@ class Store:
         return self.history_edits_status()[0]
 
     def _write_history_edits(self, edits):
+        from event_history_data import validate_envelope
+        # 合流後に上限を超えた文書を書き込むと、次回の読み取りで全履歴が読めなくなる。
+        validate_envelope(edits)
         self.db.execute('INSERT OR REPLACE INTO app_state VALUES(?,?)',
                         ('event_history_edits', json.dumps(edits, ensure_ascii=False)))
 
-    def merge_history_edits(self, incoming):
+    def merge_history_edits(self, incoming, *, count_stored_rejected=True):
         from event_history_data import merge_edits, load_base
-        raw = self.history_edits_raw()
-        if 'unreadable_raw' in raw:
-            raise ValueError('履歴の原文が読めません。台データの保存・バックアップは続けられます。')
-        merged, changed, conflicts, rejected, skipped_weeks = merge_edits(raw, incoming, load_base())
         with self.db:
+            # GUI保存と共有取り込みが並行しても、古い原文で別の編集を上書きしない。
+            # 読む前に書き込み権を確保し、合流と保存を一つの操作にする。
+            if not self.db.in_transaction:
+                self.db.execute('BEGIN IMMEDIATE')
+            raw = self.history_edits_raw()
+            if 'unreadable_raw' in raw:
+                raise ValueError('履歴の原文が読めません。台データの保存・バックアップは続けられます。')
+            merged, changed, conflicts, rejected, skipped_weeks = merge_edits(
+                raw, incoming, load_base(), count_stored_rejected=count_stored_rejected)
             self._write_history_edits(merged)
         return changed, conflicts, rejected, skipped_weeks
 
@@ -1687,13 +1723,15 @@ def restore_backup(store, path):
     return dict(plan, forced=forced)
 
 
-def auto_backup(store, data_dir, *, strict=False, notices=None):
+def auto_backup(store, data_dir, *, strict=False, notices=None, import_shared=True):
     """Refresh backups after data changed; strict=True reports output failures.
 
     Also writes today's dated backup (see ``snapshot_backup``). The shared-folder
     copy is skipped unless a sync folder was configured, because a failed backup
     must never get in the way of saving the record itself.
     """
+    if import_shared:
+        sync_shared_history(store, data_dir, notices)
     snapshot = None
     try:
         snapshot = snapshot_backup(store, data_dir)
@@ -2623,6 +2661,9 @@ def measurement_preview(row):
 # 照合、実機での高さ変更）。確定差枚ではないので「推定」と表示し、決められない台は None。
 MERUHEN_AXIS_STEPS = (1000,) + tuple(range(2000, 40001, 2000))
 _MERUHEN_ZERO_Y, _MERUHEN_TOP_Y = 200.5, 20.5
+# 幸町の正確なjo_netと照合し、旧推定の誤差100枚以上を除いた6,875組で確認した終点の偏り。
+# 9/30〜10/9で決めた半px補正は10/10〜19でも改善。段階を選んだ後の終点だけに適用する。
+_MERUHEN_END_PIXEL_CORRECTION = 0.5
 # 線が下がった分の合計（その日に使った枚数の目安）の、1回転あたりの上限。グラフの形と最大持玉だけでは
 # 段階が決まらない台で、いちばん大きい段階を選ぶと、1回転に3枚しか入らないのに −8,944枚（1,634回転）
 # のような値になっていた（2026-10-06、幸町 東京リベンジャーズ517・北斗637）。段階が1つに決まる3,755台
@@ -2707,7 +2748,7 @@ def meruhen_net_estimate_detail(measurement, max_hold, games=None):
             chosen = feasible[0]
     if chosen is None:
         return None, False
-    value = end * chosen / half
+    value = (end - _MERUHEN_END_PIXEL_CORRECTION) * chosen / half
     rounded = int(value + 0.5) if value >= 0 else -int(-value + 0.5)  # Dartの round と同じ（0から遠い側）
     return rounded, needs_check
 

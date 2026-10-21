@@ -74,6 +74,43 @@ void main() {
       await dir.delete(recursive: true);
     }
   });
+  // 補完機種（URLなし）を取り込んだ端末で、全台一覧の台数確認が住所の検査で止まり、どの全台一覧も
+  // 「対象のP’s CUBEページではありません」で保存できなかった（2026-10-20、通常版0.5.40）。
+  test('installation count skips external machines without a P’s CUBE url', () async {
+    sqfliteFfiInit();
+    final dir = await Directory.systemTemp.createTemp('anaslo_count');
+    final store = await PscubeStore.open(
+      path: '${dir.path}/test.sqlite3',
+      factory: databaseFactoryFfi,
+    );
+    final url =
+        '${PscubeStore.root}cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L';
+    try {
+      final d = fixture();
+      d['machines'] = [
+        ...(d['machines'] as List),
+        {
+          'store': 'c740601',
+          'rate': '20',
+          'machine': 'L東京喰種',
+          'expected_count': 24,
+          'machine_type': null,
+          'url': url,
+        },
+      ];
+      await store.importBackup(jsonEncode(d));
+      expect(await store.installationCount(url), 24);
+      expect(
+        await store.installationCount(url.replaceFirst('bai=20', 'bai=5')),
+        isNull,
+      );
+      // 補完機種そのものは消さない。
+      expect((await store.db.query('machines')).length, 2);
+    } finally {
+      await store.close();
+      await dir.delete(recursive: true);
+    }
+  });
   test('unknown MY stays null and external history has no score', () {
     final data = ViewerData.parse(jsonEncode(fixture()));
     final r = data.records.single;

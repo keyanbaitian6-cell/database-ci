@@ -30,6 +30,44 @@ class DaySelectionTests(unittest.TestCase):
         payload = dict(store='nagamachiminami', machines=self.machines, **extra)
         return json.loads(self.bridge.next_unimported_machine(json.dumps(payload)))
 
+    def test_tables_only_skips_graphs_and_can_return_to_normal(self):
+        day = '2026-10-03'
+        db = Store(self.folder / 'test.db')
+        try:
+            db.save([dict(row(rack, day=day),
+                          detail_url=f'{HOST}/standgraph/?rack_no={rack}&target_date={day}',
+                          captured_at='2026-10-03T23:30:00+09:00') for rack in (1, 2, 3)])
+        finally:
+            db.close()
+        self.assertEqual(self.ask(day=day)['reason'], 'graph')
+        self.assertTrue(self.bridge.set_tables_only(True)['tables_only'])
+        answer = self.ask(day=day)
+        self.assertEqual((answer['reason'], answer['machine']), ('table', '乙機'))
+        next_page = json.loads(self.bridge.next_ungraphed_rack(dict(
+            store='nagamachiminami', day=day, machine='甲機', rack=1)))
+        self.assertEqual(next_page['reason'], 'tables_only')
+        self.assertIn('database_next_machine=1', next_page['url'])
+        status = json.loads(self.bridge.machine_status(dict(
+            store='nagamachiminami', day=day, machines=['甲機'])))['status'][0]
+        self.assertEqual(status, {'done': 3, 'total': 3, 'tables_only': True})
+        self.bridge.set_tables_only(False)
+        self.assertEqual(self.ask(day=day)['reason'], 'graph')
+        status = json.loads(self.bridge.machine_status(dict(
+            store='nagamachiminami', day=day, machines=['甲機'])))['status'][0]
+        self.assertEqual(status, {'done': 0, 'total': 3})
+
+    def test_tables_only_cannot_change_during_capture_or_save(self):
+        with self.assertRaises(ValueError):
+            self.bridge.set_tables_only('yes')
+        self.bridge._auto.configure(True, 1)
+        with self.assertRaises(ValueError):
+            self.bridge.set_tables_only(True)
+        self.bridge._auto.configure(False, 1)
+        self.bridge._children = [mock.Mock(poll=mock.Mock(return_value=None))]
+        with self.assertRaises(ValueError):
+            self.bridge.set_tables_only(True)
+        self.assertFalse(self.bridge.get_auto_capture()['tables_only'])
+
     def test_business_days_change_at_2am(self):
         days = recent_days(datetime(2026, 10, 4, 1, 59))
         self.assertEqual((days[0], days[1], days[-1], len(days)), ('2026-10-03', '2026-10-02', '2026-09-27', 7))

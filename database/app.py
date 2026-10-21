@@ -4,6 +4,7 @@ import base64
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tkinter as tk
@@ -17,7 +18,7 @@ from output_worker import OutputWorker, refresh_outputs
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup, normalize_machine_name,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
-                  summary_report, undo_last_save, pull_shared_events, pull_shared_rainbow)
+                  summary_report, undo_last_save, pull_shared_events, pull_shared_rainbow, pull_shared_history)
 
 def runtime_root():
     """Keep user data beside the project when running a packaged Windows app."""
@@ -1210,6 +1211,18 @@ def main():
                 child.lift()
                 child.focus_set()
                 return
+        db = Store(DATA_DIR / 'database.sqlite3')
+        try:
+            changed, _conflicts, rejected, _skipped = pull_shared_history(db, load_settings(DATA_DIR).get('sync_dir'))
+            if changed:
+                schedule_outputs(backup=True)
+                tell(f'共有のイベント履歴を{changed}件取り込みました。\n')
+            if rejected:
+                tell(f'共有のイベント履歴は形式が合わない編集{rejected}件を反映していません。\n')
+        except (OSError, ValueError, sqlite3.Error) as error:
+            tell(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}\n')
+        finally:
+            db.close()
         def open_machine(machine_name, target_day):
             store_name.set(STORE_NAMES['nagamachiminami'])
             refresh_days()

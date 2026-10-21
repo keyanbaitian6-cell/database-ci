@@ -602,6 +602,7 @@ OVERLAY_JS = (
     "        let text, bg, fg;\n"
     "        if (s && s.excluded) { text = '対象外'; bg = 'transparent'; fg = '#8a94a6'; }\n"
     "        else if (!s) { text = md + '未取込'; bg = '#e2e2e5'; fg = '#707070'; }\n"
+    "        else if (s.tables_only) { text = md + '表 ' + s.total + '台保存'; bg = '#0d8b74'; fg = '#fff'; }\n"
     "        else if (s.done >= s.total) { text = md + '済 ' + s.done + '/' + s.total; bg = '#0d8b74'; fg = '#fff'; }\n"
     "        else { text = md + s.done + '/' + s.total; bg = '#f5a623'; fg = '#1d1d1f'; }\n"
     "        badge.textContent = text;\n"
@@ -874,6 +875,7 @@ OVERLAY_JS = (
     "    try {\n"
     "      const id = pageIdentity();\n"
     "      if (id.rack !== null) {\n"
+    "        if (tablesOnly) { await moveToNextRack(); return; }\n"
     "        const result = extractGraph();\n"
     "        status.textContent = 'グラフを送信しました。';\n"
     "        window.pywebview.api.submit_graph(result);\n"
@@ -1285,6 +1287,7 @@ class _Bridge:
         # （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。
         self._target_day = None
         self._direction = 'top'
+        self._tables_only = False
         # 今回の取り込みを始めた時刻。その日の機種の表をこれより前に取ったきりなら取り直す
         # （昼に取った機種を、夜の取り込みで「済み」として飛ばさない。2026-10-04）。
         # 画面を開いたとき・自動取り込みをONにしたときに決める。
@@ -1310,7 +1313,21 @@ class _Bridge:
 
     def get_auto_capture(self):
         return dict(self._auto.state(), manual_continuation=self._manual_continuation,
-                    target_day=self._target_day, direction=self._direction, days=recent_days())
+                    target_day=self._target_day, direction=self._direction, days=recent_days(),
+                    tables_only=self._tables_only)
+
+    def set_tables_only(self, enabled):
+        """この取り込み窓だけの設定。保存・自動取り込み中は切り替えない。"""
+        if not isinstance(enabled, bool):
+            raise ValueError('表だけ取り込む設定が不正です。')
+        with self._auto._lock, self._submit_lock:
+            if self._auto.state()['enabled'] or any(c.poll() is None for c in self._children):
+                raise ValueError('自動取り込みをOFFにし、保存の完了後に切り替えてください。')
+            self._signal_path.unlink(missing_ok=True)
+            self._tables_only = enabled
+            self._pending_advance = None
+            self._auto.loaded()
+            return self.get_auto_capture()
 
     def set_target_day(self, day=None, direction=None):
         """取り込み日・向きを決める。day: None＝変えない、''＝指定なし。ONの間は変えられない。"""
@@ -1458,9 +1475,10 @@ class _Bridge:
                         # again in commit_auto_move after the awaited DB query.
                         self._auto.run_current(generation, lambda: self._window.evaluate_js(
                             'window.__databaseAutoMoveMachine(' + str(generation) + ')'))
-                    elif probe.get('kind') == 'no_racks':
-                        # 機種の表の代わりに「台情報なし」。保存せず、その日はこの機種を飛ばす。
-                        result = json.loads(self.skip_machine_without_racks(probe))
+                    elif probe.get('kind') in ('no_racks', 'table_only_return'):
+                        # 「台情報なし」はその機種を飛ばす。表だけモードの台ページは一覧へ戻る。
+                        result = json.loads(self.next_ungraphed_rack(probe) if probe['kind'] == 'table_only_return'
+                                            else self.skip_machine_without_racks(probe))
                         url = result.get('url')
                         self._auto.pause('ON・' + result.get('message', ''), generation)
                         if url and is_allowed_url(url):
@@ -1577,6 +1595,11 @@ class _Bridge:
             if not machine:
                 return json.dumps({'url': None, 'reason': 'unknown_machine',
                                    'message': '機種名を特定できません。一覧の取り込み後にお試しください。'},
+                                  ensure_ascii=False)
+            if self._tables_only:
+                return json.dumps({'url': machine_list_url(store_path, day, after=machine),
+                                   'reason': 'tables_only',
+                                   'message': '表だけ取り込むモードです。グラフを省略して次の機種を探します。'},
                                   ensure_ascii=False)
             step = _next_step(db, day, machine, store_path, current_rack)
         finally:
@@ -1704,7 +1727,8 @@ class _Bridge:
             is_excluded_machine(store_path, name) for name in listed_names if name)
         all_done_message = json.dumps({
             'url': None, 'reason': 'all_done',
-            'message': f'未取り込みの機種・グラフはありません。（{EXCLUDED_MACHINE_NOTES.get(store_path, "データ非公開の機種")}は対象外）'},
+            'message': ('未取り込みの表はありません。' if self._tables_only else '未取り込みの機種・グラフはありません。')
+                       + f'（{EXCLUDED_MACHINE_NOTES.get(store_path, "データ非公開の機種")}は対象外）'},
             ensure_ascii=False)
 
         # The category-level list has no date when an import session first
@@ -1721,7 +1745,7 @@ class _Bridge:
 
             def done_today(name):
                 done_total = today_progress.get(re.sub(r'\s+', '', name))
-                return done_total is not None and done_total[0] >= done_total[1]
+                return done_total is not None and (self._tables_only or done_total[0] >= done_total[1])
             candidates = []
             for raw_machine in raw_machines:
                 if not isinstance(raw_machine, dict):
@@ -1792,7 +1816,7 @@ class _Bridge:
                         continue   # その日はサイトに台情報が無かった機種
                     done_total = progress.get(key)
                     old = done_total is not None and stale(key)
-                    if done_total is not None and done_total[0] < done_total[1] and not old:
+                    if not self._tables_only and done_total is not None and done_total[0] < done_total[1] and not old:
                         step = _next_step(db, day, machine['name'], store_path)
                         if step['kind'] == 'next' and listed_url(step.get('url')):
                             return json.dumps({'url': step['url'], 'reason': 'graph',
@@ -1814,7 +1838,7 @@ class _Bridge:
                         message = (f"{machine['name']}は設置台数が変わっています。現在の表を取り込んでください。"
                                    if changed else
                                    f"{machine['name']}は前に取った表のままです。現在の表を取り込み直してください"
-                                   "（数値が変わった台だけグラフも取り直します）。"
+                                   + ("（グラフは省略します）。" if self._tables_only else "（数値が変わった台だけグラフも取り直します）。")
                                    if old else
                                    f"{machine['name']}は未取込です。現在の表を取り込んでください。")
                         return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
@@ -1837,14 +1861,14 @@ class _Bridge:
                     if found:
                         return found
                     return json.dumps({'url': None, 'reason': 'all_done',
-                                       'message': '未取り込みの機種・グラフはありません。'}, ensure_ascii=False)
+                                       'message': '未取り込みの表はありません。' if self._tables_only else '未取り込みの機種・グラフはありません。'}, ensure_ascii=False)
             found = search(machines)
             if found:
                 return found
         finally:
             db.close()
         return json.dumps({'url': None, 'reason': 'all_done',
-                           'message': '未取り込みの機種・グラフはありません。'}, ensure_ascii=False)
+                           'message': '未取り込みの表はありません。' if self._tables_only else '未取り込みの機種・グラフはありません。'}, ensure_ascii=False)
 
     def progress(self, raw):
         """"今日 長町南 42/80台・幸町 18/60台" for the overlay's progress line."""
@@ -1859,6 +1883,9 @@ class _Bridge:
             if guessed:
                 day = today_iso()
             text = progress_text(db, day) if day else ''
+            if self._tables_only and day and store_path in STORE_NAMES:
+                count = len(db.rows(day, None, store_path))
+                text = f'{day}　表：{STORE_NAMES[store_path]} {count}台を保存済み（グラフは省略）'
             if guessed and not text:
                 text = f'{day}　まだ取り込みがありません'
         finally:
@@ -1887,7 +1914,9 @@ class _Bridge:
                 status.append({'excluded': True})
                 continue
             done_total = progress.get(re.sub(r'\s+', '', normalize_machine_name(name)))
-            status.append(None if done_total is None else dict(done=done_total[0], total=done_total[1]))
+            status.append(None if done_total is None else dict(
+                done=done_total[1] if self._tables_only else done_total[0],
+                total=done_total[1], **({'tables_only': True} if self._tables_only else {})))
         return json.dumps({'day': day, 'status': status}, ensure_ascii=False)
 
     def undo_last_save(self):
@@ -1905,6 +1934,8 @@ class _Bridge:
         # process at a time, including a manual click racing an automatic tick.
         with self._auto._lock, self._submit_lock:
             if self._retrying or self._connection.failure:
+                return False
+            if kind == 'graph' and self._tables_only:
                 return False
             self._children = [c for c in self._children if c.poll() is None]
             if self._children:
@@ -1935,7 +1966,8 @@ class _Bridge:
         self._advance_url = self._window.get_current_url() if state['enabled'] else None
         self._manual_continuation = not state['enabled']
         self._children.append(subprocess.Popen(command, env={**os.environ,
-            'DATABASE_ADVANCE_SIGNAL': str(self._signal_path)}))
+            'DATABASE_ADVANCE_SIGNAL': str(self._signal_path),
+            'DATABASE_CAPTURE_TABLES_ONLY': '1' if self._tables_only else '0'}))
 
 
 def _load_payload(payload_path):
@@ -2042,6 +2074,13 @@ def _confirm_table(payload_path, db_path, reports_folder):
         store.save(saved_rows)
         remember_for_undo(store, data_dir, f'{machine}の一覧{len(saved_rows)}台', saved_rows,
                           previous=previous)
+        import os
+        if os.environ.get('DATABASE_CAPTURE_TABLES_ONLY') == '1':
+            warning = duplicate_warning(store, day, location, machine)
+            message = f'{len(saved_rows)}台の表を保存しました。グラフを省略して次の機種を探します。'
+            _write_advance_signal(' '.join(p for p in (message, warning) if p),
+                                  next_url=machine_list_url(location, day, after=machine))
+            return
         # 自動バックアップは保存のたびではなく、内部ブラウザを閉じたときに1回だけ
         # 取る（run_session）。全データの書き出しは記録が増えるほど重くなり、
         # 1台ごとに待たされるようになるため。
