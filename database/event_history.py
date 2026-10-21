@@ -8,7 +8,7 @@ from tkinter import ttk, messagebox, simpledialog
 
 from event_history_data import (ASSET, KINDS, STORE, load_base, empty_edits, materialize,
     clean_edits, edit_key, saved_name, machine_candidates, variety_week_lineup, capture_shortfall, stamp,
-    SHORTFALL_DAYS)
+    SHORTFALL_DAYS, machine_day_nets, auto_faces)
 
 HISTORY_FILE = ASSET
 EVENT_TYPES = KINDS
@@ -56,6 +56,14 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     week_combo.pack(side='left', padx=8)
     content = ttk.Frame(frame)
     content.pack(fill='both', expand=True)
+    # 顔文字の自動挿入：表の真上（スクロールしない位置）。バラエティの週を開いているときだけ出す。
+    auto_row = ttk.Frame(frame)
+    auto_day = tk.StringVar()
+    ttk.Label(auto_row, text='顔文字の自動挿入：').pack(side='left')
+    auto_combo = ttk.Combobox(auto_row, textvariable=auto_day, state='readonly', width=10)
+    auto_combo.pack(side='left', padx=4)
+    ttk.Button(auto_row, text='この日の差枚で顔文字を入れる', command=lambda: auto_insert()).pack(side='left')
+    ttk.Label(auto_row, text='  +3000枚以上😍　1000〜2999😀　0〜999😌　マイナス🥶（空欄だけ）').pack(side='left')
     canvas = tk.Canvas(content, highlightthickness=0)
     vertical = ttk.Scrollbar(content, orient='vertical', command=canvas.yview)
     horizontal = ttk.Scrollbar(content, orient='horizontal', command=canvas.xview)
@@ -72,19 +80,20 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     footer.pack(fill='x', pady=(8,0))
     ttk.Label(footer, textvariable=status).pack(side='left')
 
-    def save(group, entry):
-        # 別窓からの編集も取り込んだ上で、対象セルだけを保存する。
-        entry['device'] = 'pc'
+    def save_many(group, entries):
+        # 別窓からの編集も取り込んだ上で、対象のセルだけを保存する（まとめて1回）。
         db = Store(db_path)
         try:
             current = db.history_edits()
-            now = datetime.now().astimezone()
-            for old in current[group]:
-                if edit_key(group, old) == edit_key(group, entry):
-                    now = max(now, stamp(old['updated_at']) + timedelta(milliseconds=1))
-            entry['updated_at'] = now.isoformat()
             incoming = empty_edits()
-            incoming[group].append(entry)
+            for entry in entries:
+                entry['device'] = 'pc'
+                now = datetime.now().astimezone()
+                for old in current[group]:
+                    if edit_key(group, old) == edit_key(group, entry):
+                        now = max(now, stamp(old['updated_at']) + timedelta(milliseconds=1))
+                entry['updated_at'] = now.isoformat()
+                incoming[group].append(entry)
             _changed, conflicts, rejected, skipped_weeks = db.merge_history_edits(incoming)
             edits[0] = db.history_edits_raw()
         finally:
@@ -93,6 +102,9 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         status.set('PCに保存済み。次の保存か「共有へ反映」で共有用ファイルを更新します' + (f'（不一致{conflicts}件）' if conflicts else ''))
         if rejected:
             messagebox.showwarning('履歴の確認', f'形式が合わない編集{rejected}件を反映しませんでした。', parent=window)
+
+    def save(group, entry):
+        save_many(group, [entry])
 
     def names_for(w):
         return set().union(*(names for d,names in index.items() if w['from'] <= d <= w['to']))
@@ -140,6 +152,17 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         week_combo.configure(values=list(labels))
         if reset or chosen.get() not in labels: chosen.set(next(iter(labels), ''))
         w = labels.get(chosen.get())
+        if w is not None and w['type'] == 'バラエティ':
+            first_day = date.fromisoformat(w['from'])
+            options = [f"{(first_day+timedelta(days=i)).isoformat()} {WEEKDAYS[i]}" for i in range(7)]
+            auto_combo.configure(values=options)
+            if auto_day.get() not in options:
+                # 既定は、その週で保存済みの記録がある最後の日（無ければ週の初日）。
+                recorded = [o for o in options if o.split()[0] in index]
+                auto_day.set(recorded[-1] if recorded else options[0])
+            auto_row.pack(fill='x', pady=(0, 6), before=content)
+        else:
+            auto_row.pack_forget()
         if w is None:
             ttk.Label(table, text='この種別の週表はまだありません。バラエティは「週表を作成」から追加できます。', padding=18).grid()
             return
@@ -187,6 +210,35 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             kind.set('バラエティ'); chosen.set(f"{value}〜{(date.fromisoformat(value)+timedelta(days=6)).isoformat()}")
             render()
         except Exception as error: messagebox.showerror('週表を作成できません',str(error),parent=window)
+
+    def auto_insert():
+        # 選んだ日のバラエティの空欄に、その日の機種の合計差枚で顔文字を入れる（入力済みのセルは変えない）。
+        weeks, _rejected = materialize(base, edits[0])
+        w = next((x for x in weeks if x['type'] == kind.get() and f"{x['from']}〜{x['to']}" == chosen.get()), None)
+        target = auto_day.get()
+        if w is None or w['type'] != 'バラエティ' or not target:
+            messagebox.showinfo('自動挿入', '「バラエティ」の週と日付を選んでから押してください。', parent=window)
+            return
+        target = target.split()[0]
+        try:
+            db = Store(db_path)
+            try:
+                nets = machine_day_nets(db, target, target)
+            finally:
+                db.close()
+            cells, skipped = auto_faces(w, nets, index, base['symbols'], base.get('user_blank_days', ()), only_day=target)
+            if not cells:
+                messagebox.showinfo('自動挿入', f'{target}に入れられる空欄がありません。' + (f'\n差枚の分からない空欄が{skipped}件あります。' if skipped else ''), parent=window)
+                return
+            if not messagebox.askyesno('自動挿入', f'{target}の空欄{len(cells)}件に顔文字を入れます（入力済みのセルは変えません）。\n'
+                    '+3000枚以上＝😍　1000〜2999枚＝😀　0〜999枚＝😌　マイナス＝🥶\n'
+                    + (f'差枚の分からない空欄{skipped}件は空欄のままです。\n' if skipped else '') + '入れますか？', parent=window):
+                return
+            save_many('cells', [dict(store=STORE, type=w['type'], week=w['from'], machine=m, day=d, value=v) for m, d, v in cells])
+            render()
+            status.set(f'{target}に顔文字を{len(cells)}件入れました。' + (f'差枚の分からない空欄{skipped}件は空欄のままです。' if skipped else '') + '次の保存か「共有へ反映」で共有用ファイルを更新します。')
+        except Exception as error:
+            messagebox.showerror('自動挿入できません', str(error), parent=window)
 
     def publish():
         if dirty[0] and on_changed:

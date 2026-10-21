@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 from core import Store, export_backup, import_backup, auto_backup, save_settings
 from event_history_data import (load_base, validate_base, empty_edits, merge_edits,
-    materialize, saved_name, variety_week_lineup, capture_shortfall, FILE_NAME)
+    materialize, saved_name, variety_week_lineup, capture_shortfall, FILE_NAME,
+    net_face, auto_faces, machine_day_nets)
 
 
 def cell(base, value='😀', at='2026-10-19T00:00:00Z', device='android'):
@@ -283,6 +284,98 @@ class HistoryTests(unittest.TestCase):
         older=empty_edits();older['cells']=[cell(self.base,'😇','2026-10-19T03:00:00+09:00','pc')]
         kept,*_=merge_edits(older,empty_edits(),removed)
         self.assertEqual([c['value'] for c in kept['cells']],['😇'])
+
+    def test_net_face_bands(self):
+        # 利用者指定（2026-10-21）：+3000以上＝😍、1000〜2999＝😀、0〜999＝😌、マイナス＝🥶。境目の値を固定する。
+        for total, face in [(5000,'😍'),(3000,'😍'),(2999,'😀'),(1000,'😀'),(999,'😌'),(0,'😌'),(-1,'🥶'),(-8000,'🥶')]:
+            self.assertEqual(net_face(total), face, total)
+        self.assertTrue({'😍','😀','😌','🥶'} <= set(self.base['symbols']))
+
+    def test_auto_faces_fill_only_blank_cells_with_known_net(self):
+        week = dict(type='バラエティ', **{'from':'2026-10-12','to':'2026-10-18'}, machines=[
+            dict(name='A', record_name='A', count=2, results=['','😍','','','','','']),
+            dict(name='B', record_name='B', count=1, results=['']*7)])
+        nets = {('2026-10-12','A'):3500, ('2026-10-13','A'):-500, ('2026-10-14','A'):1200,
+                ('2026-10-12','B'):500, ('2026-10-14','B'):-1}
+        names = {'2026-10-12':{'A','B'}, '2026-10-13':{'A'}, '2026-10-14':{'A','B'}, '2026-10-15':{'B'}}
+        cells, skipped = auto_faces(week, nets, names, self.base['symbols'])
+        self.assertEqual(sorted(cells), [('A','2026-10-12','😍'),('A','2026-10-14','😀'),('B','2026-10-12','😌'),('B','2026-10-14','🥶')])
+        # 入力済みの10/13のAは変えない。10/15のBは記録はあるが差枚が分からないので空欄のまま数える。記録の無い日は数えない。
+        self.assertEqual(skipped, 1)
+        cells, _ = auto_faces(week, nets, names, self.base['symbols'], blank_days=('2026-10-12',))
+        self.assertNotIn('2026-10-12', {d for _m, d, _f in cells})
+
+    def test_machine_day_net_needs_every_rack(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db = Store(Path(temp)/'nets.db')
+            try:
+                row = lambda day, machine, rack, **kw: dict(store='nagamachiminami', kind_code=21, day=day, machine=machine, rack=rack, games=1000, bb=4, rb=2, max_hold=100, **kw)
+                db.save([row('2026-10-12','機種A',1,jo_net=1500), row('2026-10-12','機種A',2,jo_net=-200),
+                         row('2026-10-12','機種B',1,jo_net=900), row('2026-10-12','機種B',2)])
+                nets = machine_day_nets(db, '2026-10-12', '2026-10-18')
+            finally:
+                db.close()
+            self.assertEqual(nets.get(('2026-10-12','機種A')), 1300)
+            # 機種Bは1台の差枚が分からない。一部だけの合計は出さない。
+            self.assertNotIn(('2026-10-12','機種B'), nets)
+
+    @staticmethod
+    def _saved_faces(path):
+        db = Store(path)
+        try:
+            return {c['day']: c['value'] for c in db.history_edits()['cells']}
+        finally:
+            db.close()
+
+    def test_pc_auto_insert_button_saves_faces_and_keeps_manual_cells(self):
+        import tkinter as tk
+        from tkinter import ttk
+        from unittest.mock import patch
+        from event_history import open_event_history
+        with tempfile.TemporaryDirectory() as temp:
+            root_path = Path(temp)
+            name = self.base['weeks'][-1]['machines'][0]['name']
+            # 実際の基準にバラエティの週は無い。週表の作成と同じく、週の定義を編集として保存する。
+            base = dict(self.base)
+            source = root_path/'history.json'; source.write_text(json.dumps(base), encoding='utf-8')
+            path = root_path/'fixture.db'; db = Store(path)
+            try:
+                row = lambda day, rack, net: dict(store='nagamachiminami', kind_code=21, day=day, machine=name, rack=rack, games=1000, bb=4, rb=2, max_hold=100, jo_net=net)
+                week = dict(store='nagamachiminami', type='バラエティ', week='2026-10-12', lineup_day='2026-10-12', removed=False,
+                            machines=[dict(name=name, record_name=name, count=2)], updated_at='2026-10-20T00:00:00+09:00', device='pc')
+                db.merge_history_edits(dict(empty_edits(), weeks=[week]))
+                db.save([row('2026-10-12',1,2000), row('2026-10-12',2,1500), row('2026-10-13',1,-300), row('2026-10-13',2,100)])
+            finally:
+                db.close()
+            root = tk.Tk(); root.withdraw()
+            try:
+                window = open_event_history(root, lambda n, d: None, db_path=path, path=source)
+                window.withdraw(); root.update_idletasks()
+                def children(parent):
+                    for w in parent.winfo_children():
+                        yield w
+                        yield from children(w)
+                widgets = list(children(window))
+                button = next(w for w in widgets if isinstance(w, ttk.Button) and w.cget('text') == 'この日の差枚で顔文字を入れる')
+                self.assertEqual(button.master.winfo_manager(), '')  # バラエティの週を開くまで出さない
+                kind_box = next(w for w in widgets if isinstance(w, ttk.Combobox) and 'バラエティ' in w.cget('values'))
+                kind_box.set('バラエティ'); kind_box.event_generate('<<ComboboxSelected>>'); root.update()
+                self.assertEqual(button.master.winfo_manager(), 'pack')
+                widgets = list(children(window))  # 再描画で表の部品が作り直される
+                day_box = next(w for w in widgets if isinstance(w, ttk.Combobox) and '2026-10-12 月' in str(w.cget('values')))
+                self.assertEqual(day_box.get(), '2026-10-13 火')  # 既定は記録のある最後の日
+                saved = lambda: self._saved_faces(path)
+                with patch('event_history.messagebox.askyesno', return_value=True), patch('event_history.messagebox.showinfo'):
+                    button.invoke()
+                    # 選んだ日だけに入る：10/13は合計-200＝🥶、10/12にはまだ入れない。
+                    self.assertEqual(saved(), {'2026-10-13': '🥶'})
+                    day_box.set('2026-10-12 月'); button.invoke()
+                    self.assertEqual(saved(), {'2026-10-12': '😍', '2026-10-13': '🥶'})  # 10/12は合計3500＝😍
+                    # 押し直しても入力済みのセルは変えない。記録の無い日は入れない。
+                    day_box.set('2026-10-15 木'); button.invoke()
+                    self.assertEqual(saved(), {'2026-10-12': '😍', '2026-10-13': '🥶'})
+            finally:
+                root.destroy()
 
     def test_thin_capture_period_is_reported(self):
         # 週と前13日がまるごと取り込み不足だと、週内の8割判定は素通りする（2026-10-19 Claudeレビュー中3。実例 9/14〜21）。

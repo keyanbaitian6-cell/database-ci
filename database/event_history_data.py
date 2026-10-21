@@ -323,3 +323,64 @@ def capture_shortfall(records, lineup_day):
     usual = max((len(v) for v in counts.values()), default=0)
     found = len(counts.get(lineup_day, ()))
     return (found, usual) if found < usual * .8 else None
+
+
+# バラエティの週表に自動で入れる顔文字（利用者指定、2026-10-21）。記号は基準JSONの既存の5つのうち4つを使う。
+# 当日差枚（機種の全台の合計）が +3000枚以上＝目がハート、1000〜2999＝笑顔、0〜999＝目を閉じた顔、マイナス＝苦しい顔。
+NET_FACES = ((3000, '😍'), (1000, '😀'), (0, '😌'))
+NET_FACE_LOSS = '🥶'
+
+
+def net_face(total):
+    """機種のその日の合計差枚に対応する顔文字。"""
+    for floor, face in NET_FACES:
+        if total >= floor:
+            return face
+    return NET_FACE_LOSS
+
+
+def machine_day_nets(db, first, last):
+    """{(日, 機種名): 合計差枚}。全台の差枚が分かる機種・日だけ（一部の台しか分からない合計は出さない）。
+    差枚は画面と同じ rack_net（ジャグラーオンラインの差枚、無ければ推定差枚）。数値異常の台がある機種・日も出さない。"""
+    from core import rack_net, implausible_numbers
+    query = ("SELECT day, machine, json_extract(payload,'$.games'), json_extract(payload,'$.bb'), json_extract(payload,'$.rb'),"
+             " json_extract(payload,'$.max_hold'), json_extract(payload,'$.graph_measurement'),"
+             " json_extract(payload,'$.jo_net') FROM days"
+             " WHERE store=? AND day BETWEEN ? AND ? AND json_valid(payload)")
+    totals = {}
+    for d, name, games, bb, rb, max_hold, measurement, jo_net in db.db.execute(query, (STORE, first, last)):
+        try:
+            measurement = json.loads(measurement) if measurement else None
+        except ValueError:
+            measurement = None
+        row = {'jo_net': jo_net, 'graph_measurement': measurement, 'max_hold': max_hold, 'games': games,
+               'bb': bb, 'rb': rb, 'store': STORE, 'day': d}
+        net = None if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}) else rack_net(row)[0]
+        key = (d, name)
+        if net is None or totals.get(key, 0) is None:
+            totals[key] = None
+        else:
+            totals[key] = totals.get(key, 0) + net
+    return {k: v for k, v in totals.items() if v is not None}
+
+
+def auto_faces(week, nets, names_by_day, symbols, blank_days=(), only_day=None):
+    """週表の空欄のセルに入れる顔文字。戻り値は (入れるセル[(機種名, 日, 記号)], 入れなかった空欄の数)。
+    only_day があればその日だけ。入力済みのセルは変えない。その日の記録が無いセルは数えず、記録はあるが差枚の分からない機種・日は空欄のまま数える。"""
+    first = day(week['from'])
+    cells, skipped = [], 0
+    for item in week['machines']:
+        for i, current in enumerate(item['results']):
+            d = (first + timedelta(days=i)).isoformat()
+            if current != '' or d in blank_days or (only_day is not None and d != only_day):
+                continue
+            name = saved_name(item, names_by_day.get(d, set()))
+            if not name:
+                continue  # その日の記録が無い（未来の日・取り込み前）。数えない
+            total = nets.get((d, name))
+            face = net_face(total) if total is not None else None
+            if face is None or face not in symbols:
+                skipped += 1
+                continue
+            cells.append((item['name'], d, face))
+    return cells, skipped
