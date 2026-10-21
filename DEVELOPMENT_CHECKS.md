@@ -53,7 +53,9 @@ Flutterのない環境でも `bash database_android/tool/check_before_build.sh -
 
 回帰試験は `database/tests`・`database/test_*.py`・`database_android/test`・`database_android/tool/test_*.mjs` に置く。GitHub ActionsはLinux/Windows、JST/UTCのPC試験と、Linuxの全体ゲートを実行する。実機・実Googleの動作確認とは区別する。
 
-mainへのpushでCIが動き、GitHubの通知設定に応じて結果メールが届く。メールはジョブの成否だけを示す。全体ゲートが失敗した場合は、Actionsの `Complete pre-build gate` 内の失敗名のグループにエラー本文の末尾120行を表示する。全体ゲートのログファイルも `regression-full-logs` のartifactとして7日間保存する。`test_rainbow_today_browser` は共有／Flutter閲覧と320／393pxを個別の試験名で表示する。
+コードを含むmainへのpushでCIが動き、GitHubの通知設定に応じて結果メールが届く。**push前に日本時間の日付を確認し、1〜15日は `imakurudev-eng/database`、16日〜月末は `keyanbaitian6-cell/database-ci` だけへ送る。** 正本の指定は変えず、両リポジトリの履歴を1本に保つ。送り先にだけある変更を取得・統合してから送る。期間外へのpush、CI失敗の原因を調べない再実行、強制pushは行わない。詳しくは `AGENTS.md` の10/20の規則を参照する。
+
+メールはジョブの成否だけを示す。全体ゲートが失敗した場合は、Actionsの `Complete pre-build gate` 内の失敗名のグループにエラー本文の末尾120行を表示する。全体ゲートのログファイルも `regression-full-logs` のartifactとして7日間保存する。`test_rainbow_today_browser` は共有／Flutter閲覧と320／393pxを個別の試験名で表示する。
 
 一時フォルダー内のSQLiteは、フォルダーを削除する前に必ず閉じる。`with TemporaryDirectory()` 内で `addCleanup(store.close)` だけを登録すると、接続を閉じるより先にフォルダー削除が走り、Windowsで失敗する。内側の `with closing(Store(...))` または `try/finally` を使う。今回のバックアップ・削除同期の4試験には、Linuxでも同じ寿命違反を検出する `test_sqlite_fixture_cleanup.py` がある。
 
