@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 【その日のまとめに0回転・500回転未満の台数を出す】2026-10-21 Claude
+
+- 利用者：共有カレンダーの「その日のまとめ」で、推定差枚を取れていない0回転などの台が何台あるかを「307/355（40台が0回転。8台が500回転未満）」のように出したい。出す画面は利用者が選び、**共有ページ（`share_viewer/`）とiPhoneの閲覧ページ（Flutter `calendar_day_page.dart`）**。PC・Androidには入れていない。
+- 数え方：数値異常の台を除いたその日の台のうち、0回転の台と1〜499回転の台（0回転は含めない）。0台の方は出さず、両方0台なら何も足さない。共有ページは `data.mjs` の `lowGamesNote`、Flutterは `lowGamesNote` で同じ規則。仕様は `EVENT_CALENDAR.md` に追記した。
+- 最初は正本 `imakurudev-eng/database` の古い `main`（`faba881`）を土台にして、ブランチ `claude/low-games-note` を正本へpushしていた（mainではないのでCIは動いていない）。10月後半の規則に従い、`database-ci` の `main`（`836cc62`）へ移し直した。正本のそのブランチは使わない。
+- 試験：共有ページの単体試験に境目（0・1・499・500）、画面試験に0回転・300回転の台がある日を足し、Flutterの単体試験も足した。Flutter 3.47.1（CIと同じ版）・Python 3.12で `check_before_build.sh` を流し、68項目 **ALL PASSED**。試験用ではなく改めてビルドした成果物を `database-share`・`database-viewer` に公開した。
+- CI：ブランチ `claude/low-games-note` から `database-ci` の `main` へのプルリクエスト（利用者が許可）。プルリクエストとmainへの取り込みで、CIは2回動く。
+
 ## 【Windows CI：専用Python試験がWSLのbash.exeを選ぶ問題】2026-10-21 Codex
 
 - 利用者提示の失敗通知を確認。実行 `39562304448`（`3b70a54`）はfull・Ubuntu成功、Windowsのみ専用Python関連5件が失敗。ログは `Windows Subsystem for Linux has no installed distributions`。新しい実行 `39563859900`（`f5856f7`）でもWindowsの失敗を確認。CI再実行はしていない。
