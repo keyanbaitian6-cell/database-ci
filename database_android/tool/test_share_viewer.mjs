@@ -16,6 +16,7 @@ import {
   rackWon, showWinRate, winRateText, daySummaries, calendarDay,
   monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureReason, loadFailureText,
   characterBirthdayCellLabel, characterBirthdayLabel, characterBirthdaysOn, parseCharacterBirthdays,
+  lowGames, lowGamesNote,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -492,4 +493,14 @@ test('キャラ誕生日：収録データを全件読み、PC・Flutterと同�
   assert.deepEqual(daysOf('柴大寿'), ['07-24'], '一覧には12/15もあるが、利用者の指定で7/24だけ');
   assert.deepEqual(characterBirthdaysOn(all, '2026-10-20').map(b => b.name), ['天秤座の童虎', '灰谷竜胆', '無名'],
     '名前順（PCの sorted・Dartの compareTo と同じ並び）');
+});
+
+test('その日のまとめ：0回転の台と500回転未満の台の数（2026-10-21）', () => {
+  const g = (games) => ({games});
+  const racks = [0, 0, 1, 499, 500, 3000].map(g);
+  assert.deepEqual(lowGames(racks), {zero: 2, short: 2}, '0回転は500回転未満に含めない・500Gちょうどは入れない');
+  assert.equal(lowGamesNote(racks), '（2台が0回転。2台が500回転未満）');
+  assert.equal(lowGamesNote([0, 0].map(g)), '（2台が0回転）');
+  assert.equal(lowGamesNote([10].map(g)), '（1台が500回転未満）');
+  assert.equal(lowGamesNote([500, 1000].map(g)), '', 'どちらも無ければ何も出さない');
 });

@@ -9,7 +9,7 @@ import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, histor
 import {fetchViewerDocument, readViewerHistory, rememberViewerHistory} from './viewer_parts.mjs';
 import {prepareOffline, readOfflineMetadata, saveOfflineMetadata} from './offline.mjs';
 import {
-  MERUHEN_STORES, calendarDay, compactSigned, dayNet, daySummaries, daySummary, displayMachineName, eventLabel, indexRecords,
+  MERUHEN_STORES, calendarDay, compactSigned, dayNet, daySummaries, daySummary, displayMachineName, eventLabel, indexRecords, lowGamesNote,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel, TOP_RACKS_OPEN, viewerNameFrom, winRateText,
   IDLE_DAY_CHOICES, IDLE_DEFAULT_DAYS, IDLE_DEFAULT_GAMES, IDLE_GAMES_CHOICES, idleVarietyRacks, storeDays,
   RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
@@ -635,7 +635,7 @@ function openDay(first) {
       ${birthdayLines(view.day)}
       ${net.total != null ? `<p class="total"><span class="label">総${netName}</span>
         <span class="value num ${tone(net.total)}">${signed(net.total)}</span>
-        <span class="sub num">${netName}がわかった台 ${net.captured}/${net.racks}台</span></p>` : ''}
+        <span class="sub num">${netName}がわかった台 ${net.captured}/${net.racks}台${lowGamesNote(racks)}</span></p>` : ''}
       ${net.winRate ? `<p class="total" data-win-rate><span class="label">勝率</span>
         <span class="value num zero">${winRateText(net.won, net.judged)}</span>
         <span class="sub num">${net.judged}台中${net.won}台プラス（${netName}の分からない台が多い日）</span></p>` : ''}

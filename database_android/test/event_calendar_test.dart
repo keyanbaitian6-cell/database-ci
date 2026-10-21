@@ -679,6 +679,23 @@ void main() {
     }
   });
 
+  test('その日のまとめ：0回転と500回転未満の台数（2026-10-21）', () {
+    SlotRecord rec(int games) => SlotRecord(
+      store: 'nagamachiminami',
+      day: '2026-10-21',
+      machine: 'M',
+      rack: 1,
+      games: games,
+      bb: 0,
+      rb: 0,
+    );
+    final racks = [0, 0, 1, 499, 500, 3000].map(rec).toList();
+    expect(lowGamesNote(racks), '　2台が0回転。2台が500回転未満');
+    expect(lowGamesNote([0, 0].map(rec).toList()), '　2台が0回転');
+    expect(lowGamesNote([10].map(rec).toList()), '　1台が500回転未満');
+    expect(lowGamesNote([500, 1000].map(rec).toList()), '');
+  });
+
   group('日付を押したときのTOP10・強かった機種5選（2026-10-09）', () {
     const base =
         'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
