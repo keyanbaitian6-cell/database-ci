@@ -319,6 +319,41 @@ class HistoryTests(unittest.TestCase):
             # 機種Bは1台の差枚が分からない。一部だけの合計は出さない。
             self.assertNotIn(('2026-10-12','機種B'), nets)
 
+    def test_pc_auto_insert_works_on_four_and_half_row_weeks(self):
+        # 利用者の追加指示（2026-10-21）：4台構成・半列の週表にも同じ自動挿入を出す。
+        import tkinter as tk
+        from tkinter import ttk
+        from unittest.mock import patch
+        from event_history import open_event_history
+        week = next(w for w in self.base['weeks'] if w['type'] == '4台構成' and w['from'] == '2026-10-05')
+        name = week['machines'][0]['name']
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp)/'history.json'; source.write_text(json.dumps(self.base), encoding='utf-8')
+            path = Path(temp)/'fixture.db'; db = Store(path)
+            try:
+                row = lambda rack, net: dict(store='nagamachiminami', kind_code=21, day='2026-10-11', machine=name, rack=rack, games=1000, bb=4, rb=2, max_hold=100, jo_net=net)
+                db.save([row(1, 1800), row(2, 1700), row(3, 100), row(4, -500)])
+            finally:
+                db.close()
+            root = tk.Tk(); root.withdraw()
+            try:
+                window = open_event_history(root, lambda n, d: None, db_path=path, path=source)
+                window.withdraw(); root.update_idletasks()
+                def children(parent):
+                    for w in parent.winfo_children():
+                        yield w
+                        yield from children(w)
+                widgets = list(children(window))
+                button = next(w for w in widgets if isinstance(w, ttk.Button) and w.cget('text') == 'この日の差枚で顔文字を入れる')
+                day_box = next(w for w in widgets if isinstance(w, ttk.Combobox) and '2026-10-11 日' in str(w.cget('values')))
+                self.assertEqual(day_box.get(), '2026-10-11 日')  # 既定は記録のある最後の日。10/5〜10/10は入力済み
+                with patch('event_history.messagebox.askyesno', return_value=True), patch('event_history.messagebox.showinfo'):
+                    button.invoke()
+                # 合計3100＝😍。入力済みの他の日・他の機種には入れない。
+                self.assertEqual(self._saved_faces(path), {'2026-10-11': '😍'})
+            finally:
+                root.destroy()
+
     @staticmethod
     def _saved_faces(path):
         db = Store(path)
@@ -357,7 +392,7 @@ class HistoryTests(unittest.TestCase):
                         yield from children(w)
                 widgets = list(children(window))
                 button = next(w for w in widgets if isinstance(w, ttk.Button) and w.cget('text') == 'この日の差枚で顔文字を入れる')
-                self.assertEqual(button.master.winfo_manager(), '')  # バラエティの週を開くまで出さない
+                self.assertEqual(button.master.winfo_manager(), 'pack')  # 4台構成・半列・バラエティのどの週表にも出す
                 kind_box = next(w for w in widgets if isinstance(w, ttk.Combobox) and 'バラエティ' in w.cget('values'))
                 kind_box.set('バラエティ'); kind_box.event_generate('<<ComboboxSelected>>'); root.update()
                 self.assertEqual(button.master.winfo_manager(), 'pack')

@@ -56,7 +56,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     week_combo.pack(side='left', padx=8)
     content = ttk.Frame(frame)
     content.pack(fill='both', expand=True)
-    # 顔文字の自動挿入：表の真上（スクロールしない位置）。バラエティの週を開いているときだけ出す。
+    # 顔文字の自動挿入：表の真上（スクロールしない位置）。週表を開いているときだけ出す（4台構成・半列・バラエティ共通）。
     auto_row = ttk.Frame(frame)
     auto_day = tk.StringVar()
     ttk.Label(auto_row, text='顔文字の自動挿入：').pack(side='left')
@@ -152,7 +152,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         week_combo.configure(values=list(labels))
         if reset or chosen.get() not in labels: chosen.set(next(iter(labels), ''))
         w = labels.get(chosen.get())
-        if w is not None and w['type'] == 'バラエティ':
+        if w is not None:
             first_day = date.fromisoformat(w['from'])
             options = [f"{(first_day+timedelta(days=i)).isoformat()} {WEEKDAYS[i]}" for i in range(7)]
             auto_combo.configure(values=options)
@@ -212,12 +212,12 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         except Exception as error: messagebox.showerror('週表を作成できません',str(error),parent=window)
 
     def auto_insert():
-        # 選んだ日のバラエティの空欄に、その日の機種の合計差枚で顔文字を入れる（入力済みのセルは変えない）。
+        # 選んだ日の空欄に、その日の機種の合計差枚で顔文字を入れる（入力済みのセルは変えない）。
         weeks, _rejected = materialize(base, edits[0])
         w = next((x for x in weeks if x['type'] == kind.get() and f"{x['from']}〜{x['to']}" == chosen.get()), None)
         target = auto_day.get()
-        if w is None or w['type'] != 'バラエティ' or not target:
-            messagebox.showinfo('自動挿入', '「バラエティ」の週と日付を選んでから押してください。', parent=window)
+        if w is None or not target:
+            messagebox.showinfo('自動挿入', 'イベントの週と日付を選んでから押してください。', parent=window)
             return
         target = target.split()[0]
         try:
