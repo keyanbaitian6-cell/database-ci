@@ -1,6 +1,6 @@
 # database
 
-メルヘンワールド長町南店・幸町店の1000円46枚スロットを、個人利用のために端末内へ保存・採点するツールです。PC版はPython/Tkinter、Android版はFlutterで実装しています。
+個人利用のために端末内へ保存・採点するツールです。PC版はPython/Tkinter、Android版はFlutterで実装しています。
 
 対象・採点・取り込み方針は[AI_COLLABORATION.md](AI_COLLABORATION.md)と[SCORING_POLICY.md](SCORING_POLICY.md)を参照してください。実サイトの自動巡回や自動保存は行いません。
 
