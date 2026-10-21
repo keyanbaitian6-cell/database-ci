@@ -177,6 +177,23 @@ export function dayNet(racks) {
           judged, won, winRate: showWinRate(nets.length, judged)};
 }
 
+/** 「0回転」「500回転未満」として数える境目（その日のまとめの注記用）。 */
+export const LOW_GAMES = 500;
+
+/** その日の台のうち、0回転の台数と、1〜499回転（0回転は含めない）の台数。差枚の取れていない台の目安。 */
+export function lowGames(racks) {
+  const zero = racks.filter(r => r.games === 0).length;
+  const short = racks.filter(r => r.games > 0 && r.games < LOW_GAMES).length;
+  return {zero, short};
+}
+
+/** 「（40台が0回転。8台が500回転未満）」。どちらも0台なら空。 */
+export function lowGamesNote(racks) {
+  const {zero, short} = lowGames(racks);
+  const parts = [zero ? `${zero}台が0回転` : '', short ? `${short}台が${LOW_GAMES}回転未満` : ''].filter(Boolean);
+  return parts.length ? `（${parts.join('。')}）` : '';
+}
+
 /**
  * 閲覧用ファイルの day_summaries（保存したアナスロのHTMLからの日ごとの「何台中何台プラス」。台の数値は無い。
  * 2026-10-18 利用者「各日の勝率、何台中何台プラスで終わったかをそれだけを乗せて欲しい」、PC html_day_summary.py）。

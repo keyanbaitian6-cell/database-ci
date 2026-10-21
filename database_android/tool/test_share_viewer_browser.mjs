@@ -44,6 +44,9 @@ const meruhen = {format: 'database-backup', version: 1, exported_at: '2026-10-09
   ...Array.from({length: 14}, (_, k) => ({store: 'nagamachiminami', day: d3, machine: 'ネオアイム', rack: 201 + k,
     games: 1000 * (k + 1), bb: 11 + k, rb: k + 6, max_hold: 1500, jo_net: (k - 6) * 100})),
   {store: 'saiwaichou', day: d2, machine: '幸町の機種', rack: 5, games: 3000, bb: 9, rb: 9, max_hold: 2376, graph_measurement: curve([0, -63, 40, 147, 128])},
+  // 差枚の取れていない台：0回転と500回転未満（その日のまとめに台数を出す、2026-10-21）。
+  {store: 'saiwaichou', day: d2, machine: '幸町の機種B', rack: 6, games: 0, bb: 0, rb: 0},
+  {store: 'saiwaichou', day: d2, machine: '幸町の機種C', rack: 7, games: 300, bb: 1, rb: 0},
 ], date_events: [{store: 'nagamachiminami', day: d1, name: '半列<b>', updated_at: '2026-09-01T00:00:00Z'}],
 // 保存したアナスロのHTMLからの日ごとの集計（台の数値は無い）。台データのある日（幸町の2日）には使わない。形のおかしい日は捨てる。
 day_summaries: [
@@ -184,7 +187,7 @@ try {
     assert.match(await p2.innerText(), /末尾イベ/);
     assert.match(await p2.innerText(), /\+3,121/);
     await p2.click();
-    assert.match(await page.locator('.sheet').innerText(), /総差枚\s*\+3,121/);
+    assert.match(await page.locator('.sheet').innerText(), /総差枚\s*\+3,121\s*差枚がわかった台 2\/2台\n/, '0回転・500回転未満の台が無ければ何も足さない');
     await page.locator('.sheet .row', {hasText: '1番'}).first().click();
     await page.locator('.sheet .row', {hasText: '1番'}).first().click();
     const pRack = await page.locator('.sheet').innerText();
@@ -195,6 +198,10 @@ try {
     // 幸町は選んだまま次に開いても残る。月の切り替え。
     await page.getByRole('button', {name: '幸町'}).click();
     assert.match(await page.locator(`[data-open="${d2}"]`).innerText(), /\+1,417/);
+    await page.locator(`[data-open="${d2}"]`).click();
+    assert.match(await page.locator('.sheet').innerText(), /推定差枚がわかった台 1\/3台（1台が0回転。1台が500回転未満）/);
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.sheet', {state: 'detached'});
     // 台データの無い日：保存したHTMLからの勝率。押すと「何台中何台プラス」。日付送りは集計のある日どうし。
     assert.equal(await page.locator('[data-summary-open]').count(), 1, '台データのある日・形のおかしい日には出さない');
     const sumCell = page.locator(`[data-summary-open="${d3}"]`);

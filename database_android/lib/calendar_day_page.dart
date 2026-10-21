@@ -76,6 +76,21 @@ Color _netColor(int value) => value > 0
     ? const Color(0xFFC62828)
     : AppColors.ash;
 
+/// 「0回転」「500回転未満」として数える境目（その日のまとめの注記用）。
+const lowGamesLimit = 500;
+
+/// 「　40台が0回転。8台が500回転未満」（全角空白つき）。どちらも0台なら空（共有カレンダー share_viewer の lowGamesNote と同じ数え方）。
+String lowGamesNote(List<SlotRecord> records) {
+  final zero = records.where((r) => r.games == 0).length;
+  final short =
+      records.where((r) => r.games > 0 && r.games < lowGamesLimit).length;
+  final parts = [
+    if (zero > 0) '$zero台が0回転',
+    if (short > 0) '$short台が$lowGamesLimit回転未満',
+  ];
+  return parts.isEmpty ? '' : '　${parts.join('。')}';
+}
+
 /// その日・その店のTOP10と強かった機種5選。イベント名の編集もここから。
 class CalendarDayPage extends StatefulWidget {
   const CalendarDayPage({
@@ -180,7 +195,8 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                     ),
                     TextSpan(
                       text:
-                          '（$netLabelがわかった台 ${nets.length}/${usable.length}台）',
+                          '（$netLabelがわかった台 ${nets.length}/${usable.length}台'
+                          '${lowGamesNote(usable)}）',
                     ),
                   ],
                 ),
