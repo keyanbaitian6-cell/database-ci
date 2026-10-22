@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 【CI失敗の調査：Windowsだけ週ボタンの表示確認で落ちた件】2026-10-22 Claude
+
+- 利用者がdatabase-ciのメール通知（Regression checks の `pc (windows-latest, UTC)` 失敗）のスクリーンショットを見せ、「何のエラーか」と質問。落ちたのは `test_saiwaichou_history` の `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day` 1件で、`weekly_button().winfo_viewable()` が 0（410件中1件）。Ubuntuのpcジョブとfullは成功。
+- 原因（コードと手元の再現からの推測）：試験が `window.geometry(...)` のあと `root.update_idletasks()` だけで可視状態を見ていた。Windowsでは表示イベントを `root.update()` で処理しないと未表示と判定される。製品コードの不具合ではない。
+- 利用者の依頼で、手元のWindows（`py`、PYTHONUTF8=1）でCIと同じ2系統を実行：`unittest discover -s tests` 412件、`test_*.py` 全モジュール 214件、いずれも成功。
+- 確認の途中で、同じ1行の修正（`262c7c7`）と記録（`b3c7e8b`）が別の作業で `database-ci/main` に送られ、手元の `main` も同じコミットになっていた。このため、こちらからの試験コードのコミット・pushは行っていない（同じ内容の2重pushでCIの枠を使わないため）。`b3c7e8b` のCI実行は、この記録時点で実行中で、結果は未確認。
+- 日本時間10/22なので送り先は `database-ci`。この記録（.mdのみ）だけを自分の分としてコミットし、他の作業の未コミットの追記は触っていない。
+
 ## 【幸町バラエティ：表示中の週へ優・良を一括入力】2026-10-22 Codex
 
 - 利用者「めんどくさいから週単位で自動挿入機能もつけて」。直前の幸町の機能と同じく入力操作はPCのみ、保存した結果は既存のPC・Android・iPhone閲覧ページ・共有カレンダーへ渡す。
