@@ -70,12 +70,17 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     content.pack(fill='both', expand=True)
     # 顔文字の自動挿入：表の真上（スクロールしない位置）。週表を開いているときだけ出す（4台構成・半列・バラエティ共通）。
     auto_row = ttk.Frame(frame)
+    auto_daily = ttk.Frame(auto_row)
+    auto_daily.pack(fill='x')
     auto_day = tk.StringVar()
-    ttk.Label(auto_row, text=f'{result_name}の自動挿入：').pack(side='left')
-    auto_combo = ttk.Combobox(auto_row, textvariable=auto_day, state='readonly', width=10)
+    ttk.Label(auto_daily, text=f'{result_name}の自動挿入：').pack(side='left')
+    auto_combo = ttk.Combobox(auto_daily, textvariable=auto_day, state='readonly', width=10)
     auto_combo.pack(side='left', padx=4)
-    ttk.Button(auto_row, text=f'この日の差枚で{result_name}を入れる', command=lambda: auto_insert()).pack(side='left')
-    ttk.Label(auto_row, text=f'  {rule_text}（空欄だけ）').pack(side='left')
+    ttk.Button(auto_daily, text=f'この日の差枚で{result_name}を入れる', command=lambda: auto_insert()).pack(side='left')
+    ttk.Label(auto_daily, text=f'  {rule_text}（空欄だけ）').pack(side='left')
+    if saiwaichou:
+        ttk.Button(auto_row, text='この週の差枚で優・良を入れる',
+                   command=lambda: auto_insert(whole_week=True)).pack(anchor='w', pady=(4, 0))
     canvas = tk.Canvas(content, highlightthickness=0)
     vertical = ttk.Scrollbar(content, orient='vertical', command=canvas.yview)
     horizontal = ttk.Scrollbar(content, orient='horizontal', command=canvas.xview)
@@ -235,33 +240,38 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             render()
         except Exception as error: messagebox.showerror('週表を作成できません',str(error),parent=window)
 
-    def auto_insert():
-        # 選んだ日の空欄に、その日の機種の合計差枚で顔文字を入れる（入力済みのセルは変えない）。
+    def auto_insert(whole_week=False):
+        # 週単位でも日ごとの合計差枚で判定し、入力済みのセルは変えない。
         weeks, _rejected = materialize(base, edits[0])
         w = next((x for x in weeks if x['type'] == kind.get() and f"{x['from']}〜{x['to']}" == chosen.get()), None)
         target = auto_day.get()
-        if w is None or not target:
+        if w is None or (not whole_week and not target):
             messagebox.showinfo('自動挿入', 'イベントの週と日付を選んでから押してください。', parent=window)
             return
-        target = target.split()[0]
+        target = None if whole_week else target.split()[0]
+        targets = [(date.fromisoformat(w['from']) + timedelta(days=i)).isoformat()
+                   for i in range(7)] if whole_week else [target]
+        target_label = f"{w['from']}〜{w['to']}" if whole_week else target
         try:
             db = Store(db_path)
             try:
-                expected = {saved_name(m, index.get(target, set())): m['count'] for m in w['machines']} if saiwaichou else None
-                nets = machine_day_nets(db, target, target, location, expected)
+                nets = {}
+                for d in targets:
+                    expected = {saved_name(m, index.get(d, set())): m['count'] for m in w['machines']} if saiwaichou else None
+                    nets.update(machine_day_nets(db, d, d, location, expected))
             finally:
                 db.close()
             cells, skipped = auto_faces(w, nets, index, base['symbols'], base.get('user_blank_days', ()),
                                         only_day=target, classify=net_grade if saiwaichou else net_face)
             if not cells:
-                messagebox.showinfo('自動挿入', f'{target}に入れられる空欄がありません。' + (f'\n{skipped_text}が{skipped}件あります。' if skipped else ''), parent=window)
+                messagebox.showinfo('自動挿入', f'{target_label}に入れられる空欄がありません。' + (f'\n{skipped_text}が{skipped}件あります。' if skipped else ''), parent=window)
                 return
-            if not messagebox.askyesno('自動挿入', f'{target}の空欄{len(cells)}件に{result_name}を入れます（入力済みのセルは変えません）。\n'
+            if not messagebox.askyesno('自動挿入', f'{target_label}の空欄{len(cells)}件に{result_name}を入れます（入力済みのセルは変えません）。\n'
                     + rule_text + '\n' + (f'{skipped_text}{skipped}件は空欄のままです。\n' if skipped else '') + '入れますか？', parent=window):
                 return
             save_many('cells', [dict(store=location, type=w['type'], week=w['from'], machine=m, day=d, value=v) for m, d, v in cells])
             render()
-            status.set(f'{target}に{result_name}を{len(cells)}件入れました。' + (f'{skipped_text}{skipped}件は空欄のままです。' if skipped else '') + '次の保存か「共有へ反映」で共有用ファイルを更新します。')
+            status.set(f'{target_label}に{result_name}を{len(cells)}件入れました。' + (f'{skipped_text}{skipped}件は空欄のままです。' if skipped else '') + '次の保存か「共有へ反映」で共有用ファイルを更新します。')
         except Exception as error:
             messagebox.showerror('自動挿入できません', str(error), parent=window)
 

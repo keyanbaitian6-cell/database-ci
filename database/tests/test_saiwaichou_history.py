@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 import json
 from pathlib import Path
 import tempfile
@@ -174,5 +175,85 @@ class SaiwaichouHistoryTests(unittest.TestCase):
                     button('→').invoke()
                     self.assertEqual(picked, [('機種A', MONDAY)])
                     self.assertFalse(any(isinstance(w, ttk.Label) and str(w.cget('foreground')) == '#b91c1c' for w in children(window)))
+            finally:
+                root.destroy()
+
+    def test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day(self):
+        import tkinter as tk
+        from tkinter import ttk
+        from event_history import open_event_history
+
+        def children(parent):
+            for w in parent.winfo_children():
+                yield w
+                yield from children(w)
+
+        def records(day_offset, a, b):
+            target = (date.fromisoformat(MONDAY) + timedelta(days=day_offset)).isoformat()
+            return [dict(row(name, rack, net), day=target) for name, rack, net in
+                    [('機種A', 1, a), *[('機種B', i + 2, net) for i, net in enumerate(b)]]]
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'weekly.db'
+            db = Store(path)
+            initial = dict(empty_edits(), **{VARIETY_KEY: dict(variety(), cells=[grade(value='良')])})
+            try:
+                db.save([*records(0, 2500, [2000, 500]), *records(1, 2499, [0, 0]),
+                         *records(2, -1, [None, None]), *records(3, 0, [6000]),
+                         *records(4, 2501, [1000, 1000, 1000]), *records(5, -1, [-200, 2500])[1:],
+                         *records(6, 2500, [-500, 2999]), *records(7, 9000, [9000, 9000]),
+                         row('機種A', 99, 90000, location=STORE)])
+                db.merge_history_edits(initial)
+                before = db.history_edits_raw()
+            finally:
+                db.close()
+            root = tk.Tk(); root.withdraw()
+            published = []
+            try:
+                window = open_event_history(root, lambda *_: None, db_path=path,
+                    location=SAIWAI_STORE, on_changed=lambda: published.append(True))
+                def weekly_button():
+                    return next(w for w in children(window) if isinstance(w, ttk.Button)
+                                and w.cget('text') == 'この週の差枚で優・良を入れる')
+                window.geometry('820x440')
+                root.update_idletasks()
+                self.assertTrue(weekly_button().winfo_viewable())
+                self.assertLessEqual(weekly_button().winfo_rootx() + weekly_button().winfo_width(),
+                                     window.winfo_rootx() + window.winfo_width())
+                def saved():
+                    db = Store(path)
+                    try:
+                        return db.history_edits_raw()
+                    finally:
+                        db.close()
+                with patch('event_history.messagebox.askyesno', return_value=False) as confirm:
+                    weekly_button().invoke()
+                    self.assertEqual(saved(), before)
+                    self.assertIn('2026-10-19〜2026-10-25の空欄8件', confirm.call_args.args[1])
+                with patch('event_history.messagebox.askyesno', return_value=True) as confirm, \
+                        patch('event_history.messagebox.showinfo') as info, \
+                        patch('event_history.messagebox.showerror') as error:
+                    weekly_button().invoke()
+                    confirm.assert_called_once()
+                    self.assertIn('台数不足の空欄4件', confirm.call_args.args[1])
+                    raw = saved()
+                    machines = materialize(saiwaichou_base(), raw[VARIETY_KEY])[0][0]['machines']
+                    self.assertEqual({m['name']: m['results'] for m in machines}, {
+                        '機種A': ['良', '良', '', '良', '優', '', '優'],
+                        '機種B': ['優', '良', '', '', '', '良', '良']})
+                    self.assertEqual(raw['cells'], [])
+                    self.assertEqual(len(raw[VARIETY_KEY]['cells']), 9)
+                    self.assertEqual(published, [], '共有出力は週の保存ごとには作り直さない')
+                    weekly_button().invoke()
+                    self.assertEqual(saved(), raw, '再実行で入力済みセルや時刻を変えない')
+                    confirm.assert_called_once()
+                    info.assert_called_once()
+                    error.assert_not_called()
+                    window.flush_history()
+                    window.flush_history()
+                    self.assertEqual(published, [True], '週の編集を1回の共有出力へまとめる')
+                nagamachi = open_event_history(root, lambda *_: None, db_path=path)
+                self.assertFalse(any(isinstance(w, ttk.Button) and w.cget('text') ==
+                    'この週の差枚で優・良を入れる' for w in children(nagamachi)))
             finally:
                 root.destroy()
