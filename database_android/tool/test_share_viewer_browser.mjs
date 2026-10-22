@@ -159,6 +159,9 @@ try {
     assert.match(rack, /RB確率\s*1\/444\.4/);
     assert.match(rack, /合成確率\s*1\/173\.9/);
     assert.match(rack, /最大持玉\s*1,500/);
+    // ボタンの連打でダブルタップ拡大しない（2本指の拡大は残す。2026-10-22）。
+    assert.deepEqual(await page.evaluate(() => [document.documentElement, document.body].map(e => getComputedStyle(e).touchAction)),
+      ['manipulation', 'manipulation'], 'ダブルタップ拡大を止める');
     // 重ねた画面では「閉じる」を出さない。台のデータは台一覧の順（台番号順）で前後の台へ送れる（2026-10-22）。
     assert.equal(await page.locator('.sheet [data-close]').isVisible(), false, '重ねた画面では閉じるを隠す');
     await page.locator('[data-rack-step="1"]').click();

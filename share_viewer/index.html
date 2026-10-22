@@ -36,6 +36,8 @@
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
+  /* ダブルタップでの拡大を止める（次の台・日付送りを連打すると拡大されたため、2026-10-22 利用者）。2本指で広げる拡大とスクロールはそのまま。 */
+  html, body { touch-action: manipulation; }
   body {
     margin: 0; background: var(--color-gallery-white); color: var(--color-ink);
     font-family: var(--font-text); font-size: 17px; line-height: 1.47; letter-spacing: -0.374px;

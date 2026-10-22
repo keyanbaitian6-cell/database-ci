@@ -1,5 +1,11 @@
 # database AI共同作業メモ
 
+## 【共有ページ・iPhone閲覧ページ：ダブルタップでの拡大を止める】2026-10-22 Claude
+
+- 利用者「次の台連打していくとズームされるからやめたい」。iPhoneのSafariのダブルタップ拡大はiPhoneの設定では止められないと説明し、利用者の指定「iPhoneブラウザ版、共有ページで止めてください」「二本指で拡大機能だけでOK」で対応した。
+- `share_viewer/index.html`（`android.html` はここから作られる）、`database_android/web/index.html`、`database_android/web/pscube/index.html` の html・body に `touch-action: manipulation` を付けた。2本指の拡大とスクロールは残る。`user-scalable=no` などで拡大自体は止めていない。Androidアプリ・PCは対象外（利用者の指定）。
+- 試験：`test_double_tap_zoom.mjs`（3つのHTMLの指定と、viewportで拡大を止めていないこと）を新設した。`test_share_viewer_browser.mjs` に、実際のページで html・body が manipulation になっていることの確認を足した。`check_before_build.sh` は「ALL PASSED」（PC 410件・214件・UTC 27件、Flutter 654件、JS 63本）。公開物の3つのHTMLに指定が入ることも確かめた。iPhone実機での連打は未確認。
+
 ## 【共有カレンダー：重ねた画面の「閉じる」を隠し、前後の台ボタンを全シートへ】2026-10-22 Claude
 
 - 利用者指摘：共有カレンダーのイベント履歴で、台のデータから「閉じる」を押すと履歴ごと閉じて分かりにくい。次の台（下の台）へ送るボタンがほしい。クラウドのセッションが履歴シートだけに入れ（`ec9ac32`、ブランチ `claude/event-history-close-next-machine-4dr838`）、デスクトップで続けた。
