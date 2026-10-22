@@ -216,7 +216,7 @@ class SaiwaichouHistoryTests(unittest.TestCase):
                     return next(w for w in children(window) if isinstance(w, ttk.Button)
                                 and w.cget('text') == 'この週の差枚で優・良を入れる')
                 window.geometry('820x440')
-                root.update_idletasks()
+                root.update()  # Windowsでは表示イベントも処理してから可視状態を確認する。
                 self.assertTrue(weekly_button().winfo_viewable())
                 self.assertLessEqual(weekly_button().winfo_rootx() + weekly_button().winfo_width(),
                                      window.winfo_rootx() + window.winfo_width())
