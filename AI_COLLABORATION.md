@@ -3166,4 +3166,7 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 今回追加分のanalyze info 2件（波括弧）を修正。`event_history.dart:101` のinfoは既存コミット分で触っていない。
 - 全体ゲート `check_before_build.sh`：ALL PASSED（70項目。PC412件、追加PC/P’s CUBE214件、UTC27件、Flutter654件、analyzeはinfo22件のみ、閲覧Webビルド・stage、共有stage、JS全試験）。PYTHONは `database/.venv`（既定のpythoncore-3.14はrapidocr・onnxruntimeが無く開始時に止まる）。ログは ../review_packages/history-redesign-20261022/gate2/。stageに `database_seed.json`・`event_history.json` が無いことを確認。
 - 画面確認：ゲート時の閲覧画像と、警告の出ない正常な合成データで撮った共有画像（両店舗×3幅、screenshots/claude-demo/）を目視。幸町の赤字は、前週日曜の優を数え、6日前の優は数えないことを確認。320pxの閲覧では「次の週」が2段目に回る（はみ出しなし）。
-- 実DB3本と設定のSHA-256は作業前と同じ。実Googleへの試験入力なし。実iPhone Safari・実Googleでの表示は未確認。コミット・push・公開は利用者の承認待ち。
+- 実DB3本と設定のSHA-256は作業前と同じ。実Googleへの試験入力なし。実iPhone Safari・実Googleでの表示は未確認。
+- 利用者の承認後、今回分13ファイルだけを `5e86dc9` としてコミットし、`database-ci` の main へpush（10/22は月後半）。作業記録は他作業の未コミットの項を混ぜず、引継ぎの項と本項だけを入れた。他の先行変更は未コミットのまま保持。
+- 公開：手元に他作業の未コミット変更（P’s CUBEの `web/pscube/data.mjs`・`pubspec.yaml` など）があるため、`5e86dc9` だけのworktree（../outputs/history-redesign-20261022/src、seedはCIと同じく見本をコピー）でビルドし、`stage_viewer.py`・`stage_share_viewer.py` を通した。共有 `database-share` の `832a04d`、閲覧 `database-viewer` の `41b795c`。Pagesは両方成功。公開URLの配信ファイル（共有4本・閲覧3本）が公開リポジトリと一致、`database_seed.json`・`event_history.json` は404。公開物の閲覧で `test_viewer_event_history_browser`、公開URLの共有で `test_event_history_browser`（3幅）が成功。
+- CI：一つ前の `62ee80e` で `pc (windows-latest, UTC)` が `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day` で失敗済み。Codexが記録した `update_idletasks`→`root.update` の試験修正は手元に未コミットで、今回のコミットにも含めていないため、`5e86dc9` のCIも同じ箇所で落ちる見込み（今回の変更とは無関係。再実行していない）。
