@@ -8,7 +8,8 @@ from tkinter import ttk, messagebox, simpledialog
 
 from event_history_data import (ASSET, KINDS, STORE, load_base, empty_edits, materialize,
     clean_edits, edit_key, saved_name, machine_candidates, variety_week_lineup, capture_shortfall, stamp,
-    SHORTFALL_DAYS, machine_day_nets, auto_faces)
+    SHORTFALL_DAYS, machine_day_nets, auto_faces, SAIWAI_STORE, VARIETY_KEY,
+    saiwaichou_base, store_edits, store_kinds, net_face, net_grade)
 
 HISTORY_FILE = ASSET
 EVENT_TYPES = KINDS
@@ -19,22 +20,30 @@ def load_event_history(path=HISTORY_FILE):
     return load_base(path)['weeks']
 
 
-def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTORY_FILE):
+def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTORY_FILE, location=STORE):
     from core import Store
+    if location not in (STORE, SAIWAI_STORE):
+        raise ValueError('対応していない店舗です。')
+    saiwaichou = location == SAIWAI_STORE
+    title = '幸町のバラエティ履歴' if saiwaichou else '長町南のイベント履歴'
+    result_name = '優・良' if saiwaichou else '顔文字'
+    rule_text = '2,500枚以上＝優　0〜2,499枚＝良　マイナス・差枚不明は空欄' if saiwaichou else '+3000枚以上＝😍　1000〜2999枚＝😀　0〜999枚＝😌　マイナス＝🥶'
+    skipped_text = 'マイナス・差枚不明・台数不足の空欄' if saiwaichou else '差枚の分からない空欄'
     window = tk.Toplevel(parent)
-    window.title('長町南のイベント履歴')
+    window.history_store = location
+    window.title(title)
     window.geometry('1180x720')
     window.minsize(820, 440)
     frame = ttk.Frame(window, padding=12)
     frame.pack(fill='both', expand=True)
     status = tk.StringVar(value='読み込み中…')
     try:
-        base = load_base(path)
+        base = saiwaichou_base() if saiwaichou else load_base(path)
         db = Store(db_path)
         try:
-            edits = [db.history_edits_raw()]
+            edits = [store_edits(db.history_edits_raw(), location)]
             records = [dict(store=s, day=d, machine=m, rack=r) for s,d,m,r in db.db.execute(
-                'SELECT store,day,machine,rack FROM days WHERE store=?', (STORE,))]
+                'SELECT store,day,machine,rack FROM days WHERE store=?', (location,))]
         finally:
             db.close()
     except (OSError, ValueError, sqlite3.Error) as error:
@@ -45,12 +54,14 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         index.setdefault(r['day'], set()).add(r['machine'])
     dirty = [False]
     name_labels = {}
-    ttk.Label(frame, text='長町南のイベント履歴', style='H2.TLabel').pack(anchor='w')
-    ttk.Label(frame, text='記号はプルダウンで編集します。→ はその機種・その日のデータを開きます。記号の意味は未設定です。').pack(anchor='w')
+    ttk.Label(frame, text=title, style='H2.TLabel').pack(anchor='w')
+    ttk.Label(frame, text=('優・良はPCで入力・修正します。→ はその機種・その日のデータを開きます。' if saiwaichou else
+                          '記号はプルダウンで編集します。→ はその機種・その日のデータを開きます。記号の意味は未設定です。')).pack(anchor='w')
     controls = ttk.Frame(frame)
     controls.pack(fill='x', pady=8)
-    kind = tk.StringVar(value=KINDS[0])
-    kind_combo = ttk.Combobox(controls, textvariable=kind, values=KINDS, state='readonly', width=14)
+    kinds = store_kinds(location)
+    kind = tk.StringVar(value=kinds[0])
+    kind_combo = ttk.Combobox(controls, textvariable=kind, values=kinds, state='readonly', width=14)
     kind_combo.pack(side='left')
     chosen = tk.StringVar()
     week_combo = ttk.Combobox(controls, textvariable=chosen, state='readonly', width=34)
@@ -60,11 +71,11 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     # 顔文字の自動挿入：表の真上（スクロールしない位置）。週表を開いているときだけ出す（4台構成・半列・バラエティ共通）。
     auto_row = ttk.Frame(frame)
     auto_day = tk.StringVar()
-    ttk.Label(auto_row, text='顔文字の自動挿入：').pack(side='left')
+    ttk.Label(auto_row, text=f'{result_name}の自動挿入：').pack(side='left')
     auto_combo = ttk.Combobox(auto_row, textvariable=auto_day, state='readonly', width=10)
     auto_combo.pack(side='left', padx=4)
-    ttk.Button(auto_row, text='この日の差枚で顔文字を入れる', command=lambda: auto_insert()).pack(side='left')
-    ttk.Label(auto_row, text='  +3000枚以上😍　1000〜2999😀　0〜999😌　マイナス🥶（空欄だけ）').pack(side='left')
+    ttk.Button(auto_row, text=f'この日の差枚で{result_name}を入れる', command=lambda: auto_insert()).pack(side='left')
+    ttk.Label(auto_row, text=f'  {rule_text}（空欄だけ）').pack(side='left')
     canvas = tk.Canvas(content, highlightthickness=0)
     vertical = ttk.Scrollbar(content, orient='vertical', command=canvas.yview)
     horizontal = ttk.Scrollbar(content, orient='horizontal', command=canvas.xview)
@@ -85,7 +96,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         # 別窓からの編集も取り込んだ上で、対象のセルだけを保存する（まとめて1回）。
         db = Store(db_path)
         try:
-            current = db.history_edits()
+            current = clean_edits(store_edits(db.history_edits_raw(), location), base)[0]
             incoming = empty_edits()
             for entry in entries:
                 entry['device'] = 'pc'
@@ -95,8 +106,9 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
                         now = max(now, stamp(old['updated_at']) + timedelta(milliseconds=1))
                 entry['updated_at'] = now.isoformat()
                 incoming[group].append(entry)
-            _changed, conflicts, rejected, skipped_weeks = db.merge_history_edits(incoming)
-            edits[0] = db.history_edits_raw()
+            payload = dict(empty_edits(), **{VARIETY_KEY: incoming}) if saiwaichou else incoming
+            _changed, conflicts, rejected, skipped_weeks = db.merge_history_edits(payload)
+            edits[0] = store_edits(db.history_edits_raw(), location)
         finally:
             db.close()
         dirty[0] = True
@@ -128,7 +140,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             if value.get() not in names:
                 return
             try:
-                save('links', dict(store=STORE, machine=item['name'], record_name=value.get()))
+                save('links', dict(store=location, machine=item['name'], record_name=value.get()))
             except Exception as error:
                 messagebox.showerror('保存できません', str(error), parent=dialog)
                 return
@@ -140,13 +152,13 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         previous = next((c['value'] for c in clean_edits(edits[0], base)[0]['cells'] if c['type'] == w['type']
                          and c['week'] == w['from'] and c['machine'] == item['name'] and c['day'] == d), previous)
         try:
-            save('cells', dict(store=STORE, type=w['type'], week=w['from'], machine=item['name'], day=d, value=value.get()))
+            save('cells', dict(store=location, type=w['type'], week=w['from'], machine=item['name'], day=d, value=value.get()))
             # 最新の編集を重ねてから判定し、😍を付け外しした直後にも機種名の色を更新する。
             for week in materialize(base, edits[0])[0]:
                 for machine in week['machines']:
                     label = name_labels.get((week['type'], week['from'], machine['name']))
                     if label is not None:
-                        label.configure(foreground='#b91c1c' if week['type'] == 'バラエティ' and '😍' not in machine['results'] else '')
+                        label.configure(foreground='#b91c1c' if not saiwaichou and week['type'] == 'バラエティ' and '😍' not in machine['results'] else '')
         except Exception as error:
             value.set(previous)
             messagebox.showerror('保存できません', str(error), parent=window)
@@ -185,7 +197,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             namebox = ttk.Frame(table, padding=(4,4))
             namebox.grid(row=row,column=0,sticky='w')
             name_label = ttk.Label(namebox, text=f"{item['name']}  {item['count']}台", width=38,
-                                   foreground='#b91c1c' if w['type'] == 'バラエティ' and '😍' not in item['results'] else '')
+                                   foreground='#b91c1c' if not saiwaichou and w['type'] == 'バラエティ' and '😍' not in item['results'] else '')
             name_label.pack(anchor='w')
             name_labels[(w['type'], w['from'], item['name'])] = name_label
             ttk.Button(namebox, text='保存名の対応を確認', command=lambda w=w,m=item: link_machine(w,m)).pack(anchor='w')
@@ -206,18 +218,19 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         try:
             all_weeks,_=materialize(base,edits[0])
             if any(w['from']==value for w in all_weeks): raise ValueError('この週のイベント表は既にあります。')
-            lineup,machines,doubtful=variety_week_lineup(records,value)
+            lineup,machines,doubtful=variety_week_lineup(records,value,location)
             notes=[]
-            shortfall=capture_shortfall(records,lineup)
+            shortfall=capture_shortfall(records,lineup,location)
             if shortfall:
                 notes.append(f'分類日（{lineup}）の保存台数は{shortfall[0]}台で、前後{SHORTFALL_DAYS}日で最も多い日（{shortfall[1]}台）の8割に届きません。'
-                             'この時期は取り込みが少なく、4台以上の機種が1〜3台に見えている可能性があります。')
+                             + ('この時期は取り込みが少なく、3台以上の機種が1〜2台に見えている可能性があります。' if saiwaichou else
+                                'この時期は取り込みが少なく、4台以上の機種が1〜3台に見えている可能性があります。'))
             if doubtful:
-                notes.append('次の機種は周辺の日に4台以上あり、取り込み不足の可能性があります。\n' + '\n'.join(doubtful))
+                notes.append(f'次の機種は周辺の日に{3 if saiwaichou else 4}台以上あり、取り込み不足の可能性があります。\n' + '\n'.join(doubtful))
             if notes and not messagebox.askyesno('機種台数の確認',
                     '\n\n'.join(notes) + '\n\nこの構成で週表を作成しますか？', parent=window):
                 return
-            save('weeks',dict(store=STORE,type='バラエティ',week=value,lineup_day=lineup,machines=machines,removed=False))
+            save('weeks',dict(store=location,type='バラエティ',week=value,lineup_day=lineup,machines=machines,removed=False))
             kind.set('バラエティ'); chosen.set(f"{value}〜{(date.fromisoformat(value)+timedelta(days=6)).isoformat()}")
             render()
         except Exception as error: messagebox.showerror('週表を作成できません',str(error),parent=window)
@@ -234,20 +247,21 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         try:
             db = Store(db_path)
             try:
-                nets = machine_day_nets(db, target, target)
+                expected = {saved_name(m, index.get(target, set())): m['count'] for m in w['machines']} if saiwaichou else None
+                nets = machine_day_nets(db, target, target, location, expected)
             finally:
                 db.close()
-            cells, skipped = auto_faces(w, nets, index, base['symbols'], base.get('user_blank_days', ()), only_day=target)
+            cells, skipped = auto_faces(w, nets, index, base['symbols'], base.get('user_blank_days', ()),
+                                        only_day=target, classify=net_grade if saiwaichou else net_face)
             if not cells:
-                messagebox.showinfo('自動挿入', f'{target}に入れられる空欄がありません。' + (f'\n差枚の分からない空欄が{skipped}件あります。' if skipped else ''), parent=window)
+                messagebox.showinfo('自動挿入', f'{target}に入れられる空欄がありません。' + (f'\n{skipped_text}が{skipped}件あります。' if skipped else ''), parent=window)
                 return
-            if not messagebox.askyesno('自動挿入', f'{target}の空欄{len(cells)}件に顔文字を入れます（入力済みのセルは変えません）。\n'
-                    '+3000枚以上＝😍　1000〜2999枚＝😀　0〜999枚＝😌　マイナス＝🥶\n'
-                    + (f'差枚の分からない空欄{skipped}件は空欄のままです。\n' if skipped else '') + '入れますか？', parent=window):
+            if not messagebox.askyesno('自動挿入', f'{target}の空欄{len(cells)}件に{result_name}を入れます（入力済みのセルは変えません）。\n'
+                    + rule_text + '\n' + (f'{skipped_text}{skipped}件は空欄のままです。\n' if skipped else '') + '入れますか？', parent=window):
                 return
-            save_many('cells', [dict(store=STORE, type=w['type'], week=w['from'], machine=m, day=d, value=v) for m, d, v in cells])
+            save_many('cells', [dict(store=location, type=w['type'], week=w['from'], machine=m, day=d, value=v) for m, d, v in cells])
             render()
-            status.set(f'{target}に顔文字を{len(cells)}件入れました。' + (f'差枚の分からない空欄{skipped}件は空欄のままです。' if skipped else '') + '次の保存か「共有へ反映」で共有用ファイルを更新します。')
+            status.set(f'{target}に{result_name}を{len(cells)}件入れました。' + (f'{skipped_text}{skipped}件は空欄のままです。' if skipped else '') + '次の保存か「共有へ反映」で共有用ファイルを更新します。')
         except Exception as error:
             messagebox.showerror('自動挿入できません', str(error), parent=window)
 

@@ -5,8 +5,44 @@ import 'package:flutter/services.dart';
 import 'models.dart';
 
 const historyStore = 'nagamachiminami';
+const saiwaichouHistoryStore = 'saiwaichou';
+const saiwaichouHistoryKey = 'saiwaichou_variety';
 const historyTypes = ['4台構成', '半列', 'バラエティ'];
 const historyFormat = 'database-event-history';
+
+List<String> historyTypesForStore(String store) =>
+    store == saiwaichouHistoryStore ? ['バラエティ'] : historyTypes;
+
+Map<String, dynamic> saiwaichouHistoryBase() => {
+  'version': 2,
+  'store': saiwaichouHistoryStore,
+  'symbols': ['優', '良'],
+  'user_blank_days': <String>[],
+  'weeks': <dynamic>[],
+};
+
+Map<String, dynamic> historyEditsForStore(
+  Map<String, dynamic> raw,
+  String store,
+) {
+  if (store == historyStore) return raw;
+  if (store != saiwaichouHistoryStore) {
+    throw const FormatException('対応していない店舗です。');
+  }
+  return raw[saiwaichouHistoryKey] == null
+      ? emptyHistoryEdits()
+      : Map<String, dynamic>.from(raw[saiwaichouHistoryKey] as Map);
+}
+
+Map<String, dynamic> historyDocumentForStore(dynamic raw, String store) {
+  if (raw is! Map) throw const FormatException('履歴ファイルを読めません。');
+  final root = Map<String, dynamic>.from(raw);
+  if (store == historyStore) return root;
+  if (store != saiwaichouHistoryStore || root[saiwaichouHistoryKey] is! Map) {
+    throw const FormatException('PCで幸町のバラエティ履歴を共有へ反映してください。');
+  }
+  return Map<String, dynamic>.from(root[saiwaichouHistoryKey] as Map);
+}
 
 Map<String, dynamic> emptyHistoryEdits() => {
   'format': historyFormat,
@@ -88,12 +124,17 @@ Map<String, dynamic> _machine(
 Map<String, dynamic> parseHistoryBase(dynamic raw) {
   if (raw is! Map ||
       raw['version'] != 2 ||
-      raw['store'] != historyStore ||
+      ![historyStore, saiwaichouHistoryStore].contains(raw['store']) ||
       raw['symbols'] is! List ||
       raw['weeks'] is! List) {
     throw const FormatException('履歴ファイルを読めません。');
   }
   final symbols = raw['symbols'] as List;
+  final store = raw['store'] as String;
+  if (store == saiwaichouHistoryStore &&
+      jsonEncode(symbols) != jsonEncode(['優', '良'])) {
+    throw const FormatException('幸町の評価は優・良だけです。');
+  }
   if (symbols.isEmpty ||
       symbols.any((v) => !_name(v) || (v as String).runes.length > 16) ||
       symbols.toSet().length != symbols.length) {
@@ -103,7 +144,7 @@ Map<String, dynamic> parseHistoryBase(dynamic raw) {
   final weeks = <Map<String, dynamic>>[];
   for (final w in raw['weeks']) {
     if (w is! Map ||
-        !historyTypes.contains(w['type']) ||
+        !historyTypesForStore(store).contains(w['type']) ||
         w['machines'] is! List) {
       throw const FormatException('週の形式が違います。');
     }
@@ -114,6 +155,10 @@ Map<String, dynamic> parseHistoryBase(dynamic raw) {
       throw const FormatException('週が重複または不正です。');
     }
     final machines = [for (final m in w['machines']) _machine(m, symbols)];
+    if (store == saiwaichouHistoryStore &&
+        machines.any((m) => m['count'] > 2)) {
+      throw const FormatException('幸町のバラエティは1〜2台機種です。');
+    }
     if (machines.map((m) => m['name']).toSet().length != machines.length) {
       throw const FormatException('機種名が重複しています。');
     }
@@ -131,7 +176,7 @@ Map<String, dynamic> parseHistoryBase(dynamic raw) {
   }
   return {
     'version': 2,
-    'store': historyStore,
+    'store': store,
     'symbols': List<String>.from(symbols),
     'user_blank_days': blanks,
     'weeks': weeks,
@@ -143,7 +188,7 @@ Future<Map<String, dynamic>> loadHistoryBase() async => parseHistoryBase(
 );
 
 /// バックアップ外枠の検証。値と機種の照合は基準ファイルと合わせて保存前に行う。
-void validateHistoryEnvelope(dynamic raw) {
+void validateHistoryEnvelope(dynamic raw, {bool nested = false}) {
   if (raw is! Map ||
       raw['format'] != historyFormat ||
       raw['version'] != 1 ||
@@ -160,6 +205,10 @@ void validateHistoryEnvelope(dynamic raw) {
     'links',
   ].any((k) => raw.containsKey(k) && (raw[k] as List).length > 30000)) {
     throw const FormatException('履歴編集の保存件数の上限（各30,000件）を超えるため保存できません。');
+  }
+  if (raw.containsKey(saiwaichouHistoryKey)) {
+    if (nested) throw const FormatException('幸町の履歴を入れ子にできません。');
+    validateHistoryEnvelope(raw[saiwaichouHistoryKey], nested: true);
   }
 }
 
@@ -179,6 +228,8 @@ Map<String, dynamic>? historyForBackup(String? raw) {
 ({Map<String, dynamic> edits, int rejected, Map<String, List<dynamic>> orphans})
 cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
   validateHistoryEnvelope(raw);
+  final store = base['store'] as String;
+  final maxRacks = store == saiwaichouHistoryStore ? 2 : 3;
   final out = emptyHistoryEdits(), orphans = <String, List<dynamic>>{};
   var rejected = 0;
   void reject(String group, dynamic value) {
@@ -196,7 +247,7 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
   for (final w in (raw['weeks'] as List? ?? const [])) {
     try {
       if (w is! Map ||
-          w['store'] != historyStore ||
+          w['store'] != store ||
           w['type'] != 'バラエティ' ||
           (w.containsKey('removed') && w['removed'] is! bool) ||
           w['machines'] is! List) {
@@ -216,12 +267,12 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
           _machine(m, base['symbols'] as List, results: false),
       ];
       if (machines.isEmpty ||
-          machines.any((m) => m['count'] > 3) ||
+          machines.any((m) => m['count'] > maxRacks) ||
           machines.map((m) => m['name']).toSet().length != machines.length) {
         throw const FormatException();
       }
       final entry = <String, dynamic>{
-        'store': historyStore,
+        'store': store,
         'type': 'バラエティ',
         'week': w['week'],
         'lineup_day': w['lineup_day'],
@@ -251,7 +302,7 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
     final entries = <String, Map<String, dynamic>>{};
     for (final c in (raw[group] as List? ?? const [])) {
       try {
-        if (c is! Map || c['store'] != historyStore || !_name(c['machine'])) {
+        if (c is! Map || c['store'] != store || !_name(c['machine'])) {
           throw const FormatException();
         }
         historyStamp(c['updated_at']);
@@ -265,7 +316,9 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
         };
         DateTime? first;
         if (scoped) {
-          if (!historyTypes.contains(c['type'])) throw const FormatException();
+          if (!historyTypesForStore(store).contains(c['type'])) {
+            throw const FormatException();
+          }
           first = historyDate(c['week']);
           final w = weeks['${c['type']}|${c['week']}'];
           if (w == null ||
@@ -339,6 +392,10 @@ mergeHistoryEdits(
   Map<String, dynamic> base,
 ) {
   validateHistoryEnvelope(incoming);
+  if (stored.containsKey('unreadable_raw') ||
+      incoming.containsKey('unreadable_raw')) {
+    throw const FormatException('履歴の原文が読めません。原本とバックアップを保持してください。');
+  }
   final current = cleanHistoryEdits(stored, base), old = current.edits;
   final fixed = <String, dynamic>{
     for (final w in old['weeks']) historyKey('weeks', w): w,
@@ -400,13 +457,29 @@ mergeHistoryEdits(
         if (!_superseded(group, o, entries)) o,
     ];
   }
+  var nestedRejected = 0;
+  if (base['store'] == historyStore &&
+      (stored.containsKey(saiwaichouHistoryKey) ||
+          incoming.containsKey(saiwaichouHistoryKey))) {
+    final variety = mergeHistoryEdits(
+      historyEditsForStore(stored, saiwaichouHistoryStore),
+      historyEditsForStore(incoming, saiwaichouHistoryStore),
+      saiwaichouHistoryBase(),
+    );
+    out[saiwaichouHistoryKey] = variety.edits;
+    changed += variety.changed;
+    conflicts += variety.conflicts;
+    skippedWeeks += variety.weekConflicts;
+    nestedRejected = variety.rejected;
+  }
   // 合流結果も読み取り側の上限内に保ち、保存済みの履歴を読めなくしない。
   validateHistoryEnvelope(out);
   return (
     edits: out,
     changed: changed,
     conflicts: conflicts,
-    rejected: current.rejected + proposed.rejected + fresh.rejected,
+    rejected:
+        current.rejected + proposed.rejected + fresh.rejected + nestedRejected,
     weekConflicts: skippedWeeks,
   );
 }
@@ -480,10 +553,13 @@ List<Map<String, dynamic>> historyWeeks(
     ..sort((a, b) => (b['from'] as String).compareTo(a['from'] as String));
 }
 
-Map<String, Set<String>> historyRecordIndex(List<SlotRecord> records) {
+Map<String, Set<String>> historyRecordIndex(
+  List<SlotRecord> records, {
+  String store = historyStore,
+}) {
   final index = <String, Set<String>>{};
   for (final r in records) {
-    if (r.store == historyStore) (index[r.day] ??= {}).add(r.machine);
+    if (r.store == store) (index[r.day] ??= {}).add(r.machine);
   }
   return index;
 }

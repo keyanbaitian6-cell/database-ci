@@ -428,6 +428,8 @@ def main():
     ttk.Label(tab_results, text='保存済みの店舗・日付・機種だけ選べます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 10))
     ttk.Button(tab_results, text='長町南のイベント履歴', style='Link.TButton',
                command=lambda: open_event_history_page()).pack(anchor='w', pady=(0, 8))
+    ttk.Button(tab_results, text='幸町のバラエティ履歴', style='Link.TButton',
+               command=lambda: open_event_history_page('saiwaichou')).pack(anchor='w', pady=(0, 8))
     startup_notes = []
     identity = ttk.Frame(tab_results)
     identity.pack(fill='x')
@@ -1205,9 +1207,9 @@ def main():
             return
         os.startfile(output)
 
-    def open_event_history_page():
+    def open_event_history_page(location='nagamachiminami'):
         for child in root.winfo_children():
-            if hasattr(child, 'flush_history'):
+            if hasattr(child, 'flush_history') and getattr(child, 'history_store', 'nagamachiminami') == location:
                 child.lift()
                 child.focus_set()
                 return
@@ -1224,10 +1226,10 @@ def main():
         finally:
             db.close()
         def open_machine(machine_name, target_day):
-            store_name.set(STORE_NAMES['nagamachiminami'])
+            store_name.set(STORE_NAMES[location])
             refresh_days()
             if target_day not in day_combo.cget('values'):
-                messagebox.showinfo('記録がありません', f'{target_day}の長町南の保存済みデータがありません。', parent=root)
+                messagebox.showinfo('記録がありません', f'{target_day}の{STORE_NAMES[location]}の保存済みデータがありません。', parent=root)
                 return
             day.set(target_day)
             refresh_machines()
@@ -1242,7 +1244,7 @@ def main():
             notebook.select(tab_results)
             open_result()
         show_event_history(root, open_machine, db_path=DATA_DIR / 'database.sqlite3',
-                           on_changed=lambda: schedule_outputs(backup=True))
+                           on_changed=lambda: schedule_outputs(backup=True), location=location)
 
     def open_history():
         if current_location() == PSCUBE_KEY:

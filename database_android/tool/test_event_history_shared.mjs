@@ -52,12 +52,26 @@ async function drive(name) {
     LockService:{getScriptLock:()=>({waitLock(){locks++;},releaseLock(){locks--;}})},
     ContentService:{MimeType:{JSON:'json'},createTextOutput:body=>({body,setMimeType(){return this;}})},console:{log(){}},JSON,Date:Clock};
   vm.createContext(sandbox);
-  vm.runInContext(await fs.readFile(new URL(name,import.meta.url),'utf8'),sandbox);
+  const source=process.env.HISTORY_COMPAT_DIR ? `${process.env.HISTORY_COMPAT_DIR}/${name}` : new URL(name,import.meta.url);
+  vm.runInContext(await fs.readFile(source,'utf8'),sandbox);
   return {files,writes,get:()=>JSON.parse(sandbox.doGet({parameter:{file:'event-history'}}).body),
     post:cells=>JSON.parse(sandbox.doPost({postData:{contents:JSON.stringify({file:'event-history',cells})}}).body),locks:()=>locks};
 }
 
 for(const script of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {
+  test(`${script}：PCの幸町をGETで保持し、共有からは書き換えない`,async()=>{
+    const d=await drive(script);
+    const sample=JSON.parse(await fs.readFile(new URL('../test/fixtures/saiwaichou_history_cases.json',import.meta.url),'utf8'));
+    const pc={...doc(),saiwaichou_variety:sample.saiwaichou_variety};
+    d.files.get('database-event-history.json').text=JSON.stringify(pc);
+    assert.deepEqual(d.get().saiwaichou_variety,pc.saiwaichou_variety);
+    assert.equal(d.post([entry()]).ok,true);
+    assert.deepEqual(d.get().saiwaichou_variety,pc.saiwaichou_variety);
+    const before=d.writes.length;
+    assert.ok(d.post([sample.saiwaichou_variety.cells[0]]).error);
+    assert.equal(d.writes.length,before);
+    assert.deepEqual(JSON.parse(d.files.get('database-event-history.json').text),pc);
+  });
   test(`${script}：記号保存・再取得・PCの再出力・新しい編集を保持する`,async()=>{
     const d=await drive(script), original=d.files.get('database-event-history.json').text;
     assert.equal(d.get().shared_editing,true);

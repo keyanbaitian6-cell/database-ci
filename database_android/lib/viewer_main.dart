@@ -671,14 +671,16 @@ class _ViewerHomeState extends State<ViewerHome> {
     ),
   );
 
-  void _openEventHistory() => Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => EventHistoryPage(
-        data: _data ?? const ViewerData(records: []),
-        remoteUrl: _remote,
-      ),
-    ),
-  );
+  void _openEventHistory([String location = 'nagamachiminami']) =>
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => EventHistoryPage(
+            store: location,
+            data: _data ?? const ViewerData(records: []),
+            remoteUrl: _remote,
+          ),
+        ),
+      );
 
   void _openMachine(String machine) {
     Navigator.of(context).push(
@@ -970,11 +972,11 @@ class _ViewerHomeState extends State<ViewerHome> {
             label: const Text('イベントカレンダー'),
           ),
           const SizedBox(height: 8),
-          if (store == 'nagamachiminami') ...[
+          if (store == 'nagamachiminami' || store == 'saiwaichou') ...[
             OutlinedButton.icon(
-              onPressed: _openEventHistory,
+              onPressed: () => _openEventHistory(store),
               icon: const Icon(Icons.history),
-              label: const Text('長町南のイベント履歴'),
+              label: Text(store == 'saiwaichou' ? '幸町のバラエティ履歴' : '長町南のイベント履歴'),
             ),
             const SizedBox(height: 8),
           ],
