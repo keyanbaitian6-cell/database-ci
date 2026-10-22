@@ -181,6 +181,54 @@ class HistoryTests(unittest.TestCase):
                 self.assertEqual(flushed,[True])
             finally: root.destroy()
 
+    def test_pc_variety_name_color_tracks_each_week_and_last_heart_removal(self):
+        import tkinter as tk
+        from tkinter import ttk
+        from event_history import open_event_history
+
+        def week(kind, first, last, results):
+            return dict(type=kind, **{'from': first, 'to': last}, machines=[
+                dict(name='テスト機種', record_name=None, count=1, results=results)])
+
+        base = dict(version=2, store='nagamachiminami', symbols=['😀', '😍'], weeks=[
+            week('4台構成', '2026-09-28', '2026-10-04', [''] * 7),
+            week('バラエティ', '2026-10-05', '2026-10-11', [''] * 6 + ['😍']),
+            week('バラエティ', '2026-10-12', '2026-10-18', [''] * 7)])
+
+        def descendants(parent):
+            for widget in parent.winfo_children():
+                yield widget
+                yield from descendants(widget)
+
+        with tempfile.TemporaryDirectory() as folder, patch('event_history_data.load_base', return_value=base), \
+                patch('event_history.load_base', return_value=base):
+            root = tk.Tk(); root.withdraw()
+            try:
+                window = open_event_history(root, lambda *_: None, db_path=Path(folder) / 'test.db')
+                def labels():
+                    return [w for w in descendants(window) if isinstance(w, ttk.Label)
+                            and str(w.cget('text')).startswith('テスト機種')]
+                def red():
+                    return str(labels()[0].cget('foreground')) == '#b91c1c'
+                def select(combo, value):
+                    combo.set(value); combo.event_generate('<<ComboboxSelected>>'); root.update_idletasks()
+
+                self.assertFalse(red(), '4台構成は😍が無くても通常色')
+                combos = [w for w in descendants(window) if isinstance(w, ttk.Combobox)]
+                select(combos[0], 'バラエティ')
+                select(combos[1], '2026-10-05〜2026-10-11')
+                self.assertFalse(red(), '日曜の😍もその週の達成として数える')
+                select(combos[1], '2026-10-12〜2026-10-18')
+                self.assertTrue(red(), '別の週の😍は数えない')
+                symbols = [w for w in descendants(window) if isinstance(w, ttk.Combobox)
+                           and '😍' in w.cget('values')]
+                select(symbols[0], '😍'); self.assertFalse(red())
+                select(symbols[6], '😍'); self.assertFalse(red())
+                select(symbols[0], '😀'); self.assertFalse(red(), 'まだ日曜の😍が残る')
+                select(symbols[6], ''); self.assertTrue(red(), '最後の😍を消すと即座に赤字に戻る')
+            finally:
+                root.destroy()
+
     def test_week_definition_cannot_orphan_existing_cells(self):
         week = dict(store='nagamachiminami',type='バラエティ',week='2026-10-12',lineup_day='2026-10-12',
                     machines=[dict(name='機種A',record_name='機種A',count=2)],removed=False,updated_at='2026-10-19T00:00:00Z')

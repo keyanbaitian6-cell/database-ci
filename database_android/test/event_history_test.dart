@@ -45,6 +45,97 @@ SlotRecord record(String day, String machine, int rack) => SlotRecord(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final editable in [false, true]) {
+    testWidgets('週内に😍がないバラエティの機種名だけ赤字（編集:$editable）', (tester) async {
+      Map<String, dynamic> week(
+        String type,
+        String first,
+        String last,
+        List<String> results,
+      ) => {
+        'type': type,
+        'from': first,
+        'to': last,
+        'machines': [
+          {
+            'name': 'テスト機種',
+            'record_name': null,
+            'count': 1,
+            'results': results,
+          },
+        ],
+      };
+      final base = <String, dynamic>{
+        'version': 2,
+        'store': historyStore,
+        'symbols': ['😀', '😍'],
+        'weeks': [
+          week('4台構成', '2026-09-28', '2026-10-04', List.filled(7, '')),
+          week('バラエティ', '2026-10-05', '2026-10-11', [
+            ...List.filled(6, ''),
+            '😍',
+          ]),
+          week('バラエティ', '2026-10-12', '2026-10-18', List.filled(7, '')),
+        ],
+      };
+      var edits = emptyHistoryEdits();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EventHistoryPage(
+            data: const ViewerData(records: []),
+            loadBase: () => Future.value(base),
+            onSave: !editable
+                ? null
+                : (incoming) async {
+                    edits = mergeHistoryEdits(edits, incoming, base).edits;
+                    return edits;
+                  },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      Color? nameColor() =>
+          tester.widget<Text>(find.text('テスト機種')).style?.color;
+      Future<void> chooseField(String label, String value) async {
+        final field = tester.widget<DropdownButtonFormField<String>>(
+          find.byWidgetPredicate(
+            (w) =>
+                w is DropdownButtonFormField<String> &&
+                w.decoration.labelText == label,
+          ),
+        );
+        field.onChanged!(value);
+        await tester.pumpAndSettle();
+      }
+
+      expect(nameColor(), isNot(const Color(0xffb91c1c)), reason: '4台構成は通常色');
+      await chooseField('イベント種別', 'バラエティ');
+      expect(nameColor(), const Color(0xffb91c1c));
+      await chooseField('対象週', '2026-10-05');
+      expect(nameColor(), isNot(const Color(0xffb91c1c)), reason: '日曜の😍も数える');
+      await chooseField('対象週', '2026-10-12');
+      expect(nameColor(), const Color(0xffb91c1c), reason: '別の週とは独立');
+      if (editable) {
+        Future<void> symbol(int index, String value) async {
+          tester
+              .widget<DropdownButton<String>>(
+                find.byKey(ValueKey('symbol:2026-10-12:テスト機種:$index')),
+              )
+              .onChanged!(value);
+          await tester.pumpAndSettle();
+        }
+
+        await symbol(0, '😍');
+        expect(nameColor(), isNot(const Color(0xffb91c1c)));
+        await symbol(6, '😍');
+        await symbol(0, '😀');
+        expect(nameColor(), isNot(const Color(0xffb91c1c)));
+        await symbol(6, '');
+        expect(nameColor(), const Color(0xffb91c1c));
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
   test('件数上限では追加を拒否して原文を保持し、既存セルの置き換えは許可する', () async {
     final base = await loadHistoryBase();
     final full = {

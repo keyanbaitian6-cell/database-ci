@@ -44,6 +44,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     for r in records:
         index.setdefault(r['day'], set()).add(r['machine'])
     dirty = [False]
+    name_labels = {}
     ttk.Label(frame, text='長町南のイベント履歴', style='H2.TLabel').pack(anchor='w')
     ttk.Label(frame, text='記号はプルダウンで編集します。→ はその機種・その日のデータを開きます。記号の意味は未設定です。').pack(anchor='w')
     controls = ttk.Frame(frame)
@@ -140,12 +141,19 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
                          and c['week'] == w['from'] and c['machine'] == item['name'] and c['day'] == d), previous)
         try:
             save('cells', dict(store=STORE, type=w['type'], week=w['from'], machine=item['name'], day=d, value=value.get()))
+            # 最新の編集を重ねてから判定し、😍を付け外しした直後にも機種名の色を更新する。
+            for week in materialize(base, edits[0])[0]:
+                for machine in week['machines']:
+                    label = name_labels.get((week['type'], week['from'], machine['name']))
+                    if label is not None:
+                        label.configure(foreground='#b91c1c' if week['type'] == 'バラエティ' and '😍' not in machine['results'] else '')
         except Exception as error:
             value.set(previous)
             messagebox.showerror('保存できません', str(error), parent=window)
 
     def render(*_, reset=False):
         for child in table.winfo_children(): child.destroy()
+        name_labels.clear()
         weeks, rejected = materialize(base, edits[0])
         selected = [w for w in weeks if w['type'] == kind.get()]
         labels = {f"{w['from']}〜{w['to']}": w for w in selected}
@@ -176,7 +184,10 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         for row,item in enumerate(w['machines'],1):
             namebox = ttk.Frame(table, padding=(4,4))
             namebox.grid(row=row,column=0,sticky='w')
-            ttk.Label(namebox, text=f"{item['name']}  {item['count']}台", width=38).pack(anchor='w')
+            name_label = ttk.Label(namebox, text=f"{item['name']}  {item['count']}台", width=38,
+                                   foreground='#b91c1c' if w['type'] == 'バラエティ' and '😍' not in item['results'] else '')
+            name_label.pack(anchor='w')
+            name_labels[(w['type'], w['from'], item['name'])] = name_label
             ttk.Button(namebox, text='保存名の対応を確認', command=lambda w=w,m=item: link_machine(w,m)).pack(anchor='w')
             for i,d in enumerate(days):
                 cell=ttk.Frame(table,padding=(4,4)); cell.grid(row=row,column=i+1)

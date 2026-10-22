@@ -1168,7 +1168,7 @@ function openEventHistory() {
     if (!weeks.length) return `${types}${notice}<p class="note">この種別の週表はまだありません。</p>`;
     return `${types}${notice}${rejected}${weeks.map(w=>{
       const days=Array.from({length:7},(_,i)=>historyDay(w.from,i));
-      const rows=w.machines.map(item=>`<tr><th scope="row"><span>${esc(displayMachineName(item.name))}</span><small>${count(item.count)}台</small></th>${days.map((d,i)=>{
+      const rows=w.machines.map(item=>`<tr><th scope="row"><span${w.type==='バラエティ'&&!item.results.includes('😍')?' class="history-no-heart"':''}>${esc(displayMachineName(item.name))}</span><small>${count(item.count)}台</small></th>${days.map((d,i)=>{
         const name=historySavedName(item,index.get(d)??new Set());
         const key=encodeURIComponent(JSON.stringify({type:w.type,week:w.from,machine:item.name,day:d}));
         return `<td><select class="history-symbol" data-history-edit="${esc(key)}"${state.historyDocument?.shared_editing?'':' disabled'} aria-label="${esc(d)} ${esc(displayMachineName(item.name))}の結果">${['',...state.eventHistory.symbols].map(s=>`<option value="${esc(s)}"${s===item.results[i]?' selected':''}>${esc(s||'空欄')}</option>`).join('')}</select>${name ? `<button type="button" class="row history-cell" data-history-machine="${esc(name)}" data-history-day="${d}" aria-label="${esc(d)} ${esc(name)}のデータを開く">開く →</button>` : '<small>この日の記録なし</small>'}</td>`;

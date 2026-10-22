@@ -19,6 +19,7 @@ const url=process.env.SHARE_PUBLIC_URL || `http://127.0.0.1:${server.address().p
 const id='AKfycbTEST'+'x'.repeat(40);
 const base={version:2,store:'nagamachiminami',symbols:['😀','😍'],user_blank_days:[],weeks:[
   {type:'4台構成',from:'2026-10-05',to:'2026-10-11',machines:[{name:'Lテスト',record_name:null,count:4,results:['😀','','','','','','']}]},
+  {type:'バラエティ',from:'2026-09-28',to:'2026-10-04',machines:[{name:'週の機種',record_name:null,count:2,results:['','','','','','','😍']}]},
 ]};
 const history={format:'database-event-history',version:1,base,shared_editing:true,cells:[{store:base.store,type:'4台構成',week:'2026-10-05',machine:'Lテスト',day:'2026-10-05',value:'',updated_at:'2026-10-19T09:00:00.123456+09:00'}],
   links:[{store:base.store,type:'4台構成',week:'2026-10-05',machine:'Lテスト',record_name:'L ﾃｽﾄ',updated_at:'2026-10-19T00:00:00.123457Z'}],
@@ -153,6 +154,21 @@ try{
     assert.match(await page.locator('[data-history-save-status]').innerText(),/2件.*端末/);
   }
   assert.deepEqual(reviewFailures,[]);
+  // 週ごとに判定し、共有編集で最後の😍を消した直後にも赤字へ戻す。
+  await page.evaluate(id=>localStorage.removeItem('database-share-history-edits:'+id),reviewId);
+  await page.reload();await page.locator('[data-event-history-open]').click();
+  assert.equal(await page.locator('.history-no-heart').count(),0,'4台構成は赤字にしない');
+  await page.locator('[data-history-type="バラエティ"]').click();
+  const names=page.locator('.history-table tbody th > span');
+  assert.equal(await names.nth(0).evaluate(e=>getComputedStyle(e).color),'rgb(185, 28, 28)');
+  assert.notEqual(await names.nth(1).evaluate(e=>getComputedStyle(e).color),'rgb(185, 28, 28)','別週の日曜の😍を数える');
+  const symbols=page.locator('.history-table').first().locator('select');
+  for(const [day,value,red] of [[0,'😍',false],[6,'😍',false],[0,'😀',false],[6,'',true]]) {
+    await symbols.nth(day).selectOption(value);
+    assert.equal(await names.nth(0).evaluate(e=>e.classList.contains('history-no-heart')),red);
+    await page.waitForFunction(()=>document.querySelector('[data-history-save-status]')?.textContent.includes('共有に保存しました'));
+    assert.equal(await names.nth(0).evaluate(e=>getComputedStyle(e).color)==='rgb(185, 28, 28)',red);
+  }
   assert.deepEqual(errors,[]);
   assert.ok(localRequests.every(r=>!r.includes('event_history.json')),'履歴JSONを公開アセットから取得しない');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

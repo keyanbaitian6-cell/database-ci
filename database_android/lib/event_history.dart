@@ -237,6 +237,10 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
           children: [
             Text(
               displayMachineName(m['name'] as String),
+              style:
+                  w['type'] == 'バラエティ' && !(m['results'] as List).contains('😍')
+                  ? const TextStyle(color: Color(0xffb91c1c))
+                  : null,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
