@@ -64,6 +64,43 @@ DateTime historyDate(Object? raw) {
 }
 
 String historyDay(DateTime d) => d.toUtc().toIso8601String().substring(0, 10);
+
+/// 表示週の最終記録日までの5暦日。空欄も数え、前週の優・良も参照する。
+bool historyGradeGap(
+  Iterable<Map<String, dynamic>> weeks,
+  Map machine,
+  String? lastDay,
+) {
+  if (lastDay == null) return false;
+  final end = historyDate(lastDay);
+  for (var offset = 0; offset < 5; offset++) {
+    final target = historyDay(end.subtract(Duration(days: offset)));
+    for (final week in weeks) {
+      if (week['type'] != 'バラエティ' ||
+          target.compareTo(week['from'] as String) < 0 ||
+          target.compareTo(week['to'] as String) > 0) {
+        continue;
+      }
+      final saved = (week['machines'] as List)
+          .where(
+            (m) =>
+                m['name'] == machine['name'] ||
+                (machine['record_name'] != null &&
+                    machine['record_name'] != '' &&
+                    m['record_name'] == machine['record_name']),
+          )
+          .firstOrNull;
+      if (saved == null) continue;
+      final value =
+          saved['results'][historyDate(target)
+              .difference(historyDate(week['from']))
+              .inDays];
+      if (value == '優' || value == '良') return false;
+    }
+  }
+  return true;
+}
+
 DateTime historyStamp(Object? raw) {
   if (raw is! String) throw const FormatException('履歴の編集時刻が読めません。');
   final match = RegExp(

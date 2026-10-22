@@ -25,6 +25,8 @@ const history={format:'database-event-history',version:1,base,shared_editing:tru
   links:[{store:base.store,type:'4台構成',week:'2026-10-05',machine:'Lテスト',record_name:'L ﾃｽﾄ',updated_at:'2026-10-19T00:00:00.123457Z'}],
   weeks:[{store:base.store,type:'バラエティ',week:'2026-10-12',lineup_day:'2026-10-13',machines:[{name:'週の機種',record_name:'週の機種',count:2}],updated_at:'2026-10-19T00:00:00Z',removed:false}]};
 history.saiwaichou_variety=JSON.parse(await fs.readFile(new URL('../test/fixtures/saiwaichou_history_cases.json',import.meta.url),'utf8')).saiwaichou_variety;
+history.saiwaichou_variety=JSON.parse(JSON.stringify(history.saiwaichou_variety).replaceAll('2台機種','L スマスロ 長い機種名の折り返しを確認するテスト機種'));
+history.saiwaichou_variety.weeks.push({...structuredClone(history.saiwaichou_variety.weeks[0]),week:'2026-10-12',lineup_day:'2026-10-12'});
 const records=[{store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:101,games:1000,bb:4,rb:2},
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:999,games:2000,bb:8,rb:4},
   {store:base.store,day:'2026-10-07',machine:'L+ﾃｽﾄ',rack:777,games:2000,bb:8,rb:4},
@@ -63,7 +65,8 @@ try{
   assert.equal(await page.locator('.history-table select').count(),7);
   const fixed=page.locator('.history-table tbody th').first();const left=(await fixed.boundingBox()).x;
   await page.locator('.history-overflow').evaluate(e=>e.scrollLeft=500);
-  assert.ok(Math.abs((await fixed.boundingBox()).x-left)<2,'機種名の列を横スクロールで動かさない');
+  assert.ok(Math.abs((await fixed.boundingBox()).x-left)<2,'機種名を横スクロールで動かさない');
+  if(width<=700) assert.equal(await page.locator('.history-overflow').evaluate(e=>e.scrollWidth>e.clientWidth),false,'スマホの7日表示は横スクロール不要');
   await page.locator('.history-overflow').evaluate(e=>e.scrollLeft=0);
   await page.locator('[data-history-day="2026-10-05"]').click();
   assert.equal(await page.locator('[data-sheet-day]').inputValue(),'2026-10-05');
@@ -164,7 +167,13 @@ try{
   await page.locator('[data-history-type="バラエティ"]').click();
   const names=page.locator('.history-table tbody th > span');
   assert.equal(await names.nth(0).evaluate(e=>getComputedStyle(e).color),'rgb(185, 28, 28)');
-  assert.notEqual(await names.nth(1).evaluate(e=>getComputedStyle(e).color),'rgb(185, 28, 28)','別週の日曜の😍を数える');
+  assert.equal(await page.locator('.history-week').count(),1,'全週を積み上げず選択した1週だけ表示');
+  assert.equal(await page.locator('[data-history-week]').inputValue(),'2026-10-12');
+  await page.getByRole('button',{name:'前の週',exact:true}).click();
+  assert.equal(await page.locator('[data-history-week]').inputValue(),'2026-09-28');
+  assert.notEqual(await names.nth(0).evaluate(e=>getComputedStyle(e).color),'rgb(185, 28, 28)','別週の日曜の😍を数える');
+  assert.equal(await page.getByRole('button',{name:'前の週',exact:true}).isDisabled(),true);
+  await page.getByRole('button',{name:'次の週',exact:true}).click();
   const symbols=page.locator('.history-table').first().locator('select');
   for(const [day,value,red] of [[0,'😍',false],[6,'😍',false],[0,'😀',false],[6,'',true]]) {
     await symbols.nth(day).selectOption(value);
@@ -181,16 +190,32 @@ try{
   assert.equal(await page.locator('.history-no-heart').count(),0,'幸町へ長町南の赤字判定を適用しない');
   assert.equal(await page.locator('.history-symbol').first().innerText(),'優');
   assert.ok((await page.locator('.history-symbol').allInnerTexts()).includes('良'));
-  assert.equal(await page.locator('.history-table tbody tr').first().locator('td').nth(1).evaluate(cell=>{
-    const grade=cell.querySelector('.history-symbol').getBoundingClientRect();
-    const note=cell.querySelector('small').getBoundingClientRect();
-    return grade.bottom<=note.top+1;
+  assert.equal(await page.locator('[data-history-week]').inputValue(),'2026-10-19');
+  assert.equal(await page.getByRole('button',{name:'次の週',exact:true}).isDisabled(),true);
+  const beforeWeekNavigation=posts.length;
+  await page.locator('[data-history-week]').selectOption('2026-10-12');
+  assert.equal(await page.locator('.history-symbol').first().innerText(),'—');
+  assert.equal(await page.locator('.history-grade-gap').count(),0,'記録のない週を赤くしない');
+  await page.getByRole('button',{name:'最新の週へ',exact:true}).click();
+  assert.equal(await page.locator('[data-history-week]').inputValue(),'2026-10-19');
+  assert.equal(await page.locator('.history-symbol').first().innerText(),'優');
+  assert.equal(await page.locator('.history-grade-gap').count(),1,'最終記録日より後の良は赤字判定に含めない');
+  assert.equal(posts.length,beforeWeekNavigation,'閲覧と週移動で保存通信を送らない');
+  assert.equal(await page.locator('.history-table tbody tr').nth(1).locator('td').nth(1).evaluate(cell=>{
+    const grade=cell.querySelector('.history-symbol'), note=cell.querySelector('.history-no-record');
+    return grade.innerText==='良' && grade.getBoundingClientRect().bottom<=note.getBoundingClientRect().top+1;
   }),true,'優・良と記録なしの案内を別の行にする');
+  if(process.env.HISTORY_SCREENSHOTS) {
+    await fs.mkdir(process.env.HISTORY_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:path.join(process.env.HISTORY_SCREENSHOTS,`share-history-${width}.png`),fullPage:true});
+  }
   await page.locator('[data-history-day="2026-10-19"]').click();
   assert.match(await page.locator('.sheet').innerText(),/610番/);
   assert.doesNotMatch(await page.locator('.sheet').innerText(),/90番/);
   await page.locator('[data-history-rack="0"]').click();
   assert.equal(await page.locator('#sheet-title').innerText(),'610番台');
+  await page.locator('[data-back]').click();await page.locator('[data-back]').click();
+  assert.equal(await page.locator('[data-history-week]').inputValue(),'2026-10-19','台データから戻っても選択週を保持');
   assert.deepEqual(errors,[]);
   assert.ok(localRequests.every(r=>!r.includes('event_history.json')),'履歴JSONを公開アセットから取得しない');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

@@ -1,7 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import {parsePrivateHistory, mergeHistoryCells} from '../../share_viewer/event_history.mjs';
+import {parsePrivateHistory, mergeHistoryCells, historyGradeGap} from '../../share_viewer/event_history.mjs';
+
+test('赤字は最終記録日までの5暦日で判定し、前週・境界・空欄・未来・対応名を区別する',()=>{
+  const machine={name:'機種A',record_name:'保存名A'};
+  const weeks=[{type:'バラエティ',from:'2026-10-12',to:'2026-10-18',machines:[{...machine,results:Array(7).fill('')}]},
+    {type:'バラエティ',from:'2026-10-19',to:'2026-10-25',machines:[{...machine,results:Array(7).fill('')}]}];
+  assert.equal(historyGradeGap(weeks,machine,'2026-10-20'),true);
+  weeks[0].machines[0].results[4]='良'; // 10/16は直近5暦日に含む。
+  assert.equal(historyGradeGap(weeks,machine,'2026-10-20'),false);
+  weeks[0].machines[0].name='旧表示名';
+  assert.equal(historyGradeGap(weeks,machine,'2026-10-20'),false,'明示した保存名で前週と対応');
+  weeks[0].machines[0].results[4]=''; weeks[0].machines[0].results[3]='優';
+  weeks[1].machines[0].results[2]='良';
+  assert.equal(historyGradeGap(weeks,machine,'2026-10-20'),true,'5日前の優と翌日の良は対象外');
+  weeks[1].machines[0].results[1]='良';
+  assert.equal(historyGradeGap(weeks,machine,'2026-10-20'),false,'最終記録日の良を含む');
+  assert.equal(historyGradeGap(weeks,{name:'別機種'},'2026-10-20'),true);
+  assert.equal(historyGradeGap(weeks,machine,null),false,'記録なしの週を赤くしない');
+});
 
 const doc=JSON.parse(await fs.readFile(new URL('../test/fixtures/saiwaichou_history_cases.json',import.meta.url),'utf8'));
 

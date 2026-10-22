@@ -1,4 +1,4 @@
-import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, historyCell, historyEditKey, mergeHistoryCells, newHistoryCell} from './event_history.mjs';
+import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, historyCell, historyEditKey, mergeHistoryCells, newHistoryCell, historyGradeGap} from './event_history.mjs';
 // 閲覧専用の共有ページ（お試し、2026-10-09。EVENT_CALENDAR.md「閲覧専用の共有ページ」）。
 // 読むだけのApps Script（database_android/tool/viewer_drive_script_readonly.gs）からDriveのファイルを読み、
 // イベントカレンダー（各日のイベント・総差枚）と、日付を押したときの差枚TOP50（11位からは折りたたみ）・強かった機種10選、
@@ -393,6 +393,7 @@ function openSheet({first, body, onRow, onChange, onAction}) {
   };
   const render = () => {
     const view = views[views.length - 1];
+    sheet.classList.toggle('history-sheet', view.kind === 'history');
     sheet.innerHTML = `
       <div class="sheet-head">
         <div class="head-row">${views.length > 1 ? '<button type="button" class="pill pill-outline" data-back>‹ 戻る</button>' : ''}
@@ -473,7 +474,7 @@ function openSheet({first, body, onRow, onChange, onAction}) {
       return;
     }
     // 画面の中の切り替え（例：バラエティ🌈の表・空き順）。描き直す。
-    const action = e.target.closest('[data-variety-mode], [data-history-type]');
+    const action = e.target.closest('[data-variety-mode], [data-history-type], [data-history-week-step], [data-history-latest]');
     if (action && onAction) {
       view.scroll = 0;
       onAction(action, view);
@@ -496,8 +497,10 @@ function openSheet({first, body, onRow, onChange, onAction}) {
     if (e.target.matches('[data-sheet-day]')) { changeDay(view, e.target.value); return; }
     if (e.target.matches('[data-sheet-year]')) { view.year = Number(e.target.value); view.scroll = 0; render(); return; }
     if (!onChange) return;
+    if (e.target.matches('[data-history-week]')) sheet.scrollTop = 0;
     onChange(e.target, view);
     redrawKeepingPosition();
+    if (e.target.matches('[data-history-week]')) sheet.querySelector('[data-history-week]')?.focus({preventScroll:true});
   });
   document.addEventListener('keydown', onKey);
   document.body.style.overflow = 'hidden';
@@ -1167,7 +1170,10 @@ function openEventHistory() {
   }
   const historyView = view => {
     const model=saiwaichou?varietyModel:state.eventHistory;
-    const weeks = model.weeks.filter(w=>w.type===view.type);
+    const weeks = model.weeks.filter(w=>w.type===view.type).sort((a,b)=>b.from.localeCompare(a.from));
+    if (!weeks.some(w=>w.from===view.week)) view.week=weeks[0]?.from;
+    const selected=weeks.find(w=>w.from===view.week), weekIndex=weeks.indexOf(selected);
+    const lastRecordDay=selected?[...index.keys()].filter(d=>d>=selected.from&&d<=selected.to).sort().at(-1):null;
     const heading = `<h2 id="sheet-title">${saiwaichou?'幸町のバラエティ履歴':'長町南のイベント履歴'}</h2><div class="history-types">${types.map(t=>`<button type="button" class="pill ${t===view.type?'':'pill-outline'}" data-history-type="${esc(t)}" aria-pressed="${t===view.type}">${esc(t)}</button>`).join('')}</div>`;
     let pending=0;
     try { if(!saiwaichou) pending=localHistoryEdits().filter(c=>c.pending===true).length; } catch { /* 読み込み時の警告を表示する。 */ }
@@ -1176,16 +1182,23 @@ function openEventHistory() {
       + (pending?`<button type="button" class="pill pill-outline" data-history-retry>未送信${count(pending)}件を再送する</button>`:'');
     const rejected = model.rejected ? `<p class="note">形式が合わない編集${count(model.rejected)}件を表示していません。</p>` : '';
     if (!weeks.length) return `${heading}${notice}<p class="note">この種別の週表はまだありません。</p>`;
-    return `${heading}${notice}${rejected}${weeks.map(w=>{
+    const navigation=`<div class="history-navigation" aria-label="週を選ぶ">
+      <label for="history-week-select">表示する週</label>
+      <div class="history-week-picker"><button type="button" class="pill pill-outline" data-history-week-step="1" aria-label="前の週"${weekIndex>=weeks.length-1?' disabled':''}>‹</button>
+      <select id="history-week-select" data-history-week aria-label="対象週">${weeks.map(w=>`<option value="${w.from}"${w===selected?' selected':''}>${esc(w.from)} 〜 ${esc(w.to)}</option>`).join('')}</select>
+      <button type="button" class="pill pill-outline" data-history-week-step="-1" aria-label="次の週"${weekIndex<=0?' disabled':''}>›</button></div>
+      <div class="history-week-meta"><span>${selected.machines.length}機種 · ${weekIndex+1} / ${weeks.length}週</span><button type="button" class="history-latest" data-history-latest${weekIndex===0?' disabled':''}>最新の週へ</button></div>
+      ${saiwaichou?`<p class="history-gap-note">${lastRecordDay?`赤字：${esc(lastRecordDay)}までの5暦日、優・良なし（空欄の日を含む）`:'この週は記録がないため赤字判定はしません。'}</p>`:''}</div>`;
+    return `${heading}${navigation}${notice}${rejected}${[selected].map(w=>{
       const days=Array.from({length:7},(_,i)=>historyDay(w.from,i));
-      const rows=w.machines.map(item=>`<tr><th scope="row"><span${!saiwaichou&&w.type==='バラエティ'&&!item.results.includes('😍')?' class="history-no-heart"':''}>${esc(displayMachineName(item.name))}</span><small>${count(item.count)}台</small></th>${days.map((d,i)=>{
+      const rows=w.machines.map(item=>`<tr><th scope="row"><span${saiwaichou&&historyGradeGap(model.weeks,item,lastRecordDay)?' class="history-grade-gap"':!saiwaichou&&w.type==='バラエティ'&&!item.results.includes('😍')?' class="history-no-heart"':''}>${esc(displayMachineName(item.name))}</span><small>${count(item.count)}台</small></th>${days.map((d,i)=>{
         const name=historySavedName(item,index.get(d)??new Set());
         const key=encodeURIComponent(JSON.stringify({type:w.type,week:w.from,machine:item.name,day:d}));
-        const result=saiwaichou?`<span class="history-symbol">${esc(item.results[i]||'—')}</span>`:`<select class="history-symbol" data-history-edit="${esc(key)}"${state.historyDocument?.shared_editing?'':' disabled'} aria-label="${esc(d)} ${esc(displayMachineName(item.name))}の結果">${['',...model.symbols].map(s=>`<option value="${esc(s)}"${s===item.results[i]?' selected':''}>${esc(s||'空欄')}</option>`).join('')}</select>`;
-        return `<td>${result}${name ? `<button type="button" class="row history-cell" data-history-machine="${esc(name)}" data-history-day="${d}" aria-label="${esc(d)} ${esc(name)}のデータを開く">開く →</button>` : '<small>この日の記録なし</small>'}</td>`;
+        const result=saiwaichou?`<span class="history-symbol ${item.results[i]==='優'?'history-excellent':item.results[i]==='良'?'history-good':'history-empty'}">${esc(item.results[i]||'—')}</span>`:`<select class="history-symbol" data-history-edit="${esc(key)}"${state.historyDocument?.shared_editing?'':' disabled'} aria-label="${esc(d)} ${esc(displayMachineName(item.name))}の結果">${['',...model.symbols].map(s=>`<option value="${esc(s)}"${s===item.results[i]?' selected':''}>${esc(s||'—')}</option>`).join('')}</select>`;
+        return `<td><span class="history-mobile-day" aria-hidden="true">${'月火水木金土日'[i]}<small>${d.slice(8)}</small></span>${result}${name ? `<button type="button" class="row history-cell" data-history-machine="${esc(name)}" data-history-day="${d}" aria-label="${esc(d)} ${esc(name)}のデータを開く"><span class="history-open-label">開く </span>↗</button>` : '<small class="history-no-record"><span class="history-no-record-label">この日の記録なし</span><span class="history-mobile-none" aria-hidden="true">—</span></small>'}</td>`;
       }).join('')}</tr>`).join('');
       return `<section class="history-week"><h3>${esc(w.from)}〜${esc(w.to)}</h3>${w.lineup_day?`<p class="note">分類日：${esc(w.lineup_day)}（作成時の構成で固定）</p>`:''}<div class="history-overflow"><table class="history-table"><thead><tr><th>機種名・台数</th>${days.map(d=>`<th>${esc(shortDateWeek(d))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div></section>`;
-    }).join('')}<p class="note">${saiwaichou?'2,500枚以上＝優、0〜2,499枚＝良。マイナス・差枚不明は空欄です。入力・修正はPCのみ。':'記号の意味は未設定です。'}「開く」は、その機種・その日の保存データを表示します。</p>`;
+    }).join('')}<p class="note">${saiwaichou?'2,500枚以上＝優、0〜2,499枚＝良。マイナス・差枚不明は空欄です。入力・修正はPCのみ。':'記号の意味は未設定です。'}「↗」は、その機種・その日の保存データを表示します。</p>`;
   };
   const machineView = view => {
     const racks=(state.model.byDay.get(`${location}|${view.day}`)??[]).filter(r=>r.machine===view.machine).sort((a,b)=>a.rack-b.rack);
@@ -1194,8 +1207,16 @@ function openEventHistory() {
   };
   state.historyRedraw=openSheet({first:{kind:'history',type:types[0]},
     body:view=>view.kind==='history'?historyView(view):view.kind==='historyMachine'?machineView(view):rackView(view),
-    onAction:(action,view)=>{if(action.dataset.historyType) view.type=action.dataset.historyType;},
-    onChange:field=>{if(field.matches('[data-history-edit]')) queueHistoryEdit(field);},
+    onAction:(action,view)=>{
+      if(action.dataset.historyType) { view.type=action.dataset.historyType; view.week=null; }
+      const weeks=(saiwaichou?varietyModel:state.eventHistory).weeks.filter(w=>w.type===view.type).sort((a,b)=>b.from.localeCompare(a.from));
+      if(action.dataset.historyWeekStep) view.week=weeks[weeks.findIndex(w=>w.from===view.week)+Number(action.dataset.historyWeekStep)]?.from??view.week;
+      if(action.dataset.historyLatest!=null) view.week=weeks[0]?.from;
+    },
+    onChange:(field,view)=>{
+      if(field.matches('[data-history-edit]')) queueHistoryEdit(field);
+      if(field.matches('[data-history-week]')) { view.week=field.value; view.scroll=0; }
+    },
     onRow:(row,push,view)=>{
       if(row.dataset.historyRetry!=null) { flushHistoryEdits(); return; }
       if(view.kind==='history' && row.dataset.historyMachine && row.dataset.historyDay) push({kind:'historyMachine',machine:row.dataset.historyMachine,day:row.dataset.historyDay,picked:null});

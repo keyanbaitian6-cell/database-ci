@@ -20,6 +20,7 @@ class EventHistoryPage extends StatefulWidget {
     this.recordCutoff,
     this.loadBase = loadHistoryBase,
     this.store = historyStore,
+    this.browserLayout = kIsWeb,
   });
   final ViewerData data;
   final Map<String, dynamic>? edits;
@@ -28,6 +29,7 @@ class EventHistoryPage extends StatefulWidget {
   final String? recordCutoff;
   final Future<Map<String, dynamic>> Function() loadBase;
   final String store;
+  final bool browserLayout;
   @override
   State<EventHistoryPage> createState() => _EventHistoryPageState();
 }
@@ -236,6 +238,179 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
       ? '端末に記録がありません（60日より前）'
       : 'この日の記録なし';
 
+  Widget _browserTable(Map<String, dynamic> week) {
+    final first = historyDate(week['from']);
+    final days = List.generate(
+      7,
+      (i) => historyDay(first.add(Duration(days: i))),
+    );
+    final machines = week['machines'] as List;
+    final recordedDays =
+        _index.keys
+            .where(
+              (d) =>
+                  d.compareTo(week['from'] as String) >= 0 &&
+                  d.compareTo(week['to'] as String) <= 0,
+            )
+            .toList()
+          ..sort();
+    final lastRecordDay = recordedDays.lastOrNull;
+    final allWeeks = historyWeeks(_base!, _edits);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text(
+            '${machines.length}機種${week['lineup_day'] == null ? '' : ' · 分類日：${week['lineup_day']}'}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        if (_saiwaichou)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              lastRecordDay == null
+                  ? 'この週は記録がないため赤字判定はしません。'
+                  : '赤字：$lastRecordDayまでの直近5暦日、優・良なし（空欄の日を含む）。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        for (final machine in machines)
+          Container(
+            key: ValueKey('history-card:${week['from']}:${machine['name']}'),
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.fromLTRB(10, 14, 10, 10),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              border: Border.all(color: const Color(0xffdce4ef)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  displayMachineName(machine['name'] as String),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    color:
+                        (_saiwaichou &&
+                                historyGradeGap(
+                                  allWeeks,
+                                  machine as Map,
+                                  lastRecordDay,
+                                )) ||
+                            (!_saiwaichou &&
+                                week['type'] == 'バラエティ' &&
+                                !(machine['results'] as List).contains('😍'))
+                        ? const Color(0xffb91c1c)
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${machine['count']}台',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < 7; i++)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 1),
+                          child: Builder(
+                            builder: (context) {
+                              final name = historySavedName(
+                                machine as Map,
+                                _index[days[i]] ?? {},
+                              );
+                              final grade = machine['results'][i] as String;
+                              final background = grade == '優'
+                                  ? const Color(0xfffff1ce)
+                                  : grade == '良'
+                                  ? const Color(0xffe7f4ed)
+                                  : const Color(0xfff4f7fb);
+                              final foreground = grade == '優'
+                                  ? const Color(0xff8a4900)
+                                  : grade == '良'
+                                  ? const Color(0xff17634c)
+                                  : const Color(0xff586576);
+                              return Column(
+                                children: [
+                                  Text(
+                                    '月火水木金土日'[i],
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  Text(
+                                    days[i].substring(8),
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Semantics(
+                                    label:
+                                        '${days[i]} ${displayMachineName(machine['name'] as String)} ${grade.isEmpty ? '空欄' : grade} ${name == null ? _missingRecord(days[i]) : 'データを開く'}',
+                                    child: Tooltip(
+                                      message: name == null
+                                          ? _missingRecord(days[i])
+                                          : '${days[i]}のデータを開く',
+                                      child: TextButton(
+                                        key: ValueKey(
+                                          'history-day:${week['from']}:${machine['name']}:$i',
+                                        ),
+                                        style: TextButton.styleFrom(
+                                          minimumSize: const Size(0, 64),
+                                          padding: EdgeInsets.zero,
+                                          backgroundColor: background,
+                                          foregroundColor: foreground,
+                                          disabledBackgroundColor: background,
+                                          disabledForegroundColor: foreground,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                        ),
+                                        onPressed: name == null
+                                            ? null
+                                            : () => _open(days[i], name),
+                                        child: Column(
+                                          children: [
+                                            Text(
+                                              grade.isEmpty ? '—' : grade,
+                                              style: const TextStyle(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            Text(
+                                              name == null ? '—' : '↗',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _table(Map<String, dynamic> w) {
     final first = historyDate(w['from']);
     final days = List.generate(
@@ -442,6 +617,11 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
       base,
       _edits,
     ).where((w) => w['type'] == _type).toList();
+    if (widget.browserLayout) {
+      weeks.sort(
+        (a, b) => (b['from'] as String).compareTo(a['from'] as String),
+      );
+    }
     if (!weeks.any((w) => w['from'] == _week)) {
       _week = weeks.isEmpty ? null : weeks.first['from'] as String;
     }
@@ -482,6 +662,47 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
               ],
               onChanged: (v) => setState(() => _week = v),
             ),
+          if (widget.browserLayout && selected != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                spacing: 4,
+                runSpacing: 4,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: weeks.indexOf(selected) < weeks.length - 1
+                        ? () => setState(
+                            () => _week =
+                                weeks[weeks.indexOf(selected) + 1]['from']
+                                    as String,
+                          )
+                        : null,
+                    icon: const Icon(Icons.chevron_left, size: 18),
+                    label: const Text('前の週'),
+                  ),
+                  TextButton(
+                    onPressed: weeks.indexOf(selected) == 0
+                        ? null
+                        : () => setState(
+                            () => _week = weeks.first['from'] as String,
+                          ),
+                    child: const Text('最新の週'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: weeks.indexOf(selected) > 0
+                        ? () => setState(
+                            () => _week =
+                                weeks[weeks.indexOf(selected) - 1]['from']
+                                    as String,
+                          )
+                        : null,
+                    icon: const Icon(Icons.chevron_right, size: 18),
+                    label: const Text('次の週'),
+                  ),
+                ],
+              ),
+            ),
           if (_status.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -494,7 +715,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
               child: Text('この種別の週表はまだありません。'),
             )
           else
-            _table(selected),
+            widget.browserLayout ? _browserTable(selected) : _table(selected),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: Text(
