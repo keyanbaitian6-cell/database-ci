@@ -126,7 +126,7 @@ try {
     assert.equal(await page.locator('[data-rack-step="-1"]').isDisabled(), true, '空き順の先頭に前は無い');
     await page.locator('[data-rack-step="1"]').click();
     assert.equal(await page.locator('#sheet-title').innerText(), '1201番台 🌈');
-    assert.match(await page.locator('[data-rack-step="1"]').innerText(), /次の台（1202番）/);
+    assert.match(await page.locator('[data-rack-step="1"]').innerText(), /次の台（1202番・/);
     await page.locator('[data-rack-step="-1"]').click();
     assert.equal(await page.locator('#sheet-title').innerText(), '1203番台');
     await sheet.getByRole('button', {name: '1203番台の🌈 付ける'}).click();

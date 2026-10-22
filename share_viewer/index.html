@@ -163,7 +163,9 @@
   }
   .date-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .date-bar .step { min-width: 44px; min-height: 36px; font-size: 18px; padding: 4px 0; }
-  .date-bar .rack-step { flex: 1; min-height: 36px; font-size: 15px; padding: 4px 8px; }
+  /* 前後の台・機種。機種名が長いときは1行に収めて「…」で省く（幅は2つで半分ずつ）。 */
+  .date-bar .rack-step { flex: 1 1 0; min-width: 0; min-height: 36px; font-size: 15px; padding: 4px 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .date-bar select {
     flex: 1; min-width: 0; min-height: 36px; font: inherit; font-size: 15px; text-align: center; text-align-last: center;
     border: 1px solid var(--color-steel); border-radius: 10px; background: var(--color-gallery-white); color: var(--color-ink);

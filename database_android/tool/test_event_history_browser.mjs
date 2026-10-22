@@ -18,7 +18,8 @@ await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const url=process.env.SHARE_PUBLIC_URL || `http://127.0.0.1:${server.address().port}/share/`;
 const id='AKfycbTEST'+'x'.repeat(40);
 const base={version:2,store:'nagamachiminami',symbols:['😀','😍'],user_blank_days:[],weeks:[
-  {type:'4台構成',from:'2026-10-05',to:'2026-10-11',machines:[{name:'Lテスト',record_name:null,count:4,results:['😀','','','','','','']}]},
+  {type:'4台構成',from:'2026-10-05',to:'2026-10-11',machines:[{name:'Lテスト',record_name:null,count:4,results:['😀','','','','','','']},
+    {name:'L下の機種',record_name:null,count:1,results:['','','','','','','']}]},
   {type:'バラエティ',from:'2026-09-28',to:'2026-10-04',machines:[{name:'週の機種',record_name:null,count:2,results:['','','','','','','😍']}]},
 ]};
 const history={format:'database-event-history',version:1,base,shared_editing:true,cells:[{store:base.store,type:'4台構成',week:'2026-10-05',machine:'Lテスト',day:'2026-10-05',value:'',updated_at:'2026-10-19T09:00:00.123456+09:00'}],
@@ -30,6 +31,7 @@ history.saiwaichou_variety.weeks.push({...structuredClone(history.saiwaichou_var
 const records=[{store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:101,games:1000,bb:4,rb:2},
   {store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:102,games:1500,bb:5,rb:3},
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:999,games:2000,bb:8,rb:4},
+  {store:base.store,day:'2026-10-05',machine:'L下の機種',rack:201,games:4000,bb:12,rb:7},
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:101,games:3000,bb:9,rb:5},
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:102,games:3500,bb:10,rb:6},
   {store:base.store,day:'2026-10-07',machine:'L+ﾃｽﾄ',rack:777,games:2000,bb:8,rb:4},
@@ -65,14 +67,21 @@ try{
   await page.locator('[data-event-history-open]').click();await page.waitForSelector('.history-table');
   assert.equal(await page.locator('#sheet-title').innerText(),'長町南のイベント履歴');
   assert.equal(await page.locator('.history-table td .history-symbol').first().inputValue(),'');
-  assert.equal(await page.locator('.history-table select').count(),7);
+  assert.equal(await page.locator('.history-table select').count(),14);
   const fixed=page.locator('.history-table tbody th').first();const left=(await fixed.boundingBox()).x;
   await page.locator('.history-overflow').evaluate(e=>e.scrollLeft=500);
   assert.ok(Math.abs((await fixed.boundingBox()).x-left)<2,'機種名を横スクロールで動かさない');
   if(width<=700) assert.equal(await page.locator('.history-overflow').evaluate(e=>e.scrollWidth>e.clientWidth),false,'スマホの7日表示は横スクロール不要');
   await page.locator('.history-overflow').evaluate(e=>e.scrollLeft=0);
-  await page.locator('[data-history-day="2026-10-05"]').click();
+  await page.locator('[data-history-machine="L ﾃｽﾄ"][data-history-day="2026-10-05"]').click();
   assert.equal(await page.locator('[data-sheet-day]').inputValue(),'2026-10-05');
+  // 機種の台一覧から、表の下の行の機種へ戻らずに送れる（2026-10-22 利用者「ディスクアップに行くボタンが絶対必要」）。
+  assert.equal(await page.locator('[data-machine-step="-1"]').isDisabled(),true,'表の先頭の機種に前は無い');
+  assert.match(await page.locator('[data-machine-step="1"]').innerText(),/次の機種（L下の機種）/);
+  await page.locator('[data-machine-step="1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'L下の機種');
+  assert.match(await page.locator('.sheet').innerText(),/201番/);
+  assert.equal(await page.locator('[data-machine-step="1"]').isDisabled(),true,'表の最後の機種に次は無い');
+  await page.locator('[data-machine-step="-1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'L テスト');
   assert.deepEqual(await page.locator('[data-sheet-day] option').evaluateAll(nodes=>nodes.map(n=>n.value)),['2026-10-06','2026-10-05']);
   assert.match(await page.locator('.sheet').innerText(),/101番/);assert.doesNotMatch(await page.locator('.sheet').innerText(),/999番/);
   await page.locator('[data-history-rack="0"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'101番台');
@@ -80,8 +89,14 @@ try{
   assert.equal(await page.locator('.sheet [data-close]').isVisible(),false,'重ねた画面では閉じるを隠す');
   assert.equal(await page.locator('[data-rack-step="-1"]').isDisabled(),true,'先頭の台に前は無い');
   await page.locator('[data-rack-step="1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'102番台');
-  assert.equal(await page.locator('[data-rack-step="1"]').isDisabled(),true,'末尾の台に次は無い');
-  await page.locator('[data-rack-step="-1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'101番台');
+  // この機種の最後の台の次は、表の下の行の機種の台。
+  assert.match(await page.locator('[data-rack-step="1"]').innerText(),/次の台（201番・L下の機種）/);
+  await page.locator('[data-rack-step="1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'201番台');
+  assert.equal(await page.locator('[data-rack-step="1"]').isDisabled(),true,'表の最後の台に次は無い');
+  const barOverflow=await page.locator('.sheet .rack-step').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().right-n.closest('.sheet').getBoundingClientRect().right));
+  assert.ok(barOverflow.every(v=>v<=0),`前後の台のボタンがはみ出す（${width}px）`);
+  await page.locator('[data-rack-step="-1"]').click();await page.locator('[data-rack-step="-1"]').click();
+  assert.equal(await page.locator('#sheet-title').innerText(),'101番台');
   // 台のデータで日付を送ってから次の台へ：隣の台も、いま見ている日（10/6）の記録を開く。
   await page.locator('[data-day-step="-1"]').click();assert.equal(await page.locator('[data-sheet-day]').inputValue(),'2026-10-06');
   await page.locator('[data-rack-step="1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'102番台');
