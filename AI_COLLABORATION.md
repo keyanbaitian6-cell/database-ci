@@ -8,6 +8,8 @@
   - 前後の台は、開いた一覧に並んでいた順で送る（`rackPage`・`rackNeighbor`）。画面ごとの並びは `EVENT_HISTORY.md` の同日の節に書いた。
   - iPhone閲覧（Flutter）には入れなかった。ページの切り替えで「閉じる」が無いことと、台のデータの部品がAndroidと共通であるため。
 - 試験：共有ページの画面試験5本に前後の台の確認を足した。既存の「重ねた画面で閉じるを押す」手順は、戻ってから閉じるように直した。`check_before_build.sh` は「ALL PASSED」（PC 410件・214件・UTC 27件、Flutter 654件・analyzeは情報のみ22件、JS 62本、閲覧ページと共有ページのstage）。iPhone Safariの実機表示は未確認。
+- 利用者「公開までお願い」により、`database-ci` の `main` へ `4879f5e` を早送りでpush（CIが1回動く）し、`database-share` の `main` へ `513ede8` を早送りでpushして公開した。公開ページの `app.mjs` に今回の変更があり、版の印 `533fc50e9f3a` が全体チェックのstageと一致することを確かめた。
+- 手元の `database-main` の `main` は、他の作業の未コミット変更（`AI_COLLABORATION.md` など）があるため、08a0174 のまま進めていない。次にこのフォルダでコミットする作業は、先に `database-ci` の `main`（4879f5e以降）を取り込むこと。
 - 環境メモ：新しいworktreeでは、gitで無視されている `database_android/assets/database_seed.json` が無く、Flutterの3件（試験・analyze・閲覧ページのビルド）が失敗した。本体のフォルダから写して流し直した。メモにあるPython（pythoncore-3.14）には rapidocr・onnxruntime が無いため、`database-main/database/.venv` のPythonを使った。
 
 ## 【CI失敗の調査：Windowsだけ週ボタンの表示確認で落ちた件】2026-10-22 Claude
