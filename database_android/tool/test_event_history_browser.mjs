@@ -28,6 +28,7 @@ history.saiwaichou_variety=JSON.parse(await fs.readFile(new URL('../test/fixture
 history.saiwaichou_variety=JSON.parse(JSON.stringify(history.saiwaichou_variety).replaceAll('2台機種','L スマスロ 長い機種名の折り返しを確認するテスト機種'));
 history.saiwaichou_variety.weeks.push({...structuredClone(history.saiwaichou_variety.weeks[0]),week:'2026-10-12',lineup_day:'2026-10-12'});
 const records=[{store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:101,games:1000,bb:4,rb:2},
+  {store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:102,games:1500,bb:5,rb:3},
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:999,games:2000,bb:8,rb:4},
   {store:base.store,day:'2026-10-07',machine:'L+ﾃｽﾄ',rack:777,games:2000,bb:8,rb:4},
   {store:base.store,day:'2026-10-19',machine:'同名機種',rack:90,games:1000,bb:4,rb:2},
@@ -73,7 +74,14 @@ try{
   assert.deepEqual(await page.locator('[data-sheet-day] option').evaluateAll(nodes=>nodes.map(n=>n.value)),['2026-10-06','2026-10-05']);
   assert.match(await page.locator('.sheet').innerText(),/101番/);assert.doesNotMatch(await page.locator('.sheet').innerText(),/999番/);
   await page.locator('[data-history-rack="0"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'101番台');
+  // 履歴から開いた台のデータでは「閉じる」を出さず（履歴ごと閉じて分かりにくい）、次の台・前の台へ送れる（2026-10-22）。
+  assert.equal(await page.locator('.sheet [data-close]').isVisible(),false,'重ねた画面では閉じるを隠す');
+  assert.equal(await page.locator('[data-rack-step="-1"]').isDisabled(),true,'先頭の台に前は無い');
+  await page.locator('[data-rack-step="1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'102番台');
+  assert.equal(await page.locator('[data-rack-step="1"]').isDisabled(),true,'末尾の台に次は無い');
+  await page.locator('[data-rack-step="-1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'101番台');
   await page.locator('[data-back]').click();await page.locator('[data-back]').click();
+  assert.equal(await page.locator('.sheet [data-close]').isVisible(),true,'履歴の一覧では閉じるが出る');
   await page.locator('[data-history-type="バラエティ"]').click();assert.match(await page.locator('.sheet').innerText(),/分類日：2026-10-13/);
   await page.locator('[data-close]').click();
   failHistory=true;
@@ -215,6 +223,7 @@ try{
   await page.locator('[data-history-rack="0"]').click();
   assert.equal(await page.locator('#sheet-title').innerText(),'610番台');
   await page.locator('[data-back]').click();await page.locator('[data-back]').click();
+  assert.equal(await page.locator('.sheet [data-close]').isVisible(),true,'履歴の一覧では閉じるが出る');
   assert.equal(await page.locator('[data-history-week]').inputValue(),'2026-10-19','台データから戻っても選択週を保持');
   assert.deepEqual(errors,[]);
   assert.ok(localRequests.every(r=>!r.includes('event_history.json')),'履歴JSONを公開アセットから取得しない');

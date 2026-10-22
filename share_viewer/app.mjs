@@ -363,8 +363,10 @@ function titleOfView(view) {
  * 押したとき（push で次の画面。いまの画面も渡す）、[onChange] が選択欄を変えたとき（rerender で描き直す）。
  * 上に固定した帯に、戻る・見出し・閉じると、日付送り（前の日・日付・次の日）。日を変えてもスクロール位置はそのまま。
  * 「戻る」（Esc）で前の画面へ、開いていた折りたたみ・スクロール位置のまま戻る。
+ * [backOnly]：重ねた画面では「閉じる」を隠し、戻るだけにする（イベント履歴：閉じると履歴ごと消えて分かりにくいため、2026-10-22）。
+ * [rackStep]：台のデータの画面に「前の台・次の台」を出す。(view, 向き) から隣の台を返す（無ければ null）。
  */
-function openSheet({first, body, onRow, onChange, onAction}) {
+function openSheet({first, body, onRow, onChange, onAction, backOnly, rackStep}) {
   const views = [first];
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -391,15 +393,25 @@ function openSheet({first, body, onRow, onChange, onAction}) {
         <button type="button" class="pill pill-outline step" data-day-step="-1" aria-label="次の日"${index <= 0 ? ' disabled' : ''}>›</button>
       </div>`;
   };
+  const rackStepBar = (view) => {
+    if (!rackStep || view.kind !== 'rack') return '';
+    const before = rackStep(view, -1), after = rackStep(view, 1);
+    return `<div class="date-bar">
+        <button type="button" class="pill pill-outline rack-step" data-rack-step="-1"${before ? '' : ' disabled'}>‹ 前の台${before ? `（${before.rack}番）` : ''}</button>
+        <button type="button" class="pill pill-outline rack-step" data-rack-step="1"${after ? '' : ' disabled'}>次の台${after ? `（${after.rack}番）` : ''} ›</button>
+      </div>`;
+  };
   const render = () => {
     const view = views[views.length - 1];
     sheet.classList.toggle('history-sheet', view.kind === 'history');
+    // 隠した「閉じる」も残す（別の接続先へ切り替えるとき、開いたシートをこのボタンで閉じるため）。
+    const hideClose = backOnly && views.length > 1;
     sheet.innerHTML = `
       <div class="sheet-head">
         <div class="head-row">${views.length > 1 ? '<button type="button" class="pill pill-outline" data-back>‹ 戻る</button>' : ''}
           <span class="head-title">${esc(titleOfView(view))}</span>
-          <button type="button" class="pill pill-outline" data-close>閉じる</button></div>
-        ${dateBar(view)}
+          <button type="button" class="pill pill-outline" data-close${hideClose ? ' style="visibility:hidden" tabindex="-1" aria-hidden="true"' : ''}>閉じる</button></div>
+        ${dateBar(view)}${rackStepBar(view)}
       </div>${body(view)}`;
     if (view.moreOpen) sheet.querySelector('details.more')?.setAttribute('open', '');
     sheet.scrollTop = view.scroll ?? 0;
@@ -444,6 +456,12 @@ function openSheet({first, body, onRow, onChange, onAction}) {
       const years = winRateYears(state.model.byDay, state.model.summaries, state.store);
       const next = years[years.indexOf(view.year) + Number(yearStep.dataset.yearStep)];
       if (next) { view.year = next; view.scroll = 0; render(); }
+      return;
+    }
+    const rackMove = e.target.closest('[data-rack-step]');
+    if (rackMove && rackStep) {
+      const next = rackStep(view, Number(rackMove.dataset.rackStep));
+      if (next) { view.rack = next; view.scroll = 0; render(); }
       return;
     }
     const step = e.target.closest('[data-day-step]');
@@ -1205,7 +1223,13 @@ function openEventHistory() {
     view.items=racks;
     return `<p class="store">${esc(storeLabel(location))}　${dateLabel(view.day)}</p><h2 id="sheet-title" class="long">${esc(displayMachineName(view.machine))}</h2><p class="caption">台を押すと、その日のデータを開きます。</p>${racks.length?tapList(racks.map((r,i)=>({lead:'',attrs:`data-history-rack="${i}"`,main:`<span class="machine num" style="display:block">${r.rack}番${rackMark(r)}</span><span class="rack num">BB ${r.bb}・RB ${r.rb}</span>`,right:`${netCell(r)}<span class="small num">${count(r.games)}G</span>`}))):'<p class="note">この日の機種データはありません。</p>'}`;
   };
-  state.historyRedraw=openSheet({first:{kind:'history',type:types[0]},
+  state.historyRedraw=openSheet({first:{kind:'history',type:types[0]}, backOnly:true,
+    // 同じ日・同じ機種の台を台番号の順に。下の台が次の台。
+    rackStep:(view,dir)=>{
+      const r=view.rack, list=(state.model.byDay.get(`${r.store}|${r.day}`)??[]).filter(x=>x.machine===r.machine).sort((a,b)=>a.rack-b.rack);
+      const i=list.findIndex(x=>x.rack===r.rack);
+      return i<0?null:list[i+dir]??null;
+    },
     body:view=>view.kind==='history'?historyView(view):view.kind==='historyMachine'?machineView(view):rackView(view),
     onAction:(action,view)=>{
       if(action.dataset.historyType) { view.type=action.dataset.historyType; view.week=null; }
