@@ -30,6 +30,8 @@ history.saiwaichou_variety.weeks.push({...structuredClone(history.saiwaichou_var
 const records=[{store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:101,games:1000,bb:4,rb:2},
   {store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:102,games:1500,bb:5,rb:3},
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:999,games:2000,bb:8,rb:4},
+  {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:101,games:3000,bb:9,rb:5},
+  {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:102,games:3500,bb:10,rb:6},
   {store:base.store,day:'2026-10-07',machine:'L+ﾃｽﾄ',rack:777,games:2000,bb:8,rb:4},
   {store:base.store,day:'2026-10-19',machine:'同名機種',rack:90,games:1000,bb:4,rb:2},
   {store:'saiwaichou',day:'2026-10-19',machine:'同名機種',rack:610,games:1000,bb:4,rb:2,jo_net:2500}];
@@ -80,6 +82,11 @@ try{
   await page.locator('[data-rack-step="1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'102番台');
   assert.equal(await page.locator('[data-rack-step="1"]').isDisabled(),true,'末尾の台に次は無い');
   await page.locator('[data-rack-step="-1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'101番台');
+  // 台のデータで日付を送ってから次の台へ：隣の台も、いま見ている日（10/6）の記録を開く。
+  await page.locator('[data-day-step="-1"]').click();assert.equal(await page.locator('[data-sheet-day]').inputValue(),'2026-10-06');
+  await page.locator('[data-rack-step="1"]').click();assert.equal(await page.locator('#sheet-title').innerText(),'102番台');
+  assert.equal(await page.locator('[data-sheet-day]').inputValue(),'2026-10-06','日付は送ったまま');
+  assert.match(await page.locator('.sheet').innerText(),/3,500G/);
   await page.locator('[data-back]').click();await page.locator('[data-back]').click();
   assert.equal(await page.locator('.sheet [data-close]').isVisible(),true,'履歴の一覧では閉じるが出る');
   await page.locator('[data-history-type="バラエティ"]').click();assert.match(await page.locator('.sheet').innerText(),/分類日：2026-10-13/);

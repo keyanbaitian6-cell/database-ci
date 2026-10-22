@@ -78,8 +78,15 @@ try {
     await page.locator('.sheet .row[data-suffix="7"]').first().click();
     assert.equal(await page.locator('.head-title').innerText(), '末尾7の内訳');
     assert.match(await sheet.innerText(), /3台・2日・6件/);
+    // 内訳の並び（日ごと）の順で前後の台へ（2026-10-22）。押す前に画面の並びを読んでおく。
+    const shown = (await page.locator('.sheet .row[data-suffix-rack]').allInnerTexts()).map(t => /(\d+)番/.exec(t)[1]);
+    const at = shown.indexOf('1007');
     await page.locator('.sheet .row', {hasText: '1007番'}).first().click();
     assert.equal(await page.locator('#sheet-title').innerText(), '1007番台');
+    assert.equal(await page.locator('[data-rack-step="-1"]').isDisabled(), at === 0, '先頭の台に前は無い');
+    await page.locator('[data-rack-step="1"]').click();
+    assert.equal(await page.locator('#sheet-title').innerText(), `${shown[at + 1]}番台`, '内訳の次の行の台');
+    assert.match(await page.locator('[data-rack-step="-1"]').innerText(), /前の台（1007番）/);
     await page.locator('[data-back]').click();
     await page.locator('[data-back]').click();
     assert.equal(await page.locator('.head-title').innerText(), '末尾別データまとめ');
@@ -87,6 +94,7 @@ try {
     await page.locator('.sheet .row[data-suffix-day="2026-10-09"]').click();
     assert.match(await sheet.innerText(), /平均差枚の首位：末尾7/);
     // P-STATION にも出す（2026-10-12「共有のP-stationの方にも末尾データほしいです」）。末尾4・9は無い。
+    await page.locator('[data-back]').click();
     await page.locator('[data-close]').click();
     await page.locator('[data-store="pscube:c740601:20"]').click();
     await page.getByRole('button', {name: '末尾別データまとめ'}).click();

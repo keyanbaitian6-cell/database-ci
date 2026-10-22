@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 【共有カレンダー：重ねた画面の「閉じる」を隠し、前後の台ボタンを全シートへ】2026-10-22 Claude
+
+- 利用者指摘：共有カレンダーのイベント履歴で、台のデータから「閉じる」を押すと履歴ごと閉じて分かりにくい。次の台（下の台）へ送るボタンがほしい。クラウドのセッションが履歴シートだけに入れ（`ec9ac32`、ブランチ `claude/event-history-close-next-machine-4dr838`）、デスクトップで続けた。
+- 利用者の回答「日付シート・回っていない台・バラエティ🌈・末尾別の画面にも付ける」「あとは良いと思う判断で」により、`share_viewer/app.mjs` で次のように広げた。
+  - 重ねた画面で「閉じる」を隠すのを、全シートの共通動作にした（履歴だけの指定 `backOnly` をやめた）。
+  - 前後の台は、開いた一覧に並んでいた順で送る（`rackPage`・`rackNeighbor`）。画面ごとの並びは `EVENT_HISTORY.md` の同日の節に書いた。
+  - iPhone閲覧（Flutter）には入れなかった。ページの切り替えで「閉じる」が無いことと、台のデータの部品がAndroidと共通であるため。
+- 試験：共有ページの画面試験5本に前後の台の確認を足した。既存の「重ねた画面で閉じるを押す」手順は、戻ってから閉じるように直した。`check_before_build.sh` は「ALL PASSED」（PC 410件・214件・UTC 27件、Flutter 654件・analyzeは情報のみ22件、JS 62本、閲覧ページと共有ページのstage）。iPhone Safariの実機表示は未確認。
+- 環境メモ：新しいworktreeでは、gitで無視されている `database_android/assets/database_seed.json` が無く、Flutterの3件（試験・analyze・閲覧ページのビルド）が失敗した。本体のフォルダから写して流し直した。メモにあるPython（pythoncore-3.14）には rapidocr・onnxruntime が無いため、`database-main/database/.venv` のPythonを使った。
+
 ## 【CI失敗の調査：Windowsだけ週ボタンの表示確認で落ちた件】2026-10-22 Claude
 
 - 利用者がdatabase-ciのメール通知（Regression checks の `pc (windows-latest, UTC)` 失敗）のスクリーンショットを見せ、「何のエラーか」と質問。落ちたのは `test_saiwaichou_history` の `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day` 1件で、`weekly_button().winfo_viewable()` が 0（410件中1件）。Ubuntuのpcジョブとfullは成功。

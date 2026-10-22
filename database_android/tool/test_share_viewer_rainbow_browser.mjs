@@ -122,6 +122,13 @@ try {
     await sheet.locator('button.row', {hasText: '1203番'}).click();
     assert.equal(await page.locator('#sheet-title').innerText(), '1203番台');
     assert.ok(await page.getByRole('button', {name: '前の日'}).isDisabled());
+    // 前後の台は画面の並び（空き順）で送る。台番号順ではない（2026-10-22）。
+    assert.equal(await page.locator('[data-rack-step="-1"]').isDisabled(), true, '空き順の先頭に前は無い');
+    await page.locator('[data-rack-step="1"]').click();
+    assert.equal(await page.locator('#sheet-title').innerText(), '1201番台 🌈');
+    assert.match(await page.locator('[data-rack-step="1"]').innerText(), /次の台（1202番）/);
+    await page.locator('[data-rack-step="-1"]').click();
+    assert.equal(await page.locator('#sheet-title').innerText(), '1203番台');
     await sheet.getByRole('button', {name: '1203番台の🌈 付ける'}).click();
     await waitPosts(2);
     assert.ok(posts[1].marks.some(m => m.rack === 1203 && m.on === true));

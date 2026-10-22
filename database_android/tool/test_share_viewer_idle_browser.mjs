@@ -82,7 +82,20 @@ try {
     assert.match(await sheet.innerText(), /差枚\s*-250/);
     assert.match(await sheet.innerText(), /最大持玉\s*120/);
     assert.match(await sheet.innerText(), /最終🌈：10\/2（6日前）/, '台のデータに最終🌈');
+    assert.equal(await page.locator('[data-rack-step]').count(), 0, '一覧が1台だけなら前後の台は出さない');
+    assert.equal(await page.locator('.sheet [data-close]').isVisible(), false, '重ねた画面では閉じるを隠す');
     await page.getByRole('button', {name: '‹ 戻る'}).click();
+    // 2台のとき：一覧の順（期間の長い順）で前後の台へ（2026-10-22）。
+    await page.locator('select[data-idle="games"]').selectOption('1000');
+    const idleOrder = (await page.locator('.sheet .row[data-idle-rack] .rack').allInnerTexts()).map(t => /(\d+)番/.exec(t)[1]);
+    assert.equal(idleOrder.length, 2);
+    await page.locator('.sheet .row[data-idle-rack="0"]').click();
+    assert.equal(await page.locator('[data-rack-step="-1"]').isDisabled(), true, '先頭の台に前は無い');
+    await page.locator('[data-rack-step="1"]').click();
+    assert.equal(await page.locator('#sheet-title').innerText(), `${idleOrder[1]}番台`);
+    assert.equal(await page.locator('[data-rack-step="1"]').isDisabled(), true, '末尾の台に次は無い');
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
+    await page.locator('select[data-idle="games"]').selectOption('500');
     assert.equal(await page.locator('select[data-idle="games"]').inputValue(), '500');
     // 日付を戻すと数え直す（10/3 では10/1〜10/3 の3日間なので、7日以上には当たらない）。
     await page.locator('select[data-sheet-day]').selectOption('2026-10-03');

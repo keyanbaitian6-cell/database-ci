@@ -159,6 +159,14 @@ try {
     assert.match(rack, /RB確率\s*1\/444\.4/);
     assert.match(rack, /合成確率\s*1\/173\.9/);
     assert.match(rack, /最大持玉\s*1,500/);
+    // 重ねた画面では「閉じる」を出さない。台のデータは台一覧の順（台番号順）で前後の台へ送れる（2026-10-22）。
+    assert.equal(await page.locator('.sheet [data-close]').isVisible(), false, '重ねた画面では閉じるを隠す');
+    await page.locator('[data-rack-step="1"]').click();
+    assert.equal(await page.locator('#sheet-title').innerText(), '205番台');
+    assert.match(await page.locator('[data-rack-step="-1"]').innerText(), /前の台（204番）/);
+    await page.locator('[data-rack-step="-1"]').click();
+    await page.locator('[data-rack-step="-1"]').click();
+    assert.equal(await page.locator('#sheet-title').innerText(), '203番台');
     await page.getByRole('button', {name: '‹ 戻る'}).click();
     assert.equal(await page.locator('#sheet-title').innerText(), 'ネオアイム');
     await page.keyboard.press('Escape');
@@ -171,6 +179,7 @@ try {
     assert.equal(await page.locator('.sheet-head').evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 255, 255)');
     const sheetOverflow = await page.locator('.sheet').evaluate(e => e.scrollWidth - e.clientWidth);
     assert.ok(sheetOverflow <= 0, `シートが横にはみ出す（${width}px）`);
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
     await page.getByRole('button', {name: '閉じる'}).click();
     await page.waitForSelector('.sheet', {state: 'detached'});
     // P-STATION（データはP’s CUBE）：元グラフの差枚、共有のイベント。表記は P-STATION だけ。
@@ -194,6 +203,8 @@ try {
     assert.match(pRack, /差枚\s*\+4,321/);
     assert.match(pRack, /MY\s*3,000/, 'P-STATIONはMY');
     assert.ok(!/最大持玉/.test(pRack));
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
     await page.getByRole('button', {name: '閉じる'}).click();
     // 幸町は選んだまま次に開いても残る。月の切り替え。
     await page.getByRole('button', {name: '幸町'}).click();
