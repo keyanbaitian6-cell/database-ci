@@ -19,6 +19,7 @@ class EventHistoryPage extends StatefulWidget {
     this.remoteUrl,
     this.recordCutoff,
     this.loadBase = loadHistoryBase,
+    this.store = historyStore,
   });
   final ViewerData data;
   final Map<String, dynamic>? edits;
@@ -26,6 +27,7 @@ class EventHistoryPage extends StatefulWidget {
   final String? remoteUrl;
   final String? recordCutoff;
   final Future<Map<String, dynamic>> Function() loadBase;
+  final String store;
   @override
   State<EventHistoryPage> createState() => _EventHistoryPageState();
 }
@@ -33,15 +35,21 @@ class EventHistoryPage extends StatefulWidget {
 class _EventHistoryPageState extends State<EventHistoryPage> {
   Map<String, dynamic>? _base;
   Map<String, dynamic> _edits = emptyHistoryEdits();
-  late final _index = historyRecordIndex(widget.data.records);
+  late final _index = historyRecordIndex(
+    widget.data.records,
+    store: widget.store,
+  );
   String _type = historyTypes.first;
   String? _week, _error;
   String _status = '';
   bool _busy = false;
-  bool get _editable => widget.onSave != null && !kIsWeb;
+  bool get _saiwaichou => widget.store == saiwaichouHistoryStore;
+  String get _title => _saiwaichou ? '幸町のバラエティ履歴' : '長町南のイベント履歴';
+  bool get _editable => !_saiwaichou && widget.onSave != null && !kIsWeb;
   @override
   void initState() {
     super.initState();
+    if (_saiwaichou) _type = 'バラエティ';
     _load();
   }
 
@@ -61,23 +69,34 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
           if (raw is! Map || raw['base'] == null) {
             throw const FormatException('編集の反映にはApps Scriptの更新が必要です。');
           }
-          base = parseHistoryBase(raw['base']);
-          edits = Map<String, dynamic>.from(raw);
+          final document = historyDocumentForStore(raw, widget.store);
+          base = parseHistoryBase(document['base']);
+          edits = document;
           cleanHistoryEdits(edits, base);
           saveViewerSetting(key, jsonEncode(raw));
         } on Object catch (error) {
           final cached = loadViewerSetting(key);
           if (cached == null) rethrow;
           raw = jsonDecode(cached);
-          base = parseHistoryBase(raw['base']);
-          edits = Map<String, dynamic>.from(raw as Map);
+          final document = historyDocumentForStore(raw, widget.store);
+          base = parseHistoryBase(document['base']);
+          edits = document;
           status = '最新の履歴を取得できません。保存済みの内容を表示しています。$error';
         }
       } else {
-        base = await widget.loadBase();
-        edits = widget.edits ?? emptyHistoryEdits();
-        status = _editable ? '編集は端末に保存します。バックアップをPCへ取り込むと共有へ反映します。' : '';
+        base = _saiwaichou ? saiwaichouHistoryBase() : await widget.loadBase();
+        edits = historyEditsForStore(
+          widget.edits ?? emptyHistoryEdits(),
+          widget.store,
+        );
+        status = _saiwaichou
+            ? '優・良の入力・修正はPCで行います。'
+            : _editable
+            ? '編集は端末に保存します。バックアップをPCへ取り込むと共有へ反映します。'
+            : '';
       }
+      if (base['store'] != widget.store)
+        throw const FormatException('履歴の店舗が一致しません。');
       final rejected =
           cleanHistoryEdits(edits, base).rejected +
           (edits['rejected'] is int ? edits['rejected'] as int : 0);
@@ -141,7 +160,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
     MaterialPageRoute<void>(
       builder: (_) => ViewerMachinePage(
         data: widget.data,
-        store: historyStore,
+        store: widget.store,
         machine: name,
         day: day,
       ),
@@ -238,7 +257,9 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
             Text(
               displayMachineName(m['name'] as String),
               style:
-                  w['type'] == 'バラエティ' && !(m['results'] as List).contains('😍')
+                  !_saiwaichou &&
+                      w['type'] == 'バラエティ' &&
+                      !(m['results'] as List).contains('😍')
                   ? const TextStyle(color: Color(0xffb91c1c))
                   : null,
               maxLines: 2,
@@ -426,7 +447,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
     }
     final selected = weeks.where((w) => w['from'] == _week).firstOrNull;
     return Scaffold(
-      appBar: AppBar(title: const Text('長町南のイベント履歴')),
+      appBar: AppBar(title: Text(_title)),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
@@ -436,7 +457,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
             initialValue: _type,
             decoration: const InputDecoration(labelText: 'イベント種別'),
             items: [
-              for (final t in historyTypes)
+              for (final t in historyTypesForStore(widget.store))
                 DropdownMenuItem(value: t, child: Text(t)),
             ],
             onChanged: _busy
@@ -474,9 +495,13 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
             )
           else
             _table(selected),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Text('記号の意味は未設定です。「開く」は、その機種・その日の保存データを表示します。'),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Text(
+              _saiwaichou
+                  ? '2,500枚以上＝優、0〜2,499枚＝良。マイナス・差枚不明は空欄です。入力・修正はPCのみ。'
+                  : '記号の意味は未設定です。「開く」は、その機種・その日の保存データを表示します。',
+            ),
           ),
         ],
       ),

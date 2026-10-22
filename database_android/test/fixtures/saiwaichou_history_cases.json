@@ -1,0 +1,164 @@
+{
+  "format": "database-event-history",
+  "version": 1,
+  "weeks": [],
+  "cells": [],
+  "links": [],
+  "base": {
+    "version": 2,
+    "store": "nagamachiminami",
+    "symbols": [
+      "😍",
+      "😀"
+    ],
+    "weeks": [
+      {
+        "type": "バラエティ",
+        "from": "2026-10-19",
+        "to": "2026-10-25",
+        "machines": [
+          {
+            "name": "同名機種",
+            "count": 1,
+            "record_name": "同名機種",
+            "results": [
+              "😍",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "saiwaichou_variety": {
+    "format": "database-event-history",
+    "version": 1,
+    "weeks": [
+      {
+        "store": "saiwaichou",
+        "type": "バラエティ",
+        "week": "2026-10-19",
+        "lineup_day": "2026-10-19",
+        "updated_at": "2026-10-22T00:00:00Z",
+        "removed": false,
+        "machines": [
+          {
+            "name": "同名機種",
+            "record_name": "同名機種",
+            "count": 1
+          },
+          {
+            "name": "2台機種",
+            "record_name": "2台機種",
+            "count": 2
+          }
+        ]
+      },
+      {
+        "store": "saiwaichou",
+        "type": "バラエティ",
+        "week": "2026-10-26",
+        "lineup_day": "2026-10-26",
+        "updated_at": "2026-10-22T00:00:00Z",
+        "removed": false,
+        "machines": [
+          {
+            "name": "3台機種",
+            "count": 3
+          }
+        ]
+      }
+    ],
+    "cells": [
+      {
+        "store": "saiwaichou",
+        "type": "バラエティ",
+        "week": "2026-10-19",
+        "machine": "同名機種",
+        "day": "2026-10-19",
+        "value": "優",
+        "updated_at": "2026-10-22T00:00:00Z",
+        "device": "pc"
+      },
+      {
+        "store": "saiwaichou",
+        "type": "バラエティ",
+        "week": "2026-10-19",
+        "machine": "2台機種",
+        "day": "2026-10-20",
+        "value": "良",
+        "updated_at": "2026-10-22T00:00:00Z",
+        "device": "pc"
+      },
+      {
+        "store": "saiwaichou",
+        "type": "バラエティ",
+        "week": "2026-10-19",
+        "machine": "同名機種",
+        "day": "2026-10-21",
+        "value": "😍",
+        "updated_at": "2026-10-22T00:00:00Z",
+        "device": "pc"
+      },
+      {
+        "store": "nagamachiminami",
+        "type": "バラエティ",
+        "week": "2026-10-19",
+        "machine": "同名機種",
+        "day": "2026-10-19",
+        "value": "優",
+        "updated_at": "2026-10-22T00:00:00Z",
+        "device": "pc"
+      },
+      {
+        "store": "saiwaichou",
+        "type": "バラエティ",
+        "week": "2026-10-19",
+        "machine": "存在しない機種",
+        "day": "2026-10-19",
+        "value": "良",
+        "updated_at": "2026-10-22T00:00:00Z",
+        "device": "pc"
+      }
+    ],
+    "links": [],
+    "base": {
+      "version": 2,
+      "store": "saiwaichou",
+      "symbols": [
+        "優",
+        "良"
+      ],
+      "user_blank_days": [],
+      "weeks": []
+    }
+  },
+  "expected": {
+    "rejected": 4,
+    "results": [
+      [
+        "優",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      [
+        "",
+        "良",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    ]
+  }
+}

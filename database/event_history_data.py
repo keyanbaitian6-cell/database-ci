@@ -3,14 +3,34 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import json
+import math
 import re
 import unicodedata
 
 STORE = 'nagamachiminami'
+SAIWAI_STORE = 'saiwaichou'
+VARIETY_KEY = 'saiwaichou_variety'
 KINDS = ('4台構成', '半列', 'バラエティ')
 ASSET = Path(__file__).resolve().parents[1] / 'database_android/assets/event_history.json'
 FILE_NAME = 'database-event-history.json'
 FORMAT = 'database-event-history'
+
+
+def saiwaichou_base():
+    """幸町はPCで作成する週表だけ。長町南の画像転記と記号を混ぜない。"""
+    return dict(version=2, store=SAIWAI_STORE, symbols=['優', '良'], user_blank_days=[], weeks=[])
+
+
+def store_edits(raw, location):
+    if location == STORE:
+        return raw
+    if location != SAIWAI_STORE:
+        raise ValueError('対応していない店舗です。')
+    return raw.get(VARIETY_KEY, empty_edits())
+
+
+def store_kinds(location):
+    return ('バラエティ',) if location == SAIWAI_STORE else KINDS
 
 
 def day(value):
@@ -53,16 +73,19 @@ def machine(raw, symbols, results=True):
 
 
 def validate_base(raw):
-    if not isinstance(raw, dict) or raw.get('version') != 2 or raw.get('store') != STORE:
+    if not isinstance(raw, dict) or raw.get('version') != 2 or raw.get('store') not in (STORE, SAIWAI_STORE):
         raise ValueError('履歴ファイルの形式が違います。')
     symbols = raw.get('symbols')
+    location = raw['store']
+    if location == SAIWAI_STORE and symbols != ['優', '良']:
+        raise ValueError('幸町の評価は優・良だけです。')
     if not isinstance(symbols, list) or not symbols or any(not text(v) or len(v) > 16 for v in symbols) or len(set(symbols)) != len(symbols):
         raise ValueError('記号一覧の形式が違います。')
     if not isinstance(raw.get('weeks'), list):
         raise ValueError('週の一覧がありません。')
     occupied, weeks = set(), []
     for w in raw['weeks']:
-        if not isinstance(w, dict) or w.get('type') not in KINDS:
+        if not isinstance(w, dict) or w.get('type') not in store_kinds(location):
             raise ValueError('イベント種別が読めません。')
         first, last = day(w.get('from')), day(w.get('to'))
         if first.weekday() != 0 or last - first != timedelta(days=6) or first in occupied:
@@ -71,6 +94,8 @@ def validate_base(raw):
         if not isinstance(w.get('machines'), list):
             raise ValueError('機種一覧がありません。')
         machines = [machine(m, symbols) for m in w['machines']]
+        if location == SAIWAI_STORE and any(m['count'] > 2 for m in machines):
+            raise ValueError('幸町のバラエティは1〜2台機種です。')
         if len({m['name'] for m in machines}) != len(machines):
             raise ValueError('週の機種名が重複しています。')
         weeks.append(dict(type=w['type'], **{'from': first.isoformat(), 'to': last.isoformat()}, machines=machines))
@@ -79,7 +104,7 @@ def validate_base(raw):
         raise ValueError('空欄の日付が読めません。')
     for d in blanks:
         day(d)
-    return dict(version=2, store=STORE, symbols=list(symbols), user_blank_days=blanks, weeks=weeks)
+    return dict(version=2, store=location, symbols=list(symbols), user_blank_days=blanks, weeks=weeks)
 
 
 def load_base(path=ASSET):
@@ -93,7 +118,7 @@ def empty_edits():
     return dict(format=FORMAT, version=1, cells=[], weeks=[], links=[])
 
 
-def validate_envelope(raw):
+def validate_envelope(raw, *, nested=False):
     """バックアップの外枠だけを検証する。個別の古い編集で台データを止めない。"""
     if not isinstance(raw, dict) or raw.get('format') != FORMAT or raw.get('version') != 1:
         raise ValueError('履歴編集の形式が違います。')
@@ -101,10 +126,16 @@ def validate_envelope(raw):
         raise ValueError('履歴編集の一覧が読めません。')
     if any(len(raw.get(k, [])) > 30000 for k in ('cells', 'weeks', 'links')):
         raise ValueError('履歴編集の保存件数の上限（各30,000件）を超えるため保存できません。')
+    if VARIETY_KEY in raw:
+        if nested:
+            raise ValueError('幸町の履歴を入れ子にできません。')
+        validate_envelope(raw[VARIETY_KEY], nested=True)
 
 
 def clean_edits(raw, base, rejected_items=None):
     validate_envelope(raw)
+    location = base['store']
+    max_racks = 2 if location == SAIWAI_STORE else 3
     out, rejected = empty_edits(), 0
     def reject(group, value):
         nonlocal rejected
@@ -115,16 +146,16 @@ def clean_edits(raw, base, rejected_items=None):
     occupied = {w['from']: w['type'] for w in base['weeks']}
     for w in raw.get('weeks', []):
         try:
-            if w.get('store') != STORE or w.get('type') != 'バラエティ' or type(w.get('removed', False)) is not bool:
+            if w.get('store') != location or w.get('type') != 'バラエティ' or type(w.get('removed', False)) is not bool:
                 raise ValueError()
             first, lineup = day(w.get('week')), day(w.get('lineup_day'))
             stamp(w.get('updated_at'))
             if first.weekday() or not 0 <= (lineup - first).days <= 6 or occupied.get(w['week'], 'バラエティ') != 'バラエティ':
                 raise ValueError()
             machines = [machine(m, base['symbols'], False) for m in w['machines']]
-            if not machines or any(m['count'] > 3 for m in machines) or len({m['name'] for m in machines}) != len(machines):
+            if not machines or any(m['count'] > max_racks for m in machines) or len({m['name'] for m in machines}) != len(machines):
                 raise ValueError()
-            entry = dict(store=STORE, type='バラエティ', week=w['week'], lineup_day=w['lineup_day'],
+            entry = dict(store=location, type='バラエティ', week=w['week'], lineup_day=w['lineup_day'],
                          machines=machines, updated_at=w['updated_at'], removed=w.get('removed', False))
             key = ('バラエティ', w['week'])
             prior = next((v for v in out['weeks'] if v['week'] == w['week']), None)
@@ -142,13 +173,13 @@ def clean_edits(raw, base, rejected_items=None):
         entries = {}
         for c in raw.get(group, []):
             try:
-                if c.get('store') != STORE or not text(c.get('machine')):
+                if c.get('store') != location or not text(c.get('machine')):
                     raise ValueError()
                 stamp(c.get('updated_at'))
                 scoped = group == 'cells' or 'week' in c or 'type' in c
                 entry = {k: c[k] for k in ('store', 'machine', 'updated_at')}
                 if scoped:
-                    if c.get('type') not in KINDS:
+                    if c.get('type') not in store_kinds(location):
                         raise ValueError()
                     first = day(c.get('week'))
                     w = weeks[(c['type'], c['week'])]
@@ -185,6 +216,8 @@ def edit_key(group, c):
 def merge_edits(stored, incoming, base, *, count_stored_rejected=True):
     """固定済みの週の食い違いは除外し、ほかの台データの取り込みを妨げない。"""
     validate_envelope(incoming)
+    if 'unreadable_raw' in stored or 'unreadable_raw' in incoming:
+        raise ValueError('履歴の原文が読めません。原本とバックアップを保持してください。')
     orphans = {}
     current, old_bad = clean_edits(stored, base, orphans)
     fixed = {edit_key('weeks', w): w for w in current['weeks']}
@@ -220,8 +253,17 @@ def merge_edits(stored, incoming, base, *, count_stored_rejected=True):
         # ただし同じ場所により新しい正しい編集があれば、古い方は役目を終えたので捨てる（警告が残り続けないように）。
         out[group] = [entries[k] for k in sorted(entries)] + [
             o for o in orphans.get(group, []) if not superseded(group, o, entries)]
-    validate_envelope(out)
     rejected = (old_bad if count_stored_rejected else 0) + bad_weeks + new_bad
+    if base['store'] == STORE and (VARIETY_KEY in stored or VARIETY_KEY in incoming):
+        variety, added, differing, bad, skipped = merge_edits(
+            stored.get(VARIETY_KEY, empty_edits()), incoming.get(VARIETY_KEY, empty_edits()),
+            saiwaichou_base(), count_stored_rejected=count_stored_rejected)
+        out[VARIETY_KEY] = variety
+        changed += added
+        conflicts += differing
+        rejected += bad
+        skipped_weeks += skipped
+    validate_envelope(out)
     return out, changed, conflicts, rejected, skipped_weeks
 
 
@@ -276,7 +318,7 @@ def machine_candidates(name, names):
     return sorted(names, key=lambda n: (loose(n) != loose(name), n))
 
 
-def variety_week_lineup(records, monday):
+def variety_week_lineup(records, monday, location=STORE):
     """対象週とその前13暦日で最多台数の8割以上ある、週内の最初の日を選ぶ。"""
     first = day(monday)
     if first.weekday():
@@ -284,7 +326,7 @@ def variety_week_lineup(records, monday):
     indexed = {}
     for r in records:
         d = day(r['day'])
-        if r['store'] == STORE and -13 <= (d - first).days <= 6:
+        if r['store'] == location and -13 <= (d - first).days <= 6:
             indexed.setdefault(r['day'], {})[(r['machine'], r['rack'])] = r
     usual = max((len(v) for v in indexed.values()), default=0)
     candidates = sorted(d for d, rows in indexed.items() if monday <= d <= (first + timedelta(days=6)).isoformat() and len(rows) >= usual * .8)
@@ -293,7 +335,8 @@ def variety_week_lineup(records, monday):
     counts = {}
     for r in indexed[candidates[0]].values():
         counts[r['machine']] = counts.get(r['machine'], 0) + 1
-    machines = [dict(name=n, record_name=n, count=c) for n, c in sorted(counts.items()) if c <= 3]
+    max_racks = 2 if location == SAIWAI_STORE else 3
+    machines = [dict(name=n, record_name=n, count=c) for n, c in sorted(counts.items()) if c <= max_racks]
     if not machines:
         raise ValueError('対象日にバラエティの機種がありません。')
     peak = {}
@@ -303,14 +346,14 @@ def variety_week_lineup(records, monday):
             per_day[name] = per_day.get(name, 0) + 1
         for name, count in per_day.items():
             peak[name] = max(peak.get(name, 0), count)
-    doubtful = [m['name'] for m in machines if peak.get(m['name'], 0) > 3]
+    doubtful = [m['name'] for m in machines if peak.get(m['name'], 0) > max_racks]
     return candidates[0], machines, doubtful
 
 
 SHORTFALL_DAYS = 30
 
 
-def capture_shortfall(records, lineup_day):
+def capture_shortfall(records, lineup_day, location=STORE):
     """分類日の保存台数が、前後 SHORTFALL_DAYS 日で最も多い日の8割に届かなければ (分類日の台数, その最多) を返す。
 
     variety_week_lineup の8割は「週と前13日」の中での比較なので、その期間がまるごと取り込み不足
@@ -318,7 +361,7 @@ def capture_shortfall(records, lineup_day):
     center = day(lineup_day)
     counts = {}
     for r in records:
-        if r['store'] == STORE and abs((day(r['day']) - center).days) <= SHORTFALL_DAYS:
+        if r['store'] == location and abs((day(r['day']) - center).days) <= SHORTFALL_DAYS:
             counts.setdefault(r['day'], set()).add((r['machine'], r['rack']))
     usual = max((len(v) for v in counts.values()), default=0)
     found = len(counts.get(lineup_day, ()))
@@ -339,7 +382,14 @@ def net_face(total):
     return NET_FACE_LOSS
 
 
-def machine_day_nets(db, first, last):
+def net_grade(total):
+    """幸町：2,500枚以上は優、0枚以上2,500枚未満は良。対象外は空欄。"""
+    if not isinstance(total, (int, float)) or isinstance(total, bool) or not math.isfinite(total) or total < 0:
+        return None
+    return '優' if total >= 2500 else '良'
+
+
+def machine_day_nets(db, first, last, location=STORE, expected_counts=None):
     """{(日, 機種名): 合計差枚}。全台の差枚が分かる機種・日だけ（一部の台しか分からない合計は出さない）。
     差枚は画面と同じ rack_net（ジャグラーオンラインの差枚、無ければ推定差枚）。数値異常の台がある機種・日も出さない。"""
     from core import rack_net, implausible_numbers
@@ -347,24 +397,26 @@ def machine_day_nets(db, first, last):
              " json_extract(payload,'$.max_hold'), json_extract(payload,'$.graph_measurement'),"
              " json_extract(payload,'$.jo_net') FROM days"
              " WHERE store=? AND day BETWEEN ? AND ? AND json_valid(payload)")
-    totals = {}
-    for d, name, games, bb, rb, max_hold, measurement, jo_net in db.db.execute(query, (STORE, first, last)):
+    totals, counts = {}, {}
+    for d, name, games, bb, rb, max_hold, measurement, jo_net in db.db.execute(query, (location, first, last)):
         try:
             measurement = json.loads(measurement) if measurement else None
         except ValueError:
             measurement = None
         row = {'jo_net': jo_net, 'graph_measurement': measurement, 'max_hold': max_hold, 'games': games,
-               'bb': bb, 'rb': rb, 'store': STORE, 'day': d}
+               'bb': bb, 'rb': rb, 'store': location, 'day': d}
         net = None if implausible_numbers({'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}) else rack_net(row)[0]
         key = (d, name)
+        counts[key] = counts.get(key, 0) + 1
         if net is None or totals.get(key, 0) is None:
             totals[key] = None
         else:
             totals[key] = totals.get(key, 0) + net
-    return {k: v for k, v in totals.items() if v is not None}
+    return {k: v for k, v in totals.items() if v is not None and
+            (expected_counts is None or counts[k] == expected_counts.get(k[1]))}
 
 
-def auto_faces(week, nets, names_by_day, symbols, blank_days=(), only_day=None):
+def auto_faces(week, nets, names_by_day, symbols, blank_days=(), only_day=None, classify=net_face):
     """週表の空欄のセルに入れる顔文字。戻り値は (入れるセル[(機種名, 日, 記号)], 入れなかった空欄の数)。
     only_day があればその日だけ。入力済みのセルは変えない。その日の記録が無いセルは数えず、記録はあるが差枚の分からない機種・日は空欄のまま数える。"""
     first = day(week['from'])
@@ -378,7 +430,7 @@ def auto_faces(week, nets, names_by_day, symbols, blank_days=(), only_day=None):
             if not name:
                 continue  # その日の記録が無い（未来の日・取り込み前）。数えない
             total = nets.get((d, name))
-            face = net_face(total) if total is not None else None
+            face = classify(total) if total is not None else None
             if face is None or face not in symbols:
                 skipped += 1
                 continue

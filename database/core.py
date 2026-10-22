@@ -332,10 +332,10 @@ def pull_shared_history(store, folder):
     path = Path(folder) / SHARED_HISTORY_NAME if folder else None
     if path is None or not path.is_file():
         return 0, 0, 0, 0
-    from event_history_data import validate_envelope
+    from event_history_data import validate_envelope, VARIETY_KEY
     raw = json.loads(path.read_text(encoding='utf-8-sig'))
     validate_envelope(raw)
-    if raw.get('weeks') or raw.get('links'):
+    if raw.get('weeks') or raw.get('links') or VARIETY_KEY in raw:
         raise ValueError('共有の履歴では週の構成・機種対応は変更できません。')
     # 「共有の編集」の除外数に、PCに保存済みの基準外原文を混ぜない。
     return store.merge_history_edits(raw, count_stored_rejected=False)
@@ -1763,8 +1763,11 @@ def auto_backup(store, data_dir, *, strict=False, notices=None, import_shared=Tr
             raise
     # 履歴の基準・個別項目が読めなくても、通常のバックアップとAndroid出力は続ける。
     try:
-        from event_history_data import FILE_NAME, load_base
+        from event_history_data import FILE_NAME, load_base, VARIETY_KEY, saiwaichou_base, clean_edits, empty_edits
         clean, rejected = store.history_edits_status()
+        variety, variety_rejected = clean_edits(store.history_edits_raw().get(VARIETY_KEY, empty_edits()), saiwaichou_base())
+        if variety['weeks'] or variety['cells'] or variety['links'] or variety_rejected:
+            clean[VARIETY_KEY] = dict(variety, base=saiwaichou_base(), rejected=variety_rejected)
         with atomic_writer(Path(folder) / FILE_NAME) as out:
             json.dump(dict(clean, base=load_base(), rejected=rejected,
                            updated_at=datetime.now().astimezone().isoformat()), out, ensure_ascii=False)

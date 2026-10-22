@@ -1018,26 +1018,28 @@ class _ResultsPageState extends State<ResultsPage> {
         ),
       );
 
-  void _openEventHistory() => Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => EventHistoryPage(
-        data: ViewerData(
-          records: widget.controller.records,
-          dateEvents: widget.controller.dateEvents,
+  void _openEventHistory([String location = 'nagamachiminami']) =>
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => EventHistoryPage(
+            store: location,
+            data: ViewerData(
+              records: widget.controller.records,
+              dateEvents: widget.controller.dateEvents,
+            ),
+            recordCutoff: widget.controller.records.isEmpty
+                ? null
+                : retentionCutoff(
+                    widget.controller.records
+                        .map((r) => r.day)
+                        .fold<String>('', (a, b) => a.compareTo(b) > 0 ? a : b),
+                    DateTime.now().toIso8601String().substring(0, 10),
+                  ),
+            edits: widget.controller.historyEdits,
+            onSave: widget.controller.saveHistoryEdits,
+          ),
         ),
-        recordCutoff: widget.controller.records.isEmpty
-            ? null
-            : retentionCutoff(
-                widget.controller.records
-                    .map((r) => r.day)
-                    .fold<String>('', (a, b) => a.compareTo(b) > 0 ? a : b),
-                DateTime.now().toIso8601String().substring(0, 10),
-              ),
-        edits: widget.controller.historyEdits,
-        onSave: widget.controller.saveHistoryEdits,
-      ),
-    ),
-  );
+      );
 
   /// カレンダーの差枚（その店・その日の総差枚）。記録が変わったときだけ数え直す。
   List<SlotRecord>? _netRecords;
@@ -1389,11 +1391,14 @@ class _ResultsPageState extends State<ResultsPage> {
                       ],
                     ),
                     const SizedBox(height: 14),
-                    if (store == 'nagamachiminami') ...[
+                    if (store == 'nagamachiminami' ||
+                        store == 'saiwaichou') ...[
                       OutlinedButton.icon(
-                        onPressed: _openEventHistory,
+                        onPressed: () => _openEventHistory(store!),
                         icon: const Icon(Icons.history),
-                        label: const Text('長町南のイベント履歴'),
+                        label: Text(
+                          store == 'saiwaichou' ? '幸町のバラエティ履歴' : '長町南のイベント履歴',
+                        ),
                       ),
                       const SizedBox(height: 10),
                     ],

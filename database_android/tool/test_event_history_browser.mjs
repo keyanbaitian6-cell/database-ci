@@ -24,9 +24,12 @@ const base={version:2,store:'nagamachiminami',symbols:['😀','😍'],user_blank
 const history={format:'database-event-history',version:1,base,shared_editing:true,cells:[{store:base.store,type:'4台構成',week:'2026-10-05',machine:'Lテスト',day:'2026-10-05',value:'',updated_at:'2026-10-19T09:00:00.123456+09:00'}],
   links:[{store:base.store,type:'4台構成',week:'2026-10-05',machine:'Lテスト',record_name:'L ﾃｽﾄ',updated_at:'2026-10-19T00:00:00.123457Z'}],
   weeks:[{store:base.store,type:'バラエティ',week:'2026-10-12',lineup_day:'2026-10-13',machines:[{name:'週の機種',record_name:'週の機種',count:2}],updated_at:'2026-10-19T00:00:00Z',removed:false}]};
+history.saiwaichou_variety=JSON.parse(await fs.readFile(new URL('../test/fixtures/saiwaichou_history_cases.json',import.meta.url),'utf8')).saiwaichou_variety;
 const records=[{store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:101,games:1000,bb:4,rb:2},
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:999,games:2000,bb:8,rb:4},
-  {store:base.store,day:'2026-10-07',machine:'L+ﾃｽﾄ',rack:777,games:2000,bb:8,rb:4}];
+  {store:base.store,day:'2026-10-07',machine:'L+ﾃｽﾄ',rack:777,games:2000,bb:8,rb:4},
+  {store:base.store,day:'2026-10-19',machine:'同名機種',rack:90,games:1000,bb:4,rb:2},
+  {store:'saiwaichou',day:'2026-10-19',machine:'同名機種',rack:610,games:1000,bb:4,rb:2,jo_net:2500}];
 const responses={'':{format:'database-backup',version:1,records},pscube:{format:'pscube-viewer',version:1,records:[]},'event-history':history};
 const engine=process.env.HISTORY_BROWSER||'chromium';
 const browser=await engines[engine].launch(engine==='chromium'?{headless:true,executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox']}:{headless:true});
@@ -169,6 +172,25 @@ try{
     await page.waitForFunction(()=>document.querySelector('[data-history-save-status]')?.textContent.includes('共有に保存しました'));
     assert.equal(await names.nth(0).evaluate(e=>getComputedStyle(e).color)==='rgb(185, 28, 28)',red);
   }
+  await page.locator('[data-close]').click();
+  await page.locator('[data-store="saiwaichou"]').click();
+  await page.locator('[data-event-history-open]').click();
+  assert.equal(await page.locator('#sheet-title').innerText(),'幸町のバラエティ履歴');
+  assert.equal(await page.locator('.history-table select').count(),0,'優・良の編集はPCだけ');
+  assert.equal(await page.locator('.history-table [data-history-edit]').count(),0);
+  assert.equal(await page.locator('.history-no-heart').count(),0,'幸町へ長町南の赤字判定を適用しない');
+  assert.equal(await page.locator('.history-symbol').first().innerText(),'優');
+  assert.ok((await page.locator('.history-symbol').allInnerTexts()).includes('良'));
+  assert.equal(await page.locator('.history-table tbody tr').first().locator('td').nth(1).evaluate(cell=>{
+    const grade=cell.querySelector('.history-symbol').getBoundingClientRect();
+    const note=cell.querySelector('small').getBoundingClientRect();
+    return grade.bottom<=note.top+1;
+  }),true,'優・良と記録なしの案内を別の行にする');
+  await page.locator('[data-history-day="2026-10-19"]').click();
+  assert.match(await page.locator('.sheet').innerText(),/610番/);
+  assert.doesNotMatch(await page.locator('.sheet').innerText(),/90番/);
+  await page.locator('[data-history-rack="0"]').click();
+  assert.equal(await page.locator('#sheet-title').innerText(),'610番台');
   assert.deepEqual(errors,[]);
   assert.ok(localRequests.every(r=>!r.includes('event_history.json')),'履歴JSONを公開アセットから取得しない');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

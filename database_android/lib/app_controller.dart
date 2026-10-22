@@ -188,6 +188,9 @@ class AppController extends ChangeNotifier {
   Future<Map<String, dynamic>> saveHistoryEdits(
     Map<String, dynamic> incoming,
   ) => _write(() async {
+    if (incoming.containsKey(saiwaichouHistoryKey)) {
+      throw const FormatException('幸町の優・良はPCで入力・修正してください。');
+    }
     final base = await loadHistoryBase();
     final merged = mergeHistoryEdits(historyEdits, incoming, base);
     final encoded = jsonEncode(merged.edits);
