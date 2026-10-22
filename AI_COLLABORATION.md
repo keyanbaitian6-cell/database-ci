@@ -3170,3 +3170,9 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 利用者の承認後、今回分13ファイルだけを `5e86dc9` としてコミットし、`database-ci` の main へpush（10/22は月後半）。作業記録は他作業の未コミットの項を混ぜず、引継ぎの項と本項だけを入れた。他の先行変更は未コミットのまま保持。
 - 公開：手元に他作業の未コミット変更（P’s CUBEの `web/pscube/data.mjs`・`pubspec.yaml` など）があるため、`5e86dc9` だけのworktree（../outputs/history-redesign-20261022/src、seedはCIと同じく見本をコピー）でビルドし、`stage_viewer.py`・`stage_share_viewer.py` を通した。共有 `database-share` の `832a04d`、閲覧 `database-viewer` の `41b795c`。Pagesは両方成功。公開URLの配信ファイル（共有4本・閲覧3本）が公開リポジトリと一致、`database_seed.json`・`event_history.json` は404。公開物の閲覧で `test_viewer_event_history_browser`、公開URLの共有で `test_event_history_browser`（3幅）が成功。
 - CI：一つ前の `62ee80e` で `pc (windows-latest, UTC)` が `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day` で失敗済み。Codexが記録した `update_idletasks`→`root.update` の試験修正は手元に未コミットで、今回のコミットにも含めていないため、`5e86dc9` のCIも同じ箇所で落ちる見込み（今回の変更とは無関係。再実行していない）。
+
+## 【幸町の試験：Windowsでのボタン可視確認を修正してCIへ】2026-10-22 Claude
+
+- 利用者の指示で、手元に未コミットだった `database/tests/test_saiwaichou_history.py` の1行（`root.update_idletasks()`→`root.update()`、Windowsでは表示イベントも処理してから可視状態を確かめる）を確認した。Codexが2026-10-22のPC更新で記録した修正で、同ファイルに他の変更はない。
+- `62ee80e` のCIで `pc (windows-latest, UTC)` が落ちた `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day`（`winfo_viewable()` が0）と同じ箇所。手元のWindowsで `database/.venv` のPythonにより、TZ=JST-9とUTC0の両方で同ファイル9件成功。
+- このファイルだけを `262c7c7` としてコミットし、本記録の別コミットと合わせて `database-ci` へ1回push。他の先行変更は未コミットのまま保持。
