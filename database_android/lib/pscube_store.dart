@@ -97,6 +97,22 @@ bool pscubeSameMachineUrl(String first, String second) {
 /// 取り込み日の日付タブがサイトに無かった機種と日（新台・入れ替え）。その日の未取得に数えない。
 const pscubeAbsentDaysKey = 'absent_table_days';
 
+/// 全台一覧の日付タブ（[days]）に、取り込み日（[day]）のタブが無く、飛ばしてよい形か（PC版 `day_tab_absent` と
+/// 同じ規則）。タブが読めない・空のときや、取り込み日がタブより新しい（早朝でまだ出ていない）ときは false。
+/// 自動取り込みの「日付違いでも読み取りへ進めるか」と、保存側の `_skipAbsentDay` の両方で使う（2026-10-22）。
+bool pscubeDayTabAbsent(String? day, Object? days) {
+  if (day == null ||
+      days is! List ||
+      days.isEmpty ||
+      days.any(
+        (d) => d is! String || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(d),
+      )) {
+    return false;
+  }
+  final tabs = days.cast<String>().toList()..sort();
+  return !tabs.contains(day) && day.compareTo(tabs.last) < 0;
+}
+
 /// 過去の日の全台一覧で、その日の数値もリンクも無かった台（増台した台）。台数の確認と未取得の数え方に足す。
 const pscubeAbsentRacksKey = 'absent_table_racks';
 
@@ -550,6 +566,7 @@ class PscubeStore {
       oldRecords[key] = await _get('records', key);
     }
     final oldAbsentRacks = await _absentRacks();
+    final oldAbsentDays = tablePage ? await _absentDays() : const <String>{};
     await db.transaction((txn) async {
       for (final machine in machines) {
         final key = _key(machine);
@@ -604,6 +621,19 @@ class PscubeStore {
               [...jsonDecode(e.key) as List, e.value],
           ]),
         }, conflictAlgorithm: ConflictAlgorithm.replace);
+        // この機種・日の全台一覧を保存できた＝その日のタブはある。「タブなし」の印を外し、未取得に戻す
+        // （以前は外さず、あとで取れても機種ごと除外され続けた。2026-10-22、PC版と同じ）。ほかの機種・日の印は残す。
+        // 読むのはトランザクションの前（上の oldAbsentDays）。ここで db へ問い合わせると待ち合いで止まる。
+        if (oldAbsentDays.contains(place)) {
+          await txn.insert('state', {
+            'key': pscubeAbsentDaysKey,
+            'value': jsonEncode([
+              for (final e
+                  in (oldAbsentDays.toSet()..remove(place)).toList()..sort())
+                jsonDecode(e),
+            ]),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
       if (indexPage) {
         await txn.insert('state', {
@@ -770,17 +800,10 @@ class PscubeStore {
     if (expectedDay == null ||
         current == null ||
         !current.path.endsWith('nc-v05-011.php') ||
-        days is! List ||
-        days.isEmpty ||
-        days.any(
-          (d) => d is! String || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(d),
-        )) {
+        !pscubeDayTabAbsent(expectedDay, days)) {
       return null;
     }
-    final tabs = days.cast<String>().toList()..sort();
-    if (tabs.contains(expectedDay) || expectedDay.compareTo(tabs.last) > 0) {
-      return null;
-    }
+    final tabs = (days as List).cast<String>().toList()..sort();
     _site(currentUrl, 'nc-v05-011.php');
     final reported = Uri.tryParse(data['source_url']?.toString() ?? '');
     if (reported == null || !pscubeSamePage(current, reported)) {

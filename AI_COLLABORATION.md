@@ -1,5 +1,13 @@
 # database AI共同作業メモ
 
+## 【P’s CUBE：日付タブが無い機種を自動取り込みでも飛ばす・全台一覧の保存で「タブなし」を外す】2026-10-22 Claude
+
+- 依頼：取り込み日（例10/18）を指定しても、新台の全台一覧には10/19のタブしか無くサイトが10/19を選ぶ。保存側（Store）には `absent_table_days` に覚えて次へ進む処理（`fb952b7`）があるが、自動取り込みは表示中の日が違うと読み取りの前に待つため届かない経路があった。また全台一覧の保存は `absent_table_racks` だけを更新し、`absent_table_days` を外す処理が無かった（一度覚えた機種・日は、あとで正しい一覧を保存しても未取得から外れ続ける）。どちらも正本mainのコードで確認し（月後半の規則により、コミットは `database-ci` のmain `59ac509` の上に載せ直した。競合は作業記録だけ）、`fb952b7`・`3277043` の処理は重複して作っていない。
+- 直したこと：共通の判定 `autoPageState` が全台一覧の日付タブ一覧 `days` も返す（生成物 `pscube_auto_probe.js`・`pscube_capture.js` は `build_pscube_capture.mjs` で作り直し。`pscube_cloud_sync.gs` はこの関数を含まず生成結果も変わらない）。PC `AutoPilot.tick`・Android `pscubeAutoDecision` は、全台一覧で取り込み日のタブが無く、取り込み日がタブの最新より前で、選ばれたタブがその中にあるときだけ読み取りへ進める（PC `day_tab_absent`・Android `pscubeDayTabAbsent` の同じ規則。保存側の `_skip_absent_day` もこれを使う）。最終の判定と印の更新は保存側が読み取り結果の日付タブで行う。タブが読めない・タブがある・取り込み日がタブより新しい・人間確認や読み込み中・台別ページの日付違いは今までどおり待つ。全台一覧を保存できたら、同じトランザクションでその機種・日だけ `absent_table_days` から外す（Androidはトランザクション前に読み、中では `txn` だけで書く）。PCの自動取り込みの状態表示も飛ばした理由を出す。
+- 試験：模擬ページで生成JSを動かす `tool/test_pscube_absent_tab_auto.mjs`（出力を `test/fixtures/pscube_absent_tab_auto.json` と照合）。同じ出力で PC `test_pscube_auto_absent_tab.py`（判定→取り込み開始→`submit_capture`→次のURL）・Android `test/pscube_auto_absent_tab_test.dart`（`PscubeAutoGuard.decide`→`importPage`→次のURL）。判定の境界は `test_pscube_auto.py`・`test/pscube_auto_test.dart`。「タブなし」の解除・別機種別日の維持・4+2→5+1→6・拒否と保存途中の失敗で記録と印が変わらない・開き直しは `test_pscube_import.py`・`test/pscube_store_test.dart`（既存の「残り6件」の試験にも保存された印の確認を足した）。修正前のコードで新しい試験が失敗することを確認した（PC 5試験・場面ごとに7か所、Android 6試験。4+2→5+1→6は既存動作の確認なので修正前も通る）。
+- 確認（クラウド、Python 3.12＋requirements・xvfb、Flutter 3.47.1）：`database-ci` のmainの上で、PC `tests/` 401件・直下 `test_*.py` 221件成功、P’s CUBEのPC試験108件は日本時間でも成功（正本の古いmainの上でも381件・214件成功）。Flutter P’s CUBE試験とanalyze（error・warning 0、info 21件は変更前と同じ）。P’s CUBEのブラウザ・JS試験13本成功。全体ゲート（`check_before_build.sh`）・Flutter全試験・閲覧ページのビルドと画面試験は流していない。
+- 未確認：実サイトでの動作（新台の全台一覧で日付タブが読み込み途中に一部だけ見える瞬間があるか等）、Android実機・PCの実WebView2での通し。Android画面の `_autoTick`→`_capture` そのものは、間隔が実時間15〜25秒で差し替え口が無いため試験で動かしていない（同じ部品を同じ順に呼ぶ試験で代えた）。過去のRegression checksの失敗の原因は取得できた情報からは不明で、今回の2点が原因とは断定していない。コミット・push・ビルド・公開はしていない。
+
 ## 【長町南バラエティ：週内に😍がない機種名を赤字】2026-10-22 Codex
 
 - 利用者「長町南のバラエティの表について、この😍顔がまだその週についてない場合に赤字で表示するようにして」。表示先を確認し「PC・Android・iPhone閲覧ページ・共有カレンダーすべて」と回答。赤字の対象は機種名として説明済み。

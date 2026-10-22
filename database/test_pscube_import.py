@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -144,6 +145,142 @@ class PscubeImportTests(unittest.TestCase):
                          [self.record(machine, rack, yesterday) for rack in range(1, 7)])
         self.store.import_page(dict(full, available_days=[yesterday, today]), machine['url'], expected_day=yesterday)
         self.assertEqual(self.store._absent_racks(), {})
+
+    # ---- 全台一覧を保存できたら「タブなし」（absent_table_days）を外す（2026-10-22） ----
+    # 以前は外さず、一度「その日はタブなし」と覚えた機種・日は、あとで正しい全台一覧を保存しても未取得から外れ続けた。
+    TABS = ['2026-10-17', '2026-10-18', '2026-10-19']
+
+    def six_and_other(self, alone=False):
+        six = dict(self.machines[0], expected_count=6)
+        other = self.machines[1]
+        self.store.import_page(self.page(self.index_url, [six] if alone else [six, other]), self.index_url)
+        return six, other
+
+    def table(self, machine, day, racks, missing=(), games=1854):
+        records = [dict(self.record(machine, rack, day), games=games) for rack in racks]
+        data = dict(self.page(machine['url'], [dict(machine, expected_count=None)], records), available_days=self.TABS)
+        return dict(data, missing_racks=list(missing)) if missing else data
+
+    def skip_tab(self, machine, day, store=None):
+        """取り込み日のタブが無い全台一覧（サイトは10/19を選ぶ）を読んだ結果を渡し、「タブなし」を覚えさせる。"""
+        url = machine['url'] + '#3;0;20261019;0;cd_dai;1;0;664'
+        page = {'error': '1526番台の台別ページへのリンクがありません。', 'source_url': url, 'available_days': ['2026-10-19']}
+        result = (store or self.store).import_page(json.dumps(page), url, expected_day=day)
+        self.assertEqual(result['saved'], 0)
+
+    def absent(self, store=None):
+        store = store or self.store
+        key = lambda m: json.loads(m)[2]   # 機種名で読みやすく
+        return (sorted((key(k), d) for k, d in store._absent_days()),
+                {(key(k), d): r for (k, d), r in store._absent_racks().items()})
+
+    def rows(self, store=None):
+        return sorted((r['machine'], r['rack'], r['day'], r['games']) for r in
+                      (json.loads(row[0]) for row in (store or self.store).db.execute('SELECT payload FROM records')))
+
+    def reopened(self):
+        store = PscubeStore(Path(self.tmp.name) / 'pscube.sqlite3')
+        self.addCleanup(store.close)
+        return store
+
+    def test_a_full_table_clears_its_own_missing_tab_and_rack_marks_and_keeps_the_others(self):
+        six, other = self.six_and_other()
+        name, other_name = six['machine'], other['machine']
+        # 10/17・10/18は過去の日の一覧（4台＋増台2台）を保存済み。そのあと両日とも「タブなし」を覚え、別機種の10/18も覚えた。
+        for day in ('2026-10-17', '2026-10-18'):
+            self.store.import_page(self.table(six, day, [1, 2, 3, 4], [5, 6]), six['url'], expected_day=day)
+            self.skip_tab(six, day)
+        self.skip_tab(other, '2026-10-18')
+        both = {(name, '2026-10-17'): [5, 6], (name, '2026-10-18'): [5, 6]}
+        self.assertEqual(self.absent(), ([(name, '2026-10-17'), (name, '2026-10-18'), (other_name, '2026-10-18')], both))
+        self.assertEqual(self.store.next_target('2026-10-18'), (None, 0), '10/18はどちらの機種も未取得から外れている')
+        day17 = self.store.next_target('2026-10-17')
+        self.assertEqual(day17, (other['url'], 1), '10/17はこの機種だけ外れ、別機種の一覧は未取得')
+        # 10/18の6台そろった一覧を保存：この機種・この日の両方の印だけが外れる。
+        result = self.store.import_page(self.table(six, '2026-10-18', range(1, 7), games=2000), six['url'], expected_day='2026-10-18')
+        self.assertEqual((result['saved'], result['kind']), (6, '全台一覧'))
+        expected = ([(name, '2026-10-17'), (other_name, '2026-10-18')], {(name, '2026-10-17'): [5, 6]})
+        self.assertEqual(self.absent(), expected)
+        # 6台の台別ページが未取得に戻る（別機種の10/18は外れたまま）。
+        url, remaining = self.store.next_target('2026-10-18')
+        self.assertEqual((url, remaining), (self.record(six, 1, '2026-10-18')['detail_url'], 6))
+        self.assertEqual(self.store.next_target('2026-10-17'), day17, '10/17は変わらない')
+        # 開き直しても同じ。
+        again = self.reopened()
+        self.assertEqual(self.absent(again), expected)
+        self.assertEqual(again.next_target('2026-10-18')[1], 6)
+
+    def test_a_past_day_table_with_racks_added_later_clears_the_missing_tab_and_keeps_the_racks(self):
+        six, _ = self.six_and_other(alone=True)
+        name, day = six['machine'], '2026-10-18'
+        self.skip_tab(six, day)
+        self.assertEqual(self.absent()[0], [(name, day)])
+        # 実データ4台＋その日に無かった2台の過去の日の一覧も、正しい全台一覧として受け付ける。
+        result = self.store.import_page(self.table(six, day, [1, 2, 3, 4], [5, 6]), six['url'], expected_day=day)
+        self.assertEqual(result['saved'], 4)
+        self.assertEqual(self.absent(), ([], {(name, day): [5, 6]}), '日の印は外れ、増台した2台は覚えたまま')
+        self.assertEqual(self.store.next_target(day), (self.record(six, 1, day)['detail_url'], 4))
+        self.assertEqual(self.absent(self.reopened()), ([], {(name, day): [5, 6]}))
+
+    def test_racks_added_later_shrink_from_two_to_one_to_none(self):
+        six, _ = self.six_and_other(alone=True)
+        name, day = six['machine'], '2026-10-18'
+        first = self.record(six, 1, day)['detail_url']
+        for racks, missing, remaining in (([1, 2, 3, 4], [5, 6], 4), ([1, 2, 3, 4, 5], [6], 5), (range(1, 7), [], 6)):
+            with self.subTest(missing=missing):
+                result = self.store.import_page(self.table(six, day, racks, missing), six['url'], expected_day=day)
+                self.assertEqual(result['next_url'], first)
+                self.assertEqual(result['remaining'], remaining)
+                self.assertEqual(self.absent(), ([], {(name, day): missing} if missing else {}))
+                self.assertEqual(self.store.next_target(day), (first, remaining))
+                self.assertEqual(self.absent(self.reopened()), self.absent())
+
+    def test_a_refused_or_failed_table_keeps_the_records_and_both_marks(self):
+        six, _ = self.six_and_other()
+        name, day = six['machine'], '2026-10-18'
+        self.store.import_page(self.table(six, day, [1, 2, 3, 4], [5, 6]), six['url'], expected_day=day)
+        self.skip_tab(six, day)
+        marks, records = self.absent(), self.rows()
+        self.assertEqual(marks, ([(name, day)], {(name, day): [5, 6]}))
+        no_link = {'error': '5番台の台別ページへのリンクがありません。数値が表示されてから保存してください。',
+                   'source_url': six['url'], 'available_days': self.TABS}
+        latest = dict(self.table(six, day, [1, 2, 3, 4], [5, 6]), available_days=['2026-10-17', day])
+        refused = {
+            '台数が合わない': (self.table(six, day, [1, 2, 3, 4], [5]), '表示は5台、設置台数は6台'),
+            '数値があるのにリンクが無い': (json.dumps(no_link), '5番台の台別ページへのリンクがありません'),
+            '最新のタブの日に数値なしの台': (latest, '5・6番台に数値と台別ページへのリンクがありません'),
+            '数値のある台が無い': (dict(self.table(six, day, []), missing_racks=[1, 2, 3, 4, 5, 6]), '全台一覧を確認できません'),
+        }
+        for label, (payload, message) in refused.items():
+            with self.subTest(label), self.assertRaisesRegex(ValueError, message):
+                self.store.import_page(payload, six['url'], expected_day=day)
+            self.assertEqual((self.absent(), self.rows()), (marks, records))
+
+        # 保存の途中（印を書くところ）で失敗：記録も印も書き換えない（同じトランザクション）。
+        class Failing:
+            def __init__(self, db):
+                self.db = db
+
+            def execute(self, sql, params=()):
+                if params and params[0] == 'absent_table_days' and sql.startswith('INSERT'):
+                    raise sqlite3.OperationalError('disk I/O error')
+                return self.db.execute(sql, params)
+
+            def __enter__(self):
+                return self.db.__enter__()
+
+            def __exit__(self, *error):
+                return self.db.__exit__(*error)
+
+        real = self.store.db
+        self.store.db = Failing(real)
+        try:
+            with self.assertRaisesRegex(sqlite3.OperationalError, 'disk I/O error'):
+                self.store.import_page(self.table(six, day, range(1, 7), games=2000), six['url'], expected_day=day)
+        finally:
+            self.store.db = real
+        self.assertEqual((self.absent(), self.rows()), (marks, records))
+        self.assertEqual((self.absent(self.reopened()), self.rows(self.reopened())), (marks, records))
 
     def test_date_events_free_names_shared_by_backup_with_newest_winning(self):
         # P’s CUBEのイベント名（自由記入、2026-10-06）。Android pscube_store_test と同じ規則。

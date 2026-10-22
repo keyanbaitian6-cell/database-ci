@@ -200,4 +200,60 @@ void main() {
       expect(d.stop, isFalse);
     }
   });
+
+  // 2026-10-22：新台は取り込み日のタブが無く、サイトは最新のタブを選ぶ。以前は日付違いとして待ち続け、保存側の
+  // 飛ばす処理まで届かなかった。タブが無いと読めるときだけ読み取りへ進め、保存側が確かめる（PC版と同じ表）。
+  test('取り込み日のタブが無い全台一覧だけは、表示中の日が違っても読み取りへ進める', () {
+    final cases = <(String, String, String, Object?, bool)>[
+      // (取り込み日, 表示中の日, 種類, 日付タブ, 読み取るか)
+      ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-19'], true),
+      ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-17', '2026-10-19'], true),
+      ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-18', '2026-10-19'], false),
+      ('2026-10-19', '2026-10-18', '全台一覧', ['2026-10-17', '2026-10-18'], false),
+      ('2026-10-18', '2026-10-19', '全台一覧', <String>[], false),
+      ('2026-10-18', '2026-10-19', '全台一覧', null, false),
+      ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-19', '10/17'], false),
+      ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-20'], false),
+      ('2026-10-18', '2026-10-19', '台別7日分', ['2026-10-19'], false),
+    ];
+    for (final (target, shown, kind, days, reads) in cases) {
+      final probe = {...ready('T', kind), 'day': shown, 'days': ?days};
+      final decision = pscubeAutoDecision(probe, {}, {}, targetDay: target);
+      expect(
+        decision.capture,
+        reads ? 'T' : isNull,
+        reason: '$target $kind $days',
+      );
+      expect(
+        decision.message,
+        contains(reads ? '日付タブが無い機種か確かめています' : '合わせてください'),
+      );
+    }
+    // 人間確認・読み込み中・保存中の画面は、タブが無く見えても読み取らない。
+    for (final probe in [
+      {
+        'ready': false,
+        'challenge': true,
+        'reason': '人間確認・同意の画面',
+        'days': ['2026-10-19'],
+      },
+      {
+        'ready': false,
+        'missing': true,
+        'reason': '全台一覧の表示待ち',
+        'days': ['2026-10-19'],
+      },
+      {
+        ...ready('T'),
+        'day': '2026-10-19',
+        'days': ['2026-10-19'],
+        'busy': true,
+      },
+    ]) {
+      expect(
+        pscubeAutoDecision(probe, {}, {}, targetDay: '2026-10-18').capture,
+        isNull,
+      );
+    }
+  });
 }

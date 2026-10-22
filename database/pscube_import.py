@@ -182,6 +182,15 @@ def same_machine_url(first, second) -> bool:
     return isinstance(first, str) and isinstance(second, str) and key(first) == key(second)
 
 
+def day_tab_absent(day, days) -> bool:
+    """全台一覧の日付タブ（days）に、取り込み日（day）のタブが無く、飛ばしてよい形か（Android `pscubeDayTabAbsent`
+    と同じ規則）。タブが読めない・空のときや、取り込み日がタブより新しい（早朝でまだ出ていない）ときは False。
+    自動取り込みの「日付違いでも読み取りへ進めるか」と、保存側の `_skip_absent_day` の両方で使う（2026-10-22）。"""
+    return (isinstance(day, str) and isinstance(days, list) and bool(days) and
+            all(isinstance(d, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', d) for d in days) and
+            day not in days and day < max(days))
+
+
 def table_url_for_day(url, day):
     """取り込み日を指定しているとき、機種の全台一覧をその日の日付タブで開くURL（Android
     `pscubeTableUrlForDay` と同じ）。サイトは全台一覧の状態（表示件数;位置;選んだ日付;…）を#以降に持ち、
@@ -728,6 +737,12 @@ class PscubeStore:
                     absent[(_machine_key(old), day)] = missing_racks
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 (ABSENT_RACKS_KEY, json.dumps([[k, d, r] for (k, d), r in sorted(absent.items())], ensure_ascii=False)))
+                # この機種・日の全台一覧を保存できた＝その日のタブはある。「タブなし」の印を外し、未取得に戻す
+                # （以前は外さず、あとで取れても機種ごと除外され続けた。2026-10-22）。ほかの機種・日の印は残す。
+                absent_days = self._absent_days()
+                if (_machine_key(old), day) in absent_days:
+                    self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                                    (ABSENT_DAYS_KEY, json.dumps(sorted(absent_days - {(_machine_key(old), day)}), ensure_ascii=False)))
             if is_index:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('active_machine_keys', json.dumps([_machine_key(m) for m in data['machines']], ensure_ascii=False)))
@@ -808,9 +823,7 @@ class PscubeStore:
             actual = site_url(current_url)
         except ValueError:
             return None
-        if (not actual.path.endswith('nc-v05-011.php') or not isinstance(days, list) or not days or
-                any(not isinstance(d, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', d) for d in days) or
-                expected_day in days or expected_day > max(days)):
+        if not actual.path.endswith('nc-v05-011.php') or not day_tab_absent(expected_day, days):
             return None
         if not same_page(current_url, data.get('source_url')):
             raise ValueError('表示中のページと読み取り結果が違います。')
@@ -1341,7 +1354,8 @@ class AutoPilot:
                 self.auto.pause('ON・保存処理中・完了待ち', token)
             elif not probe.get('ready'):
                 self.auto.pause('ON・待機：' + str(probe.get('reason') or 'ページの準備待ち'), token)
-            elif self.target_day and probe.get('day') and probe['day'] != self.target_day:
+            elif (self.target_day and probe.get('day') and probe['day'] != self.target_day and
+                  not self._absent_tab(probe)):
                 # 取り込み日と違う日のページ。サイトのボタンはアプリが押さない。アプリが開く全台一覧は日付つき（table_url_for_day）
                 # なので、ここで待つのは利用者が自分で開いた全台一覧だけ。日付タブを手で合わせてもらう。
                 hint = ('全台一覧の日付タブを' if probe.get('kind') == '全台一覧' else 'このページを')
@@ -1362,8 +1376,18 @@ class AutoPilot:
                     return False
 
                 if self.auto.run_current(token, start):
-                    self.auto.pause('ON・取り込み中（' + str(probe.get('kind') or 'ページ') + '）', token)
+                    self.auto.pause(f'ON・{_short_day(self.target_day)}の日付タブが無い機種か確かめています（全台一覧）'
+                                    if self._absent_tab(probe) else
+                                    'ON・取り込み中（' + str(probe.get('kind') or 'ページ') + '）', token)
         self.render()
+
+    def _absent_tab(self, probe):
+        """表示中の全台一覧に取り込み日の日付タブが無い（新台・入れ替え）。このときだけ、表示中の日が違っても読み取りへ進め、
+        保存側（`PscubeStore._skip_absent_day`）が読み取った日付タブで確かめて飛ばす。タブが読めない・取り込み日のタブが
+        ある・取り込み日がタブより新しい・台別ページは、今までどおり待つ（2026-10-22、Android `pscubeAutoDecision` と同じ）。"""
+        days = probe.get('days')
+        return (probe.get('kind') == '全台一覧' and isinstance(days, list) and probe.get('day') in days and
+                day_tab_absent(self.target_day, days))
 
     def finished(self, result=None, error=None):
         """保存の結果（手動の取り込みでも呼ばれる）。自動で始めた取り込みだけを数える。"""
@@ -1385,7 +1409,7 @@ class AutoPilot:
                     self.auto.pause('すべて取り込みました（自動取り込みを停止しました）' if not day else
                                     f'{_short_day(day)}の分をすべて取り込みました（自動取り込みを停止しました）')
                 elif enabled:
-                    self.auto.pause(f'ON・{result.get("kind", "")}を保存・残り{result.get("remaining", "?")}件・'
+                    self.auto.pause(f'ON・{result.get("skipped") or result.get("kind", "") + "を保存"}・残り{result.get("remaining", "?")}件・'
                                     f'次のページへ（{DIRECTION_LABELS[self.direction]}）'
                                     + ('（差枚は未取得）' if result.get('net_warning') else ''))
         self.render()

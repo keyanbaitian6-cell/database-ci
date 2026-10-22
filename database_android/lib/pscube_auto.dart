@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'auto_capture_state.dart';
+import 'pscube_store.dart' show pscubeDayTabAbsent;
 
 /// P’s CUBEの自動取り込みで、表示中のページの判定結果（assets/pscube_auto_probe.js）から
 /// 次にすることを決める。PC版 `AutoPilot.tick`（database/pscube_import.py）と同じ規則。
@@ -37,6 +38,8 @@ String _shortDay(String day) {
 /// [targetDay]：取り込み日を指定しているとき。違う日のページは取り込まず待つ
 /// （サイトのボタンはアプリが押さない。アプリが開く全台一覧は日付つきのURLで開く（`pscubeTableUrlForDay`）ので、
 /// ここで待つのは利用者が自分で開いた全台一覧だけ。日付タブを手で合わせてもらう）。
+/// ただし全台一覧に取り込み日の日付タブが無い（新台・入れ替え）ときだけは読み取りへ進め、保存側
+/// （`PscubeStore._skipAbsentDay`）が読み取った日付タブで確かめて飛ばす（2026-10-22、PC版 `AutoPilot._absent_tab` と同じ）。
 ({String? capture, String message}) pscubeAutoDecision(
   Object? probe,
   Set<String> done,
@@ -52,7 +55,20 @@ String _shortDay(String day) {
     return (capture: null, message: 'ON・待機：${probe['reason'] ?? 'ページの準備待ち'}');
   }
   final shown = probe['day'];
-  if (targetDay != null && shown is String && shown != targetDay) {
+  final days = probe['days'];
+  // タブが読めない・取り込み日のタブがある・取り込み日がタブより新しい・台別ページは、今までどおり待つ。
+  final absentTab =
+      targetDay != null &&
+      shown is String &&
+      shown != targetDay &&
+      probe['kind'] == '全台一覧' &&
+      days is List &&
+      days.contains(shown) &&
+      pscubeDayTabAbsent(targetDay, days);
+  if (targetDay != null &&
+      shown is String &&
+      shown != targetDay &&
+      !absentTab) {
     final hint = probe['kind'] == '全台一覧' ? '全台一覧の日付タブを' : 'このページを';
     return (
       capture: null,
@@ -70,7 +86,12 @@ String _shortDay(String day) {
       message: 'ON・同じページで3回失敗したため待機中（内容を確かめて手動で取り込むか、OFF→ONで再開）',
     );
   }
-  return (capture: signature, message: 'ON・取り込み中（${probe['kind'] ?? 'ページ'}）');
+  return (
+    capture: signature,
+    message: absentTab
+        ? 'ON・${_shortDay(targetDay)}の日付タブが無い機種か確かめています（全台一覧）'
+        : 'ON・取り込み中（${probe['kind'] ?? 'ページ'}）',
+  );
 }
 
 /// 15〜25秒を100マイクロ秒刻みの100,001通りから待機ごとに抽選する。

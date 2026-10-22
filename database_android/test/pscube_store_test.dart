@@ -1290,6 +1290,279 @@ void main() {
       expectedDay: yesterday,
     );
     expect((await store.nextTarget(yesterday)).remaining, 6);
+    // 残り件数だけでは、古い印が残っていても通ってしまう。保存された印そのものを確かめる（2026-10-22）。
+    final saved = await store.db.query(
+      'state',
+      where: 'key=?',
+      whereArgs: [pscubeAbsentRacksKey],
+    );
+    expect(jsonDecode(saved.single['value'] as String), isEmpty);
+  });
+
+  // 全台一覧を保存できたら「タブなし」（absent_table_days）を外す（2026-10-22、PC版と同じ）。以前は外さず、一度「その日は
+  // タブなし」と覚えた機種・日は、あとで正しい全台一覧を保存しても未取得から外れ続けた。
+  group('全台一覧の保存で「タブなし」を外す', () {
+    const tabs = ['2026-10-17', '2026-10-18', '2026-10-19'];
+    final six = {
+      ...machine,
+      'machine': 'L東京喰種',
+      'expected_count': 6,
+      'url': '${machine['url']}&nmk_kisyu=six',
+    };
+    final other = {
+      ...machine,
+      'machine': 'ﾏｲｼﾞｬｸﾞﾗｰV',
+      'url': '${machine['url']}&nmk_kisyu=other',
+    };
+    Map<String, dynamic> rack(Map m, int number, String date, int games) => {
+      ...record(date),
+      'machine': m['machine'],
+      'rack': number,
+      'games': games,
+      'detail_url':
+          '${PscubeStore.root}cgi-bin/nc-v06-001.php?cd_dai=$number#${date.replaceAll('-', '')}',
+    };
+    String table(
+      Map m,
+      String date,
+      List<int> numbers, [
+      List<int> missing = const [],
+      int games = 1854,
+      List<String> days = tabs,
+    ]) => jsonEncode({
+      ...jsonDecode(
+        page(
+          m['url'],
+          [
+            {...m, 'expected_count': null},
+          ],
+          [for (final n in numbers) rack(m, n, date, games)],
+        ),
+      ) as Map,
+      if (missing.isNotEmpty) 'missing_racks': missing,
+      'available_days': days,
+    });
+    Future<void> seed([bool alone = false]) => store.importPage(
+      page(PscubeStore.index, alone ? [six] : [six, other]),
+      PscubeStore.index,
+    );
+    Future<void> skipTab(Map m, String date) async {
+      final url = '${m['url']}#3;0;20261019;0;cd_dai;1;0;664';
+      final result = await store.importPage(
+        jsonEncode({
+          'error': '1526番台の台別ページへのリンクがありません。',
+          'source_url': url,
+          'available_days': ['2026-10-19'],
+        }),
+        url,
+        expectedDay: date,
+      );
+      expect(result.saved, 0);
+    }
+
+    /// 保存された印：日単位は [機種名, 日]、台単位は {機種名|日: 台番号}。
+    Future<List<Object>> absent() async {
+      Future<List> read(String key) async {
+        final rows = await store.db.query(
+          'state',
+          where: 'key=?',
+          whereArgs: [key],
+        );
+        return rows.isEmpty ? [] : jsonDecode(rows.single['value'] as String);
+      }
+
+      String name(Object key) => (jsonDecode(key as String) as List)[2];
+      return [
+        [
+          for (final e in await read(pscubeAbsentDaysKey))
+            '${name(e[0])}|${e[1]}',
+        ]..sort(),
+        {
+          for (final e in await read(pscubeAbsentRacksKey))
+            '${name(e[0])}|${e[1]}': (e[2] as List).cast<int>(),
+        },
+      ];
+    }
+
+    Future<List<String>> rows() async => [
+      for (final row in await store.db.query('records', columns: ['payload']))
+        if (jsonDecode(row['payload'] as String) case final Map r)
+          '${r['machine']}|${r['rack']}|${r['day']}|${r['games']}',
+    ]..sort();
+    Future<void> reopen() async {
+      await store.close();
+      store = await PscubeStore.open(
+        path: '${dir.path}/pscube.sqlite3',
+        factory: databaseFactoryFfi,
+      );
+    }
+
+    test('6台そろった一覧で、この機種・この日の日単位・台単位の印だけが外れ、台別ページが未取得に戻る', () async {
+      await seed();
+      for (final date in ['2026-10-17', '2026-10-18']) {
+        await store.importPage(
+          table(six, date, [1, 2, 3, 4], [5, 6]),
+          six['url'],
+          expectedDay: date,
+        );
+        await skipTab(six, date);
+      }
+      await skipTab(other, '2026-10-18');
+      expect(await absent(), [
+        ['L東京喰種|2026-10-17', 'L東京喰種|2026-10-18', 'ﾏｲｼﾞｬｸﾞﾗｰV|2026-10-18'],
+        {
+          'L東京喰種|2026-10-17': [5, 6],
+          'L東京喰種|2026-10-18': [5, 6],
+        },
+      ]);
+      final before18 = await store.nextTarget('2026-10-18');
+      expect((before18.url, before18.remaining), (null, 0));
+      final before17 = await store.nextTarget('2026-10-17');
+      expect((before17.url, before17.remaining), (other['url'], 1));
+      final result = await store.importPage(
+        table(six, '2026-10-18', [1, 2, 3, 4, 5, 6], [], 2000),
+        six['url'],
+        expectedDay: '2026-10-18',
+      );
+      expect((result.saved, result.kind), (6, '全台一覧'));
+      final expected = [
+        ['L東京喰種|2026-10-17', 'ﾏｲｼﾞｬｸﾞﾗｰV|2026-10-18'],
+        {
+          'L東京喰種|2026-10-17': [5, 6],
+        },
+      ];
+      expect(await absent(), expected);
+      final after18 = await store.nextTarget('2026-10-18');
+      expect(
+        (after18.url, after18.remaining),
+        (rack(six, 1, '2026-10-18', 2000)['detail_url'], 6),
+      );
+      final after17 = await store.nextTarget('2026-10-17');
+      expect((after17.url, after17.remaining), (other['url'], 1));
+      await reopen();
+      expect(await absent(), expected, reason: '開き直しても同じ');
+      expect((await store.nextTarget('2026-10-18')).remaining, 6);
+    });
+
+    test('実データ4台＋その日に無かった2台の過去の一覧で、日の印は外れ、2台は覚えたまま', () async {
+      const date = '2026-10-18';
+      await seed(true);
+      await skipTab(six, date);
+      expect((await absent())[0], ['L東京喰種|$date']);
+      final result = await store.importPage(
+        table(six, date, [1, 2, 3, 4], [5, 6]),
+        six['url'],
+        expectedDay: date,
+      );
+      expect(result.saved, 4);
+      final expected = [
+        <String>[],
+        {
+          'L東京喰種|$date': [5, 6],
+        },
+      ];
+      expect(await absent(), expected);
+      final next = await store.nextTarget(date);
+      expect(
+        (next.url, next.remaining),
+        (rack(six, 1, date, 1854)['detail_url'], 4),
+      );
+      await reopen();
+      expect(await absent(), expected);
+    });
+
+    test('4台＋2台 → 5台＋1台 → 6台で、印と次のページ・残り件数が変わる', () async {
+      const date = '2026-10-18';
+      await seed(true);
+      final first = rack(six, 1, date, 1854)['detail_url'];
+      for (final (numbers, missing, remaining) in [
+        ([1, 2, 3, 4], [5, 6], 4),
+        ([1, 2, 3, 4, 5], [6], 5),
+        ([1, 2, 3, 4, 5, 6], <int>[], 6),
+      ]) {
+        final result = await store.importPage(
+          table(six, date, numbers, missing),
+          six['url'],
+          expectedDay: date,
+        );
+        expect((result.nextUrl, result.remaining), (first, remaining));
+        final expected = [
+          <String>[],
+          missing.isEmpty ? <String, List<int>>{} : {'L東京喰種|$date': missing},
+        ];
+        expect(await absent(), expected, reason: '$missing');
+        final next = await store.nextTarget(date);
+        expect((next.url, next.remaining), (first, remaining));
+        await reopen();
+        expect(await absent(), expected, reason: '開き直しても同じ');
+      }
+    });
+
+    test('拒否した一覧・保存の途中で失敗した一覧は、記録も両方の印も変えない', () async {
+      const date = '2026-10-18';
+      await seed();
+      await store.importPage(
+        table(six, date, [1, 2, 3, 4], [5, 6]),
+        six['url'],
+        expectedDay: date,
+      );
+      await skipTab(six, date);
+      final marks = await absent(), saved = await rows();
+      expect(marks, [
+        ['L東京喰種|$date'],
+        {
+          'L東京喰種|$date': [5, 6],
+        },
+      ]);
+      final refused = {
+        '台数が合わない': (table(six, date, [1, 2, 3, 4], [5]), '表示 5 台、設置 6 台'),
+        '数値があるのにリンクが無い': (
+          jsonEncode({
+            'error': '5番台の台別ページへのリンクがありません。数値が表示されてから保存してください。',
+            'source_url': six['url'],
+            'available_days': tabs,
+          }),
+          '5番台の台別ページへのリンクがありません',
+        ),
+        '最新のタブの日に数値なしの台': (
+          table(six, date, [1, 2, 3, 4], [5, 6], 1854, ['2026-10-17', date]),
+          '5・6番台に数値と台別ページへのリンクがありません',
+        ),
+        '数値のある台が無い': (table(six, date, [], [1, 2, 3, 4, 5, 6]), '全台一覧が揃っていません'),
+      };
+      for (final MapEntry(key: label, value: (payload, message))
+          in refused.entries) {
+        await expectLater(
+          store.importPage(payload, six['url'], expectedDay: date),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains(message),
+            ),
+          ),
+          reason: label,
+        );
+        expect([await absent(), await rows()], [marks, saved], reason: label);
+      }
+      // 保存の途中（日の印を書くところ）で失敗：同じトランザクションなので、記録も印も書き換えない。
+      await store.db.execute(
+        "CREATE TEMP TRIGGER fail_absent BEFORE INSERT ON state WHEN NEW.key = '$pscubeAbsentDaysKey' "
+        "BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END",
+      );
+      await expectLater(
+        store.importPage(
+          table(six, date, [1, 2, 3, 4, 5, 6], [], 2000),
+          six['url'],
+          expectedDay: date,
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+      await store.db.execute('DROP TRIGGER fail_absent');
+      expect([await absent(), await rows()], [marks, saved]);
+      await reopen();
+      expect([await absent(), await rows()], [marks, saved]);
+    });
   });
 
   test('取り込み日を指定すると、全台一覧はその日の日付タブで開く（サイトは#以降の日付でタブを選ぶ）', () {
