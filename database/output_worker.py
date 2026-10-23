@@ -17,12 +17,20 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
     from core import HistoryReportCancelled, Store, auto_backup, sync_shared_history, history_report
 
     @contextmanager
-    def snapshot_store(path, factory):
+    def snapshot_store(path, factory, source_name):
         with tempfile.TemporaryDirectory(prefix='database-output-') as directory:
             snapshot = Path(directory) / 'snapshot.sqlite3'
-            with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(sqlite3.connect(snapshot)) as destination:
-                source.backup(destination)
-            store = factory(snapshot)
+            try:
+                with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(sqlite3.connect(snapshot)) as destination:
+                    source.backup(destination)
+                store = factory(snapshot)
+            except Exception as error:
+                if source_name == 'pscube':
+                    from backup_status import BackupStatus
+                    from core import load_settings
+                    BackupStatus(data_dir, source_name, load_settings(data_dir).get('sync_dir')).finish(
+                        'failed', f'保存済みの記録の読み取り：{error}')
+                raise
             try:
                 yield store
             finally:
@@ -36,9 +44,14 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
             return task()
         except Exception as error:
             errors.append(f'{name}: {error}')
+            if name == 'meruhen' and backup:
+                from backup_status import BackupStatus
+                from core import load_settings
+                BackupStatus(data_dir, 'meruhen', load_settings(data_dir).get('sync_dir')).finish(
+                    'failed', f'共有用ファイルの書き出し準備：{error}')
         finally:
             timings[name] = perf_counter() - started
-    if history or backup:
+    def meruhen_output():
         if backup:
             # 共有の取り込みは必ず本体へ保存してから写す。写しだけへの合流は次回の出力で失われる。
             if not Path(database_path).is_file():
@@ -49,7 +62,7 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
                     sync_shared_history(source, data_dir, notices)
             except (OSError, sqlite3.Error) as error:
                 notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
-        with snapshot_store(database_path, Store) as store:
+        with snapshot_store(database_path, Store, 'meruhen') as store:
             if history:
                 def build_history():
                     try:
@@ -62,10 +75,12 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
                 if value is None and not errors:
                     notices.append('同期フォルダ未設定：PC内のバックアップのみ更新しました。')
             result['pending_marks'] = len(store.pending_rainbow_marks())
+    if history or backup:
+        run('meruhen', meruhen_output)
     if pscube:
         import pscube_import
         def pscube_output():
-            with snapshot_store(Path(data_dir) / 'pscube.sqlite3', pscube_import.PscubeStore) as store:
+            with snapshot_store(Path(data_dir) / 'pscube.sqlite3', pscube_import.PscubeStore, 'pscube') as store:
                 status = pscube_import.auto_backup(store, Path(data_dir) / 'pscube-viewer.json')
                 if '失敗' in status:
                     raise OSError(status)

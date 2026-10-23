@@ -497,16 +497,29 @@ def auto_backup(store: 'PscubeStore', export_path, today: date | None = None) ->
     ローカルの `pscube-viewer.json`、日付ごとの控え（7日分）、同期フォルダの
     `pscube-backup-auto.json` と `pscube-viewer-drive.json` を作る。戻り値は画面に出す状態。
     """
+    from backup_status import BackupStatus
+    data_dir = Path(export_path).parent
+    status = BackupStatus(data_dir, 'pscube', _load_settings(data_dir).get('sync_dir'))
     try:
-        data_dir = Path(export_path).parent
         folder = sync_folder(data_dir)
         today = today or date.today()
+        status.step = 'PC内のバックアップ'
         full = store.export_payload('backup')
+        groups = {}
+        for row in full['records']:
+            key = (row['store'], row['rate'])
+            entry = groups.setdefault(key, dict(name=f'P’s CUBE {key[0]}・{key[1]}', day=None, count=0))
+            entry['day'] = max(entry['day'] or '', row['day'])
+            entry['count'] += 1
+        status.stores = list(groups.values())
         local = _write_json(Path(export_path), full)
+        status.done('local')
+        status.step = '日別バックアップ'
         snapshots = (folder or data_dir) / 'backups'
         snapshot = snapshots / f'pscube-backup-{today.isoformat()}.json'
         snapshots.mkdir(parents=True, exist_ok=True)
         atomic_copy(local, snapshot)
+        status.done('snapshot')
         for old in snapshots.glob(SNAPSHOT_PATTERN):
             try:
                 stamp = date.fromisoformat(old.stem[len('pscube-backup-'):])
@@ -515,12 +528,20 @@ def auto_backup(store: 'PscubeStore', export_path, today: date | None = None) ->
             if (today - stamp).days > SNAPSHOT_KEEP_DAYS:
                 old.unlink(missing_ok=True)
         if folder is None:
+            status.finish('unavailable', '同期フォルダ未設定' if not status.folder else
+                          '同期フォルダが見つかりません。ドライブ・接続を確認してください。')
             return '同期フォルダ未設定（本体の「バックアップ・同期」で指定）'
+        status.step = '全期間バックアップの共有フォルダへの書き出し'
         atomic_copy(local, folder / AUTO_BACKUP_NAME)
+        status.done('backup')
+        status.step = '閲覧用ファイルの共有フォルダへの書き出し'
         light = _write_json(data_dir / VIEWER_DRIVE_NAME, store.export_payload('viewer'))
         atomic_copy(light, folder / VIEWER_DRIVE_NAME)
+        status.done('viewer')
+        status.finish('success')
         return 'バックアップ済み'
-    except (OSError, ValueError, sqlite3.Error):
+    except (OSError, ValueError, sqlite3.Error) as error:
+        status.finish('failed', f'{status.step}：{error}')
         return 'バックアップに失敗（取り込みは保存済み）'
 
 

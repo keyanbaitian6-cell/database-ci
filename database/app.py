@@ -15,6 +15,7 @@ from event_calendar import PscubeEvents, open_event_calendar
 from event_history import open_event_history as show_event_history
 from variety_rainbow import build_variety_tab
 from output_worker import OutputWorker, refresh_outputs
+from backup_status_ui import BackupStatusPanel
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup, normalize_machine_name,
                   latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
@@ -762,9 +763,39 @@ def main():
     sync_box.pack(fill='x', pady=(0, 14))
     sync_dir = tk.StringVar(value=settings.get('sync_dir') or '未設定')
     ttk.Label(sync_box, style='Sub.TLabel', wraplength=680, text=(
-        '一度フォルダを指定すると、保存のたびに最新のバックアップが自動でこのフォルダに書き出されます。'
-        'Android版のファイルは、ボタン1つで読み込めます（食い違う記録だけ確認します）。')).pack(anchor='w', pady=(0, 8))
+        '保存済みの記録から、共有用ファイルとバックアップをこのフォルダへ書き出します。'
+        'メルヘンの取り込み画面で保存した分は、その画面を閉じたあとに自動で書き出します。'
+        'Googleドライブへのアップロードは、Drive側の同期状況も確認してください。')).pack(anchor='w', pady=(0, 8))
     ttk.Label(sync_box, textvariable=sync_dir).pack(anchor='w')
+
+    def reexport_shared():
+        if closing[0]:
+            return
+        folder = load_settings(DATA_DIR).get('sync_dir')
+        if not folder or not Path(folder).is_dir():
+            shared_status.refresh()
+            messagebox.showinfo('書き出し先を確認してください',
+                                '「同期フォルダを指定」で保存先を選んでください。'
+                                'ドライブが見つからないときは、接続の復旧後にもう一度更新できます。', parent=root)
+            return
+        meruhen = (DATA_DIR / 'database.sqlite3').is_file()
+        pscube = (DATA_DIR / 'pscube.sqlite3').is_file()
+        if not meruhen and not pscube:
+            messagebox.showinfo('保存済みの記録がありません', 'PC内に書き出せる記録ファイルがありません。', parent=root)
+            return
+        shared_status.set_busy(True)
+        tell('共有用ファイルの更新を受け付けました。書き出し完了までお待ちください。\n')
+        def completed(result):
+            shared_status.set_busy(False)
+        try:
+            schedule_outputs(backup=meruhen, pscube=pscube, done=completed)
+        except Exception:
+            shared_status.set_busy(False)
+            raise
+
+    shared_status = BackupStatusPanel(sync_box, DATA_DIR,
+                                     lambda: load_settings(DATA_DIR).get('sync_dir'), reexport_shared)
+    shared_status.pack(fill='x', pady=(6, 0))
     sync_buttons = ttk.Frame(sync_box)
     sync_buttons.pack(fill='x', pady=(8, 0))
 
@@ -1009,13 +1040,9 @@ def main():
             return
         save_settings(DATA_DIR, sync_dir=folder)
         sync_dir.set(folder)
-        db = Store(DATA_DIR / 'database.sqlite3')
-        try:
-            schedule_outputs(backup=True)
-        finally:
-            db.close()
-        logbox.insert('end', f'同期フォルダを設定しました：{folder}\n最新のバックアップを書き出しました。\n')
+        logbox.insert('end', f'同期フォルダを設定しました：{folder}\n')
         logbox.see('end')
+        reexport_shared()
 
     def import_latest_from_sync():
         folder = load_settings(DATA_DIR).get('sync_dir')

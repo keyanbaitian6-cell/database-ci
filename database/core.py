@@ -1724,6 +1724,33 @@ def restore_backup(store, path):
 
 
 def auto_backup(store, data_dir, *, strict=False, notices=None, import_shared=True):
+    from backup_status import BackupStatus
+    status = BackupStatus(data_dir, 'meruhen', load_settings(data_dir).get('sync_dir'))
+    try:
+        names = {'nagamachiminami': '長町南', 'saiwaichou': '幸町'}
+        status.stores = [dict(name=names.get(place, place), day=day, count=count)
+                         for place, day, count in store.db.execute(
+                             'SELECT store, MAX(day), COUNT(*) FROM days GROUP BY store')]
+        result = _auto_backup(store, data_dir, strict=strict, notices=notices,
+                              import_shared=import_shared, status=status)
+        if not status.folder or not Path(status.folder).is_dir():
+            state, message = 'unavailable', ('同期フォルダ未設定' if not status.folder else
+                                             '同期フォルダが見つかりません。ドライブ・接続を確認してください。')
+        elif result is None:
+            state, message = 'failed', '\n'.join(status.problems)
+        elif status.problems:
+            state, message = 'partial', '\n'.join(status.problems)
+        else:
+            state, message = 'success', ''
+    except Exception as error:
+        status.finish('failed', f'{status.step}：{error}')
+        raise
+    if not status.finish(state, message) and notices is not None:
+        notices.append('書き出し結果の記録を保存できませんでした。共有フォルダのファイルを確認してください。')
+    return result
+
+
+def _auto_backup(store, data_dir, *, strict, notices, import_shared, status):
     """Refresh backups after data changed; strict=True reports output failures.
 
     Also writes today's dated backup (see ``snapshot_backup``). The shared-folder
@@ -1731,38 +1758,50 @@ def auto_backup(store, data_dir, *, strict=False, notices=None, import_shared=Tr
     must never get in the way of saving the record itself.
     """
     if import_shared:
+        status.step = '共有編集の取り込み'
         sync_shared_history(store, data_dir, notices)
     snapshot = None
     try:
+        status.step = '日別バックアップ'
         snapshot = snapshot_backup(store, data_dir)
-    except (OSError, ValueError):
+        status.done('snapshot')
+    except (OSError, ValueError) as error:
+        status.problems.append(f'日別バックアップ：{error}')
         if strict:
             raise
     folder = load_settings(data_dir).get('sync_dir')
+    status.folder = str(folder) if folder else None
     if not folder or not Path(folder).is_dir():
         return None
     try:
+        status.step = '全期間バックアップの共有フォルダへの書き出し'
         path = Path(folder) / AUTO_BACKUP_NAME
         if snapshot is not None:
             # 同じ内容なので、全データを2回書き出さず、書き出した1つを複製する。
             atomic_copy(snapshot, path)
         else:
             export_backup(store, path)
-    except OSError:
+        status.done('backup')
+    except OSError as error:
+        status.problems.append(f'{status.step}：{error}')
         if strict:
             raise
         return None
     try:
+        status.step = '閲覧用ファイルの共有フォルダへの書き出し'
         # 閲覧ページ用の軽いファイル。ローカルで書いてから同期フォルダへ複製する
         # （書きかけのファイルがDriveへ上がらないように）。
         local = Path(data_dir) / VIEWER_FILE_NAME
         export_viewer(store, local)
         atomic_copy(local, Path(folder) / VIEWER_FILE_NAME)
-    except (OSError, ValueError):
+        status.done('viewer')
+    except (OSError, ValueError) as error:
+        status.problems.append(f'{status.step}：{error}')
         if strict:
             raise
     # 履歴の基準・個別項目が読めなくても、通常のバックアップとAndroid出力は続ける。
     try:
+        status.step = 'イベント履歴の共有フォルダへの書き出し'
         from event_history_data import FILE_NAME, load_base, VARIETY_KEY, saiwaichou_base, clean_edits, empty_edits
         clean, rejected = store.history_edits_status()
         variety, variety_rejected = clean_edits(store.history_edits_raw().get(VARIETY_KEY, empty_edits()), saiwaichou_base())
@@ -1771,14 +1810,19 @@ def auto_backup(store, data_dir, *, strict=False, notices=None, import_shared=Tr
         with atomic_writer(Path(folder) / FILE_NAME) as out:
             json.dump(dict(clean, base=load_base(), rejected=rejected,
                            updated_at=datetime.now().astimezone().isoformat()), out, ensure_ascii=False)
+        status.done('history')
     except (OSError, ValueError) as error:
+        status.problems.append(f'{status.step}：{error}')
         if notices is not None:
             notices.append(f'イベント履歴の共有用出力は更新できませんでした：{error}')
     # Android用の直近7日分は最後に、失敗してもほかの書き出しを止めない（strict でも知らせるだけ）。
     # 先に書くと、ここでの失敗で閲覧用（iPhone版・共有ページ）の更新まで止まる（2026-10-18 確認）。
     try:
-        export_recent_backup(store, data_dir, folder)
+        status.step = 'Android用の直近7日分の書き出し'
+        if export_recent_backup(store, data_dir, folder) is not None:
+            status.done('recent')
     except (OSError, ValueError) as error:
+        status.problems.append(f'{status.step}：{error}')
         if notices is not None:
             notices.append(f'Android用の直近7日分（{RECENT_BACKUP_NAME}）を書き出せませんでした（{error}）。'
                            '全期間のバックアップと閲覧用は更新済みです。次の保存でもう一度書き出します。')
