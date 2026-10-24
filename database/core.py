@@ -413,6 +413,14 @@ class Store:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path)
+        try:
+            self._initialize()
+        except BaseException:
+            # 壊れたDBなどで初期化に失敗しても、接続・ファイルロックを残さない。
+            self.db.close()
+            raise
+
+    def _initialize(self):
         self.db.execute('CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, captured_at TEXT NOT NULL, payload TEXT NOT NULL)')
         # 1行保存するたびの古い行の削除（_log_observation）が、索引なしでは全件（数万行・数十MB）を読んでいた。
         # 新しいバックアップ551行の取り込みで約21秒画面が止まった主因（2026-10-14 レビュー、専用コピーで計測）。

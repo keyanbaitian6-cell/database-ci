@@ -144,7 +144,7 @@ class _ViewerHomeState extends State<ViewerHome> {
   /// 出す。[manual] は利用者が押したとき（変わっていなくても知らせる）。
   Future<void> _refreshFromDrive({bool manual = false}) async {
     final url = _remote;
-    if (url == null || _syncing) return;
+    if (url == null || _syncing || _loading) return;
     setState(() {
       _syncing = true;
       _error = null;
@@ -155,6 +155,7 @@ class _ViewerHomeState extends State<ViewerHome> {
         url,
         unlessExportedAt: current?.exportedAtText,
       );
+      if (!mounted) return;
       _checkedAt = DateTime.now();
       if (text == null) {
         final at = current?.exportedAt;
@@ -176,9 +177,12 @@ class _ViewerHomeState extends State<ViewerHome> {
         } on Object {
           stored = null;
         }
-        final merged = ViewerData.merge(stored, text);
-        final data = ViewerData.parse(merged.text);
-        if (merged.text != stored) await saveViewerData(merged.text);
+        final merged = ViewerData.prepareMerge(stored, text);
+        final data = merged.data;
+        if (merged.text != stored) {
+          await saveViewerData(merged.text, meruhen: data.source != 'pscube');
+        }
+        if (!mounted) return;
         _show(data);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -318,6 +322,7 @@ class _ViewerHomeState extends State<ViewerHome> {
   }
 
   Future<void> _editRemote() async {
+    if (_loading || _syncing) return;
     final field = TextEditingController(text: _remote ?? '');
     final result = await showDialog<String>(
       context: context,
@@ -378,19 +383,23 @@ class _ViewerHomeState extends State<ViewerHome> {
   }
 
   Future<void> _pick() async {
+    if (_loading || _syncing) return;
     setState(() {
       _error = null;
       _loading = true;
     });
     try {
       final picked = await pickBackup();
-      // 端末で入れたイベント（イベントカレンダー）は、新しく読んだ内容に統合して残す。
-      final text = picked == null
-          ? null
-          : ViewerData.withOtherEvents(await loadViewerData(), picked);
-      if (text != null) {
-        final data = ViewerData.parse(text);
-        await saveViewerData(text);
+      if (picked != null && mounted) {
+        // 古い台データを組み立て直さず、端末の最新イベントだけを引き継ぐ。
+        final prepared = ViewerData.preparePicked(
+          picked,
+          _data,
+          events: pickedBackupEvents(),
+        );
+        final data = prepared.data;
+        await saveViewerData(prepared.text, meruhen: data.source != 'pscube');
+        if (!mounted) return;
         _show(data);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -399,9 +408,10 @@ class _ViewerHomeState extends State<ViewerHome> {
         }
       }
     } catch (error) {
-      _error = 'バックアップを読み込めませんでした。\n$error';
+      if (mounted) _error = 'バックアップを読み込めませんでした。\n$error';
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _exportPscube() async {
@@ -763,21 +773,21 @@ class _ViewerHomeState extends State<ViewerHome> {
           if (_remote != null)
             IconButton(
               tooltip: 'Googleドライブの最新を読み込む',
-              onPressed: _syncing
+              onPressed: _syncing || _loading
                   ? null
                   : () => _refreshFromDrive(manual: true),
               icon: const Icon(Icons.refresh),
             ),
           IconButton(
             tooltip: 'Googleドライブの自動読み込み',
-            onPressed: _editRemote,
+            onPressed: _loading || _syncing ? null : _editRemote,
             icon: Icon(
               _remote == null ? Icons.link : Icons.cloud_done_outlined,
             ),
           ),
           IconButton(
             tooltip: 'バックアップを読み込む',
-            onPressed: _pick,
+            onPressed: _loading || _syncing ? null : _pick,
             icon: const Icon(Icons.file_open_outlined),
           ),
         ],
@@ -809,7 +819,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       const SizedBox(height: 12),
       Center(
         child: TextButton.icon(
-          onPressed: _editRemote,
+          onPressed: _loading || _syncing ? null : _editRemote,
           icon: const Icon(Icons.link),
           label: const Text('Googleドライブの自動読み込みを設定する'),
         ),
@@ -826,7 +836,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       const SizedBox(height: 16),
       Center(
         child: FilledButton.icon(
-          onPressed: _loading ? null : _pick,
+          onPressed: _loading || _syncing ? null : _pick,
           icon: const Icon(Icons.file_open_outlined),
           label: Text(_loading ? '読み込み中…' : 'バックアップを読み込む'),
         ),

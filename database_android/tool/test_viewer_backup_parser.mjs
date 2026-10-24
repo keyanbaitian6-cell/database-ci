@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import * as driveFetch from '../web/drive_fetch.mjs';
+import * as backupStream from '../web/backup_stream.mjs';
 
 // Execute the exact browser importer through its normal URL entry point.
 // Synthetic data only: no browser, Drive access, IndexedDB, or user records.
@@ -22,7 +23,7 @@ const head = {format: 'database-backup', version: 1, source: 'android', date_eve
 const start = `${JSON.stringify(head).slice(0, -1)}, "records": [\n`;
 const row = JSON.stringify(record);
 
-async function parse(text, chunkSize = 17) {
+async function parse(text, chunkSize = 17, stats) {
   const bytes = new TextEncoder().encode(text);
   const body = new ReadableStream({
     start(controller) {
@@ -32,7 +33,23 @@ async function parse(text, chunkSize = 17) {
       controller.close();
     },
   });
-  const context = {window: {}, TextDecoderStream, fetch: async () => ({ok: true, body})};
+  const originalParse = JSON.parse;
+  const json = stats ? {
+    stringify: JSON.stringify,
+    parse: (text) => {
+      stats.largest = Math.max(stats.largest || 0, text.length);
+      assert.ok(text.length < 1024 * 1024, '大きなバックアップを一括で解析しない');
+      return originalParse(text);
+    },
+  } : JSON;
+  const streamParser = stats ? {
+    readBackupJson: (stream, options) => {
+      const old = JSON.parse;
+      JSON.parse = json.parse;
+      return backupStream.readBackupJson(stream, options).finally(() => { JSON.parse = old; });
+    },
+  } : backupStream;
+  const context = {window: {databaseBackupStream: streamParser}, JSON: json, TextDecoderStream, fetch: async () => ({ok: true, body})};
   vm.runInNewContext(code, context);
   return JSON.parse(await context.window.databaseViewer.fromUrl('fixture.json'));
 }
@@ -58,6 +75,45 @@ test('older compact and pretty JSON exports use the same contract', async () => 
   const doc = {...head, records: [record], candidate_snapshots: [candidate]};
   check(await parse(JSON.stringify(doc)));
   check(await parse(JSON.stringify(doc, null, 2)));
+});
+
+test('40MBを超える改行なしの画像入りJSONも台ごとに解析する', async () => {
+  const image = 'A'.repeat(32 * 1024);
+  const rows = Array.from({length: 1300}, (_, i) => ({...record, rack: i + 1,
+    graph_measurement: {...record.graph_measurement, preview_image: image}}));
+  const text = JSON.stringify({...head, records: rows, candidate_snapshots: [candidate]});
+  assert.ok(Buffer.byteLength(text) > 40 * 1024 * 1024);
+  const stats = {};
+  const result = await parse(text, 64 * 1024, stats);
+  assert.equal(result.records.length, rows.length);
+  assert.equal(result.records.at(-1).rack, 1300);
+  assert.ok(result.records.every(r => !('preview_image' in r.graph_measurement)));
+  assert.deepEqual(result.records[0].graph_measurement.curve, record.graph_measurement.curve);
+  assert.deepEqual(result.candidates, [candidate]);
+  assert.deepEqual(result.date_events, [event]);
+  console.log(`stream benchmark (synthetic): ${JSON.stringify({input_bytes:Buffer.byteLength(text),largest_json_parse_chars:stats.largest,records:result.records.length})}`);
+});
+
+test('文字列中の括弧・改行・引用符と、チャンクをまたぐエスケープを壊さない', async () => {
+  const tricky = {...record, machine: '機種 ] } , "records": [ \\ 引用"\n改行'};
+  const result = await parse(JSON.stringify({...head, records: [tricky]}), 1);
+  assert.equal(result.records[0].machine, tricky.machine);
+});
+
+test('保存済みJSONからイベントだけを読むときは台の値を解析しない', async () => {
+  const text=JSON.stringify({header:head, records:Array(10).fill({...record,
+    graph_measurement:{preview_image:'A'.repeat(256*1024)}}), date_events:[event]});
+  const original=JSON.parse;
+  try {
+    JSON.parse=value=>{
+      assert.ok(value.length<16384,'イベントを読むために台のJSONを解析しない');
+      return original(value);
+    };
+    const {document:doc}=await backupStream.readBackupJson(new Blob([text]).stream(),{skipRecordValues:true});
+    assert.equal(doc.records.length,10);
+    assert.ok(doc.records.every(r=>r===null));
+    assert.deepEqual(doc.date_events,[event]);
+  } finally { JSON.parse=original; }
 });
 
 test('empty valid backups are accepted', async () => {
@@ -157,6 +213,7 @@ function remote(text, {chunkSize = 64, timers = {setTimeout, clearTimeout}, fetc
     ...(document ? {document} : {}),
   };
   context.window.databaseDriveFetch = driveModule(drive);
+  context.window.databaseBackupStream = backupStream;
   vm.runInNewContext(code, context);
   return {viewer: context.window.databaseViewer, stats};
 }

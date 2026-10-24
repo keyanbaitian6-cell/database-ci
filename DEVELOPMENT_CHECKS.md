@@ -50,6 +50,9 @@ Flutterのない環境でも `bash database_android/tool/check_before_build.sh -
 - メルヘンのGoogle同期は履歴モードで削除情報を日別原本に保持する。古いAndroid入力は削除済みの台を復活させない。旧モードで削除情報を持つAndroid入力を受けた場合は黙って捨てず停止・通知する。
 - PCの重いレポート・バックアップ出力は、1本のワーカーがSQLiteの専用コピーから行う。連続要求はまとめ、GUIの操作・通知はメインスレッドで行う。終了時は保留中の出力を待つ。DB保存と出力失敗は区別して知らせる。
 - 閲覧履歴の再起動読み込みは1日ずつハッシュ検査する。全期間の検索・集計用のレコードは保持する。同時更新を検出した読み出しは取り直しを求め、異なる版を混ぜない。
+- iPhone閲覧ページの手動JSONは `web/backup_stream.mjs` で台ごとに解析する。改行なし・整形JSONでも画像入りの全文を一括解析しない。外枠も末尾まで検査してから保存し、途中の結果をIndexedDBへ書かない。
+- 手動読み込み・Drive更新・自動読み込み設定の切り替えは重ねない。手動読み込み時の旧イベントは、保存済みJSONから台の値を組み立てずに取り出し、別タブの入力も引き継ぐ。`skipRecordValues` はこの保存済みメタデータの読み出し専用であり、未検査ファイルの受け入れには使わない。
+- `ViewerData.preparePicked` / `prepareMerge` は解析済みの内容から表示モデルを作り、同じ全文の再解析を避ける。保存成功後に表示を切り替え、解析・保存の失敗では旧データを保持する。`test_viewer_import_browser.mjs` はメルヘン・P’s CUBEで競合、別タブのイベント、破損JSON、IndexedDBの明示中断を実際の生成物で確認する。iPhone Safari実機の容量限界は別途確認が必要。
 
 回帰試験は `database/tests`・`database/test_*.py`・`database_android/test`・`database_android/tool/test_*.mjs` に置く。GitHub ActionsはLinux/Windows、JST/UTCのPC試験と、Linuxの全体ゲートを実行する。実機・実Googleの動作確認とは区別する。
 

@@ -51,8 +51,9 @@ class ViewerData {
   /// Driveの内容に合わせて残した、前に読み込んだ古い日の台の数（[merge]）。
   final int keptOlder;
 
-  static ViewerData parse(String text) {
-    final decoded = jsonDecode(text);
+  static ViewerData parse(String text) => _parseDocument(jsonDecode(text));
+
+  static ViewerData _parseDocument(Object? decoded) {
     if (decoded is! Map || decoded['records'] is! List) {
       throw const FormatException('databaseのバックアップファイルではありません。');
     }
@@ -161,23 +162,87 @@ class ViewerData {
     final from = decode(other);
     final into = decode(text);
     if (from == null || into == null) return text;
-    final days = [
-      if (into['records'] case final List records)
-        for (final item in records)
-          if (item is Map && item['day'] is String) item['day'] as String,
-    ];
-    final first = days.isEmpty
-        ? null
-        : days.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
-    final kept = [
-      for (final event in _events(from).values)
-        if (event.updatedAt != null ||
-            (!timedOnly && (first == null || event.day.compareTo(first) < 0)))
-          event,
-    ];
+    final result = _withEvents(
+      into,
+      _events(from).values,
+      timedOnly: timedOnly,
+    );
+    return identical(result, into) ? text : jsonEncode(result);
+  }
+
+  static Map<String, dynamic> _withEvents(
+    Map<String, dynamic> into,
+    Iterable<DateEvent> incoming, {
+    bool timedOnly = false,
+  }) {
+    String? first;
+    if (into['records'] case final List records) {
+      for (final item in records) {
+        final day = item is Map ? item['day'] : null;
+        if (day is String && (first == null || day.compareTo(first) < 0)) {
+          first = day;
+        }
+      }
+    }
+    final kept = incoming.where(
+      (event) =>
+          event.updatedAt != null ||
+          (!timedOnly && (first == null || event.day.compareTo(first) < 0)),
+    );
     final merged = mergeDateEvents(_events(into), kept);
-    if (merged.changed == 0) return text;
-    return jsonEncode({...into, 'date_events': _eventsJson(merged.events)});
+    if (merged.changed == 0) return into;
+    return {...into, 'date_events': _eventsJson(merged.events)};
+  }
+
+  /// 手動読み込みは端末のイベントを引き継ぎ、古い台データを組み立て直さない。
+  static ({String text, ViewerData data}) preparePicked(
+    String incoming,
+    ViewerData? previous, {
+    String? events,
+  }) {
+    final fresh = _decodeDocument(incoming);
+    if (fresh == null) {
+      throw const FormatException('databaseのバックアップファイルではありません。');
+    }
+    final cachedEvents = _decodeDocument(events);
+    final doc =
+        fresh['format'] == 'pscube-viewer' || previous?.source == 'pscube'
+        ? fresh
+        : _withEvents(
+            fresh,
+            cachedEvents == null
+                ? previous?.dateEvents.values ?? const <DateEvent>[]
+                : _events(cachedEvents).values,
+          );
+    return (
+      text: identical(doc, fresh) ? incoming : jsonEncode(doc),
+      data: _parseDocument(doc),
+    );
+  }
+
+  /// 統合と表示用モデルの組み立てで、同じ全文を繰り返し解析しない。
+  static ({String text, String? note, ViewerData data}) prepareMerge(
+    String? stored,
+    String incoming,
+  ) {
+    final result = _mergeDocument(stored, incoming);
+    return (
+      text: result.text,
+      note: result.note,
+      data: _parseDocument(result.document),
+    );
+  }
+
+  static Map<String, dynamic>? _decodeDocument(String? text) {
+    if (text == null) return null;
+    try {
+      final doc = jsonDecode(text);
+      return doc is Map && doc['records'] is List
+          ? Map<String, dynamic>.from(doc)
+          : null;
+    } on FormatException {
+      return null;
+    }
   }
 
   /// 共有カレンダーのファイル [shared]（`{format: database-events, events}`）の入力時刻つきイベントを、
@@ -312,40 +377,60 @@ class ViewerData {
   ///
   /// 返す [text] を表示・保存に使う。[note] は利用者への知らせ（無ければ null）。
   static ({String text, String? note}) merge(String? stored, String incoming) {
-    final result = _mergeRecords(stored, incoming);
-    // 端末で入れたイベントとDriveのイベントは、どちらの内容を使うときも新しい方を残す。
-    // 端末の内容を残したときは、Driveからは時刻つきの入力だけを足す。
-    final keptStored = identical(result.text, stored);
+    try {
+      final result = _mergeDocument(stored, incoming);
+      return (text: result.text, note: result.note);
+    } on FormatException {
+      return (text: incoming, note: null);
+    }
+  }
+
+  static ({String text, String? note, Map<String, dynamic> document})
+  _mergeDocument(String? stored, String incoming) {
+    final old = _decodeDocument(stored);
+    final fresh = _decodeDocument(incoming);
+    if (fresh == null) {
+      throw const FormatException('databaseのバックアップファイルではありません。');
+    }
+    final result = _mergeRecords(old, fresh);
+    var doc = result.document;
+    final keptStored = identical(doc, old);
+    final eventsFrom = keptStored ? fresh : old;
+    if (doc['format'] != 'pscube-viewer' &&
+        eventsFrom != null &&
+        eventsFrom['format'] != 'pscube-viewer') {
+      doc = _withEvents(doc, _events(eventsFrom).values, timedOnly: keptStored);
+    }
+    if (old != null) {
+      final marks = mergeRainbowMarks(
+        rainbowMarksOf(doc),
+        rainbowMarksOf(old).values,
+      );
+      if (marks.changed != 0) {
+        doc = {
+          ...doc,
+          'rainbow_marks': [
+            for (final key in marks.marks.keys.toList()..sort())
+              marks.marks[key]!.toJson(),
+          ],
+        };
+      }
+    }
     return (
-      // 閲覧ページで付け外しした🌈（端末だけが持つ）は、Driveの内容に置き換えても残す。
-      text: keepRainbowMarks(
-        stored,
-        withOtherEvents(
-          keptStored ? incoming : stored,
-          result.text,
-          timedOnly: keptStored,
-        ),
-      ),
+      document: doc,
       note: result.note,
+      text: identical(doc, old)
+          ? stored!
+          : identical(doc, fresh)
+          ? incoming
+          : jsonEncode(doc),
     );
   }
 
-  static ({String text, String? note}) _mergeRecords(
-    String? stored,
-    String incoming,
+  static ({Map<String, dynamic> document, String? note}) _mergeRecords(
+    Map<String, dynamic>? old,
+    Map<String, dynamic> fresh,
   ) {
-    Map<String, dynamic>? decode(String? text) {
-      if (text == null) return null;
-      try {
-        final value = jsonDecode(text);
-        return value is Map && value['records'] is List
-            ? Map<String, dynamic>.from(value)
-            : null;
-      } on FormatException {
-        return null;
-      }
-    }
-
     DateTime? exportedAt(Map<String, dynamic> doc) {
       final header = doc['header'];
       return header is Map
@@ -359,17 +444,17 @@ class ViewerData {
       return '${local.month}/${local.day} ${two(local.hour)}:${two(local.minute)}';
     }
 
-    final old = decode(stored);
-    final fresh = decode(incoming);
-    if (old == null || fresh == null) return (text: incoming, note: null);
+    if (old == null) return (document: fresh, note: null);
     // P's CUBE's bridge merges records by shop/rate/machine/rack/day before
     // returning them, preserving older days and detailed graphs.
-    if (fresh['format'] == 'pscube-viewer') return (text: incoming, note: null);
+    if (fresh['format'] == 'pscube-viewer') {
+      return (document: fresh, note: null);
+    }
     final oldAt = exportedAt(old);
     final freshAt = exportedAt(fresh);
     if (oldAt != null && freshAt != null && oldAt.isAfter(freshAt)) {
       return (
-        text: stored!,
+        document: old,
         note:
             '前に読み込んだ内容（${when(oldAt)}書き出し）の方が、Googleドライブの内容'
             '（${when(freshAt)}書き出し）より新しいので、置き換えていません。',
@@ -382,7 +467,7 @@ class ViewerData {
 
     final freshRecords = fresh['records'] as List;
     final freshDays = [for (final item in freshRecords) ?dayOf(item)];
-    if (freshDays.isEmpty) return (text: incoming, note: null);
+    if (freshDays.isEmpty) return (document: fresh, note: null);
     final first = freshDays.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
     final completeDays = fresh['history_days'] is List
         ? (fresh['history_days'] as List).whereType<String>().toSet()
@@ -395,7 +480,7 @@ class ViewerData {
                 : day.compareTo(first) < 0)
           item,
     ];
-    if (older.isEmpty) return (text: incoming, note: null);
+    if (older.isEmpty) return (document: fresh, note: null);
     final events = <String, Object?>{};
     // 最新の対象期間ではイベントの解除も反映する。手元のイベントを
     // 引き継ぐのは、今回残した古い記録の店舗・日付だけ。
@@ -415,12 +500,12 @@ class ViewerData {
       }
     }
     return (
-      text: jsonEncode({
+      document: {
         ...fresh,
         'records': [...freshRecords, ...older],
         'date_events': events.values.toList(),
         'kept_older': older.length,
-      }),
+      },
       note:
           'Googleドライブの最新に、前に読み込んだ${first.substring(5).replaceAll('-', '/')}より前の'
           '${older.length}台を合わせて表示しています。',

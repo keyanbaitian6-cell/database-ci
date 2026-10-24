@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import test_atomic_backup as atomic_fixtures
 import test_record_deletions as deletion_fixtures
+import test_backup_output_status as output_fixtures
 
 
 class SqliteFixtureCleanupTests(unittest.TestCase):
@@ -16,6 +17,8 @@ class SqliteFixtureCleanupTests(unittest.TestCase):
             deletion_fixtures.RecordDeletionTests('test_last_row_deletion_is_exported_and_old_backup_cannot_resurrect_it'),
             deletion_fixtures.RecordDeletionTests('test_deletion_roundtrip_preserves_unrelated_rows_and_explicit_restore'),
             deletion_fixtures.RecordDeletionTests('test_invalid_deletion_rejects_whole_input'),
+            output_fixtures.BackupOutputStatusTests('test_combined_reexport_still_updates_meruhen_when_pscube_source_is_broken'),
+            output_fixtures.BackupOutputStatusTests('test_combined_reexport_still_updates_pscube_when_meruhen_source_is_broken'),
         ]
         connect, cleanup = sqlite3.connect, tempfile.TemporaryDirectory.cleanup
         connections = []

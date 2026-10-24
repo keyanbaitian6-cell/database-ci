@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readBinaryPlist, readWebArchive } from '../web/pscube/archive.mjs';
 import { emptyData, validateData, mergeData, progress, siteUrl, isExcludedMachine, cleanEventName, dateEventNames } from '../web/pscube/data.mjs';
 import {netMedalsOfProbe, applyGraphProbe} from '../web/pscube/graph_probe.mjs';
+import {readPscubeFiles} from '../web/pscube/viewer_bridge.mjs';
 
 const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c1/cgi-bin/';
 const machine = { store: 'c1', rate: '20', machine: '試験機種', expected_count: 2, url: `${base}nc-v05-011.php?cd_ps=2&bai=20` };
@@ -10,6 +11,15 @@ const graph = { kind: 'daily', zero_y: 10, points: [[0, 10], [10, 2]] };
 const record = { ...machine, rack: 1, day: '2026-10-01', bb: 3, rb: 1, at_art: 0, games: 600, my: 120,
   observed_at: '2026-10-01T10:00:00+09:00', detail_url: `${base}nc-v06-001.php?cd_dai=1#20261001`, graph };
 const data = (patch = {}, machinePatch = {}) => ({ ...emptyData(), machines: [{ ...machine, ...machinePatch }], records: [{ ...record, ...patch }] });
+
+test('手動ファイルは全文textを使わず、グラフ・MY・数値を保持して読む', async () => {
+  const file = new File([JSON.stringify(data())], 'fixture.json', {type:'application/json'});
+  file.text = () => { throw new Error('ファイル全体を文字列にしない'); };
+  const result = JSON.parse(await readPscubeFiles([file], emptyData()));
+  assert.equal(result.records[0].games, record.games);
+  assert.equal(result.records[0].my, record.my);
+  assert.deepEqual(result.records[0].graph, graph);
+});
 
 test('MY and source identity survive round trip without max_hold conversion', () => {
   const saved = validateData(JSON.parse(JSON.stringify(data())));

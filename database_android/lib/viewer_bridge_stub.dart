@@ -1,9 +1,11 @@
 /// Web以外で使う、何もしない版（テスト用）。
 Future<String?> pickBackup() async => null;
 
+String? pickedBackupEvents() => null;
+
 Future<String?> backupFromUrl(String url) async => null;
 
-Future<void> saveViewerData(String text) async {}
+Future<void> saveViewerData(String text, {bool meruhen = false}) async {}
 
 Future<String?> loadViewerData() async => null;
 

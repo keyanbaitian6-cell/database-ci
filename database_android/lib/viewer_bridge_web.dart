@@ -16,7 +16,7 @@ external JSString? _getRemote();
 external void _setRemote(JSString? url);
 
 @JS('databaseViewer.save')
-external JSPromise<JSAny?> _save(JSString text);
+external JSPromise<JSAny?> _save(JSString text, JSBoolean meruhen);
 
 @JS('databaseViewer.load')
 external JSPromise<JSString?> _load();
@@ -34,12 +34,18 @@ external JSPromise<JSString?> _setPscubeType(
 /// ファイルを選んで読んだ結果（軽くしたJSON）。選ばなければ null。
 Future<String?> pickBackup() async => (await _pick().toDart)?.toDart;
 
+@JS('databaseViewer.pickedEvents')
+external JSString? _pickedEvents();
+
+/// 手動読み込み直前の、端末に保存済みのイベントだけ。
+String? pickedBackupEvents() => _pickedEvents()?.toDart;
+
 /// 同じサイトの中のファイルを読む（手元での確認用）。
 Future<String?> backupFromUrl(String url) async =>
     (await _fromUrl(url.toJS).toDart)?.toDart;
 
-Future<void> saveViewerData(String text) async {
-  await _save(text.toJS).toDart;
+Future<void> saveViewerData(String text, {bool meruhen = false}) async {
+  await _save(text.toJS, meruhen.toJS).toDart;
 }
 
 Future<String?> loadViewerData() async => (await _load().toDart)?.toDart;
