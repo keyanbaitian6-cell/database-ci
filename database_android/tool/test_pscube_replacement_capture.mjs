@@ -34,7 +34,12 @@ try {
       const request = {
         done(callback) {
           queueMicrotask(() => callback({Graph:{src:{datas:{
-            g:[{YMD_biz:20261005,xField:'out-1',yField:'value-1'}],
+            // 新台の前日以前も系列の見出しだけ返る応答。点の無い日を0枚にしない。
+            g:Array.from({length:7},(_,i) => {
+              const date=new Date('2026-10-05T00:00:00Z');date.setUTCDate(date.getUTCDate()-i);
+              return {YMD_biz:Number(date.toISOString().slice(0,10).replaceAll('-','')),
+                xField:`out-${i+1}`,yField:`value-${i+1}`};
+            }),
             p:[{'out-1':0,'value-1':50},{'out-1':10,'value-1':175}],
           }}}})); return request;
         }, fail() { return request; },

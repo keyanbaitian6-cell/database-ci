@@ -56,6 +56,33 @@ try {
   assert.equal(request.url, 'nc-m06-003.php');
   assert.equal(request.data.cd_dai, '1120');
   assert.equal(request.data.YMD_biz, '20261002');
+  const captureGraph = async graphData => {
+    await page.evaluate(value => {
+      window.jQuery.ajax = () => {
+        const request = {
+          done(callback) { queueMicrotask(() => callback({Graph:{src:value}})); return request; },
+          fail() { return request; },
+        }; return request;
+      };
+    }, graphData);
+    return JSON.parse(await page.evaluate(script));
+  };
+  // 別日が空・1点・不正でも、正常日の正確な差枚と既存の数値は返す。
+  for (const oldPoints of [[],[{'out-1':0,'value-1':100}],[{'out-1':0,'value-1':NaN}]]) {
+    const partial=await captureGraph({datas:{g:graph.datas.g,p:[...oldPoints,...graph.datas.p.slice(2)]}});
+    assert.equal(partial.records[0].net_medals,125);
+    assert.equal(partial.records[1].net_medals,undefined);
+    assert.equal(partial.records[0].my,120);
+    assert.equal(partial.net_warning,undefined);
+  }
+  // 選択日の点が無い場合も、正常な過去日の差枚は保存用データに残す。
+  const missingSelected=await captureGraph({datas:{g:graph.datas.g,p:graph.datas.p.slice(0,2)}});
+  assert.equal(missingSelected.records[0].net_medals,undefined);
+  assert.equal(missingSelected.records[1].net_medals,-25);
+  assert.match(missingSelected.net_warning,/選択日のグラフ/);
+  const allMissing=await captureGraph({datas:{g:graph.datas.g,p:[]}});
+  assert.ok(allMissing.records.every(r=>r.net_medals==null));
+  assert.match(allMissing.net_warning,/選択日のグラフ/);
   await page.evaluate(() => {
     window.jQuery.ajax = () => {
       const request = {
