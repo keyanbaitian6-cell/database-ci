@@ -74,13 +74,8 @@ async function seen(pattern){
 // その日のマスを押す。マスの文字は日付で始まり、イベント名・誕生日・差枚が続くことがあるので、
 // 文字の完全一致ではなく「先頭が日付」で探す（誕生日のある日は '21' だけのマスにならない）。
 async function clickDay(day){
-  const box=await page.evaluate(source=>{
-    const re=new RegExp(source);
-    const el=[...document.querySelectorAll('flt-semantics')].find(e=>re.test(e.getAttribute('aria-label')||e.textContent||''));
-    if(!el)return null;const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};
-  },`^${day}(?:\\s|$)`);
-  assert.ok(box,'no calendar day '+day);
-  await page.mouse.click(box.x,box.y);
+  // 座標を先に保存しない。幅変更後の配置が安定したボタンをPlaywrightに選ばせる。
+  await page.getByRole('button',{name:new RegExp(`^${day}(?:\\s|$)`)}).click();
 }
 async function waitSeen(pattern){
   for(let i=0;i<60;i++){if(await seen(pattern))return;await page.waitForTimeout(250);}

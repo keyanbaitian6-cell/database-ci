@@ -51,13 +51,21 @@ try {
     assert.equal(await card.locator('.hist > div').count(), 2, '当り履歴2回');
     assert.match(await card.innerText(), /5,000/);
     assert.match(await page.locator('#rack-90').innerText(), /まだです/);
+    // 台への移動はスムーズスクロール。移動中に固定バーを押さず、完了を確認する。
+    await page.evaluate(()=>{window.__reportTestScroll={y:NaN,stable:0};});
+    await page.waitForFunction(()=>{
+      const s=window.__reportTestScroll,y=scrollY;s.stable=s.y===y ? s.stable+1 : 0;s.y=y;
+      return s.stable>=3;
+    },null,{polling:'raf',timeout:10000});
     // 見る末尾を切り替える（2026-10-12 利用者「末尾表示ページもほしい」）。10月は月に合わせて末尾0から。
     assert.equal(await page.locator('#tails button.on').innerText(), '0');
     assert.equal(await page.locator('#title').innerText(), 'パチンコ 末尾0の記録');
     await page.click('#tails button[data-t="5"]');
+    await page.waitForFunction(()=>document.querySelector('#tails button.on')?.dataset.t==='5');
     assert.deepEqual(await page.locator('tr.rack').evaluateAll(trs => trs.map(t => t.dataset.r)), ['75', '85', '95', '105']);
     assert.equal(await page.locator('#title').innerText(), 'パチンコ 末尾5の記録');
     await page.click('#tails button[data-t="0"]');
+    await page.waitForFunction(()=>document.querySelector('#tails button.on')?.dataset.t==='0');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 0, `${width}px で横にはみ出さない（${overflow}px）`);
     await page.click('#prev', {force: true}).catch(() => {});

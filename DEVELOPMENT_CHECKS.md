@@ -11,9 +11,6 @@ Python依存は `database/requirements.txt` の固定版、Flutter依存は `pub
 
 ```bash
 python3 database/setup_python.py
-cd database_android
-flutter pub get --enforce-lockfile
-cd ..
 bash database_android/tool/check_before_build.sh
 ```
 
@@ -62,6 +59,24 @@ Flutterのない環境でも `bash database_android/tool/check_before_build.sh -
 メールはジョブの成否だけを示す。全体ゲートが失敗した場合は、Actionsの `Complete pre-build gate` 内の失敗名のグループにエラー本文の末尾120行を表示する。全体ゲートのログファイルも `regression-full-logs` のartifactとして7日間保存する。`test_rainbow_today_browser` は共有／Flutter閲覧と320／393pxを個別の試験名で表示する。
 
 一時フォルダー内のSQLiteは、フォルダーを削除する前に必ず閉じる。`with TemporaryDirectory()` 内で `addCleanup(store.close)` だけを登録すると、接続を閉じるより先にフォルダー削除が走り、Windowsで失敗する。内側の `with closing(Store(...))` または `try/finally` を使う。Storeの初期化中に例外が起きた場合は、コンストラクター自身が接続を閉じる。バックアップ・削除同期と壊れたDBからの再出力の6試験には、Linuxでも同じ寿命違反を検出する `test_sqlite_fixture_cleanup.py` がある。
+
+## 試験を省かずに実行時間を短くする（D）
+
+GitHubのfullジョブは `CHECK_JS_JOBS=2` でJSファイルを2本ずつ実行する。PCのUbuntu/UTC・Windows/UTCと、fullの日本時間という条件は維持する。Windowsのローカル確認にも同じ実行制御を使うため、新しい制御の7試験だけはWindowsでも確認し、UbuntuのPCジョブには重ねない。
+
+手元の既定は従来どおり1本ずつ。クラウドで2本ずつ動かす場合は次を使う。設定は1または2だけを受け付ける。Flutterの試験・解析・ビルドを同時に動かす変更ではない。
+
+```bash
+CHECK_JS_JOBS=2 bash database_android/tool/check_before_build.sh
+```
+
+試験の一覧は毎回 `tool/test_*.mjs` から全件集める。各ファイルを1回だけ、従来と同じ独立したNodeプロセスで実行し、ログもファイルごとに残す。並行中の失敗・起動失敗も集約する。新しい閲覧ビルドが無い場合の未実行を成功へ置き換えない。診断用の画面試験は別ポート・別のブラウザ保存領域、保存を伴う試験は固有の一時フォルダーを使う。取得元サイトへの通信を増やさない。
+
+通常のゲートはAndroidプロジェクトのディレクトリで `flutter pub get --enforce-lockfile` を1回実行し、以後のtest・analyze・buildには `--no-pub` を渡す。依存解決に失敗したら、古い依存設定によるFlutter確認・閲覧ビルドは実行しない。lockfileとSDKの固定版は変更しない。CIのfullでもPCジョブと同じpipキャッシュ指定を使う。SDK・ブラウザ・ビルド済みの閲覧画面は今回キャッシュしない。
+
+ログの隣に `timings.tsv`（工程別の結果と秒）、`js-results.json`（全JSファイルの結果・実時間・実測同時数）、`timings.md`（表示用の要約）を出す。CIの概要に要約を表示し、`regression-timings` artifactに7日間保存する。これらは実行時に生成する出力であり、リポジトリのMarkdownを試験の入力にはしない。失敗時の完全なログと末尾120行の表示は維持する。
+
+時間を比較するときは、ジョブ全体の時間と実行条件を合わせる。以前のCIでは依存解決がゲートの外、現在はゲート内の `flutter-pub` なので、「Complete pre-build gate」だけの前後比較はしない。Windowsの2倍とジョブ単位の分の切り上げも考慮し、実行時間の短縮と無料枠の削減を区別する。
 
 ## GoogleとWebへの反映
 

@@ -27,26 +27,40 @@ case "$WORK" in
     exit 1
     ;;
 esac
+case "${CHECK_JS_JOBS:-1}" in
+  1|2) ;;
+  *) echo 'CHECK_JS_JOBSは1または2を指定してください。' >&2; exit 1 ;;
+esac
 mkdir -p "$WORK/viewer"
+printf 'stage\tresult\tseconds\n' > "$WORK/timings.tsv"
 failed=()
 unrun=()
 
 run() {
   local name=$1
   shift
+  local began=$SECONDS result=passed code=0
   if "$@" > "$WORK/$name.log" 2>&1; then
     echo "OK    $name"
   else
+    code=1
+    result=failed
     echo "FAIL  $name  （記録：$WORK/$name.log）"
-    # Hosted runners disappear after the job. Keep the actual error in the
-    # Actions output as well as the per-test file, with bounded log volume.
+    # CIの実行環境が消えても、元の失敗理由を確認できるようにする。
     echo "::group::$name failure log (last 120 lines)"
     tail -n 120 "$WORK/$name.log"
     echo '::endgroup::'
     failed+=("$name")
-    return 1
   fi
+  printf '%s\t%s\t%s\n' "$name" "$result" "$((SECONDS-began))" >> "$WORK/timings.tsv"
+  return "$code"
 }
+
+cd "$ROOT/database_android"
+flutter_deps_ready=false
+if ! $LOCAL_ONLY; then
+  if run flutter-pub flutter pub get --enforce-lockfile; then flutter_deps_ready=true; fi
+fi
 
 cd "$ROOT/database"
 run pc-tests "$PYTHON" -m unittest discover -s tests
@@ -57,25 +71,32 @@ run pc-event-timezone-utc bash -c 'TZ=UTC "$0" -m unittest discover -s tests -p 
 
 cd "$ROOT/database_android"
 viewer_ready=false
-if ! $LOCAL_ONLY; then
-  run flutter-test flutter test
-  run flutter-analyze flutter analyze --no-fatal-infos
-  if run viewer-build bash -c 'MSYS_NO_PATHCONV=1 flutter build web -t lib/viewer_main.dart --release --base-href /database-viewer/'; then
+if ! $LOCAL_ONLY && $flutter_deps_ready; then
+  run flutter-test flutter test --no-pub
+  run flutter-analyze flutter analyze --no-pub --no-fatal-infos
+  if run viewer-build bash -c 'MSYS_NO_PATHCONV=1 flutter build web --no-pub -t lib/viewer_main.dart --release --base-href /database-viewer/'; then
     if run viewer-stage "$PYTHON" tool/stage_viewer.py "$WORK/viewer"; then viewer_ready=true; fi
   else unrun+=(viewer-stage); fi
 else unrun+=(flutter-test flutter-analyze viewer-build viewer-stage); fi
 export VIEWER_WEB_ROOT="$WORK/viewer/"
 run share-stage "$PYTHON" tool/stage_share_viewer.py "$WORK/share"
 export SHARE_WEB_ROOT="$WORK/share/"
-for test in tool/test_*.mjs; do
-  # Never test an old build after a failed build or a local-only invocation.
-  if ! $viewer_ready && "$PYTHON" -c 'import pathlib,sys; t=pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"); sys.exit(0 if "VIEWER_WEB_ROOT" in t or "build/web" in t else 1)' "$test"; then
-    echo "UNRUN $(basename "$test" .mjs) (fresh Flutter build required)"
-    unrun+=("$(basename "$test" .mjs)")
-    continue
-  fi
-  run "$(basename "$test" .mjs)" "$NODE" --test "$test"
-done
+# 各ファイルのプロセスとログを分けたまま、CIでは2本ずつ進める。
+# 閲覧用ビルドが失敗した場合・--local時の除外規則は従来と同じ。
+js_began=$SECONDS
+"$NODE" tool/run_js_checks.mjs "$WORK" "$viewer_ready"
+js_code=$?
+if [ "$js_code" -le 1 ] && [ -f "$WORK/js-failed.txt" ] && [ -f "$WORK/js-unrun.txt" ]; then
+  while IFS= read -r name; do [ -z "$name" ] || failed+=("$name"); done < "$WORK/js-failed.txt"
+  while IFS= read -r name; do [ -z "$name" ] || unrun+=("$name"); done < "$WORK/js-unrun.txt"
+  if [ "$js_code" -eq 1 ] && [ ! -s "$WORK/js-failed.txt" ]; then failed+=(javascript-runner); fi
+else
+  failed+=(javascript-runner)
+fi
+js_result=passed
+if [ "$js_code" -ne 0 ]; then js_result=failed; fi
+printf 'javascript\t%s\t%s\n' "$js_result" "$((SECONDS-js_began))" >> "$WORK/timings.tsv"
+if ! "$NODE" tool/run_js_checks.mjs --summary "$WORK"; then failed+=(timing-summary); fi
 
 if [ ${#failed[@]} -gt 0 ]; then
   echo "失敗 ${#failed[@]} 件：${failed[*]} （記録：$WORK、ビルドしないで原因を調べる）"

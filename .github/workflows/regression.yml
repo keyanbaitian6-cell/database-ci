@@ -50,6 +50,16 @@ jobs:
           modules=()
           for file in test_*.py; do modules+=("${file%.py}"); done
           "${display[@]}" python -m unittest "${modules[@]}"
+      # 実行制御はWindowsのローカル確認にも使うため、追加の7件だけをこちらでも確認する。
+      # Ubuntu側ではfullが同じ制御を確認するので重複させない。Windowsは分数が2倍。
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: '24'
+      - name: 試験の実行制御を確認（Windows）
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node --test database_android/tool/test_run_js_checks.mjs
 
   full:
     runs-on: ubuntu-latest
@@ -57,11 +67,14 @@ jobs:
       TZ: Asia/Tokyo
       DASH__SUPPRESS_ANALYTICS: 'true'
       FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      CHECK_JS_JOBS: '2'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: database/requirements.txt
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -78,11 +91,24 @@ jobs:
           node "$RUNNER_TEMP/browser-tests/node_modules/playwright/cli.js" install --with-deps chromium
           echo "PLAYWRIGHT_MODULE=file://$RUNNER_TEMP/browser-tests/node_modules/playwright/index.mjs" >> "$GITHUB_ENV"
           cp database_android/assets/database_seed.example.json database_android/assets/database_seed.json
-      - name: Resolve Flutter dependencies without changing the lockfile
-        working-directory: database_android
-        run: flutter pub get --enforce-lockfile
       - name: Complete pre-build gate
         run: xvfb-run -a bash database_android/tool/check_before_build.sh
+      - name: 検証の所要時間を表示
+        if: always()
+        run: |
+          if [ -f database_android/build/check_before_build/timings.md ]; then
+            cat database_android/build/check_before_build/timings.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: 検証の所要時間を保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-timings
+          path: |
+            database_android/build/check_before_build/timings.*
+            database_android/build/check_before_build/js-results.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Preserve failed regression logs
         if: failure()
         uses: actions/upload-artifact@v4
