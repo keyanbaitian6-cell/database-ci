@@ -60,7 +60,7 @@ Flutterのない環境でも `bash database_android/tool/check_before_build.sh -
 
 メールはジョブの成否だけを示す。全体ゲートが失敗した場合は、Actionsの `Complete pre-build gate` 内の失敗名のグループにエラー本文の末尾120行を表示する。全体ゲートのログファイルも `regression-full-logs` のartifactとして7日間保存する。`test_rainbow_today_browser` は共有／Flutter閲覧と320／393pxを個別の試験名で表示する。
 
-一時フォルダー内のSQLiteは、フォルダーを削除する前に必ず閉じる。`with TemporaryDirectory()` 内で `addCleanup(store.close)` だけを登録すると、接続を閉じるより先にフォルダー削除が走り、Windowsで失敗する。内側の `with closing(Store(...))` または `try/finally` を使う。今回のバックアップ・削除同期の4試験には、Linuxでも同じ寿命違反を検出する `test_sqlite_fixture_cleanup.py` がある。
+一時フォルダー内のSQLiteは、フォルダーを削除する前に必ず閉じる。`with TemporaryDirectory()` 内で `addCleanup(store.close)` だけを登録すると、接続を閉じるより先にフォルダー削除が走り、Windowsで失敗する。内側の `with closing(Store(...))` または `try/finally` を使う。Storeの初期化中に例外が起きた場合は、コンストラクター自身が接続を閉じる。バックアップ・削除同期と壊れたDBからの再出力の6試験には、Linuxでも同じ寿命違反を検出する `test_sqlite_fixture_cleanup.py` がある。
 
 ## GoogleとWebへの反映
 
