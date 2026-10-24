@@ -15,6 +15,7 @@
 node database_android/tool/reanalyse_pscube_net.mjs 入力.json 新しい出力.json
 ```
 
+- 再解析の出力はブラウザ補完用バックアップ形式。Bの自動統合へ渡す場合は、出力名を `pscube-backup-browser-YYYYMMDD-HHMMSS.json` にしてDriveの「database共有」へ保存する。Google側の更新が済んでから利用する。
 - 今回相談された10/23の3台の既存原本には元数値が残っていない。この変更によって過去の空欄を復元できるとは言わない。SVGの高さから正確な差枚を捏造しない。
 
 ## C：更新工程の証拠を分ける
@@ -48,3 +49,14 @@ node database_android/tool/reanalyse_pscube_net.mjs 入力.json 新しい出力.
 3. 保存後、既存の `syncPscubeCloud`・`syncMeruhenCloud` を各1回実行する。既存の30分トリガーは維持する。失敗時は実行ログを確認し、理由を見ずに連続実行しない。
 4. iPhone/共有を更新し、「更新・差枚の取得状況」で書き出し元・Drive・Googleの工程と、スマホ補完の反映/不一致件数を確認する。P’s CUBEの `supplement_supported` が出るまではスマホ補完が有効とは案内しない。
 5. PC側も更新したソースを使う必要がある。Androidは新しいAPKをインストールするまで取得診断の追加は届かない。今回APKは依頼されていないため作成しない。
+
+## PCのソースへ取り込むとき
+
+10/24は月後半なので、今回のコードは `keyanbaitian6-cell/database-ci` の `main` にある。正本originだけを更新しても、この変更はまだ届かない。PCに未コミットの変更があれば保護し、利用者の作業を消さずに、同じ履歴へ取り込む。
+
+```bash
+git fetch https://github.com/keyanbaitian6-cell/database-ci main
+git merge --ff-only FETCH_HEAD
+```
+
+途中で止まったら強制反映やresetをせず、PCの既存変更・履歴との差を確認する。取り込み後は `database/start.cmd` から起動する。新しいPython依存の追加・EXE作成は不要。Androidへの反映は別途新APKの作成・インストールが必要で、今回は行っていない。
