@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'capture_health_ui.dart';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -841,6 +843,25 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     }
   }
 
+  Future<void> _showCaptureHealth() async {
+    final store = _store;
+    if (store == null) return;
+    try {
+      final rows = await store.healthRecords(_targetDay),
+          status = await store.syncStatus();
+      if (!mounted) return;
+      await showCaptureHealth(
+        context,
+        records: rows,
+        syncStatus: status,
+        day: rows.isEmpty ? _targetDay : rows.first['day'] as String,
+        pscube: true,
+      );
+    } catch (error) {
+      if (mounted) setState(() => _status = '取得状況を読めませんでした：$error');
+    }
+  }
+
   String get _backupText {
     final at = _lastBackup;
     if (at == null) return 'バックアップ：まだ書き出していません';
@@ -900,6 +921,16 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                   ],
                 ),
               Text(_backupText, style: Theme.of(context).textTheme.bodySmall),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _store == null || _busy
+                      ? null
+                      : _showCaptureHealth,
+                  icon: const Icon(Icons.info_outline),
+                  label: const Text('更新・差枚の取得状況'),
+                ),
+              ),
               const SizedBox(height: 8),
               Row(
                 children: [

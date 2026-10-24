@@ -156,6 +156,9 @@ try {
   assert.ok(backup.records[0].my>0);
   assert.deepEqual(backup.date_events,marksBefore,'event survives a PC-style import and is included in browser backup');
   assert.equal(backup.suffix_events,undefined);
+  await page.getByText('スマホの補完を共有する',{exact:true}).waitFor();
+  await page.getByText(/Google側がスマホ補完に対応しているか未確認/).waitFor();
+  await page.getByRole('button',{name:'閉じる',exact:true}).click();
   await page.evaluate(async oldBackup=>{
     await window.databaseViewer.setDateEvent('pscube:c740601:20','2026-10-01',null);
     await window.databaseViewer.save(JSON.stringify(oldBackup));

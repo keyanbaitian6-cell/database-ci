@@ -998,7 +998,7 @@ class DatabaseService {
         'event_history_edits': ?history,
         'format': backupFormat,
         'version': backupVersion,
-        'exported_at': DateTime.now().toIso8601String(),
+        'exported_at': DateTime.now().toUtc().toIso8601String(),
         'source': source,
         if (deletions.isNotEmpty)
           'record_deletions': [for (final m in deletions) m.toJson()],

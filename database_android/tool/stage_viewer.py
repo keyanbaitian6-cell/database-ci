@@ -57,7 +57,7 @@ def stage_pscube(target):
         sys.exit('共通閲覧画面の新しいFlutterビルドが必要です。先に全体をstageしてください。')
     if dest.exists() and any(p.name not in PSCUBE_FILES | {'app.mjs', 'style.css'} for p in dest.iterdir()):
         sys.exit('公開先のpscubeフォルダに未知のファイルがあります。')
-    for name in ('drive_fetch.mjs', 'viewer_parts.mjs', 'backup_stream.mjs'):
+    for name in ('drive_fetch.mjs', 'viewer_parts.mjs', 'backup_stream.mjs', 'capture_health.mjs'):
         data = (HERE / 'web' / name).read_bytes()
         if any(p.encode() in data for p in record_probes()):
             sys.exit(f'{name} に記録らしい文字列があります。公開しません。')

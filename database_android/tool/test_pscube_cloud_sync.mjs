@@ -9,6 +9,7 @@ import {emptyData, mergeData, validateData, recordKey} from '../web/pscube/data.
 import {fetchDrive} from '../web/pscube/sync.mjs';
 
 const source = await fs.readFile(new URL('./pscube_cloud_sync.gs', import.meta.url), 'utf8');
+const fixtureText=await fs.readFile(new URL('../../database/tests/fixtures/pscube_net_capture.json',import.meta.url),'utf8');
 const base = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
 const machine = {store: 'c740601', rate: '20', machine: '試験機種🌈', expected_count: 3,
   url: base + 'nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=%E8%A9%A6%E9%A8%93', machine_type: 'normal'};
@@ -328,7 +329,7 @@ test('入力が全部不正で統合済みバックアップも無いときは�
   assert.equal(d.writes.length, 0); assert.equal(d.triggers.length, 0);
 });
 
-test('別フォルダ・ブラウザの部分バックアップ・ごみ箱・別サイトのファイルを拾わない', () => {
+test('別フォルダ・出典が一致しないブラウザファイル・ごみ箱・別サイトのファイルを拾わない', () => {
   const d = drive();
   d.add('pscube-backup-android-20261013-090000.json', backup([record(90)]), {id: 'another-folder'});
   d.add('pscube-backup-browser-20261013-090000.json', backup([record(91)]));
@@ -336,6 +337,55 @@ test('別フォルダ・ブラウザの部分バックアップ・ごみ箱・�
   d.add('database-backup-android-20261013-090000.json', '{broken'); d.setup();
   assert.equal(d.doc('pscube-viewer-drive.json').records.length, 1);
 });
+
+const readPublished = d => {
+  const baseFile=d.files.find(f=>f.name==='pscube-viewer-drive.json');
+  return plain(d.context.vpGet(baseFile,'pscube',{}) || d.doc(baseFile.name));
+};
+for (const history of [false,true]) test(`スマホ補完：欠測だけを埋め、正常値・別の数値・機種タイプ・イベントを変えない（履歴=${history}）`,()=>{
+  const d=drive({history}),native=d.files.find(f=>f.name==='pscube-backup-auto.json');
+  const initial=backup([record(1,undefined,{net_medals:null}),record(2,undefined,{net_medals:0}),record(3,undefined,{games:4000,net_medals:null})]);
+  d.replace(native,initial);d.replace(d.files.find(f=>f.name==='pscube-viewer-drive.json'),{...initial,kind:'viewer'});
+  d.setup();
+  const doc=backup([record(1,undefined,{net_medals:250}),record(2,undefined,{net_medals:900}),record(3,undefined,{net_medals:500}),record(4)],
+    {source:'browser',exported_at:'2026-10-24T12:00:00+09:00',machines:[{...machine,machine_type:'other'}],
+      date_events:[{store:machine.store,rate:machine.rate,day:'2026-10-12',name:'補完で変更しない',updated_at:'2026-10-24T12:00:00Z'}]});
+  const browser=d.add('pscube-backup-browser-20261024-120000.json',doc),original=browser.text;
+  d.sync();const view=readPublished(d),by=new Map(view.records.map(r=>[r.rack,r]));
+  assert.equal(by.get(1).net_medals,250);assert.equal(by.get(2).net_medals,0);
+  assert.equal(by.get(3).net_medals,undefined);assert.equal(by.has(4),false);
+  assert.equal(view.machines[0].machine_type,'normal');assert.ok(!view.date_events?.length);
+  assert.equal(browser.text,original);const reads=browser.reads,writes=d.writes.length;
+  d.sync();assert.equal(browser.reads,reads);assert.equal(d.writes.length,writes);
+  if(history){assert.equal(view.sync_status.supplement.applied,1);assert.equal(view.sync_status.supplement.mismatched,1);assert.equal(view.sync_status.supplement.unmatched,1);}
+});
+
+test('先に届いたスマホ補完は、元記録が後で届いたとき再確認し、一致する欠測だけ補う',()=>{
+  const d=drive({history:true});d.setup();
+  const browser=d.add('pscube-backup-browser-20261024-120000.json',backup([record(7,undefined,{net_medals:250})],{source:'browser'}));
+  d.sync();assert.ok(!readPublished(d).records.some(r=>r.rack===7));const before=browser.reads;
+  d.add('pscube-backup-android-20261024-121000.json',backup([record(7,undefined,{net_medals:null})]));d.sync();
+  assert.equal(readPublished(d).records.find(r=>r.rack===7).net_medals,250);assert.equal(browser.reads,before+1);
+  d.sync();assert.equal(browser.reads,before+1);
+});
+
+test('診断の元数値は日別原本に保持し、公開閲覧パーツには載せない。更新元と処理時刻も保持する',()=>{
+  const doc=JSON.parse(fixtureText);doc.source='pc';doc.kind='backup';doc.exported_at='2026-10-24T12:00:00+09:00';
+  doc.records[0].net_capture.checked_at=new Date().toISOString();
+  const d=drive({history:true}),input=d.files.find(f=>f.name==='pscube-backup-auto.json');d.replace(input,doc);
+  const light=structuredClone(doc);delete light.records[0].net_capture.probe;light.records[0].net_capture.probe_available=true;
+  d.replace(d.files.find(f=>f.name==='pscube-viewer-drive.json'),{...light,kind:'viewer'});d.setup();
+  const view=readPublished(d),capture=view.records[0].net_capture;
+  assert.equal(capture.reason,'invalid_response');assert.equal(capture.probe,undefined);assert.equal(capture.probe_available,true);
+  const index=d.doc('database-viewer-parts-pscube.json'),raw=d.doc(index.cloud_days[0].name);
+  assert.ok(raw.data.records[0].net_capture.probe);
+  const source=view.sync_status.writes.find(w=>w.source==='pc');
+  assert.equal(source.at,doc.exported_at);
+  const base=d.files.find(f=>f.name==='pscube-viewer-drive.json');
+  assert.equal(source.drive_at,new Date(Math.max(input.updated,base.updated)).toISOString());
+  assert.ok(Date.parse(view.sync_status.processed_at));
+});
+
 
 test('マイドライブ直下と共有フォルダのバックアップを統合し、出力は共有フォルダだけに書く', () => {
   const d = drive();
@@ -637,4 +687,38 @@ test('取り込みの規則を直した版を貼ったら、前に取り込め�
   d.sync();
   assert.equal(later.reads, 0);
   assert.ok(!plain(d.context.vpGet(baseFile, 'pscube', {})).records.some(r => r.rack === 4));
+});
+
+test('診断元数値は7日後に現行の日別原本から整理し、入力バックアップと台数値を保持する',()=>{
+  const d=drive({seed:false,history:true}),data=JSON.parse(fixtureText);
+  const now=Date.now();data.records[0].net_capture.checked_at=new Date(now).toISOString();
+  data.source='pc';data.exported_at=new Date(now).toISOString();
+  const input=d.add('pscube-backup-auto.json',data),before=input.text;
+  d.add('pscube-viewer-drive.json',{...data,kind:'viewer'});d.setup();
+  const index=()=>d.doc('database-viewer-parts-pscube.json');
+  const first=index().cloud_days[0];assert.ok(first.probe_next_expiry>now);
+  assert.ok(d.doc(first.name).data.records[0].net_capture.probe);
+  vm.runInContext(`Date.now=()=>${now+8*86400000}`,d.context);
+  d.sync();
+  const ref=index().cloud_days[0],record=d.doc(ref.name).data.records[0];
+  assert.notEqual(ref.hash,first.hash);assert.equal(record.net_capture.probe,undefined);
+  assert.equal(record.net_capture.probe_omitted,'expired');assert.equal(record.games,300);
+  assert.equal(input.text,before,'利用者の入力バックアップは変更しない');
+  const part=index().parts[0],rows=JSON.parse(d.files.find(f=>f.id===part.id).text);
+  assert.equal(rows[0].net_capture.probe_available,undefined);
+});
+
+test('古いPC入力が後から更新されても、新しい書き出しのDrive時刻へ付け替えない',()=>{
+  for(const history of [false,true]) {
+    const d=drive({seed:false,history});
+    const newer='2026-10-24T10:00:00Z',older='2026-10-23T10:00:00Z';
+    const pc=d.add('pscube-backup-auto.json',backup([record(1)],{source:'pc',exported_at:newer}));
+    d.add('pscube-viewer-drive.json',{...backup([record(1)],{source:'pc',exported_at:older}),kind:'viewer'});
+    d.setup();
+    const health=()=>history ? d.doc('database-viewer-parts-pscube.json').header.sync_status : d.doc('pscube-backup-cloud.json').sync_status;
+    const first=plain(health().writes.find(w=>w.source==='pc'));
+    assert.equal(first.at,newer);assert.equal(first.drive_at,new Date(pc.updated).toISOString());
+    d.add('pscube-backup-pc-20261023-090000.json',backup([record(1)],{source:'pc',exported_at:older}));d.sync();
+    assert.deepEqual(plain(health().writes.find(w=>w.source==='pc')),first);
+  }
 });

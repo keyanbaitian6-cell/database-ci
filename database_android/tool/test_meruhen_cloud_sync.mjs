@@ -465,7 +465,11 @@ test('10入力ずつ処理、10件の理由上限を外れた失敗版も再読�
 test('48MiB上限は読む前・書く前に停止し既存閲覧データを維持、ロック中は何もしない', () => {
   const d = drive(); d.setup(); const before = d.files[0].text;
   const f = d.add('database-backup-android.json', backup([record(538)])); f.getSize = () => 49 * 1024 * 1024;
-  assert.throws(() => d.sync(), /48MiB/); assert.equal(f.reads, 0); assert.equal(d.files[0].text, before);
+  assert.throws(() => d.sync(), /48MiB/); assert.equal(f.reads, 0);
+  const prior=JSON.parse(before),after=JSON.parse(d.files[0].text);
+  assert.equal(after.sync_status.failed_inputs,1,'台を変えず、入力失敗の工程情報を知らせる');
+  assert.deepEqual({...after,exported_at:prior.exported_at,sync_status:prior.sync_status,
+    cloud_merged:{...after.cloud_merged,at:prior.cloud_merged.at}},prior);
   assert.throws(() => d.context.meruhenCheckSize('x'.repeat(48 * 1024 * 1024 + 1), 'test'), /48MiB/);
   const lock = d.context.LockService.getScriptLock(); lock.tryLock();
   const writes = d.writes.length; assert.equal(d.sync().busy, true); assert.equal(d.writes.length, writes); lock.releaseLock();
@@ -484,4 +488,20 @@ test('出力は共有パーサーとPC read_backup_file(allow_viewer=True)で読
       {cwd: fileURLToPath(new URL('../../database/', import.meta.url)), encoding: 'utf8'});
     assert.equal(result.status, 0, result.stderr || result.error?.message); assert.equal(JSON.parse(result.stdout)[0].jo_net, 15725);
   } finally {await fs.rm(file, {force: true}); await fs.rmdir(temp);}
+});
+
+test('メルヘンもPC・Androidの書出しとDrive・Google処理を区別し、Googleの再出力をPC出力と誤認しない',()=>{
+  for(const history of [false,true]){
+    const d=drive({history}),at='2026-10-24T10:00:00Z';
+    const input=d.add('database-backup-android-20261024-190000.json',backup([record(538)],{exported_at:at}));
+    d.setup();
+    const get=()=>history ? plain(d.context.vpGet(d.files[0],'meruhen',{})) : d.doc('database-viewer.json');
+    const status=get().sync_status,android=status.writes.find(w=>w.source==='android'),pc=status.writes.find(w=>w.source==='pc');
+    assert.equal(android.at,at);assert.equal(android.drive_at,new Date(input.updated).toISOString());
+    assert.ok(status.processed_at);assert.equal(android.stores[0].count,1);
+    assert.equal(pc.at,'2026-10-13T09:00:00+09:00');
+    const writes=d.writes.length;d.sync();assert.equal(d.writes.length,writes);
+    d.add('database-backup-android-20261024-191000.json',backup([record(539)],{exported_at:'2026-10-24T10:10:00Z'}));
+    d.sync();assert.deepEqual(plain(get().sync_status.writes.find(w=>w.source==='pc')),plain(pc));
+  }
 });

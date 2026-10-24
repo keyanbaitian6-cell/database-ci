@@ -115,7 +115,7 @@ class BackupService {
   }) => {
     'format': backupFormat,
     'version': backupVersion,
-    'exported_at': DateTime.now().toIso8601String(),
+    'exported_at': DateTime.now().toUtc().toIso8601String(),
     'source': source,
     'records': records.map((r) => r.toJson()).toList(),
     if (events.isNotEmpty) 'date_events': [for (final e in events) e.toJson()],

@@ -24,7 +24,10 @@ test('exported backup is a valid pscube-viewer file with kind, source, time and 
   const backup = buildBackup(data(), new Date(2026, 9, 1, 9, 5, 7));
   assert.equal(backup.format, 'pscube-viewer'); assert.equal(backup.kind, 'backup'); assert.equal(backup.source, 'browser');
   assert.deepEqual(backup.rack_captures, [recordKey(rec(1, '2026-10-01'))]);
-  assert.deepEqual(validateData(JSON.parse(JSON.stringify(backup))), data());
+  const restored=validateData(JSON.parse(JSON.stringify(backup)));
+  assert.deepEqual(restored, {...data(),sync_status:{version:1,writes:[{source:'browser',at:backup.exported_at,
+    stores:[{store:machine.store,rate:machine.rate,day:'2026-10-01',count:2}]}]}});
+  assert.equal(restored.sync_status.processed_at,undefined,'書き出しだけでGoogle処理を成功としない');
 });
 
 test('Drive URL: only the Apps Script exec URL, with ?file=pscube', () => {
@@ -209,4 +212,13 @@ test('the check reply is recognised even when it arrives in tiny pieces', async 
   const slow = () => new Response(new ReadableStream({ start(c) { for (let i = 0; i < pieces.length; i += 5) c.enqueue(pieces.subarray(i, i + 5)); c.close(); } }));
   const old = await checkVersion('https://x/exec?check=1', { fetchImpl: async () => slow() });
   assert.equal(await new Response(old.stream).text(), whole, '古いスクリプトの全文は、先頭を見たあとも欠けずに渡る');
+});
+
+
+test('スマホの書き出し・再読込でGoogle処理の証拠を失わず、ブラウザ書き出し時刻を別に記録する',()=>{
+  const doc={...data(),sync_status:{version:1,writes:[],processed_at:'2026-10-01T10:00:00Z',supplement_supported:true}};
+  const out=validateData(buildBackup(doc,new Date('2026-10-01T11:00:00Z')));
+  assert.equal(out.sync_status.processed_at,doc.sync_status.processed_at);
+  assert.equal(out.sync_status.supplement_supported,true);
+  assert.equal(out.sync_status.writes[0].source,'browser');
 });

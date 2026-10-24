@@ -125,6 +125,7 @@ export function pscubeRecords(doc) {
       store: `pscube:${raw.store}:${raw.rate}`, day: raw.day, machine: raw.machine, rack,
       games: int(raw.games) ?? 0, bb: int(raw.bb) ?? 0, rb: int(raw.rb) ?? 0, output: int(raw.my),
       net: int(raw.net_medals), needsCheck: false, estimated: false,
+      net_capture:raw.net_capture ?? null,source_site:raw.source_site,
     });
   }
   return result;

@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'date_events.dart';
 import 'models.dart';
 import 'pscube_viewer_data.dart';
+import 'capture_health.dart';
 import 'rainbow_marks.dart';
 
 /// 閲覧ページで読んだバックアップ（画像を除いた軽い形）。
@@ -25,6 +26,7 @@ class ViewerData {
     this.loadedAt,
     this.skipped = 0,
     this.keptOlder = 0,
+    this.syncStatus,
   });
 
   final List<SlotRecord> records;
@@ -37,6 +39,7 @@ class ViewerData {
   /// イベント名の入力欄のプルダウンに使う。
   final Map<String, List<String>> eventNames;
   final String? file;
+  final Map<String, dynamic>? syncStatus;
   final DateTime? exportedAt;
 
   /// 書き出した時刻の、ファイルに書かれていたままの文字。Driveの自動読み込みで
@@ -129,6 +132,9 @@ class ViewerData {
           ?.toLocal(),
       skipped: skipped,
       keptOlder: (decoded['kept_older'] as num?)?.toInt() ?? 0,
+      syncStatus: validateSyncStatus(
+        decoded['sync_status'] ?? header['sync_status'],
+      ),
     );
   }
 
@@ -400,6 +406,13 @@ class ViewerData {
         eventsFrom != null &&
         eventsFrom['format'] != 'pscube-viewer') {
       doc = _withEvents(doc, _events(eventsFrom).values, timedOnly: keptStored);
+    }
+    if (old != null && old['format'] == fresh['format']) {
+      dynamic status(Map<String, dynamic> d) =>
+          d['sync_status'] ??
+          (d['header'] is Map ? d['header']['sync_status'] : null);
+      final health = mergeSyncStatuses(status(old), status(fresh));
+      if (health != null) doc = {...doc, 'sync_status': health};
     }
     if (old != null) {
       final marks = mergeRainbowMarks(

@@ -6,6 +6,7 @@ const read = name => readFileSync(new URL(name, import.meta.url), 'utf8').replac
 export const partsCore = () => read('./viewer_parts_core.js');
 export const partsDrive = () => partsCore() + '\n' + read('./viewer_parts_drive.js');
 export const partsPublisher = () => partsDrive() + '\n' + read('./viewer_parts_publish.js') + '\n' +
+  read('../web/capture_health.mjs').replace(/^export /gm,'') + '\n' +
   read('./viewer_history_cloud.js') + '\n' + read('./viewer_history_adapters.js');
 export const partsClient = () => '// 生成元: tool/build_viewer_parts.mjs\n' + partsCore() + '\n' + read('./viewer_parts_client.js') +
   '\nexport {fetchViewerParts, fetchViewerDocument, rememberViewerHistory, readViewerHistory};\n';
@@ -19,5 +20,6 @@ export function buildPartsFiles() {
   for (const name of ['../web/viewer_parts.mjs', '../../share_viewer/viewer_parts.mjs']) {
     writeFileSync(new URL(name, import.meta.url), partsClient());
   }
+  writeFileSync(new URL('../../share_viewer/capture_health.mjs',import.meta.url),read('../web/capture_health.mjs'));
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) buildPartsFiles();

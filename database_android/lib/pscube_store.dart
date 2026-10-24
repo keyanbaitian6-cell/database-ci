@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 
 import 'models.dart' show timestampWithOffset;
 import 'pscube_viewer_data.dart';
+import 'capture_health.dart';
 
 /// 時差つきの時刻文字列を比べられる数（ミリ秒）に。読めなければ null。
 int? _instant(Object? text) =>
@@ -276,6 +277,9 @@ class PscubeStore {
         (row['net_medals'] is! int ||
             (row['net_medals'] as int).abs() > 1000000)) {
       throw const FormatException('差枚の数値が不正です。');
+    }
+    if (row['net_capture'] != null) {
+      row['net_capture'] = validateNetCapture(row['net_capture'], record: row);
     }
     final graph = row['graph'];
     if (graph != null) {
@@ -618,6 +622,7 @@ class PscubeStore {
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
     });
+    if (records.any((r) => r['net_capture'] != null)) await _trimProbes();
     if ((tablePage || rackPage) &&
         day != null &&
         !freshSince.containsKey(day)) {
@@ -860,8 +865,10 @@ class PscubeStore {
     if (!same) return chosen;
     final graph = chosen['graph'];
     final alternate = other['graph'];
+    final capture = mergeNetCapture(chosen, other, same);
     return {
       ...chosen,
+      if (capture != null) 'net_capture': capture,
       if (net != null) 'net_medals': net,
       'graph': graph is Map && graph['kind'] == 'daily'
           ? graph
@@ -998,6 +1005,61 @@ class PscubeStore {
 
   /// 全期間のバックアップ（仕様：database/PSCUBE_SYNC.md）。[path] を省くと
   /// 書類フォルダへ [backupFileName] の名前で書き、前に書いた自分のバックアップを消す。
+  Future<void> _trimProbes() async {
+    final rows = await db.query(
+      'records',
+      columns: ['key', 'payload'],
+      where: 'payload LIKE ?',
+      whereArgs: ['%"probe":%'],
+    );
+    final records = rows
+        .map((r) => _asMap(jsonDecode(r['payload'] as String)))
+        .toList();
+    final before = records.map((r) => jsonEncode(r['net_capture'])).toList();
+    trimNetProbes(records);
+    final batch = db.batch();
+    for (var i = 0; i < records.length; i++) {
+      if (jsonEncode(records[i]['net_capture']) != before[i]) {
+        batch.update(
+          'records',
+          {'payload': jsonEncode(records[i])},
+          where: 'key=?',
+          whereArgs: [rows[i]['key']],
+        );
+      }
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<List<Map<String, dynamic>>> healthRecords(String? day) =>
+      _serial(() async {
+        final selected = day ?? await _dayIn(db);
+        final rows = await db.query(
+          'records',
+          columns: ['payload'],
+          where: selected == null ? null : 'key LIKE ?',
+          whereArgs: selected == null ? null : ['%,"$selected"]'],
+        );
+        return rows
+            .map((r) => _asMap(jsonDecode(r['payload'] as String)))
+            .toList();
+      });
+
+  Future<Map<String, dynamic>?> syncStatus() =>
+      _serial(() => _syncStatusIn(db));
+
+  Future<Map<String, dynamic>?> _syncStatusIn(DatabaseExecutor executor) async {
+    final rows = await executor.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: ['sync_status'],
+    );
+    return rows.isEmpty
+        ? null
+        : validateSyncStatus(jsonDecode(rows.first['value'] as String));
+  }
+
   Future<File> exportViewer({String? path, DateTime? now}) =>
       _serial(() => _exportViewer(path, now ?? DateTime.now()));
 
@@ -1011,13 +1073,18 @@ class PscubeStore {
       'records',
       columns: ['payload'],
       orderBy: 'rowid',
-    )).map((r) => jsonDecode(r['payload'] as String)).toList();
+    )).map((r) => _asMap(jsonDecode(r['payload'] as String))).toList();
     final captures = (await db.query(
       'rack_captures',
       columns: ['key'],
       orderBy: 'rowid',
     )).map((r) => r['key'] as String).toList();
+    trimNetProbes(records, now: now);
     final events = await _dateEventsIn(db);
+    final status = mergeSyncStatuses(
+      await _syncStatusIn(db),
+      makeSyncWrite('android', timestampWithOffset(now), records),
+    );
     final folder = path == null
         ? Directory((await getApplicationDocumentsDirectory()).path)
         : null;
@@ -1030,6 +1097,7 @@ class PscubeStore {
         'kind': 'backup',
         'source': 'android',
         'exported_at': timestampWithOffset(now),
+        if (status != null) 'sync_status': status,
         'machines': machines,
         'records': records,
         'rack_captures': captures,
@@ -1039,6 +1107,11 @@ class PscubeStore {
       flush: true,
     );
     final saved = await temp.rename(file.path);
+    if (status != null)
+      await db.insert('state', {
+        'key': 'sync_status',
+        'value': jsonEncode(status),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     if (folder != null) {
       await for (final old in folder.list()) {
         final name = old.uri.pathSegments.last;
@@ -1312,6 +1385,17 @@ class PscubeStore {
       };
     }
     final incomingEvents = pscubeDateEvents(decoded);
+    final status = mergeSyncStatuses(
+      await _syncStatusIn(db),
+      mergeSyncStatuses(
+        decoded['sync_status'],
+        makeSyncWrite(
+          decoded['source'] as String?,
+          decoded['exported_at'] as String?,
+          records,
+        ),
+      ),
+    );
     final fillMissing = decoded['import_mode'] == 'fill_missing';
     // sqflite はトランザクション中の通常の問い合わせを待たせるので、先に全部読む。
     final storedEvents = await _dateEventsIn(db);
@@ -1402,6 +1486,11 @@ class PscubeStore {
           'value': latest,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
+      if (status != null)
+        batch.insert('state', {
+          'key': 'sync_status',
+          'value': jsonEncode(status),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       if (changedEvents > 0) {
         batch.insert('state', {
           'key': 'date_events',
@@ -1410,6 +1499,7 @@ class PscubeStore {
       }
       await batch.commit(noResult: true);
     });
+    if (records.any((r) => r['net_capture'] != null)) await _trimProbes();
     return (
       added: added,
       updated: updated,

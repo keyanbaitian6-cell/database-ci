@@ -9,7 +9,8 @@ export function buildCloudScript() {
     if (a < 0 || b < 0) throw new Error('P’s CUBEパーサーの構成が変わりました。生成規則を更新してください。');
     return parser.slice(a, b);
   };
-  const core = [slice('export const FORMAT', 'const graphSafe'),
+  const health = readFileSync(new URL('../web/capture_health.mjs', import.meta.url), 'utf8').replace(/^export /gm, '');
+  const core = [health,slice('export const FORMAT', 'const graphSafe'),
     slice('export function siteUrl', 'const text ='),
     slice('export const dateEventKey', '/** 沖ドキ')].join('\n')
     .replace(/^export /gm, '').replace('raw.records.length > 100000', 'raw.records.length > 200000');

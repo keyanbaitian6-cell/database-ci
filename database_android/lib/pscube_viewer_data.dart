@@ -1,5 +1,6 @@
 import 'date_events.dart';
 import 'models.dart';
+import 'capture_health.dart';
 
 /// P’s CUBEの日付ごとのイベント名1件（`web/pscube/data.mjs` の date_events と同じ形）。
 /// [name] が null の記録は「イベントを消した」印（表示しない）。
@@ -225,6 +226,7 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
             (item['net_medals'] as int).abs() > 1000000)) {
       throw const FormatException('差枚の数値が不正です。');
     }
+    final netCapture = validateNetCapture(item['net_capture'], record: item);
     final day = item['day'];
     if (day is! String || !isValidRecordDay(day))
       throw const FormatException('営業日が不正です。');
@@ -297,6 +299,7 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
         'rate': item['rate'],
         'my': item['my'],
         'net_medals': item['net_medals'],
+        if (netCapture != null) 'net_capture': netCapture,
         'at_art': item['at_art'],
         'machine_type': m['machine_type'],
         'pscube_graph_kind': rawGraph is Map ? rawGraph['kind'] : null,

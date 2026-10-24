@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from backup_status import status_text
+from sync_health import synced_status, sync_status_lines, local_net_lines
 
 
 class BackupStatusPanel(ttk.Frame):
@@ -54,10 +55,14 @@ class BackupStatusPanel(ttk.Frame):
             text.configure(state='normal')
             text.delete('1.0', 'end')
             text.insert('end', ('共有用ファイルの更新待ち・書き出し中です。以下は前回までの結果です。\n\n' if self._busy else '') +
-                        'ここに表示するのはPCから共有フォルダへの書き出し結果です。\n'
+                        'PCから共有フォルダへの書き出しと、同期フォルダに届いたGoogle側の処理情報を分けて表示します。\n'
                         'Googleドライブへのアップロード完了や、iPhoneでの読み込み完了は確認していません。\n\n'
                         f'同期フォルダ：{self.folder() or "未設定"}\n\n' +
-                        '\n\n'.join(self.source_text(source) for source in ('meruhen', 'pscube')))
+                        '\n\n'.join(self.source_text(source) for source in ('meruhen', 'pscube')) +
+                        '\n\nGoogle側の状況（同期フォルダに届いた情報。最新とは限りません）\n' +
+                        '\n\n'.join(('長町南・幸町' if source=='meruhen' else 'P’s CUBE')+'\n'+
+                          '\n'.join(sync_status_lines(synced_status(self.folder(),source))) for source in ('meruhen','pscube')) +
+                        '\n\nPC内の最新日の差枚取得状況\n'+'\n'.join(local_net_lines(self.data_dir)))
             text.configure(state='disabled')
         read_details()
         buttons = ttk.Frame(window)

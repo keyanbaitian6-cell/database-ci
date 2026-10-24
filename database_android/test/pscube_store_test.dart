@@ -331,8 +331,18 @@ void main() {
       ),
       throwsFormatException,
     );
-    // 書き出しの時刻は毎回変わるので、中身（機種・台・印）だけを比べる。
-    expect(await exported(), {...before, 'exported_at': anything});
+    // 出力ファイルとAndroidの書き出し時刻だけは毎回変わる。台・印・他工程は厳密に比べる。
+    expect(await exported(), {
+      ...before,
+      'exported_at': anything,
+      'sync_status': {
+        ...before['sync_status'] as Map,
+        'writes': [
+          for (final w in before['sync_status']['writes'] as List)
+            {...w as Map, 'at': anything},
+        ],
+      },
+    });
   });
 
   test('新台の全空欄の過去日だけを省略し、旧機種の同番号の履歴を維持する', () async {
@@ -391,7 +401,17 @@ void main() {
         throwsFormatException,
       );
     }
-    expect(await exported(), {...before, 'exported_at': anything});
+    expect(await exported(), {
+      ...before,
+      'exported_at': anything,
+      'sync_status': {
+        ...before['sync_status'] as Map,
+        'writes': [
+          for (final w in before['sync_status']['writes'] as List)
+            {...w as Map, 'at': anything},
+        ],
+      },
+    });
     final result = await store.importPage(
       jsonEncode({...payload, 'missing_history_days': missing}),
       record()['detail_url'] as String,

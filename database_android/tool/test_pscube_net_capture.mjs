@@ -52,6 +52,10 @@ try {
   assert.equal(captured.records[1].net_medals, -25);
   assert.equal(captured.records[0].my, 120);
   assert.equal(captured.records[2].net_medals, undefined);
+  assert.equal(captured.records[0].net_capture.status,'ok');
+  assert.equal(captured.records[2].net_capture.reason,'missing_series');
+  assert.ok(captured.records[2].net_capture.probe);
+  assert.equal(JSON.stringify(captured).includes('apikey'),false);
   const request = await page.evaluate(() => ({url:window.graphRequest.url, data:window.graphRequest.data}));
   assert.equal(request.url, 'nc-m06-003.php');
   assert.equal(request.data.cd_dai, '1120');
@@ -100,6 +104,8 @@ try {
   assert.equal(failed.records[0].my, 120);
   assert.match(failed.net_warning, /差枚は未取得：通信に失敗しました（HTTP 403）/);
   assert.equal(failed.source_url, url);
+  assert.equal(failed.records[0].net_capture.reason,'network');
+  assert.equal(failed.records[0].net_capture.http_status,403);
   // 形式の違う応答・サイトの通信の準備ができていない場合も同じ。
   await page.evaluate(() => {
     window.jQuery.ajax = () => {

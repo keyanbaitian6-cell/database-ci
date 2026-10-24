@@ -31,7 +31,7 @@ const PSCUBE_CLOUD_FAILED = 'pscubeCloudFailed';
 const PSCUBE_CLOUD_FAILED_MAX = 120;
 // 取り込みの規則の版。規則を直して貼り替えた最初の実行で、前に取り込めなかった入力をもう一度読む
 // （2026-10-18、アナスロの出典リンクを拒んでPCの閲覧用ファイルが処理されないままだった。版が同じだと再試行されない）。
-const PSCUBE_CLOUD_RULES = '2026-10-18-anaslo-url';
+const PSCUBE_CLOUD_RULES = '2026-10-24-capture-health-browser';
 // 書き出しの一時的な失敗（429・5xx・通信の例外）は、同じ実行の中でこの回数まで少し待って試す（1秒・2秒）。
 const PSCUBE_CLOUD_WRITE_TRIES = 3;
 
@@ -193,6 +193,10 @@ function pscubeCloudRun() {
         '共有フォルダから外す（名前を変える）と、次の実行で入力から作り直します。');
     }
     const versions = {...(data.cloud_sync && data.cloud_sync.inputs || {})};
+    const browserBaseline = pscubeCloudDigest(inputs.filter(i => !i.browser).map(i => [i.id,i.version]));
+    if (data.cloud_sync?.browser_baseline !== browserBaseline) {
+      for (const input of inputs.filter(i => i.browser)) delete versions[input.id];
+    }
     // 取り込み済みの版・取り込めなかった同じ版は読まない（直したり更新したりすると版が変わり、再試行する）。
     const pending = inputs.filter(i => versions[i.id] !== i.version && failedVersions[i.id] !== i.version);
     if (!backupFile && !inputs.length) {
@@ -207,7 +211,9 @@ function pscubeCloudRun() {
       readBytes += input.size;
       let merged;
       try {
-        merged = pscubeCloudMerge(data, pscubeCloudRead(input.file, input.size));
+        const incoming = pscubeCloudRead(input.file, input.size, input.browser ? 'browser' : null);
+        merged = input.browser ? {...mergeNetSupplement(data,incoming,input.report || (input.report={})),rack_captures:data.rack_captures || []} : pscubeCloudMerge(data,incoming);
+        merged={...merged,sync_status:vhSourceStatus(data,incoming,input)};
       } catch (error) {
         // Driveの一時的な障害で読めなかった入力は、壊れたファイルとして記録しない。この回は取り込まず、次の実行で
         // 同じ版のまま読み直す（2026-10-13 再発防止：以前は失敗として記録し、ファイルが更新されるまで読み直さなかった）。
@@ -250,7 +256,11 @@ function pscubeCloudRun() {
     const writeViewer = writeBackup || !viewerFile || props.getProperty('pscubeCloudViewer') !== viewerVersion ||
       props.getProperty('pscubeCloudBackup') !== backupVersion || props.getProperty('pscubeCloudParts') !== partsVersion;
     const exportedAt = new Date().toISOString();
-    const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt, cloud_sync: {version: 1, inputs: versions}};
+    const reports=selected.filter(i=>i.report).map(i=>i.report);
+    const health=mergeSyncStatus(data.sync_status,{version:1,writes:[],processed_at:exportedAt,pending:remaining,failed_inputs:Object.keys(failedVersions).length,supplement_supported:true,
+      ...(reports.length ? {supplement:{at:exportedAt,...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,reports.reduce((n,r)=>n+(r[k] || 0),0)]))}} : {})});
+    const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt,sync_status:health,
+      cloud_sync: {version: 1, inputs: versions, browser_baseline:browserBaseline}};
     const viewer = pscubeCloudViewer(backup, exportedAt);
     const backupText = writeBackup ? JSON.stringify(backup) : null, viewerText = writeViewer ? JSON.stringify(viewer) : null;
     const backupBytes = backupText ? pscubeCloudCheckSize(backupText) : backupFile.getSize();
@@ -308,14 +318,15 @@ function pscubeCloudListInputs(folders) {
     const files = folder.searchFiles("trashed = false and title contains 'pscube-backup-'");
     while (files.hasNext()) {
       const file = files.next(), name = file.getName();
-      if (!/^pscube-backup-(?:auto|(?:android|pc)-\d{8}-\d{6})\.json$/.test(name)) continue;
+      if (!/^pscube-backup-(?:auto|(?:android|pc|browser)-\d{8}-\d{6})\.json$/.test(name)) continue;
       const id = file.getId();
       if (byId.has(id)) continue;
       const updated = file.getLastUpdated().getTime(), size = file.getSize();
-      byId.set(id, {file: file, id: id, name: name, updated: updated, size: size, version: updated + '-' + size});
+      byId.set(id, {file: file, id: id, name: name, updated: updated, size: size, version: updated + '-' + size,
+        browser:name.startsWith('pscube-backup-browser-')});
     }
   }
-  return [...byId.values()].sort((a, b) => a.updated - b.updated || a.id.localeCompare(b.id));
+  return [...byId.values()].sort((a, b) => Number(a.browser)-Number(b.browser) || a.updated - b.updated || a.id.localeCompare(b.id));
 }
 
 /** 上限に近づいたときの知らせ（全期間・閲覧用の容量と件数、処理時間、入力の数）。 */
@@ -379,13 +390,14 @@ function pscubeCloudDigest(value) {
   return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(value))
     .map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
 }
-function pscubeCloudRead(file, size) {
+function pscubeCloudRead(file, size, expectedSource) {
   if (size > PSCUBE_CLOUD_MAX_BYTES) throw new Error('ファイルが48MiBを超えています。記録は変更していません。');
   let text;
   // Driveからの読み出しの例外は一時的な障害（通信・Drive側）とみなし、中身の不正（下の解析・検査）と分ける。
   try { text = file.getBlob().getDataAsString('UTF-8'); }
   catch (error) { throw new PscubeCloudTransient(String(error && error.message || error).slice(0, 120)); }
   const raw = JSON.parse(text.replace(/^\uFEFF/, ''));
+  if (expectedSource === 'browser' && (raw.source !== 'browser' || raw.kind !== 'backup')) throw new Error('ブラウザ補完用バックアップの形式が不正です。');
   if (raw.kind === 'viewer') throw new Error('軽量な閲覧用ファイルは全期間バックアップとして使えません。');
   const validated = validateData(raw);
   // バックアップは足し込み。閲覧用の完成日メタデータで保存済み原本を削除しない。
@@ -394,7 +406,7 @@ function pscubeCloudRead(file, size) {
   const keys = new Set(data.records.map(recordKey));
   const captures = raw.rack_captures == null ? data.records.filter(r => r.graph && r.graph.kind === 'daily').map(recordKey) : raw.rack_captures;
   if (!Array.isArray(captures) || captures.some(k => typeof k !== 'string' || !keys.has(k))) throw new Error('取り込み済みの印が不正です。');
-  return {...data, rack_captures: [...new Set(captures)], ...(raw.cloud_sync ? {cloud_sync: raw.cloud_sync} : {})};
+  return {...data, source:raw.source, exported_at:raw.exported_at, rack_captures: [...new Set(captures)], ...(raw.cloud_sync ? {cloud_sync: raw.cloud_sync} : {})};
 }
 function pscubeCloudMerge(stored, incoming) {
   const merged = mergeData(stored, incoming);
@@ -411,12 +423,16 @@ function pscubeCloudMerge(stored, incoming) {
   return {...merged, rack_captures: [...captures]};
 }
 function pscubeCloudViewer(backup, exportedAt) {
-  const latest = backup.records.reduce((day, r) => r.day > day ? r.day : day, '');
+  const sourceRecords=backup.records.map(r=>({...r,...(r.net_capture ? {net_capture:validateNetCapture(r.net_capture)} : {})}));
+  trimNetProbes(sourceRecords);
+  const latest = sourceRecords.reduce((day, r) => r.day > day ? r.day : day, '');
   const first = latest ? new Date(Date.parse(latest) - 30 * 86400000).toISOString().slice(0, 10) : '';
-  const records = backup.records.filter(r => r.day >= first).map(r => ({...r, graph: pscubeCloudThinGraph(r.graph)}));
+  const records = sourceRecords.filter(r => r.day >= first).map(r => ({...r, graph: pscubeCloudThinGraph(r.graph),
+    ...(r.net_capture ? {net_capture:viewerNetCapture(r.net_capture)} : {})}));
   if (records.length > PSCUBE_CLOUD_VIEWER_LIMIT) throw new PscubeCloudStop('output', '直近31日の記録が閲覧ページの上限10万件を超えています。');
   return {format: FORMAT, version: 1, kind: 'viewer', source: 'cloud', exported_at: exportedAt,
-    machines: backup.machines, records: records, ...(backup.date_events ? {date_events: backup.date_events} : {})};
+    machines: backup.machines, records: records, ...(backup.date_events ? {date_events: backup.date_events} : {}),
+    ...(backup.sync_status ? {sync_status:backup.sync_status} : {})};
 }
 function pscubeCloudThinGraph(graph) {
   if (!graph || graph.points.length <= 16) return graph;
@@ -464,6 +480,216 @@ function pscubeCloudWrite(folder, file, name, text) {
     Utilities.sleep(1000 * attempt);
   }
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
+}
+
+// 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
+const NET_PROBE_MAX = 64 * 1024;
+const NET_PROBE_BUDGET = 3 * 1024 * 1024;
+const NET_PROBE_DAYS = 7;
+const ND_STATUSES = new Set(['ok','empty','invalid','network','unavailable','unknown']);
+const ND_REASONS = new Set(['ok','missing_series','empty','short_series','invalid_points','invalid_net','invalid_response','network','not_ready']);
+const ND_OMITTED = new Set(['size','unsafe','expired','budget']);
+const ND_NUMBERS = ['bb','rb','at_art','games','my'];
+const ndError = () => { throw new Error('差枚の取得診断が不正です。'); };
+const ndDay = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) &&
+  Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0,10) === s;
+const ndScalar = v => v == null || (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1e12) ||
+  (typeof v === 'string' && v.length <= 32 && /^[-+\d.eE]*$/.test(v));
+
+function ndProbe(raw) {
+  if (!raw || raw.version !== 1 || !Number.isSafeInteger(raw.rack) || raw.rack < 1 ||
+      typeof raw.day !== 'string' || !/^\d{8}$/.test(raw.day) || !ndDay(`${raw.day.slice(0,4)}-${raw.day.slice(4,6)}-${raw.day.slice(6)}`) ||
+      !Array.isArray(raw.numbers) || raw.numbers.length < 1 || raw.numbers.length > 7 ||
+      !Array.isArray(raw.graph?.datas?.g) || raw.graph.datas.g.length > 7 ||
+      !Array.isArray(raw.graph.datas.p) || raw.graph.datas.p.length > 50000 ||
+      !ndScalar(raw.graph.anjYUnit ?? 1)) ndError();
+  const numbers = raw.numbers.map(r => {
+    if (!r || !ndDay(r.day) || ND_NUMBERS.some(k => !Number.isSafeInteger(r[k]) || r[k] < 0)) ndError();
+    return {day:r.day,...Object.fromEntries(ND_NUMBERS.map(k => [k,r[k]]))};
+  });
+  const fields = new Set();
+  const g = raw.graph.datas.g.map(line => {
+    if (!line || !ndScalar(line.YMD_biz) || !/^\d{8}$/.test(String(line.YMD_biz)) ||
+        !/^out-\d{1,5}$/.test(line.xField ?? '') || !/^value-\d{1,5}$/.test(line.yField ?? '')) ndError();
+    fields.add(line.xField); fields.add(line.yField);
+    return {YMD_biz:line.YMD_biz,xField:line.xField,yField:line.yField};
+  });
+  const p = raw.graph.datas.p.map(point => {
+    if (!point || typeof point !== 'object' || Array.isArray(point)) ndError();
+    return Object.fromEntries([...fields].filter(k => Object.hasOwn(point,k)).map(k => {
+      if (!ndScalar(point[k])) ndError();
+      return [k,point[k]];
+    }));
+  });
+  const probe = {version:1,rack:raw.rack,day:raw.day,numbers,graph:{anjYUnit:raw.graph.anjYUnit ?? 1,datas:{g,p}}};
+  if (JSON.stringify(probe).length > NET_PROBE_MAX) throw new Error('診断用の元数値が上限を超えています。');
+  return probe;
+}
+
+function makeNetProbe(raw, records) {
+  try {
+    if (Array.isArray(raw?.graph?.datas?.p) && !raw.graph.datas.p.length) return {};
+    const probe=ndProbe({version:1,...raw,numbers:records.map(r => ({day:r.day,
+      ...Object.fromEntries(ND_NUMBERS.map(k => [k,r[k]]))}))});
+    // 他言語のJSON数値表記に少し余裕を残す。受け側の上限は64KiB。
+    return JSON.stringify(probe).length>60*1024 ? {probe_omitted:"size"} : {probe};
+  } catch (error) {
+    return {probe_omitted:error.message.includes('上限') ? 'size' : 'unsafe'};
+  }
+}
+
+function validateNetCapture(value) {
+  if (value == null) return null;
+  if (value.version !== 1 || !ND_STATUSES.has(value.status) || !ND_REASONS.has(value.reason) ||
+      typeof value.checked_at !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value.checked_at) ||
+      !Number.isFinite(Date.parse(value.checked_at))) ndError();
+  const result = {version:1,status:value.status,reason:value.reason,checked_at:value.checked_at};
+  if (value.http_status != null) {
+    if (!Number.isSafeInteger(value.http_status) || value.http_status < 0 || value.http_status > 599) ndError();
+    result.http_status = value.http_status;
+  }
+  if (value.probe_omitted != null) {
+    if (!ND_OMITTED.has(value.probe_omitted)) ndError();
+    result.probe_omitted = value.probe_omitted;
+  }
+  if (value.probe != null) result.probe = ndProbe(value.probe);
+  if (value.probe_available != null) {
+    if (typeof value.probe_available !== 'boolean') ndError();
+    result.probe_available=value.probe_available;
+  }
+  return result;
+}
+
+function trimNetProbes(records, now = Date.now()) {
+  let remaining = NET_PROBE_BUDGET;
+  const samples = records.filter(r => r.net_capture?.probe)
+    .sort((a,b) => Date.parse(b.net_capture.checked_at)-Date.parse(a.net_capture.checked_at));
+  for (const r of samples) {
+    const at = Date.parse(r.net_capture.checked_at), size = JSON.stringify(r.net_capture.probe).length;
+    const omitted = at < now-NET_PROBE_DAYS*86400000 || at > now+300000 ? 'expired' : size > remaining ? 'budget' : null;
+    if (omitted) {
+      const {probe,...rest} = r.net_capture;
+      delete rest.probe_available;
+      r.net_capture = {...rest,probe_omitted:omitted};
+    } else remaining -= size;
+  }
+  return records;
+}
+
+function mergeNetCapture(chosen, alternate, sameNumbers) {
+  if (!sameNumbers) return chosen.net_capture;
+  const a = chosen.net_capture, b = alternate.net_capture;
+  return !a || (b && (Date.parse(b.checked_at) > Date.parse(a.checked_at) ||
+    (b.checked_at===a.checked_at && b.probe && !a.probe))) ? b : a;
+}
+
+function viewerNetCapture(value) {
+  const cap=validateNetCapture(value);if(!cap)return null;
+  const {probe,probe_available,...rest}=cap;
+  return {...rest,...((probe || probe_available!=null) ? {probe_available:!!probe || probe_available===true} : {})};
+}
+
+function netCaptureLabel(record) {
+  if (Number.isSafeInteger(record.net_medals)) return record.net_medals === 0 ? '取得済み（0枚）' : '取得済み';
+  if (record.source_site === 'anaslo') return '出典に差枚なし';
+  const reason = record.net_capture?.reason;
+  return ({missing_series:'日別の系列なし',empty:'元数値が空',short_series:'元数値の点が不足',
+    invalid_points:'元数値の形式不正',invalid_net:'差枚の範囲不正',invalid_response:'応答の形式不正',
+    network:'差枚の通信失敗',not_ready:'サイトの通信準備前'})[reason] || '未取得（理由未記録）';
+}
+
+function netHealth(records) {
+  const known = records.filter(r => Number.isSafeInteger(r.net_medals));
+  return {total:records.length,known:known.length,zero:known.filter(r => r.net_medals===0).length,
+    missing:records.filter(r => !Number.isSafeInteger(r.net_medals)).map(r =>
+      ({rack:r.rack,day:r.day,machine:r.machine,reason:netCaptureLabel(r),
+        checked_at:r.net_capture?.checked_at ?? null,replayable:!!(r.net_capture?.probe || r.net_capture?.probe_available) &&
+          Date.parse(r.net_capture.checked_at)>=Date.now()-NET_PROBE_DAYS*86400000 && Date.parse(r.net_capture.checked_at)<=Date.now()+300000}))};
+}
+
+const ndTime = value => typeof value === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
+const ndMillis = value => {const n=Date.parse(value || '');return Number.isFinite(n) ? n : -Infinity;};
+function validateSyncStatus(raw) {
+  if (raw == null) return null;
+  if (raw.version !== 1 || !Array.isArray(raw.writes) || raw.writes.length > 3) throw new Error('更新状況の形式が不正です。');
+  const writes = raw.writes.map(w => {
+    if (!w || !['pc','android','browser'].includes(w.source) || !ndTime(w.at) ||
+        !Array.isArray(w.stores) || w.stores.length > 100 || (w.drive_at != null && !ndTime(w.drive_at))) throw new Error('更新状況の形式が不正です。');
+    return {source:w.source,at:w.at,...(w.drive_at ? {drive_at:w.drive_at} : {}),stores:w.stores.map(s => {
+      if (!s || !/^[A-Za-z0-9_-]{1,80}$/.test(s.store ?? '') ||
+          (s.rate != null && !/^\d+(?:\.\d+)?$/.test(s.rate)) || !ndDay(s.day) ||
+          !Number.isSafeInteger(s.count) || s.count < 0) throw new Error('更新状況の店舗情報が不正です。');
+      return {store:s.store,...(s.rate != null ? {rate:s.rate} : {}),day:s.day,count:s.count};
+    })};
+  });
+  if (new Set(writes.map(w => w.source)).size !== writes.length || (raw.processed_at != null && !ndTime(raw.processed_at))) throw new Error('更新状況の形式が不正です。');
+  const result={version:1,writes,...(raw.processed_at ? {processed_at:raw.processed_at} : {})};
+  for (const key of ['pending','failed_inputs']) if (raw[key]!=null) {
+    if (!Number.isSafeInteger(raw[key]) || raw[key]<0 || raw[key]>1000000) throw new Error('更新状況の形式が不正です。');
+    result[key]=raw[key];
+  }
+  if (raw.supplement!=null) {
+    const s=raw.supplement;
+    if (!ndTime(s.at) || ['applied','unmatched','mismatched','known'].some(k=>!Number.isSafeInteger(s[k]) || s[k]<0 || s[k]>1000000)) throw new Error('補完結果の形式が不正です。');
+    result.supplement={at:s.at,...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,s[k]]))};
+  }
+  if (raw.supplement_supported!=null) {
+    if (typeof raw.supplement_supported!=='boolean') throw new Error('更新状況の形式が不正です。');
+    result.supplement_supported=raw.supplement_supported;
+  }
+  return result;
+}
+
+function makeSyncWrite(source, at, records, driveAt) {
+  if (['pc-viewer','pc-deleted'].includes(source)) source='pc';
+  if (!['pc','android','browser'].includes(source) || !ndTime(at)) return null;
+  const stores = new Map();
+  for (const r of records) {
+    const store=r.store || 'nagamachiminami';
+    if (!ndDay(r.day) || !/^[A-Za-z0-9_-]{1,80}$/.test(store)) continue;
+    const key=JSON.stringify([store,r.rate ?? null]), old=stores.get(key);
+    if (!old) stores.set(key,{store,...(r.rate != null ? {rate:r.rate} : {}),day:r.day,count:1});
+    else if(r.day>old.day) {old.day=r.day;old.count=1;}
+    else if(r.day===old.day) old.count++;
+  }
+  return validateSyncStatus({version:1,writes:[{source,at,...(ndTime(driveAt) ? {drive_at:driveAt} : {}),stores:[...stores.values()]}]});
+}
+
+function updateStatusLines(status, {exportedAt,loadedAt,checkedAt} = {}) {
+  const value=validateSyncStatus(status);
+  const when=s=>ndTime(s) ? new Date(s).toLocaleString('ja-JP') : '未確認';
+  const storeName=s=>({nagamachiminami:'長町南',saiwaichou:'幸町'})[s.store] || `${/^c\d+$/.test(s.store) ? 'P’s CUBE' : s.store}${s.rate==null ? '' : '（'+s.rate+'スロ）'}`;
+  const lines=(value?.writes || []).flatMap(w=>[
+    `${({pc:'PC',android:'Android',browser:'iPhone・ブラウザ'})[w.source]}の書き出し：${when(w.at)}／Driveファイルの更新：${when(w.drive_at)}`,
+    ...w.stores.map(s=>`この出力の最新日：${storeName(s)} ${s.day}・${s.count}台`)]);
+  if (!lines.length) lines.push('元ファイルの書き出し：未確認');
+  lines.push(`Google側の処理：${when(value?.processed_at)}`);
+  if (value?.pending || value?.failed_inputs) lines.push(`Google側の処理待ち ${value.pending || 0}件・入力失敗 ${value.failed_inputs || 0}件`);
+  lines.push(`閲覧データの書き出し：${when(exportedAt)}`,`この端末の読み込み：${when(loadedAt)}`);
+  if (checkedAt) lines.push(`この端末で最新か確認：${when(checkedAt)}`);
+  if (value?.supplement) {
+    const s=value.supplement;
+    lines.push(`スマホ補完：反映 ${s.applied}件・取得済み ${s.known}件・数値不一致 ${s.mismatched}件・元記録なし ${s.unmatched}件（${when(s.at)}）`);
+  }
+  return lines;
+}
+
+function mergeSyncStatus(...items) {
+  const writes = new Map(); let processed_at,meta={},supplement;
+  for (const item of items) {
+    const status=validateSyncStatus(item);if(!status)continue;
+    for (const w of status.writes) {
+      const old=writes.get(w.source);
+      if (!old || Date.parse(w.at)>Date.parse(old.at) || (Date.parse(w.at)===Date.parse(old.at) &&
+          ndMillis(w.drive_at)>ndMillis(old.drive_at))) writes.set(w.source,w);
+    }
+    if (status.processed_at && (!processed_at || Date.parse(status.processed_at)>=Date.parse(processed_at))) {
+      processed_at=status.processed_at;
+      meta=Object.fromEntries(['pending','failed_inputs','supplement_supported'].filter(k=>status[k]!=null).map(k=>[k,status[k]]));
+    }
+    if (status.supplement && (!supplement || Date.parse(status.supplement.at)>=Date.parse(supplement.at))) supplement=status.supplement;
+  }
+  return writes.size || processed_at || supplement ? {version:1,writes:[...writes.values()],...(processed_at ? {processed_at,...meta} : {}),...(supplement ? {supplement} : {})} : null;
 }
 
 const FORMAT = 'pscube-viewer';
@@ -608,19 +834,25 @@ function validateData(raw) {
       graph = { kind: g.kind, zero_y: g.zero_y, points: g.points.map(p => [...p]) };
     }
     if (r.observed_at != null && (typeof r.observed_at !== 'string' || !Number.isFinite(Date.parse(r.observed_at)))) fail('更新時刻が不正です。');
+    const netCapture = validateNetCapture(r.net_capture);
+    if (netCapture?.probe && (netCapture.probe.rack !== r.rack || !netCapture.probe.numbers.some(n => n.day===r.day &&
+        ['bb','rb','at_art','games','my'].every(k => n[k]===r[k])))) fail('差枚の取得診断と台の数値が一致しません。');
     return { ...base, rack: r.rack, day: r.day, bb: r.bb, rb: r.rb, at_art: r.at_art, games: r.games, my: r.my,
       detail_url: url?.href ?? null, observed_at: r.observed_at ?? null, graph,
       ...(external ? {source_site:'anaslo', source_url:r.source_url, source_sha256:r.source_sha256,
         source_machine:r.source_machine, source_probabilities:r.source_probabilities, source_graph:r.source_graph} : {}),
-      ...(external ? {net_medals:null} : r.net_medals == null ? {} : {net_medals: r.net_medals}) };
+      ...(external ? {net_medals:null} : r.net_medals == null ? {} : {net_medals: r.net_medals}),
+      ...(netCapture ? {net_capture:netCapture} : {}) };
   });
   if (new Set(machines.map(machineKey)).size !== machines.length || new Set(records.map(recordKey)).size !== records.length) fail('同じ機種・台が重複しています。');
   const known = new Set(machines.map(machineKey));
   if (records.some(r => !known.has(machineKey(r)))) fail('台に対応する機種情報がありません。');
+  trimNetProbes(records);
   const dateEvents = validateDateEvents(raw.date_events, raw.suffix_events);
   if (raw.history_days != null && (!Array.isArray(raw.history_days) || !raw.history_days.every(validDay) ||
       new Set(raw.history_days).size !== raw.history_days.length)) fail('履歴の日付一覧が不正です。');
-  return { format: FORMAT, version: 1, machines, records, ...(raw.history === true ? {history: true} : {}),
+  const syncStatus = mergeSyncStatus(raw.sync_status,makeSyncWrite(raw.source,raw.exported_at,records));
+  return { format: FORMAT, version: 1, machines, records, ...(syncStatus ? {sync_status:syncStatus} : {}), ...(raw.history === true ? {history: true} : {}),
     ...(raw.history_days ? {history_days: raw.history_days} : {}),
     ...(dateEvents.length ? {date_events:dateEvents} : {}) };
 }
@@ -657,14 +889,31 @@ function mergeData(stored, incoming) {
         : alternate.graph?.kind === 'daily' ? alternate.graph : preferred.graph ?? alternate.graph;
     }
     const alternate = older ? r : previous;
-    records.set(key, { ...preferred, graph,
+    const netCapture = mergeNetCapture(preferred,alternate,sameNumbers);
+    records.set(key, { ...preferred, graph, ...(netCapture ? {net_capture:netCapture} : {}),
       ...(sameNumbers && preferred.net_medals == null && alternate.net_medals != null ? {net_medals:alternate.net_medals} : {}) });
   }
   // Events are independent of machine/rack data. A removal is retained as a dated
   // null name so an older backup cannot bring the event back.
   return validateData({ ...emptyData(), ...(old.history || fresh.history ? {history: true} : {}), machines: [...machines.values()], records: [...records.values()],
+    sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status),
     ...(old.history_days || fresh.history_days ? {history_days: [...new Set([...(old.history_days || []), ...(fresh.history_days || [])])]} : {}),
     date_events:mergeDateEvents(old.date_events, fresh.date_events) });
+}
+
+/** ブラウザの補完は既存の同じ台・日・数値の欠測差枚だけ。記録の追加や上書きを行わない。 */
+function mergeNetSupplement(stored, incoming, report = {}) {
+  const old=validateData(stored), fresh=validateData(incoming), records=new Map(old.records.map(r=>[recordKey(r),r]));
+  for(const key of ['applied','unmatched','mismatched','known']) if (report[key]==null) report[key]=0;
+  for (const value of fresh.records.filter(r=>r.net_medals!=null)) {
+    const key=recordKey(value),r=records.get(key);
+    if (!r) {report.unmatched++;continue;}
+    if (r.source_site==='anaslo' || value.source_site==='anaslo' || !['bb','rb','at_art','games','my'].every(k=>r[k]===value[k])) {report.mismatched++;continue;}
+    if (r.net_medals!=null) {report.known++;continue;}
+    report.applied++;
+    records.set(key,{...r,net_medals:value.net_medals,...(value.net_capture ? {net_capture:value.net_capture} : {})});
+  }
+  return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
@@ -924,6 +1173,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
   // Apps Scriptの保存時に解釈できる通常の代入で初期化する。
   if (!m.history_inputs) m.history_inputs = {};
   if (!m.history_progress) m.history_progress = {};
+  if (!m.history_baselines) m.history_baselines = {};
   if (!m.cloud_days) m.cloud_days = [];
   const days = new Map(m.cloud_days.map(d => [d.day, d]));
   const parts = new Map();
@@ -937,11 +1187,28 @@ function vhSync(folder, base, props, adapter, startedAt) {
   const inputs = adapter.inputs();
   const failures = adapter.failures();
   const live = new Set(inputs.map(i => i.id));
-  for (const table of [m.history_inputs, m.history_progress, failures.reasons, failures.versions]) {
+  for (const table of [m.history_inputs, m.history_progress, m.history_baselines, failures.reasons, failures.versions]) {
     for (const id of Object.keys(table)) if (!live.has(id)) delete table[id];
   }
   const newFailures = []; let processed = 0, changedDays = 0, written = 0, bytes = 0, readBytes = 0;
-  const pending = inputs.filter(i => m.history_inputs[i.id] !== i.version && failures.versions[i.id] !== i.version);
+  const saveDay=(day,value)=>{
+    if (site==='pscube') trimNetProbes(value.data.records);
+    const rawText=vpCanonical(value),rawHash=vpHash(rawText);
+    if (days.get(day)?.hash===rawHash) return false;
+    const rows=adapter.viewer(value);
+    if (rows.length>100000) throw new Error('1日分の閲覧記録が10万件を超えています。');
+    const published=vhDayParts(folder,site,day,rows,write);
+    const rawName='database-history-day-'+site+'-'+day+'-'+rawHash+'.json';
+    const {created,...rawRef}=vhImmutable(folder,rawName,rawText,write);
+    const probes=site==='pscube' ? value.data.records.filter(r=>r.net_capture?.probe) : [];
+    const probeInfo=probes.length ? {probe_bytes:probes.reduce((n,r)=>n+JSON.stringify(r.net_capture.probe).length,0),
+      probe_next_expiry:Math.min(...probes.map(r=>Date.parse(r.net_capture.checked_at)+NET_PROBE_DAYS*86400000))} : {};
+    days.set(day,{...rawRef,day,site,count:rows.length,...probeInfo});parts.set(day,published.parts);
+    written+=published.written;bytes+=published.writtenBytes;changedDays++;
+    return true;
+  };
+  const needsInput = i => (m.history_inputs[i.id] !== i.version || (i.baseline && m.history_baselines[i.id] !== i.baseline)) && failures.versions[i.id] !== i.version;
+  const pending = inputs.filter(needsInput);
   for (const input of pending.slice(0, 10)) {
     if (readBytes && (Date.now() - startedAt > 150000 || readBytes + input.size > 64 * 1024 * 1024)) break;
     let incoming;
@@ -956,8 +1223,9 @@ function vhSync(folder, base, props, adapter, startedAt) {
     readBytes += input.size;
     if (vpVersion(input.file) !== input.version) continue;
     const grouped = adapter.group(incoming), allDays = [...grouped.keys()].sort();
-    const resume = m.history_progress[input.id];
-    const start = resume?.version === input.version ? resume.next : 0;
+    const savedProgress = m.history_progress[input.id];
+    const resume = savedProgress?.version === input.version ? savedProgress : null;
+    const start = resume?.next || 0;
     let next = start;
     // 大きい初回入力は日付単位で途中確定し、次の30分実行で続きから処理する。
     for (; next < allDays.length; next++) {
@@ -965,23 +1233,22 @@ function vhSync(folder, base, props, adapter, startedAt) {
       const day = allDays[next], prior = loadDay(day);
       const value = adapter.merge(prior, grouped.get(day), input);
       if (value.day !== day || value.site !== site) throw new Error('統合後の日付が不正です。');
-      const rawText = vpCanonical(value), rawHash = vpHash(rawText);
-      if (days.get(day)?.hash === rawHash) continue;
-      const rows = adapter.viewer(value);
-      if (rows.length > 100000) throw new Error('1日分の閲覧記録が10万件を超えています。');
-      const published = vhDayParts(folder, site, day, rows, write);
-      const rawName = 'database-history-day-' + site + '-' + day + '-' + rawHash + '.json';
-      const {created, ...rawRef} = vhImmutable(folder, rawName, rawText, write);
-      days.set(day, {...rawRef, day, site, count: rows.length}); parts.set(day, published.parts);
-      written += published.written; bytes += published.writtenBytes; changedDays++;
+      saveDay(day,value);
     }
-    if (next < allDays.length) m.history_progress[input.id] = {version: input.version, next};
+    if (next < allDays.length) m.history_progress[input.id] = {version: input.version, next,
+      ...(input.baseline ? {baseline:resume?.baseline || input.baseline} : {})};
     else {
-      m.history_inputs[input.id] = input.version; delete m.history_progress[input.id];
+      m.history_inputs[input.id] = input.version;
+      if (input.baseline) m.history_baselines[input.id] = resume?.baseline || input.baseline;
+      delete m.history_progress[input.id];
       delete failures.versions[input.id]; delete failures.reasons[input.id]; processed++;
     }
-    m.header = adapter.mergeHeader(m.header, incoming);
+    m.header = adapter.mergeHeader(m.header, incoming, input);
     if (next < allDays.length) break;
+  }
+  if (site==='pscube') for (const [day,ref] of days) {
+    if (changedDays>=24 || Date.now()-startedAt>150000) break;
+    if (Number.isFinite(ref.probe_next_expiry) && ref.probe_next_expiry<=Date.now()) saveDay(day,loadDay(day));
   }
   if (props.getProperty(site + 'HistoryRebuild')) {
     let next = m.history_rebuild_next || 0;
@@ -999,6 +1266,15 @@ function vhSync(folder, base, props, adapter, startedAt) {
   m.cloud_days = [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
   m.days = [...new Set([...parts.keys(), ...days.keys()])].sort();
   m.count = m.parts.reduce((n, p) => n + p.count, 0);
+  const health=mergeSyncStatus(m.header.sync_status);
+  const remainingNow=inputs.filter(needsInput).length+(m.history_rebuild_next != null ? 1 : 0);
+  const failuresNow=Object.keys(failures.versions).length;
+  const browserReports=pending.filter(i=>i.report).map(i=>i.report);
+  const supplement=browserReports.length ? {at:new Date().toISOString(),
+    ...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,browserReports.reduce((n,r)=>n+(r[k] || 0),0)]))} : null;
+  m.header.sync_status={version:1,writes:[],...health,pending:remainingNow,failed_inputs:failuresNow,
+    ...(site==='pscube' ? {supplement_supported:true} : {}),
+    ...((changedDays || processed || !health?.processed_at) ? {processed_at:new Date().toISOString()} : {}),...(supplement ? {supplement} : {})};
   const {exported_at, ...stableHeader} = m.header;
   m.signature = vpHash(vpCanonical({parts: m.parts.map(({day, hash}) => ({day, hash})), days: m.days, header: stableHeader}));
   if (old?.signature !== m.signature) m.header.exported_at = new Date(Math.max(Date.now(), Date.parse(old?.header?.exported_at || '') + 1 || 0)).toISOString();
@@ -1012,7 +1288,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
   // 故障した原本の自動削除はしない。未参照の生成物だけ7日後に整理する。
   vpMaintain(folder, site, props);
   vhMaintain(folder, site, props);
-  const remaining = inputs.filter(i => m.history_inputs[i.id] !== i.version && failures.versions[i.id] !== i.version).length + (m.history_rebuild_next != null ? 1 : 0);
+  const remaining = inputs.filter(needsInput).length + (m.history_rebuild_next != null ? 1 : 0);
   const status = {at: new Date().toISOString(), result: Object.keys(failures.versions).length ? 'partial' : 'ok', history: true,
     message: '履歴を日別に保存・' + changedDays + '日更新', processed, remaining,
     viewer_records: m.count, android_records: m.count, backup_records: m.count, records: m.count,
@@ -1045,6 +1321,13 @@ function vhMaintain(folder, site, props) {
 
 function vhInput(file, kind) {
   return {file, kind, id: kind + ':' + file.getId(), name: file.getName(), size: file.getSize(), version: vpVersion(file)};
+}
+function vhSourceStatus(old,fresh,input) {
+  // Driveの更新時刻は、その入力自身の書き出しにだけ結び付ける。
+  // 古いPC出力の読み込みで、別ファイルにある新しいPC出力の時刻を偽って更新しない。
+  const own=fresh.cloud_merged ? null : makeSyncWrite(fresh.source,fresh.exported_at,fresh.records || [],
+    input?.file ? input.file.getLastUpdated().toISOString() : undefined);
+  return mergeSyncStatus(old.sync_status,fresh.sync_status,own);
 }
 // A missing day may have aged out of the PC's 60-day view. Only an explicit,
 // timestamped operation can remove a record from the permanent cloud history.
@@ -1122,7 +1405,7 @@ function vhMeruhen(folder, base, props, startedAt) {
       return vhMergeMeruhen(old, fresh, input.kind);
     },
     viewer: value => meruhenApply({records: value.pc}, value.android).records,
-    mergeHeader: (old, fresh) => {
+    mergeHeader: (old, fresh, input) => {
       const events = new Map((old.date_events || []).map(e => [e.store + '|' + e.day, e]));
       for (const e of fresh.date_events || []) {
         const key = e.store + '|' + e.day, prior = events.get(key);
@@ -1131,7 +1414,7 @@ function vhMeruhen(folder, base, props, startedAt) {
       // PCの閲覧用の日ごとの「何台中何台プラス」（day_summaries、2026-10-18 html_day_summary.py）は、
       // PCの最新の出力のものに置き換える。Androidのバックアップには無いので前のまま。
       const summaries = Array.isArray(fresh.day_summaries) ? {day_summaries: fresh.day_summaries} : {};
-      return {...old, ...summaries, date_events: [...events.values()]};
+      return {...old, ...summaries, date_events: [...events.values()],sync_status:vhSourceStatus(old,fresh,input)};
     },
     failures: () => ({reasons: meruhenParse(props.getProperty(MERUHEN_CLOUD_ERRORS)) || {},
       versions: meruhenParse(props.getProperty(MERUHEN_CLOUD_FAILED)) || {}}),
@@ -1148,15 +1431,19 @@ function vhPscube(folder, base, props, startedAt) {
     header: () => { const {records, ...header} = emptyData(); return {...header, kind: 'viewer', source: 'cloud', exported_at: new Date().toISOString()}; },
     inputs: () => {
       const legacy = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_BACKUP);
-      return [vhInput(base, 'pc'), ...(legacy ? [vhInput(legacy, 'legacy')] : []),
-        ...pscubeCloudListInputs([folder, DriveApp.getRootFolder()]).map(i => vhInput(i.file, 'backup'))];
+      const inputs = [vhInput(base, 'pc'), ...(legacy ? [vhInput(legacy, 'legacy')] : []),
+        ...pscubeCloudListInputs([folder, DriveApp.getRootFolder()]).map(i => vhInput(i.file, i.browser ? 'browser' : 'backup'))];
+      const baseline = vpHash(vpCanonical(inputs.filter(i=>i.kind!=='browser').map(i=>[i.id,i.version])));
+      for (const input of inputs) if (input.kind==='browser') input.baseline=baseline;
+      return inputs;
     },
     read: input => {
-      if (input.kind !== 'pc') return pscubeCloudRead(input.file, input.size);
+      if (input.kind !== 'pc') return pscubeCloudRead(input.file, input.size,input.kind==='browser' ? 'browser' : null);
       if (input.size > PSCUBE_CLOUD_MAX_BYTES) throw new Error('PC閲覧用入力が48MiBを超えています。期間を分けてください。');
       let text;
       try { text = input.file.getBlob().getDataAsString('UTF-8'); } catch (e) { throw new PscubeCloudTransient(e.message); }
-      return validateData(JSON.parse(text));
+      const raw=JSON.parse(text);
+      return {...validateData(raw),source:raw.source,exported_at:raw.exported_at};
     },
     group: doc => vhGroup(doc, 'pscube'),
     fromViewer: (day, header, records) => ({site: 'pscube', day, data: {...emptyData(), machines: header.machines || [], records}}),
@@ -1171,15 +1458,20 @@ function vhPscube(folder, base, props, startedAt) {
             ? {...r, graph: prior.graph} : r;
         })};
       }
-      return {site: 'pscube', day: fresh.day, data: pscubeCloudMerge(old.data, fresh)};
+      const report=input.kind==='browser' ? (input.report || (input.report={})) : null;
+      const merged = input.kind==='browser' ? mergeNetSupplement(old.data,fresh,report) : pscubeCloudMerge(old.data,fresh);
+      // 更新経路は一覧の見出しに保持し、同じ情報だけで全日別原本を再生成しない。
+      const {sync_status,...data}=merged;
+      return {site: 'pscube', day: fresh.day, data};
     },
     viewer: value => pscubeCloudViewer(value.data, '').records,
-    mergeHeader: (old, fresh) => {
+    mergeHeader: (old, fresh, input) => {
+      if (input?.kind==='browser') return {...old,sync_status:vhSourceStatus(old,fresh,input)};
       const machines = new Map((old.machines || []).map(m => [machineKey(m), m]));
       for (const m of fresh.machines) {
         const prior = machines.get(machineKey(m)); machines.set(machineKey(m), {...m, machine_type: m.machine_type ?? prior?.machine_type ?? null});
       }
-      return {...old, machines: [...machines.values()], date_events: mergeDateEvents(old.date_events, fresh.date_events)};
+      return {...old, machines: [...machines.values()], date_events: mergeDateEvents(old.date_events, fresh.date_events),sync_status:vhSourceStatus(old,fresh,input)};
     },
     failures: () => ({reasons: pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_ERRORS)) || {},
       versions: pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_FAILED)) || {}}),

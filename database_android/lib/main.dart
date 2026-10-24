@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'capture_health_ui.dart';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
@@ -229,6 +231,25 @@ class AppShell extends StatelessWidget {
             onSelected: (value) => switch (value) {
               'export' => _shareBackup(context, controller),
               'import' => _importBackup(context, controller),
+              'health' => showCaptureHealth(
+                context,
+                records: controller.records.map(healthRecord).toList(),
+                syncStatus: controller.lastFullBackupExport == null
+                    ? null
+                    : {
+                        'version': 1,
+                        'writes': [
+                          {
+                            'source': 'android',
+                            'at': controller.lastFullBackupExport!
+                                .toUtc()
+                                .toIso8601String(),
+                            'stores': [],
+                          },
+                        ],
+                      },
+                pscube: false,
+              ),
               'storage' => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const StorageUsagePage(),
@@ -248,6 +269,7 @@ class AppShell extends StatelessWidget {
                 ),
               ),
               const PopupMenuItem(value: 'import', child: Text('バックアップを読み込む')),
+              const PopupMenuItem(value: 'health', child: Text('更新・差枚の取得状況')),
               const PopupMenuItem(
                 value: 'trash',
                 child: Text('ゴミ箱（$trashDays日間）'),

@@ -55,6 +55,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
   // Apps Scriptの保存時に解釈できる通常の代入で初期化する。
   if (!m.history_inputs) m.history_inputs = {};
   if (!m.history_progress) m.history_progress = {};
+  if (!m.history_baselines) m.history_baselines = {};
   if (!m.cloud_days) m.cloud_days = [];
   const days = new Map(m.cloud_days.map(d => [d.day, d]));
   const parts = new Map();
@@ -68,11 +69,28 @@ function vhSync(folder, base, props, adapter, startedAt) {
   const inputs = adapter.inputs();
   const failures = adapter.failures();
   const live = new Set(inputs.map(i => i.id));
-  for (const table of [m.history_inputs, m.history_progress, failures.reasons, failures.versions]) {
+  for (const table of [m.history_inputs, m.history_progress, m.history_baselines, failures.reasons, failures.versions]) {
     for (const id of Object.keys(table)) if (!live.has(id)) delete table[id];
   }
   const newFailures = []; let processed = 0, changedDays = 0, written = 0, bytes = 0, readBytes = 0;
-  const pending = inputs.filter(i => m.history_inputs[i.id] !== i.version && failures.versions[i.id] !== i.version);
+  const saveDay=(day,value)=>{
+    if (site==='pscube') trimNetProbes(value.data.records);
+    const rawText=vpCanonical(value),rawHash=vpHash(rawText);
+    if (days.get(day)?.hash===rawHash) return false;
+    const rows=adapter.viewer(value);
+    if (rows.length>100000) throw new Error('1日分の閲覧記録が10万件を超えています。');
+    const published=vhDayParts(folder,site,day,rows,write);
+    const rawName='database-history-day-'+site+'-'+day+'-'+rawHash+'.json';
+    const {created,...rawRef}=vhImmutable(folder,rawName,rawText,write);
+    const probes=site==='pscube' ? value.data.records.filter(r=>r.net_capture?.probe) : [];
+    const probeInfo=probes.length ? {probe_bytes:probes.reduce((n,r)=>n+JSON.stringify(r.net_capture.probe).length,0),
+      probe_next_expiry:Math.min(...probes.map(r=>Date.parse(r.net_capture.checked_at)+NET_PROBE_DAYS*86400000))} : {};
+    days.set(day,{...rawRef,day,site,count:rows.length,...probeInfo});parts.set(day,published.parts);
+    written+=published.written;bytes+=published.writtenBytes;changedDays++;
+    return true;
+  };
+  const needsInput = i => (m.history_inputs[i.id] !== i.version || (i.baseline && m.history_baselines[i.id] !== i.baseline)) && failures.versions[i.id] !== i.version;
+  const pending = inputs.filter(needsInput);
   for (const input of pending.slice(0, 10)) {
     if (readBytes && (Date.now() - startedAt > 150000 || readBytes + input.size > 64 * 1024 * 1024)) break;
     let incoming;
@@ -87,8 +105,9 @@ function vhSync(folder, base, props, adapter, startedAt) {
     readBytes += input.size;
     if (vpVersion(input.file) !== input.version) continue;
     const grouped = adapter.group(incoming), allDays = [...grouped.keys()].sort();
-    const resume = m.history_progress[input.id];
-    const start = resume?.version === input.version ? resume.next : 0;
+    const savedProgress = m.history_progress[input.id];
+    const resume = savedProgress?.version === input.version ? savedProgress : null;
+    const start = resume?.next || 0;
     let next = start;
     // 大きい初回入力は日付単位で途中確定し、次の30分実行で続きから処理する。
     for (; next < allDays.length; next++) {
@@ -96,23 +115,22 @@ function vhSync(folder, base, props, adapter, startedAt) {
       const day = allDays[next], prior = loadDay(day);
       const value = adapter.merge(prior, grouped.get(day), input);
       if (value.day !== day || value.site !== site) throw new Error('統合後の日付が不正です。');
-      const rawText = vpCanonical(value), rawHash = vpHash(rawText);
-      if (days.get(day)?.hash === rawHash) continue;
-      const rows = adapter.viewer(value);
-      if (rows.length > 100000) throw new Error('1日分の閲覧記録が10万件を超えています。');
-      const published = vhDayParts(folder, site, day, rows, write);
-      const rawName = 'database-history-day-' + site + '-' + day + '-' + rawHash + '.json';
-      const {created, ...rawRef} = vhImmutable(folder, rawName, rawText, write);
-      days.set(day, {...rawRef, day, site, count: rows.length}); parts.set(day, published.parts);
-      written += published.written; bytes += published.writtenBytes; changedDays++;
+      saveDay(day,value);
     }
-    if (next < allDays.length) m.history_progress[input.id] = {version: input.version, next};
+    if (next < allDays.length) m.history_progress[input.id] = {version: input.version, next,
+      ...(input.baseline ? {baseline:resume?.baseline || input.baseline} : {})};
     else {
-      m.history_inputs[input.id] = input.version; delete m.history_progress[input.id];
+      m.history_inputs[input.id] = input.version;
+      if (input.baseline) m.history_baselines[input.id] = resume?.baseline || input.baseline;
+      delete m.history_progress[input.id];
       delete failures.versions[input.id]; delete failures.reasons[input.id]; processed++;
     }
-    m.header = adapter.mergeHeader(m.header, incoming);
+    m.header = adapter.mergeHeader(m.header, incoming, input);
     if (next < allDays.length) break;
+  }
+  if (site==='pscube') for (const [day,ref] of days) {
+    if (changedDays>=24 || Date.now()-startedAt>150000) break;
+    if (Number.isFinite(ref.probe_next_expiry) && ref.probe_next_expiry<=Date.now()) saveDay(day,loadDay(day));
   }
   if (props.getProperty(site + 'HistoryRebuild')) {
     let next = m.history_rebuild_next || 0;
@@ -130,6 +148,15 @@ function vhSync(folder, base, props, adapter, startedAt) {
   m.cloud_days = [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
   m.days = [...new Set([...parts.keys(), ...days.keys()])].sort();
   m.count = m.parts.reduce((n, p) => n + p.count, 0);
+  const health=mergeSyncStatus(m.header.sync_status);
+  const remainingNow=inputs.filter(needsInput).length+(m.history_rebuild_next != null ? 1 : 0);
+  const failuresNow=Object.keys(failures.versions).length;
+  const browserReports=pending.filter(i=>i.report).map(i=>i.report);
+  const supplement=browserReports.length ? {at:new Date().toISOString(),
+    ...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,browserReports.reduce((n,r)=>n+(r[k] || 0),0)]))} : null;
+  m.header.sync_status={version:1,writes:[],...health,pending:remainingNow,failed_inputs:failuresNow,
+    ...(site==='pscube' ? {supplement_supported:true} : {}),
+    ...((changedDays || processed || !health?.processed_at) ? {processed_at:new Date().toISOString()} : {}),...(supplement ? {supplement} : {})};
   const {exported_at, ...stableHeader} = m.header;
   m.signature = vpHash(vpCanonical({parts: m.parts.map(({day, hash}) => ({day, hash})), days: m.days, header: stableHeader}));
   if (old?.signature !== m.signature) m.header.exported_at = new Date(Math.max(Date.now(), Date.parse(old?.header?.exported_at || '') + 1 || 0)).toISOString();
@@ -143,7 +170,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
   // 故障した原本の自動削除はしない。未参照の生成物だけ7日後に整理する。
   vpMaintain(folder, site, props);
   vhMaintain(folder, site, props);
-  const remaining = inputs.filter(i => m.history_inputs[i.id] !== i.version && failures.versions[i.id] !== i.version).length + (m.history_rebuild_next != null ? 1 : 0);
+  const remaining = inputs.filter(needsInput).length + (m.history_rebuild_next != null ? 1 : 0);
   const status = {at: new Date().toISOString(), result: Object.keys(failures.versions).length ? 'partial' : 'ok', history: true,
     message: '履歴を日別に保存・' + changedDays + '日更新', processed, remaining,
     viewer_records: m.count, android_records: m.count, backup_records: m.count, records: m.count,

@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from auto_capture import AutoCapture
+from pscube_health import validate_net_capture, trim_net_probes, merge_net_capture, viewer_net_capture
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, retry_page, stop_navigation
 
 # バックアップ・Drive同期（仕様：PSCUBE_SYNC.md）。メルヘンの database-backup-* とは名前を分ける。
@@ -290,6 +291,8 @@ def _validate_record(r):
         _number(r.get(name), name)
     if r.get('net_medals') is not None and (type(r['net_medals']) is not int or abs(r['net_medals']) > 1000000):
         raise ValueError('差枚の数値が不正です。')
+    if r.get('net_capture') is not None:
+        r['net_capture'] = validate_net_capture(r['net_capture'], r)
     g = r.get('graph')
     if g is not None:
         if not isinstance(g, dict) or g.get('kind') not in ('overview', 'daily') or type(g.get('zero_y')) not in (int, float) or not math.isfinite(g['zero_y']):
@@ -368,7 +371,8 @@ def _merge(old: dict | None, fresh: dict) -> dict:
         if not graph or graph['kind'] != 'daily':
             second = other.get('graph')
             graph = second if second and second['kind'] == 'daily' else graph or second
-        return {**chosen, 'graph': graph,
+        capture = merge_net_capture(chosen, other, same)
+        return {**chosen, 'graph': graph, **({'net_capture': capture} if capture else {}),
                 **({'net_medals': other['net_medals']} if chosen.get('net_medals') is None and other.get('net_medals') is not None else {})}
     return chosen
 
@@ -754,6 +758,8 @@ class PscubeStore:
                                 ('active_machine_keys', json.dumps([_machine_key(m) for m in data['machines']], ensure_ascii=False)))
             if is_rack:
                 self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (_record_key(current),))
+        if any(r.get('net_capture') for r in data['records']):
+            self._trim_net_probes()
         if (is_table or is_rack) and day and day not in fresh_since:
             times = [r.get('observed_at') for r in data['records'] if r['day'] == day and _instant(r.get('observed_at'))]
             if times:
@@ -904,18 +910,31 @@ class PscubeStore:
         urls = [e[2] for e in pending]
         return (urls[0] if urls else None), len(urls)
 
+    def _trim_net_probes(self):
+        rows = self.db.execute('SELECT key,payload FROM records WHERE payload LIKE ?', ('%"probe":%',)).fetchall()
+        records = [json.loads(row[1]) for row in rows]
+        before = [json.dumps(r.get('net_capture'), sort_keys=True) for r in records]
+        trim_net_probes(records)
+        with self.db:
+            for (key, _), record, old in zip(rows, records, before):
+                if json.dumps(record.get('net_capture'), sort_keys=True) != old:
+                    self.db.execute('UPDATE records SET payload=? WHERE key=?', (json.dumps(record, ensure_ascii=False), key))
+
     def export_payload(self, kind='backup', today: date | None = None) -> dict:
         """kind='backup'：全期間・グラフ全点・取り込み済みの印つき。'viewer'：閲覧ページ用の軽い版
         （直近31日・グラフ16点まで。復元には使えない）。"""
         machines = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM machines ORDER BY rowid')]
         records = [json.loads(row[0]) for row in self.db.execute('SELECT payload FROM records ORDER BY rowid')]
+        trim_net_probes(records)
         data = {'format': FORMAT, 'version': 1, 'kind': kind, 'source': 'pc', 'exported_at': _now_text(),
                 'machines': machines, 'records': records}
         if kind == 'viewer':
             latest = max((r['day'] for r in records), default=None)
             if latest:
                 first = (date.fromisoformat(latest) - timedelta(days=VIEWER_DAYS - 1)).isoformat()
-                data['records'] = [{**r, 'graph': thin_graph(r.get('graph'))} for r in records if r['day'] >= first]
+                data['records'] = [{**r, 'graph': thin_graph(r.get('graph')),
+                                    **({'net_capture': viewer_net_capture(r['net_capture'])} if r.get('net_capture') else {})}
+                                   for r in records if r['day'] >= first]
         else:
             data['rack_captures'] = [row[0] for row in self.db.execute('SELECT key FROM rack_captures ORDER BY rowid')]
         events = self.date_events()
@@ -1116,6 +1135,8 @@ class PscubeStore:
                     self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (key,))
             if data['records'] and not self._state('last_day'):
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)', ('last_day', max(r['day'] for r in data['records'])))
+        if any(r.get('net_capture') for r in data['records']):
+            self._trim_net_probes()
         return summary
 
     def _import_cloud_history(self, source, index):

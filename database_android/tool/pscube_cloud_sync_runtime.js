@@ -27,7 +27,7 @@ const PSCUBE_CLOUD_FAILED = 'pscubeCloudFailed';
 const PSCUBE_CLOUD_FAILED_MAX = 120;
 // 取り込みの規則の版。規則を直して貼り替えた最初の実行で、前に取り込めなかった入力をもう一度読む
 // （2026-10-18、アナスロの出典リンクを拒んでPCの閲覧用ファイルが処理されないままだった。版が同じだと再試行されない）。
-const PSCUBE_CLOUD_RULES = '2026-10-18-anaslo-url';
+const PSCUBE_CLOUD_RULES = '2026-10-24-capture-health-browser';
 // 書き出しの一時的な失敗（429・5xx・通信の例外）は、同じ実行の中でこの回数まで少し待って試す（1秒・2秒）。
 const PSCUBE_CLOUD_WRITE_TRIES = 3;
 
@@ -189,6 +189,10 @@ function pscubeCloudRun() {
         '共有フォルダから外す（名前を変える）と、次の実行で入力から作り直します。');
     }
     const versions = {...(data.cloud_sync && data.cloud_sync.inputs || {})};
+    const browserBaseline = pscubeCloudDigest(inputs.filter(i => !i.browser).map(i => [i.id,i.version]));
+    if (data.cloud_sync?.browser_baseline !== browserBaseline) {
+      for (const input of inputs.filter(i => i.browser)) delete versions[input.id];
+    }
     // 取り込み済みの版・取り込めなかった同じ版は読まない（直したり更新したりすると版が変わり、再試行する）。
     const pending = inputs.filter(i => versions[i.id] !== i.version && failedVersions[i.id] !== i.version);
     if (!backupFile && !inputs.length) {
@@ -203,7 +207,9 @@ function pscubeCloudRun() {
       readBytes += input.size;
       let merged;
       try {
-        merged = pscubeCloudMerge(data, pscubeCloudRead(input.file, input.size));
+        const incoming = pscubeCloudRead(input.file, input.size, input.browser ? 'browser' : null);
+        merged = input.browser ? {...mergeNetSupplement(data,incoming,input.report || (input.report={})),rack_captures:data.rack_captures || []} : pscubeCloudMerge(data,incoming);
+        merged={...merged,sync_status:vhSourceStatus(data,incoming,input)};
       } catch (error) {
         // Driveの一時的な障害で読めなかった入力は、壊れたファイルとして記録しない。この回は取り込まず、次の実行で
         // 同じ版のまま読み直す（2026-10-13 再発防止：以前は失敗として記録し、ファイルが更新されるまで読み直さなかった）。
@@ -246,7 +252,11 @@ function pscubeCloudRun() {
     const writeViewer = writeBackup || !viewerFile || props.getProperty('pscubeCloudViewer') !== viewerVersion ||
       props.getProperty('pscubeCloudBackup') !== backupVersion || props.getProperty('pscubeCloudParts') !== partsVersion;
     const exportedAt = new Date().toISOString();
-    const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt, cloud_sync: {version: 1, inputs: versions}};
+    const reports=selected.filter(i=>i.report).map(i=>i.report);
+    const health=mergeSyncStatus(data.sync_status,{version:1,writes:[],processed_at:exportedAt,pending:remaining,failed_inputs:Object.keys(failedVersions).length,supplement_supported:true,
+      ...(reports.length ? {supplement:{at:exportedAt,...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,reports.reduce((n,r)=>n+(r[k] || 0),0)]))}} : {})});
+    const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt,sync_status:health,
+      cloud_sync: {version: 1, inputs: versions, browser_baseline:browserBaseline}};
     const viewer = pscubeCloudViewer(backup, exportedAt);
     const backupText = writeBackup ? JSON.stringify(backup) : null, viewerText = writeViewer ? JSON.stringify(viewer) : null;
     const backupBytes = backupText ? pscubeCloudCheckSize(backupText) : backupFile.getSize();
@@ -304,14 +314,15 @@ function pscubeCloudListInputs(folders) {
     const files = folder.searchFiles("trashed = false and title contains 'pscube-backup-'");
     while (files.hasNext()) {
       const file = files.next(), name = file.getName();
-      if (!/^pscube-backup-(?:auto|(?:android|pc)-\d{8}-\d{6})\.json$/.test(name)) continue;
+      if (!/^pscube-backup-(?:auto|(?:android|pc|browser)-\d{8}-\d{6})\.json$/.test(name)) continue;
       const id = file.getId();
       if (byId.has(id)) continue;
       const updated = file.getLastUpdated().getTime(), size = file.getSize();
-      byId.set(id, {file: file, id: id, name: name, updated: updated, size: size, version: updated + '-' + size});
+      byId.set(id, {file: file, id: id, name: name, updated: updated, size: size, version: updated + '-' + size,
+        browser:name.startsWith('pscube-backup-browser-')});
     }
   }
-  return [...byId.values()].sort((a, b) => a.updated - b.updated || a.id.localeCompare(b.id));
+  return [...byId.values()].sort((a, b) => Number(a.browser)-Number(b.browser) || a.updated - b.updated || a.id.localeCompare(b.id));
 }
 
 /** 上限に近づいたときの知らせ（全期間・閲覧用の容量と件数、処理時間、入力の数）。 */
@@ -375,13 +386,14 @@ function pscubeCloudDigest(value) {
   return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(value))
     .map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
 }
-function pscubeCloudRead(file, size) {
+function pscubeCloudRead(file, size, expectedSource) {
   if (size > PSCUBE_CLOUD_MAX_BYTES) throw new Error('ファイルが48MiBを超えています。記録は変更していません。');
   let text;
   // Driveからの読み出しの例外は一時的な障害（通信・Drive側）とみなし、中身の不正（下の解析・検査）と分ける。
   try { text = file.getBlob().getDataAsString('UTF-8'); }
   catch (error) { throw new PscubeCloudTransient(String(error && error.message || error).slice(0, 120)); }
   const raw = JSON.parse(text.replace(/^\uFEFF/, ''));
+  if (expectedSource === 'browser' && (raw.source !== 'browser' || raw.kind !== 'backup')) throw new Error('ブラウザ補完用バックアップの形式が不正です。');
   if (raw.kind === 'viewer') throw new Error('軽量な閲覧用ファイルは全期間バックアップとして使えません。');
   const validated = validateData(raw);
   // バックアップは足し込み。閲覧用の完成日メタデータで保存済み原本を削除しない。
@@ -390,7 +402,7 @@ function pscubeCloudRead(file, size) {
   const keys = new Set(data.records.map(recordKey));
   const captures = raw.rack_captures == null ? data.records.filter(r => r.graph && r.graph.kind === 'daily').map(recordKey) : raw.rack_captures;
   if (!Array.isArray(captures) || captures.some(k => typeof k !== 'string' || !keys.has(k))) throw new Error('取り込み済みの印が不正です。');
-  return {...data, rack_captures: [...new Set(captures)], ...(raw.cloud_sync ? {cloud_sync: raw.cloud_sync} : {})};
+  return {...data, source:raw.source, exported_at:raw.exported_at, rack_captures: [...new Set(captures)], ...(raw.cloud_sync ? {cloud_sync: raw.cloud_sync} : {})};
 }
 function pscubeCloudMerge(stored, incoming) {
   const merged = mergeData(stored, incoming);
@@ -407,12 +419,16 @@ function pscubeCloudMerge(stored, incoming) {
   return {...merged, rack_captures: [...captures]};
 }
 function pscubeCloudViewer(backup, exportedAt) {
-  const latest = backup.records.reduce((day, r) => r.day > day ? r.day : day, '');
+  const sourceRecords=backup.records.map(r=>({...r,...(r.net_capture ? {net_capture:validateNetCapture(r.net_capture)} : {})}));
+  trimNetProbes(sourceRecords);
+  const latest = sourceRecords.reduce((day, r) => r.day > day ? r.day : day, '');
   const first = latest ? new Date(Date.parse(latest) - 30 * 86400000).toISOString().slice(0, 10) : '';
-  const records = backup.records.filter(r => r.day >= first).map(r => ({...r, graph: pscubeCloudThinGraph(r.graph)}));
+  const records = sourceRecords.filter(r => r.day >= first).map(r => ({...r, graph: pscubeCloudThinGraph(r.graph),
+    ...(r.net_capture ? {net_capture:viewerNetCapture(r.net_capture)} : {})}));
   if (records.length > PSCUBE_CLOUD_VIEWER_LIMIT) throw new PscubeCloudStop('output', '直近31日の記録が閲覧ページの上限10万件を超えています。');
   return {format: FORMAT, version: 1, kind: 'viewer', source: 'cloud', exported_at: exportedAt,
-    machines: backup.machines, records: records, ...(backup.date_events ? {date_events: backup.date_events} : {})};
+    machines: backup.machines, records: records, ...(backup.date_events ? {date_events: backup.date_events} : {}),
+    ...(backup.sync_status ? {sync_status:backup.sync_status} : {})};
 }
 function pscubeCloudThinGraph(graph) {
   if (!graph || graph.points.length <= 16) return graph;

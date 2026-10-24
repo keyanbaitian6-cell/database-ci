@@ -1,6 +1,13 @@
 function vhInput(file, kind) {
   return {file, kind, id: kind + ':' + file.getId(), name: file.getName(), size: file.getSize(), version: vpVersion(file)};
 }
+function vhSourceStatus(old,fresh,input) {
+  // Driveの更新時刻は、その入力自身の書き出しにだけ結び付ける。
+  // 古いPC出力の読み込みで、別ファイルにある新しいPC出力の時刻を偽って更新しない。
+  const own=fresh.cloud_merged ? null : makeSyncWrite(fresh.source,fresh.exported_at,fresh.records || [],
+    input?.file ? input.file.getLastUpdated().toISOString() : undefined);
+  return mergeSyncStatus(old.sync_status,fresh.sync_status,own);
+}
 // A missing day may have aged out of the PC's 60-day view. Only an explicit,
 // timestamped operation can remove a record from the permanent cloud history.
 function vhDeletions(doc) {
@@ -77,7 +84,7 @@ function vhMeruhen(folder, base, props, startedAt) {
       return vhMergeMeruhen(old, fresh, input.kind);
     },
     viewer: value => meruhenApply({records: value.pc}, value.android).records,
-    mergeHeader: (old, fresh) => {
+    mergeHeader: (old, fresh, input) => {
       const events = new Map((old.date_events || []).map(e => [e.store + '|' + e.day, e]));
       for (const e of fresh.date_events || []) {
         const key = e.store + '|' + e.day, prior = events.get(key);
@@ -86,7 +93,7 @@ function vhMeruhen(folder, base, props, startedAt) {
       // PCの閲覧用の日ごとの「何台中何台プラス」（day_summaries、2026-10-18 html_day_summary.py）は、
       // PCの最新の出力のものに置き換える。Androidのバックアップには無いので前のまま。
       const summaries = Array.isArray(fresh.day_summaries) ? {day_summaries: fresh.day_summaries} : {};
-      return {...old, ...summaries, date_events: [...events.values()]};
+      return {...old, ...summaries, date_events: [...events.values()],sync_status:vhSourceStatus(old,fresh,input)};
     },
     failures: () => ({reasons: meruhenParse(props.getProperty(MERUHEN_CLOUD_ERRORS)) || {},
       versions: meruhenParse(props.getProperty(MERUHEN_CLOUD_FAILED)) || {}}),
@@ -103,15 +110,19 @@ function vhPscube(folder, base, props, startedAt) {
     header: () => { const {records, ...header} = emptyData(); return {...header, kind: 'viewer', source: 'cloud', exported_at: new Date().toISOString()}; },
     inputs: () => {
       const legacy = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_BACKUP);
-      return [vhInput(base, 'pc'), ...(legacy ? [vhInput(legacy, 'legacy')] : []),
-        ...pscubeCloudListInputs([folder, DriveApp.getRootFolder()]).map(i => vhInput(i.file, 'backup'))];
+      const inputs = [vhInput(base, 'pc'), ...(legacy ? [vhInput(legacy, 'legacy')] : []),
+        ...pscubeCloudListInputs([folder, DriveApp.getRootFolder()]).map(i => vhInput(i.file, i.browser ? 'browser' : 'backup'))];
+      const baseline = vpHash(vpCanonical(inputs.filter(i=>i.kind!=='browser').map(i=>[i.id,i.version])));
+      for (const input of inputs) if (input.kind==='browser') input.baseline=baseline;
+      return inputs;
     },
     read: input => {
-      if (input.kind !== 'pc') return pscubeCloudRead(input.file, input.size);
+      if (input.kind !== 'pc') return pscubeCloudRead(input.file, input.size,input.kind==='browser' ? 'browser' : null);
       if (input.size > PSCUBE_CLOUD_MAX_BYTES) throw new Error('PC閲覧用入力が48MiBを超えています。期間を分けてください。');
       let text;
       try { text = input.file.getBlob().getDataAsString('UTF-8'); } catch (e) { throw new PscubeCloudTransient(e.message); }
-      return validateData(JSON.parse(text));
+      const raw=JSON.parse(text);
+      return {...validateData(raw),source:raw.source,exported_at:raw.exported_at};
     },
     group: doc => vhGroup(doc, 'pscube'),
     fromViewer: (day, header, records) => ({site: 'pscube', day, data: {...emptyData(), machines: header.machines || [], records}}),
@@ -126,15 +137,20 @@ function vhPscube(folder, base, props, startedAt) {
             ? {...r, graph: prior.graph} : r;
         })};
       }
-      return {site: 'pscube', day: fresh.day, data: pscubeCloudMerge(old.data, fresh)};
+      const report=input.kind==='browser' ? (input.report || (input.report={})) : null;
+      const merged = input.kind==='browser' ? mergeNetSupplement(old.data,fresh,report) : pscubeCloudMerge(old.data,fresh);
+      // 更新経路は一覧の見出しに保持し、同じ情報だけで全日別原本を再生成しない。
+      const {sync_status,...data}=merged;
+      return {site: 'pscube', day: fresh.day, data};
     },
     viewer: value => pscubeCloudViewer(value.data, '').records,
-    mergeHeader: (old, fresh) => {
+    mergeHeader: (old, fresh, input) => {
+      if (input?.kind==='browser') return {...old,sync_status:vhSourceStatus(old,fresh,input)};
       const machines = new Map((old.machines || []).map(m => [machineKey(m), m]));
       for (const m of fresh.machines) {
         const prior = machines.get(machineKey(m)); machines.set(machineKey(m), {...m, machine_type: m.machine_type ?? prior?.machine_type ?? null});
       }
-      return {...old, machines: [...machines.values()], date_events: mergeDateEvents(old.date_events, fresh.date_events)};
+      return {...old, machines: [...machines.values()], date_events: mergeDateEvents(old.date_events, fresh.date_events),sync_status:vhSourceStatus(old,fresh,input)};
     },
     failures: () => ({reasons: pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_ERRORS)) || {},
       versions: pscubeCloudParse(props.getProperty(PSCUBE_CLOUD_FAILED)) || {}}),

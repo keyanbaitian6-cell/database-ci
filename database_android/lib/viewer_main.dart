@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'capture_health_ui.dart';
+
 import 'package:flutter/material.dart';
 
 import 'answer_check.dart';
@@ -417,6 +419,26 @@ class _ViewerHomeState extends State<ViewerHome> {
   Future<void> _exportPscube() async {
     try {
       await exportPscubeBackup();
+      if (!mounted) return;
+      final supported = _data?.syncStatus?['supplement_supported'] == true;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('スマホの補完を共有する'),
+          content: Text(
+            '書き出した pscube-backup-browser-…json をGoogleドライブの「database共有」に保存してください。'
+            '${supported ? 'Google側の次の自動処理で、数値が一致する記録の空欄差枚だけを補完します。' : 'Google側がスマホ補完に対応しているか未確認です。既存のApps Scriptの更新が必要です。'}'
+            '取得済みの差枚・回転数・BB/RB・機種設定・イベントは変更しません。'
+            '保存しただけで反映済みとは限りません。「更新・差枚の取得状況」でGoogle側の補完結果を確認してください。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('閉じる'),
+            ),
+          ],
+        ),
+      );
     } catch (error) {
       if (mounted) setState(() => _error = 'バックアップを書き出せませんでした。\n$error');
     }
@@ -903,6 +925,24 @@ class _ViewerHomeState extends State<ViewerHome> {
       children: [
         if (_error != null) Notice(text: _error!),
         Notice(text: _sourceText(data)),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => showCaptureHealth(
+              context,
+              records: data.records.map(healthRecord).toList(),
+              syncStatus: data.syncStatus,
+              exportedAt: data.exportedAtText,
+              loadedAt: data.loadedAt?.toIso8601String(),
+              checkedAt: _checkedAt?.toIso8601String(),
+              store: store,
+              day: day,
+              pscube: data.source == 'pscube',
+            ),
+            icon: const Icon(Icons.info_outline),
+            label: const Text('更新・差枚の取得状況'),
+          ),
+        ),
         if (day != null && history < 3)
           Notice(
             text:
