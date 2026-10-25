@@ -1,0 +1,414 @@
+{
+  "note": "生成元: tool/test_pscube_absent_tab_auto.mjs（UPDATE_FIXTURE=1 で作り直す）。手で直さない。",
+  "scenes": [
+    {
+      "name": "index",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v03-001.php?cd_ps=2",
+      "probe": {
+        "ready": true,
+        "kind": "機種一覧",
+        "signature": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v03-001.php?cd_ps=2",
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v03-001.php?cd_ps=2"
+      },
+      "capture": {
+        "format": "pscube-viewer",
+        "version": 1,
+        "machines": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW",
+            "expected_count": 2,
+            "machine_type": null
+          },
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+            "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG",
+            "expected_count": 1,
+            "machine_type": null
+          }
+        ],
+        "records": [],
+        "source_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v03-001.php?cd_ps=2",
+        "available_days": []
+      }
+    },
+    {
+      "name": "only_newer_tab",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+      "probe": {
+        "ready": true,
+        "kind": "全台一覧",
+        "signature": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW",
+        "day": "2026-10-19",
+        "days": [
+          "2026-10-19"
+        ],
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664"
+      },
+      "capture": {
+        "format": "pscube-viewer",
+        "version": 1,
+        "machines": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+            "expected_count": null,
+            "machine_type": null
+          }
+        ],
+        "records": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "rack": 1526,
+            "day": "2026-10-19",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261019",
+            "observed_at": "2026-10-19T22:00:00+09:00",
+            "graph": null
+          },
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "rack": 1527,
+            "day": "2026-10-19",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1527#20261019",
+            "observed_at": "2026-10-19T22:00:00+09:00",
+            "graph": null
+          }
+        ],
+        "source_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+        "available_days": [
+          "2026-10-19"
+        ]
+      }
+    },
+    {
+      "name": "gap_in_tabs",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+      "probe": {
+        "ready": true,
+        "kind": "全台一覧",
+        "signature": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW",
+        "day": "2026-10-19",
+        "days": [
+          "2026-10-17",
+          "2026-10-19"
+        ],
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664"
+      },
+      "capture": {
+        "format": "pscube-viewer",
+        "version": 1,
+        "machines": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+            "expected_count": null,
+            "machine_type": null
+          }
+        ],
+        "records": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "rack": 1526,
+            "day": "2026-10-19",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261019",
+            "observed_at": "2026-10-19T22:00:00+09:00",
+            "graph": null
+          },
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "rack": 1527,
+            "day": "2026-10-19",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1527#20261019",
+            "observed_at": "2026-10-19T22:00:00+09:00",
+            "graph": null
+          }
+        ],
+        "source_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+        "available_days": [
+          "2026-10-17",
+          "2026-10-19"
+        ]
+      }
+    },
+    {
+      "name": "target_tab_not_selected",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+      "probe": {
+        "ready": true,
+        "kind": "全台一覧",
+        "signature": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW",
+        "day": "2026-10-19",
+        "days": [
+          "2026-10-18",
+          "2026-10-19"
+        ],
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664"
+      },
+      "capture": {
+        "format": "pscube-viewer",
+        "version": 1,
+        "machines": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+            "expected_count": null,
+            "machine_type": null
+          }
+        ],
+        "records": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "rack": 1526,
+            "day": "2026-10-19",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261019",
+            "observed_at": "2026-10-19T22:00:00+09:00",
+            "graph": null
+          },
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "L新台",
+            "rack": 1527,
+            "day": "2026-10-19",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1527#20261019",
+            "observed_at": "2026-10-19T22:00:00+09:00",
+            "graph": null
+          }
+        ],
+        "source_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+        "available_days": [
+          "2026-10-18",
+          "2026-10-19"
+        ]
+      }
+    },
+    {
+      "name": "target_newer_than_tabs",
+      "target_day": "2026-10-19",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261019;0;cd_dai;1;0;0",
+      "probe": {
+        "ready": true,
+        "kind": "全台一覧",
+        "signature": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG",
+        "day": "2026-10-18",
+        "days": [
+          "2026-10-12",
+          "2026-10-13",
+          "2026-10-14",
+          "2026-10-15",
+          "2026-10-16",
+          "2026-10-17",
+          "2026-10-18"
+        ],
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261019;0;cd_dai;1;0;0"
+      },
+      "capture": {
+        "format": "pscube-viewer",
+        "version": 1,
+        "machines": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+            "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261019;0;cd_dai;1;0;0",
+            "expected_count": null,
+            "machine_type": null
+          }
+        ],
+        "records": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+            "rack": 2001,
+            "day": "2026-10-18",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=2001#20261018",
+            "observed_at": "2026-10-18T22:00:00+09:00",
+            "graph": null
+          }
+        ],
+        "source_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261019;0;cd_dai;1;0;0",
+        "available_days": [
+          "2026-10-12",
+          "2026-10-13",
+          "2026-10-14",
+          "2026-10-15",
+          "2026-10-16",
+          "2026-10-17",
+          "2026-10-18"
+        ]
+      }
+    },
+    {
+      "name": "no_tabs",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+      "probe": {
+        "ready": false,
+        "missing": true,
+        "reason": "全台一覧の表示待ち（人間確認・同意の画面なら手動で操作してください）",
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664"
+      },
+      "capture": {
+        "error": "対象営業日を確認できません。",
+        "source_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+        "available_days": []
+      }
+    },
+    {
+      "name": "challenge",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664",
+      "probe": {
+        "ready": false,
+        "challenge": true,
+        "reason": "人間確認・同意の画面（手動で操作してください）",
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=NEW#3;0;20261019;0;cd_dai;1;0;664"
+      }
+    },
+    {
+      "name": "rack_other_day",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261019",
+      "probe": {
+        "ready": true,
+        "kind": "台別7日分",
+        "signature": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261019",
+        "day": "2026-10-19",
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261019"
+      }
+    },
+    {
+      "name": "next_machine",
+      "target_day": "2026-10-18",
+      "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261018;0;cd_dai;1;0;0",
+      "probe": {
+        "ready": true,
+        "kind": "全台一覧",
+        "signature": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG",
+        "day": "2026-10-18",
+        "days": [
+          "2026-10-12",
+          "2026-10-13",
+          "2026-10-14",
+          "2026-10-15",
+          "2026-10-16",
+          "2026-10-17",
+          "2026-10-18",
+          "2026-10-19"
+        ],
+        "busy": false,
+        "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261018;0;cd_dai;1;0;0"
+      },
+      "capture": {
+        "format": "pscube-viewer",
+        "version": 1,
+        "machines": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+            "url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261018;0;cd_dai;1;0;0",
+            "expected_count": null,
+            "machine_type": null
+          }
+        ],
+        "records": [
+          {
+            "store": "c740601",
+            "rate": "20",
+            "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+            "rack": 2001,
+            "day": "2026-10-18",
+            "bb": 3,
+            "rb": 2,
+            "at_art": 0,
+            "games": 1200,
+            "my": 150,
+            "detail_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=2001#20261018",
+            "observed_at": "2026-10-18T22:00:00+09:00",
+            "graph": null
+          }
+        ],
+        "source_url": "https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=JUG#0;0;20261018;0;cd_dai;1;0;0",
+        "available_days": [
+          "2026-10-12",
+          "2026-10-13",
+          "2026-10-14",
+          "2026-10-15",
+          "2026-10-16",
+          "2026-10-17",
+          "2026-10-18",
+          "2026-10-19"
+        ]
+      }
+    }
+  ]
+}

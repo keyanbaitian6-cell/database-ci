@@ -239,6 +239,46 @@ class AutoPilotTests(unittest.TestCase):
         other.tick()
         self.assertIn('start', other.evaluate.calls)
 
+    def test_only_a_table_without_the_chosen_day_tab_is_read_despite_another_selected_day(self):
+        # 2026-10-22：新台は取り込み日のタブが無く、サイトは最新のタブを選ぶ。以前は日付違いとして待ち続け、保存側の
+        # 飛ばす処理まで届かなかった。タブが無いと読めるときだけ読み取りへ進め、保存側が確かめる。それ以外は今までどおり待つ。
+        with mock.patch('pscube_import.recent_business_days', return_value=['2026-10-19', '2026-10-18', '2026-10-17']):
+            cases = [
+                # (取り込み日, 表示中の日, 種類, 日付タブ, 読み取るか)
+                ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-19'], True),                     # 新台：最新のタブだけ
+                ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-17', '2026-10-19'], True),       # 範囲の途中が無い
+                ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-18', '2026-10-19'], False),      # タブはある：合わせてもらう
+                ('2026-10-19', '2026-10-18', '全台一覧', ['2026-10-17', '2026-10-18'], False),      # タブより新しい（早朝）
+                ('2026-10-18', '2026-10-19', '全台一覧', [], False),                                # タブが読めない
+                ('2026-10-18', '2026-10-19', '全台一覧', None, False),                              # 古い判定（タブを返さない）
+                ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-19', '10/17'], False),           # 形の違う日付
+                ('2026-10-18', '2026-10-19', '全台一覧', ['2026-10-20'], False),                    # 選ばれた日がタブに無い
+                ('2026-10-18', '2026-10-19', '台別7日分', ['2026-10-19'], False),                   # 台別ページの日付違い
+            ]
+            for target, shown, kind, days, reads in cases:
+                with self.subTest(target=target, kind=kind, days=days):
+                    window = FakeWindow()
+                    pilot = AutoPilot(window, PROBE, auto=AutoCapture(clock=self.clock, minimum=5, maximum=60, default=10))
+                    pilot.configure(True, 10, target)
+                    window.probe = {**page('T', kind), 'day': shown, **({} if days is None else {'days': days})}
+                    self.wait(10)
+                    pilot.tick()
+                    self.assertEqual('start' in window.calls, reads, pilot.state()['message'])
+                    self.assertIn('日付タブが無い機種か確かめています' if reads else '合わせてください', pilot.state()['message'])
+                    self.assertTrue(pilot.state()['enabled'])
+            # 人間確認・読み込み中の画面は、タブが無く見えても読み取らない。
+            for probe in ({'ready': False, 'challenge': True, 'reason': '人間確認・同意の画面', 'busy': False, 'days': ['2026-10-19']},
+                          {'ready': False, 'missing': True, 'reason': '全台一覧の表示待ち', 'busy': False, 'days': ['2026-10-19']},
+                          {**page('T'), 'day': '2026-10-19', 'days': ['2026-10-19'], 'busy': True}):
+                with self.subTest(probe=probe):
+                    window = FakeWindow()
+                    pilot = AutoPilot(window, PROBE, auto=AutoCapture(clock=self.clock, minimum=5, maximum=60, default=10))
+                    pilot.configure(True, 10, '2026-10-18')
+                    window.probe = probe
+                    self.wait(10)
+                    pilot.tick()
+                    self.assertNotIn('start', window.calls)
+
     def test_turns_itself_off_when_nothing_is_left(self):
         self.pilot.configure(True, 5)
         self.window.probe = page('A', '台別7日分')
