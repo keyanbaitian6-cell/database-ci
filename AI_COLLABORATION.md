@@ -3414,5 +3414,6 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 利用者報告（iPhone・メルヘン閲覧ページ）：長町南のイベント履歴のバラエティ・4大オススメを開くとSafariが「問題が繰り返し起きました」で落ちる。原因：Webで編集できる週表の各セルが DropdownButton で、幅を決めるため全選択肢（顔文字・記号）を常に作る。66機種×7日で数百の選択欄と数千の絵文字を抱えていた。新部品 `face_menu.dart`（FaceMenuButton：今の値だけを描き、押したときに showMenu で選択肢を出す）に置き換え。`event_history.dart` の `_browserTable`（Webで編集可能なときだけ）と `recommendations_view.dart`。保存処理・読み上げ名（「日付 機種の顔文字」「日付 機種 台番の顔文字」）・選択肢・保存中に押せない動きは従来どおり。
 - メモリ（実データの複製、Chromiumのヘッドレスでバラエティ表示、JSヒープ）：公開中02474f3 ピーク328MB・残り226MB → 修正後 258MB・188MB。10/24版（f5722b8）は216MB・169MB で、10/24並みまでは戻っていない。描く絵文字は約3,200→約460に減るが、JSヒープの数字には出ない部分。iPhone実機での確認は未実施（公開後に利用者の確認が要る）。
 - 全体ゲートは **ALL PASSED**：PC438件・追加215件・UTC27件、Flutter673件、analyzeはエラー・警告なし（既存info26件、前回と同数）、JS70ファイル全成功。記録 `../review_packages/claude-handoff-20261025/gate/`（前回分は `gate-run3-passed/`）。
-- Androidの取り込み画面のYouTube遮断は別セッションがブランチ `claude/sleepy-matsumoto-84df0c`（`c1c801e`、そのセッションでALL PASSED）に作成。この記録の時点では main に取り込んでいない。
-- 公開・push は利用者の承認待ち。公開までの間、iPhoneでは長町南のイベント履歴のバラエティと4大オススメを開かないよう案内した。
+- Androidの取り込み画面のYouTube遮断は別セッションがブランチ `claude/sleepy-matsumoto-84df0c`（`c1c801e`、そのセッションでALL PASSED）に作成。
+- 利用者「公開までお願い」により：(1) 閲覧ページを、616cf34のゲートでstage済みの物から database-viewer へ `9a25e4d` として公開（変更は main.dart.js・version.json 0.5.42・NOTICES・bootstrapの並び順だけ）。Pagesのデプロイ成功と公開中の version.json を確認。(2) `c1c801e` を main へ取り込み（`f506c48`）、取り込み後の全体ゲートも **ALL PASSED**（PC438・215・UTC27件、Flutter682件、analyze info26件のみ、JS70ファイル全成功）。閲覧ページのビルド（main.dart.js）は公開した物とバイト一致。(3) 同セッションの版上げ `a8dc7e4`（0.5.43+2026102502・作業メモだけ）を取り込み（`9d38d49`）、版を読む試験 test_android_release_rules 2件・test_check_before_build_logging 5件が成功。database-ci へ1回push。
+- iPhone実機での確認は未実施（利用者に、Safariで開き直して長町南のバラエティ・4大オススメが落ちないかを見てもらう）。
