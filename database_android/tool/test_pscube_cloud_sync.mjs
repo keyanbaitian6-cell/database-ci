@@ -44,6 +44,33 @@ test('P-STATION履歴：31日以前も保持・全期間ファイルは上書き
   assert.ok(!JSON.stringify(check).includes('history_inputs')); assert.ok(!JSON.stringify(check).includes('"id"'));
 });
 
+test('P-STATION履歴：PCの16点で一覧グラフ（17点）の原本を縮めず、同じ日を書き直し続けない', () => {
+  // 2026-10-25：overview は守る対象外で、PCの閲覧用（16点）とAndroid（17点）が交互に原本を書き直していた。
+  const overview = {kind: 'overview', zero_y: 64.5, points: Array.from({length: 17}, (_, i) => [i * 10, 60 + (i % 5)])};
+  const d = drive({history: true}); d.setup();
+  const baseFile = d.files.find(f => f.name === 'pscube-viewer-drive.json');
+  const full = record(7, '2026-10-12', {graph: overview});
+  d.add('pscube-backup-android-20261014-120000.json', backup([full]));
+  d.sync();
+  const rawGraph = () => {
+    const ref = d.doc('database-viewer-parts-pscube.json').cloud_days.find(x => x.day === '2026-10-12');
+    return d.doc(ref.name).data.records.find(r => r.rack === 7).graph;
+  };
+  assert.equal(rawGraph().points.length, 17);
+  const thin = plain(d.context.pscubeCloudThinGraph(overview));
+  assert.equal(thin.points.length, 16);
+  d.replace(baseFile, {...backup([record(1), {...full, graph: thin}]), kind: 'viewer', source: 'pc'});
+  d.sync();
+  assert.equal(rawGraph().points.length, 17, 'PCの軽量出力で一覧グラフを縮めない');
+  const rawName = () => d.doc('database-viewer-parts-pscube.json').cloud_days.find(x => x.day === '2026-10-12').name;
+  const before = rawName();
+  d.add('pscube-backup-android-20261015-120000.json', backup([full]));
+  d.sync(); assert.equal(rawName(), before, '同じ内容のAndroidバックアップで原本を書き直さない');
+  // 数値が変われば、PCの新しい記録（16点）をそのまま使う。
+  d.replace(baseFile, {...backup([record(1), {...full, games: 3500, graph: thin}]), kind: 'viewer', source: 'pc'});
+  d.sync(); assert.equal(rawGraph().points.length, 16);
+});
+
 test('P-STATION履歴：新しい不正入力だけ報告・一時障害は次回再試行・旧入力削除でも履歴保持', () => {
   const d = drive({history: true}); d.setup();
   const bad = d.add('pscube-backup-android-20261014-000000.json', '{bad');

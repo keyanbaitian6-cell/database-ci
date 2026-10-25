@@ -128,12 +128,14 @@ function vhPscube(folder, base, props, startedAt) {
     fromViewer: (day, header, records) => ({site: 'pscube', day, data: {...emptyData(), machines: header.machines || [], records}}),
     merge: (old, fresh, input) => {
       if (input.kind === 'pc') {
-        // PC閲覧用の16点グラフを、日別原本の完全グラフへ逆流させない。
+        // PC閲覧用の16点グラフを、日別原本の完全グラフへ逆流させない。一覧のグラフ（overview、多くは17点）も同じ
+        // （2026-10-25：16点と17点を行き来して、同じ日の原本を同期のたびに書き直していた）。
         const previous = new Map(old.data.records.map(r => [recordKey(r), r]));
         fresh = {...fresh, records: fresh.records.map(r => {
           const prior = previous.get(recordKey(r));
           const same = prior && ['bb', 'rb', 'at_art', 'games', 'my'].every(k => prior[k] === r[k]);
-          return same && prior.graph?.kind === 'daily' && prior.graph.points.length > (r.graph?.points.length || 0)
+          return same && (prior.graph?.kind === 'daily' || prior.graph?.kind === r.graph?.kind) &&
+            prior.graph.points.length > (r.graph?.points.length || 0)
             ? {...r, graph: prior.graph} : r;
         })};
       }
