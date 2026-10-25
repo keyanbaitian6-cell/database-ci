@@ -3484,3 +3484,5 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - メモリ（実データの写し・Chromium・JSヒープ）：起動・再起動の山 283〜559MB → 205〜218MB、常駐 122MB → 41〜43MB。閲覧データの大きさ 41MB → 21MB。iPhone実機は未確認。
 - 全体ゲート **ALL PASSED**（PC438・222・UTC27件、Flutter704件、analyze info26件のみ、JS73ファイル全成功。別セッションの `d605d3f` を含む状態）。
 - 貼り替え用：`../outputs/viewer-curve-lazy-google-20261025/`（自分用・閲覧専用・メルヘン自動統合の3本。先に閲覧ページと共有カレンダーを公開してから貼る。P’s CUBEは不要）。
+- 閲覧ページを database-viewer `781e1ca`、共有カレンダーを database-share `3be52cc` として公開（いずれも source e338171、gateのstage物）。Pagesのデプロイ成功、公開中の main.dart.js がstage物と一致、共有の data.mjs に新しい処理が入っていることを確認。公開物には main にある別作業（P’s CUBEの自動取り込みの修正 `8c0ea20`、共有の app.mjs など前回公開後の変更）も含まれる。
+- **履歴の注意**：`e39e4e6`（作業記録だけのつもりのコミット）は、別のセッションが同じ作業フォルダで始めていたブランチ `claude/amazing-cerf-0nukce`（`8c0ea20` P’s CUBEの自動取り込み、`e43c940`）の取り込みを、私のコミットが完了させたマージになっていた。そのまま database-ci へ送っており、CI 40171960628 は成功。push済みのため履歴は書き換えない。以後、コミット前に MERGE_HEAD が無いことを確かめる。
