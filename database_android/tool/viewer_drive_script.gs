@@ -30,6 +30,11 @@
 // 同じフォルダの database-rainbow-shared.json に足し込む（店舗・日付・台番号ごとに、付け外しした時刻の
 // 新しい方が残る）。?file=rainbow で読む。PC版は同期フォルダに届いたこのファイルを読んで記録に取り込む。
 // この部分を足したら、「デプロイを管理」→ 編集 →「新バージョン」で更新する（URLは変わらない）。
+//
+// P’s CUBEの当日分（2026-10-26）：Androidアプリが自動取り込みを終えたとき、その日の記録だけを送ってくる。
+// 同じフォルダの pscube-day-android-YYYY-MM-DD.json に書き、PC版が起動中に読み込む。台の記録を書くので、
+// 「プロジェクトの設定」→「スクリプト プロパティ」に PSCUBE_UPLOAD_KEY（合言葉）を入れ、アプリにも同じ
+// 合言葉を入れる。未設定・違う合言葉の送信は受け付けない。足したら「新バージョン」でデプロイし直す。
 
 // 返すファイルは、名前（file=）で決まる許可リストの中からだけ選ぶ。
 //   （指定なし）  → database-viewer.json   … メルヘンの閲覧ページ
@@ -102,6 +107,7 @@ function doPost(e) {
   }
   if (!body || typeof body !== 'object') return respond(JSON.stringify({ error: '送られてきた内容が読めません。' }));
   if (body.file === 'rainbow') return postRainbow(body.marks);
+  if (body.file === 'pscube-day') return postPscubeDay(body);
   if (body.file === 'event-history') return postEventHistory(body.cells,body.recommendations,body.recommendation_results);
   const spec = Object.prototype.hasOwnProperty.call(EVENT_FILES, body.file) ? EVENT_FILES[body.file] : null;
   if (!spec) return respond(JSON.stringify({ error: '指定できないファイルです。' }));
@@ -162,6 +168,44 @@ function postRainbow(marks) {
     if (file) file.setContent(text);
     else folderBeside(RAINBOW_FILE.beside).createFile(RAINBOW_FILE.name, text, 'application/json');
     return respond(JSON.stringify({ ok: true, marks: merged.length, changed: changed }));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Androidアプリが取り込み終わったP’s CUBEの当日分（2026-10-26、database/PSCUBE_SYNC.md「当日分の自動送信」）：
+// {file: 'pscube-day', key: 合言葉, day: 'YYYY-MM-DD', backup: {当日の記録だけのバックアップ}}。
+// 台の記録を書くので合言葉が要る（利用者の選択）。合言葉はスクリプトの「スクリプト プロパティ」の
+// PSCUBE_UPLOAD_KEY に入れる。未設定なら受け付けない。同じ日は同じ名前のファイルを上書きする。
+// 中身の細かい検査はPC版が読み込むときにする（ここでは形・日付・件数・容量だけ）。
+const PSCUBE_DAY = { prefix: 'pscube-day-android-', beside: 'pscube-viewer-drive.json', maxRecords: 20000,
+  maxMachines: 5000, maxBytes: 20 * 1024 * 1024 };
+
+function postPscubeDay(body) {
+  const expected = PropertiesService.getScriptProperties().getProperty('PSCUBE_UPLOAD_KEY');
+  if (!expected) return respond(JSON.stringify({ error: 'スクリプトに合言葉（PSCUBE_UPLOAD_KEY）が設定されていません。' }));
+  if (typeof body.key !== 'string' || body.key !== expected) return respond(JSON.stringify({ error: '合言葉が違います。' }));
+  const day = body.day, backup = body.backup;
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day) || isNaN(Date.parse(day + 'T00:00:00Z'))) {
+    return respond(JSON.stringify({ error: '日付が不正です。' }));
+  }
+  if (!backup || typeof backup !== 'object' || backup.format !== 'pscube-viewer' || backup.version !== 1 ||
+      backup.kind !== 'backup' || backup.source !== 'android' || !Array.isArray(backup.records) ||
+      !Array.isArray(backup.machines) || backup.records.length === 0 ||
+      backup.records.length > PSCUBE_DAY.maxRecords || backup.machines.length > PSCUBE_DAY.maxMachines ||
+      backup.records.some(r => !r || typeof r !== 'object' || r.day !== day)) {
+    return respond(JSON.stringify({ error: '当日分の形式が不正です。' }));
+  }
+  const text = JSON.stringify(backup);
+  if (text.length > PSCUBE_DAY.maxBytes) return respond(JSON.stringify({ error: '当日分が大きすぎます。' }));
+  const name = PSCUBE_DAY.prefix + day + '.json';
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const file = latestFile(name);
+    if (file) file.setContent(text);
+    else folderBeside(PSCUBE_DAY.beside).createFile(name, text, 'application/json');
+    return respond(JSON.stringify({ ok: true, name: name, records: backup.records.length }));
   } finally {
     lock.releaseLock();
   }

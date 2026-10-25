@@ -7,7 +7,7 @@ import vm from 'node:vm';
 
 const source = await fs.readFile(new URL('./viewer_drive_script.gs', import.meta.url), 'utf8');
 
-function drive() {
+function drive(properties = {}) {
   const files = [];
   const folder = (name) => ({
     name,
@@ -43,6 +43,7 @@ function drive() {
       getRootFolder: () => root,
     },
     LockService: {getScriptLock: () => ({waitLock: () => locks.push('lock'), releaseLock: () => locks.push('release')})},
+    PropertiesService: {getScriptProperties: () => ({getProperty: (name) => properties[name] ?? null})},
     ContentService: {
       MimeType: {JSON: 'json'},
       createTextOutput: (body) => ({body, setMimeType() { return this; }}),
@@ -138,4 +139,39 @@ test('🌈：形式の検査（時刻なし・台番号・on・店舗）は丸�
     assert.match(d.post({file: 'rainbow', marks}).error, /形式が不正/);
   }
   assert.equal(d.files.some(f => f.name === 'database-rainbow-shared.json'), false);
+});
+
+// P’s CUBEの当日分（2026-10-26）：合言葉が合うときだけ、同じフォルダの日ごとのファイルに書く。
+const pscubeDay = (day, extra = {}) => ({
+  format: 'pscube-viewer', version: 1, kind: 'backup', source: 'android', exported_at: '2026-10-26T23:50:00+09:00',
+  machines: [{store: 'c740601', rate: '20', machine: '試験'}],
+  records: [{store: 'c740601', rate: '20', day, machine: '試験', rack: 101}], ...extra,
+});
+
+test('P’s CUBEの当日分は合言葉が合うときだけ書き、同じ日は上書きする', () => {
+  const unset = drive();
+  assert.match(unset.post({file: 'pscube-day', key: 'x', day: '2026-10-26', backup: pscubeDay('2026-10-26')}).error, /設定されていません/);
+  assert.equal(unset.files.some(f => f.name.startsWith('pscube-day-')), false);
+
+  const d = drive({PSCUBE_UPLOAD_KEY: 'あいことば2026'});
+  assert.match(d.post({file: 'pscube-day', key: 'ちがう', day: '2026-10-26', backup: pscubeDay('2026-10-26')}).error, /合言葉/);
+  assert.match(d.post({file: 'pscube-day', day: '2026-10-26', backup: pscubeDay('2026-10-26')}).error, /合言葉/);
+  const ok = (day, backup) => d.post({file: 'pscube-day', key: 'あいことば2026', day, backup});
+  // 別の日の記録・形式違い・空・日付の誤りは断る。
+  assert.match(ok('2026-10-26', pscubeDay('2026-10-25')).error, /形式/);
+  assert.match(ok('2026-10-26', pscubeDay('2026-10-26', {format: 'database-backup'})).error, /形式/);
+  assert.match(ok('2026-10-26', pscubeDay('2026-10-26', {records: []})).error, /形式/);
+  assert.match(ok('2026-13-40', pscubeDay('2026-13-40')).error, /日付/);
+  assert.equal(d.files.some(f => f.name.startsWith('pscube-day-')), false);
+
+  let r = ok('2026-10-26', pscubeDay('2026-10-26'));
+  assert.deepEqual([r.ok, r.name, r.records], [true, 'pscube-day-android-2026-10-26.json', 1]);
+  const file = d.files.find(f => f.name === 'pscube-day-android-2026-10-26.json');
+  assert.equal(file.parent, d.shared);
+  r = ok('2026-10-26', pscubeDay('2026-10-26', {exported_at: '2026-10-27T00:30:00+09:00'}));
+  assert.equal(r.ok, true);
+  assert.equal(d.files.filter(f => f.name === 'pscube-day-android-2026-10-26.json').length, 1, '同じ日は1つのファイル');
+  assert.equal(JSON.parse(file.text).exported_at, '2026-10-27T00:30:00+09:00');
+  // 台の記録の閲覧用ファイル・ほかのファイルは書き換えない。
+  assert.equal(d.files.find(f => f.name === 'pscube-viewer-drive.json').text, '{}');
 });

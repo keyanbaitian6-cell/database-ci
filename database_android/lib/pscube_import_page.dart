@@ -21,6 +21,7 @@ import 'list_views.dart' show shortDayLabel;
 import 'models.dart' show isPscubeStore, viewerStoreNames;
 import 'pscube_auto.dart';
 import 'pscube_connection.dart';
+import 'pscube_day_upload.dart';
 import 'pscube_list_wait.dart';
 import 'pscube_store.dart';
 import 'pscube_viewer_data.dart' show pscubeDateEvents, pscubeViewerRecords;
@@ -56,6 +57,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   String? _navigationUrl;
   int _remaining = 0;
   DateTime? _lastBackup;
+  // 当日分の自動送信（pscube_day_upload.dart）の設定と、最後の送信の結果。
+  PscubeDayUploadSetting? _upload;
+  Map<String, dynamic>? _lastUpload;
 
   // 自動取り込み（仕様：database/PSCUBE_AUTO_CAPTURE.md）。メルヘンと同じ ON/OFF・間隔・
   // 起動時OFF・常駐通知。サイトのボタン・人間確認・同意には触れず、表示中のページを読む判定
@@ -219,6 +223,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         return;
       }
       final backedUp = await store.lastBackupAt();
+      final upload = PscubeDayUploadSetting.fromJson(
+        await store.dayUploadSetting(),
+      );
+      final lastUpload = await store.lastDayUpload();
       if (!mounted) {
         await store.close();
         return;
@@ -228,6 +236,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _script = script;
         _probe = probe;
         _lastBackup = backedUp;
+        _upload = upload;
+        _lastUpload = lastUpload;
       });
     } catch (error) {
       if (mounted) setState(() => _status = '取り込みの準備ができません：$error');
@@ -701,6 +711,12 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                 ? 'すべて取り込みました（自動取り込みを停止しました）'
                 : '${int.parse(day.substring(5, 7))}/${int.parse(day.substring(8))}の分をすべて取り込みました（自動取り込みを停止しました）',
           );
+          // 取り込み終わった日の分だけをDriveへ送る（設定があるときだけ。失敗しても取り込みは済んでいる）。
+          final upload = _upload;
+          if (upload != null && upload.enabled) {
+            final sent = day ?? await store.lastDay();
+            if (sent != null) unawaited(_sendDay(store, sent, upload));
+          }
         } else if (_auto.enabled) {
           _autoMessage(
             'ON・${result.skipped ?? '${result.kind}を保存'}・残り${result.remaining}件・次のページへ'
@@ -870,6 +886,152 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     }
   }
 
+  Future<void> _sendDay(
+    PscubeStore store,
+    String day,
+    PscubeDayUploadSetting setting,
+  ) async {
+    if (mounted) setState(() => _lastUpload = {'day': day, 'sending': true});
+    final result = await uploadPscubeDay(store, day, setting);
+    final last = await store.lastDayUpload();
+    if (mounted) {
+      setState(() {
+        _lastUpload = last;
+        if (!result.ok) _status = result.message;
+      });
+    }
+  }
+
+  /// 当日分の自動送信の設定（スクリプトのURL・合言葉）と、今の日の分を手で送る。
+  Future<void> _uploadSettings() async {
+    final store = _store;
+    if (store == null) return;
+    final url = TextEditingController(text: _upload?.url ?? '');
+    final key = TextEditingController(text: _upload?.key ?? '');
+    var enabled = _upload?.enabled ?? true;
+    String? problem;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('当日分をDriveへ自動で送る'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '自動取り込みが「すべて取り込みました」で止まったら、その日の記録だけをGoogleのスクリプト経由で'
+                  'Driveの「database共有」へ送ります。PC版は起動中にそれを自動で読み込みます。',
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: url,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'スクリプトのURL',
+                    hintText: 'https://script.google.com/macros/s/…/exec',
+                  ),
+                ),
+                TextField(
+                  controller: key,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: '合言葉（スクリプトの PSCUBE_UPLOAD_KEY と同じ）',
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('取り込み終わったら自動で送る'),
+                  value: enabled,
+                  onChanged: (v) => update(() => enabled = v),
+                ),
+                if (problem != null)
+                  Text(
+                    problem!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'clear'),
+              child: const Text('設定を消す'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('閉じる'),
+            ),
+            TextButton(
+              onPressed: () {
+                final error = PscubeDayUploadSetting.problem(
+                  url.text,
+                  key.text,
+                );
+                if (error != null) return update(() => problem = error);
+                Navigator.pop(context, 'send');
+              },
+              child: const Text('保存して今の日を送る'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final error = PscubeDayUploadSetting.problem(
+                  url.text,
+                  key.text,
+                );
+                if (error != null) return update(() => problem = error);
+                Navigator.pop(context, 'save');
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == 'clear') {
+      await store.setDayUploadSetting(null);
+      if (mounted) setState(() => _upload = null);
+      return;
+    }
+    final setting = PscubeDayUploadSetting(
+      url: url.text.trim(),
+      key: key.text.trim(),
+      enabled: enabled,
+    );
+    await store.setDayUploadSetting(setting.toJson());
+    if (!mounted) return;
+    setState(() => _upload = setting);
+    if (action == 'send') {
+      final day = _targetDay ?? await store.lastDay();
+      if (day == null) {
+        if (mounted) {
+          setState(() => _status = '送る日がありません（まだ全台一覧を保存していません）。');
+        }
+        return;
+      }
+      await _sendDay(store, day, setting);
+    }
+  }
+
+  String get _uploadText {
+    final upload = _upload, last = _lastUpload;
+    if (upload == null) return 'Driveへの当日分の自動送信：未設定';
+    if (last == null) {
+      return 'Driveへの当日分の自動送信：${upload.enabled ? 'ON' : 'OFF'}・まだ送っていません';
+    }
+    if (last['sending'] == true) return 'Driveへ当日分を送っています…';
+    final at = DateTime.tryParse('${last['at']}')?.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final when = at == null
+        ? ''
+        : '（${at.month}/${at.day} ${two(at.hour)}:${two(at.minute)}）';
+    return '${last['message']}$when';
+  }
+
   String get _backupText {
     final at = _lastBackup;
     if (at == null) return 'バックアップ：まだ書き出していません';
@@ -894,6 +1056,11 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
           tooltip: 'バックアップを読み込む',
           onPressed: _busy || _store == null ? null : _restore,
           icon: const Icon(Icons.file_open),
+        ),
+        IconButton(
+          tooltip: '当日分をDriveへ自動で送る（設定・今すぐ送る）',
+          onPressed: _busy || _store == null ? null : _uploadSettings,
+          icon: const Icon(Icons.cloud_upload_outlined),
         ),
         IconButton(
           tooltip: 'バックアップを保存（初回はDriveの「database共有」を選択）',
@@ -929,6 +1096,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                   ],
                 ),
               Text(_backupText, style: Theme.of(context).textTheme.bodySmall),
+              Text(_uploadText, style: Theme.of(context).textTheme.bodySmall),
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(

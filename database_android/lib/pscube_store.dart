@@ -1338,6 +1338,98 @@ class PscubeStore {
         : DateTime.tryParse(rows.first['value'] as String);
   });
 
+  /// 最後に全台一覧を保存した日（取り込み中の日）。
+  Future<String?> lastDay() => _serial(() => _dayIn(db));
+
+  /// その日の記録だけのバックアップ（Apps Scriptへ送る当日分、2026-10-26、database/PSCUBE_SYNC.md）。
+  /// 形は [exportViewer] の書き出しと同じで、記録・取り込み済みの印はその日の分、機種はその記録の機種だけ。
+  /// PC版は普通のバックアップとして読む。その日の記録が無ければ null。
+  Future<Map<String, Object?>?> dayBackup(String day, {DateTime? now}) =>
+      _serial(() async {
+        final records = [
+          for (final r in await db.query(
+            'records',
+            columns: ['payload'],
+            where: 'key LIKE ?',
+            whereArgs: ['%,"$day"]'],
+            orderBy: 'rowid',
+          ))
+            _asMap(jsonDecode(r['payload'] as String)),
+        ].where((r) => r['day'] == day).toList();
+        if (records.isEmpty) return null;
+        final recordKeys = {for (final r in records) _key(r, record: true)};
+        final machineKeys = {for (final r in records) _key(r)};
+        final machines = [
+          for (final m in await db.query(
+            'machines',
+            columns: ['key', 'payload'],
+            orderBy: 'rowid',
+          ))
+            if (machineKeys.contains(m['key']))
+              jsonDecode(m['payload'] as String),
+        ];
+        final captures = [
+          for (final c in await db.query(
+            'rack_captures',
+            columns: ['key'],
+            orderBy: 'rowid',
+          ))
+            if (recordKeys.contains(c['key'])) c['key'] as String,
+        ];
+        final at = now ?? DateTime.now();
+        trimNetProbes(records, now: at);
+        return {
+          'format': 'pscube-viewer',
+          'version': 1,
+          'kind': 'backup',
+          'source': 'android',
+          'exported_at': timestampWithOffset(at),
+          'machines': machines,
+          'records': records,
+          'rack_captures': captures,
+        };
+      });
+
+  /// 当日分の自動送信の設定（{url, key, enabled}）と、最後の送信の結果（{day, at, ok, message}）。
+  /// 端末の中だけに持つ（バックアップには入れない。合言葉を他の端末のファイルへ出さない）。
+  Future<Map<String, dynamic>?> dayUploadSetting() =>
+      _serial(() => _stateJson('day_upload'));
+
+  Future<void> setDayUploadSetting(Map<String, Object?>? value) => _serial(
+    () => value == null
+        ? db.delete('state', where: 'key=?', whereArgs: ['day_upload'])
+        : db.insert('state', {
+            'key': 'day_upload',
+            'value': jsonEncode(value),
+          }, conflictAlgorithm: ConflictAlgorithm.replace),
+  );
+
+  Future<Map<String, dynamic>?> lastDayUpload() =>
+      _serial(() => _stateJson('day_upload_last'));
+
+  Future<void> markDayUpload(Map<String, Object?> value) => _serial(
+    () => db.insert('state', {
+      'key': 'day_upload_last',
+      'value': jsonEncode(value),
+    }, conflictAlgorithm: ConflictAlgorithm.replace),
+  );
+
+  Future<Map<String, dynamic>?> _stateJson(String key) async {
+    final rows = await db.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: [key],
+    );
+    if (rows.isEmpty) return null;
+    try {
+      final value = jsonDecode(rows.first['value'] as String);
+      return value is Map ? value.cast<String, dynamic>() : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   Future<void> markBackedUp([DateTime? at]) => _serial(
     () => db.insert('state', {
       'key': 'last_backup_at',

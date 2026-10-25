@@ -14,6 +14,7 @@ P’s CUBE用に移したもの。**メルヘンの記録・設定・ファイ�
 | `pscube-viewer-drive.json` | PC（保存のたび上書き） | 閲覧ページ用の軽いファイル：直近31日・グラフは最大16点（最高・最低・終点・ゼロ線を必ず残す）。バックアップではない |
 | `pscube-backup-android-YYYYMMDD-HHMMSS.json` | Android（共有から手で保存） | 全期間のバックアップ |
 | `pscube-backup-browser-YYYYMMDD-HHMMSS.json` | iPhoneブラウザ（書き出し） | 閲覧ページに入っている内容 |
+| `pscube-day-android-YYYY-MM-DD.json` | Android→自分用スクリプト（自動取り込みを終えたとき） | その日の記録だけ（下の「当日分の自動送信」） |
 
 メルヘンの `database-backup-auto.json`・`database-viewer.json`・`backups/database-backup-????-??-??.json` とは
 名前が重ならず、メルヘン側の「7日より古い控えを消す」処理にもかからない
@@ -60,6 +61,34 @@ P’s CUBE用に移したもの。**メルヘンの記録・設定・ファイ�
   数値が違えば取得時刻の新しい方（時刻が無ければ回転数の多い方）を採り、古い数値で新しい数値を
   上書きしない（従来の取り込みの `_merge` と同じ）。数値が変わった台は台別7日分の印を外す。
   機種タイプは自分の設定を優先。**消す操作はない**（Drive側で消えた台を端末から消さない）。
+
+## 当日分の自動送信（2026-10-26）
+
+利用者「取り込んだ当日分のデータだけ送る。送るのはpscubeのみ」「押さなくてもドライブに上げた時点でどうにかなったりない？」。
+翌日候補の比較の記録（`NEXT_DAY_SHADOW_PLAN_20261025.md`、`database/input_versions.py`）は、PCに入った時刻で残る。
+スマホで取り込んだ日も、締切（翌日02:00 JST）までにPCへ入るようにする。
+
+- **Android**（`lib/pscube_day_upload.dart`）：自動取り込みが「◯/◯の分をすべて取り込みました」で止まったら、
+  その日の記録だけ（`PscubeStore.dayBackup`：その日の記録・台別7日分の印と、その記録の機種だけ。形は普通の
+  `backup`）を、自分用スクリプトへ `{file: 'pscube-day', key, day, backup}` でPOSTする。取り込み画面の
+  雲のボタンで、スクリプトのURL（…/exec）・合言葉・自動のON/OFFを入れ、今の日の分を手で送れる。設定は
+  端末の `state` 表の `day_upload` に持ち、バックアップには入れない。最後の送信の結果は `day_upload_last`
+  に残して画面に出す。送れなくても取り込みは済んでいる（手で送り直すか、従来どおり全期間を共有で保存する）。
+- **Apps Script**（`tool/viewer_drive_script.gs` の `postPscubeDay`）：スクリプト プロパティ `PSCUBE_UPLOAD_KEY`
+  （合言葉、利用者の選択で必須）と一致するときだけ、`pscube-viewer-drive.json` と同じフォルダの
+  `pscube-day-android-YYYY-MM-DD.json` に書く（同じ日は上書き）。形・日付・件数（記録2万・機種5千）・容量（20MB）
+  だけ検査し、細かい検査はPC版が読むときにする。台の記録を書くので、合言葉が未設定・違う送信は断る。
+- **PC**（`app.poll_pscube_from_sync`、`pscube_import.android_sync_files`・`android_sync_due`）：起動の15秒後と
+  2分おきに同期フォルダを見て、`pscube-day-android-*.json` と `pscube-backup-android-*.json` の新しい版
+  （名前と更新時刻が前に読んだものと違い、書かれてから10秒以上たったもの）を古い順に読み込む。読めたものを
+  `data/settings.json` の `pscube_android_synced` に覚える。初めて使うときは、その時点のファイルを読み込み済み
+  として扱う（古いバックアップを読み直さない）。失敗したファイルは覚えず、次の確認でやり直す（同じ失敗は記録欄に
+  1回だけ書き、画面には出さない）。PC版が起動していなければ読めない。
+- 利用者の作業（1回）：スクリプトを貼り直して「新バージョン」でデプロイし、スクリプト プロパティに
+  `PSCUBE_UPLOAD_KEY` を足す。アプリの雲のボタンで、同じURL・合言葉を入れる。
+- 試験：`tool/test_viewer_drive_script.mjs`（合言葉・形式・上書き）、`test/pscube_day_upload_test.dart`
+  （当日分の中身・送る内容・失敗・合言葉をバックアップに出さない）、`database/test_pscube_android_sync.py`
+  （読むファイルの選び方・初回・書きかけ待ち・当日分の統合）。実Driveへの送信・実機での確認は利用者の環境で行う。
 
 ## Apps Script（利用者の作業が1回必要）
 

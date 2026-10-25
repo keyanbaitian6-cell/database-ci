@@ -1,5 +1,17 @@
 # database AI共同作業メモ
 
+## 【P’s CUBEの当日分をスマホから自動でDriveへ送り、PCが起動中に自動で読み込む】2026-10-26 Claude
+
+- 経緯：翌日候補の比較の記録（下の節、`input_versions.py`）はPCに入った時刻で残る。10/26 0:20、P-STATIONをスマホで取り込み、利用者が手でDriveへ上げてPCの「P’s CUBEの同期フォルダの最新を読み込む」を押して、締切前に記録できた（出発点23,888行、書き込み427件、作り直しは本体23,967行と全件一致）。利用者「押さなくてもドライブに上げた時点でどうにかなったりない？」「取り込み終わったら自動でドライブにあげる機能」「取り込んだ当日分のデータだけ送る。送るのはpscubeのみで、両方実装」。受け口の合言葉は利用者の選択で付ける。
+- Apps Script（`database_android/tool/viewer_drive_script.gs`）：`doPost` に `file: 'pscube-day'`。スクリプト プロパティ `PSCUBE_UPLOAD_KEY` と一致するときだけ `pscube-viewer-drive.json` と同じフォルダの `pscube-day-android-YYYY-MM-DD.json` に書く（同じ日は上書き）。未設定・違う合言葉・別の日の記録・形式違い・空・日付の誤り・件数（記録2万・機種5千）・容量（20MB）超えは断る。クラウド統合のスクリプト（`pscube_cloud_sync.gs`）は `pscube-backup-…` だけを拾うので当日分は混ざらない。
+- Android：`PscubeStore.dayBackup`（その日の記録・台別7日分の印と、その記録の機種だけ。形は普通の `backup`）、`lastDay`、設定 `day_upload`・結果 `day_upload_last`（端末の `state` 表。バックアップには出さない）。`lib/pscube_day_upload.dart`（送信。`dart:io` の HttpClient でPOSTし、Apps Scriptの302転送先をGETで読む）。取り込み画面：自動取り込みが「すべて取り込みました」で止まったら、設定がONなら `targetDay`（無ければ `last_day`）の分を送る。上部に雲のボタン（URL・合言葉・ON/OFF、「保存して今の日を送る」）、状態の行に最後の送信結果。送れなくても取り込みは済んでいる。
+- PC：`app.poll_pscube_from_sync`（起動の15秒後と2分おき）。`pscube_import.android_sync_files`・`android_sync_due` で `pscube-day-android-*.json` と `pscube-backup-android-*.json` の新しい版（名前と更新時刻が前と違い、10秒以上たったもの）を古い順に読み、`settings.json` の `pscube_android_synced` に覚える。初回はその時点のファイルを読み込み済み扱い。失敗は覚えず次回やり直し、同じ失敗は記録欄に1回だけ（画面に出さない）。`import_pscube_file(background=True)` は例外を呼び出し側へ返す。
+- 実データ確認：同期フォルダのスマホの全期間バックアップ（`pscube-backup-android-20261026-001933.json`）から、Androidと同じ規則で10/25の当日分（79台・4機種・印58件、64,814バイト）を作り、一時の空DBへPCの `import_backup` で読み込めた（追加79件）。
+- 試験：新規 `tool/test_viewer_drive_script.mjs` に1件（計6件成功）、`test/pscube_day_upload_test.dart` 5件、`database/test_pscube_android_sync.py` 4件。全体ゲート `check_before_build.sh`（`PYTHONUTF8=1`、`CHECK_BUILD_WORK=/c/w/cbw-dayup`）**ALL PASSED**：PC tests 444件・ルート226件・UTC 27件、Flutter 709件、analyze info 26件だけ（既存と同数）、JS・画面試験の各段成功（OK 82段）。
+- APK（ALL PASSEDのコードと同じ、`flutter build apk --release --no-pub`、P’s CUBE版は `DATABASE_ANDROID_CLONE=pscube`）：`database_android/build/releases/0.5.44/` の通常版 `database-0.5.44-2026102601.apk`（`com.keyan.database_android`、SHA-256 `0072712c…2340`）とP’s CUBE版 `database-pscube-0.5.44-2026102601.apk`（`.pscube`、`89074976…ede0`）。aapt2で版0.5.44／2026102601・ID、apksignerで署名 `4332fcb9…a047`（0.5.43と同じ）を確認。0.5.43のAPK2本はごみ箱へ。実機への導入は利用者が行う。
+- 版：`pubspec.yaml` を `0.5.44+2026102601`。正本 origin の main に手元に無い `faba881`（README の変更）がある（月後半のため database-ci だけを更新してきた。前半に正本へ送るときに取り込む）。
+- 未確認：実際のApps Scriptでの受け付け（利用者の再デプロイとスクリプト プロパティの設定が要る）、実機での自動送信、Drive for desktop の同期を経たPCの自動読み込み。
+
 ## 【翌日候補の店舗別案を現行と並べて比べる記録（PC）と事前固定の計画】2026-10-25 Claude
 
 - 利用者の選択：「A：本番は今のまま、店舗別の案を裏で毎日一緒に保存し、30日ほど比べる」、取り込みは「だいたいPC」。直前の再導出（下の節）で3店舗とも改善を確定できなかったため、当時の入力で前向きに比べる。

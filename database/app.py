@@ -41,6 +41,9 @@ ALL_STORES_LABEL = 'すべての店舗'
 PSCUBE_KEY = 'pscube'
 PSCUBE_LABEL = 'P’s CUBE（スロット）'
 PSCUBE_VIEWER_URL = 'https://keyanbaitian6-cell.github.io/database-viewer/pscube/'
+# 起動中に同期フォルダのAndroidのP’s CUBEを確かめる間隔（poll_pscube_from_sync）。最初は起動の15秒後。
+PSCUBE_SYNC_FIRST_MS = 15_000
+PSCUBE_SYNC_POLL_MS = 120_000
 # Kept only for the Chrome-extension filename format they still describe;
 # no PC-side UI decodes these anymore (see AI_COLLABORATION.md).
 GRAPH_DOWNLOAD_RE = re.compile(
@@ -1089,14 +1092,17 @@ def main():
             return
         import_pscube_file(latest)
 
-    def import_pscube_file(latest, quiet=False):
-        """P’s CUBEのバックアップ1つを専用の記録へ統合する（メルヘンの記録には混ぜない）。"""
+    def import_pscube_file(latest, quiet=False, background=False):
+        """P’s CUBEのバックアップ1つを専用の記録へ統合する（メルヘンの記録には混ぜない）。
+        background：起動中の自動読み込み。失敗は画面に出さず記録欄に書き、Falseを返す（次の確認でやり直す）。"""
         latest = Path(latest)
         store = pscube_import.PscubeStore(DATA_DIR / 'pscube.sqlite3')
         try:
             summary = store.import_backup(latest)
             schedule_outputs(pscube=True)
         except Exception as exc:
+            if background:
+                raise
             messagebox.showerror('取り込めません', str(exc), parent=root)
             return False
         finally:
@@ -1141,6 +1147,50 @@ def main():
             if not import_backup_file(str(path), quiet=True):
                 return
             save_settings(DATA_DIR, last_synced=version)
+
+    pscube_sync_errors = {}
+
+    def poll_pscube_from_sync():
+        """起動中、同期フォルダに届いたAndroidのP’s CUBE（当日分・全期間）を数分おきに自動で読み込む（2026-10-26）。
+
+        スマホで取り込んでDriveに上がった記録を、ボタンを押さずにPCへ入れる（翌日候補の比較の記録
+        input_versions.py は、PCに入った時刻で残る）。読めたファイルは名前と更新時刻を覚え、同じ版は読み直さない。
+        失敗したファイルは覚えず、次の確認でやり直す（同じ失敗は記録欄に1回だけ書く）。
+        """
+        try:
+            current = load_settings(DATA_DIR)
+            folder = current.get('sync_dir')
+            if closing[0] or not folder or not Path(folder).is_dir():
+                return
+            files = pscube_import.android_sync_files(folder)
+            seen = current.get('pscube_android_synced')
+            due, initial = pscube_import.android_sync_due(files, seen, datetime.now().timestamp())
+            if initial is not None:
+                save_settings(DATA_DIR, pscube_android_synced=initial)
+                return
+            for name, mtime, path in due:
+                try:
+                    import_pscube_file(path, quiet=True, background=True)
+                except Exception as exc:  # noqa: BLE001 - 次の確認でやり直す
+                    message = f'P’s CUBEの自動読み込みに失敗しました（{name}、次の確認でやり直します）：{exc}'
+                    if pscube_sync_errors.get(name) != message:
+                        pscube_sync_errors[name] = message
+                        logbox.insert('end', message + '\n')
+                        logbox.see('end')
+                    break
+                pscube_sync_errors.pop(name, None)
+                seen = {**seen, name: mtime}
+                present = {n for n, _m, _p in files}
+                save_settings(DATA_DIR, pscube_android_synced={n: m for n, m in seen.items() if n in present})
+        except Exception as exc:  # noqa: BLE001 - 確認そのものの失敗でPC版を止めない
+            message = f'P’s CUBEの同期フォルダを確認できませんでした：{exc}'
+            if pscube_sync_errors.get('') != message:
+                pscube_sync_errors[''] = message
+                logbox.insert('end', message + '\n')
+                logbox.see('end')
+        finally:
+            if not closing[0]:
+                root.after(PSCUBE_SYNC_POLL_MS, poll_pscube_from_sync)
 
     auto_sync = tk.BooleanVar(value=settings.get('auto_sync_on_start', True) is not False)
     ttk.Checkbutton(
@@ -1545,6 +1595,7 @@ def main():
     ttk.Button(results_buttons, text='直前の保存を取り消す', command=undo_last).pack(side='left')
 
     root.after(400, auto_sync_on_start)
+    root.after(PSCUBE_SYNC_FIRST_MS, poll_pscube_from_sync)
     def close_app():
         if closing[0]:
             return

@@ -584,6 +584,40 @@ def write_backup(store: 'PscubeStore', path) -> Path:
     return _write_json(Path(path), store.export_payload('backup'))
 
 
+# Androidが同期フォルダに置くP’s CUBEのファイル：全期間（手で保存）と、自動取り込みを終えたときの当日分
+# （Apps Script経由、2026-10-26 PSCUBE_SYNC.md「当日分の自動送信」）。PC版は起動中にこれだけを自動で読む。
+ANDROID_SYNC_NAME = re.compile(r'pscube-(?:backup-android-\d{8}-\d{6}|day-android-\d{4}-\d{2}-\d{2})\.json')
+
+
+def android_sync_files(folder) -> list[tuple[str, float, Path]]:
+    """同期フォルダのAndroidのP’s CUBEファイルを（名前, 更新時刻, パス）で、更新の古い順に返す。"""
+    found = []
+    for path in Path(folder).glob('pscube-*.json'):
+        if not ANDROID_SYNC_NAME.fullmatch(path.name):
+            continue
+        try:
+            found.append((path.name, path.stat().st_mtime, path))
+        except OSError:
+            continue  # Driveが書き換え中など。次の確認で読む
+    return sorted(found, key=lambda item: (item[1], item[0]))
+
+
+ANDROID_SYNC_SETTLE_SECONDS = 10  # Driveが書き終えたばかりのファイルは、次の確認まで待つ
+
+
+def android_sync_due(files, seen, now):
+    """``android_sync_files`` のうち、読み込むもの（古い順）。
+
+    ``seen`` は前に読み込んだ {名前: 更新時刻}。None（この機能を初めて使う）なら、今あるファイルは
+    読み込み済みとして扱い、何も読まない（PC版で既に読んだ古いバックアップを読み直さない）。
+    戻り値は（読むファイルの一覧, 次に覚える seen の初期値 または None）。
+    """
+    if seen is None:
+        return [], {name: mtime for name, mtime, _path in files}
+    return [(name, mtime, path) for name, mtime, path in files
+            if seen.get(name) != mtime and now - mtime >= ANDROID_SYNC_SETTLE_SECONDS], None
+
+
 def latest_pscube_backup(folder) -> Path | None:
     """同期フォルダの最新のP’s CUBEバックアップ。自分の自動コピーと閲覧用の軽いファイルは除く。"""
     candidates = [p for p in Path(folder).glob('pscube-*.json') if p.name not in (AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME)]
