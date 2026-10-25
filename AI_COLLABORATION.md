@@ -3446,3 +3446,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 修正：`event_history.dart` で、照合のときだけ表示中の文書の `weeks` を渡す。送信待ちには週の定義を保存しない（`weeks` は空のまま）。再発試験 `tool/test_viewer_history_edit_browser.mjs`（文書の週だけにある週の顔文字を選ぶと共有へ送り、送信後に送信待ちが残らない、320/393px）。直す前のビルドでは失敗、修正後は成功を確認。test_viewer_event_history_browser・test_recommendations_browser 6件も成功。
 - 全体ゲート1回目は、新しい試験が393pxで1回失敗（送信待ちが消えるのを待たずに確かめていた試験側の問題。送信は届いていた）。返事の処理を待つよう直し、gateのstage物で3回連続成功。2回目の全体ゲートは **ALL PASSED**（PC438・215・UTC27件、Flutter682件、analyze info26件のみ、JS71ファイル全成功）。
 - 利用者が今週分で先に選んだ顔文字は端末にも残っていないため、公開後に選び直してもらう。
+- 閲覧ページを gate のstage物から database-viewer へ `ff0b2b9` として公開（変更は main.dart.js と version.json 0.5.43）。Pagesのデプロイ成功、公開中の main.dart.js がstage物とバイト一致を確認。database-ci へ1回push。iPhoneでの確認は利用者待ち。
