@@ -40,6 +40,9 @@ class MainActivity : FlutterActivity() {
     }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // 取り込み画面の内部ブラウザで YouTube への要求を外へ出さない（YouTubeRequestBlocker.kt）。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "database/web_requests")
+            .setMethodCallHandler(YouTubeRequestBlocker(flutterEngine)::handle)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "database/backup_destination")
             .setMethodCallHandler(backupSaver::handle)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->

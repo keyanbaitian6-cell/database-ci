@@ -1,9 +1,14 @@
 /// Every first load/retry waits for settings, including third-party Cookies.
 /// The callbacks also make order/failure/disposal behavior testable without a
 /// live site's authentication or requests.
+///
+/// [blockRequests] は YouTube などへの要求を端末の中で止める設定
+/// （youtube_request_block.dart）。setNavigationDelegate が WebViewClient を
+/// 置き換えるので、[configureNavigation] の後・最初の読み込みの前に毎回行う。
 Future<void> prepareBrowserSession({
   required Future<void> Function() configureJavaScript,
   required Future<void> Function() configureNavigation,
+  Future<void> Function()? blockRequests,
   required Future<void> Function() configureCookies,
   required Future<void> Function() load,
   required bool Function() active,
@@ -11,6 +16,7 @@ Future<void> prepareBrowserSession({
   for (final step in [
     configureJavaScript,
     configureNavigation,
+    ?blockRequests,
     configureCookies,
     load,
   ]) {
