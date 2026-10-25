@@ -2,13 +2,14 @@
 import fs from 'node:fs/promises';
 import {partsDrive} from './build_viewer_parts.mjs';
 const api=(await fs.readFile(new URL('../../share_viewer/event_history.mjs',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
+const recommendations=(await fs.readFile(new URL('../../share_viewer/recommendations.mjs',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
 const runtime=(await fs.readFile(new URL('event_history_drive.js',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
 const begin='// BEGIN EVENT_HISTORY_SHARED', end='// END EVENT_HISTORY_SHARED';
 // Apps Scriptの保存時パーサーはBigIntの数値リテラル（1000n）を受け付けない。
 // コンストラクターで同じ整数を作り、比較のマイクロ秒精度は維持する。
-const portable=api.replace(/\bexport /g,'').replaceAll('Object.hasOwn(', 'Object.prototype.hasOwnProperty.call(')
+const portable=(api+'\n'+recommendations).replace(/\bexport /g,'').replaceAll('Object.hasOwn(', 'Object.prototype.hasOwnProperty.call(')
   .replace(/\b(\d+)n\b/g,'BigInt("$1")');
-const block=`${begin}\nconst EVENT_HISTORY_API=(function(){\n${portable}\nreturn {parsePrivateHistory,historyCell,historyEditKey,mergeHistoryCells};\n})();\n${runtime}\n${end}`;
+const block=`${begin}\nconst EVENT_HISTORY_API=(function(){\n${portable}\nreturn {parsePrivateHistory,historyCell,historyEditKey,mergeHistoryCells,mergeRecommendations,recommendationPlan,recommendationPlans,mergeRecommendationResults,recommendationResult};\n})();\n${runtime}\n${end}`;
 for(const name of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {
   const url=new URL(name,import.meta.url), old=await fs.readFile(url,'utf8');
   const normalized=old.replace(/\r\n/g,'\n');

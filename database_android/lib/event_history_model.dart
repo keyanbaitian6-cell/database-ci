@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'models.dart';
+import 'recommendations.dart';
 
 const historyStore = 'nagamachiminami';
 const saiwaichouHistoryStore = 'saiwaichou';
@@ -233,6 +234,8 @@ void validateHistoryEnvelope(dynamic raw, {bool nested = false}) {
         'cells',
         'weeks',
         'links',
+        'recommendations',
+        'recommendation_results',
       ].any((k) => raw.containsKey(k) && raw[k] is! List)) {
     throw const FormatException('履歴編集の形式が不正です。');
   }
@@ -240,6 +243,8 @@ void validateHistoryEnvelope(dynamic raw, {bool nested = false}) {
     'cells',
     'weeks',
     'links',
+    'recommendations',
+    'recommendation_results',
   ].any((k) => raw.containsKey(k) && (raw[k] as List).length > 30000)) {
     throw const FormatException('履歴編集の保存件数の上限（各30,000件）を超えるため保存できません。');
   }
@@ -394,6 +399,20 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
     }
     out[group] = entries.values.toList();
   }
+  if (store == historyStore && raw['recommendations'] != null) {
+    out['recommendations'] = mergeRecommendations(
+      [],
+      raw['recommendations'] as List,
+      strict: false,
+    );
+  }
+  if (store == historyStore && raw['recommendation_results'] != null) {
+    out['recommendation_results'] = mergeRecommendationResults(
+      raw['recommendation_results'] as List,
+      [],
+      strict: false,
+    );
+  }
   return (edits: out, rejected: rejected, orphans: orphans);
 }
 
@@ -508,6 +527,30 @@ mergeHistoryEdits(
     conflicts += variety.conflicts;
     skippedWeeks += variety.weekConflicts;
     nestedRejected = variety.rejected;
+  }
+  if (base['store'] == historyStore &&
+      (stored.containsKey('recommendations') ||
+          incoming.containsKey('recommendations'))) {
+    final previous = stored['recommendations'] as List? ?? [];
+    out['recommendations'] = mergeRecommendations(
+      previous,
+      incoming['recommendations'] as List? ?? [],
+    );
+    changed += (out['recommendations'] as List)
+        .where((p) => !previous.any((old) => sameRecommendation(p, old)))
+        .length;
+  }
+  if (base['store'] == historyStore &&
+      (stored.containsKey('recommendation_results') ||
+          incoming.containsKey('recommendation_results'))) {
+    final previous = stored['recommendation_results'] as List? ?? [];
+    out['recommendation_results'] = mergeRecommendationResults(
+      previous,
+      incoming['recommendation_results'] as List? ?? [],
+    );
+    changed += (out['recommendation_results'] as List)
+        .where((p) => !previous.any((old) => sameRecommendation(p, old)))
+        .length;
   }
   // 合流結果も読み取り側の上限内に保ち、保存済みの履歴を読めなくしない。
   validateHistoryEnvelope(out);

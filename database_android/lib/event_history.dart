@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'event_history_model.dart';
+import 'recommendations.dart';
+import 'recommendations_view.dart';
 import 'list_views.dart' show displayMachineName;
 import 'viewer_bridge.dart';
 import 'viewer_data.dart';
@@ -45,9 +47,21 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
   String? _week, _error;
   String _status = '';
   bool _busy = false;
+  bool _recommendationResultsEditing = false;
+  bool _sharedEditing = false;
+  String get _historyPendingKey =>
+      'event-history-pending:${widget.remoteUrl ?? 'local'}';
+  Map<String, dynamic> _pendingWebHistory() {
+    final text = loadViewerSetting(_historyPendingKey);
+    if (text == null) return emptyHistoryEdits();
+    final raw = jsonDecode(text);
+    validateHistoryEnvelope(raw);
+    return Map<String, dynamic>.from(raw as Map);
+  }
+
   bool get _saiwaichou => widget.store == saiwaichouHistoryStore;
   String get _title => _saiwaichou ? '幸町のバラエティ履歴' : '長町南のイベント履歴';
-  bool get _editable => !_saiwaichou && widget.onSave != null && !kIsWeb;
+  bool get _editable => !_saiwaichou && (widget.onSave != null || kIsWeb);
   @override
   void initState() {
     super.initState();
@@ -61,12 +75,12 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
       var status = '';
       if (kIsWeb) {
         final url = widget.remoteUrl;
-        if (url == null) {
-          throw const FormatException('履歴を見るにはGoogleドライブの自動読み込みを設定してください。');
-        }
         final key = 'event-history:$url';
         dynamic raw;
         try {
+          if (url == null) {
+            throw const FormatException('共有するにはGoogleドライブの自動読み込みを設定してください。');
+          }
           raw = jsonDecode(await fetchSharedEvents(url, 'event-history'));
           if (raw is! Map || raw['base'] == null) {
             throw const FormatException('編集の反映にはApps Scriptの更新が必要です。');
@@ -74,16 +88,32 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
           final document = historyDocumentForStore(raw, widget.store);
           base = parseHistoryBase(document['base']);
           edits = document;
+          _recommendationResultsEditing =
+              raw['recommendation_results_editing'] == true;
+          _sharedEditing = raw['shared_editing'] == true;
           cleanHistoryEdits(edits, base);
           saveViewerSetting(key, jsonEncode(raw));
         } on Object catch (error) {
           final cached = loadViewerSetting(key);
-          if (cached == null) rethrow;
-          raw = jsonDecode(cached);
-          final document = historyDocumentForStore(raw, widget.store);
-          base = parseHistoryBase(document['base']);
-          edits = document;
-          status = '最新の履歴を取得できません。保存済みの内容を表示しています。$error';
+          if (cached == null) {
+            if (_saiwaichou) rethrow;
+            base = {
+              'version': 2,
+              'store': widget.store,
+              'symbols': ['😀', '😍', '🥶', '😌', '😇'],
+              'weeks': [],
+              'user_blank_days': [],
+            };
+            edits = emptyHistoryEdits();
+            status = '共有の履歴を取得できません。4大オススメの顔文字は端末に保存できます。$error';
+            raw = null;
+          } else {
+            raw = jsonDecode(cached);
+            final document = historyDocumentForStore(raw, widget.store);
+            base = parseHistoryBase(document['base']);
+            edits = document;
+            status = '最新の履歴を取得できません。保存済みの内容を表示しています。$error';
+          }
         }
       } else {
         base = _saiwaichou ? saiwaichouHistoryBase() : await widget.loadBase();
@@ -97,8 +127,17 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
             ? '編集は端末に保存します。バックアップをPCへ取り込むと共有へ反映します。'
             : '';
       }
-      if (base['store'] != widget.store)
+      if (kIsWeb && !_saiwaichou) {
+        final pending = _pendingWebHistory();
+        edits = {...edits, ...mergeHistoryEdits(edits, pending, base).edits};
+        if ((pending['cells'] as List).isNotEmpty ||
+            (pending['recommendation_results'] as List? ?? []).isNotEmpty) {
+          status += ' 顔文字は共有への送信待ちです。「未送信の顔文字を再送」で再送できます。';
+        }
+      }
+      if (base['store'] != widget.store) {
         throw const FormatException('履歴の店舗が一致しません。');
+      }
       final rejected =
           cleanHistoryEdits(edits, base).rejected +
           (edits['rejected'] is int ? edits['rejected'] as int : 0);
@@ -113,6 +152,145 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
       }
     } on Object catch (e) {
       if (mounted) setState(() => _error = '履歴ファイルを読めません：$e');
+    }
+  }
+
+  Future<void> _saveRecommendationResult(Map<String, dynamic> entry) async {
+    if (kIsWeb) {
+      await _saveWebHistory('recommendation_results', entry);
+      return;
+    }
+    if (widget.onSave == null) throw const FormatException('この画面では保存できません。');
+    final next = await widget.onSave!({
+      ...emptyHistoryEdits(),
+      'recommendation_results': [entry],
+    });
+    if (mounted) {
+      setState(() {
+        _edits = next;
+        _status = '端末に保存しました。バックアップをPCへ取り込むと共有へ反映します。';
+      });
+    }
+  }
+
+  Future<void> _saveWebHistory(String group, Map<String, dynamic> entry) async {
+    final incoming = {
+      ...emptyHistoryEdits(),
+      group: [
+        {...entry, 'device': 'shared'},
+      ],
+    };
+    final pending = mergeHistoryEdits(
+      _pendingWebHistory(),
+      incoming,
+      _base!,
+    ).edits;
+    final text = jsonEncode(pending);
+    saveViewerSetting(_historyPendingKey, text);
+    if (loadViewerSetting(_historyPendingKey) != text) {
+      throw const FormatException('端末に顔文字を保存できません。');
+    }
+    if (mounted) {
+      setState(() {
+        _edits = {
+          ..._edits,
+          ...mergeHistoryEdits(_edits, pending, _base!).edits,
+        };
+        _status = '顔文字を端末に保存しました。共有への送信待ちです。';
+      });
+    }
+    if (group == 'recommendation_results'
+        ? !_recommendationResultsEditing
+        : !_sharedEditing) {
+      throw const FormatException(
+        '端末には保存済みです。共有するには閲覧・共有用Apps Scriptを更新して再読み込み後に再送してください。',
+      );
+    }
+    await _flushWebHistory();
+  }
+
+  Future<void> _flushWebHistory() async {
+    final url = widget.remoteUrl;
+    if (url == null) {
+      throw const FormatException('共有するにはGoogleドライブの自動読み込みを設定してください。');
+    }
+    final pending = _pendingWebHistory();
+    final cells = _sharedEditing
+        ? (pending['cells'] as List).take(100).toList()
+        : <dynamic>[];
+    final results = _recommendationResultsEditing
+        ? (pending['recommendation_results'] as List? ?? [])
+              .take(100 - cells.length)
+              .toList()
+        : <dynamic>[];
+    if (cells.isEmpty && results.isEmpty) {
+      throw const FormatException('共有用Apps Scriptの更新後に再読み込みしてください。');
+    }
+    final answer = jsonDecode(
+      await postSharedEvents(
+        url,
+        jsonEncode({
+          'file': 'event-history',
+          'cells': cells,
+          'recommendation_results': results,
+        }),
+      ),
+    );
+    if (answer is! Map || answer['ok'] != true || answer['history'] is! Map) {
+      throw FormatException(
+        '端末には保存済みです。${answer is Map ? answer['error'] ?? '共有へ送信できませんでした。' : '共有の返答が不正です。'}',
+      );
+    }
+    final remote = Map<String, dynamic>.from(answer['history'] as Map);
+    final sent = {'cells': cells, 'recommendation_results': results};
+    for (final group in sent.keys) {
+      for (final c in sent[group]!) {
+        final key = group == 'cells'
+            ? historyKey(group, c)
+            : recommendationResultKey(c);
+        final hits = (remote[group] as List? ?? []).where((r) {
+          try {
+            return (group == 'cells'
+                    ? historyKey(group, r)
+                    : recommendationResultKey(r)) ==
+                key;
+          } on Object {
+            return false;
+          }
+        }).toList();
+        if (!hits.any(
+          (r) =>
+              !historyStamp(r['updated_at'])
+                  .isBefore(historyStamp(c['updated_at'])),
+        )) {
+          throw const FormatException('共有の保存確認ができません。端末の送信待ちを保持します。');
+        }
+      }
+    }
+    final remaining = _pendingWebHistory();
+    for (final group in sent.keys) {
+      remaining[group] = (remaining[group] as List? ?? [])
+          .where((c) => !sent[group]!.any((s) => sameRecommendation(c, s)))
+          .toList();
+    }
+    final text = jsonEncode(remaining);
+    saveViewerSetting(_historyPendingKey, text);
+    saveViewerSetting('event-history:$url', jsonEncode(remote));
+    final stillPending =
+        (remaining['cells'] as List).length +
+        (remaining['recommendation_results'] as List).length;
+    if (mounted) {
+      setState(() {
+        _edits = {
+          ...remote,
+          ...mergeHistoryEdits(remote, remaining, _base!).edits,
+        };
+        _status = loadViewerSetting(_historyPendingKey) != text
+            ? '共有へ保存しましたが、端末の送信済み状態を更新できません。'
+            : stillPending > 0
+            ? '共有へ保存しました。残り$stillPending件は送信待ちです。'
+            : '共有へ保存しました。ほかの画面は最新を読むと反映します。';
+      });
     }
   }
 
@@ -138,6 +316,17 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
       'updated_at': now.toIso8601String(),
       'device': 'android',
     };
+    if (kIsWeb) {
+      setState(() => _busy = true);
+      try {
+        await _saveWebHistory(group, entry);
+      } on Object catch (e) {
+        _say('顔文字は共有への送信待ちです：$e');
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+      return;
+    }
     final incoming = emptyHistoryEdits();
     (incoming[group] as List).add(entry);
     setState(() => _busy = true);
@@ -349,6 +538,41 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
                                     style: const TextStyle(fontSize: 11),
                                   ),
                                   const SizedBox(height: 6),
+                                  if (_editable && kIsWeb)
+                                    Semantics(
+                                      label:
+                                          '${days[i]} ${machine['name']}の顔文字',
+                                      child: DropdownButton<String>(
+                                        value: grade,
+                                        isExpanded: true,
+                                        iconSize: 10,
+                                        items: [
+                                          for (final s in [
+                                            '',
+                                            ..._base!['symbols'] as List,
+                                          ])
+                                            DropdownMenuItem(
+                                              value: s as String,
+                                              child: Text(
+                                                s.isEmpty ? '—' : s,
+                                                style: const TextStyle(
+                                                  fontSize: 20,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                        onChanged: _busy
+                                            ? null
+                                            : (v) => _save('cells', {
+                                                'store': historyStore,
+                                                'type': week['type'],
+                                                'week': week['from'],
+                                                'machine': machine['name'],
+                                                'day': days[i],
+                                                'value': v!,
+                                              }),
+                                      ),
+                                    ),
                                   Semantics(
                                     label:
                                         '${days[i]} ${displayMachineName(machine['name'] as String)} ${grade.isEmpty ? '空欄' : grade} ${name == null ? _missingRecord(days[i]) : 'データを開く'}',
@@ -378,13 +602,14 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
                                             : () => _open(days[i], name),
                                         child: Column(
                                           children: [
-                                            Text(
-                                              grade.isEmpty ? '—' : grade,
-                                              style: const TextStyle(
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.w600,
+                                            if (!(_editable && kIsWeb))
+                                              Text(
+                                                grade.isEmpty ? '—' : grade,
+                                                style: const TextStyle(
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
                                               ),
-                                            ),
                                             Text(
                                               name == null ? '—' : '↗',
                                               style: const TextStyle(
@@ -627,7 +852,17 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
     }
     final selected = weeks.where((w) => w['from'] == _week).firstOrNull;
     return Scaffold(
-      appBar: AppBar(title: Text(_title)),
+      appBar: AppBar(
+        title: Text(_title),
+        actions: [
+          if (kIsWeb)
+            IconButton(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              tooltip: '再読み込み',
+            ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
@@ -637,7 +872,10 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
             initialValue: _type,
             decoration: const InputDecoration(labelText: 'イベント種別'),
             items: [
-              for (final t in historyTypesForStore(widget.store))
+              for (final t in [
+                ...historyTypesForStore(widget.store),
+                if (!_saiwaichou) recommendationType,
+              ])
                 DropdownMenuItem(value: t, child: Text(t)),
             ],
             onChanged: _busy
@@ -647,7 +885,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
                   },
           ),
           const SizedBox(height: 12),
-          if (weeks.isNotEmpty)
+          if (_type != recommendationType && weeks.isNotEmpty)
             DropdownButtonFormField<String>(
               key: ValueKey('$_type:$_week'),
               isExpanded: true,
@@ -709,21 +947,46 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
               child: Text(_status),
             ),
           if (_busy) const LinearProgressIndicator(),
-          if (selected == null)
+          if (kIsWeb && !_saiwaichou)
+            TextButton(
+              onPressed: () async {
+                try {
+                  await _flushWebHistory();
+                } on Object catch (e) {
+                  _say('再送できません：$e');
+                }
+              },
+              child: const Text('未送信の顔文字を再送'),
+            ),
+          if (_type == recommendationType)
+            RecommendationsView(
+              records: widget.data.records,
+              plans: _edits['recommendations'] as List? ?? [],
+              results: _edits['recommendation_results'] as List? ?? [],
+              onResult: _saveRecommendationResult,
+              onOpen: (record) => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      ViewerRecordPage(data: widget.data, record: record),
+                ),
+              ),
+            )
+          else if (selected == null)
             const Padding(
               padding: EdgeInsets.all(24),
               child: Text('この種別の週表はまだありません。'),
             )
           else
             widget.browserLayout ? _browserTable(selected) : _table(selected),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Text(
-              _saiwaichou
-                  ? '2,500枚以上＝優、0〜2,499枚＝良。マイナス・差枚不明は空欄です。入力・修正はPCのみ。'
-                  : '記号の意味は未設定です。「開く」は、その機種・その日の保存データを表示します。',
+          if (_type != recommendationType)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Text(
+                _saiwaichou
+                    ? '2,500枚以上＝優、0〜2,499枚＝良。マイナス・差枚不明は空欄です。入力・修正はPCのみ。'
+                    : '記号の意味は未設定です。「開く」は、その機種・その日の保存データを表示します。',
+              ),
             ),
-          ),
         ],
       ),
     );

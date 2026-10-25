@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {mergeRecommendations, RECOMMENDATION_DEFAULT, mergeRecommendationResults} from '../../share_viewer/recommendations.mjs';
 import {parsePrivateHistory,mergeHistoryCells,newHistoryCell,historyEditKey} from '../../share_viewer/event_history.mjs';
 
 const doc=()=>({format:'database-event-history',version:1,base:{version:2,store:'nagamachiminami',symbols:['😀','😍'],weeks:[
@@ -55,10 +56,35 @@ async function drive(name) {
   const source=process.env.HISTORY_COMPAT_DIR ? `${process.env.HISTORY_COMPAT_DIR}/${name}` : new URL(name,import.meta.url);
   vm.runInContext(await fs.readFile(source,'utf8'),sandbox);
   return {files,writes,get:()=>JSON.parse(sandbox.doGet({parameter:{file:'event-history'}}).body),
+    postResults:recommendation_results=>JSON.parse(sandbox.doPost({postData:{contents:JSON.stringify({file:'event-history',cells:[],recommendation_results})}}).body),
+    postPlans:recommendations=>JSON.parse(sandbox.doPost({postData:{contents:JSON.stringify({file:'event-history',cells:[],recommendations})}}).body),
     post:cells=>JSON.parse(sandbox.doPost({postData:{contents:JSON.stringify({file:'event-history',cells})}}).body),locks:()=>locks};
 }
 
 for(const script of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {
+  test(`${script}：4機種の構成変更は拒否し、台ごとの顔文字だけを保存する`,async()=>{
+    const d=await drive(script),original=d.files.get('database-event-history.json').text;
+    const plan={...RECOMMENDATION_DEFAULT,updated_at:'2026-10-20T00:00:00Z'};
+    assert.match(d.postPlans([plan]).error,/機種構成はPC/);assert.deepEqual(d.writes,[]);
+    const r={store:'nagamachiminami',week:plan.week,machine:plan.machines[0],rack:100,day:'2026-10-26',value:'😇',updated_at:'2026-10-20T00:00:00.123456Z',device:'shared'};
+    assert.equal(d.postResults([r]).ok,true);assert.equal(d.get().recommendations_editing,false);assert.equal(d.get().recommendation_results_editing,true);
+    assert.deepEqual(d.get().recommendation_results,[r]);
+    assert.equal(d.post([entry()]).ok,true);assert.deepEqual(d.get().recommendation_results,[r]);
+    const next={...r,day:'2026-10-27',value:''};assert.equal(d.postResults([next]).ok,true);
+    const newer={...r,value:'😍',updated_at:'2026-10-20T00:00:00.123457Z'};
+    const pc=JSON.parse(original);pc.recommendation_results=[newer];d.files.get('database-event-history.json').text=JSON.stringify(pc);
+    assert.equal(d.postResults([r]).ok,true);assert.deepEqual(d.get().recommendation_results,mergeRecommendationResults([newer],[r,next]));
+    assert.deepEqual(JSON.parse(d.files.get('database-event-history.json').text),pc);assert.ok(d.writes.every(n=>n==='database-event-history-shared.json'));
+    assert.equal(d.locks(),0);
+  });
+  test(`${script}：不正な台別結果・未来時刻・壊れた原文を保存しない`,async()=>{
+    const d=await drive(script),r={store:'nagamachiminami',week:'2026-10-26',machine:RECOMMENDATION_DEFAULT.machines[0],rack:100,day:'2026-10-26',value:'😇',updated_at:'2026-10-20T00:00:00Z'};
+    for(const change of [{store:'saiwaichou'},{week:'2026-10-27'},{machine:'未選定機種'},{day:'2026-11-02'},{value:'未知'},{rack:1.5},{updated_at:'2026-10-30T00:00:00Z'},{updated_at:'2026-02-30T00:00:00Z'}]) assert.ok(d.postResults([{...r,...change}]).error);
+    assert.deepEqual(d.writes,[]);assert.ok(d.postResults([r,{...r,value:'不正'}]).error);assert.deepEqual(d.writes,[]);
+    assert.equal(d.postResults([r]).ok,true);
+    const shared=d.files.get('database-event-history-shared.json'),broken=JSON.stringify({...JSON.parse(shared.text),recommendation_results:'壊れた原文'});shared.text=broken;
+    const count=d.writes.length;assert.ok(d.postResults([r]).error);assert.equal(shared.text,broken);assert.equal(d.writes.length,count);assert.equal(d.locks(),0);
+  });
   test(`${script}：PCの幸町をGETで保持し、共有からは書き換えない`,async()=>{
     const d=await drive(script);
     const sample=JSON.parse(await fs.readFile(new URL('../test/fixtures/saiwaichou_history_cases.json',import.meta.url),'utf8'));

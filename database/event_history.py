@@ -6,6 +6,8 @@ import unicodedata
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
+import recommendations as rec
+
 from event_history_data import (ASSET, KINDS, STORE, load_base, empty_edits, materialize,
     clean_edits, edit_key, saved_name, machine_candidates, variety_week_lineup, capture_shortfall, stamp,
     SHORTFALL_DAYS, machine_day_nets, auto_faces, SAIWAI_STORE, VARIETY_KEY,
@@ -59,7 +61,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
                           '記号はプルダウンで編集します。→ はその機種・その日のデータを開きます。記号の意味は未設定です。')).pack(anchor='w')
     controls = ttk.Frame(frame)
     controls.pack(fill='x', pady=8)
-    kinds = store_kinds(location)
+    kinds = (*store_kinds(location), rec.TYPE) if not saiwaichou else store_kinds(location)
     kind = tk.StringVar(value=kinds[0])
     kind_combo = ttk.Combobox(controls, textvariable=kind, values=kinds, state='readonly', width=14)
     kind_combo.pack(side='left')
@@ -106,11 +108,11 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             for entry in entries:
                 entry['device'] = 'pc'
                 now = datetime.now().astimezone()
-                for old in current[group]:
-                    if edit_key(group, old) == edit_key(group, entry):
+                for old in current.get(group, []):
+                    if (old.get('week') == entry.get('week') if group == 'recommendations' else rec.result_key(old) == rec.result_key(entry) if group == 'recommendation_results' else edit_key(group, old) == edit_key(group, entry)):
                         now = max(now, stamp(old['updated_at']) + timedelta(milliseconds=1))
                 entry['updated_at'] = now.isoformat()
-                incoming[group].append(entry)
+                incoming.setdefault(group, []).append(entry)
             payload = dict(empty_edits(), **{VARIETY_KEY: incoming}) if saiwaichou else incoming
             _changed, conflicts, rejected, skipped_weeks = db.merge_history_edits(payload)
             edits[0] = store_edits(db.history_edits_raw(), location)
@@ -168,9 +170,107 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             value.set(previous)
             messagebox.showerror('保存できません', str(error), parent=window)
 
+    recommendation_drafts = {}
+
+    def recommendation_table():
+        from core import rack_net, implausible_numbers
+        plans = rec.plans(edits[0].get('recommendations', []))
+        all_plans = {p['week']: p for p in plans}
+        all_plans.update(recommendation_drafts)
+        labels = {f"{first}〜{rec.days(first)[-1]}": all_plans[first] for first in sorted(all_plans, reverse=True)}
+        week_combo.configure(values=list(labels))
+        if chosen.get() not in labels: chosen.set(next(iter(labels)))
+        p = labels[chosen.get()]
+        first, machines = p['week'], p['machines']
+        lineup, choices = rec.candidates(records, first)
+        result_index=rec.result_index(edits[0].get('recommendation_results',[]))
+        names=sorted({r['machine'] for r in records if first<=r['day']<=rec.days(first)[-1] and any(rec.normal(r['machine'])==rec.normal(n) for n in machines)})
+        result_records=[]
+        if names:
+            db=Store(db_path)
+            try:
+                query="SELECT store,day,machine,rack,json_remove(payload,'$.graph_measurement.preview_image') FROM days WHERE store=? AND day BETWEEN ? AND ? AND machine IN ("+','.join('?' for _ in names)+") AND json_valid(payload)"
+                result_records=[dict(json.loads(payload),store=s,day=d,machine=m,rack=r) for s,d,m,r,payload in db.db.execute(query,(STORE,first,rec.days(first)[-1],*names))]
+            finally:db.close()
+        ttk.Label(table, text=f"選定元：{lineup or '保存データなし'} · 7台以上の機種から異なる4機種を選択", padding=8).grid(row=0, column=0, columnspan=8, sticky='w')
+        values = []
+        row = 1
+        for slot, selected in enumerate(machines):
+            available = {n for n, _ in choices}
+            resolved = rec.saved_name(selected, available) or selected
+            options = [n for n, _ in choices]
+            if resolved not in options: options.insert(0, resolved)
+            value = tk.StringVar(value=resolved)
+            values.append(value)
+            combo = ttk.Combobox(table, textvariable=value, values=options, state='readonly', width=50)
+            combo.grid(row=row, column=0, columnspan=8, sticky='w', pady=(12, 5))
+            combo.recommendation_slot = slot
+            row += 1
+            ttk.Label(table, text='台番号', padding=6).grid(row=row,column=0)
+            for i,d in enumerate(rec.days(first)):
+                ttk.Label(table,text=f'{d[5:]} {WEEKDAYS[i]}',padding=6).grid(row=row,column=i+1)
+            row += 1
+            rack_rows = rec.rows(result_records, first, selected)
+            for rack, cells in rack_rows:
+                ttk.Label(table,text=f'{rack}番',padding=6).grid(row=row,column=0,sticky='w')
+                for i,r in enumerate(cells):
+                    net = rack_net(r)[0] if r is not None and not implausible_numbers(r) else None
+                    fields=dict(store=STORE,week=first,machine=selected,rack=rack,day=rec.days(first)[i])
+                    saved=result_index.get(rec.result_key(fields))
+                    choice='自動' if saved is None or saved['value'] is None else saved['value']
+                    face=net_face(net) if net is not None else ''
+                    cell=ttk.Frame(table,padding=2);cell.grid(row=row,column=i+1,sticky='ew')
+                    variable=tk.StringVar(value=choice)
+                    face_combo=ttk.Combobox(cell,textvariable=variable,values=['自動','',*rec.FACES],state='readonly',width=6)
+                    face_combo.pack()
+                    face_combo.recommendation_result=(rack,fields['day'])
+                    def save_face(_=None,fields=fields,variable=variable):
+                        try:
+                            save('recommendation_results',dict(fields,value=None if variable.get()=='自動' else variable.get()))
+                            render()
+                        except Exception as error:messagebox.showerror('顔文字を保存できません',str(error),parent=window)
+                    face_combo.bind('<<ComboboxSelected>>',save_face)
+                    if choice=='自動':ttk.Label(cell,text=face or '—').pack()
+                    text='—' if net is None else ('約' if r.get('jo_net') is None else '')+(f'{net:+,}' if net else '0')
+                    ttk.Button(cell,text=text,width=12,state='normal' if r else 'disabled',command=lambda r=r:on_pick(r['machine'],r['day'])).pack()
+                row += 1
+            if not rack_rows:
+                ttk.Label(table,text='この週の保存データはまだありません。',padding=8).grid(row=row,column=0,columnspan=8,sticky='w')
+                row += 1
+        def accept():
+            try:
+                selected = [v.get() for v in values]
+                for old, new in zip(machines, selected):
+                    if new != old and new not in {n for n, _ in choices}:
+                        raise ValueError('7台以上の設置機種から選んでください。')
+                entry = rec.plan(dict(store=STORE, week=first, machines=selected, updated_at=datetime.now().astimezone().isoformat(),device='pc'))
+                save('recommendations', entry)
+                recommendation_drafts.pop(first,None)
+                render()
+            except Exception as error:
+                messagebox.showerror('4機種を保存できません',str(error),parent=window)
+        ttk.Button(table,text='4機種を保存',command=accept).grid(row=row,column=0,columnspan=8,sticky='w',pady=10)
+        ttk.Label(table,text='台ごとの差枚から自動表示：3,000枚以上😍 · 1,000枚以上😀 · 0枚以上😌 · マイナス🥶 · 不明—',padding=8).grid(row=row+1,column=0,columnspan=8,sticky='w')
+
+    def create_recommendation_week():
+        value=simpledialog.askstring('4大オススメの週を追加','週開始日（月曜日、例：2026-11-02）',parent=window)
+        if not value:return
+        try:
+            rec.week(value)
+            existing=rec.plans(edits[0].get('recommendations',[]))
+            if value not in {p['week'] for p in existing}:
+                recommendation_drafts[value]=dict(existing[0],week=value)
+            kind.set(rec.TYPE);chosen.set(f"{value}〜{rec.days(value)[-1]}")
+            render()
+        except Exception as error:messagebox.showerror('週を追加できません',str(error),parent=window)
+
     def render(*_, reset=False):
         for child in table.winfo_children(): child.destroy()
         name_labels.clear()
+        if kind.get() == rec.TYPE:
+            auto_row.pack_forget()
+            recommendation_table()
+            return
         weeks, rejected = materialize(base, edits[0])
         selected = [w for w in weeks if w['type'] == kind.get()]
         labels = {f"{w['from']}〜{w['to']}": w for w in selected}
@@ -283,6 +383,8 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     def close():
         publish(); window.destroy()
     ttk.Button(controls,text='バラエティの週表を作成',command=create_week).pack(side='left')
+    if not saiwaichou:
+        ttk.Button(controls,text='4大オススメの週を追加',command=create_recommendation_week).pack(side='left',padx=4)
     ttk.Button(footer,text='共有へ反映',command=publish).pack(side='right')
     ttk.Button(footer,text='閉じる',command=close).pack(side='right',padx=8)
     kind_combo.bind('<<ComboboxSelected>>',lambda _:render(reset=True))

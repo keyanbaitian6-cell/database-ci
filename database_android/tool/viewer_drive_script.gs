@@ -102,7 +102,7 @@ function doPost(e) {
   }
   if (!body || typeof body !== 'object') return respond(JSON.stringify({ error: '送られてきた内容が読めません。' }));
   if (body.file === 'rainbow') return postRainbow(body.marks);
-  if (body.file === 'event-history') return postEventHistory(body.cells);
+  if (body.file === 'event-history') return postEventHistory(body.cells,body.recommendations,body.recommendation_results);
   const spec = Object.prototype.hasOwnProperty.call(EVENT_FILES, body.file) ? EVENT_FILES[body.file] : null;
   if (!spec) return respond(JSON.stringify({ error: '指定できないファイルです。' }));
   const incoming = validEvents(body.events, spec.kind === 'pscube');
@@ -426,9 +426,104 @@ function newHistoryCell(doc, fields, value, now=Date.now()) {
   return historyCell({...fields,store:STORE,value,updated_at,device:'shared'},parsePrivateHistory(doc));
 }
 
-return {parsePrivateHistory,historyCell,historyEditKey,mergeHistoryCells};
+// 長町南の4大オススメ。既存の週表・結果記号と独立した4枠を週ごとに保存する。
+const RECOMMENDATION_TYPE = '4大オススメ';
+const RECOMMENDATION_DEFAULT = {
+  store:'nagamachiminami', week:'2026-10-26',
+  machines:['L 甲鉄城のｶﾊﾞﾈﾘ 海門決戦 XX','L戦国乙女5L8','L戦国乙女4S3','Lﾓﾝｷｰﾀｰﾝ5CE'],
+  updated_at:'2026-10-24T00:00:00Z',device:'pc',
+};
+function recommendationWeek(raw) {
+  if(typeof raw!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw Error('週開始日は月曜日を指定してください。');
+  const d=new Date(raw+'T00:00:00Z');
+  if(!Number.isFinite(+d)||d.toISOString().slice(0,10)!==raw||d.getUTCDay()!==1||raw.startsWith('0000')) throw Error('週開始日は月曜日を指定してください。');
+  return raw;
+}
+const recommendationDays = week => Array.from({length:7},(_,i)=>new Date(Date.parse(recommendationWeek(week)+'T00:00:00Z')+i*86400000).toISOString().slice(0,10));
+const validName=n=>typeof n==='string'&&n.trim().length>0&&[...n].length<=300&&!/[\x00-\x1f]/.test(n);
+const normal=n=>n.replaceAll('+',' ').replace(/\s+/g,'').toLowerCase();
+function recommendationPlan(raw) {
+  if(!raw||raw.store!=='nagamachiminami'||!Array.isArray(raw.machines)||raw.machines.length!==4||raw.machines.some(n=>!validName(n))||new Set(raw.machines.map(normal)).size!==4) throw Error('異なる4機種を選んでください。');
+  recommendationWeek(raw.week);
+  if(typeof raw.updated_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw.updated_at)||!Number.isFinite(Date.parse(raw.updated_at))) throw Error('4機種の編集時刻が不正です。');
+  const at=raw.updated_at.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/);
+  const date=new Date(at[1]+'T00:00:00Z');
+  if(!Number.isFinite(+date)||date.toISOString().slice(0,10)!==at[1]||at[1].startsWith('0000')||+at[2]>23||+at[3]>59||+at[4]>59||(at[5]!=='Z'&&(+at[5].slice(1,3)>23||+at[5].slice(4,6)>59)))throw Error('4機種の編集時刻が不正です。');
+  return {store:raw.store,week:raw.week,machines:[...raw.machines],updated_at:raw.updated_at,device:['pc','android','shared'].includes(raw.device)?raw.device:'pc'};
+}
+// 小数秒6桁の編集順を落とさず比較する（Apps Scriptの生成時にも使用）。
+const time=p=>{
+  const m=p.updated_at.match(/\.(\d{1,6})(?=Z|[+-])/);
+  return BigInt(Math.floor(Date.parse(p.updated_at)/1000))*BigInt("1000000")+BigInt((m?.[1]??'').padEnd(6,'0'));
+};
+function mergeRecommendations(stored=[],incoming=[],{strict=true}={}) {
+  if(!Array.isArray(stored)||!Array.isArray(incoming)||stored.length>3000||incoming.length>3000) throw Error('4機種の週一覧が不正です。');
+  const plans=new Map(),orphans=[];
+  for(const [items,check] of [[stored,false],[incoming,strict]]) for(const raw of items) {
+    try {const p=recommendationPlan(raw),old=plans.get(p.week);if(!old||time(p)>=time(old)) plans.set(p.week,p);}
+    catch(e){if(check) throw e;orphans.push(raw);}
+  }
+  const result=[...plans.values()].sort((a,b)=>b.week.localeCompare(a.week)).concat(orphans);
+  if(result.length>3000) throw Error('4機種の週一覧が上限に達しています。');
+  return result;
+}
+function recommendationPlans(raw=[]) {
+  return mergeRecommendations([RECOMMENDATION_DEFAULT],raw,{strict:false}).flatMap(p=>{try{return [recommendationPlan(p)];}catch{return [];}});
+}
+function recommendationName(selected,names) {
+  if(names.includes(selected))return selected;
+  const hits=names.filter(n=>normal(n)===normal(selected));
+  return hits.length===1?hits[0]:null;
+}
+function recommendationCandidates(records,week) {
+  const end=recommendationDays(week)[6];
+  const rows=records.filter(r=>r.store==='nagamachiminami'&&r.day<=end);
+  const day=rows.map(r=>r.day).sort().at(-1)??null,groups=new Map();
+  for(const r of rows)if(r.day===day){if(!groups.has(r.machine))groups.set(r.machine,new Set());groups.get(r.machine).add(r.rack);}
+  return {day,machines:[...groups].filter(([,racks])=>racks.size>=7).map(([name,racks])=>({name,count:racks.size})).sort((a,b)=>a.name.localeCompare(b.name,'ja'))};
+}
+function recommendationRows(records,week,selected) {
+  const days=recommendationDays(week),rows=records.filter(r=>r.store==='nagamachiminami'&&days.includes(r.day));
+  const names=new Map(days.map(day=>[day,recommendationName(selected,[...new Set(rows.filter(r=>r.day===day).map(r=>r.machine))]) ]));
+  const cells=rows.filter(r=>r.machine===names.get(r.day)),racks=[...new Set(cells.map(r=>r.rack))].sort((a,b)=>a-b);
+  // 同一日に同じ台が重複していたら、どちらかを推測で採用しない。
+  return racks.map(rack=>({rack,cells:days.map(day=>{const hits=cells.filter(r=>r.rack===rack&&r.day===day);return hits.length===1?hits[0]:null;})}));
+}
+function recommendationFace(net) {
+  return typeof net!=='number'||!Number.isFinite(net)?'':net>=3000?'😍':net>=1000?'😀':net>=0?'😌':'🥶';
+}
+
+const RECOMMENDATION_FACES=['😀','😍','🥶','😌','😇'];
+const recommendationResultKey=r=>JSON.stringify([r.store,r.week,r.machine,r.rack,r.day]);
+function recommendationResult(raw) {
+  if(!raw||typeof raw!=='object'||!['store','week','machine','rack','day','value','updated_at'].every(k=>Object.prototype.hasOwnProperty.call(raw,k)))throw Error('台ごとの顔文字が不正です。');
+  // 店舗・週・時刻の検証は構成と同じ。結果から機種構成を変更することはない。
+  recommendationPlan({...RECOMMENDATION_DEFAULT,...raw,machines:RECOMMENDATION_DEFAULT.machines});
+  if(!validName(raw.machine)||!Number.isSafeInteger(raw.rack)||raw.rack<0||raw.rack>99999||!recommendationDays(raw.week).includes(raw.day)||![null,'',...RECOMMENDATION_FACES].includes(raw.value))throw Error('台ごとの顔文字が不正です。');
+  return {store:raw.store,week:raw.week,machine:raw.machine,rack:raw.rack,day:raw.day,value:raw.value,updated_at:raw.updated_at,device:['pc','android','shared'].includes(raw.device)?raw.device:'pc'};
+}
+function mergeRecommendationResults(stored=[],incoming=[],{strict=true}={}) {
+  if(!Array.isArray(stored)||!Array.isArray(incoming)||stored.length>30000||incoming.length>30000)throw Error('台ごとの結果一覧が不正です。');
+  const results=new Map(),orphans=[];
+  for(const [items,check] of [[stored,false],[incoming,strict]])for(const raw of items){
+    try {const r=recommendationResult(raw),k=recommendationResultKey(r),old=results.get(k);if(!old||time(r)>=time(old))results.set(k,r);}
+    catch(e){if(check)throw e;orphans.push(raw);}
+  }
+  const out=[...results.values()].sort((a,b)=>recommendationResultKey(a).localeCompare(recommendationResultKey(b))).concat(orphans);
+  if(out.length>30000)throw Error('台ごとの結果一覧が上限に達しています。');
+  return out;
+}
+function recommendationResultValue(results,fields,automatic) {
+  const key=recommendationResultKey(fields);
+  const r=mergeRecommendationResults(results,[],{strict:false}).find(r=>{try{return recommendationResultKey(recommendationResult(r))===key;}catch{return false;}});
+  return !r||r.value===null?automatic:r.value;
+}
+
+const recommendationNotOlder=(a,b)=>time(a)>=time(b);
+
+return {parsePrivateHistory,historyCell,historyEditKey,mergeHistoryCells,mergeRecommendations,recommendationPlan,recommendationPlans,mergeRecommendationResults,recommendationResult};
 })();
-// 共有ページの記号だけを保存する。PCの基準・数値記録・週の構成には書き込まない。
+// 共有ページの記号だけを保存する。4大オススメも構成はPCのみ、台ごとの顔文字は共有で編集する。
 const HISTORY_SHARED_NAME = 'database-event-history-shared.json';
 const HISTORY_PC_NAME = 'database-event-history.json';
 
@@ -445,39 +540,53 @@ function historySharedDocument() {
   if(!file) return {file:null,doc:{format:'database-event-history',version:1,cells:[],weeks:[],links:[]}};
   const doc=JSON.parse(file.getBlob().getDataAsString('UTF-8'));
   if(!doc || doc.format!=='database-event-history' || doc.version!==1 || !Array.isArray(doc.cells) || doc.cells.length>30000 ||
-      !Array.isArray(doc.weeks) || doc.weeks.length || !Array.isArray(doc.links) || doc.links.length)
+      !Array.isArray(doc.weeks) || doc.weeks.length || !Array.isArray(doc.links) || doc.links.length ||
+      (doc.recommendations != null && (!Array.isArray(doc.recommendations) || doc.recommendations.length>3000)) ||
+      (doc.recommendation_results != null && (!Array.isArray(doc.recommendation_results) || doc.recommendation_results.length>30000)))
     throw new Error('共有の履歴ファイルを読めません。元のファイルは変更していません。');
   return {file,doc};
 }
 
 function readEventHistory() {
   try {
-    const doc=EVENT_HISTORY_API.mergeHistoryCells(historyPcDocument(),historySharedDocument().doc.cells,{strict:false});
-    return respond(JSON.stringify({...doc,shared_editing:true}));
+    const pc=historyPcDocument(), shared=historySharedDocument().doc;
+    const doc=EVENT_HISTORY_API.mergeHistoryCells(pc,shared.cells,{strict:false});
+    const recommendation_results=EVENT_HISTORY_API.mergeRecommendationResults(pc.recommendation_results??[],shared.recommendation_results??[],{strict:false});
+    return respond(JSON.stringify({...doc,recommendation_results,shared_editing:true,recommendations_editing:false,recommendation_results_editing:true}));
   } catch(e) { return respond(JSON.stringify({error:String(e.message||e)})); }
 }
 
-function postEventHistory(cells) {
-  if(!Array.isArray(cells) || !cells.length || cells.length>100)
-    return respond(JSON.stringify({error:'履歴の記号は1〜100件ずつ保存してください。'}));
+function postEventHistory(cells=[],recommendations=[],results=[]) {
+  if(!Array.isArray(recommendations) || recommendations.length)
+    return respond(JSON.stringify({error:'イベントの機種構成はPCで変更してください。'}));
+  if(!Array.isArray(cells) || !Array.isArray(results) || cells.length+results.length<1 || cells.length+results.length>100)
+    return respond(JSON.stringify({error:'結果記号は1〜100件ずつ保存してください。'}));
   const lock=LockService.getScriptLock();
   let locked=false;
   try {
     lock.waitLock(20000); locked=true;
     const pc=historyPcDocument(), model=EVENT_HISTORY_API.parsePrivateHistory(pc);
     const incoming=cells.map(c=>({...EVENT_HISTORY_API.historyCell(c,model),device:'shared'}));
-    if(incoming.some(c=>Date.parse(c.updated_at)>Date.now()+5*60*1000))
+    const plans=EVENT_HISTORY_API.recommendationPlans(pc.recommendations??[]);
+    const selected=results.map(raw=>{
+      const r=EVENT_HISTORY_API.recommendationResult(raw);
+      if(!plans.some(p=>p.week===r.week && p.machines.includes(r.machine)))throw new Error('対象の週・機種が4大オススメの選定にありません。');
+      return {...r,device:'shared'};
+    });
+    if([...incoming,...selected].some(c=>Date.parse(c.updated_at)>Date.now()+5*60*1000))
       throw new Error('端末の日時が先に進んでいます。日時を確認してから再送してください。');
     const current=historySharedDocument();
     const shared=EVENT_HISTORY_API.mergeHistoryCells({...pc,cells:current.doc.cells},incoming);
     const history=EVENT_HISTORY_API.mergeHistoryCells(pc,shared.cells,{strict:false});
-    const doc={format:'database-event-history',version:1,cells:shared.cells,weeks:[],links:[],updated_at:new Date().toISOString()};
+    const savedResults=EVENT_HISTORY_API.mergeRecommendationResults(current.doc.recommendation_results??[],selected);
+    history.recommendation_results=EVENT_HISTORY_API.mergeRecommendationResults(pc.recommendation_results??[],savedResults,{strict:false});
+    const doc={...current.doc,format:'database-event-history',version:1,cells:shared.cells,weeks:[],links:[],recommendation_results:savedResults,updated_at:new Date().toISOString()};
     const text=JSON.stringify(doc);
     if(current.file) {
-      if(JSON.stringify(shared.cells)!==JSON.stringify(current.doc.cells)) current.file.setContent(text);
+      if(JSON.stringify(shared.cells)!==JSON.stringify(current.doc.cells) || JSON.stringify(savedResults)!==JSON.stringify(current.doc.recommendation_results??[])) current.file.setContent(text);
     } else folderBeside(HISTORY_PC_NAME).createFile(HISTORY_SHARED_NAME,text,'application/json');
     const keptNewer=incoming.filter(c=>history.cells.some(old=>old && EVENT_HISTORY_API.historyEditKey(old)===EVENT_HISTORY_API.historyEditKey(c) && old.updated_at!==c.updated_at && old.value!==c.value)).length;
-    return respond(JSON.stringify({ok:true,history:{...history,shared_editing:true},keptNewer}));
+    return respond(JSON.stringify({ok:true,history:{...history,shared_editing:true,recommendations_editing:false,recommendation_results_editing:true},keptNewer}));
   } catch(e) { return respond(JSON.stringify({error:String(e.message||e)})); }
   finally { if(locked) lock.releaseLock(); }
 }

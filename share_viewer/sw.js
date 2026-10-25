@@ -1,6 +1,6 @@
 // 公開stageで内容由来の版と正確なファイルURLに置換する。Google通信は保存・中継しない。
 const VERSION = 'development';
-const FILES = ['./index.html', './app.mjs', './event_history.mjs', './data.mjs', './net.mjs', './viewer_parts.mjs', './offline.mjs', './capture_health.mjs',
+const FILES = ['./index.html', './app.mjs', './event_history.mjs', './recommendations.mjs', './data.mjs', './net.mjs', './viewer_parts.mjs', './offline.mjs', './capture_health.mjs',
   './manifest.json', './apple-touch-icon.png', './favicon.png', './icon-192.png', './icon-512.png'];
 const PREFIX = 'database-share-shell-' + new URL(self.registration.scope).pathname + '-';
 const CACHE = PREFIX + VERSION;

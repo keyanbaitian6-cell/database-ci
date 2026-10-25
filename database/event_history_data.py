@@ -122,9 +122,9 @@ def validate_envelope(raw, *, nested=False):
     """バックアップの外枠だけを検証する。個別の古い編集で台データを止めない。"""
     if not isinstance(raw, dict) or raw.get('format') != FORMAT or raw.get('version') != 1:
         raise ValueError('履歴編集の形式が違います。')
-    if any(not isinstance(raw.get(k, []), list) for k in ('cells', 'weeks', 'links')):
+    if any(not isinstance(raw.get(k, []), list) for k in ('cells', 'weeks', 'links', 'recommendations', 'recommendation_results')):
         raise ValueError('履歴編集の一覧が読めません。')
-    if any(len(raw.get(k, [])) > 30000 for k in ('cells', 'weeks', 'links')):
+    if any(len(raw.get(k, [])) > 30000 for k in ('cells', 'weeks', 'links', 'recommendations', 'recommendation_results')):
         raise ValueError('履歴編集の保存件数の上限（各30,000件）を超えるため保存できません。')
     if VARIETY_KEY in raw:
         if nested:
@@ -203,6 +203,12 @@ def clean_edits(raw, base, rejected_items=None):
             except (AttributeError, KeyError, TypeError, ValueError):
                 reject(group, c)
         out[group] = list(entries.values())
+    if 'recommendations' in raw and location == STORE:
+        from recommendations import merge
+        out['recommendations'] = merge([], raw['recommendations'], strict=False)
+    if 'recommendation_results' in raw and location == STORE:
+        from recommendations import merge_results
+        out['recommendation_results'] = merge_results(raw['recommendation_results'])
     return out, rejected
 
 
@@ -263,6 +269,16 @@ def merge_edits(stored, incoming, base, *, count_stored_rejected=True):
         conflicts += differing
         rejected += bad
         skipped_weeks += skipped
+    if base['store'] == STORE and ('recommendations' in stored or 'recommendations' in incoming):
+        from recommendations import merge
+        old_plans = stored.get('recommendations', [])
+        out['recommendations'] = merge(old_plans, incoming.get('recommendations', []))
+        changed += sum(p not in old_plans for p in out['recommendations'])
+    if base['store'] == STORE and ('recommendation_results' in stored or 'recommendation_results' in incoming):
+        from recommendations import merge_results
+        old_results = stored.get('recommendation_results', [])
+        out['recommendation_results'] = merge_results(old_results,incoming.get('recommendation_results',[]))
+        changed += sum(r not in old_results for r in out['recommendation_results'])
     validate_envelope(out)
     return out, changed, conflicts, rejected, skipped_weeks
 
