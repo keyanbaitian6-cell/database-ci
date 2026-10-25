@@ -78,6 +78,13 @@ external JSPromise<JSString> _pscubeEvents();
 @JS('databaseViewer.mergePscubeShared')
 external JSPromise<JSString?> _mergePscubeShared(JSString text);
 
+@JS('databaseViewer.curves')
+external JSPromise<JSString> _curves(JSString url, JSString refs);
+
+/// 1日分のグラフの線（[通し番号, 線] の一覧のJSON）を、Googleのスクリプトから読む。
+Future<String> fetchViewerCurves(String url, String refs) async =>
+    (await _curves(url.toJS, refs.toJS).toDart).toDart;
+
 /// 共有カレンダー（EVENT_CALENDAR.md）：共有ファイル（[file] は events・pscube-events）を読む。
 Future<String> fetchSharedEvents(String url, String file) async =>
     (await _fetchShared(url.toJS, file.toJS).toDart).toDart;

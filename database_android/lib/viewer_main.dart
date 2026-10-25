@@ -18,6 +18,7 @@ import 'event_name_dialog.dart';
 import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'pscube_suffix_page.dart';
 import 'rainbow_marks.dart';
+import 'remote_curve.dart';
 import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
@@ -378,6 +379,26 @@ class _ViewerHomeState extends State<ViewerHome> {
 
   void _show(ViewerData data) {
     _data = data;
+    // グラフの線は台の画面を開いたときにその日の分だけ読む（remote_curve.dart）。
+    clearRemoteCurves();
+    remoteCurveFetcher = data.curveParts.isEmpty
+        ? null
+        : (day) async {
+            final url = _remote;
+            if (url == null) throw StateError('Googleドライブの自動読み込みが設定されていません。');
+            final refs = [
+              for (final c in data.curveParts)
+                if (c['day'] == day) c,
+            ];
+            if (refs.isEmpty) throw StateError('この日のグラフの線がありません。');
+            final rows = jsonDecode(
+              await fetchViewerCurves(url, jsonEncode(refs)),
+            ) as List;
+            return {
+              for (final row in rows)
+                (row as List)[0] as int: SavedCurve(row[1] as List),
+            };
+          };
     _dataVersion++;
     viewerDataRevision.value++;
     _scoredFor = null;

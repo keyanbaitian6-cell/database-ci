@@ -22,6 +22,9 @@ Future<void> exportPscubeBackup() async {}
 
 void downloadText(String name, String text) {}
 
+Future<String> fetchViewerCurves(String url, String refs) async =>
+    throw UnsupportedError('グラフの線はWeb版だけで読みます。');
+
 Future<String> fetchSharedEvents(String url, String file) async => '';
 
 Future<String> postSharedEvents(String url, String text) async => '';

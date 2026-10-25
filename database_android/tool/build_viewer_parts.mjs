@@ -1,15 +1,16 @@
 // 配布する.gsは従来どおり全文を1枚貼れる。生成部分はここで同期する。
 import {readFileSync, writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {buildCloudScript} from './build_pscube_cloud_sync.mjs';
+import {buildCloudScript, netModule} from './build_pscube_cloud_sync.mjs';
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
 export const partsCore = () => read('./viewer_parts_core.js');
 export const partsDrive = () => partsCore() + '\n' + read('./viewer_parts_drive.js');
 export const partsPublisher = () => partsDrive() + '\n' + read('./viewer_parts_publish.js') + '\n' +
   read('../web/capture_health.mjs').replace(/^export /gm,'') + '\n' +
-  read('./viewer_history_cloud.js') + '\n' + read('./viewer_history_adapters.js');
+  read('./viewer_history_cloud.js') + '\n' + read('./viewer_history_adapters.js') + '\n' +
+  read('./viewer_curves_split.js') + '\n' + netModule();
 export const partsClient = () => '// 生成元: tool/build_viewer_parts.mjs\n' + partsCore() + '\n' + read('./viewer_parts_client.js') +
-  '\nexport {fetchViewerParts, fetchViewerDocument, rememberViewerHistory, readViewerHistory};\n';
+  '\nexport {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, readViewerHistory};\n';
 const marker = '\n// BEGIN GENERATED VIEWER PARTS\n';
 export function buildPartsFiles() {
   for (const name of ['viewer_drive_script.gs', 'viewer_drive_script_readonly.gs', 'meruhen_cloud_sync.gs']) {

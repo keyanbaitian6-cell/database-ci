@@ -505,3 +505,109 @@ test('メルヘンもPC・Androidの書出しとDrive・Google処理を区別し
     d.sync();assert.deepEqual(plain(get().sync_status.writes.find(w=>w.source==='pc')),plain(pc));
   }
 });
+
+// 2026-10-25：iPhoneの閲覧ページのメモリ対策。グラフの線を閲覧用の記録から外し、線パーツに置く。
+// 推定差枚は線があるうちに計算して添え、閲覧ページ・共有カレンダーが線から計算する値と1枚も違わないこと。
+const parity = JSON.parse(await fs.readFile(new URL('../test/fixtures/meruhen_net_parity.json', import.meta.url), 'utf8'));
+const {meruhenNetDetail} = await import('../../share_viewer/net.mjs');
+const {fetchViewerCurves} = await import('../web/viewer_parts.mjs');
+
+test('線を外して添えた推定差枚は、線から計算した値（共有カレンダー・合成600件）と完全に一致する', () => {
+  const c = drive().context;
+  parity.records.forEach((r, i) => {
+    const net = meruhenNetDetail(r.graph_measurement, r.max_hold ?? null, r.games ?? 0);
+    assert.deepEqual({value: net.value, needs_check: net.needsCheck}, parity.expected[i], '合成データの期待値が規則と違う（作り直す）');
+  });
+  const split = plain(c.vpSplitCurves(parity.records, () => true));
+  assert.equal(split.curves.length, parity.records.length);
+  const byRack = new Map(split.rows.map(r => [r.rack, r]));
+  parity.records.forEach((r, i) => {
+    const g = byRack.get(r.rack).graph_measurement;
+    assert.equal(g.curve, undefined); assert.equal(g.curve_remote, true);
+    assert.deepEqual(split.curves[g.curve_index][1], r.graph_measurement.curve, '番号で元の線に戻る');
+    assert.deepEqual({value: g.net_estimate.value, needs_check: g.net_estimate.needs_check}, parity.expected[i]);
+    assert.equal(g.net_estimate.max_hold, r.max_hold ?? null); assert.equal(g.net_estimate.games, r.games ?? 0);
+  });
+  // 共有カレンダーの表示（meruhenRecords）も、線ありと線なしで同じ。
+  const show = rows => meruhenRecords({records: rows}).map(r => [r.rack, r.net, r.needsCheck]).sort((a, b) => a[0] - b[0]);
+  assert.deepEqual(show(split.rows), show(parity.records));
+  // 計算時と最大持玉・回転数が違う記録は、ずれた値を出さない。
+  const changed = split.rows.find(r => r.graph_measurement.net_estimate.value !== null);
+  assert.equal(meruhenRecords({records: [{...changed, games: changed.games + 1}]})[0].net, null);
+  assert.deepEqual(plain(c.vpRestoreCurves(split.rows, split.curves)).map(r => r.graph_measurement.curve).sort(),
+    parity.records.map(r => r.graph_measurement.curve).sort(), '線を戻せる');
+});
+
+test('線を外さない記録：整数でない持玉・回転数、文字の線、座標の異常、計算済みの印', () => {
+  const c = drive().context, base = parity.records[0];
+  const keep = [
+    {...base, rack: 1, max_hold: 1.5}, {...base, rack: 2, games: 10.5},
+    {...base, rack: 3, graph_measurement: {...base.graph_measurement, curve: 'M0 200L1 100'}},
+    {...base, rack: 4, graph_measurement: {...base.graph_measurement, curve: [[0, 1], [1, '2']]}},
+    {...base, rack: 5, graph_measurement: {...base.graph_measurement, peak_y: null}},
+    {...base, rack: 6, graph_measurement: {...base.graph_measurement, curve: [[0, 200.5]]}},
+    {...base, rack: 7, graph_measurement: {...base.graph_measurement, curve_remote: true}},
+  ];
+  const split = plain(c.vpSplitCurves(keep, () => true));
+  assert.equal(split.curves.length, 0);
+  const byRack = rows => rows.slice().sort((a, b) => a.rack - b.rack).map(r => r.graph_measurement);
+  assert.deepEqual(byRack(split.rows), byRack(keep));
+  assert.equal(plain(c.vpSplitCurves([base], () => false)).curves.length, 0, '大きすぎる線は外さない');
+});
+
+test('メルヘン履歴：閲覧パーツは線なし・線パーツを一覧に載せ、台の画面で読める。原本は線を保持', async () => {
+  const d = drive({history: true}), base = d.files[0];
+  const rows = parity.records.slice(0, 40).map((r, i) => record(700 + i, r.day, {games: r.games, max_hold: r.max_hold ?? null,
+    graph_measurement: r.graph_measurement}));
+  d.add('database-backup-android.json', backup(rows)); d.setup();
+  while (d.sync().pending) { /* 24日ずつ */ }
+  const manifest = d.doc('database-viewer-parts-meruhen.json');
+  assert.ok(manifest.curve_parts.length > 0);
+  const viewer = plain(d.context.vpGet(base, 'meruhen', {}));
+  const light = viewer.records.filter(r => r.graph_measurement?.curve_remote);
+  assert.equal(light.length, rows.length, '持玉・回転数が整数の記録はすべて線を外す');
+  assert.ok(light.every(r => r.graph_measurement.curve === undefined));
+  for (const day of manifest.days) {
+    const raw = d.doc(manifest.cloud_days.find(c => c.day === day).name);
+    assert.ok(raw.pc.concat(raw.android).every(r => !r.graph_measurement || Array.isArray(r.graph_measurement.curve)), '日別原本は線を持つ');
+  }
+  // 閲覧ページの読み方（一覧・パーツ）と、線の読み取り口（?curves=）。
+  const read = url => plain(d.context.vpGet(base, 'meruhen', Object.fromEntries(new URL(url).searchParams)));
+  const check = plain(d.context.vpGet(base, 'meruhen', {check: '1'})).parts;
+  assert.ok(check.curve_parts.every(c => !('id' in c)), '一覧の公開版にファイルIDを出さない');
+  const storage = new Map(), cache = {get: key => storage.get(key), set: (key, value) => storage.set(key, value)};
+  const doc = await fetchViewerParts('https://example.test/exec', 'meruhen', check, read, cache);
+  assert.deepEqual(doc.curve_parts, check.curve_parts);
+  for (const r of doc.records.filter(r => r.graph_measurement?.curve_remote)) {
+    const refs = doc.curve_parts.filter(c => c.day === r.day);
+    const curves = new Map(await fetchViewerCurves('https://example.test/exec', 'meruhen', refs, read));
+    const original = rows.find(o => o.rack === r.rack);
+    assert.deepEqual(curves.get(r.graph_measurement.curve_index), original.graph_measurement.curve);
+    const net = meruhenNetDetail(original.graph_measurement, original.max_hold, original.games);
+    assert.deepEqual([r.graph_measurement.net_estimate.value, r.graph_measurement.net_estimate.needs_check], [net.value, net.needsCheck]);
+  }
+  assert.throws(() => d.context.vpGet(base, 'meruhen', {curves: 'f'.repeat(64)}), /グラフの線が更新/);
+  // 一覧に無い古い線パーツは7日後に整理し、使っているものは残す。
+  const used = d.files.find(f => f.id === manifest.curve_parts[0].id);
+  const stale = d.add('database-viewer-curves-meruhen-' + 'a'.repeat(64) + '.json', '{}');
+  stale.updated = used.updated = Date.now() - 8 * 86400000;
+  d.properties.delete('meruhenViewerPartsCleaned'); d.sync();
+  assert.equal(stale.trashed, true); assert.equal(used.trashed, false);
+});
+
+test('メルヘン履歴：線を外す前の一覧は、1回だけ日別原本から作り直す', () => {
+  const d = drive({history: true});
+  const rows = parity.records.slice(0, 5).map((r, i) => record(800 + i, '2026-10-0' + (1 + i), {games: r.games,
+    max_hold: r.max_hold ?? null, graph_measurement: r.graph_measurement}));
+  d.add('database-backup-android.json', backup(rows)); d.setup();
+  // 旧版のスクリプトが作った一覧（線を含むパーツ）にする。
+  const file = d.files.find(f => f.name === 'database-viewer-parts-meruhen.json');
+  const old = JSON.parse(file.text); delete old.curve_parts; d.replace(file, old);
+  d.properties.delete('meruhenCurvesSplit');
+  d.sync();
+  assert.equal(d.properties.get('meruhenCurvesSplit'), '1');
+  while (d.status().remaining) d.sync();
+  assert.equal(d.properties.get('meruhenHistoryRebuild') ?? null, null);
+  assert.ok(d.doc('database-viewer-parts-meruhen.json').curve_parts.length > 0);
+  const writes = d.writes.length; d.sync(); assert.equal(d.writes.length, writes, '作り直しは1回だけ');
+});

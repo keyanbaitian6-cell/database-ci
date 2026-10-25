@@ -626,12 +626,38 @@ function vpValidManifest(m, site) {
   if (m.version === 2 && (!Array.isArray(m.days) || new Set(m.days).size !== m.days.length ||
       m.days.some(day => !/^\d{4}-\d{2}-\d{2}$/.test(day)) ||
       [...days].some(([day, d]) => !m.days.includes(day) || d.bytes > VP_MAX_BYTES || d.count > 100000))) fail();
+  if (m.curve_parts !== undefined) {
+    if (m.version !== 2 || !Array.isArray(m.curve_parts) || m.curve_parts.length > 16384) fail();
+    const curves = new Set();
+    for (const c of m.curve_parts) {
+      if (!c || !/^[a-f0-9]{64}$/.test(c.hash) || curves.has(c.hash) || !/^\d{4}-\d{2}-\d{2}$/.test(c.day) ||
+          !m.days.includes(c.day) || !Number.isSafeInteger(c.count) || c.count < 1 ||
+          !Number.isSafeInteger(c.bytes) || c.bytes < 2 || c.bytes > VP_PART_BYTES) fail();
+      curves.add(c.hash);
+    }
+  }
   return m;
+}
+function vpPublicCurves(m) {
+  return m.curve_parts ? {curve_parts: m.curve_parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes}))} : {};
 }
 function vpPublic(m) {
   return {format: m.format, version: m.version, site: m.site, revision: m.revision,
     header: m.header, count: m.count, ...(m.version === 2 ? {days: m.days, history: true} : {}),
-    parts: m.parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes}))};
+    parts: m.parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes})), ...vpPublicCurves(m)};
+}
+// メルヘンのグラフの線は、閲覧用の記録から外して日ごとの線パーツに置く（2026-10-25、iPhoneのメモリ）。
+// 記録の graph_measurement.curve_index（その日の中の通し番号）と、線パーツの [番号, 線] を結ぶ。
+// 中身に日付を含め、別の日と同じ内容（同じハッシュ）にならないようにする。
+const VP_CURVES_FORMAT = 'database-viewer-curves';
+function vpCurveName(site, hash) { return 'database-viewer-curves-' + site + '-' + hash + '.json'; }
+function vpCurveRows(text, ref) {
+  const doc = JSON.parse(text), rows = doc && doc.curves;
+  if (!doc || doc.day !== ref.day || !Array.isArray(rows) || rows.length !== ref.count ||
+      rows.some(r => !Array.isArray(r) || r.length !== 2 || !Number.isSafeInteger(r[0]) || r[0] < 0 || !Array.isArray(r[1]))) {
+    throw new Error('グラフの線のデータが更新一覧と一致しません。');
+  }
+  return rows;
 }
 function vpRows(text, part) {
   const rows = JSON.parse(text);
@@ -667,6 +693,16 @@ function vpReadPart(site, p) {
   vpRows(text, p);
   return text;
 }
+function vpReadCurves(site, ref) {
+  const file = DriveApp.getFileById(ref.id);
+  if (file.isTrashed() || file.getName() !== vpCurveName(site, ref.hash) || file.getSize() !== ref.bytes) {
+    throw new Error('グラフの線のファイルが見つかりません。同期を再実行してください。');
+  }
+  const text = file.getBlob().getDataAsString('UTF-8');
+  if (vpHash(text) !== ref.hash) throw new Error('グラフの線のファイルが破損しています。');
+  vpCurveRows(text, ref);
+  return text;
+}
 function vpGet(latest, site, params) {
   // 旧形式だけの環境では追加の権限・設定は不要。
   const candidates = DriveApp.getFilesByName(vpManifestName(site));
@@ -681,8 +717,14 @@ function vpGet(latest, site, params) {
     manifest = m;
   }
   if (!manifest) {
-    if (params.parts) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
+    if (params.parts || params.curves) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
     return null;
+  }
+  // 台の画面を開いたときのグラフの線（一覧にある線パーツだけ。中身はハッシュで決まるので版は問わない）。
+  if (params.curves) {
+    const ref = (manifest.curve_parts || []).find(c => c.hash === params.curves);
+    if (!ref) throw new Error('グラフの線が更新されました。最新を読み込んでから開き直してください。');
+    return {format: VP_CURVES_FORMAT, hash: ref.hash, text: vpReadCurves(site, ref)};
   }
   if (params.check) return {format: 'drive-check', version: 'parts:' + manifest.revision, parts: vpPublic(manifest)};
   if (params.parts) {

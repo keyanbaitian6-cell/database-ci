@@ -10,6 +10,7 @@ import 'models.dart';
 import 'normal_day_context.dart';
 import 'normal_next_day_model.dart';
 import 'normal_day_context_note.dart';
+import 'remote_curve.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
 import 'setting_estimate_presentation.dart';
@@ -1325,8 +1326,15 @@ class SlumpTile extends StatelessWidget {
   const SlumpTile({super.key, required this.record});
   final SlotRecord record;
 
+  // 閲覧ページで線をまだ読んでいなければ、読む間は概略を薄く出す（remote_curve.dart）。
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => RemoteCurveBuilder(
+    record: record,
+    builder: (context, record, state, _) =>
+        fadeWhileLoading(state, _tile(record)),
+  );
+
+  Widget _tile(SlotRecord record) {
     final graph = record.graph!;
     // 保存時の画像がない古い記録（と、画像を読み込むまでの間）は、採点に
     // 使った4点から復元した概略で描く。

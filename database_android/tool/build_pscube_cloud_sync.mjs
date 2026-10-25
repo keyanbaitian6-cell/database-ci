@@ -2,6 +2,11 @@
 import {readFileSync, writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 
+// 共有カレンダーと同じ推定差枚の規則（share_viewer/net.mjs）を、名前がぶつからないよう包んで同梱する。
+export function netModule() {
+  const net = readFileSync(new URL('../../share_viewer/net.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+  return 'const VP_NET = (function () {\n' + net.replace(/^export /gm, '') + '\nreturn {meruhenNetDetail};\n})();\n';
+}
 export function buildCloudScript() {
   const parser = readFileSync(new URL('../web/pscube/data.mjs', import.meta.url), 'utf8');
   const slice = (start, end) => {
@@ -17,8 +22,8 @@ export function buildCloudScript() {
   const runtime = readFileSync(new URL('./pscube_cloud_sync_runtime.js', import.meta.url), 'utf8');
   return '// 生成元: tool/build_pscube_cloud_sync.mjs。共通パーサーの検証・統合規則を使用。\n' +
     '// 初回: 別のApps Scriptプロジェクトに全文を貼り、setupPscubeCloudSync を実行。\n' +
-    '// 履歴モードの移行はVIEWER_HISTORY_SYNC.mdを参照。\n\n' + runtime + '\n' + core.trimEnd() + '\n' + ['viewer_parts_core.js', 'viewer_parts_drive.js', 'viewer_parts_publish.js', 'viewer_history_cloud.js', 'viewer_history_adapters.js']
-      .map(name => readFileSync(new URL('./' + name, import.meta.url), 'utf8').replaceAll('\r\n', '\n')).join('\n');
+    '// 履歴モードの移行はVIEWER_HISTORY_SYNC.mdを参照。\n\n' + runtime + '\n' + core.trimEnd() + '\n' + ['viewer_parts_core.js', 'viewer_parts_drive.js', 'viewer_parts_publish.js', 'viewer_history_cloud.js', 'viewer_history_adapters.js', 'viewer_curves_split.js']
+      .map(name => readFileSync(new URL('./' + name, import.meta.url), 'utf8').replaceAll('\r\n', '\n')).join('\n') + '\n' + netModule();
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   writeFileSync(new URL('./pscube_cloud_sync.gs', import.meta.url), buildCloudScript());

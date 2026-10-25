@@ -27,7 +27,12 @@ class ViewerData {
     this.skipped = 0,
     this.keptOlder = 0,
     this.syncStatus,
+    this.curveParts = const [],
   });
+
+  /// メルヘンのグラフの線パーツの参照（日付・ハッシュ・件数・大きさ）。台の画面を開いたときに
+  /// その日の分だけ読む（remote_curve.dart、2026-10-25）。
+  final List<Map<String, Object?>> curveParts;
 
   final List<SlotRecord> records;
 
@@ -135,8 +140,25 @@ class ViewerData {
       syncStatus: validateSyncStatus(
         decoded['sync_status'] ?? header['sync_status'],
       ),
+      curveParts: pscube ? const [] : _curveParts(header['curve_parts']),
     );
   }
+
+  static List<Map<String, Object?>> _curveParts(Object? raw) => [
+    if (raw is List)
+      for (final c in raw)
+        if (c is Map &&
+            c['day'] is String &&
+            c['hash'] is String &&
+            c['count'] is int &&
+            c['bytes'] is int)
+          {
+            'day': c['day'],
+            'hash': c['hash'],
+            'count': c['count'],
+            'bytes': c['bytes'],
+          },
+  ];
 
   /// 画面に出すイベント（「イベントを消した」印は出さない）。
   DateEvent? dateEventFor(String store, String day) {

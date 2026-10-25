@@ -25,7 +25,7 @@ function vhImmutable(folder, name, text, write) {
   return {id: file.getId(), name, hash, bytes, created};
 }
 function vhDayParts(folder, site, day, rows, write) {
-  const parts = []; let batch = [], size = 2, written = 0, writtenBytes = 0;
+  const parts = [], curveParts = []; let batch = [], size = 2, written = 0, writtenBytes = 0;
   const flush = () => {
     if (!batch.length) return;
     const text = '[' + batch.join(',') + ']', hash = vpHash(text), name = vpPartName(site, hash);
@@ -35,13 +35,35 @@ function vhDayParts(folder, site, day, rows, write) {
     if (ref.created) { written++; writtenBytes += ref.bytes; }
     batch = []; size = 2;
   };
-  for (const row of rows.map(vpCanonical).sort()) {
+  // メルヘンは線を外した軽い記録を日別パーツに、線は線パーツに置く（viewer_curves_split.js）。
+  // 1本で線パーツの上限を超える線は外さない。
+  const split = site === 'meruhen'
+    ? vpSplitCurves(rows, curve => vhBytes(vpCanonical(curve)) + 64 <= VP_PART_BYTES)
+    : {rows, curves: []};
+  for (const row of split.rows.map(vpCanonical).sort()) {
     const bytes = vhBytes(row);
     if (bytes + 2 > VP_PART_BYTES) throw new Error('1台の閲覧用データが1MiBを超えています。');
     if (size + bytes + (batch.length ? 1 : 0) > VP_PART_BYTES) flush();
     size += bytes + (batch.length ? 1 : 0); batch.push(row);
   }
-  flush(); return {parts, written, writtenBytes};
+  flush();
+  let curveBatch = [], curveSize = 0;
+  const head = '{"curves":[', tail = '],"day":' + JSON.stringify(day) + '}';
+  const flushCurves = () => {
+    if (!curveBatch.length) return;
+    const text = head + curveBatch.join(',') + tail, hash = vpHash(text);
+    const ref = vhImmutable(folder, vpCurveName(site, hash), text, write);
+    curveParts.push({day, hash, count: curveBatch.length, bytes: ref.bytes, id: ref.id});
+    if (ref.created) { written++; writtenBytes += ref.bytes; }
+    curveBatch = []; curveSize = 0;
+  };
+  for (const entry of split.curves) {
+    const text = vpCanonical(entry), bytes = vhBytes(text);
+    if (vhBytes(head + tail) + curveSize + bytes + (curveBatch.length ? 1 : 0) > VP_PART_BYTES) flushCurves();
+    curveSize += bytes + (curveBatch.length ? 1 : 0); curveBatch.push(text);
+  }
+  flushCurves();
+  return {parts, curveParts, written, writtenBytes};
 }
 
 function vhSync(folder, base, props, adapter, startedAt) {
@@ -58,13 +80,22 @@ function vhSync(folder, base, props, adapter, startedAt) {
   if (!m.history_baselines) m.history_baselines = {};
   if (!m.cloud_days) m.cloud_days = [];
   const days = new Map(m.cloud_days.map(d => [d.day, d]));
-  const parts = new Map();
+  const parts = new Map(), curves = new Map();
   for (const p of m.parts) { if (!parts.has(p.day)) parts.set(p.day, []); parts.get(p.day).push(p); }
+  for (const c of m.curve_parts || []) { if (!curves.has(c.day)) curves.set(c.day, []); curves.get(c.day).push(c); }
   const loadDay = day => {
     if (days.has(day)) return vhRead(days.get(day));
+    // 日別原本の無い古い日は閲覧用パーツから戻す。外した線も戻す。
     const rows = (parts.get(day) || []).flatMap(p => vpRows(vpReadPart(site, p), p));
-    return adapter.fromViewer(day, m.header, rows);
+    const saved = (curves.get(day) || []).flatMap(c => vpCurveRows(vpReadCurves(site, c), c));
+    return adapter.fromViewer(day, m.header, vpRestoreCurves(rows, saved));
   };
+  // 線を外す前に作った閲覧用パーツは、日別原本から1回だけ作り直す（30分ごとに24日分ずつ）。
+  // 新しく作る一覧は最初から線を外すので作り直さない。
+  if (site === 'meruhen' && !props.getProperty('meruhenCurvesSplit')) {
+    if (old && old.parts.length) { props.setProperty(site + 'HistoryRebuild', '1'); m.history_rebuild_next = 0; }
+    props.setProperty('meruhenCurvesSplit', '1');
+  }
   // 移行元・PC再出力も版が変わった場合だけ読む。入力原本は変更・削除しない。
   const inputs = adapter.inputs();
   const failures = adapter.failures();
@@ -85,7 +116,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
     const probes=site==='pscube' ? value.data.records.filter(r=>r.net_capture?.probe) : [];
     const probeInfo=probes.length ? {probe_bytes:probes.reduce((n,r)=>n+JSON.stringify(r.net_capture.probe).length,0),
       probe_next_expiry:Math.min(...probes.map(r=>Date.parse(r.net_capture.checked_at)+NET_PROBE_DAYS*86400000))} : {};
-    days.set(day,{...rawRef,day,site,count:rows.length,...probeInfo});parts.set(day,published.parts);
+    days.set(day,{...rawRef,day,site,count:rows.length,...probeInfo});parts.set(day,published.parts);curves.set(day,published.curveParts);
     written+=published.written;bytes+=published.writtenBytes;changedDays++;
     return true;
   };
@@ -139,12 +170,15 @@ function vhSync(folder, base, props, adapter, startedAt) {
       if (changedDays >= 24 || Date.now() - startedAt > 150000) break;
       const day = ordered[next], value = vhRead(days.get(day));
       const published = vhDayParts(folder, site, day, adapter.viewer(value), write);
-      parts.set(day, published.parts); written += published.written; bytes += published.writtenBytes; changedDays++;
+      parts.set(day, published.parts); curves.set(day, published.curveParts);
+      written += published.written; bytes += published.writtenBytes; changedDays++;
     }
     m.history_rebuild_next = next < ordered.length ? next : null;
   }
   if (base && vpVersion(base) !== baseVersion) throw new Error('PCの閲覧用が処理中に変更されました。次回やり直します。');
   m.parts = [...parts].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, p]) => p);
+  const curveParts = [...curves].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, c]) => c);
+  if (curveParts.length) m.curve_parts = curveParts; else delete m.curve_parts;
   m.cloud_days = [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
   m.days = [...new Set([...parts.keys(), ...days.keys()])].sort();
   m.count = m.parts.reduce((n, p) => n + p.count, 0);
@@ -158,9 +192,11 @@ function vhSync(folder, base, props, adapter, startedAt) {
     ...(site==='pscube' ? {supplement_supported:true} : {}),
     ...((changedDays || processed || !health?.processed_at) ? {processed_at:new Date().toISOString()} : {}),...(supplement ? {supplement} : {})};
   const {exported_at, ...stableHeader} = m.header;
-  m.signature = vpHash(vpCanonical({parts: m.parts.map(({day, hash}) => ({day, hash})), days: m.days, header: stableHeader}));
+  m.signature = vpHash(vpCanonical({parts: m.parts.map(({day, hash}) => ({day, hash})), days: m.days, header: stableHeader,
+    ...(m.curve_parts ? {curves: m.curve_parts.map(({day, hash}) => ({day, hash}))} : {})}));
   if (old?.signature !== m.signature) m.header.exported_at = new Date(Math.max(Date.now(), Date.parse(old?.header?.exported_at || '') + 1 || 0)).toISOString();
-  m.revision = vpHash(vpCanonical({base: m.base, parts: m.parts, days: m.days, header: m.header}));
+  m.revision = vpHash(vpCanonical({base: m.base, parts: m.parts, days: m.days, header: m.header,
+    ...(m.curve_parts ? {curve_parts: m.curve_parts} : {})}));
   vpValidManifest(m, site);
   const text = JSON.stringify(m);
   // 一覧だけに独立した上限。レコード総容量の48MiB制限は適用しない。

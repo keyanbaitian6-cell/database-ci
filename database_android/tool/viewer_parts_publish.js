@@ -70,8 +70,8 @@ function vpPublish(folder, base, site, doc, write, expectedBase) {
 // 一覧確定後の保守であり、失敗しても確定済みの閲覧データは有効。
 function vpPrune(folder, site) {
   const manifest = vpReadManifest(vpUnique(folder, vpManifestName(site)), site);
-  const active = new Set(manifest.parts.map(p => p.id));
-  const pattern = new RegExp('^database-viewer-part-' + site + '-[a-f0-9]{64}\\.json$');
+  const active = new Set([...manifest.parts, ...(manifest.curve_parts || [])].map(p => p.id));
+  const pattern = new RegExp('^database-viewer-(part|curves)-' + site + '-[a-f0-9]{64}\\.json$');
   const files = folder.getFiles(), cutoff = Date.now() - 7 * 86400000;
   let removed = 0;
   while (files.hasNext() && removed < 200) {

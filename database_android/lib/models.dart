@@ -138,7 +138,38 @@ class GraphMeasurement {
     this.curve,
     this.storedPreview = false,
     this.storedCurve = false,
+    this.remoteCurve = false,
+    this.curveIndex,
+    this.netEstimate,
   });
+
+  /// 閲覧ページ：線はGoogleの線パーツにあり、台の画面を開いたときだけ読む（2026-10-25）。
+  /// [curveIndex] はその日の線パーツの中の通し番号、[netEstimate] は線があるうちに
+  /// Googleで計算した推定差枚（`tool/viewer_curves_split.js`）。
+  final bool remoteCurve;
+  final int? curveIndex;
+  final MeruhenNetEstimate? netEstimate;
+
+  /// 読んできた線を入れた写し。差枚はこの線から計算し直す。
+  GraphMeasurement withCurve(List<List<double>> curve) => GraphMeasurement(
+    baselineY: baselineY,
+    peakY: peakY,
+    troughY: troughY,
+    endY: endY,
+    baselineX: baselineX,
+    peakX: peakX,
+    troughX: troughX,
+    endX: endX,
+    previewPng: previewPng,
+    previewWidth: previewWidth,
+    previewHeight: previewHeight,
+    curve: curve,
+    storedPreview: storedPreview,
+    storedCurve: storedCurve,
+    remoteCurve: remoteCurve,
+    curveIndex: curveIndex,
+    netEstimate: netEstimate,
+  );
 
   /// 画像・曲線はDBの別の列にだけ置き、画面用の一覧には読み込まない
   /// （記録が増えるとメモリに載り切らなくなるため）。これらは「別の列に
@@ -168,6 +199,9 @@ class GraphMeasurement {
     previewHeight: previewHeight,
     storedPreview: hasPreview,
     storedCurve: curve != null || storedCurve,
+    remoteCurve: remoteCurve,
+    curveIndex: curveIndex,
+    netEstimate: netEstimate,
   );
 
   /// The exact SVG curve as [x, y] pairs (kept so new indicators can be
@@ -205,6 +239,12 @@ class GraphMeasurement {
         },
         storedPreview: json['preview_stored'] == true,
         storedCurve: json['curve_stored'] == true,
+        remoteCurve: json['curve_remote'] == true,
+        curveIndex: switch (json['curve_index']) {
+          final int index when index >= 0 => index,
+          _ => null,
+        },
+        netEstimate: MeruhenNetEstimate.tryParse(json['net_estimate']),
       );
 
   Map<String, dynamic> toJson() => {
@@ -222,6 +262,9 @@ class GraphMeasurement {
     if (curve != null) 'curve': curve,
     if (storedPreview && previewPng == null) 'preview_stored': true,
     if (storedCurve && curve == null) 'curve_stored': true,
+    if (remoteCurve) 'curve_remote': true,
+    if (curveIndex != null) 'curve_index': curveIndex,
+    if (netEstimate != null) 'net_estimate': netEstimate!.toJson(),
     'method': 'android-four-point',
   };
 
@@ -240,6 +283,46 @@ class GraphMeasurement {
 /// 描く線は変わらない）。閲覧ページは起動のたびに8,000台以上の線を読むが、
 /// 描くのは表示する台だけなので、全部を先に直すと時間と電池を使う。
 /// 形は読み込みの時点で確かめ、壊れた線は今までどおりそこで失敗させる。
+/// Googleで線から計算した推定差枚と、計算に使った最大持玉・回転数（Dartと同じく整数）。
+/// 記録の最大持玉・回転数が同じときだけ使う。
+class MeruhenNetEstimate {
+  const MeruhenNetEstimate({
+    required this.value,
+    required this.needsCheck,
+    required this.maxHold,
+    required this.games,
+  });
+  final int? value;
+  final bool needsCheck;
+  final int? maxHold;
+  final int games;
+
+  static MeruhenNetEstimate? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final value = raw['value'], check = raw['needs_check'];
+    final maxHold = raw['max_hold'], games = raw['games'];
+    if ((value != null && value is! int) ||
+        check is! bool ||
+        (maxHold != null && maxHold is! int) ||
+        games is! int) {
+      return null;
+    }
+    return MeruhenNetEstimate(
+      value: value as int?,
+      needsCheck: check,
+      maxHold: maxHold as int?,
+      games: games,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'value': value,
+    'needs_check': needsCheck,
+    'max_hold': maxHold,
+    'games': games,
+  };
+}
+
 class SavedCurve extends ListBase<List<double>> {
   SavedCurve(List raw) : _raw = raw {
     for (final point in raw) {
@@ -346,6 +429,15 @@ class SlotRecord {
   ({int? value, bool needsCheck})? get _meruhenNet {
     final g = graph;
     if (isPscube || g == null || meruhenNetHidden(store, day)) return null;
+    if (g.remoteCurve && g.curve == null) {
+      // 線をまだ読んでいない閲覧ページ：線があるうちに計算した値をそのまま使う。最大持玉・回転数が
+      // 計算時と違う（別の記録とまとめた）ときは、線なしで計算し直すと値がずれるため出さない。
+      final e = g.netEstimate;
+      if (e == null || e.maxHold != maxHold || e.games != games) {
+        return (value: null, needsCheck: false);
+      }
+      return (value: e.value, needsCheck: e.needsCheck);
+    }
     return meruhenNetEstimateDetail(
       baselineY: g.baselineY,
       peakY: g.peakY,

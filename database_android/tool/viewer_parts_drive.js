@@ -24,6 +24,16 @@ function vpReadPart(site, p) {
   vpRows(text, p);
   return text;
 }
+function vpReadCurves(site, ref) {
+  const file = DriveApp.getFileById(ref.id);
+  if (file.isTrashed() || file.getName() !== vpCurveName(site, ref.hash) || file.getSize() !== ref.bytes) {
+    throw new Error('グラフの線のファイルが見つかりません。同期を再実行してください。');
+  }
+  const text = file.getBlob().getDataAsString('UTF-8');
+  if (vpHash(text) !== ref.hash) throw new Error('グラフの線のファイルが破損しています。');
+  vpCurveRows(text, ref);
+  return text;
+}
 function vpGet(latest, site, params) {
   // 旧形式だけの環境では追加の権限・設定は不要。
   const candidates = DriveApp.getFilesByName(vpManifestName(site));
@@ -38,8 +48,14 @@ function vpGet(latest, site, params) {
     manifest = m;
   }
   if (!manifest) {
-    if (params.parts) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
+    if (params.parts || params.curves) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
     return null;
+  }
+  // 台の画面を開いたときのグラフの線（一覧にある線パーツだけ。中身はハッシュで決まるので版は問わない）。
+  if (params.curves) {
+    const ref = (manifest.curve_parts || []).find(c => c.hash === params.curves);
+    if (!ref) throw new Error('グラフの線が更新されました。最新を読み込んでから開き直してください。');
+    return {format: VP_CURVES_FORMAT, hash: ref.hash, text: vpReadCurves(site, ref)};
   }
   if (params.check) return {format: 'drive-check', version: 'parts:' + manifest.revision, parts: vpPublic(manifest)};
   if (params.parts) {

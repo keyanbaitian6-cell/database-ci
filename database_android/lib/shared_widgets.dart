@@ -10,6 +10,7 @@ import 'machine_sections.dart';
 import 'models.dart';
 import 'normal_day_context.dart';
 import 'normal_day_context_note.dart';
+import 'remote_curve.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
 import 'setting_estimate_presentation.dart';
@@ -408,14 +409,20 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
                   ),
               ],
             )
-          : _SavedGraphBody(
+          // 閲覧ページで線をまだ読んでいなければ、ここで読む（remote_curve.dart）。
+          : RemoteCurveBuilder(
               record: record,
-              graph: graph,
-              score: score,
-              allRecords: allRecords,
-              controller: controller,
-              bottom: bottom,
-              onOpenDay: widget.onOpenDay,
+              builder: (context, record, state, retry) => _SavedGraphBody(
+                record: record,
+                graph: record.graph!,
+                score: score,
+                allRecords: allRecords,
+                controller: controller,
+                bottom: bottom,
+                onOpenDay: widget.onOpenDay,
+                curveState: state,
+                onRetryCurve: retry,
+              ),
             ),
     );
   }
@@ -814,9 +821,13 @@ class _SavedGraphBody extends StatelessWidget {
     this.allRecords,
     this.controller,
     this.onOpenDay,
+    this.curveState = RemoteCurveState.ready,
+    this.onRetryCurve,
   });
   final SlotRecord record;
   final GraphMeasurement graph;
+  final RemoteCurveState curveState;
+  final VoidCallback? onRetryCurve;
   final ScoreResult? score;
   final List<SlotRecord>? allRecords;
   final ScrollController? controller;
@@ -870,44 +881,55 @@ class _SavedGraphBody extends StatelessWidget {
               children: [
                 AspectRatio(
                   aspectRatio: width / height,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (hasImage)
-                        // 画像は一覧に載せていないので、表示するときに読む。
-                        StoredGraphImage(
-                          record: record,
-                          fallback: CustomPaint(
+                  child: fadeWhileLoading(
+                    curveState,
+                    Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (hasImage)
+                          // 画像は一覧に載せていないので、表示するときに読む。
+                          StoredGraphImage(
+                            record: record,
+                            fallback: CustomPaint(
+                              painter: ReconstructedGraphPainter(
+                                points: points,
+                                sourceWidth: width,
+                                sourceHeight: height,
+                              ),
+                            ),
+                          )
+                        else if (curveSize != null)
+                          CustomPaint(
+                            painter: CurveGraphPainter(
+                              curve: graph.curve!,
+                              baselineY: graph.baselineY,
+                              sourceWidth: width,
+                              sourceHeight: height,
+                            ),
+                          )
+                        else
+                          CustomPaint(
                             painter: ReconstructedGraphPainter(
                               points: points,
                               sourceWidth: width,
                               sourceHeight: height,
                             ),
                           ),
-                        )
-                      else if (curveSize != null)
-                        CustomPaint(
-                          painter: CurveGraphPainter(
-                            curve: graph.curve!,
-                            baselineY: graph.baselineY,
-                            sourceWidth: width,
-                            sourceHeight: height,
-                          ),
-                        )
-                      else
-                        CustomPaint(
-                          painter: ReconstructedGraphPainter(
-                            points: points,
-                            sourceWidth: width,
-                            sourceHeight: height,
-                          ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
+                if (curveState == RemoteCurveState.failed &&
+                    onRetryCurve != null)
+                  TextButton(
+                    onPressed: onRetryCurve,
+                    child: const Text('グラフの線を読み込めませんでした（もう一度読む）'),
+                  ),
                 Text(
-                  hasImage
+                  curveState == RemoteCurveState.loading
+                      ? 'グラフの線を読み込んでいます。'
+                      : hasImage
                       ? '保存時のグラフです。'
                       : curveSize != null
                       ? '保存時のグラフの線から描いたグラフです。'

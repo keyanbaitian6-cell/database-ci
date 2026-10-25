@@ -948,12 +948,38 @@ function vpValidManifest(m, site) {
   if (m.version === 2 && (!Array.isArray(m.days) || new Set(m.days).size !== m.days.length ||
       m.days.some(day => !/^\d{4}-\d{2}-\d{2}$/.test(day)) ||
       [...days].some(([day, d]) => !m.days.includes(day) || d.bytes > VP_MAX_BYTES || d.count > 100000))) fail();
+  if (m.curve_parts !== undefined) {
+    if (m.version !== 2 || !Array.isArray(m.curve_parts) || m.curve_parts.length > 16384) fail();
+    const curves = new Set();
+    for (const c of m.curve_parts) {
+      if (!c || !/^[a-f0-9]{64}$/.test(c.hash) || curves.has(c.hash) || !/^\d{4}-\d{2}-\d{2}$/.test(c.day) ||
+          !m.days.includes(c.day) || !Number.isSafeInteger(c.count) || c.count < 1 ||
+          !Number.isSafeInteger(c.bytes) || c.bytes < 2 || c.bytes > VP_PART_BYTES) fail();
+      curves.add(c.hash);
+    }
+  }
   return m;
+}
+function vpPublicCurves(m) {
+  return m.curve_parts ? {curve_parts: m.curve_parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes}))} : {};
 }
 function vpPublic(m) {
   return {format: m.format, version: m.version, site: m.site, revision: m.revision,
     header: m.header, count: m.count, ...(m.version === 2 ? {days: m.days, history: true} : {}),
-    parts: m.parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes}))};
+    parts: m.parts.map(({hash, day, count, bytes}) => ({hash, day, count, bytes})), ...vpPublicCurves(m)};
+}
+// メルヘンのグラフの線は、閲覧用の記録から外して日ごとの線パーツに置く（2026-10-25、iPhoneのメモリ）。
+// 記録の graph_measurement.curve_index（その日の中の通し番号）と、線パーツの [番号, 線] を結ぶ。
+// 中身に日付を含め、別の日と同じ内容（同じハッシュ）にならないようにする。
+const VP_CURVES_FORMAT = 'database-viewer-curves';
+function vpCurveName(site, hash) { return 'database-viewer-curves-' + site + '-' + hash + '.json'; }
+function vpCurveRows(text, ref) {
+  const doc = JSON.parse(text), rows = doc && doc.curves;
+  if (!doc || doc.day !== ref.day || !Array.isArray(rows) || rows.length !== ref.count ||
+      rows.some(r => !Array.isArray(r) || r.length !== 2 || !Number.isSafeInteger(r[0]) || r[0] < 0 || !Array.isArray(r[1]))) {
+    throw new Error('グラフの線のデータが更新一覧と一致しません。');
+  }
+  return rows;
 }
 function vpRows(text, part) {
   const rows = JSON.parse(text);
@@ -989,6 +1015,16 @@ function vpReadPart(site, p) {
   vpRows(text, p);
   return text;
 }
+function vpReadCurves(site, ref) {
+  const file = DriveApp.getFileById(ref.id);
+  if (file.isTrashed() || file.getName() !== vpCurveName(site, ref.hash) || file.getSize() !== ref.bytes) {
+    throw new Error('グラフの線のファイルが見つかりません。同期を再実行してください。');
+  }
+  const text = file.getBlob().getDataAsString('UTF-8');
+  if (vpHash(text) !== ref.hash) throw new Error('グラフの線のファイルが破損しています。');
+  vpCurveRows(text, ref);
+  return text;
+}
 function vpGet(latest, site, params) {
   // 旧形式だけの環境では追加の権限・設定は不要。
   const candidates = DriveApp.getFilesByName(vpManifestName(site));
@@ -1003,8 +1039,14 @@ function vpGet(latest, site, params) {
     manifest = m;
   }
   if (!manifest) {
-    if (params.parts) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
+    if (params.parts || params.curves) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
     return null;
+  }
+  // 台の画面を開いたときのグラフの線（一覧にある線パーツだけ。中身はハッシュで決まるので版は問わない）。
+  if (params.curves) {
+    const ref = (manifest.curve_parts || []).find(c => c.hash === params.curves);
+    if (!ref) throw new Error('グラフの線が更新されました。最新を読み込んでから開き直してください。');
+    return {format: VP_CURVES_FORMAT, hash: ref.hash, text: vpReadCurves(site, ref)};
   }
   if (params.check) return {format: 'drive-check', version: 'parts:' + manifest.revision, parts: vpPublic(manifest)};
   if (params.parts) {
@@ -1097,8 +1139,8 @@ function vpPublish(folder, base, site, doc, write, expectedBase) {
 // 一覧確定後の保守であり、失敗しても確定済みの閲覧データは有効。
 function vpPrune(folder, site) {
   const manifest = vpReadManifest(vpUnique(folder, vpManifestName(site)), site);
-  const active = new Set(manifest.parts.map(p => p.id));
-  const pattern = new RegExp('^database-viewer-part-' + site + '-[a-f0-9]{64}\\.json$');
+  const active = new Set([...manifest.parts, ...(manifest.curve_parts || [])].map(p => p.id));
+  const pattern = new RegExp('^database-viewer-(part|curves)-' + site + '-[a-f0-9]{64}\\.json$');
   const files = folder.getFiles(), cutoff = Date.now() - 7 * 86400000;
   let removed = 0;
   while (files.hasNext() && removed < 200) {
@@ -1143,7 +1185,7 @@ function vhImmutable(folder, name, text, write) {
   return {id: file.getId(), name, hash, bytes, created};
 }
 function vhDayParts(folder, site, day, rows, write) {
-  const parts = []; let batch = [], size = 2, written = 0, writtenBytes = 0;
+  const parts = [], curveParts = []; let batch = [], size = 2, written = 0, writtenBytes = 0;
   const flush = () => {
     if (!batch.length) return;
     const text = '[' + batch.join(',') + ']', hash = vpHash(text), name = vpPartName(site, hash);
@@ -1153,13 +1195,35 @@ function vhDayParts(folder, site, day, rows, write) {
     if (ref.created) { written++; writtenBytes += ref.bytes; }
     batch = []; size = 2;
   };
-  for (const row of rows.map(vpCanonical).sort()) {
+  // メルヘンは線を外した軽い記録を日別パーツに、線は線パーツに置く（viewer_curves_split.js）。
+  // 1本で線パーツの上限を超える線は外さない。
+  const split = site === 'meruhen'
+    ? vpSplitCurves(rows, curve => vhBytes(vpCanonical(curve)) + 64 <= VP_PART_BYTES)
+    : {rows, curves: []};
+  for (const row of split.rows.map(vpCanonical).sort()) {
     const bytes = vhBytes(row);
     if (bytes + 2 > VP_PART_BYTES) throw new Error('1台の閲覧用データが1MiBを超えています。');
     if (size + bytes + (batch.length ? 1 : 0) > VP_PART_BYTES) flush();
     size += bytes + (batch.length ? 1 : 0); batch.push(row);
   }
-  flush(); return {parts, written, writtenBytes};
+  flush();
+  let curveBatch = [], curveSize = 0;
+  const head = '{"curves":[', tail = '],"day":' + JSON.stringify(day) + '}';
+  const flushCurves = () => {
+    if (!curveBatch.length) return;
+    const text = head + curveBatch.join(',') + tail, hash = vpHash(text);
+    const ref = vhImmutable(folder, vpCurveName(site, hash), text, write);
+    curveParts.push({day, hash, count: curveBatch.length, bytes: ref.bytes, id: ref.id});
+    if (ref.created) { written++; writtenBytes += ref.bytes; }
+    curveBatch = []; curveSize = 0;
+  };
+  for (const entry of split.curves) {
+    const text = vpCanonical(entry), bytes = vhBytes(text);
+    if (vhBytes(head + tail) + curveSize + bytes + (curveBatch.length ? 1 : 0) > VP_PART_BYTES) flushCurves();
+    curveSize += bytes + (curveBatch.length ? 1 : 0); curveBatch.push(text);
+  }
+  flushCurves();
+  return {parts, curveParts, written, writtenBytes};
 }
 
 function vhSync(folder, base, props, adapter, startedAt) {
@@ -1176,13 +1240,22 @@ function vhSync(folder, base, props, adapter, startedAt) {
   if (!m.history_baselines) m.history_baselines = {};
   if (!m.cloud_days) m.cloud_days = [];
   const days = new Map(m.cloud_days.map(d => [d.day, d]));
-  const parts = new Map();
+  const parts = new Map(), curves = new Map();
   for (const p of m.parts) { if (!parts.has(p.day)) parts.set(p.day, []); parts.get(p.day).push(p); }
+  for (const c of m.curve_parts || []) { if (!curves.has(c.day)) curves.set(c.day, []); curves.get(c.day).push(c); }
   const loadDay = day => {
     if (days.has(day)) return vhRead(days.get(day));
+    // 日別原本の無い古い日は閲覧用パーツから戻す。外した線も戻す。
     const rows = (parts.get(day) || []).flatMap(p => vpRows(vpReadPart(site, p), p));
-    return adapter.fromViewer(day, m.header, rows);
+    const saved = (curves.get(day) || []).flatMap(c => vpCurveRows(vpReadCurves(site, c), c));
+    return adapter.fromViewer(day, m.header, vpRestoreCurves(rows, saved));
   };
+  // 線を外す前に作った閲覧用パーツは、日別原本から1回だけ作り直す（30分ごとに24日分ずつ）。
+  // 新しく作る一覧は最初から線を外すので作り直さない。
+  if (site === 'meruhen' && !props.getProperty('meruhenCurvesSplit')) {
+    if (old && old.parts.length) { props.setProperty(site + 'HistoryRebuild', '1'); m.history_rebuild_next = 0; }
+    props.setProperty('meruhenCurvesSplit', '1');
+  }
   // 移行元・PC再出力も版が変わった場合だけ読む。入力原本は変更・削除しない。
   const inputs = adapter.inputs();
   const failures = adapter.failures();
@@ -1203,7 +1276,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
     const probes=site==='pscube' ? value.data.records.filter(r=>r.net_capture?.probe) : [];
     const probeInfo=probes.length ? {probe_bytes:probes.reduce((n,r)=>n+JSON.stringify(r.net_capture.probe).length,0),
       probe_next_expiry:Math.min(...probes.map(r=>Date.parse(r.net_capture.checked_at)+NET_PROBE_DAYS*86400000))} : {};
-    days.set(day,{...rawRef,day,site,count:rows.length,...probeInfo});parts.set(day,published.parts);
+    days.set(day,{...rawRef,day,site,count:rows.length,...probeInfo});parts.set(day,published.parts);curves.set(day,published.curveParts);
     written+=published.written;bytes+=published.writtenBytes;changedDays++;
     return true;
   };
@@ -1257,12 +1330,15 @@ function vhSync(folder, base, props, adapter, startedAt) {
       if (changedDays >= 24 || Date.now() - startedAt > 150000) break;
       const day = ordered[next], value = vhRead(days.get(day));
       const published = vhDayParts(folder, site, day, adapter.viewer(value), write);
-      parts.set(day, published.parts); written += published.written; bytes += published.writtenBytes; changedDays++;
+      parts.set(day, published.parts); curves.set(day, published.curveParts);
+      written += published.written; bytes += published.writtenBytes; changedDays++;
     }
     m.history_rebuild_next = next < ordered.length ? next : null;
   }
   if (base && vpVersion(base) !== baseVersion) throw new Error('PCの閲覧用が処理中に変更されました。次回やり直します。');
   m.parts = [...parts].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, p]) => p);
+  const curveParts = [...curves].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, c]) => c);
+  if (curveParts.length) m.curve_parts = curveParts; else delete m.curve_parts;
   m.cloud_days = [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
   m.days = [...new Set([...parts.keys(), ...days.keys()])].sort();
   m.count = m.parts.reduce((n, p) => n + p.count, 0);
@@ -1276,9 +1352,11 @@ function vhSync(folder, base, props, adapter, startedAt) {
     ...(site==='pscube' ? {supplement_supported:true} : {}),
     ...((changedDays || processed || !health?.processed_at) ? {processed_at:new Date().toISOString()} : {}),...(supplement ? {supplement} : {})};
   const {exported_at, ...stableHeader} = m.header;
-  m.signature = vpHash(vpCanonical({parts: m.parts.map(({day, hash}) => ({day, hash})), days: m.days, header: stableHeader}));
+  m.signature = vpHash(vpCanonical({parts: m.parts.map(({day, hash}) => ({day, hash})), days: m.days, header: stableHeader,
+    ...(m.curve_parts ? {curves: m.curve_parts.map(({day, hash}) => ({day, hash}))} : {})}));
   if (old?.signature !== m.signature) m.header.exported_at = new Date(Math.max(Date.now(), Date.parse(old?.header?.exported_at || '') + 1 || 0)).toISOString();
-  m.revision = vpHash(vpCanonical({base: m.base, parts: m.parts, days: m.days, header: m.header}));
+  m.revision = vpHash(vpCanonical({base: m.base, parts: m.parts, days: m.days, header: m.header,
+    ...(m.curve_parts ? {curve_parts: m.curve_parts} : {})}));
   vpValidManifest(m, site);
   const text = JSON.stringify(m);
   // 一覧だけに独立した上限。レコード総容量の48MiB制限は適用しない。
@@ -1482,3 +1560,145 @@ function vhPscube(folder, base, props, startedAt) {
       for (const line of pscubeCloudStatusLines(status, Object.values(f.reasons), Object.keys(f.versions).length)) console.log(line); },
   }, startedAt);
 }
+
+// メルヘンの閲覧用：グラフの線を記録から外し、線があるうちに推定差枚を計算して添える（2026-10-25）。
+// iPhoneの閲覧ページが起動のたびに全日分の線をメモリに載せて落ちていたため。線の正本は日別原本に残す。
+// 差枚は閲覧ページ（Dart の meruhenNetEstimateDetail）と同じ入力で計算する。Dart は最大持玉・回転数を
+// 整数に直してから使い、共有カレンダー（net.mjs）は元の値を使うため、両方が同じ値になる記録
+// （最大持玉・回転数が整数、座標がすべて有限の数）だけ線を外す。それ以外は今までどおり線を残す。
+function vpCurveSplittable(r) {
+  const g = r && r.graph_measurement, finite = v => typeof v === 'number' && Number.isFinite(v);
+  if (!g || typeof g !== 'object' || Array.isArray(g) || !Array.isArray(g.curve) || g.curve.length < 2) return false;
+  if (!['baseline_y', 'peak_y', 'end_y'].every(k => finite(g[k]))) return false;
+  if (['trough_y', 'baseline_x', 'peak_x', 'trough_x', 'end_x'].some(k => g[k] != null && !finite(g[k]))) return false;
+  if (g.curve.some(p => !Array.isArray(p) || p.length < 2 || !p.every(finite))) return false;
+  if (r.max_hold != null && !Number.isSafeInteger(r.max_hold)) return false;
+  if (r.games != null && !Number.isSafeInteger(r.games)) return false;
+  return !('net_estimate' in g) && !('curve_index' in g) && !('curve_remote' in g);
+}
+// 1日分の閲覧用の記録から線を外す。rows は日別パーツへ、curves は [通し番号, 線] の一覧。
+// 通し番号は記録の並べ方（vpCanonical の文字順）で決まり、同じ内容なら毎回同じになる。
+function vpSplitCurves(rows, fits) {
+  const ordered = rows.map(r => [vpCanonical(r), r]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, r]) => r);
+  const light = [], curves = [];
+  for (const r of ordered) {
+    if (!vpCurveSplittable(r) || !fits(r.graph_measurement.curve)) { light.push(r); continue; }
+    const {curve, ...graph} = r.graph_measurement;
+    const net = VP_NET.meruhenNetDetail(r.graph_measurement, r.max_hold ?? null, r.games ?? null);
+    const index = curves.length;
+    curves.push([index, curve]);
+    light.push({...r, graph_measurement: {...graph, curve_remote: true, curve_index: index,
+      net_estimate: {value: net.value, needs_check: net.needsCheck, max_hold: r.max_hold ?? null, games: r.games ?? 0}}});
+  }
+  return {rows: light, curves};
+}
+// 線を外した記録へ線を戻す（日別原本の無い古い日を閲覧用パーツから組み立て直すとき）。
+function vpRestoreCurves(rows, curves) {
+  const byIndex = new Map(curves);
+  return rows.map(r => {
+    const g = r && r.graph_measurement;
+    if (!g || g.curve_remote !== true) return r;
+    if (!byIndex.has(g.curve_index)) throw new Error('グラフの線が見つかりません。元バックアップからの復旧が必要です。');
+    const {curve_remote, curve_index, net_estimate, ...graph} = g;
+    return {...r, graph_measurement: {...graph, curve: byIndex.get(g.curve_index)}};
+  });
+}
+
+const VP_NET = (function () {
+// メルヘンの推定差枚（グラフの座標と最大持玉から計算）。database_android/lib/meruhen_net.dart・
+// PC core.meruhen_net_estimate と同じ規則をそのまま移したもの（閲覧専用の共有ページ用、2026-10-09）。
+// 規則を変えるときは3つを一緒に変え、database_android/tool/test_share_viewer.mjs の例も合わせる。
+
+// 推定差枚を出さない店・日（ジャグラーオンラインの差枚は出す）。長町南の10/7は、サイトのグラフが全台「始点と終点を
+// 結んだ直線」で途中の推移が無く、推定が正しく決められないため（2026-10-12 利用者「長町南10/7だけ消す」）。
+// PC core.MERUHEN_NET_HIDDEN_DAYS・database_android/lib/meruhen_net.dart の meruhenNetHiddenDays と同じ。
+const NET_HIDDEN_DAYS = {nagamachiminami: ['2026-10-07']};
+
+/** その店・日の推定差枚を出さないか。 */
+function meruhenNetHidden(store, day) {
+  return (NET_HIDDEN_DAYS[store] ?? []).includes(day);
+}
+
+const AXIS_STEPS = [1000, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000, 20000,
+  22000, 24000, 26000, 28000, 30000, 32000, 34000, 36000, 38000, 40000];
+const PLAUSIBLE_USE_PER_GAME = 1.75;
+const MAX_USE_PER_GAME = 3.0;
+const ZERO_Y = 200.5, TOP_Y = 20.5;
+const HALF = ZERO_Y - TOP_Y;
+// 幸町の正確なjo_netとの照合（旧推定の誤差100枚未満の6,875組）で確認した終点の半px補正。
+const END_PIXEL_CORRECTION = 0.5;
+
+function rise(values) {
+  let low = 0, result = 0;
+  for (const v of values) {
+    if (v < low) low = v;
+    if (v - low > result) result = v - low;
+  }
+  return result;
+}
+
+// Dartの round()（0.5は0から遠い方）と同じ丸め。
+function roundHalfAway(x) {
+  return x < 0 ? -Math.round(-x) : Math.round(x);
+}
+
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** 推定差枚と要確認の印。計算できないときは {value: null, needsCheck: false}。 */
+function meruhenNetDetail(measurement, maxHold, games) {
+  const none = {value: null, needsCheck: false};
+  if (!measurement || typeof measurement !== 'object') return none;
+  const baselineY = num(measurement.baseline_y), peakY = num(measurement.peak_y);
+  const endY = num(measurement.end_y);
+  const troughY = num(measurement.trough_y ?? measurement.end_y);
+  if (baselineY == null || peakY == null || endY == null || troughY == null) return none;
+  if (Math.abs(baselineY - ZERO_Y) > 0.01) return none;
+  if (maxHold == null || maxHold < 0 || maxHold > 100000) return none;
+  const peak = baselineY - peakY, trough = baselineY - troughY, end = baselineY - endY;
+  const amp = Math.max(Math.abs(peak), Math.abs(trough), Math.abs(end));
+  if (amp === 0) return {value: 0, needsCheck: false};
+
+  const fits = (index) => {
+    const range = AXIS_STEPS[index];
+    const previous = index === 0 ? 0 : AXIS_STEPS[index - 1];
+    const unit = range / HALF;
+    return amp * unit > previous - unit / 2 && amp * unit <= range + unit / 2;
+  };
+
+  let chosen = null, needsCheck = false;
+  const curve = Array.isArray(measurement.curve) ? measurement.curve : null;
+  if (curve && curve.length >= 2) {
+    const values = curve.map(p => baselineY - p[1]);
+    const r = rise(values);
+    if (r <= 0) return none;
+    const candidates = AXIS_STEPS.filter((step, i) => fits(i) && maxHold / (r * step / HALF) >= 0.98);
+    let drops = 0;
+    for (let i = 1; i < values.length; i++) if (values[i] < values[i - 1]) drops += values[i - 1] - values[i];
+    const within = (step, perGame) => games == null || games <= 0 || drops * step / HALF <= perGame * games;
+    const plausible = candidates.filter(step => within(step, PLAUSIBLE_USE_PER_GAME));
+    needsCheck = plausible.length !== candidates.length;
+    if (plausible.length) chosen = plausible[plausible.length - 1];
+    else if (candidates.length && within(candidates[0], MAX_USE_PER_GAME)) chosen = candidates[0];
+  } else {
+    const peakX = num(measurement.peak_x), troughX = num(measurement.trough_x), endX = num(measurement.end_x);
+    let low;
+    if (peakX == null || troughX == null) {
+      low = peak > 0 ? peak : 0;
+    } else {
+      const points = [[0, 0], [peakX, peak], [troughX, trough], [endX ?? Infinity, end]]
+        .map((p, i) => [...p, i]).sort((a, b) => a[0] - b[0] || a[2] - b[2]);
+      low = rise(points.map(p => p[1]));
+    }
+    const high = (peak > 0 ? peak : 0) - (trough < 0 ? trough : 0);
+    const feasible = AXIS_STEPS.filter((step, i) => {
+      const unit = step / HALF;
+      return fits(i) && maxHold >= low * unit * 0.98 - unit && maxHold <= high * unit * 1.3 + unit;
+    });
+    if (feasible.length === 1) chosen = feasible[0];
+  }
+  if (chosen == null) return none;
+  return {value: roundHalfAway((end - END_PIXEL_CORRECTION) * chosen / HALF), needsCheck};
+}
+
+return {meruhenNetDetail};
+})();

@@ -43,6 +43,16 @@ function implausible(r) {
   return r.games > 20000 || r.bb > 500 || r.rb > 500 || (r.output ?? 0) > 100000;
 }
 
+/** 線を外した記録（2026-10-25、tool/viewer_curves_split.js）は、線があるうちにGoogleで計算した推定差枚を使う。
+ * 最大持玉・回転数が計算時と違えば、線なしで計算し直すと値がずれるため出さない。線のある記録は null。 */
+function remoteCurveNet(graph, r) {
+  if (!graph || graph.curve_remote !== true || Array.isArray(graph.curve)) return null;
+  const e = graph.net_estimate;
+  if (!e || (e.value !== null && !Number.isInteger(e.value)) || typeof e.needs_check !== 'boolean' ||
+      e.max_hold !== (r.output ?? null) || e.games !== r.games) return {value: null, needsCheck: false};
+  return {value: e.value, needsCheck: e.needs_check};
+}
+
 /** メルヘンの閲覧用ファイル（database-viewer.json）の台。差枚は推定差枚。 */
 export function meruhenRecords(doc) {
   if (!doc || !Array.isArray(doc.records)) return [];
@@ -68,7 +78,7 @@ export function meruhenRecords(doc) {
       r.estimated = false;
     } else {
       const net = meruhenNetHidden(r.store, r.day) ? {value: null, needsCheck: false}
-        : meruhenNetDetail(raw.graph_measurement, r.output, r.games);
+        : remoteCurveNet(raw.graph_measurement, r) ?? meruhenNetDetail(raw.graph_measurement, r.output, r.games);
       r.net = net.value;
       r.needsCheck = net.needsCheck;
       r.estimated = true;
