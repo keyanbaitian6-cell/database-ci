@@ -21,6 +21,7 @@ import 'import_service.dart';
 import 'models.dart' show isValidRecordDay, storeNames;
 import 'theme.dart';
 import 'web_extraction_channel.dart';
+import 'youtube_request_block.dart';
 import 'import_day.dart';
 import 'list_views.dart' show shortDayLabel;
 
@@ -92,7 +93,8 @@ bool canSaveWithoutReview(WebTableExtraction extraction) =>
 
 /// 埋め込みの YouTube 動画か。取り込みでは動画を再生しないため、内部ブラウザでは
 /// 表示しない（通信量と画面の場所を取らないように）。判定は [_hideYouTubeScript]
-/// の JS と同じ規則。
+/// の JS と同じ規則。通信そのものは youtube_request_block.dart で端末の中で止め、
+/// この JS は空になった枠を詰めるために残す（PCと同じ分担）。
 final _youTubeUrlPattern = RegExp(
   r'^(https?:)?//([a-z0-9-]+\.)*(youtube\.com|youtube-nocookie\.com|youtu\.be)(/|$)',
   caseSensitive: false,
@@ -521,6 +523,7 @@ class _WebImportPageState extends State<WebImportPage> {
                 : NavigationDecision.prevent,
           ),
         ),
+        blockRequests: () => blockYouTubeRequests(_web),
         configureCookies: () async {
           final platform = _web.platform;
           final cookies = WebViewCookieManager().platform;

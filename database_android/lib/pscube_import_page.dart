@@ -26,6 +26,7 @@ import 'pscube_store.dart';
 import 'pscube_viewer_data.dart' show pscubeDateEvents, pscubeViewerRecords;
 import 'theme.dart';
 import 'picked_file.dart';
+import 'youtube_request_block.dart';
 
 class PscubeImportPage extends StatefulWidget {
   const PscubeImportPage({super.key});
@@ -148,6 +149,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
             },
           ),
         ),
+        blockRequests: () => blockYouTubeRequests(_web),
         configureCookies: () async {
           final platform = _web.platform;
           final cookies = WebViewCookieManager().platform;

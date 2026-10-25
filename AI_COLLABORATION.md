@@ -1,5 +1,14 @@
 # database AI共同作業メモ
 
+## 【Android：取り込み画面でYouTubeへの通信そのものを起こさない】2026-10-25 Claude
+
+- 利用者の依頼（2026-10-25）：取り込み画面でYouTubeを「見えないようにしているだけで、アクセスも開く処理もしているのでは。開こうとすらしない処理は可能か」。PCは `975dd12` でWebView2の通信フィルター（204を手元で返す）にした。Androidは別セッションから引き継いで調べた。
+- 判断：webview_flutter（4.14.1／Android 4.13.0）には要求を断る機能が無い（`onNavigationRequest` は画面全体の移動だけ）。プラグインの端末側 `WebViewClientImpl` は `shouldInterceptRequest` を持たないので、**プラグインが設定したWebViewClientを包み、`shouldInterceptRequest` だけ足して、YouTube宛ての要求に端末の中で空の204を返す**方式にした（外へ通信しない。PCと同じ段階）。ほかのコールバックは全部元のWebViewClientへ渡し、読み込みの開始・完了・`onNavigationRequest`・エラー処理は変えない。ページ読み込み後にJSで止める案（`addDocumentStartJavaScript`）は、HTMLの先読みや最初からあるiframeの通信を止めきれないので採らなかった。
+- 実装：`YouTubeRequestBlocker.kt`（新規、channel `database/web_requests`、`MainActivity.kt` で登録）、`lib/youtube_request_block.dart`（新規、止めるホストはPCの `_YOUTUBE_HOSTS` と同じ youtube.com・youtube-nocookie.com・youtu.be・ytimg.com・googlevideo.com とそのサブドメイン、ホスト名だけで判定）。`setNavigationDelegate` がWebViewClientを置き換えるので、`prepareBrowserSession` に `blockRequests` の段を足し、ナビゲーション設定の後・最初の読み込みの前に毎回止め直す（二重には包まない）。メルヘン（`web_import_page.dart`）とP’s CUBE（`pscube_import_page.dart`）の両方。Android 8未満やWebViewが見つからないときは止めずに続ける（メルヘンは従来どおりJSで枠を隠す）。メルヘンの `_hideYouTubeScript` は空いた枠を詰めるために残す。P’s CUBEには枠を隠すJSは足していない（表示の変更はしない）。
+- 試験：`test/youtube_request_block_test.dart`（新規）。止める／止めないURL、PCとホスト一覧が同じこと、channelへの引数と失敗時にfalse、両画面が止める段を渡すこと、準備の順番（ナビゲーション→止める→Cookie→読み込み）、**プラグインの `WebViewClientImpl` が受けるコールバックをすべてKotlin側が元へ渡していること**（プラグインを上げてコールバックが増えたら落ちる）。`gradlew :app:compileDebugKotlin` でKotlinのコンパイル成功を確認（APKは作っていない）。
+- `check_before_build.sh` は **ALL PASSED**（PC 438件・215件・UTC 27件、Flutter 681件、JS 70本）。途中の2回は失敗：1回目は確認用フォルダ（scratchpad）のパスが長すぎてviewer-stageのコピーがWindowsのパス長上限で失敗（`CHECK_BUILD_WORK` を短い `%TEMP%\cbw_yt` にして解消）。2回目は `test_rainbow_today_browser` の閲覧ページ393pxが「本日の🌈 1台」を8秒以内に見つけられず失敗。同時にKotlinのコンパイルを流していた。閲覧ページは今回のファイルを読み込まない（取り込み画面は `main.dart` からだけ）。同じビルドで単独に3回流して3回とも4件成功し、何も同時に流さない3回目の全体確認で成功した。負荷による時間切れと見ているが、原因は確定していない。
+- 未確認：Android実機で、YouTubeへの通信が出ないこと・取り込み（読み込み待ち・エラー表示・機種移動）が従来どおり動くこと。実サイトは開いていない。APKビルド・インストール・pushは利用者の承認待ち（versionCodeは上げていない）。
+
 ## 【P’s CUBE：空の日が正常日の差枚を巻き添えにしない】Codex
 
 - 利用者から23日のP-STATION「L魔法少女にあこがれて」3台すべての差枚が、全画面で空欄との申告。提供されたバックアップを読み取り専用で確認し、1505〜1507番台の19〜23日・計15件は回転数・当たり・MY・日別グラフがある一方、差枚が未保存で、23日の3台に台別取得済みの印もあることを確認した。原本は変更していない。実際のGraph応答・取得警告は残っておらず、今回の欠損の直接原因は未確定。
