@@ -48,6 +48,36 @@ test('source graph gives signed daily net medals and keeps MY independent', () =
   ]) assert.throws(() => netMedalsOfProbe(bad));
   assert.throws(() => validateData(data({net_medals:1.5})));
 });
+test('新台の空の過去系列はその日だけ未取得にし、有効な2日分の差枚を返す', () => {
+  const probe = {rack:1, day:'20261002', graph:{datas:{
+    g:[
+      {YMD_biz:20261002, xField:'out-1', yField:'value-1'},
+      {YMD_biz:20261001, xField:'out-2', yField:'value-2'},
+      {YMD_biz:20260930, xField:'out-3', yField:'value-3'},
+    ],
+    p:[{'out-1':0,'value-1':0},{'out-1':10,'value-1':200},
+       {'out-2':0,'value-2':200},{'out-2':10,'value-2':150}],
+  }}};
+  const reasons = new Map();
+  assert.deepEqual([...netMedalsOfProbe(probe, {reasons})], [['2026-10-02',200],['2026-10-01',-50]]);
+  assert.equal(reasons.get('2026-09-30'), 'empty');
+  // 片側だけ欠けた1点は空と区別し、その日だけ未取得。0で埋めない。
+  const partial = structuredClone(probe);
+  partial.graph.datas.p.push({'out-3':0,'value-3':null});
+  const partialReasons = new Map();
+  assert.deepEqual([...netMedalsOfProbe(partial, {reasons:partialReasons})], [['2026-10-02',200],['2026-10-01',-50]]);
+  assert.equal(partialReasons.get('2026-09-30'), 'short_series');
+  // 日付の重複など、系列との対応が曖昧な応答は全体を拒否する。
+  const duplicate = structuredClone(probe);
+  duplicate.graph.datas.g.push({YMD_biz:20260930,xField:'out-4',yField:'value-4'});
+  assert.throws(() => netMedalsOfProbe(duplicate), /日付・系列が不正/);
+  // 選択日が空なら手動貼り付けでは拒否し、取り込みでは過去日だけ返す。
+  const selectedEmpty = structuredClone(probe);
+  selectedEmpty.graph.datas.p = selectedEmpty.graph.datas.p.filter(p => !Object.hasOwn(p,'out-1'));
+  assert.throws(() => netMedalsOfProbe(selectedEmpty), /選択日のグラフがありません/);
+  assert.deepEqual([...netMedalsOfProbe(selectedEmpty, {requireSelected:false})], [['2026-10-01',-50]]);
+});
+
 test('negative day values stay negative; ambiguous rack and missing selected day are rejected', () => {
   const probe={rack:1,day:'20261001',graph:{datas:{
     g:[{YMD_biz:20261001,xField:'out-1',yField:'value-1'}],

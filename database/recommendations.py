@@ -27,7 +27,8 @@ def plan(raw):
         raise ValueError('異なる4機種を選んでください。')
     week(raw.get('week'))
     at = raw.get('updated_at')
-    if not isinstance(at, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})', at):
+    # Python 3.14のfromisoformatは24:00を翌日0時として通すため、時刻の範囲は正規表現で拒否する。
+    if not isinstance(at, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})', at):
         raise ValueError('4機種の編集時刻が不正です。')
     datetime.fromisoformat(at.replace('Z','+00:00'))
     return dict(store=raw['store'],week=raw['week'],machines=list(names),updated_at=at,device=raw.get('device') if raw.get('device') in ('pc','android','shared') else 'pc')

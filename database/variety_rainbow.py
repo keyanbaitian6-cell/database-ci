@@ -10,7 +10,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core import RAINBOW_MARK, STORE_NAMES, VARIETY_MAX_RACKS, Store, load_settings, save_settings, signed_medals
+from core import (RAINBOW_MARK, STORE_NAMES, VARIETY_MAX_RACKS, Store, implausible_numbers, is_hidden_machine,
+                  load_settings, save_settings, signed_medals)
 from event_calendar import (MINUS_COLOR, PLUS_COLOR, RAINBOW_BG, MeruhenEvents, last_rainbow_text,
                             rainbow_cell)
 
@@ -30,6 +31,8 @@ SORTS = {
     '台番順': lambda r: r['rack'],
     f'最終{RAINBOW_MARK}の古い順': lambda r: (r['rainbow'], r.get('prev_rainbow') or '', r['rack']),
     '機種順': lambda r: (r['machine'], r['rack']),
+    '差枚の多い順': lambda r: (r['net'] is None, -r['net'] if r['net'] is not None else 0, r['rack']),
+    '差枚の少ない順': lambda r: (r['net'] is None, r['net'] if r['net'] is not None else 0, r['rack']),
 }
 
 
@@ -52,7 +55,17 @@ def lineup_day(db_path, location, through=None):
     db = Store(db_path)
     try:
         days = [d for d in db.days_for(location) if through is None or d <= through][:LINEUP_LOOKBACK_DAYS]
-        counts = {day: len(MeruhenEvents(db_path).day_records(location, day)) for day in days}
+        # 台数だけを数える。day_records と同じ台（表示しない機種・数値異常を除く）を、差枚の推定や
+        # 最終🌈の検索をせずに1回で数える（2026-10-25、14日分の day_records でタブを開くのに数秒かかっていた）。
+        counts = dict.fromkeys(days, 0)
+        if days:
+            query = ("SELECT day, machine, json_extract(payload,'$.games'), json_extract(payload,'$.bb'),"
+                     " json_extract(payload,'$.rb'), json_extract(payload,'$.max_hold') FROM days"
+                     f" WHERE store=? AND day IN ({','.join('?' * len(days))}) AND json_valid(payload)")
+            for day, machine, games, bb, rb, max_hold in db.db.execute(query, (location, *days)):
+                if not is_hidden_machine(location, machine) and not implausible_numbers(
+                        {'games': games, 'bb': bb, 'rb': rb, 'max_hold': max_hold}):
+                    counts[day] += 1
     finally:
         db.close()
     if not counts:
@@ -163,6 +176,10 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
     store_var = tk.StringVar(value=STORE_NAMES.get(default_location) or labels[0])
     day_var = tk.StringVar()
     sort_var = tk.StringVar(value='台番順')
+
+    def toggle_net_sort():
+        sort_var.set('差枚の少ない順' if sort_var.get() == '差枚の多い順' else '差枚の多い順')
+
     for column, (text, var, values, width) in enumerate((('店舗', store_var, labels, 28), ('日付', day_var, [], 16),
                                                          ('並べ方', sort_var, list(SORTS), 18))):
         ttk.Label(bar, text=text).grid(row=0, column=column, sticky='w')
@@ -210,6 +227,8 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
                                       ('last', f'最終{RAINBOW_MARK}', 120, 'e'),
                                       ('count', f'{RAINBOW_COUNT_DAYS}日{RAINBOW_MARK}', 70, 'e')):
         table.heading(key, text=label)
+        if key == 'net':
+            table.heading(key, command=toggle_net_sort)
         table.column(key, width=width, anchor=anchor, stretch=key == 'machine')
     table.tag_configure('plus', foreground=PLUS_COLOR)
     table.tag_configure('minus', foreground=MINUS_COLOR)
@@ -249,6 +268,8 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
     def show():
         rows = sorted(state['rows'], key=SORTS[sort_var.get()])
         state['shown'] = rows
+        arrow = {'差枚の多い順': ' ▼', '差枚の少ない順': ' ▲'}.get(sort_var.get(), '')
+        table.heading('net', text='推定差枚' + arrow)
         set_summary()
         if mode_var.get() == 'grid':
             frame.pack_forget()
@@ -260,7 +281,8 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
             return
         grid_frame.pack_forget()
         frame.pack(fill='both', expand=True)
-        hint.set(f'{RAINBOW_MARK}の列を押すと付け外し。本日の数値「—」は未取得です。印だけ保存し、あとから取り込んでも残します。')
+        hint.set(f'{RAINBOW_MARK}の列を押すと付け外し。推定差枚の見出しを押すと多い順・少ない順を切り替えます。'
+                 '本日の数値「—」は未取得です。印だけ保存し、あとから取り込んでも残します。')
         table.delete(*table.get_children())
         for i, r in enumerate(rows):
             table.insert('', 'end', iid=str(i), values=values(r), tags=tags(r))

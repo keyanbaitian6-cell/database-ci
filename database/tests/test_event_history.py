@@ -172,7 +172,7 @@ class HistoryTests(unittest.TestCase):
                 next(w for w in widgets if isinstance(w,ttk.Button) and w.cget('text')=='→').invoke()
                 self.assertEqual(picked[0][1],'2026-10-05')
                 selector=next(w for w in widgets if isinstance(w,ttk.Combobox) and '😍' in w.cget('values'))
-                selector.set('😍');selector.event_generate('<<ComboboxSelected>>')
+                selector.set('😍');selector.event_generate('<<ComboboxSelected>>');root.update()
                 db=Store(path)
                 try: self.assertEqual(db.history_edits()['cells'][0]['value'],'😍')
                 finally: db.close()

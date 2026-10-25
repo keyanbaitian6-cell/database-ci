@@ -192,6 +192,25 @@ catch(_){document.getElementById('status').textContent='開き直せませんで
 </script></html>'''
 
 
+# 埋め込みのYouTube（動画の枠・プレーヤーのスクリプト・サムネイル・動画本体の通信）。取り込み画面では
+# 開こうとすらしない（2026-10-25 利用者「一瞬開いて見えないようにしているだけで、アクセスして開く処理も
+# しているのでは」）。WebView2の通信フィルターで、サーバーへ送らずにここで空の応答を返す。
+# 枠を隠すJS（browser_import.HIDE_YOUTUBE_JS）は、空になった枠の場所を詰めるために残す。
+YOUTUBE_REQUEST_FILTERS = tuple(f'*://{host}/*' for host in (
+    'youtube.com', '*.youtube.com', 'youtube-nocookie.com', '*.youtube-nocookie.com',
+    'youtu.be', '*.ytimg.com', '*.googlevideo.com'))
+_YOUTUBE_HOSTS = ('youtube.com', 'youtube-nocookie.com', 'youtu.be', 'ytimg.com', 'googlevideo.com')
+
+
+def is_youtube_request(url):
+    """YouTube（動画・画像・再生の通信）の宛先か。ホスト名だけで判定する（パスに youtube を含む別サイトは対象外）。"""
+    try:
+        host = (urlparse(str(url)).hostname or '').lower()
+    except ValueError:
+        return False
+    return any(host == name or host.endswith('.' + name) for name in _YOUTUBE_HOSTS)
+
+
 def install_webview2_handlers(window, connection, failed, on_start=lambda: None):
     """Called on WinForms before_show, before the first site navigation.
 
@@ -212,13 +231,33 @@ def install_webview2_handlers(window, connection, failed, on_start=lambda: None)
 
     def ready(sender, args):
         if args.IsSuccess:
-            sender.CoreWebView2.WebResourceResponseReceived += response
+            attach(sender.CoreWebView2)
 
     def response(sender, args):
         if args.Response is not None and connection.http_error(str(args.Request.Uri), args.Response.StatusCode):
             failed()
 
-    handlers.extend([started, completed, ready, response])
+    def youtube_request(sender, args):
+        if is_youtube_request(args.Request.Uri):
+            args.Response = sender.Environment.CreateWebResourceResponse(None, 204, 'No Content', '')
+
+    def attach(core):
+        core.WebResourceResponseReceived += response
+        try:
+            from Microsoft.Web.WebView2.Core import CoreWebView2WebResourceContext as kinds
+            # 古いWebView2にはAllが無い（anaslo_browser_host と同じ確認）。そのときは種類ごとに登録する。
+            contexts = [kinds.All] if hasattr(kinds, 'All') else [
+                getattr(kinds, name) for name in ('Document', 'Script', 'Image', 'Media', 'Fetch',
+                                                  'XmlHttpRequest', 'Stylesheet', 'Font', 'Other')
+                if hasattr(kinds, name)]
+            for pattern in YOUTUBE_REQUEST_FILTERS:
+                for context in contexts:
+                    core.AddWebResourceRequestedFilter(pattern, context)
+            core.WebResourceRequested += youtube_request
+        except Exception:  # noqa: BLE001 -- 取り込みは止めない。枠はこれまでどおりJSで隠す
+            pass
+
+    handlers.extend([started, completed, ready, response, youtube_request])
     # Observe navigation before CoreWebView2 initialization starts the first load.
     control.NavigationStarting += started
     control.NavigationCompleted += completed
@@ -226,5 +265,5 @@ def install_webview2_handlers(window, connection, failed, on_start=lambda: None)
     if core is None:
         control.CoreWebView2InitializationCompleted += ready
     else:
-        core.WebResourceResponseReceived += response
+        attach(core)
     return handlers

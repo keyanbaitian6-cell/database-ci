@@ -115,7 +115,7 @@ class RecommendationTests(unittest.TestCase):
         self.assertEqual(rec.result_value([entry],fields,'😌'),'😇')
         self.assertEqual(rec.result_value(rec.merge_results([entry],[blank]),fields,'😌'),'')
         self.assertEqual(rec.result_value(rec.merge_results([blank],[auto]),fields,'😌'),'😌')
-        for change in [dict(value='未知'),dict(day='2026-11-02'),dict(rack=1.5),dict(updated_at='2026-02-30T00:00:00Z')]:
+        for change in [dict(value='未知'),dict(day='2026-11-02'),dict(rack=1.5),dict(updated_at='2026-02-30T00:00:00Z'),dict(updated_at='2026-10-25T24:00:00Z'),dict(updated_at='2026-10-25T12:60:00Z')]:
             with self.assertRaises(ValueError):rec.result(dict(entry,**change))
         for key in fields:
             broken=dict(entry);del broken[key]

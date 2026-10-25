@@ -205,7 +205,7 @@ class ConnectionTests(unittest.TestCase):
         failed = []
         started = []
         refs = install_webview2_handlers(window, self.c, lambda: failed.append(True), lambda: started.append(True))
-        self.assertEqual(len(refs), 4)
+        self.assertEqual(len(refs), 5)
         control.NavigationStarting.items[0](control, types.SimpleNamespace(Uri=ROOT_URL, NavigationId=1))
         self.assertEqual(self.c.url, ROOT_URL)
         started.clear()
@@ -217,6 +217,48 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(failed, [True])
         core.NavigationCompleted.items[0](core, types.SimpleNamespace(NavigationId=2,IsSuccess=False,WebErrorStatus='HostNameNotResolved'))
         self.assertEqual(failed, [True], 'old navigation cannot change current error')
+
+    def test_youtube_requests_are_answered_locally_without_reaching_the_server(self):
+        # 2026-10-25 利用者「一瞬開いて見えないようにしているだけで、アクセスして開く処理もしているのでは」。
+        import sys
+        from pscube_connection import YOUTUBE_REQUEST_FILTERS, is_youtube_request
+        for url in ('https://www.youtube.com/embed/abc', 'https://youtube.com/watch?v=1', 'https://youtu.be/abc',
+                    'https://www.youtube-nocookie.com/embed/x', 'https://i.ytimg.com/vi/x/hq.jpg',
+                    'https://rr1---sn-x.googlevideo.com/videoplayback'):
+            self.assertTrue(is_youtube_request(url), url)
+        for url in (ROOT_URL, RACK, 'https://example.com/youtube.com/x', 'https://notyoutube.com/', 'about:blank', ''):
+            self.assertFalse(is_youtube_request(url), url)
+        core = types.SimpleNamespace(WebResourceResponseReceived=Handlers(), WebResourceRequested=Handlers(),
+                                     AddWebResourceRequestedFilter=mock.Mock())
+        control = types.SimpleNamespace(CoreWebView2=core, NavigationStarting=Handlers(), NavigationCompleted=Handlers())
+        window = types.SimpleNamespace(native=types.SimpleNamespace(webview=control))
+        kinds = types.SimpleNamespace(All='all')
+        with mock.patch.dict(sys.modules, {'Microsoft.Web.WebView2.Core':
+                                           types.SimpleNamespace(CoreWebView2WebResourceContext=kinds)}):
+            install_webview2_handlers(window, self.c, lambda: None)
+        self.assertEqual([c.args for c in core.AddWebResourceRequestedFilter.call_args_list],
+                         [(pattern, 'all') for pattern in YOUTUBE_REQUEST_FILTERS])
+        sender = types.SimpleNamespace(Environment=types.SimpleNamespace(
+            CreateWebResourceResponse=lambda *a: ('local', a[1])))
+        def request(url):
+            args = types.SimpleNamespace(Request=types.SimpleNamespace(Uri=url), Response=None)
+            for handler in core.WebResourceRequested.items:
+                handler(sender, args)
+            return args.Response
+        self.assertEqual(request('https://www.youtube.com/embed/abc'), ('local', 204))
+        self.assertIsNone(request(RACK))
+        # 古いWebView2（Allなし）は種類ごとに登録する。登録に失敗しても取り込みの処理は付け続ける。
+        old = types.SimpleNamespace(WebResourceResponseReceived=Handlers(), WebResourceRequested=Handlers(),
+                                    AddWebResourceRequestedFilter=mock.Mock())
+        control.CoreWebView2 = old
+        with mock.patch.dict(sys.modules, {'Microsoft.Web.WebView2.Core': types.SimpleNamespace(
+                CoreWebView2WebResourceContext=types.SimpleNamespace(Document='doc', Script='script'))}):
+            install_webview2_handlers(window, self.c, lambda: None)
+        self.assertEqual(old.AddWebResourceRequestedFilter.call_count, 2 * len(YOUTUBE_REQUEST_FILTERS))
+        broken = types.SimpleNamespace(WebResourceResponseReceived=Handlers())
+        control.CoreWebView2 = broken
+        install_webview2_handlers(window, self.c, lambda: None)
+        self.assertEqual(len(broken.WebResourceResponseReceived.items), 1)
 
 
 if __name__ == '__main__':

@@ -75,7 +75,8 @@ for(const pubFails of [false,true]) test(`依存解決は1回だけで、${pubFa
   const tool=path.join(root,'database_android','tool'),bin=path.join(root,'bin');
   await mkdir(tool,{recursive:true});await mkdir(bin);await mkdir(path.join(root,'database','tests'),{recursive:true});
   for(const name of ['check_before_build.sh','run_js_checks.mjs']) await copyFile(new URL('./'+name,import.meta.url),path.join(tool,name));
-  await writeFile(path.join(tool,'dev_env.sh'),': "${PYTHON:=python3}"\n: "${NODE:=node}"\nexport PYTHON NODE\nexport PATH="$FAKE_BIN:$PATH"\n');
+  // WindowsのC:/…はPATHの区切り「:」で割れるため、実際のdev_env.shと同じくcygpathで変換する。
+  await writeFile(path.join(tool,'dev_env.sh'),': "${PYTHON:=python3}"\n: "${NODE:=node}"\nexport PYTHON NODE\nfake_bin=$FAKE_BIN\nif command -v cygpath >/dev/null 2>&1; then fake_bin=$(cygpath -u "$fake_bin"); fi\nexport PATH="$fake_bin:$PATH"\n');
   await writeFile(path.join(root,'database_android','pubspec.yaml'),'name: synthetic_fixture\n');
   await writeFile(path.join(bin,'flutter'),`#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "$FLUTTER_CALLS"\nif [ ! -f pubspec.yaml ]; then echo 'Flutterの作業ディレクトリが不正です' >&2; exit 37; fi\nif [ "$1" = pub ]; then exit ${pubFails ? 6:0}; fi\n`,{mode:0o755});
   const smoke='import unittest\nclass Smoke(unittest.TestCase):\n    def test_smoke(self): pass\n';

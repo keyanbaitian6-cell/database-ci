@@ -426,6 +426,9 @@ class Store:
         # 新しいバックアップ551行の取り込みで約21秒画面が止まった主因（2026-10-14 レビュー、専用コピーで計測）。
         self.db.execute('CREATE INDEX IF NOT EXISTS observations_captured_at ON observations(captured_at)')
         self._ensure_store_schema()
+        # 機種ごとの全記録（採点・翌日候補・バラエティ）を店＋機種で引く。主キーは店・日・機種・台の順なので、
+        # 索引なしでは機種ごとに店の全行を読み直していた（2026-10-25、複製DBで2.3秒→0.6秒）。
+        self.db.execute('CREATE INDEX IF NOT EXISTS days_store_machine ON days(store, machine, day)')
         # 翌日候補（仮）の記録。Android版と同じ形（candidate_log.dart）。
         self.db.execute('CREATE TABLE IF NOT EXISTS candidate_snapshots (store TEXT NOT NULL, day TEXT NOT NULL, '
                         'machine TEXT NOT NULL, taken_at TEXT NOT NULL, payload TEXT NOT NULL, '
@@ -445,10 +448,15 @@ class Store:
         """
         # Keys only: reading every payload (graph images included) on each open
         # made opening the database grow with the data for no reason.
-        keys = self.db.execute('SELECT store,day,machine,rack FROM days').fetchall()
+        # 機種名の種類（数百）だけを点検する。全行（数万）の名前を毎回直すと、DBを開くたびに
+        # 0.1〜0.5秒かかり、バラエティ🌈のタブでは開き直しが重なって数秒になった（2026-10-25）。
+        names = [name for (name,) in self.db.execute('SELECT DISTINCT machine FROM days')]
+        odd_names = [name for name in names if name != normalize_machine_name(name)]
+        keys = [k for name in odd_names
+                for k in self.db.execute('SELECT store,day,machine,rack FROM days WHERE machine IS ?', (name,))]
         odd = [(*k, self.db.execute('SELECT payload FROM days WHERE store=? AND day=? AND machine=? AND rack=?',
                                     k).fetchone()[0])
-               for k in keys if k[2] != normalize_machine_name(k[2])]
+               for k in keys]
         if not odd:
             return
         backup_path = self.path.with_name(self.path.stem + '.pre-machine-name-fix' + self.path.suffix)
@@ -2147,18 +2155,15 @@ def next_day_evidence(store, row, max_days=10, shrink_days=5):
     100-point daily score. It is deliberately limited to data available by
     ``row['day']`` so it can be evaluated later without future leakage.
     """
-    first = (date.fromisoformat(row['day']) - timedelta(days=30)).isoformat()
-    all_rows = [r for r in store._machine_rows(row['machine'], row['store'])
-                if first <= r['day'] <= row['day'] and r.get('games', 0) >= 500
-                and r.get('bb') is not None and r.get('rb') is not None
-                and r['bb'] >= 0 and r['rb'] >= 0 and not implausible_numbers(r)]
-    days = sorted({r['day'] for r in all_rows if int(r['rack']) == int(row['rack'])}, reverse=True)[:max_days]
+    by_day = _evidence_pool(store, row['machine'], row['store'], row['day'])
+    rack = int(row['rack'])
+    days = sorted((d for d, rows in by_day.items() if any(int(r['rack']) == rack for r in rows)),
+                  reverse=True)[:max_days]
     gaps = []
     contributions = []
     for day in days:
-        mine = next(r for r in all_rows if r['day'] == day and int(r['rack']) == int(row['rack']))
-        peers = [r for r in all_rows if r['day'] == day and
-                 mine['games'] / 2 <= r['games'] <= mine['games'] * 2]
+        mine = next(r for r in by_day[day] if int(r['rack']) == rack)
+        peers = [r for r in by_day[day] if mine['games'] / 2 <= r['games'] <= mine['games'] * 2]
         if len(peers) >= 3:
             rates = [(r['bb'] + r['rb']) / r['games'] for r in peers]
             rank = percentile((mine['bb'] + mine['rb']) / mine['games'], rates)
@@ -2176,6 +2181,25 @@ def next_day_evidence(store, row, max_days=10, shrink_days=5):
                 raw_index=raw, latest_used=used[0]['day'] if used else '',
                 contributions=contributions, stability_z=z,
                 today_used=bool(used and used[0]['day'] == row['day']))
+
+
+def _evidence_pool(store, machine, location, day):
+    """next_day_evidence の比較材料（その日までの30日・使える記録）を日ごとにまとめたもの。
+    同じ機種・同じ日の台はすべて同じ材料を使うので、台ごとに全記録をふるい直さない（2026-10-25、
+    幸町の翌日候補で台数×日数×記録数の走査になっていた）。並びは _machine_rows と同じ。
+    _machine_cache の中に置き、書き込みでキャッシュが作り直されると一緒に捨てる。"""
+    cache = store.__dict__.setdefault('_machine_cache', {})
+    key = ('next_day_evidence', machine, location, day)
+    if key not in cache:
+        first = (date.fromisoformat(day) - timedelta(days=30)).isoformat()
+        by_day = {}
+        for r in store._machine_rows(machine, location):
+            if (first <= r['day'] <= day and r.get('games', 0) >= 500
+                    and r.get('bb') is not None and r.get('rb') is not None
+                    and r['bb'] >= 0 and r['rb'] >= 0 and not implausible_numbers(r)):
+                by_day.setdefault(r['day'], []).append(r)
+        cache[key] = by_day
+    return cache[key]
 
 
 def next_day_focus(evidence, today_score):
@@ -2442,6 +2466,33 @@ def latest_backup_file(folder, seen=None):
     imported as if it were a backup). ``seen`` is the last successfully
     imported file's name/mtime; unchanged content need not be read again, and
     files older than it are not read at all (None: nothing new)."""
+    for mtime, path in sorted(_backup_candidates(folder), key=lambda item: item[0], reverse=True):
+        if seen and seen.get('name') == path.name and seen.get('mtime') == mtime:
+            return path
+        # 起動時の自動取り込み：前回取り込んだものより古いファイルは「新しいバックアップ」ではない。
+        # 前回のファイルが消えていても、古いバックアップを読み直して取り込み直さない。
+        if seen and isinstance(seen.get('mtime'), (int, float)) and mtime < seen['mtime']:
+            return None
+        if _is_backup_file(path):
+            return path
+    return None
+
+
+def new_backup_files(folder, seen=None):
+    """起動時に読む、前回取り込んだ版より新しいバックアップを古い順に返す（2026-10-25 利用者指定）。
+    店舗ごとに分けて書き出したAndroidのファイルを、最新の1本だけ読んで取りこぼさないため。
+    前回の記録が無いときは、従来どおり最新の1本だけ（過去のファイルをまとめて読み直さない）。"""
+    seen_mtime = seen.get('mtime') if seen else None
+    if not isinstance(seen_mtime, (int, float)):
+        latest = latest_backup_file(folder)
+        return [latest] if latest is not None else []
+    newer = [(mtime, path) for mtime, path in _backup_candidates(folder)
+             if mtime > seen_mtime or (mtime == seen_mtime and path.name != seen.get('name'))]
+    return [path for _mtime, path in sorted(newer, key=lambda item: (item[0], item[1].name)) if _is_backup_file(path)]
+
+
+def _backup_candidates(folder):
+    """同期フォルダ内の、取り込み対象になりうるJSONの（更新時刻, パス）。"""
     # 日別原本・閲覧パーツもGoogle Driveからダウンロードして解析しない。
     # pscube-* はP’s CUBE用（別形式・大きい）。ここで読み込もうとしない。
     generated_prefixes = ('pscube-', 'database-history-day-',
@@ -2456,20 +2507,15 @@ def latest_backup_file(folder, seen=None):
             found.append((path.stat().st_mtime, path))
         except OSError:
             continue   # 探している間に消えた・読めないファイルは飛ばす（Driveの同期中など）
-    for mtime, path in sorted(found, key=lambda item: item[0], reverse=True):
-        if seen and seen.get('name') == path.name and seen.get('mtime') == mtime:
-            return path
-        # 起動時の自動取り込み：前回取り込んだものより古いファイルは「新しいバックアップ」ではない。
-        # 前回のファイルが消えていても、古いバックアップを読み直して取り込み直さない。
-        if seen and isinstance(seen.get('mtime'), (int, float)) and mtime < seen['mtime']:
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            continue
-        if isinstance(payload, dict) and payload.get('format') == BACKUP_FORMAT:
-            return path
-    return None
+    return found
+
+
+def _is_backup_file(path):
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get('format') == BACKUP_FORMAT
 
 
 def import_backup(store, path):

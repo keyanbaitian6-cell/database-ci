@@ -18,7 +18,7 @@ from output_worker import OutputWorker, refresh_outputs
 from backup_status_ui import BackupStatusPanel
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup, normalize_machine_name,
-                  latest_backup_file, list_snapshots, load_settings, report, restore_backup, save_settings,
+                  latest_backup_file, list_snapshots, load_settings, new_backup_files, report, restore_backup, save_settings,
                   summary_report, undo_last_save, pull_shared_events, pull_shared_rainbow, pull_shared_history)
 
 def runtime_root():
@@ -332,13 +332,32 @@ def main():
     notebook.pack(fill='both', expand=True)
     tab_home = ttk.Frame(notebook, padding=22)
     tab_results = ttk.Frame(notebook, padding=22)
-    tab_sync = ttk.Frame(notebook, padding=22)
+    # 同期タブは縦にスクロールできるようにする。共有用ファイルの状況パネルが増え、窓の高さが足りないと
+    # 下の「バックアップを読み込む」が窓の外に隠れて押せなかった（2026-10-25 利用者報告）。
+    sync_page = ttk.Frame(notebook)
+    sync_canvas = tk.Canvas(sync_page, highlightthickness=0, borderwidth=0,
+                            background=ttk.Style().lookup('TFrame', 'background') or None)
+    sync_bar = ttk.Scrollbar(sync_page, orient='vertical', command=sync_canvas.yview)
+    tab_sync = ttk.Frame(sync_canvas, padding=22)
+    sync_window = sync_canvas.create_window((0, 0), window=tab_sync, anchor='nw')
+    sync_canvas.configure(yscrollcommand=sync_bar.set)
+    sync_canvas.pack(side='left', fill='both', expand=True)
+    sync_bar.pack(side='right', fill='y')
+    tab_sync.bind('<Configure>', lambda _e: sync_canvas.configure(scrollregion=sync_canvas.bbox('all')))
+    sync_canvas.bind('<Configure>', lambda e: sync_canvas.itemconfigure(sync_window, width=e.width))
+
+    def scroll_sync(event):
+        if sync_canvas.yview() != (0.0, 1.0):
+            sync_canvas.yview_scroll(-1 if event.delta > 0 else 1, 'units')
+    # ホイールはこのタブの上にあるときだけ受け取る（記録欄など他の部分のスクロールを奪わない）。
+    sync_page.bind('<Enter>', lambda _e: sync_canvas.bind_all('<MouseWheel>', scroll_sync))
+    sync_page.bind('<Leave>', lambda _e: sync_canvas.unbind_all('<MouseWheel>'))
     # バラエティの🌈（確定が出た台の印、RAINBOW.md「バラエティのタブ」、2026-10-11）。
     tab_variety = ttk.Frame(notebook, padding=22)
     notebook.add(tab_home, text='  取り込み  ')
     notebook.add(tab_results, text='  結果を見る  ')
     notebook.add(tab_variety, text='  バラエティ🌈  ')
-    notebook.add(tab_sync, text='  バックアップ・同期  ')
+    notebook.add(sync_page, text='  バックアップ・同期  ')
 
     # 🌈：押したときは記録への保存だけ（速い）。閲覧・共有ページ用のファイルとバックアップの作り直し（5秒ほど）は、
     # まとめて1回（2026-10-12 利用者「一個押すたびに保存処理をしているようで数秒かかってしまう。…まとめてつけてから
@@ -1111,13 +1130,16 @@ def main():
         if not current.get('auto_sync_on_start', True) or not folder or not Path(folder).is_dir():
             return
         seen = current.get('last_synced') or {}
-        latest = latest_backup_file(folder, seen=seen)
-        version = synced_version(latest) if latest is not None else None
-        if version is None or version == dict(name=seen.get('name'), mtime=seen.get('mtime')):
-            return
-        logbox.insert('end', f'同期フォルダに新しいバックアップがあります：{latest.name}\n')
-        # 失敗したファイルは覚えない（次の起動でやり直す。Driveの一時的な失敗・DBの使用中など）。
-        if import_backup_file(str(latest), quiet=True):
+        # 前回より新しいものを古い順にすべて読む（店舗ごとに分けた書き出しを取りこぼさない、2026-10-25）。
+        for path in new_backup_files(folder, seen=seen):
+            version = synced_version(path)
+            if version is None or version == dict(name=seen.get('name'), mtime=seen.get('mtime')):
+                continue
+            logbox.insert('end', f'同期フォルダに新しいバックアップがあります：{path.name}\n')
+            # 失敗したファイルは覚えず、後のファイルにも進まない（次の起動でそこからやり直す。
+            # Driveの一時的な失敗・DBの使用中など）。
+            if not import_backup_file(str(path), quiet=True):
+                return
             save_settings(DATA_DIR, last_synced=version)
 
     auto_sync = tk.BooleanVar(value=settings.get('auto_sync_on_start', True) is not False)

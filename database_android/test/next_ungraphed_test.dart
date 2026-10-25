@@ -80,9 +80,15 @@ void main() {
       ),
     );
     expect(done.dayComplete, isTrue);
-    c.records = [rec(705)]; // リンクが保存されていない台
+    c.records = [rec(705), rec(706, link: url(706))]; // リンクなしは飛ばして次のリンクへ
     t = next(c);
-    expect((t.reason, t.rack, t.url), ('no_link', 705, null));
+    expect((t.reason, t.rack, t.url), (null, 706, url(706)));
+    expect(t.warning, contains('705番台はグラフ未取得のまま残します'));
+    c.records = [rec(705)];
+    t = next(c);
+    expect(t.reason, 'linkless');
+    expect(t.url, contains('rack_info_kt'));
+    expect(t.warning, contains('705番台はグラフ未取得のまま残します'));
   });
 
   test('対象外の機種（沖ドキ）の台は進み具合に数えない（ジャグラーオンラインで記録ができても。2026-10-12）', () {

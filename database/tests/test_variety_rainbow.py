@@ -57,6 +57,71 @@ class VarietyRainbowTests(unittest.TestCase):
         cell = frame.variety_cells[(50, '2026-10-10')]
         self.assertIn('🌈', cell.cget('text'))
 
+    def test_net_heading_toggles_numeric_order_with_unknown_last(self):
+        db = Store(self.path)
+        try:
+            db.save([row(50, 'ハナハナ', '2026-10-10', jo_net=12000),
+                     row(51, 'ハナハナ', '2026-10-10', jo_net=-800),
+                     row(60, '新バラエティ', '2026-10-10', jo_net=0),
+                     row(62, '同差枚', '2026-10-10', jo_net=12000)])
+            before = db.db.execute('SELECT store,day,machine,rack,payload FROM days ORDER BY store,day,machine,rack').fetchall()
+        finally:
+            db.close()
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1100x700+-3000+0')
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        changed = []
+        build_variety_tab(frame, self.path, lambda: changed.append(1), STORE)
+        frame.variety_mode.set('list')
+        root.update()
+        table = next(w for child in frame.winfo_children() for w in child.winfo_children() if isinstance(w, ttk.Treeview))
+
+        def racks():
+            return [int(table.item(iid, 'values')[1]) for iid in table.get_children()]
+
+        def click_net_heading():
+            x, y, width, _height = table.bbox(table.get_children()[0], 'net')
+            x, y = x + width // 2, y // 2
+            self.assertEqual(table.identify_region(x, y), 'heading')
+            table.event_generate('<ButtonPress-1>', x=x, y=y)
+            table.event_generate('<ButtonRelease-1>', x=x, y=y)
+            root.update()
+
+        self.assertEqual(racks(), [50, 51, 60, 61, 62])
+        click_net_heading()
+        self.assertEqual(racks(), [50, 62, 60, 51, 61])
+        self.assertEqual(table.heading('net', 'text'), '推定差枚 ▼')
+        click_net_heading()
+        self.assertEqual(racks(), [51, 60, 50, 62, 61])
+        self.assertEqual(table.heading('net', 'text'), '推定差枚 ▲')
+        # 別の日へ切り替え、戻っても選んだ並べ方で新しい行を表示する。
+        frame.variety_day.set('2026-10-09')
+        frame.variety_day.set('2026-10-10')
+        root.update()
+        self.assertEqual(racks(), [51, 60, 50, 62, 61])
+        self.assertEqual(changed, [], '見出しの操作では🌈を保存しない')
+        db = Store(self.path)
+        try:
+            after = db.db.execute('SELECT store,day,machine,rack,payload FROM days ORDER BY store,day,machine,rack').fetchall()
+            self.assertEqual(after, before, '並べ替えで保存済みの数値・印を変えない')
+        finally:
+            db.close()
+
+        # 並べ替えた後の🌈クリックも、表示している台番号にだけ保存する。
+        first = table.get_children()[0]
+        self.assertEqual(int(table.item(first, 'values')[1]), 51)
+        x, y, width, height = table.bbox(first, '#1')
+        table.event_generate('<Button-1>', x=x + width // 2, y=y + height // 2)
+        root.update()
+        db = Store(self.path)
+        try:
+            self.assertEqual(db.rainbow_racks(STORE, '2026-10-10'), [51])
+        finally:
+            db.close()
+        self.assertEqual(changed, [1])
+
     def test_today_grid_and_list_can_mark_without_creating_numeric_records(self):
         root = tk.Tk()
         self.addCleanup(root.destroy)

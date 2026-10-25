@@ -123,6 +123,31 @@ try {
   const unready = JSON.parse(await page.evaluate(script));
   assert.equal(unready.records.length, 7);
   assert.match(unready.net_warning, /差枚は未取得：サイトの通信の準備ができていません/);
+  // 新台で2日分だけ存在する。全空欄の過去日がAPIの空系列にもあっても、有効な2日分は保存する。
+  const shortColumns = Array.from({length:7}, (_, i) =>
+    `<td class="column"><div>${[i ? `${i}日前` : '本日',
+      ...(i < 2 ? ['3','1','0','0','600','120','0'] : Array(7).fill('')),
+    ].map(value => `<div>${value}</div>`).join('')}</div></td>`).join('');
+  await page.setContent(html.replace(columns, shortColumns));
+  const shortGraph = structuredClone(graph);
+  shortGraph.datas.g.push({YMD_biz:20260930,xField:'out-3',yField:'value-3'});
+  await page.evaluate(graphData => {
+    window.api = {apikey:'test',token:{_i:'test',_t:'test'}};
+    window.jQuery.ajax = () => {
+      const request = {
+        done(callback) { queueMicrotask(() => callback({Graph:{src:graphData}})); return request; },
+        fail() { return request; },
+      };
+      return request;
+    };
+  }, shortGraph);
+  const shortHistory = JSON.parse(await page.evaluate(script));
+  assert.equal(shortHistory.error, undefined, shortHistory.error);
+  assert.equal(shortHistory.net_warning, undefined, shortHistory.net_warning);
+  assert.equal(shortHistory.records.length, 2);
+  assert.equal(shortHistory.missing_history_days.length, 5);
+  assert.equal(shortHistory.records[0].net_medals, 125);
+  assert.equal(shortHistory.records[1].net_medals, -25);
   await page.close();
   console.log('PASS: PC/Android rack capture saves exact net values; source failures keep the rack data with net left empty');
 } finally { await browser.close(); }

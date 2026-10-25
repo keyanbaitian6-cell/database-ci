@@ -10,7 +10,7 @@ const pc = spawnSync('python', ['-c', 'import json,browser_import as b; print(js
   {cwd: new URL('../../database/', import.meta.url), encoding: 'utf8'});
 assert.equal(pc.status, 0, pc.stderr);
 const [pcGraph, pcTable] = JSON.parse(pc.stdout).map(body => `(() => {${body}})()`);
-function fixture({zero = true, zeroY = '200', values = {}, kind = '21', day = '2026-09-22', linkDay = '', pickedDay = ''} = {}) {
+function fixture({zero = true, zeroY = '200', values = {}, kind = '21', day = '2026-09-22', linkDay = '', pickedDay = '', scopeEntries = {}} = {}) {
   const svg = {
     viewBox: {baseVal: {width: 400, height: 400}},
     querySelector(selector) {
@@ -19,7 +19,10 @@ function fixture({zero = true, zeroY = '200', values = {}, kind = '21', day = '2
       return Object.hasOwn(values, selector) ? {textContent: values[selector]} : null;
     },
   };
+  const sessionEntries = new Map(Object.entries(scopeEntries).map(([key, value]) => [key, JSON.stringify(value)]));
   return {
+    sessionStorage: {get length() { return sessionEntries.size; }, key: index => [...sessionEntries.keys()][index] ?? null,
+      getItem: key => sessionEntries.get(key) ?? null},
     location: new URL(`https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph?kind_code=${kind}&rack_no=703${day ? '&target_date=' + day : ''}`),
     URL, document: {body: {innerText: '更新日時 2030/01/01'}, querySelector: () => svg, querySelectorAll(selector) {
       if (selector === 'a[href*="target_date="]' && linkDay) return [{href: `https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph?rack_no=703&target_date=${linkDay}`}];
@@ -98,6 +101,12 @@ test('PC: 台のページは種別を返し（判定はPython）、グラフの�
   assert.equal(r.kind_code, '1');
   assert.deepEqual(r.info, {info_soukaiten: '2673', info_max_mochidama: '14030'});
   assert.equal(r.page_text, '台データ情報\n大当り\n12');
+});
+
+test('PC: グラフ読み取りは保存済み一覧の台範囲を返す', async () => {
+  const scope = [703, 704];
+  const context = fixture({scopeEntries: {'database-rack-scope:saiwaichou:2026-09-22:テスト': scope}});
+  assert.deepEqual(JSON.parse(vm.runInNewContext(pcGraph, context)).rack_scope, scope);
 });
 
 test('Android: 行クリックで半角カナ、空白、+を同じ機種として照合', () => {

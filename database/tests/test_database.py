@@ -332,11 +332,31 @@ def _table_payload(rows, target_date='2026-09-13', store='nagamachiminami',
 
 
 class BrowserImportTests(unittest.TestCase):
-    def test_target_date_from_url_wins_over_page_text_date(self):
-        self.assertEqual(resolve_day(dict(target_date='2026-09-10', day='2026-09-11')), '2026-09-10')
+    def test_target_date_must_match_independently_displayed_date(self):
+        with self.assertRaisesRegex(ValueError, '日付'):
+            resolve_day(dict(target_date='2026-09-10', day='2026-09-11'))
+        with self.assertRaisesRegex(ValueError, '日付'):
+            resolve_day(dict(target_date='2026-09-10', displayed_day='2026-09-11'))
         self.assertEqual(resolve_day(dict(day='2026-09-11')), '2026-09-11')
         with self.assertRaises(ValueError):
             resolve_day({})
+
+    def test_page_mismatch_rejects_stale_visible_day_even_when_links_match_url(self):
+        from browser_import import GRAPH_EXTRACT_BODY, TABLE_EXTRACT_BODY, page_mismatch
+        self.assertIn('const readDisplayedDay = () =>', TABLE_EXTRACT_BODY)
+        self.assertIn('displayed_day: readDisplayedDay()', TABLE_EXTRACT_BODY)
+        self.assertIn('displayed_day: readDisplayedDay()', GRAPH_EXTRACT_BODY)
+        target_day = '2026-10-19'
+        payload = _table_payload([dict(row(rack=412), previous_start=1)], target_date=target_day,
+                                 store='saiwaichou', machine='Lテスト')
+        payload['displayed_day'] = '2026-10-18'
+        url = ('https://meruhenworld.pt.teramoba2.com/saiwaichou/'
+               'rack_info_kt/?kind_code=21&target_date=2026-10-19')
+        reason = page_mismatch(url, payload)
+        self.assertIsNotNone(reason)
+        self.assertIn('2026-10-18', reason)
+        with self.assertRaisesRegex(ValueError, '日付'):
+            build_table_rows(payload)
 
     def test_normalize_machine_name_matches_android_rule(self):
         self.assertEqual(normalize_machine_name('L戦国乙女5+L8'), 'L戦国乙女5 L8')
@@ -368,25 +388,26 @@ class BrowserImportTests(unittest.TestCase):
                           graph=dict(path='M0,0 L1,1', baseline=0))])
             db.close()
             bridge = _Bridge(db_path, folder, 'browser_import.py')
-            query = lambda rack, machine='テスト', day='2026-09-13': json.loads(bridge.next_ungraphed_rack(json.dumps(
-                dict(store='nagamachiminami', day=day, machine=machine, rack=rack))))
-            self.assertEqual(query(None)['rack'], 1)
-            self.assertEqual(query(1)['rack'], 3)
-            self.assertEqual(query(3)['rack'], 1, 'should wrap back to the first pending rack')
+            query = lambda rack, machine='テスト', day='2026-09-13', rack_scope=None: json.loads(bridge.next_ungraphed_rack(json.dumps(
+                dict(store='nagamachiminami', day=day, machine=machine, rack=rack,
+                     **({'rack_scope': rack_scope} if rack_scope is not None else {})))))
+            self.assertEqual(query(None, rack_scope=[1, 2, 3])['rack'], 1)
+            self.assertEqual(query(1, rack_scope=[1, 2, 3])['rack'], 3)
+            self.assertEqual(query(3, rack_scope=[1, 2, 3])['rack'], 1, 'should wrap back to the first pending rack')
 
             # An individual rack's own graph page often has no machine_name in
             # its own URL at all -- resolving it from the rack number (as
             # build_graph_context() already does) must still find the target.
-            resolved = query(1, machine='')
+            resolved = query(1, machine='', rack_scope=[1, 2, 3])
             self.assertEqual(resolved['rack'], 3)
             unresolvable = query(999, machine='')
             self.assertEqual(unresolvable['reason'], 'unknown_machine')
 
-            no_rows = query(None, machine='存在しない')
+            no_rows = query(None, machine='存在しない', rack_scope=[])
             self.assertIsNone(no_rows['url'])
             self.assertEqual(no_rows['reason'], 'no_rows')
 
-            all_done = query(None, machine='完了機', day='2026-09-14')
+            all_done = query(None, machine='完了機', day='2026-09-14', rack_scope=[9])
             # 機種が全部済んだら、機種一覧ページへ案内する（サイト自身のページ）。
             # 手動で次の機種を探すための「いま済ませた機種」の印も付く。
             self.assertTrue(all_done['url'].endswith(
@@ -401,10 +422,13 @@ class BrowserImportTests(unittest.TestCase):
             db = Store(db_path)
             db.save([row(day='2026-09-15', rack=10)])
             db.close()
-            no_link = query(None, day='2026-09-15')
-            self.assertIsNone(no_link['url'])
-            self.assertEqual(no_link['rack'], 10)
-            self.assertEqual(no_link['reason'], 'no_link')
+            db = Store(db_path)
+            db.save([dict(row(day='2026-09-15', rack=11), detail_url='https://example.com/rack11')])
+            db.close()
+            skipped_linkless = query(None, day='2026-09-15', rack_scope=[10, 11])
+            self.assertEqual(skipped_linkless['url'], 'https://example.com/rack11')
+            self.assertIsNone(skipped_linkless['reason'])
+            self.assertIn('個別リンクがない10番台', skipped_linkless['message'])
 
     def test_machine_list_opens_missing_graph_before_new_machine(self):
         host = 'https://meruhenworld.pt.teramoba2.com/nagamachiminami'
@@ -423,7 +447,8 @@ class BrowserImportTests(unittest.TestCase):
             db.close()
             bridge = _Bridge(folder / 'test.db', folder, 'x')
             machines = [
-                dict(name='途中機', url=f'{host}/standlist_slot?machine_name=途中機', count=2),
+                dict(name='途中機', url=f'{host}/standlist_slot?machine_name=途中機', count=2,
+                     rack_scope=[101, 102]),
                 dict(name='新規機', url=f'{host}/standlist_slot?machine_name=新規機', count=3),
             ]
             query = lambda: json.loads(bridge.next_unimported_machine(json.dumps(
@@ -601,15 +626,15 @@ class BrowserImportTests(unittest.TestCase):
                      end_x=4, end_y=150)
         with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
             db = Store(Path(folder) / 'test.db')
-            db.save([dict(row(rack=701), graph_measurement=graph),
-                     dict(row(rack=702), bb=0, rb=0),
-                     dict(row(rack=703), bb=0, rb=1),   # RBだけでも当たりあり → 取る
+            db.save([dict(row(rack=701), graph_measurement=graph, detail_url='https://example.com/701'),
+                     dict(row(rack=702), bb=0, rb=0, detail_url='https://example.com/702'),
+                     dict(row(rack=703), bb=0, rb=1, detail_url='https://example.com/703'),   # RBだけでも当たりあり → 取る
                      dict(row(rack=704), bb=0, rb=0)])
             target, remaining, total = _find_next_ungraphed(db, '2026-09-13', 'テスト', 'nagamachiminami')
             self.assertEqual((int(target['rack']), remaining, total), (703, 1, 4))
             self.assertEqual(progress_text(db, '2026-09-13'), '2026-09-13　長町南 3/4台')
             self.assertEqual(machine_progress(db, 'nagamachiminami', '2026-09-13'), {'テスト': (3, 4)})
-            self.assertEqual(missing_graphs(db, '2026-09-13', 'nagamachiminami'), [('テスト', [703], 1)])
+            self.assertEqual(missing_graphs(db, '2026-09-13', 'nagamachiminami'), [('テスト', [703], 0)])
             self.assertFalse(day_fully_graphed(db, '2026-09-13'))
             db.save([dict(row(rack=703), bb=0, rb=1, graph_measurement=graph)])
             self.assertEqual(_find_next_ungraphed(db, '2026-09-13', 'テスト', 'nagamachiminami')[0], None)
@@ -823,6 +848,30 @@ class BackupSharingTests(unittest.TestCase):
             backup.write_text('{"format":"database-backup","records":[]}', encoding='utf-8')
             self.assertEqual(latest_backup_file(folder, seen=seen), backup)
 
+    def test_startup_reads_every_backup_after_the_last_import_oldest_first(self):
+        # 2026-10-25：長町南（07:10）と幸町（09:39）を別々に書き出すと、最新の1本だけでは長町南を取りこぼした。
+        from core import new_backup_files
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            def write(name, offset, text='{"format":"database-backup","records":[]}'):
+                path = folder / name
+                path.write_text(text, encoding='utf-8')
+                os.utime(path, (base + offset, base + offset))
+                return path
+            base = 1_790_000_000
+            older = write('database-backup-android-20261022-160927.json', 0)
+            seen = dict(name=older.name, mtime=base)
+            nagamachi = write('database-backup-android-20261025-071058.json', 100)
+            broken = write('database-backup-android-20261025-080000.json', 150, '{broken')
+            saiwai = write('database-backup-android-20261025-093930.json', 200)
+            write('database-viewer-parts-meruhen.json', 300)
+            self.assertEqual(new_backup_files(folder, seen=seen), [nagamachi, saiwai])
+            self.assertEqual(new_backup_files(folder, seen=dict(name=nagamachi.name, mtime=base + 100)), [saiwai])
+            self.assertEqual(new_backup_files(folder, seen=dict(name=saiwai.name, mtime=base + 200)), [])
+            # 初回（前回の記録なし）は最新の1本だけ。過去のファイルをまとめて読み直さない。
+            self.assertEqual(new_backup_files(folder), [saiwai])
+            self.assertTrue(broken.exists())
+
     def test_export_backup_writes_a_readable_round_trip_file(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
             db = Store(Path(folder) / 'test.db')
@@ -969,7 +1018,7 @@ class BackupSharingTests(unittest.TestCase):
             payload_file.write_text(json.dumps(_table_payload(rows)), encoding='utf-8')
             errors, signals = [], []
             originals = (browser_import._write_advance_signal, browser_import._bring_to_front, messagebox.showerror)
-            browser_import._write_advance_signal = lambda message, next_url=None: signals.append((message, next_url))
+            browser_import._write_advance_signal = lambda message, next_url=None, **kwargs: signals.append((message, next_url))
             browser_import._bring_to_front = lambda window: None
             messagebox.showerror = lambda *args, **kwargs: errors.append(args)
             try:
@@ -985,7 +1034,8 @@ class BackupSharingTests(unittest.TestCase):
             self.assertEqual([r['rack'] for r in saved], [301, 302])
             self.assertTrue(all('rack_no=' in (r.get('detail_url') or '') for r in saved))
             answer = json.loads(_Bridge(db_path, folder / 'reports', 'x').next_ungraphed_rack(json.dumps(
-                dict(store='nagamachiminami', day='2026-09-13', machine='L戦国乙女5L8', rack=None))))
+                dict(store='nagamachiminami', day='2026-09-13', machine='L戦国乙女5L8', rack=None,
+                     rack_scope=[301, 302]))))
             self.assertIn('rack_no=301', answer['url'])
             db.close()
 

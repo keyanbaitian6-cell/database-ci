@@ -197,7 +197,7 @@ class NextGraphTarget {
   /// この日の一覧にある台が、すべてグラフ取り込み済み。
   final bool dayComplete;
 
-  /// unknown_page / unknown_machine / no_rows / all_done / no_link
+  /// unknown_page / unknown_machine / no_rows / all_done / linkless
   final String? reason;
 }
 
@@ -951,7 +951,11 @@ class _WebImportPageState extends State<WebImportPage> {
     if (url != null && _allowed(url) && _autoCurrent(autoToken, _flow.page)) {
       final String step;
       final allDone = target.reason == 'all_done';
-      if (allDone) {
+      final machineFinished = allDone || target.reason == 'linkless';
+      if (target.reason == 'linkless') {
+        step =
+            '個別リンクがない台は未取得のまま残し、機種一覧へ移動します。';
+      } else if (allDone) {
         // 機種のグラフが全部済んだら、サイト自身の機種一覧ページへ案内する。
         // 読み込み後は、その一覧から次の未取込機種も探す。
         step =
@@ -962,9 +966,9 @@ class _WebImportPageState extends State<WebImportPage> {
             '${firstOfMachine ? '最初の未取り込み台へ移動します。' : ''}'
             '次：${target.rack}番台（残り${target.remaining}台）';
       }
-      _flow.expectPage(notice: '$saved$step $warning'.trim(), advance: allDone);
+      _flow.expectPage(notice: '$saved$step $warning'.trim(), advance: machineFinished);
       _flow.startLoading();
-      _afterMachine = allDone && autoToken == null ? machine : null;
+      _afterMachine = machineFinished && autoToken == null ? machine : null;
       try {
         await _web.loadRequest(Uri.parse(url));
       } catch (error) {
@@ -979,8 +983,7 @@ class _WebImportPageState extends State<WebImportPage> {
     final message = switch (target.reason) {
       'no_rows' => 'この機種・日付の一覧をまだ取り込んでいません。先に一覧を取り込んでください。',
       'unknown_machine' => '機種名を特定できません。一覧の取り込み後にお試しください。',
-      'no_link' =>
-        '${target.rack}番台が次ですが、保存済みの一覧に個別台リンクがありません。この機種の一覧を「この表を取り込む」でもう一度取り込むと使えます。',
+      'linkless' => '取得できる個別リンクのある未取得台はありません。未取得台を残して機種一覧へ戻ります。',
       'all_done' => 'この機種・日付はすべて取り込み済みです。',
       _ => '店舗・日付を特定できませんでした。機種別一覧か個別台のページで押してください。',
     };
@@ -1274,7 +1277,11 @@ class _WebImportPageState extends State<WebImportPage> {
               machine: machines[index]['name'] as String?,
               rack: null,
             );
-            if (target.url != null && _allowed(target.url!) && active()) {
+            if (target.url != null &&
+                target.reason != 'all_done' &&
+                target.reason != 'linkless' &&
+                _allowed(target.url!) &&
+                active()) {
               _flow.expectPage(
                 notice:
                     '$prefix未取得グラフが残る${machines[index]['name']}へ移動します。次：${target.rack}番台（残り${target.remaining}台）',

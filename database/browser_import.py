@@ -92,8 +92,8 @@ def page_mismatch(current_url, payload):
     url_day = url_day.replace('/', '-') if url_day else None
     try:
         day = resolve_day(payload)
-    except ValueError:
-        day = None
+    except ValueError as exc:
+        return str(exc)
     try:
         valid = bool(url_day) and date.fromisoformat(url_day).isoformat() == url_day
     except ValueError:
@@ -108,16 +108,20 @@ def page_mismatch(current_url, payload):
 
 
 def resolve_day(payload):
-    """A URL's target_date always wins over any on-page displayed date."""
+    """Resolve the data day, rejecting disagreement between independent evidence."""
     target = payload.get('target_date')
-    if target:
-        date.fromisoformat(target)
-        return target
     day = payload.get('day')
-    if not day:
+    displayed_day = payload.get('displayed_day')
+    known = [value for value in (target, day, displayed_day) if value]
+    for value in known:
+        date.fromisoformat(value)
+    if len(set(known)) > 1:
+        raise ValueError(f'URL/ページ表示の日付が一致しません（{", ".join(known)}）。'
+                         '表示中の日付を確認してください。')
+    if known:
+        return target or day or displayed_day
+    else:
         raise ValueError('評価日を特定できません。日付を選んでから取り込んでください。')
-    date.fromisoformat(day)
-    return day
 
 
 def build_table_rows(payload):
@@ -325,6 +329,23 @@ def build_graph_context(payload, store):
 # ---------------------------------------------------------------------------
 
 READ_DAY_JS = r'''
+  const parseDisplayedDay = value => {
+    const match = String(value || '').match(/(20\d{2})\s*[\/.年-]\s*(\d{1,2})\s*[\/.月-]\s*(\d{1,2})/);
+    return match ? `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}` : null;
+  };
+  const readDisplayedDay = () => {
+    for (const input of document.querySelectorAll('input[type="date"]')) {
+      const day = parseDisplayedDay(input.value);
+      if (day) return day;
+    }
+    for (const option of document.querySelectorAll('select option:checked')) {
+      for (const value of [option.value, option.textContent]) {
+        const day = parseDisplayedDay(value);
+        if (day) return day;
+      }
+    }
+    return null;
+  };
   const readTargetDay = () => {
     const fromUrl = new URL(location.href).searchParams.get('target_date');
     if (fromUrl) return fromUrl;
@@ -334,11 +355,7 @@ READ_DAY_JS = r'''
         if (day) return day;
       } catch (_) {}
     }
-    for (const option of document.querySelectorAll('select option:checked')) {
-      const match = (option.textContent || '').match(/(20\d{2})\s*[\/.年-]\s*(\d{1,2})\s*[\/.月-]\s*(\d{1,2})/);
-      if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
-    }
-    return null;
+    return readDisplayedDay();
   };
 '''
 
@@ -392,6 +409,7 @@ TABLE_EXTRACT_BODY = READ_DAY_JS + r'''
       location.pathname.startsWith('/nagamachiminami/') ? 'nagamachiminami' : null;
     return JSON.stringify({
       matrix, links, store, machine, target_date: targetDate,
+      displayed_day: readDisplayedDay(),
       kind_code: pageUrl.searchParams.get('kind_code'),
       source_url: location.href, updated_display: updated,
     });
@@ -448,6 +466,31 @@ GRAPH_EXTRACT_BODY = READ_DAY_JS + r'''
   machine = machine.replace(/\+/g, ' ').replace(/\s+/g, ' ').trim();
   const store = location.pathname.startsWith('/saiwaichou/') ? 'saiwaichou' :
     location.pathname.startsWith('/nagamachiminami/') ? 'nagamachiminami' : null;
+  const target_date = readTargetDay();
+  let rack_scope = null;
+  // GRAPH_EXTRACT_BODY runs by itself in the WebView. It cannot call the
+  // overlay's pageIdentity(), so read the scope saved when the machine table
+  // was imported directly from sessionStorage.
+  try {
+    if (typeof sessionStorage !== 'undefined' && store && target_date && rackParam) {
+      const prefix = 'database-rack-scope:' + store + ':' + target_date + ':';
+      const key = prefix + machine.normalize('NFKC').replace(/\+/g, ' ').replace(/\s+/g, '').trim();
+      const exact = JSON.parse(sessionStorage.getItem(key) || 'null');
+      if (Array.isArray(exact) && exact.every(Number.isInteger) && exact.includes(Number(rackParam))) {
+        rack_scope = exact;
+      } else {
+        const matches = new Map();
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const candidate = sessionStorage.key(i);
+          if (!candidate || !candidate.startsWith(prefix)) continue;
+          const value = JSON.parse(sessionStorage.getItem(candidate) || 'null');
+          if (Array.isArray(value) && value.every(Number.isInteger) && value.includes(Number(rackParam)))
+            matches.set(candidate, value);
+        }
+        if (matches.size === 1) rack_scope = matches.values().next().value;
+      }
+    }
+  } catch (e) { rack_scope = null; }
   // グラフの中の数字（class が info_ で始まるもの）と、ページの文字（パチンコの台のページの初当り・当り履歴などを
   // あとで読むため。スロットでは使わない）。
   const info = {};
@@ -463,7 +506,9 @@ GRAPH_EXTRACT_BODY = READ_DAY_JS + r'''
     points, baseline_y: Number(zero.getAttribute('y1')), width, height,
     games: numOf('.info_soukaiten'), bb: numOf('.info_big'), rb: numOf('.info_reg'),
     max_hold: numOf('.info_max_mochidama'),
-    rack: rackParam ? Number(rackParam) : null, target_date: readTargetDay(),
+    rack: rackParam ? Number(rackParam) : null, target_date,
+    displayed_day: readDisplayedDay(),
+    rack_scope,
     machine: machine || null, store, source_url: location.href,
   });
 '''
@@ -538,6 +583,29 @@ OVERLAY_JS = (
     # data after navigation by itself.
     "  const captureBtn = document.createElement('button');\n"
     "  captureBtn.textContent = 'この画面を取り込む';\n"
+    "  const rackScopeKey = (store, day, machine) => 'database-rack-scope:' + store + ':' + day + ':' +\n"
+    "    String(machine || '').normalize('NFKC').replace(/\\+/g, ' ').replace(/\\s+/g, '').trim();\n"
+    "  const readRackScope = (store, day, machine) => {\n"
+    "    if (!store || !day || !machine) return null;\n"
+    "    try { const value = JSON.parse(sessionStorage.getItem(rackScopeKey(store, day, machine)) || 'null');\n"
+    "      return Array.isArray(value) && value.every(Number.isInteger) ? value : null;\n"
+    "    } catch (e) { return null; }\n"
+    "  };\n"
+    "  const findRackScope = (store, day, rack) => {\n"
+    "    if (!store || !day || !Number.isInteger(rack)) return null;\n"
+    "    const prefix = 'database-rack-scope:' + store + ':' + day + ':';\n"
+    "    try {\n"
+    "      const matches = new Map();\n"
+    "      for (let i = 0; i < sessionStorage.length; i++) {\n"
+    "        const key = sessionStorage.key(i);\n"
+    "        if (!key || !key.startsWith(prefix)) continue;\n"
+    "        const value = JSON.parse(sessionStorage.getItem(key) || 'null');\n"
+    "        if (Array.isArray(value) && value.every(Number.isInteger) && value.includes(rack))\n"
+    "          matches.set(key, value);\n"
+    "      }\n"
+    "      return matches.size === 1 ? matches.values().next().value : null;\n"
+    "    } catch (e) { return null; }\n"
+    "  };\n"
     "  const pageIdentity = () => {\n"
     "    const url = new URL(location.href);\n"
     "    let machine = url.searchParams.get('machine_name') || '';\n"
@@ -569,7 +637,15 @@ OVERLAY_JS = (
     "      try { day = localStorage.getItem('database-active-day-' + currentStore) || ''; } catch (e) {}\n"
     "    }\n"
     "    const rack = url.searchParams.get('rack_no');\n"
-    "    return {store: currentStore, day, machine, rack: rack ? Number(rack) : null};\n"
+    "    const rackNumber = rack ? Number(rack) : null;\n"
+    "    return {store: currentStore, day, machine, rack: rackNumber,\n"
+    "      rack_scope: readRackScope(currentStore, day, machine) ||\n"
+    "        findRackScope(currentStore, day, rackNumber)};\n"
+    "  };\n"
+    "  window.__databaseSetRackScope = (id, racks) => {\n"
+    "    if (!id || !id.store || !id.day || !id.machine || !Array.isArray(racks) || !racks.every(Number.isInteger)) return false;\n"
+    "    try { sessionStorage.setItem(rackScopeKey(id.store, id.day, id.machine), JSON.stringify(racks)); return true; }\n"
+    "    catch (e) { return false; }\n"
     "  };\n"
     "  const progress = document.createElement('span');\n"
     "  progress.style.cssText = 'font-size:11px;opacity:.85;white-space:normal;word-break:break-word';\n"
@@ -644,6 +720,7 @@ OVERLAY_JS = (
     "    return named.length ? named : rows;\n"
     "  };\n"
     "  const machineLinks = () => {\n"
+    "    const day = pageIdentity().day;\n"
     "    const anchors = Array.from(document.querySelectorAll('a[href*=\"machine_name\"]'));\n"
     "    if (anchors.length) return anchors.map(a => {\n"
     "      let name = new URL(a.href, location.origin).searchParams.get('machine_name') || '';\n"
@@ -651,7 +728,8 @@ OVERLAY_JS = (
     "        try { name = decodeURIComponent(name); } catch (e) { break; }\n"
     "      }\n"
     "      const countMatch = ((a.closest('tr') || a.parentElement || a).innerText || '').match(/(\\d+)\\s*台/);\n"
-    "      return {name, url: a.href, count: countMatch ? Number(countMatch[1]) : null, element: a};\n"
+    "      return {name, url: a.href, count: countMatch ? Number(countMatch[1]) : null,\n"
+    "        rack_scope: readRackScope(currentStore, day, name), element: a};\n"
     "    });\n"
     "    // The site's current machine list uses click handlers on table rows,\n"
     "    // not links.  Recreate its own destination from the visible name.\n"
@@ -667,7 +745,8 @@ OVERLAY_JS = (
     "      const encoded = encodeURIComponent(encodeURIComponent(urlName));\n"
     "      return {name, url: location.origin + '/' + currentStore + '/standlist_slot/?kind_code=' +\n"
     "        encodeURIComponent(kind) + '&machine_name=' + encoded,\n"
-    "        count: countMatch ? Number(countMatch[1]) : null, element};\n"
+    "        count: countMatch ? Number(countMatch[1]) : null,\n"
+    "        rack_scope: readRackScope(currentStore, day, name), element};\n"
     "    }).filter(item => item.name);\n"
     "  };\n"
     "  const waitForMachineLinks = async () => {\n"
@@ -695,7 +774,7 @@ OVERLAY_JS = (
     # Send only plain values. Each item also carries its DOM element (for the
     # badges), and on the live React-rendered site that element holds a
     # __reactFiber back-reference -> JSON.stringify throws "circular structure".
-    "    const machines = (await waitForMachineLinks()).map(({name, url, count}) => ({name, url, count}));\n"
+    "    const machines = (await waitForMachineLinks()).map(({name, url, count, rack_scope}) => ({name, url, count, rack_scope}));\n"
     "    if (!valid()) return;\n"
     "    const after = revision === null ? (new URLSearchParams(location.hash.replace(/^#/, '')).get('database_after') || '') : '';\n"
     "    const raw = await window.pywebview.api.next_unimported_machine(JSON.stringify({...id, kind_code, machines, after}));\n"
@@ -973,7 +1052,20 @@ HIDE_YOUTUBE_JS = r'''
 OVERLAY_JS = OVERLAY_JS + '\n;' + HIDE_YOUTUBE_JS
 
 
-def _find_next_ungraphed(store, day, machine, location, current_rack=None):
+def _clean_rack_scope(raw):
+    """Return a validated list-page rack scope, or None if it is unavailable."""
+    if not isinstance(raw, list):
+        return None
+    racks = []
+    for rack in raw:
+        if isinstance(rack, bool) or not isinstance(rack, int) or rack < 0:
+            return None
+        racks.append(rack)
+    return sorted(set(racks))
+
+
+def _find_next_ungraphed(store, day, machine, location, current_rack=None,
+                         rack_scope=None):
     """Shared by the manual "次の未取り込み台へ" button and the automatic
     advance-after-save path: the already-imported row (if any) for this
     store/day/machine that still has no graph, plus how many remain and how
@@ -981,10 +1073,17 @@ def _find_next_ungraphed(store, day, machine, location, current_rack=None):
     apart from "already fully graphed" -- both look like "no target" but
     need a different message).
     """
-    rows = store.rows(day, machine, location)
+    all_rows = store.rows(day, machine, location)
+    scope = _clean_rack_scope(rack_scope)
+    if scope is not None:
+        scope_set = set(scope)
+        rows = [r for r in all_rows if int(r['rack']) in scope_set]
+    else:
+        rows = all_rows
     pending = sorted(
         # 大当たり0回の台はグラフを取らないので、次の台にしない。
-        (r for r in rows if not graph_done(r)),
+        # 個別リンクが無い台も取得対象としては残すが、移動先には選ばない。
+        (r for r in rows if not graph_done(r) and r.get('detail_url')),
         key=lambda r: int(r['rack']))
     if not pending:
         return None, 0, len(rows)
@@ -1065,28 +1164,62 @@ def no_racks_notice(day, machine):
             'この日は飛ばして、次の機種へ進みます。')
 
 
-def _next_step(store, day, machine, location, current_rack=None):
+def _next_step(store, day, machine, location, current_rack=None, rack_scope=None):
     """What to do after a save / on "次の未取り込み台へ": one place decides.
 
-    kind: 'next' (jump to the next rack without a graph), 'machine_done'
-    (everything on this machine is graphed -> back to the machine list),
-    'no_link' (next rack known but no saved site link), 'no_rows'.
+    kind: 'next' (jump to the next linked rack without a graph),
+    'machine_done' (everything on this machine is graphed -> back to the
+    machine list), 'machine_done_unlinked' (linkless racks remain visibly
+    ungraphed, but cannot be opened), or 'no_rows'.
     """
-    target, remaining, total = _find_next_ungraphed(store, day, machine, location, current_rack)
+    all_rows = store.rows(day, machine, location)
+    scope = _clean_rack_scope(rack_scope)
+    out_of_scope_racks = []
+    if scope is not None:
+        scope_set = set(scope)
+        out_of_scope_racks = sorted(int(r['rack']) for r in all_rows
+                                    if int(r['rack']) not in scope_set and not graph_done(r))
+        rows = [r for r in all_rows if int(r['rack']) in scope_set]
+    else:
+        rows = all_rows
+    unlinked_racks = sorted(int(r['rack']) for r in rows
+                            if not graph_done(r) and not r.get('detail_url'))
+    target, remaining, total = _find_next_ungraphed(
+        store, day, machine, location, current_rack, rack_scope=scope)
     if total == 0:
         return dict(kind='no_rows', url=None,
                     text='この機種・日付の一覧をまだ取り込んでいません。先に一覧を取り込んでください。')
     if target is None:
+        if unlinked_racks or out_of_scope_racks:
+            skipped = []
+            if out_of_scope_racks:
+                skipped.append(f'現在の一覧にない{_rack_list_text(out_of_scope_racks)}')
+            if unlinked_racks:
+                skipped.append(f'個別リンクがない{_rack_list_text(unlinked_racks)}')
+            return dict(kind='machine_done_unlinked',
+                        url=machine_list_url(location, day, after=machine),
+                        unlinked_racks=unlinked_racks,
+                        out_of_scope_racks=out_of_scope_racks,
+                        text=f'{"と".join(skipped)}はグラフ未取得のまま残し、次の機種へ進みます。')
         return dict(kind='machine_done', url=machine_list_url(location, day, after=machine),
                     text='この機種はすべて取り込み済みです。機種一覧へ移動します。')
     rack = int(target['rack'])
     url = target.get('detail_url')
-    if not url:
-        return dict(kind='no_link', url=None, rack=rack, remaining=remaining,
-                    text=f'{rack}番台が次ですが、保存済みの一覧に個別台リンクがありません。'
-                         'この機種の一覧を「この表を取り込む」でもう一度取り込むと使えます。')
+    skipped = []
+    if out_of_scope_racks:
+        skipped.append(f'現在の一覧にない{_rack_list_text(out_of_scope_racks)}')
+    if unlinked_racks:
+        skipped.append(f'個別リンクがない{_rack_list_text(unlinked_racks)}')
+    linkless = f'{"と".join(skipped)}はグラフ未取得のまま残します。' if skipped else ''
     return dict(kind='next', url=url, rack=rack, remaining=remaining,
-                text=f'次：{rack}番台（残り{remaining}台）')
+                unlinked_racks=unlinked_racks,
+                out_of_scope_racks=out_of_scope_racks,
+                text=f'{linkless}次：{rack}番台（取得可能な残り{remaining}台）')
+
+
+def _rack_list_text(racks):
+    """Format rack numbers in a compact Japanese status message."""
+    return '・'.join(f'{int(rack)}番台' for rack in racks)
 
 
 # 読み取った内容を保存用のプロセスへ渡す一時ファイル（database-import-<32桁>.json）。
@@ -1128,13 +1261,18 @@ def _advance_signal_path():
                 str(Path(tempfile.gettempdir()) / 'database-browser-advance-signal.json'))
 
 
-def _write_advance_signal(message, next_url=None):
+def _write_advance_signal(message, next_url=None, rack_scope=None, rack_scope_identity=None):
     """Hand a status message (and optionally a URL to move on to) from the
     confirmation subprocess back to the main browser process -- the two are
     separate OS processes, so a small well-known file is the handoff, the
     same pattern ``_Bridge._spawn`` already uses in the other direction.
     """
-    payload = json.dumps(dict(message=message, next_url=next_url), ensure_ascii=False)
+    payload = dict(message=message, next_url=next_url)
+    if rack_scope is not None:
+        payload['rack_scope'] = _clean_rack_scope(rack_scope)
+        if isinstance(rack_scope_identity, dict):
+            payload['rack_scope_identity'] = rack_scope_identity
+    payload = json.dumps(payload, ensure_ascii=False)
     _advance_signal_path().write_text(payload, encoding='utf-8')
 
 
@@ -1404,6 +1542,12 @@ class _Bridge:
             return False
         payload, generation, session, source_url = self._pending_advance
         message, url = payload.get('message'), payload.get('next_url')
+        rack_scope = _clean_rack_scope(payload.get('rack_scope'))
+        scope_identity = payload.get('rack_scope_identity')
+        if rack_scope is not None and isinstance(scope_identity, dict):
+            self._window.evaluate_js('window.__databaseSetRackScope && window.__databaseSetRackScope(' +
+                                     json.dumps(scope_identity, ensure_ascii=False) + ',' +
+                                     json.dumps(rack_scope) + ')')
         if message:
             self._window.evaluate_js("try { localStorage.setItem('database-last-status', " +
                 json.dumps(message) + "); } catch (e) {}")
@@ -1601,7 +1745,15 @@ class _Bridge:
                                    'reason': 'tables_only',
                                    'message': '表だけ取り込むモードです。グラフを省略して次の機種を探します。'},
                                   ensure_ascii=False)
-            step = _next_step(db, day, machine, store_path, current_rack)
+            rack_scope = _clean_rack_scope(payload.get('rack_scope'))
+            if rack_scope is None:
+                return json.dumps({
+                    'url': machine_list_url(store_path, day, after=machine),
+                    'reason': 'need_table_scope',
+                    'message': '現在の機種一覧にある台だけを対象にするため、機種一覧へ戻ります。'},
+                    ensure_ascii=False)
+            step = _next_step(db, day, machine, store_path, current_rack,
+                              rack_scope=rack_scope)
         finally:
             db.close()
         reason = {'next': None, 'machine_done': 'all_done'}.get(step['kind'], step['kind'])
@@ -1784,7 +1936,8 @@ class _Bridge:
                 continue
             count = raw_machine.get('count')
             machines.append(dict(name=name, url=url,
-                                 count=int(count) if isinstance(count, (int, float)) else None))
+                                 count=int(count) if isinstance(count, (int, float)) else None,
+                                 rack_scope=_clean_rack_scope(raw_machine.get('rack_scope'))))
         if self._direction == 'bottom':
             machines.reverse()
         # 取り込み日を指定しているときは、サイトの行を押さず、日付つきのURLで機種の表を開く
@@ -1805,6 +1958,34 @@ class _Bridge:
                 # 今回の取り込みより前に取ったきりの機種（昼の数値のまま）。表から取り直す。
                 return cutoff is not None and key in last_capture and last_capture[key] < cutoff
 
+            unlinked_skips = {}
+
+            def unlinked_note():
+                if not unlinked_skips:
+                    return ''
+                items = []
+                for name, unlinked, out_of_scope in unlinked_skips.values():
+                    parts = []
+                    if out_of_scope:
+                        parts.append(f'現在の一覧にない{_rack_list_text(out_of_scope)}')
+                    if unlinked:
+                        parts.append(f'個別リンクがない{_rack_list_text(unlinked)}')
+                    if parts:
+                        items.append(f'{name}：{"と".join(parts)}')
+                return ('未取得のまま残した台：' + '、'.join(items) + '。') if items else ''
+
+            def with_unlinked_note(message, prefix=''):
+                return ' '.join(part for part in (prefix, unlinked_note(), message) if part)
+
+            def all_done_result():
+                note = unlinked_note()
+                message = ('リンクのある未取得グラフはありません。' + note
+                           if note else '未取り込みの機種・グラフはありません。')
+                if self._tables_only:
+                    message = '未取り込みの表はありません。'
+                return json.dumps({'url': None, 'reason': 'all_done', 'message': message},
+                                  ensure_ascii=False)
+
             def search(candidates, prefix=''):
                 # 一覧の並び（選んだ向き）の順に1回だけ見る：グラフが残る機種も、未取込・台数変更・
                 # 古い表の機種も、並びで先にある方から（2026-10-06）。以前は「グラフが残る機種」を一覧の
@@ -1817,16 +1998,33 @@ class _Bridge:
                     done_total = progress.get(key)
                     old = done_total is not None and stale(key)
                     if not self._tables_only and done_total is not None and done_total[0] < done_total[1] and not old:
-                        step = _next_step(db, day, machine['name'], store_path)
+                        rack_scope = _clean_rack_scope(machine.get('rack_scope'))
+                        known_racks = {int(row['rack']) for row in db.rows(day, machine['name'], store_path)}
+                        if rack_scope is None or not set(rack_scope).issubset(known_racks):
+                            return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
+                                               'machine': machine['name'], 'reason': 'table', 'direct': direct,
+                                               'message': with_unlinked_note(
+                                                   f'{machine["name"]}の現在の一覧を取り込んで、対象台を確認します。', prefix)},
+                                              ensure_ascii=False)
+                        step = _next_step(db, day, machine['name'], store_path,
+                                          rack_scope=rack_scope)
                         if step['kind'] == 'next' and listed_url(step.get('url')):
                             return json.dumps({'url': step['url'], 'reason': 'graph',
-                                               'message': f"{prefix}未取得グラフが残る{machine['name']}へ移動します。{step['text']}"},
+                                               'message': with_unlinked_note(
+                                                   f"未取得グラフが残る{machine['name']}へ移動します。{step['text']}", prefix)},
                                               ensure_ascii=False)
-                        # Old rows can lack detail_url.  Re-import this displayed table
-                        # so it records current per-rack links before resuming graphs.
+                        if step['kind'] == 'machine_done_unlinked':
+                            unlinked_skips[key] = (machine['name'], step['unlinked_racks'],
+                                                   step['out_of_scope_racks'])
+                            continue
+                        if step['kind'] == 'machine_done':
+                            continue
+                        # A saved row without a link is left ungraphed; current table scopes
+                        # determine which rack numbers are eligible for this session.
                         return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
                                            'machine': machine['name'], 'reason': 'table', 'direct': direct,
-                                           'message': f"{prefix}{machine['name']}の一覧を更新して、未取得グラフを続けます。"},
+                                           'message': with_unlinked_note(
+                                               f"{machine['name']}の現在の一覧を取り込んで、未取得グラフを続けます。", prefix)},
                                           ensure_ascii=False)
                     # 一覧の台数が保存台数より「多い」ときだけ取り込み直しを案内する。
                     # 一覧は今の設置台数なので、減台後に前日分を取り込むと保存台数の方が
@@ -1843,7 +2041,7 @@ class _Bridge:
                                    f"{machine['name']}は未取込です。現在の表を取り込んでください。")
                         return json.dumps({'url': with_target_date(machine['url'], day) if direct else machine['url'],
                                            'machine': machine['name'], 'reason': 'table', 'direct': direct,
-                                           'message': prefix + message},
+                                           'message': with_unlinked_note(message, prefix)},
                                           ensure_ascii=False)
                 return None
 
@@ -1860,15 +2058,13 @@ class _Bridge:
                     found = search(machines, '最後まで来たので、一覧の最初から残りを探しました。')
                     if found:
                         return found
-                    return json.dumps({'url': None, 'reason': 'all_done',
-                                       'message': '未取り込みの表はありません。' if self._tables_only else '未取り込みの機種・グラフはありません。'}, ensure_ascii=False)
+                    return all_done_result()
             found = search(machines)
             if found:
                 return found
         finally:
             db.close()
-        return json.dumps({'url': None, 'reason': 'all_done',
-                           'message': '未取り込みの表はありません。' if self._tables_only else '未取り込みの機種・グラフはありません。'}, ensure_ascii=False)
+        return all_done_result()
 
     def progress(self, raw):
         """"今日 長町南 42/80台・幸町 18/60台" for the overlay's progress line."""
@@ -2079,7 +2275,9 @@ def _confirm_table(payload_path, db_path, reports_folder):
             warning = duplicate_warning(store, day, location, machine)
             message = f'{len(saved_rows)}台の表を保存しました。グラフを省略して次の機種を探します。'
             _write_advance_signal(' '.join(p for p in (message, warning) if p),
-                                  next_url=machine_list_url(location, day, after=machine))
+                                  next_url=machine_list_url(location, day, after=machine),
+                                  rack_scope=[int(r['rack']) for r in rows],
+                                  rack_scope_identity=dict(store=location, day=day, machine=machine))
             return
         # 自動バックアップは保存のたびではなく、内部ブラウザを閉じたときに1回だけ
         # 取る（run_session）。全データの書き出しは記録が増えるほど重くなり、
@@ -2088,7 +2286,8 @@ def _confirm_table(payload_path, db_path, reports_folder):
         # a decision, and this happens once per machine (not once per rack),
         # so the browser's own status line is enough feedback. It also moves
         # straight on to the first rack that still lacks a graph.
-        step = _next_step(store, day, machine, location, None)
+        rack_scope = [int(r['rack']) for r in rows]
+        step = _next_step(store, day, machine, location, None, rack_scope=rack_scope)
         head = f'{len(saved_rows)}台を保存しました。'
         no_hit = sum(1 for r in saved_rows if no_hits(r))
         if no_hit:
@@ -2098,7 +2297,9 @@ def _confirm_table(payload_path, db_path, reports_folder):
         else:
             head += step['text']
         warning = duplicate_warning(store, day, location, machine)
-        _write_advance_signal(' '.join(part for part in (head, warning) if part), next_url=step['url'])
+        _write_advance_signal(' '.join(part for part in (head, warning) if part),
+                              next_url=step['url'], rack_scope=rack_scope,
+                              rack_scope_identity=dict(store=location, day=day, machine=machine))
     except Exception as exc:  # noqa: BLE001
         import traceback
         traceback.print_exc()
@@ -2158,7 +2359,11 @@ def _confirm_graph(payload_path, db_path, reports_folder):
         # carries no decision. The next rack's own page loading is the
         # confirmation that this one saved; see the advance-signal watcher
         # in run_session() for how the browser picks this up across processes.
-        step = _next_step(store, context['day'], context['machine'], context['store'], context['rack'])
+        rack_scope = _clean_rack_scope(payload.get('rack_scope'))
+        if rack_scope is None:
+            rack_scope = [int(context['rack'])]
+        step = _next_step(store, context['day'], context['machine'], context['store'],
+                          context['rack'], rack_scope=rack_scope)
         direction = '上昇' if context['points'][-1][1] < context['baseline_y'] else '下降'
         saved = (f"{context['rack']}番台を保存しました"
                  f"（{context['games']}G・BIG{context['bb']}・REG{context['rb']}・終点{direction}）。")

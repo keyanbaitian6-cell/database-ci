@@ -148,6 +148,9 @@ class AppController extends ChangeNotifier {
   final BackupService backupService;
   final _undo = UndoLog();
   ImportSpool? _conflictSpool;
+  // Current table scope for each machine in this app session. Older records
+  // remain available as history but cannot send imports to a former lineup.
+  final Map<String, Set<int>> _rackScopes = {};
 
   /// 画面用の記録（グラフの画像・曲線は持たない軽い形）。変更できない一覧で、
   /// 書き込みのたびに新しい一覧に入れ替える（そのたびに [revision] が進む）。
@@ -875,6 +878,7 @@ class AppController extends ChangeNotifier {
       trashKind: TrashKind.overwrite,
       changed: saved,
     );
+    _rackScopes['$store|$day|$machine'] = rows.map((row) => row.rack).toSet();
     _rememberUndo('$machineの一覧${saved.length}台', saved, old);
     message = '${saved.length}台を保存しました。$note';
     notifyListeners();
@@ -1547,32 +1551,53 @@ class AppController extends ChangeNotifier {
           ?.machine;
     }
     if (name == null) return const NextGraphTarget(reason: 'unknown_machine');
-    final rows = records
+    final allRows = records
         .where((r) => r.store == store && r.day == day && r.machine == name)
         .toList();
+    if (allRows.isEmpty) return const NextGraphTarget(reason: 'no_rows');
+    final scope = _rackScopes['$store|$day|$name'];
+    final rows = scope == null
+        ? allRows
+        : allRows.where((r) => scope.contains(r.rack)).toList();
     if (rows.isEmpty) return const NextGraphTarget(reason: 'no_rows');
-    final warning = duplicateWarning(rows, rack: rack);
+    final outOfScope = scope == null
+        ? <int>[]
+        : allRows
+              .where((r) => !scope.contains(r.rack) && !r.graphDone)
+              .map((r) => r.rack)
+              .toList()
+          ..sort();
+    final duplicate = duplicateWarning(rows, rack: rack);
+    final unlinked = rows
+        .where((r) => !r.graphDone && r.detailUrl == null)
+        .map((r) => r.rack)
+        .toList()
+      ..sort();
+    final notices = <String>[
+      if (duplicate != null && duplicate.isNotEmpty) duplicate,
+      if (unlinked.isNotEmpty)
+        '個別リンクがない${unlinked.join('・')}番台はグラフ未取得のまま残します。',
+      if (outOfScope.isNotEmpty)
+        '現在の一覧にない${outOfScope.join('・')}番台は対象外にしました。',
+    ];
+    final warning = notices.isEmpty ? null : notices.join(' ');
     // 大当たり0回の台はグラフを取らないので、次の台にしない。
-    final pending = rows.where((r) => !r.graphDone).toList()
+    final pending = rows
+        .where((r) => !r.graphDone && r.detailUrl != null)
+        .toList()
       ..sort((a, b) => a.rack.compareTo(b.rack));
     if (pending.isEmpty) {
       return NextGraphTarget(
         url: meruhenMachineListUrl(store, day),
-        reason: 'all_done',
+        reason: unlinked.isNotEmpty || outOfScope.isNotEmpty
+            ? 'linkless'
+            : 'all_done',
         warning: warning,
-        dayComplete: dayComplete,
+        dayComplete: unlinked.isEmpty && outOfScope.isEmpty && dayComplete,
       );
     }
     final later = pending.where((r) => rack == null || r.rack > rack).toList();
     final target = later.isNotEmpty ? later.first : pending.first;
-    if (target.detailUrl == null) {
-      return NextGraphTarget(
-        rack: target.rack,
-        remaining: pending.length,
-        reason: 'no_link',
-        warning: warning,
-      );
-    }
     return NextGraphTarget(
       url: target.detailUrl,
       rack: target.rack,

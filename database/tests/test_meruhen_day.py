@@ -39,6 +39,7 @@ class DaySelectionTests(unittest.TestCase):
                           captured_at='2026-10-03T23:30:00+09:00') for rack in (1, 2, 3)])
         finally:
             db.close()
+        self.machines[0]['rack_scope'] = [1, 2, 3]
         self.assertEqual(self.ask(day=day)['reason'], 'graph')
         self.assertTrue(self.bridge.set_tables_only(True)['tables_only'])
         answer = self.ask(day=day)
@@ -173,6 +174,7 @@ class DaySelectionTests(unittest.TestCase):
         db.save([dict(row(rack=r, machine='丁機', day=day), graph_measurement=graph, detail_url=detail(r))
                  for r in (31, 32, 33)])
         db.close()
+        self.machines[0]['rack_scope'] = [1, 2, 3]
         self.bridge.set_target_day(None, 'bottom')
         bottom = self.ask(day=day)
         self.assertEqual((bottom['machine'], bottom['reason']), ('丙機', 'table'),
