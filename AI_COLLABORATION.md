@@ -3394,3 +3394,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - APK：`0.5.42+2026102501`。通常版 `com.keyan.database_android`（SHA-256 `c7d9c3d6f5916816d9b7bd10916ed766dd436b2e959e80a52708438d6553b57f`）と P’s CUBE版 `.pscube`（`8cc7bbb1850ef9268b0a3f88c7a67ef812822a8bb76d79601106252c18d73feb`）、署名は既存と同じ `4332fcb9…a047`。`database_android/build/releases/0.5.42/`。2回目のALL PASSED後のAndroidソースから作成（その後の変更はPCだけ）。旧APK3本はごみ箱へ。端末へのインストール・実機確認は未実施。
 - 最終の全体ゲート（全修正後）は **ALL PASSED**：PC438件・追加215件・UTC27件、Flutter672件、analyzeはエラー・警告なし（既存info26件）、JS70ファイル377件（成功376・従来の任意1件スキップ）。記録 `../review_packages/claude-handoff-20261025/gate/`。
 - 実DB・設定は変更していない（読み取り専用の確認だけ）。PC版は再起動で反映。EXEは作らない。
+- 利用者「pushして」により、日本時間10/25 11:06に `975dd12` を後半の送り先 database-ci/main へ1回push（`148e891..975dd12`、早送り）。CI #29（40153171400）の開始を1回読んで確認した。結果は未確認で、再実行・定期の確認はしていない。正本originへは送っていない。
