@@ -3487,3 +3487,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 閲覧ページを database-viewer `781e1ca`、共有カレンダーを database-share `3be52cc` として公開（いずれも source e338171、gateのstage物）。Pagesのデプロイ成功、公開中の main.dart.js がstage物と一致、共有の data.mjs に新しい処理が入っていることを確認。公開物には main にある別作業（P’s CUBEの自動取り込みの修正 `8c0ea20`、共有の app.mjs など前回公開後の変更）も含まれる。
 - **履歴の注意**：`e39e4e6`（作業記録だけのつもりのコミット）は、別のセッションが同じ作業フォルダで始めていたブランチ `claude/amazing-cerf-0nukce`（`8c0ea20` P’s CUBEの自動取り込み、`e43c940`）の取り込みを、私のコミットが完了させたマージになっていた。そのまま database-ci へ送っており、CI 40171960628 は成功。push済みのため履歴は書き換えない。以後、コミット前に MERGE_HEAD が無いことを確かめる。
 - 利用者がGoogleの3本を貼り替え（閲覧用2本は「デプロイを管理」→鉛筆→「新バージョン」でURLは不変）、`syncMeruhenCloud` を実行（17:23、22日更新・閲覧用40.1MB、158秒）。ドライブの一覧で85日中22日分に線パーツ（`history_rebuild_next` 22）。残りは30分ごとに24日分ずつ。iPhone実機は作り直し完了後に利用者が確認予定。
+- 利用者が `syncMeruhenCloud` を手動で続けて実行し、作り直しが完了（ドライブの一覧 17:47、`history_rebuild_next` なし、処理待ち0・失敗0）。85日中84日に線パーツ。残る10/25は記録0台の日。閲覧用パーツ 45.1MB → 26.6MB、線パーツ 26.5MB。CI #33（40175923624）成功。iPhone実機は未確認。
