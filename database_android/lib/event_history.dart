@@ -181,11 +181,17 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
         {...entry, 'device': 'shared'},
       ],
     };
-    final pending = mergeHistoryEdits(
-      _pendingWebHistory(),
-      incoming,
-      _base!,
-    ).edits;
+    // PCで週単位に入れたバラエティの週（共有の文書の weeks）も照合に渡す。渡さないと、その週の
+    // 顔文字は「該当する週がない」として送信待ちに残らず、「Apps Scriptの更新後に…」で止まった
+    // （2026-10-25、長町南の10/19週）。送信待ちには週の定義を保存しない（PCが正本）。
+    final pending = {
+      ...mergeHistoryEdits(
+        {..._pendingWebHistory(), 'weeks': _edits['weeks'] ?? const []},
+        incoming,
+        _base!,
+      ).edits,
+      'weeks': const <dynamic>[],
+    };
     final text = jsonEncode(pending);
     saveViewerSetting(_historyPendingKey, text);
     if (loadViewerSetting(_historyPendingKey) != text) {
