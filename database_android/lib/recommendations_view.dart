@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'face_menu.dart';
 import 'list_views.dart' show displayMachineName;
 import 'models.dart';
 import 'recommendations.dart';
@@ -198,58 +199,30 @@ class _RecommendationsViewState extends State<RecommendationsView> {
                                               : choice;
                                           return Column(
                                             children: [
-                                              Semantics(
+                                              FaceMenuButton(
+                                                key: ValueKey(
+                                                  'recommendation-face:$slot:${row.rack}:$i',
+                                                ),
                                                 label:
                                                     '${days[i]} $machine ${row.rack}番の顔文字',
-                                                child: DropdownButton<String>(
-                                                  key: ValueKey(
-                                                    'recommendation-face:$slot:${row.rack}:$i',
+                                                display: face.isEmpty
+                                                    ? '—'
+                                                    : face,
+                                                value: choice,
+                                                fontSize: 18,
+                                                options: [
+                                                  (
+                                                    'auto',
+                                                    '自動 ${recommendationFace(net)}',
                                                   ),
-                                                  value: choice,
-                                                  isExpanded: true,
-                                                  iconSize: 10,
-                                                  alignment: Alignment.center,
-                                                  selectedItemBuilder: (_) => [
-                                                    for (final _ in [
-                                                      'auto',
-                                                      '',
-                                                      ...recommendationFaces,
-                                                    ])
-                                                      Center(
-                                                        child: Text(
-                                                          face.isEmpty
-                                                              ? '—'
-                                                              : face,
-                                                          style:
-                                                              const TextStyle(
-                                                                fontSize: 18,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                  ],
-                                                  items: [
-                                                    DropdownMenuItem(
-                                                      value: 'auto',
-                                                      child: Text(
-                                                        '自動 ${recommendationFace(net)}',
-                                                      ),
-                                                    ),
-                                                    const DropdownMenuItem(
-                                                      value: '',
-                                                      child: Text('空欄'),
-                                                    ),
-                                                    for (final f
-                                                        in recommendationFaces)
-                                                      DropdownMenuItem(
-                                                        value: f,
-                                                        child: Text(f),
-                                                      ),
-                                                  ],
-                                                  onChanged: _saving
-                                                      ? null
-                                                      : (v) =>
-                                                            _save(fields, v!),
-                                                ),
+                                                  ('', '空欄'),
+                                                  for (final f
+                                                      in recommendationFaces)
+                                                    (f, f),
+                                                ],
+                                                onSelected: _saving
+                                                    ? null
+                                                    : (v) => _save(fields, v),
                                               ),
                                               TextButton(
                                                 style: TextButton.styleFrom(

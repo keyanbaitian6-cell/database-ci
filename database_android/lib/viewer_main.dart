@@ -379,6 +379,7 @@ class _ViewerHomeState extends State<ViewerHome> {
   void _show(ViewerData data) {
     _data = data;
     _dataVersion++;
+    viewerDataRevision.value++;
     _scoredFor = null;
     final first = data.records.firstOrNull;
     if (!data.records.any((r) => r.store == _store)) _store = first?.store;

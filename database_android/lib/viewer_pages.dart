@@ -310,6 +310,11 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
 /// P’s CUBE）は台の画面に🌈のボタンを出さない。
 Future<ViewerData?> Function(SlotRecord record, bool on)? viewerRainbowEditor;
 
+/// 閲覧ページの表示データが新しくなるたびに進む番号（ViewerHome._show が増やす）。開いたままの画面
+/// （バラエティの候補・本日の🌈）はこれを聞いて描き直す。起動直後に開くと、あとから届いたほかの端末の
+/// 🌈が出なかった（2026-10-25、CIの閲覧ページ試験でたまに失敗していた原因）。
+final viewerDataRevision = ValueNotifier<int>(0);
+
 class ViewerRecordPage extends StatefulWidget {
   const ViewerRecordPage({
     super.key,

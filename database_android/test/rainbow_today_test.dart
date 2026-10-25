@@ -181,4 +181,58 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     }
   });
+
+  testWidgets('開いたあとに届いたほかの端末の🌈も、本日の一覧に出る', (tester) async {
+    // 2026-10-25：起動直後に開くと、あとから取り込んだ共有の🌈が出ないまま（CIの閲覧ページ試験がたまに失敗）。
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 852);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final decoded = jsonDecode(fixture()) as Map<String, dynamic>;
+    final today = rainbowTodayDay(DateTime.now());
+    (decoded['records'] as List).removeWhere(
+      (r) => (r['day'] as String).compareTo(today) >= 0,
+    );
+    final text = jsonEncode(decoded);
+    var data = ViewerData.parse(text);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: VarietyWeekPage(
+          data: data,
+          store: 'saiwaichou',
+          day: '2026-10-13',
+          currentData: () => data,
+        ),
+      ),
+    );
+    await tester.tap(find.text('本日'));
+    await tester.pumpAndSettle();
+    expect(find.text('本日の🌈 0台'), findsOneWidget);
+    final marker = rainbowTodayRows(
+      data,
+      'saiwaichou',
+      today,
+    ).rows.first.marker;
+    final shared = withSharedRainbow(
+      text,
+      jsonEncode({
+        'format': 'database-rainbow',
+        'marks': [
+          {
+            'store': 'saiwaichou',
+            'day': today,
+            'rack': marker.rack,
+            'on': true,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        ],
+      }),
+    )!;
+    data = ViewerData.parse(shared);
+    viewerDataRevision.value++;
+    await tester.pumpAndSettle();
+    expect(find.text('本日の🌈 1台'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

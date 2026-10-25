@@ -105,6 +105,24 @@ class _VarietyWeekPageState extends State<VarietyWeekPage> {
   late ViewerData _data = widget.data;
   bool _today = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // 開いたあとに読み込みが終わった内容（ほかの端末の🌈など）も週表に出す。
+    viewerDataRevision.addListener(_dataChanged);
+  }
+
+  void _dataChanged() {
+    final latest = widget.currentData?.call();
+    if (latest != null && mounted) setState(() => _data = latest);
+  }
+
+  @override
+  void dispose() {
+    viewerDataRevision.removeListener(_dataChanged);
+    super.dispose();
+  }
+
   Future<void> _open(SlotRecord record) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -212,14 +230,18 @@ class _VarietyWeekPageState extends State<VarietyWeekPage> {
               children: [
                 ChoiceChip(
                   label: const Text('7日間の候補'),
-                  labelStyle: TextStyle(color: !_today ? Colors.white : AppColors.carbon),
+                  labelStyle: TextStyle(
+                    color: !_today ? Colors.white : AppColors.carbon,
+                  ),
                   selected: !_today,
                   onSelected: (_) => setState(() => _today = false),
                 ),
                 const SizedBox(width: 8),
                 ChoiceChip(
                   label: const Text('本日'),
-                  labelStyle: TextStyle(color: _today ? Colors.white : AppColors.carbon),
+                  labelStyle: TextStyle(
+                    color: _today ? Colors.white : AppColors.carbon,
+                  ),
                   selected: _today,
                   onSelected: (_) => setState(() => _today = true),
                 ),

@@ -38,8 +38,12 @@ try {
     let doc = structuredClone(fixture), failPosts = false;
     // 別端末で付けた未取得日の印も最初から見える。
     const marks = [{store:'saiwaichou',day:'2026-10-14',rack:1102,on:true,updated_at:'2026-10-14T03:00:00Z'}];
-    await context.route('https://script.google.com/**', route => {
+    // 閲覧ページは最初の🌈を2秒遅らせて返す。本日の一覧を開いたあとに届いても表示に出ること
+    // （2026-10-25、CIの混雑でこの順になり、開いたままの画面に反映されず落ちていた）。
+    let delayRainbow = kind === 'viewer';
+    await context.route('https://script.google.com/**', async route => {
       const request = route.request(), file = new URL(request.url()).searchParams.get('file') || '';
+      if (file === 'rainbow' && delayRainbow) {delayRainbow = false;await new Promise(r => setTimeout(r, 2000));}
       const body = request.method() === 'POST' ? (posts.push(JSON.parse(request.postData())), failPosts ? {error:'試験の送信失敗'} : {ok:true})
         : file === 'rainbow' ? {format:'database-rainbow',marks} : file === 'pscube' ? {format:'pscube-viewer',records:[]} : file ? {events:[]}
           : {format:'database-backup',version:1,source:'pc',exported_at:doc.header?.exported_at,records:doc.records};

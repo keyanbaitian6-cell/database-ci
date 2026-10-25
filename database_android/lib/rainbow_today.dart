@@ -6,7 +6,7 @@ import 'list_views.dart' show displayMachineName;
 import 'models.dart';
 import 'rainbow_marks.dart';
 import 'viewer_data.dart';
-import 'viewer_pages.dart' show viewerRainbowEditor;
+import 'viewer_pages.dart' show viewerDataRevision, viewerRainbowEditor;
 
 String rainbowTodayDay(DateTime now) => now
     .toUtc()
@@ -96,10 +96,17 @@ class _RainbowTodayListState extends State<RainbowTodayList> {
       final day = rainbowTodayDay(DateTime.now());
       if (day != _day && mounted) setState(() => _day = day);
     });
+    // 開いたあとに届いたほかの端末の🌈も出す（build は currentData から最新を読む）。
+    viewerDataRevision.addListener(_dataChanged);
+  }
+
+  void _dataChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    viewerDataRevision.removeListener(_dataChanged);
     _timer?.cancel();
     super.dispose();
   }

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'event_history_model.dart';
+import 'face_menu.dart';
 import 'recommendations.dart';
 import 'recommendations_view.dart';
 import 'list_views.dart' show displayMachineName;
@@ -539,39 +540,28 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
                                   ),
                                   const SizedBox(height: 6),
                                   if (_editable && kIsWeb)
-                                    Semantics(
+                                    FaceMenuButton(
                                       label:
                                           '${days[i]} ${machine['name']}の顔文字',
-                                      child: DropdownButton<String>(
-                                        value: grade,
-                                        isExpanded: true,
-                                        iconSize: 10,
-                                        items: [
-                                          for (final s in [
-                                            '',
-                                            ..._base!['symbols'] as List,
-                                          ])
-                                            DropdownMenuItem(
-                                              value: s as String,
-                                              child: Text(
-                                                s.isEmpty ? '—' : s,
-                                                style: const TextStyle(
-                                                  fontSize: 20,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                        onChanged: _busy
-                                            ? null
-                                            : (v) => _save('cells', {
-                                                'store': historyStore,
-                                                'type': week['type'],
-                                                'week': week['from'],
-                                                'machine': machine['name'],
-                                                'day': days[i],
-                                                'value': v!,
-                                              }),
-                                      ),
+                                      display: grade.isEmpty ? '—' : grade,
+                                      value: grade,
+                                      options: [
+                                        for (final s in [
+                                          '',
+                                          ..._base!['symbols'] as List,
+                                        ])
+                                          (s as String, s.isEmpty ? '—' : s),
+                                      ],
+                                      onSelected: _busy
+                                          ? null
+                                          : (v) => _save('cells', {
+                                              'store': historyStore,
+                                              'type': week['type'],
+                                              'week': week['from'],
+                                              'machine': machine['name'],
+                                              'day': days[i],
+                                              'value': v,
+                                            }),
                                     ),
                                   Semantics(
                                     label:
