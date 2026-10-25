@@ -61,5 +61,5 @@
 
 ## 固定したもの
 
-- コード：このファイルと `database/input_versions.py`・`research/next_day_shadow_20261025/frozen_analysis/` を含むコミット。凍結コピーのSHA256は同フォルダの `SHA256SUMS.txt`。分析当時の計画 `計画_20261025.md` のSHA256は `5a78684a…b100e`（`selection_lock.json` の plan_sha と同じ）。
+- コード：このファイルと `database/input_versions.py`・`research/next_day_shadow_20261025/frozen_analysis/` を含むコミット。凍結コピーのSHA256は同フォルダの `SHA256SUMS.txt`（LF改行の内容に対する値。WindowsではgitがCRLFに変えて取り出すので、`git show <コミット>:research/next_day_shadow_20261025/frozen_analysis/<名前> | sha256sum` で確かめる）。分析当時の計画 `計画_20261025.md` のSHA256は `5a78684a…b100e`（`selection_lock.json` の plan_sha と同じ）。
 - 評価で `core.py`・`scoring.mjs` などのPC・閲覧ページのコードを使う場合は、このコミットの版を使う（期間中にほかの作業でコードが変わっても、評価は固定した版で行う）。
