@@ -3334,3 +3334,13 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - GitHub実行 **`40145927929`** はWindows UTC（2分43秒）・Ubuntu UTC（1分6秒）が成功、**fullは10分21秒でゲートが失敗**。再実行していない。注記は汎用のexit code 1のみで失敗試験名は分からない。`regression-timings`（ID12581241989）と`regression-full-logs`（ID12581032201）は保存されている。ローカル全体成功を、CI全体成功と取り違えない。
 - timings取得はGitHub APIから302で **productionresultssa15.blob.core.windows.net** へ転送され、その先でForbidden。署名URLは記録・表示しない。GitHubの権限不足ではなく、現行環境の接続許可が必要な段階で止まることを確認。環境設定の既存のカスタム接続先6件を保持し、当該ホスト1件だけを下書きへ追加した（保存成功、requires_publish=true）。SDK・スクリプト・認証・リポジトリ登録は変更していない。下書き保存だけでは稼働中の通信許可が変わらないため、利用者が保存・公開した後にログ取得から調査を続ける必要がある。原因を推測して修正・CI再実行はしない。
 - Google実プロジェクト更新、Android新APK/実機、CI full失敗の原因確定は未完了。実装・両Web公開・ローカル全体確認・Windowsを含むPC CI成功までは完了として区別する。この完了/保留記録は文書だけのコミットで送り、追加CIは起動しない。
+
+
+## 【4大オススメの画面試験・固定保存先の修正】2026-10-25 Codex
+
+- 利用者の画像から、d20082bの実行#27（40145927929）の失敗は `test_recommendations_browser` の1ファイルだけで、ほかの全体ゲート試験は通っていることが判明。Windows/UbuntuのPC試験成功も画像とAPIで一致。
+- 新しく追加した画面試験が、393pxのときに調査画像を無条件で `/workspace/outputs/four-recommendations` に保存していた。クラウドの作業場所をGitHubランナーでも書き込めると誤って仮定した実装。ユーザーデータの保存処理とは別の、試験画像の保存先の問題。
+- Nodeの書き込み許可を `/tmp` だけにして同じ393px共有試験を実行し、当該mkdirが固定パスへのFileSystemWrite拒否で失敗することを再現（`/tmp/recommendations-readonly-red.log`）。GitHubの詳細ログは接続許可未適用で未取得だが、画面試験の環境依存の欠陥を確認できたため修正を進めた。
+- 画像保存は `RECOMMENDATIONS_SCREENSHOTS` が明示された場合だけに変更。通常のCIでも6ケースの構成確認・台別表示・顔文字保存・再読み込み・通信失敗時の端末保持・既存週表編集の検証は省かない。アプリや公開ファイル、Googleコードの変更はない。
+- 修正後は同じ `/tmp` 書き込み限定条件で全6件成功（`/tmp/recommendations-readonly-green.log`）。さらに画像保存先を `/tmp/recommendations-screenshots-checked` に明示し、該当2件が成功して両PNGの実生成も確認（`/tmp/recommendations-opt-in-checked.log`）。SDK・依存定義・試験数・ジョブは変更していない。アプリの新ビルド・公開は不要で、同じ試験済み公開用stageを使用した。
+- 原因不明の同一CIの再実行はせず、この修正と記録を1回のpushにまとめる。CIの新しい結果は確定後に追記する。

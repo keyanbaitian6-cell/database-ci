@@ -1,4 +1,4 @@
-// 新しい閲覧ビルドと共有ページで、4機種・台別7日間・選定の保存を合成応答で確認する。
+// 新しい閲覧ビルドと共有ページで、4機種・台別7日間・顔文字の保存を合成応答で確認する。
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -88,7 +88,12 @@ try {
         await open();
         if(kind==='share')assert.equal(await page.getByLabel('2026-10-26 100番の顔文字',{exact:true}).inputValue(),'😇');
         else assert.match(await page.getByRole('button',{name:/2026-10-26 .*100番の顔文字/}).innerText(),/😇/);
-        if(width===393){await fs.mkdir('/workspace/outputs/four-recommendations',{recursive:true});await page.screenshot({path:`/workspace/outputs/four-recommendations/${kind}-393.png`});}
+        // 画像は調査時の明示指定だけ。GitHubランナーにクラウド専用の保存先はない。
+        if(width===393 && process.env.RECOMMENDATIONS_SCREENSHOTS){
+          const directory=path.resolve(process.env.RECOMMENDATIONS_SCREENSHOTS);
+          await fs.mkdir(directory,{recursive:true});
+          await page.screenshot({path:path.join(directory,`${kind}-393.png`)});
+        }
         failPosts=true;
         if(kind==='share')await page.getByLabel('2026-10-26 100番の顔文字',{exact:true}).selectOption('🥶');
         else {await page.getByRole('button',{name:/2026-10-26 .*100番の顔文字/}).click();await page.getByRole('menuitem',{name:'🥶',exact:true}).click();}
