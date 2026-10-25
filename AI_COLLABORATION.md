@@ -3417,3 +3417,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - Androidの取り込み画面のYouTube遮断は別セッションがブランチ `claude/sleepy-matsumoto-84df0c`（`c1c801e`、そのセッションでALL PASSED）に作成。
 - 利用者「公開までお願い」により：(1) 閲覧ページを、616cf34のゲートでstage済みの物から database-viewer へ `9a25e4d` として公開（変更は main.dart.js・version.json 0.5.42・NOTICES・bootstrapの並び順だけ）。Pagesのデプロイ成功と公開中の version.json を確認。(2) `c1c801e` を main へ取り込み（`f506c48`）、取り込み後の全体ゲートも **ALL PASSED**（PC438・215・UTC27件、Flutter682件、analyze info26件のみ、JS70ファイル全成功）。閲覧ページのビルド（main.dart.js）は公開した物とバイト一致。(3) 同セッションの版上げ `a8dc7e4`（0.5.43+2026102502・作業メモだけ）を取り込み（`9d38d49`）、版を読む試験 test_android_release_rules 2件・test_check_before_build_logging 5件が成功。database-ci へ1回push。
 - iPhone実機での確認は未実施（利用者に、Safariで開き直して長町南のバラエティ・4大オススメが落ちないかを見てもらう）。
+- 利用者が0.5.43のAPK 2本をインストール。adbで両ID 0.5.43/2026102502、firstInstallTime保持（2026-09-16・2026-10-03）、更新12:28を確認。取り込み画面の動作とYouTubeへの通信が出ないことの実機確認は未実施。
