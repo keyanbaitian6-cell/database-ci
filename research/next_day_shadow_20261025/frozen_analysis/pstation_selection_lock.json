@@ -1,0 +1,16 @@
+{
+  "plan_sha": "5a78684a7dfec223c542950a2e3a711841631e735723b189922803b89a3b100e",
+  "features_sha": "6cdd9efadafc2b3d296b2723df050295d669405e86fb8a7eb15a31315b9b000e",
+  "selection_uses": "development only",
+  "locks": [
+    {
+      "store": "pscube:c740601:20",
+      "kind": "ordinary",
+      "method": "primary",
+      "development_days": 2,
+      "development_difference": 0.012782356532356532,
+      "eligible_for_selection": false,
+      "reason": "development only; insufficient days => provisional, not adopted"
+    }
+  ]
+}

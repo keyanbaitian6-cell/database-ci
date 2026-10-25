@@ -20,6 +20,7 @@ import time
 from contextlib import closing, nullcontext
 from datetime import date, datetime, timedelta, timezone
 from file_io import atomic_copy, atomic_writer
+import input_versions
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -638,6 +639,17 @@ class PscubeStore:
         self.db.execute('CREATE TABLE IF NOT EXISTS rack_captures (key TEXT PRIMARY KEY)')
         self.db.execute('CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         self.db.commit()
+        # 翌日候補の店舗別案を並べて比べるための版の記録（input_versions.py）。失敗しても開ける。
+        if not input_versions.attach(self.db, self.path.parent, 'pscube'):
+            try:
+                with self.db:
+                    failures = self._state('input_versions_failures')
+                    self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                                    ('input_versions_failures', str(int(failures) + 1 if failures else 1)))
+                    self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
+                                    ('input_versions_last_error', input_versions.state().get('pscube', '')))
+            except sqlite3.Error:
+                pass
 
     def close(self):
         self.db.close()

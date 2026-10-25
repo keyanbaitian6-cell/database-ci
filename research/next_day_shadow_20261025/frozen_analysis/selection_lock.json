@@ -1,0 +1,61 @@
+{
+  "plan_sha": "5a78684a7dfec223c542950a2e3a711841631e735723b189922803b89a3b100e",
+  "features_sha": "abbe26ed00b6f9fa82c087de251a6108b4846cacd8b132fa6f9aba50f8788a29",
+  "selection_uses": "development only",
+  "locks": [
+    {
+      "store": "nagamachiminami",
+      "kind": "ordinary",
+      "method": "exclude88",
+      "development_days": 16,
+      "development_difference": 0.002222222222222222,
+      "eligible_for_selection": false,
+      "reason": "development only; insufficient days => provisional, not adopted"
+    },
+    {
+      "store": "nagamachiminami",
+      "kind": "variety",
+      "method": "pwin14",
+      "development_days": 8,
+      "development_difference": -0.027083333333333348,
+      "eligible_for_selection": false,
+      "reason": "development only; insufficient days => provisional, not adopted"
+    },
+    {
+      "store": "nagamachiminami",
+      "kind": "variety_all",
+      "method": "current",
+      "development_days": 0,
+      "development_difference": null,
+      "eligible_for_selection": false,
+      "reason": "development only; insufficient days => provisional, not adopted"
+    },
+    {
+      "store": "saiwaichou",
+      "kind": "ordinary",
+      "method": "simple1",
+      "development_days": 178,
+      "development_difference": 0.0014214082882797185,
+      "eligible_for_selection": true,
+      "reason": "development only; insufficient days => provisional, not adopted"
+    },
+    {
+      "store": "saiwaichou",
+      "kind": "variety",
+      "method": "pwin14",
+      "development_days": 178,
+      "development_difference": 0.07322097378277154,
+      "eligible_for_selection": true,
+      "reason": "development only; insufficient days => provisional, not adopted"
+    },
+    {
+      "store": "saiwaichou",
+      "kind": "variety_all",
+      "method": "pwin14",
+      "development_days": 178,
+      "development_difference": 0.0653558052434457,
+      "eligible_for_selection": true,
+      "reason": "development only; insufficient days => provisional, not adopted"
+    }
+  ]
+}

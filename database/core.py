@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from file_io import atomic_copy, atomic_writer
+import input_versions
 
 from setting_estimate import candidate_label, estimate_setting
 from normal_day_context import normal_day_context_html
@@ -438,6 +439,17 @@ class Store:
             self.set_date_events(INITIAL_DATE_EVENTS)
         self._merge_machine_spellings()
         self.db.commit()
+        # 翌日候補の店舗別案を並べて比べるための版の記録（input_versions.py）。失敗しても開ける。
+        if not input_versions.attach(self.db, self.path.parent, 'meruhen'):
+            try:
+                with self.db:
+                    failures = self.state('input_versions_failures')
+                    self.db.execute("INSERT OR REPLACE INTO app_state VALUES('input_versions_failures', ?)",
+                                    (str(int(failures) + 1 if failures else 1),))
+                    self.db.execute("INSERT OR REPLACE INTO app_state VALUES('input_versions_last_error', ?)",
+                                    (input_versions.state().get('meruhen', ''),))
+            except sqlite3.Error:
+                pass
 
     def _merge_machine_spellings(self):
         """Fold rows saved under a '+'-spelled machine name into the normal one.
