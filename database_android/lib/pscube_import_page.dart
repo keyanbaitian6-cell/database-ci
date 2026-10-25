@@ -29,7 +29,12 @@ import 'picked_file.dart';
 import 'youtube_request_block.dart';
 
 class PscubeImportPage extends StatefulWidget {
-  const PscubeImportPage({super.key});
+  const PscubeImportPage({super.key, this.elapsed, this.now, this.openStore});
+
+  // 時計と保存先を差し替えても、画面の自動判定・読み取り・保存は同じ経路を通す。
+  final Duration Function()? elapsed;
+  final DateTime Function()? now;
+  final Future<PscubeStore> Function()? openStore;
 
   @override
   State<PscubeImportPage> createState() => _PscubeImportPageState();
@@ -57,7 +62,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   // （assets/pscube_auto_probe.js）が ready のときだけ「未取得を取り込む」と同じ処理を始める。
   static const _autoService = MethodChannel('database/auto_capture');
   // 待機ごとに15〜25秒を抽選する（PC版と同じ）。
-  final _auto = pscubeRandomAutoState();
+  late final _auto = pscubeRandomAutoState(elapsed: _elapsed);
   Timer? _autoTimer;
   String? _probe;
   bool _autoChanging = false;
@@ -66,6 +71,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   final _autoDone = <String>{};
   final _guard = PscubeAutoGuard();
   final _clock = Stopwatch()..start();
+  Duration _elapsed() => widget.elapsed?.call() ?? _clock.elapsed;
   final _autoFailures = <String, int>{};
   // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
   // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前2時で営業日が変わる。
@@ -79,7 +85,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   String? _eventShownDay;
   bool _eventLoading = false;
 
-  String get _eventDay => _targetDay ?? pscubeBusinessDay();
+  String get _eventDay => _targetDay ?? pscubeBusinessDay(widget.now?.call());
 
   @override
   void initState() {
@@ -198,7 +204,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
 
   Future<void> _initialize() async {
     try {
-      final store = await PscubeStore.open();
+      final store = await (widget.openStore?.call() ?? PscubeStore.open());
       String script;
       String probe;
       try {
@@ -575,7 +581,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         probe,
         _autoDone,
         _autoFailures,
-        _clock.elapsed,
+        _elapsed(),
         targetDay: _targetDay,
       );
       if (decision.stop) {
@@ -1010,7 +1016,9 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                     value: '',
                     child: Text('指定なし（サイトの表示どおり）'),
                   ),
-                  for (final (i, day) in pscubeRecentBusinessDays().indexed)
+                  for (final (i, day) in pscubeRecentBusinessDays(
+                    widget.now?.call(),
+                  ).indexed)
                     DropdownMenuItem(
                       value: day,
                       child: Text(

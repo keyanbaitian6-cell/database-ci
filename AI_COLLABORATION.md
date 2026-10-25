@@ -1,5 +1,15 @@
 # database AI共同作業メモ
 
+## 【PR #2：Androidの自動判定から読み取り・Store保存までの画面回帰試験】2026-10-25 Codex
+
+- 対象：https://github.com/keyanbaitian6-cell/database-ci/pull/2 （head `e43c940`）。開始時main `8d54c95` は期間内リポジトリの最新mainと一致し、PRの実変更 `8c0ea20` は未反映だった。最新の全体・ルート・AndroidのAGENTS、取得系開発メモ、関連仕様と作業状態を確認。月後半なので送り先はdatabase-ciのみ。originへのfetchも実施（取得は通常実行のDNS失敗後、許可された実行で成功）。未追跡の `CLAUDE_HISTORY_VIEW_HANDOFF_20261022.md`・`debug.log`・`rows.json` は保持。
+- PRを最新mainへ統合。コードは自動統合でき、作業メモだけの競合は両方の内容を残して解消。統合中に別セッションが `e39e4e6` をコミットし、そのmerge commitにPR差分も含まれた（この作業が作ったコミットではない）。以後の別セッションのコミットも巻き戻していない。PRのコードを古い版で上書きせず、現行の診断・グラフ・YouTube遮断などを維持した。
+- `PscubeImportPage` に単調時計・営業日の時計・Storeの差し替え口を追加。省略時は従来の実時計とStoreを使用。新しい `test/pscube_auto_flow_test.dart` 10件は実画面の周期Timer→`_autoTick`→`_capture`→一時SQLite Store→ページ移動を通す。15〜25秒・一覧表示の待機は仮想時間で進め、SQLite I/Oは待機時間0のイベントループ譲渡で処理する。判定・読み取りの応答は既存の共通fixtureを使用し、生成JSを実行する模擬ブラウザ試験で照合。
+- 確認した経路：タブなし（新しいタブだけ／途中の日が欠ける）の2場面で保存0件・対象機種日の印・次機種への移動、その次の全台一覧で実記録を保存・台別URLへ移動・DB再読込後も記録と印を保持。待つべき5場面、期限前の待機、重複保存防止、読み取り中の二重判定防止、OFF／画面移動後の古い結果の破棄、3回失敗後の待機。Cookie・キャッシュ・既存stateを消さないことも確認。
+- 旧判定（作業開始時 `8d54c95` の `pscube_auto.dart`）へ一時的に戻すと、新試験が `['index', 'only_newer_tab']` を期待する箇所で `['index']` となり失敗。必ず修正版へ戻したうえで成功確認。最初は別セッションによりHEADが変わり、修正済みHEADを参照してしまったため、開始時のhashを明示して再確認した。生成スクリプトのimport除去がCRLFで失敗する問題も再現し、`build_pscube_capture.mjs` をLF／CRLF両対応にした。再生成結果に実質差分なし。
+- 手元結果：Flutter全700件成功。その後、DB再読込と読み取り中の二重判定のアサートを追加した新試験10件も成功。analyzeはerror／warning 0、info 26件（既存と同数、既定のfatal-infoにより終了値1）。PC P’s CUBE関連109件成功、プロセス起動前 `TZ=JST-9` でUTC offset +09:00を実測。JS／模擬ブラウザ6本成功（absent-tab fixture9場面、auto_browser、data17件、net_capture、net_days5件、replacement_capture）。auto_browserの初回は既定pythonが見つからず失敗したため、プロジェクト専用Pythonを指定して成功。差分の空白検査成功。
+- 記録：`review_packages/pscube-auto-flow-20261025/`（red.log・flow-final.log・flutter-test.log・analyze.log・pc-pscube.log・JS各ログ）。利用者のDB・バックアップ・seed・Cookieは変更せず、実サイトへ接続していない。APK／Web／EXEのビルド・公開・全体ゲート・実Android WebView・常駐通知サービス・実サイトは未確認。今回解消したのはPR記載のAndroid画面の実動線を自動試験で通していない制約であり、実機確認の完了ではない。pushは明示承認待ちで未実施。
+
 ## 【Android：取り込み画面でYouTubeへの通信そのものを起こさない】2026-10-25 Claude
 
 - 利用者の依頼（2026-10-25）：取り込み画面でYouTubeを「見えないようにしているだけで、アクセスも開く処理もしているのでは。開こうとすらしない処理は可能か」。PCは `975dd12` でWebView2の通信フィルター（204を手元で返す）にした。Androidは別セッションから引き継いで調べた。
