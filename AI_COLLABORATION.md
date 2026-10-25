@@ -3344,3 +3344,5 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 画像保存は `RECOMMENDATIONS_SCREENSHOTS` が明示された場合だけに変更。通常のCIでも6ケースの構成確認・台別表示・顔文字保存・再読み込み・通信失敗時の端末保持・既存週表編集の検証は省かない。アプリや公開ファイル、Googleコードの変更はない。
 - 修正後は同じ `/tmp` 書き込み限定条件で全6件成功（`/tmp/recommendations-readonly-green.log`）。さらに画像保存先を `/tmp/recommendations-screenshots-checked` に明示し、該当2件が成功して両PNGの実生成も確認（`/tmp/recommendations-opt-in-checked.log`）。SDK・依存定義・試験数・ジョブは変更していない。アプリの新ビルド・公開は不要で、同じ試験済み公開用stageを使用した。
 - 原因不明の同一CIの再実行はせず、この修正と記録を1回のpushにまとめる。CIの新しい結果は確定後に追記する。
+- 修正コミット **`3d9db73dbe187a410a403cd30bc46bc8e77e1a19`** をdatabase-ci/mainへ反映。GitHub実行 **#28 / 40147393209 は全3ジョブ成功**（full 14分15秒、Windows UTC 2分47秒、Ubuntu UTC 1分4秒）。新しいコミットの確認であり、失敗した#27を再実行したものではない。CI全体の失敗は解消。追加のクラウド設定適用・ログ貼り付けを待たず、ローカルで再現した保存先の欠陥を修正して検証できた。
+- 利用者が使用制限を懸念してClaudeへの引き継ぎを希望。実行中ジョブは残っていない。Google既存スクリプトの手動更新・Android新APKと実機確認は従来どおり別途残る。公開ページや配布済みGoogleコードは今回変更していない。
