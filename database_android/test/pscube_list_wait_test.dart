@@ -9,9 +9,13 @@ class FakeList {
     this.batch = 20,
     this.latency = Duration.zero,
     this.loads = true,
+    this.ignoredArrivals = 0,
   }) : count = first;
 
   final int total, first, batch;
+
+  /// 最初の何回の到着では続きが始まらないか（着き直したときに始まるサイト）。
+  int ignoredArrivals;
   final Duration latency;
   final bool loads;
   int count;
@@ -30,7 +34,11 @@ class FakeList {
       case PscubeScroll.arrive:
         atBottom = true;
         if (loads && count < total && _arrivesAt == null) {
-          _arrivesAt = elapsed + latency;
+          if (ignoredArrivals > 0) {
+            ignoredArrivals--;
+          } else {
+            _arrivesAt = elapsed + latency;
+          }
         }
       case PscubeScroll.nudge:
         atBottom = false;
@@ -106,7 +114,7 @@ void main() {
     );
   });
 
-  test('設置台数が不明の一覧は、一番下で3秒増えなければ終わる', () async {
+  test('設置台数が不明の一覧は、増えないことを着き直しながら3回確かめてから終わる', () async {
     final list = FakeList(total: 6, loads: false);
     await waitForPscubeList(
       isCurrent: () => true,
@@ -114,7 +122,31 @@ void main() {
       delay: list.delay,
     );
     expect(list.count, 6);
-    expect(list.elapsed, lessThan(const Duration(seconds: 12)));
+    expect(
+      list.actions.where((a) => a == PscubeScroll.nudge).length,
+      pscubeUnknownListNudges,
+    );
+    expect(list.elapsed, greaterThan(const Duration(seconds: 12)));
+    expect(list.elapsed, lessThan(const Duration(seconds: 30)));
+  });
+
+  // 2026-10-24〜26：20件ずつ届く機種一覧を、一番下で3秒増えないところで20件・40件として読み取り、
+  // 残りの機種を取り込まずに「すべて取り込みました」で止まった。
+  test('機種一覧（台数不明）は、続きが3秒より遅く届いても最後まで待つ', () async {
+    for (final ignored in [0, 1]) {
+      final list = FakeList(
+        total: 61,
+        first: 20,
+        latency: const Duration(milliseconds: 3500),
+        ignoredArrivals: ignored,
+      );
+      await waitForPscubeList(
+        isCurrent: () => true,
+        scroll: list.scroll,
+        delay: list.delay,
+      );
+      expect(list.count, 61, reason: '最初の到着を無視するサイト：$ignored回');
+    }
   });
 
   test('台別など一覧がないページは待機しない', () async {

@@ -360,9 +360,11 @@ void main() {
       page(oldMachine['url'] as String, [oldMachine], [oldRecord]),
       oldMachine['url'] as String,
     );
+    // 撤去で減っただけの機種一覧は、自動では受け付けず手動で取り込む（2026-10-27）。
     await store.importPage(
       page(PscubeStore.index, [machine]),
       PscubeStore.index,
+      manual: true,
     );
     await store.importPage(
       page(machine['url'] as String, [machine], [record()]),
@@ -483,6 +485,46 @@ void main() {
       throwsFormatException,
     );
     expect((await store.nextTarget(day)).url, record()['detail_url']);
+  });
+
+  // 2026-10-24〜26：20件ずつ届く機種一覧を途中で読み取り、後ろの機種を取り込まずに終わった（PC版と同じ規則）。
+  test('自動では、前回より減って新しい機種も無い機種一覧を保存しない', () async {
+    Map<String, dynamic> named(String name) => {
+      ...machine,
+      'machine': name,
+      'url': '${PscubeStore.root}cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&k=$name',
+    };
+    final all = [for (var n = 0; n < 5; n++) named('機種$n')];
+    await store.importPage(page(PscubeStore.index, all), PscubeStore.index);
+    await expectLater(
+      store.importPage(
+        page(PscubeStore.index, all.sublist(0, 3)),
+        PscubeStore.index,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('前回より少なく（5→3機種）'),
+        ),
+      ),
+    );
+    // 拒否した一覧で並びを置き換えない：下からなら最後の機種が次。
+    expect(
+      (await store.nextTarget(day, 'bottom')).url,
+      all.last['url'],
+    );
+    // 入れ替え（新しい機種がある）は、減っていても自動で受け付ける。
+    final replaced = [...all.sublist(0, 2), named('新台')];
+    await store.importPage(page(PscubeStore.index, replaced), PscubeStore.index);
+    expect((await store.nextTarget(day, 'bottom')).remaining, 3);
+    // 撤去で減っただけなら、手動の取り込みで受け付ける。
+    await store.importPage(
+      page(PscubeStore.index, replaced.sublist(0, 2)),
+      PscubeStore.index,
+      manual: true,
+    );
+    expect((await store.nextTarget(day, 'bottom')).remaining, 2);
   });
 
   test('手動のときは、飛ばした上の機種へ戻らず、保存したページの次へ進む（最後まで来たら最初へ回る）', () async {

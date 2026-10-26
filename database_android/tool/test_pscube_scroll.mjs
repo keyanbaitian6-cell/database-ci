@@ -33,6 +33,36 @@ try {
     assert.equal(await page.locator('li').count(), 61);
   }
 
+  // 1b. 機種一覧（台数不明）：20件ずつ、一番下に着いてから3.5秒（縮めて0.35秒）後に届く61件。
+  //     以前は一番下で3秒増えなければ終わり、20件・40件で読み取った（2026-10-24〜26、Android）。
+  //     一番下に1回着いただけでは続きが始まらず、着き直したときに始まるサイトでも61件まで読む。
+  const tallIndex = (n) => `<div style="height:300px">header</div><ul id="ulKI">${Array.from({length: n}, (_, i) => `<li style="height:150px">${i + 1}</li>`).join('')}</ul><footer style="height:1500px">Footer</footer>`;
+  for (const ignoreFirst of [false, true]) {
+    const slowIndex = await browser.newPage({viewport: {width: 1050, height: 780}});
+    await slowIndex.setContent(tallIndex(20));
+    await slowIndex.evaluate(({scale, ignoreFirst}) => {
+      let pending = false, ignored = !ignoreFirst, wasBottom = false;
+      window.addEventListener('scroll', () => {
+        const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 5;
+        const arrived = bottom && !wasBottom;
+        wasBottom = bottom;
+        const list = document.querySelector('#ulKI');
+        if (!arrived || pending || list.children.length >= 61) return;
+        if (!ignored) { ignored = true; return; }
+        pending = true;
+        setTimeout(() => {
+          for (let k = 0; k < 20 && list.children.length < 61; k++) {
+            const card = document.createElement('li'); card.style.height = '150px'; list.append(card);
+          }
+          pending = false;
+        }, 3500 * scale);
+      });
+    }, {scale: SCALE, ignoreFirst});
+    await run(slowIndex, null);
+    assert.equal(await slowIndex.locator('#ulKI li').count(), 61, `遅い続きでも機種一覧を最後まで読む（最初の到着を無視：${ignoreFirst}）`);
+    await slowIndex.close();
+  }
+
   // 2. 実サイト（2026-10-02 PC版で表示6台・設置7台）：最後の台が見えても続きは来ず、ページの一番下まで
   //    スクロールしたときだけ次の台が増える。
   const tall = (n) => `<div style="height:300px">header</div><ul>${Array.from({length: n}, (_, i) => `<li id="li-${i + 1}" style="height:150px">${i + 1}</li>`).join('')}</ul><footer style="height:1500px">Footer</footer>`;
@@ -100,5 +130,5 @@ try {
   // 6. 台別など一覧がないページは、そのまま返る。
   await page.setContent('<h2>台別7日履歴</h2>');
   await run(page, null);
-  console.log('PASS: replacement lists load all 61 cards; bottom-only lazy load reaches 7 of 7 and 64 of 64 in batches; delayed 6 -> 31 waits for the installation count; a stalled list is not hammered (few scrolls, at most 5 retries); rack page returns without scrolling');
+  console.log('PASS: replacement lists load all 61 cards; a machine list of unknown size arriving 20 at a time 3.5s late (even when only a second arrival starts it) reaches 61;bottom-only lazy load reaches 7 of 7 and 64 of 64 in batches; delayed 6 -> 31 waits for the installation count; a stalled list is not hammered (few scrolls, at most 5 retries); rack page returns without scrolling');
 } finally { await browser.close(); }

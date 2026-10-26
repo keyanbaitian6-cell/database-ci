@@ -46,6 +46,26 @@ class PscubeImportTests(unittest.TestCase):
         days = recent_business_days(datetime(2026, 10, 4, 1, 0))
         self.assertEqual((days[0], days[1], days[-1], len(days)), ('2026-10-03', '2026-10-02', '2026-09-27', 7))
 
+    def test_auto_refuses_an_index_cut_short_before_the_rest_of_the_list_arrived(self):
+        # 2026-10-24〜26：20件ずつ届く機種一覧を途中で読み取り、後ろの機種を取り込まずに終わった。
+        machines = [{**self.machines[0], 'machine': f'L機種{n}',
+                     'url': ROOT_URL + f'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L機種{n}'}
+                    for n in range(5)]
+        self.store.import_page(self.page(self.index_url, machines), self.index_url)
+        with self.assertRaisesRegex(ValueError, r'前回より少なく（5→3機種）'):
+            self.store.import_page(self.page(self.index_url, machines[:3]), self.index_url)
+        active = json.loads(self.store._state('active_machine_keys'))
+        self.assertEqual(len(active), 5, '拒否した一覧で機種の並びを置き換えない')
+        self.assertEqual(self.store.next_target(self.day, 'bottom')[0], machines[-1]['url'])
+        # 入れ替え（新しい機種がある）は、減っていても自動で受け付ける。
+        replaced = machines[:2] + [{**machines[0], 'machine': 'L新台',
+                                    'url': ROOT_URL + 'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L新台'}]
+        self.store.import_page(self.page(self.index_url, replaced), self.index_url)
+        self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 3)
+        # 撤去で減っただけなら、手動の取り込みで受け付ける。
+        self.store.import_page(self.page(self.index_url, replaced[:2]), self.index_url, manual=True)
+        self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 2)
+
     def test_direction_picks_the_machine_from_the_top_or_the_bottom_of_the_list(self):
         self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
         first, last = self.machines[0]['url'], self.machines[-1]['url']
@@ -676,7 +696,8 @@ class PscubeImportTests(unittest.TestCase):
         self.store.import_page(self.page(self.index_url, [old, new]), self.index_url)
         old_record = self.record(old, 1085, previous_day)
         self.store.import_page(self.page(old['url'], [old], [old_record]), old['url'])
-        self.store.import_page(self.page(self.index_url, [new]), self.index_url)
+        # 撤去で減っただけの機種一覧は、自動では受け付けず手動で取り込む（2026-10-27）。
+        self.store.import_page(self.page(self.index_url, [new]), self.index_url, manual=True)
         current = self.record(new, 1085)
         self.store.import_page(self.page(new['url'], [new], [current]), new['url'])
         missing = [(date.fromisoformat(self.day) - timedelta(days=i)).isoformat() for i in range(1, 7)]

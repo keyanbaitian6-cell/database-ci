@@ -67,17 +67,19 @@ SCROLL_SCRIPT = r'''(async () => {
   const countCards = () => target === null ? (findList()?.children.length ?? -1)
     : document.querySelectorAll('li[id^="li-"]').length;
   const atBottom = () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
-  let last = -1, quiet = 0, nudges = 0, armed = true;
+  let last = -1, quiet = 0, nudges = 0, idleNudges = 0, armed = true;
   for (let tick = 0; tick < 360; tick++) {          // 1回250ミリ秒、最長およそ90秒
     const list = findList();
     if (!list) return;
     const count = countCards();
     if (count > last) {                              // 続きが届いた：描画が落ち着くのを待つ
-      last = count; quiet = 0; armed = true;          // 新しい最後の台まで、もう一度下へ
+      last = count; quiet = 0; armed = true; idleNudges = 0;   // 新しい最後の台まで、もう一度下へ
       await sleep(400);
     } else if (atBottom()) quiet++;
-    // 設置台数が分かっていれば届いたら終わり。不明なら、一番下で3秒増えなければ終わり。
-    if (target === null ? quiet >= 12 : (count >= target && quiet >= 1)) { await sleep(300); return; }
+    // 設置台数が分かっていれば届いたら終わり。不明（機種一覧）なら、一番下で4秒増えないことを、少し戻って
+    // 着き直しながら3回確かめてから終わる（Android `waitForPscubeList` と同じ）。以前は3秒で終わり、
+    // 20件ずつ届く機種一覧を途中で読み取ることがあった（2026-10-24〜26、Android）。
+    if (target === null ? (quiet >= 16 && idleNudges >= 2) : (count >= target && quiet >= 1)) { await sleep(300); return; }
     if (atBottom()) {
       if (armed) {                                   // 着いたときに1回だけ：最後の台を見せて、一番下まで
         list.lastElementChild?.scrollIntoView({block:'end'});
@@ -86,6 +88,7 @@ SCROLL_SCRIPT = r'''(async () => {
       }
       else if (quiet >= 16) {                        // 4秒増えない：少し戻って、もう一度下へ
         if (++nudges > 5) return;
+        idleNudges++;                                  // 最後に増えてから戻った回数（台数不明の終わりの判定）
         window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));
         armed = true; quiet = 0;
         await sleep(400);
@@ -705,6 +708,21 @@ class PscubeStore:
         row = self.db.execute('SELECT value FROM state WHERE key=?', (key,)).fetchone()
         return row[0] if row else None
 
+    def _check_index_complete(self, machines):
+        """自動取り込みの機種一覧：前回の機種一覧より少なく、新しい機種も無いときは保存しない
+        （Android `_checkIndexComplete` と同じ）。サイトは機種一覧を20件ずつ届けるため、続きが届く前に
+        読み取ると後ろの機種が抜け、その機種を無いものとして「すべて取り込みました」で止まった
+        （2026-10-24〜26、Android）。撤去で減っただけのときは、利用者が手動で取り込めば受け付ける。"""
+        stored = self._state('active_machine_keys')
+        if stored is None:
+            return
+        previous = set(json.loads(stored))
+        shown = {_machine_key(m) for m in machines}
+        if len(shown) < len(previous) and shown <= previous:
+            raise ValueError(f'機種一覧が前回より少なく（{len(previous)}→{len(shown)}機種）、新しい機種もありません。'
+                             '続きを読み込み終える前の一覧かもしれないため、保存しませんでした。'
+                             '撤去で減ったときは、一覧を一番下まで表示してから手動で取り込んでください。')
+
     def import_page(self, raw, current_url, expected_day=None, direction='top', manual=False, fresh_since=None):
         """expected_day：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
         direction：'top'＝機種の一覧の上から、'bottom'＝下から次の機種を選ぶ。
@@ -744,6 +762,8 @@ class PscubeStore:
             raise ValueError('スロット機種一覧を確認できません。')
         if is_index:
             data['machines'] = [m for m in data['machines'] if not is_excluded_machine(m['machine'])]
+            if not manual:
+                self._check_index_complete(data['machines'])
         elif data['machines'] and is_excluded_machine(data['machines'][0]['machine']):
             raise ValueError(f'{data["machines"][0]["machine"]}は取り込みの対象外です（沖ドキ）。保存しませんでした。')
         if is_table:
