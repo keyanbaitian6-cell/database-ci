@@ -1,5 +1,222 @@
 # database AI共同作業メモ
 
+## 【P’s CUBEの当日分をスマホから自動でDriveへ送り、PCが起動中に自動で読み込む】2026-10-26 Claude
+
+- 経緯：翌日候補の比較の記録（下の節、`input_versions.py`）はPCに入った時刻で残る。10/26 0:20、P-STATIONをスマホで取り込み、利用者が手でDriveへ上げてPCの「P’s CUBEの同期フォルダの最新を読み込む」を押して、締切前に記録できた（出発点23,888行、書き込み427件、作り直しは本体23,967行と全件一致）。利用者「押さなくてもドライブに上げた時点でどうにかなったりない？」「取り込み終わったら自動でドライブにあげる機能」「取り込んだ当日分のデータだけ送る。送るのはpscubeのみで、両方実装」。受け口の合言葉は利用者の選択で付ける。
+- Apps Script（`database_android/tool/viewer_drive_script.gs`）：`doPost` に `file: 'pscube-day'`。スクリプト プロパティ `PSCUBE_UPLOAD_KEY` と一致するときだけ `pscube-viewer-drive.json` と同じフォルダの `pscube-day-android-YYYY-MM-DD.json` に書く（同じ日は上書き）。未設定・違う合言葉・別の日の記録・形式違い・空・日付の誤り・件数（記録2万・機種5千）・容量（20MB）超えは断る。クラウド統合のスクリプト（`pscube_cloud_sync.gs`）は `pscube-backup-…` だけを拾うので当日分は混ざらない。
+- Android：`PscubeStore.dayBackup`（その日の記録・台別7日分の印と、その記録の機種だけ。形は普通の `backup`）、`lastDay`、設定 `day_upload`・結果 `day_upload_last`（端末の `state` 表。バックアップには出さない）。`lib/pscube_day_upload.dart`（送信。`dart:io` の HttpClient でPOSTし、Apps Scriptの302転送先をGETで読む）。取り込み画面：自動取り込みが「すべて取り込みました」で止まったら、設定がONなら `targetDay`（無ければ `last_day`）の分を送る。上部に雲のボタン（URL・合言葉・ON/OFF、「保存して今の日を送る」）、状態の行に最後の送信結果。送れなくても取り込みは済んでいる。
+- PC：`app.poll_pscube_from_sync`（起動の15秒後と2分おき）。`pscube_import.android_sync_files`・`android_sync_due` で `pscube-day-android-*.json` と `pscube-backup-android-*.json` の新しい版（名前と更新時刻が前と違い、10秒以上たったもの）を古い順に読み、`settings.json` の `pscube_android_synced` に覚える。初回はその時点のファイルを読み込み済み扱い。失敗は覚えず次回やり直し、同じ失敗は記録欄に1回だけ（画面に出さない）。`import_pscube_file(background=True)` は例外を呼び出し側へ返す。
+- 実データ確認：同期フォルダのスマホの全期間バックアップ（`pscube-backup-android-20261026-001933.json`）から、Androidと同じ規則で10/25の当日分（79台・4機種・印58件、64,814バイト）を作り、一時の空DBへPCの `import_backup` で読み込めた（追加79件）。
+- 試験：新規 `tool/test_viewer_drive_script.mjs` に1件（計6件成功）、`test/pscube_day_upload_test.dart` 5件、`database/test_pscube_android_sync.py` 4件。全体ゲート `check_before_build.sh`（`PYTHONUTF8=1`、`CHECK_BUILD_WORK=/c/w/cbw-dayup`）**ALL PASSED**：PC tests 444件・ルート226件・UTC 27件、Flutter 709件、analyze info 26件だけ（既存と同数）、JS・画面試験の各段成功（OK 82段）。
+- APK（ALL PASSEDのコードと同じ、`flutter build apk --release --no-pub`、P’s CUBE版は `DATABASE_ANDROID_CLONE=pscube`）：`database_android/build/releases/0.5.44/` の通常版 `database-0.5.44-2026102601.apk`（`com.keyan.database_android`、SHA-256 `0072712c…2340`）とP’s CUBE版 `database-pscube-0.5.44-2026102601.apk`（`.pscube`、`89074976…ede0`）。aapt2で版0.5.44／2026102601・ID、apksignerで署名 `4332fcb9…a047`（0.5.43と同じ）を確認。0.5.43のAPK2本はごみ箱へ。実機への導入は利用者が行う。
+- 版：`pubspec.yaml` を `0.5.44+2026102601`。正本 origin の main に手元に無い `faba881`（README の変更）がある（月後半のため database-ci だけを更新してきた。前半に正本へ送るときに取り込む）。
+- 未確認：実際のApps Scriptでの受け付け（利用者の再デプロイとスクリプト プロパティの設定が要る）、実機での自動送信、Drive for desktop の同期を経たPCの自動読み込み。
+
+## 【翌日候補の店舗別案を現行と並べて比べる記録（PC）と事前固定の計画】2026-10-25 Claude
+
+- 利用者の選択：「A：本番は今のまま、店舗別の案を裏で毎日一緒に保存し、30日ほど比べる」、取り込みは「だいたいPC」。直前の再導出（下の節）で3店舗とも改善を確定できなかったため、当時の入力で前向きに比べる。
+- 調べたこと：メルヘンの現行候補はPC・Androidの `candidate_snapshots` に保存されているが、P-STATIONの候補は閲覧ページのJSだけで計算し保存されない。書き込み記録 `observations` は30日で消える。後日の作り直しでは「締切前に何が保存されていたか」を証明できない。
+- 実装：`database/input_versions.py`。`Store`（`days`）と `PscubeStore`（`records`）が開くたびに `database/data/input_versions.sqlite3` をATTACHし、接続ごとの一時トリガーで、表へのすべての書き込み（保存・復元・削除・機種名の統一など）を版として追記する。保存処理の各経路には手を入れていない。取得時刻とグラフのプレビュー画像を除いた内容が直前と同じなら追記しない。初回に全行を出発点として1回だけ記録する。準備に失敗しても開ける・保存できる（回数を `input_versions_failures` に残す）。SQLiteはトリガー内で `iv.versions` と書けないため表名だけで書き、本体DBに同名の表が無いことを確かめている。`as_of(path, source, 締切)` で締切前の内容を作り直す。`python database/input_versions.py` で件数を確認できる。本番の候補・画面・採点・バックアップは変えていない。
+- 実DBの複製（scratchpad、確認後に削除）で計測：初回の出発点はメルヘン6.9秒・P’s CUBE 2.0秒、記録ファイル171.9MB（大半はグラフの線 `curve`。メルヘンの差枚の計算に使うので残した）。2回目以降の開く処理は0.014秒、14台の保存は0.13秒。作り直した内容は本体とメルヘン57,533行・P’s CUBE 23,888行で全件一致。
+- 計画：`NEXT_DAY_SHADOW_PLAN_20261025.md`（記録開始前・結果を見る前に固定）。予測日2026-10-26〜11-24、締切D+1 02:00 JST、評価は11-26以降に1回。案は長町南 exclude88／pwin14、幸町 simple1・simple14（計画範囲の照合で選ばれた案も含め2案）／pwin14、P-STATION primary。母集団は計画の範囲（同定済みA/RT/BTを除く）。判定は評価20日以上・5日ブロック4個以上・95%区間下端>0（幸町通常は97.5%）・判定不能率の悪化2pp以内・点数（P-STATIONは差枚も）の明らかな悪化なし。30日6ブロックではブロック符号検定のpが最小約0.03で判定に使えないため参考扱い。分析の計算は `research/next_day_shadow_20261025/frozen_analysis/` に固定コピー（SHA256SUMS.txt）。評価用の作り直しの変換はまだ書いていない（評価前に、出発点から作った入力が保存済み `features.pkl` と一致することを確かめてから使うと計画に記載）。
+- 試験：新しい `database/tests/test_input_versions.py` 6件（版の追加・時刻だけの取り直しは追加しない・削除・復元・まとめて削除・別の接続・出発点1回・プレビュー除外・準備失敗でも保存・P’s CUBEの日付・2店で1ファイル）。PC全試験 `PYTHONUTF8=1`（CIと同じ）で tests 444件・ルート222件成功、`TZ=UTC` で追加6件成功。最初に `PYTHONUTF8` なしで流したとき `test_saiwaichou_history` 2件がcp932で読めずエラー（試験がencoding指定なしで読むため。今回の変更と無関係、CI条件では成功）。Flutter・JS・閲覧ページは変更なしのため流していない。全体ゲート・ビルドは実施していない。
+- 利用者の操作が要る：PC版を閉じて `start.cmd` から開き直すまで記録は始まらない。初回だけ起動が約7秒遅くなる。10/26の取り込み前に開き直さないと、その日は評価不能になる。
+
+## 【3店舗（長町南・幸町・P-STATION）の翌日候補の再導出：最終確認と報告の仕上げ】2026-10-25 Codex→Claude
+
+- 依頼：元の依頼文 `../outputs/astra-store-next-day-review-prompt-20261025.md`。途中で利用者「長町南と幸町とP-statioinは全て翌日候補への導き方を変えてね。店長が全部違うから。」によりP-STATIONを追加。許可範囲は分析・検証・具体的な設計だけ。元データ・DB・本番採点・候補ロジック・画面・既存計画は変更せず、commit・push・公開・定期実行追加もしない。分析の大部分・報告初稿・検算はCodexが実施し、使用上限のため `../outputs/store-next-day-reassessment-20261025/Claude引継ぎ.md` でClaudeへ引継ぎ。Claudeは全面再実行をせず、残りの最終確認と整文だけを行った。
+- 成果物：`../outputs/store-next-day-reassessment-20261025/` の `報告.md`（①〜⑦）・`再現方法.md`・`計画.md`・`selected_method_confirmation.csv`・`all_comparison/all_effects/all_monthly.csv`・`report_qa.json`。報告は `build_report.py` を直してから生成し直した（手で本文を書き換えていない）。
+- 結論（変わらず）：**3店舗とも、新方式へ置き換えれば候補の信頼性が上がるとは確定できない。** 開発期だけで選んだ案の確認期「案−現行」の日平均プラス率差（pp、暦日5日ブロック95%区間）：長町南・通常 現行順位＋88点除外 +0.45［+0.13,+0.85］（開発16日・Holm補正ブロック符号p=1.0・2000G感度で区間0含む）、長町南・バラエティ 14暦日縮小率 +2.92［−4.17,+11.25］（開発8日）、幸町・通常 前日順位 +0.28［−1.00,+1.63］、幸町・バラエティ 14暦日縮小率 +1.83［−2.66,+6.24］、P-STATION・20スロ 半減期3日＋88点除外 +1.10［−0.08,+3.08］（開発2日・差枚は現行+40.00→+25.43枚）。完全な未使用最終試験ではない（長期アーカイブに取得日時がない）。
+- 固定評価ツールの問題：10月末のfocusツールは方式版の定数（2026-10-07）だけを見て、共通候補関数が10/17導入のノーマルモデルを呼ぶため、比較相手の旧★が途中から変わる。幸町の固定案の差は旧★再現で+1.7782点、現ツールのままで+0.8495点。分析用コピー（`frozen_dart/`）で分岐だけ無効化して再現した。本番ツール・確定計画は直していない。finalは未実行。
+- Claudeが今回確かめ・直したこと：
+  - **計画との差**：計画では同定済みA/RT/BTを主比較から外すとしたが、通常機種の集約には参考群として入っていた。`plan_scope_check.py`（保存済み `group_metrics.csv.gz` を読むだけ）で範囲を分けて照合。長町南は同定済みA/RT/BTがなく結論同じ（残り群だけで+0.47［+0.14,+0.88］）。**幸町は計画の範囲だと開発期の規則が前日順位ではなく14暦日順位を選ぶ**（開発期 +0.02 対 −0.07pp）。14暦日順位の確認期は+0.33［−0.40,+1.11］、型式未確認の残り群だけでは前日順位−0.03［−1.14,+1.31］。どの範囲でも改善未確認で結論は不変。ロックは差し替えていない。報告①・②・⑤・⑥に明記。
+  - `details_validation.json` の `unknown_feature_ids=23765` は旧指数が欠測の選出台数（すべてバラエティ）の誤集計だった。`details_id_check.py` でID集合の照合だけやり直し、不一致0件・`old_index_missing_selected_rows=23765` に訂正（旧値は `correction` に保存）。
+  - 新方式の特徴の未来削除検算（`future_check.py`、2機種を2026-10-15で物理的に切断、8,457行×35項目が全履歴版と全一致）を報告・再現方法・`report_qa.json` に追記。再実行はしていない。
+  - 報告⑥の「幸町バラエティの点数約1.53点悪化」は④の平均点同士の差だった。報告の主な比べ方（同じグループの直接差→日平均）では−1.74点［−3.52,+0.06］に訂正し、両方を書いた。
+  - 再現方法の「matplotlibを使用」を「図は任意・今回未作成」に訂正（このPythonにmatplotlibがない。依存は足していない）。
+- 検算：`qa.py` を更新して実行し合格（候補数・判定数・集計率の再計算一致、独立v12採点851件・旧指数427件・P-STATION 1,714機種日の一致、上記3件の保存結果の確認）。保護対象187ファイル（入力177・P-STATION 10）のSHA256は作業前の記録と現時点で全て一致し、同一入力での確認と言える。報告のローカルリンク52件はすべて存在、①〜⑦の章立て、主表5行の数値と `selected_method_confirmation.csv` の一致、P-STATION差枚・低稼働感度・状態優先の数値を元表で照合。
+- 変更していないもの：database-main のコード・DB・seed・画面・既存計画、元のJSON。この記録以外にリポジトリ内のファイルは触っていない。分析の重い計算（prepare・evaluate・details）は再実行していない。このメモのcommit・pushは、今回の依頼の範囲（commit・pushしない）に従い未実施で、利用者の確認待ち。
+
+## 【PR #2：Androidの自動判定から読み取り・Store保存までの画面回帰試験】2026-10-25 Codex
+
+- 対象：https://github.com/keyanbaitian6-cell/database-ci/pull/2 （head `e43c940`）。開始時main `8d54c95` は期間内リポジトリの最新mainと一致し、PRの実変更 `8c0ea20` は未反映だった。最新の全体・ルート・AndroidのAGENTS、取得系開発メモ、関連仕様と作業状態を確認。月後半なので送り先はdatabase-ciのみ。originへのfetchも実施（取得は通常実行のDNS失敗後、許可された実行で成功）。未追跡の `CLAUDE_HISTORY_VIEW_HANDOFF_20261022.md`・`debug.log`・`rows.json` は保持。
+- PRを最新mainへ統合。コードは自動統合でき、作業メモだけの競合は両方の内容を残して解消。統合中に別セッションが `e39e4e6` をコミットし、そのmerge commitにPR差分も含まれた（この作業が作ったコミットではない）。以後の別セッションのコミットも巻き戻していない。PRのコードを古い版で上書きせず、現行の診断・グラフ・YouTube遮断などを維持した。
+- `PscubeImportPage` に単調時計・営業日の時計・Storeの差し替え口を追加。省略時は従来の実時計とStoreを使用。新しい `test/pscube_auto_flow_test.dart` 10件は実画面の周期Timer→`_autoTick`→`_capture`→一時SQLite Store→ページ移動を通す。15〜25秒・一覧表示の待機は仮想時間で進め、SQLite I/Oは待機時間0のイベントループ譲渡で処理する。判定・読み取りの応答は既存の共通fixtureを使用し、生成JSを実行する模擬ブラウザ試験で照合。
+- 確認した経路：タブなし（新しいタブだけ／途中の日が欠ける）の2場面で保存0件・対象機種日の印・次機種への移動、その次の全台一覧で実記録を保存・台別URLへ移動・DB再読込後も記録と印を保持。待つべき5場面、期限前の待機、重複保存防止、読み取り中の二重判定防止、OFF／画面移動後の古い結果の破棄、3回失敗後の待機。Cookie・キャッシュ・既存stateを消さないことも確認。
+- 旧判定（作業開始時 `8d54c95` の `pscube_auto.dart`）へ一時的に戻すと、新試験が `['index', 'only_newer_tab']` を期待する箇所で `['index']` となり失敗。必ず修正版へ戻したうえで成功確認。最初は別セッションによりHEADが変わり、修正済みHEADを参照してしまったため、開始時のhashを明示して再確認した。生成スクリプトのimport除去がCRLFで失敗する問題も再現し、`build_pscube_capture.mjs` をLF／CRLF両対応にした。再生成結果に実質差分なし。
+- 手元結果：Flutter全700件成功。その後、DB再読込と読み取り中の二重判定のアサートを追加した新試験10件も成功。analyzeはerror／warning 0、info 26件（既存と同数、既定のfatal-infoにより終了値1）。PC P’s CUBE関連109件成功、プロセス起動前 `TZ=JST-9` でUTC offset +09:00を実測。JS／模擬ブラウザ6本成功（absent-tab fixture9場面、auto_browser、data17件、net_capture、net_days5件、replacement_capture）。auto_browserの初回は既定pythonが見つからず失敗したため、プロジェクト専用Pythonを指定して成功。差分の空白検査成功。
+- 記録：`review_packages/pscube-auto-flow-20261025/`（red.log・flow-final.log・flutter-test.log・analyze.log・pc-pscube.log・JS各ログ）。利用者のDB・バックアップ・seed・Cookieは変更せず、実サイトへ接続していない。APK／Web／EXEのビルド・公開・全体ゲート・実Android WebView・常駐通知サービス・実サイトは未確認。今回解消したのはPR記載のAndroid画面の実動線を自動試験で通していない制約であり、実機確認の完了ではない。pushは明示承認待ちで未実施。
+
+## 【Android：取り込み画面でYouTubeへの通信そのものを起こさない】2026-10-25 Claude
+
+- 利用者の依頼（2026-10-25）：取り込み画面でYouTubeを「見えないようにしているだけで、アクセスも開く処理もしているのでは。開こうとすらしない処理は可能か」。PCは `975dd12` でWebView2の通信フィルター（204を手元で返す）にした。Androidは別セッションから引き継いで調べた。
+- 判断：webview_flutter（4.14.1／Android 4.13.0）には要求を断る機能が無い（`onNavigationRequest` は画面全体の移動だけ）。プラグインの端末側 `WebViewClientImpl` は `shouldInterceptRequest` を持たないので、**プラグインが設定したWebViewClientを包み、`shouldInterceptRequest` だけ足して、YouTube宛ての要求に端末の中で空の204を返す**方式にした（外へ通信しない。PCと同じ段階）。ほかのコールバックは全部元のWebViewClientへ渡し、読み込みの開始・完了・`onNavigationRequest`・エラー処理は変えない。ページ読み込み後にJSで止める案（`addDocumentStartJavaScript`）は、HTMLの先読みや最初からあるiframeの通信を止めきれないので採らなかった。
+- 実装：`YouTubeRequestBlocker.kt`（新規、channel `database/web_requests`、`MainActivity.kt` で登録）、`lib/youtube_request_block.dart`（新規、止めるホストはPCの `_YOUTUBE_HOSTS` と同じ youtube.com・youtube-nocookie.com・youtu.be・ytimg.com・googlevideo.com とそのサブドメイン、ホスト名だけで判定）。`setNavigationDelegate` がWebViewClientを置き換えるので、`prepareBrowserSession` に `blockRequests` の段を足し、ナビゲーション設定の後・最初の読み込みの前に毎回止め直す（二重には包まない）。メルヘン（`web_import_page.dart`）とP’s CUBE（`pscube_import_page.dart`）の両方。Android 8未満やWebViewが見つからないときは止めずに続ける（メルヘンは従来どおりJSで枠を隠す）。メルヘンの `_hideYouTubeScript` は空いた枠を詰めるために残す。P’s CUBEには枠を隠すJSは足していない（表示の変更はしない）。
+- 試験：`test/youtube_request_block_test.dart`（新規）。止める／止めないURL、PCとホスト一覧が同じこと、channelへの引数と失敗時にfalse、両画面が止める段を渡すこと、準備の順番（ナビゲーション→止める→Cookie→読み込み）、**プラグインの `WebViewClientImpl` が受けるコールバックをすべてKotlin側が元へ渡していること**（プラグインを上げてコールバックが増えたら落ちる）。`gradlew :app:compileDebugKotlin` でKotlinのコンパイル成功を確認（APKは作っていない）。
+- `check_before_build.sh` は **ALL PASSED**（PC 438件・215件・UTC 27件、Flutter 681件、JS 70本）。途中の2回は失敗：1回目は確認用フォルダ（scratchpad）のパスが長すぎてviewer-stageのコピーがWindowsのパス長上限で失敗（`CHECK_BUILD_WORK` を短い `%TEMP%\cbw_yt` にして解消）。2回目は `test_rainbow_today_browser` の閲覧ページ393pxが「本日の🌈 1台」を8秒以内に見つけられず失敗。同時にKotlinのコンパイルを流していた。閲覧ページは今回のファイルを読み込まない（取り込み画面は `main.dart` からだけ）。同じビルドで単独に3回流して3回とも4件成功し、何も同時に流さない3回目の全体確認で成功した。負荷による時間切れと見ているが、原因は確定していない。
+- **【全AI向け】`check_before_build.sh` の確認用フォルダ（`CHECK_BUILD_WORK`）は短いパスにする（2026-10-25 利用者「パスが長すぎ問題が頻発してます」）。** このPCはWindowsの長いパスの有効化がオフで、260文字を超えるファイルを扱えない。Claudeの一時フォルダ（scratchpad、約120文字）の中に置いたため、`viewer\assets\packages\cupertino_icons\assets\CupertinoIcons.ttf` のコピー先が263文字になり、viewer-stageが失敗した。`C:\w\cbw-作業名` のような短い専用フォルダを指定する（既定の作業ツリー内 `database_android\build\check_before_build` は今のworktreeの深さで211文字で、ぎりぎり収まる）。別の作業ツリーでビルドするときも `C:\w\名前` のような短い場所を使う。`C:\Users\keyan\.codex` はCodexの設定フォルダ（ログイン情報を含む）なので、作業用のコピーやビルドの出力を置かない。
+- 未確認：Android実機で、YouTubeへの通信が出ないこと・取り込み（読み込み待ち・エラー表示・機種移動）が従来どおり動くこと。実サイトは開いていない。
+- 利用者「ビルドし直しインストールコマンド提示」：`pubspec.yaml` を `0.5.43+2026102502` にして（コードはALL PASSED時と同じ、版だけ変更）、通常版と `DATABASE_ANDROID_CLONE=pscube` のP’s CUBE版をリリースビルド。通常版 `com.keyan.database_android`（SHA-256 `7e8084cdc12d3be3c708d778ffeb3788f6cacc9977acfc4d130809d1f1123bb7`）、P’s CUBE版 `.pscube`（`d30f3f6d6f8fc029ce81a1928dbb025566db3900ed4fe6f4f4ea89cfe753e67b`）。aapt2で版・ID、apksignerで署名 `4332fcb9…a047`（0.5.42と同じ）、dexにchannel `database/web_requests` があることを確認。置き場所 `database_android/build/releases/0.5.43/`（本体フォルダ側）。0.5.42のAPK2本とビルド出力に残った旧APKはごみ箱へ。
+- 利用者がRFGL146LVVWへ両方をインストール（12:28）。`dumpsys package` で両アプリとも0.5.43 / 2026102502、初回インストール日時は変わらず（通常版 2026-09-16、P’s CUBE版 2026-10-03）を確認。取り込み画面での実機確認とpushは未実施。
+
+## 【P’s CUBE：空の日が正常日の差枚を巻き添えにしない】Codex
+
+- 利用者から23日のP-STATION「L魔法少女にあこがれて」3台すべての差枚が、全画面で空欄との申告。提供されたバックアップを読み取り専用で確認し、1505〜1507番台の19〜23日・計15件は回転数・当たり・MY・日別グラフがある一方、差枚が未保存で、23日の3台に台別取得済みの印もあることを確認した。原本は変更していない。実際のGraph応答・取得警告は残っておらず、今回の欠損の直接原因は未確定。
+- ユーザー指示「1日でも空があれば表示されない処理を改善」により、PC・Android共通生成元 `web/pscube/data.mjs` を修正。日ごとに点と差枚を検査し、空・1点だけ・片側欠損・不正座標・範囲外の差枚はその日だけ未取得にする。正常日の正負・0枚は保存用に返す。日付や系列の重複、未来日の混入、共通単位の不正など、対応が曖昧な応答の拒否は維持する。
+- 選択日自体が欠測でも、PC/Androidの取り込みは正常な過去日を保存し、従来の差枚未取得警告を返す。手動貼り付け時の選択日確認は維持。生成済みcapture/auto_probeも同じ生成元から更新した。画面構成・保存形式・MY・既存の取り込み済み判定は変更しない。通信の追加、自動再試行や無限再取得は行わない。
+- 新規の日別解析5件と、新台の空系列を含む応答・選択日欠測を実際の生成済みJSで読むブラウザ試験を追加。修正前は新規5件中3件と新台ブラウザ試験が失敗し、修正後は関連23件成功。ユーザーデータは試験や公開物へ含めていない。
+- 最終の全体ゲートはALL PASSED。PC421件・追加214件・UTC27件、Flutter659件、JS332件成功・任意1件スキップ。実サイトのGraph応答、Windows WebView2実機、Android実機での再取得は未確認。
+- 月後半用の `database-ci/main` へ `aa39091` を1回反映。CI実行 `40070945395` のWindows・UbuntuのPCジョブが成功し、fullも成功し、全3ジョブ成功を確認した。公開用の再ビルド・stage後、生成物のP’s CUBE閲覧と両サイトの手動取り込み画面試験3件も成功。公開先は試験済みソースと一致する3ファイルだけを `a60fc21` として反映し、GitHub Pagesの当該コミットのbuiltを確認した。追加の実サイト通信はしていない。
+- 保存済み15件の差枚は元数値が無いため、このコード修正だけでは復元できない。修正版PCを更新後、該当3台の台別ページを再取得して共有用ファイルを更新する必要がある。Android実機/APKは未ビルド・未確認であり、ソース反映を端末の更新完了とは扱わない。
+
+## 【②のiPhone閲覧ページを公開】Codex
+
+- 利用者が公開先の共同作業者設定を追加後、接続中のimakurudev-engに `keyanbaitian6-cell/database-viewer` のpush権限が付いたことをAPIで確認。個人リポジトリの共同作業者では権限選択欄が無くても書き込み可能になることを案内した。
+- 公開先mainが準備時の親 `d01edb2` のままであることと、試験済み生成物6ファイルのSHA256一致を再確認。準備済み `f5722b8`（ソース `416206e`）を履歴・tree・commit SHAを変えず、強制更新なしで1回反映した。再ビルドやCIの再実行はしていない。
+- GitHub Pagesの最新ビルドが `f5722b8`・status=built・error=nullになったことを確認。両iPhone閲覧ページの公開処理は完了。公開URLへの直接HTTP取得はこのクラウドの通信制限で拒否されたため、配信本文の照合と実iPhoneでの動作確認は未実施。ストレージ消去は案内していない。
+
+## 【②とWindows修正の反映、④クラウド環境の再現手順】Codex
+
+- `416206e` を月後半用の `database-ci/main` に1回反映し、CI実行 `40058845062` のWindows・UbuntuのPCジョブが両方成功した。Windowsジョブ `120767723600` で、初期化失敗時の接続解放修正と既存のPython回帰試験が通った。前の失敗実行を再実行していない。最後にfullも13分1秒で成功し、この実行の全3ジョブ成功を確認した。
+- ②の全体ゲートはPC662件・Flutter659件・JS327件成功、任意の非公開保存ページ1件スキップ。公開用生成物の2画面試験も成功。公開先の変更はローカルコミット `f5722b8` として準備し、完全なGit bundleと生成物ハッシュを `/workspace/.cloud-setup/` に保存。接続中のimakurudev-engに `keyanbaitian6-cell/database-viewer` の書き込み権限が無いため、公開先への反映は保留し、利用者へ共同作業者追加を依頼した。公開済みとは扱わない。
+- ④は指定の環境セットアップスキルに沿い、既存venvを再利用する `database/setup_python.py`、Python 3.12、Flutter 3.47.1の固定Gitコミット、Node24・Playwright1.62.1、書き込み可能なキャッシュ、空seedの未作成時だけの補完を再現手順へまとめた。ソース・依存定義・lockfile・実データは変更していない。古い手順にあった存在しないinstall.shとXvfbの異なるパスを修正。
+- `/workspace/.cloud-setup/install.sh` の再実行が成功。`start.sh` でPythonの実ライブラリ、固定Flutter、Tk画面とChromiumの実操作を確認。自分で起動した別画面`:102`を停止・再起動後、既存のTk画面試験とSQLite接続寿命試験2件が成功した。元から使用中の`:101`は止めていない。
+- install_scriptと日本語のstart_skillを環境設定の下書きrevision 10へ保存し、読み戻して実行済みファイルと全文一致を確認。リポジトリ登録・既存の通信許可・認証設定は変更していない。利用者による設定の確認・保存と環境の公開が残り、新しいタスクでの復元は未確認。③の日付重複診断は利用者の指定どおり未着手。
+
+## 【iPhone閲覧ページの大きなJSON取り込みと、WindowsのDB接続解放】Codex
+
+- 改善②の対象は利用者確認済みのメルヘン・P’s CUBE両方のiPhone閲覧ページ。画像を含む大きなJSONをレコード単位で読み、不要画像を落としてからFlutterへ渡す。全体の重複デコードを減らし、手動取り込みと自動更新の競合を防ぐ。失敗・保存中断時は既存データを維持し、別タブで直前に保存したイベントも小さなメタデータだけで引き継ぐ。PC・Android・共有カレンダーの画面は変更していない。③の日付重複診断には着手しない。
+- 40MiB超・1,300件の合成JSON、文字境界・エスケープ・不正入力、両サイトの実ビルド画面での競合・保存中断・イベント保持を追加検証。実iPhoneのSafariや実Drive同期は未確認。実データを試験・公開物へ含めていない。
+- `8d8e1da` のCI実行 `40042261988`、Windowsジョブ `120715822236` のログを取得。壊れたメルヘンDBの初期化例外がコンストラクター中に起き、closingの管理に入る前にSQLite接続が残り、試験終了時の削除がWinError 32になっていた。Store初期化失敗時に接続を閉じて例外を再送出する。既存の接続追跡試験に両DB破損ケースを追加し、Linuxでも修正前に接続漏れを検出、修正後に成功した。
+- 全体ゲート `viewer-import-verified` はALL PASSED。PC421件・追加214件・UTC27件、Flutter659件、JS試験スクリプト64本。任意の非公開保存ページ試験は既定どおりスキップ。公開用releaseビルド・stageと、その生成物による両サイトの画面試験2件も成功。静的解析は既存のinfoのみで警告・エラーなし。Windowsの新CI結果は反映後に確認する。
+- 送り先は月後半の `keyanbaitian6-cell/database-ci/main`。正本originへは送らない。閲覧ページ公開用生成物は `/workspace/.cloud-setup/viewer-publication` に準備済みだが、接続中のimakurudev-engには公開リポジトリのpush権限が無く、公開反映は未実施。
+
+## 【PC：共有への書き出し結果と、保存済みデータからの再出力】Codex
+
+- 利用者がクラウドでの改善案①「共有への更新状況と、再書き出しボタン」を指定。最新の期間内main `bc07737` を取り込んで実装した。表示範囲の追加確認は回答待ちのため、両案に共通するPC側を実装。Androidアプリ・iPhone閲覧ページ・共有カレンダーの画面は変更していない。
+- PC「バックアップ・同期」に「共有用ファイルを更新」「更新状況の詳細」を追加。保存済みDBがあるメルヘン・P’s CUBEを既存の出力ワーカーで再出力する。フォルダを選び直す経路も同じ処理を使い、受付時に「書き出しました」と出していた誤表示を削除。未接続の同期先や、存在しない他サイトのDBを作らない。片方のDBを読めなくても、もう片方は出力を試みる。
+- 自動取り込みの終了後も含め、元のdataフォルダの `backup-output-meruhen.json` / `backup-output-pscube.json` に完成後の状態を原子的に記録。成功・一部失敗・失敗・同期先不明、前回の全体成功、各出力の成功時刻、店舗の最新記録日・保存件数を表示する。異なる同期先の成功を引き継がず、旧版で未記録の結果は未確認とする。実際に作っていない直近バックアップを成功と記録しない。
+- 表示が確認するのはPCから共有フォルダへの書き出しまで。Google Driveへのアップロード完了や、iPhone・共有ページでの読み込み完了は確認済みとしない。出力状況の記録は本体DBやバックアップ形式へ追加せず、実データを変更しないローカル補助ファイルとして保持する。
+- 回帰試験は10件の出力状態・失敗復旧・両DBの独立性と、実際のTk画面で受付／完了／再出力／詳細表示を確認する1件を追加。修正前に状態未記録による失敗を確認。画面試験で見つかった終了時のタイマー登録元の競合も修正し、既存の終了試験を含め成功。
+- 最終確認：PC全421件・追加214件・UTCイベント27件、合計662件成功。LinuxのTkはXvfb `:101`。差分の空白検査成功。Flutter全試験・全体ゲート・Windows実機・実Drive同期は今回未実施。APK・EXE・Webのビルドや公開はしていない。合成データの画面レイアウトは確認したが、この環境の日本語フォント描画には制限があり、Windows実画面の見た目は未確認。
+
+## 【幸町ノーマル・翌日候補の再検討資料を必読化】2026-10-23 Codex
+
+- 利用者「今後私がこの見直しとかをお願いした際にこの報告書関連を参照させることをルール化して下さい」。`AGENTS.md` に必読ルールを追加した。
+- 参照先は `../outputs/normal-reassessment-20261023/` の `報告.md`・`計画.md`・`再現方法.md` と、判断に関係する比較CSV・検算JSON・スクリプト。報告は幸町のみ。新案による改善は未確認であり、7〜14日優先などを採用済みの結論として扱わない。
+- 今後は現在の仕様・候補コードとの差、データ取得方法・機種構成・欠測、評価期間の再利用、当時の保存候補と後日再現の違いを確認する。追加データによる再評価は妨げず、過去の結論を固定しない。
+- 今回は指示・引き継ぎ文書だけの変更。元データ・本番コードは変更せず、実行・試験・ビルド・公開への影響がないため試験・ビルドを省略。利用者の「pushしておいて」により、日本時間10月23日の指定先 `keyanbaitian6-cell/database-ci` の最新mainへ、この必読ルールと本記録の2文書だけを反映する。他作業の未コミット差分と、リポジトリ外の報告書本体・元データは含めない。
+
+## 【共有カレンダー：イベント履歴で表の下の行の機種へ送る】2026-10-22 Claude
+
+- 利用者がiPhoneのスクリーンショットで指摘：長町南のバラエティ履歴で「L A-SLOT このすば FX」（1台）を開くと、次の台が無く、下の行の機種を見るのに戻る必要がある。「ディスクアップに行くボタンが絶対必要」。前回の「同じ機種の台だけを送る」作りは、1機種1台のバラエティでは使えなかった（1台のときは帯を出さないため、ボタンが消えて見えた）。
+- `share_viewer/app.mjs`：イベント履歴では、表の上から下の行の順（その日に記録のある機種だけ）で送る。
+  - 機種の台一覧に「前の機種・次の機種」を出した（`machineStepBar`）。日付を送ったあとは出さない（表の並びはその日のものなので）。
+  - 台のデータの「前の台・次の台」は機種をまたぐ（この機種の最後の台の次は、下の行の機種の台）。隣が別の機種なら、ボタンに機種名を添える（他のシートも同じ）。
+  - ボタンは1行に収め、長い機種名は「…」で省く（`index.html` の `.rack-step`）。
+- 試験：`test_event_history_browser.mjs` の週表に2つめの機種を足し、次の機種・前の機種、102番→201番（下の行の機種）、ボタンがはみ出さないことを確かめる（320/393/1280px）。バラエティ🌈の試験は、ボタンに機種名が付く形に合わせた。`check_before_build.sh` は「ALL PASSED」（PC 410件・214件・UTC 27件、Flutter 654件、JS 63本）。共有ページだけ公開（閲覧ページは変更なし）。iPhone実機は未確認。
+- 利用者「閉じるについても…なにもかわってない」：重ねた画面では「閉じる」を隠している（2枚目のスクリーンショットでも右上に無い）。期待と違う点を確かめたところ、利用者は「今のままでよい」を選んだ（変更なし）。
+
+## 【共有ページ・iPhone閲覧ページ：ダブルタップでの拡大を止める】2026-10-22 Claude
+
+- 利用者「次の台連打していくとズームされるからやめたい」。iPhoneのSafariのダブルタップ拡大はiPhoneの設定では止められないと説明し、利用者の指定「iPhoneブラウザ版、共有ページで止めてください」「二本指で拡大機能だけでOK」で対応した。
+- `share_viewer/index.html`（`android.html` はここから作られる）、`database_android/web/index.html`、`database_android/web/pscube/index.html` の html・body に `touch-action: manipulation` を付けた。2本指の拡大とスクロールは残る。`user-scalable=no` などで拡大自体は止めていない。Androidアプリ・PCは対象外（利用者の指定）。
+- 試験：`test_double_tap_zoom.mjs`（3つのHTMLの指定と、viewportで拡大を止めていないこと）を新設した。`test_share_viewer_browser.mjs` に、実際のページで html・body が manipulation になっていることの確認を足した。`check_before_build.sh` は「ALL PASSED」（PC 410件・214件・UTC 27件、Flutter 654件、JS 63本）。公開物の3つのHTMLに指定が入ることも確かめた。iPhone実機での連打は未確認。
+
+## 【共有カレンダー：重ねた画面の「閉じる」を隠し、前後の台ボタンを全シートへ】2026-10-22 Claude
+
+- 利用者指摘：共有カレンダーのイベント履歴で、台のデータから「閉じる」を押すと履歴ごと閉じて分かりにくい。次の台（下の台）へ送るボタンがほしい。クラウドのセッションが履歴シートだけに入れ（`ec9ac32`、ブランチ `claude/event-history-close-next-machine-4dr838`）、デスクトップで続けた。
+- 利用者の回答「日付シート・回っていない台・バラエティ🌈・末尾別の画面にも付ける」「あとは良いと思う判断で」により、`share_viewer/app.mjs` で次のように広げた。
+  - 重ねた画面で「閉じる」を隠すのを、全シートの共通動作にした（履歴だけの指定 `backOnly` をやめた）。
+  - 前後の台は、開いた一覧に並んでいた順で送る（`rackPage`・`rackNeighbor`）。画面ごとの並びは `EVENT_HISTORY.md` の同日の節に書いた。
+  - iPhone閲覧（Flutter）には入れなかった。ページの切り替えで「閉じる」が無いことと、台のデータの部品がAndroidと共通であるため。
+- 試験：共有ページの画面試験5本に前後の台の確認を足した。既存の「重ねた画面で閉じるを押す」手順は、戻ってから閉じるように直した。`check_before_build.sh` は「ALL PASSED」（PC 410件・214件・UTC 27件、Flutter 654件・analyzeは情報のみ22件、JS 62本、閲覧ページと共有ページのstage）。iPhone Safariの実機表示は未確認。
+- 利用者「公開までお願い」により、`database-ci` の `main` へ `4879f5e` を早送りでpush（CIが1回動く）し、`database-share` の `main` へ `513ede8` を早送りでpushして公開した。公開ページの `app.mjs` に今回の変更があり、版の印 `533fc50e9f3a` が全体チェックのstageと一致することを確かめた。
+- 手元の `database-main` の `main` は、他の作業の未コミット変更（`AI_COLLABORATION.md` など）があるため、08a0174 のまま進めていない。次にこのフォルダでコミットする作業は、先に `database-ci` の `main`（4879f5e以降）を取り込むこと。
+- 環境メモ：新しいworktreeでは、gitで無視されている `database_android/assets/database_seed.json` が無く、Flutterの3件（試験・analyze・閲覧ページのビルド）が失敗した。本体のフォルダから写して流し直した。メモにあるPython（pythoncore-3.14）には rapidocr・onnxruntime が無いため、`database-main/database/.venv` のPythonを使った。
+
+## 【CI失敗の調査：Windowsだけ週ボタンの表示確認で落ちた件】2026-10-22 Claude
+
+- 利用者がdatabase-ciのメール通知（Regression checks の `pc (windows-latest, UTC)` 失敗）のスクリーンショットを見せ、「何のエラーか」と質問。落ちたのは `test_saiwaichou_history` の `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day` 1件で、`weekly_button().winfo_viewable()` が 0（410件中1件）。Ubuntuのpcジョブとfullは成功。
+- 原因（コードと手元の再現からの推測）：試験が `window.geometry(...)` のあと `root.update_idletasks()` だけで可視状態を見ていた。Windowsでは表示イベントを `root.update()` で処理しないと未表示と判定される。製品コードの不具合ではない。
+- 利用者の依頼で、手元のWindows（`py`、PYTHONUTF8=1）でCIと同じ2系統を実行：`unittest discover -s tests` 412件、`test_*.py` 全モジュール 214件、いずれも成功。
+- 確認の途中で、同じ1行の修正（`262c7c7`）と記録（`b3c7e8b`）が別の作業で `database-ci/main` に送られ、手元の `main` も同じコミットになっていた。このため、こちらからの試験コードのコミット・pushは行っていない（同じ内容の2重pushでCIの枠を使わないため）。`b3c7e8b` のCI実行は、この記録時点で実行中で、結果は未確認。
+- 日本時間10/22なので送り先は `database-ci`。この記録（.mdのみ）だけを自分の分としてコミットし、他の作業の未コミットの追記は触っていない。
+
+## 【幸町バラエティ：表示中の週へ優・良を一括入力】2026-10-22 Codex
+
+- 利用者「めんどくさいから週単位で自動挿入機能もつけて」。直前の幸町の機能と同じく入力操作はPCのみ、保存した結果は既存のPC・Android・iPhone閲覧ページ・共有カレンダーへ渡す。
+- `database/event_history.py` に「この週の差枚で優・良を入れる」を追加。表の上の独立した行に置き、表示中の月曜〜日曜を対象にする。日付の選択は不要。各日の機種合計差枚で優・良を判定し、週の差枚を合計しない。各日の保存名と週表の台数を照合し、入力済み・マイナス・差枚不明・欠測・台数不足・台数増加を既存と同じ規則で扱う。確認・DB保存は週の全セルで各1回、共有出力は既存どおりまとめる。
+- 合成DBの実Tk画面で、月曜から日曜までの入力、2,499／2,500枚・0枚、手入力保持、別店舗・翌週の除外、記録なし・差枚不明・台数増減の空欄、キャンセル、再実行で時刻を変えないこと、共有出力を1回へ集約することを確認。820px幅でも週のボタンが見える。長町南には週の優良ボタンを出さず、既存の日別顔文字入力を保持する。試験の初回は土曜のマイナスも除外数へ入るのに期待値へ数え忘れて失敗。土曜を記録なしの例にして欠測も確認し、最終9件成功。
+- 検証：PC全410件成功（追加の週単位画面試験を含む）。共有履歴のパーサー・320/393/1280pxの実ブラウザ・2種類のGoogleスクリプトに関する14件も成功。幅の確認を追加後に幸町9件を再確認。PCの操作追加だけなのでWeb／APK／EXEのビルド・再公開とFlutter全体ゲートは行っていない。保存形式・閲覧側・数値・採点は変更せず、実DBや実Googleへの試験入力もしていない。
+- 開始は `database-ci/main` の `7bda249`。日本時間10/22なので、今回も `keyanbaitian6-cell/database-ci` だけへ反映する。直前のWindows更新時はPCの未コミット変更をstashへ保持して取り込み直し、利用者「いけました」と回答。現在の起動元は `C:\Users\keyan\Documents\Codex\2026-09-24\a\work\database-main\database\start.cmd`。クラウドの反映をPC側の更新完了とは扱わず、同フォルダからkeyan側をpull後に再起動するよう案内する。
+## 【P’s CUBE：日付タブが無い機種を自動取り込みでも飛ばす・全台一覧の保存で「タブなし」を外す】2026-10-22 Claude
+
+- 依頼：取り込み日（例10/18）を指定しても、新台の全台一覧には10/19のタブしか無くサイトが10/19を選ぶ。保存側（Store）には `absent_table_days` に覚えて次へ進む処理（`fb952b7`）があるが、自動取り込みは表示中の日が違うと読み取りの前に待つため届かない経路があった。また全台一覧の保存は `absent_table_racks` だけを更新し、`absent_table_days` を外す処理が無かった（一度覚えた機種・日は、あとで正しい一覧を保存しても未取得から外れ続ける）。どちらも正本mainのコードで確認し（月後半の規則により、コミットは `database-ci` のmain `59ac509` の上に載せ直し、PRの競合を解くため最新main `7bda249` を取り込んだ。競合はどちらも作業記録だけ）、`fb952b7`・`3277043` の処理は重複して作っていない。
+- 直したこと：共通の判定 `autoPageState` が全台一覧の日付タブ一覧 `days` も返す（生成物 `pscube_auto_probe.js`・`pscube_capture.js` は `build_pscube_capture.mjs` で作り直し。`pscube_cloud_sync.gs` はこの関数を含まず生成結果も変わらない）。PC `AutoPilot.tick`・Android `pscubeAutoDecision` は、全台一覧で取り込み日のタブが無く、取り込み日がタブの最新より前で、選ばれたタブがその中にあるときだけ読み取りへ進める（PC `day_tab_absent`・Android `pscubeDayTabAbsent` の同じ規則。保存側の `_skip_absent_day` もこれを使う）。最終の判定と印の更新は保存側が読み取り結果の日付タブで行う。タブが読めない・タブがある・取り込み日がタブより新しい・人間確認や読み込み中・台別ページの日付違いは今までどおり待つ。全台一覧を保存できたら、同じトランザクションでその機種・日だけ `absent_table_days` から外す（Androidはトランザクション前に読み、中では `txn` だけで書く）。PCの自動取り込みの状態表示も飛ばした理由を出す。
+- 試験：模擬ページで生成JSを動かす `tool/test_pscube_absent_tab_auto.mjs`（出力を `test/fixtures/pscube_absent_tab_auto.json` と照合）。同じ出力で PC `test_pscube_auto_absent_tab.py`（判定→取り込み開始→`submit_capture`→次のURL）・Android `test/pscube_auto_absent_tab_test.dart`（`PscubeAutoGuard.decide`→`importPage`→次のURL）。判定の境界は `test_pscube_auto.py`・`test/pscube_auto_test.dart`。「タブなし」の解除・別機種別日の維持・4+2→5+1→6・拒否と保存途中の失敗で記録と印が変わらない・開き直しは `test_pscube_import.py`・`test/pscube_store_test.dart`（既存の「残り6件」の試験にも保存された印の確認を足した）。修正前のコードで新しい試験が失敗することを確認した（PC 5試験・場面ごとに7か所、Android 6試験。4+2→5+1→6は既存動作の確認なので修正前も通る）。
+- 確認（クラウド、Python 3.12＋requirements・xvfb、Flutter 3.47.1）：`database-ci` のmainの上で、PC `tests/` 401件・直下 `test_*.py` 221件成功、P’s CUBEのPC試験108件は日本時間でも成功（正本の古いmainの上でも381件・214件成功）。Flutter P’s CUBE試験とanalyze（error・warning 0、info 21件は変更前と同じ）。P’s CUBEのブラウザ・JS試験13本成功。全体ゲート（`check_before_build.sh`）・Flutter全試験・閲覧ページのビルドと画面試験は流していない。
+- 未確認：実サイトでの動作（新台の全台一覧で日付タブが読み込み途中に一部だけ見える瞬間があるか等）、Android実機・PCの実WebView2での通し。Android画面の `_autoTick`→`_capture` そのものは、間隔が実時間15〜25秒で差し替え口が無いため試験で動かしていない（同じ部品を同じ順に呼ぶ試験で代えた）。過去のRegression checksの失敗の原因は取得できた情報からは不明で、今回の2点が原因とは断定していない。コミット・push・ビルド・公開はしていない。
+
+## 【幸町バラエティ：差枚から優・良をPCで入力、4画面で表示】2026-10-22 Codex
+
+- 利用者「先ほどの幸町のバラエティの差枚への表示機能つけて。設計案を参考に」。先の設計案 `/workspace/scratch/幸町バラエティ評価の設計案.md` を確認。基準は2,500枚以上＝優、0〜2,499枚＝良（2,500枚ちょうどを優に含む）。表示先を確認し「PC・Android・iPhone閲覧ページ・共有カレンダーすべて」と回答。入力・手動修正はPCのみ。
+- 開始は期間内の `database-ci/main` `59ac509`。同じ履歴の正本側へは送らない。長町南の顔文字入力と週内😍なしの赤字は維持。
+- PC「結果を見る」の「幸町のバラエティ履歴」から、既存と同じ週表を作成・閲覧する。幸町の1〜2台機種で分類日と構成を固定（🌈一覧の1台機種とは別）。日付を指定して、その日の機種の合計差枚から空欄だけへ優・良を一括入力。全台の差枚が分かり、週表の台数と一致する機種だけ。片方が未取り込みの2台機種・増減台・マイナス・数値異常・欠測を勝手に評価しない。0枚は良。差枚の優先順位は既存rack_netのまま。
+- データは `event_history_edits.saiwaichou_variety` に分離し、同じ週・機種名でも長町南へ混ぜない。バックアップの既存入口で両方を時刻順に統合。旧バックアップに幸町が無いときや長町南の編集後も幸町を保持する。AndroidはPCバックアップを読むだけで、優・良の編集選択欄を出さない。
+- PCの共有用履歴JSONへ幸町の基準と編集を同じ名前空間で載せる。Android・iPhone共通画面と共有ページは店舗に対応した週表・同店同日の機種／台データを開く。幸町には長町南の赤字判定を適用しない。
+- Apps Scriptの生成コピー2本も共通検証コードに合わせたが、今回の導入に貼り替えは不要。開始時の既存コピー2本を隔離した模擬Driveで実行し、幸町のGET保持と長町南の編集後の保持・幸町へのPOST拒否を含む10件が成功。共有ファイルはPCが書く従来のものを使い、新しい接続先・スクリプト・同期ファイルは作らない。
+- 対象確認：PCの履歴関連42件、Flutterの履歴21件、JSの検証21件成功。共通の合成JSONでPython／Dart／JSの結果・除外件数・店舗分離を照合。PCの実際の週作成・自動入力・手動修正・再実行、バックアップ往復、Android取り込みと再出力、共有の320/393/1280pxの読み取り専用表示・同店のデータ遷移を確認した。
+- 393pxの画像を目視し、静的な優・良と「記録なし」が横に詰まるのを直し、別の行に出る確認を画面試験へ追加。生成したテスト画像は合成データ。初期の試験コマンドは作業ディレクトリ指定を誤りimportに失敗し、仮想画面99も前回終了済みのロックが残っていたため、新しい100で実行し直した。
+- 全体ゲート `/workspace/scratch/saiwai-gate.log` は **ALL PASSED（69項目）**。PC409件・P’s CUBE214件・UTC27件・Flutter647件成功。analyzeはinfo22件（既存21件と今回の波括弧の提案1件）でエラー・警告なし。P’s CUBEの実保存ページは `PSCUBE_ARCHIVE_DIR` 未指定で1件SKIP（未確認）。旧版のGoogleスクリプトを読み込む互換試験も10件成功。
+- 利用者が「pushとかは今は22日なのでkeyanの方でやってね」と再指定。日本時間2026-10-22を確認し、ソースは `keyanbaitian6-cell/database-ci` のみへ送る。公開は同じ所有者の既存閲覧・共有リポジトリへ送る。利用者の実データ・実Googleへ試験値を書き込んでいない。APK・EXEの作成や実機インストールは今回行わない。
+
+- ソース反映は `aa202fd`。CLIのgit pushは資格情報なし／gh経由の認証で失敗し、mainは更新されなかった。接続済みのkeyanアカウントのGitHubコネクターで22ファイルのblob・treeを作り、手元のtreeと完全一致（`acdeb0f1`）を確認して既存mainへ通常更新した。コードでCIが動くmain更新は1回。手元も同一treeを確認して公開コミットへそろえた。`imakurudev-eng/database` にはpushしていない。
+- 閲覧 `3e4c256`、共有 `593753d`（版 `a6c3593a86ce`）を既存mainへ反映。公開のtreeは手元stageと完全一致。両Pagesは該当コミットでbuilt。変更9ファイルのSHA-256が手元と一致し、両サイトの記録・履歴10パスは404。公開URLの320/393/1280pxでも幸町の優・良が読み取り専用、同店の台へ遷移、長町南の既存編集・赤字・再送が正常であることを確認した（実Googleは合成応答）。公開処理中の初回取得は旧版で、切り替え完了後に成功を確認した。
+- PCは利用者のソースを更新して再起動し、「結果を見る」→「幸町のバラエティ履歴」から週表作成・日付選択・優良入力を行う。共有は「共有へ反映」のあと読み込み直す。Android実機は次回APK更新で反映。実機のAndroid／iPhone Safariと実Google同期は今回未確認。
+
+## 【長町南バラエティ：週内に😍がない機種名を赤字】2026-10-22 Codex
+
+- 利用者「長町南のバラエティの表について、この😍顔がまだその週についてない場合に赤字で表示するようにして」。表示先を確認し「PC・Android・iPhone閲覧ページ・共有カレンダーすべて」と回答。赤字の対象は機種名として説明済み。
+- 月後半の最新 `keyanbaitian6-cell/database-ci/main`（開始 `64bc2aa`）を取得。正本側は月後半の顔文字自動挿入等をまだ含まないため、期間内のCI側を基に作業。以前の幸町「優・良」の設計案とは別の変更。
+- PC `database/event_history.py`、Android／iPhone共通 `database_android/lib/event_history.dart`、共有 `share_viewer/app.mjs`・`index.html` で、表示中のバラエティ週の7セルに😍がない機種名を赤（#b91c1c）にする。空欄だけの週も対象。1つ以上あれば通常色、別の週は独立。4台構成・半列は通常色のまま。保存形式・記号・数値・採点は変更しない。
+- PCは記号保存後の最新編集を重ねた週表から色を更新し、選択欄を作り直さない。Android／iPhoneと共有も編集後の週表から再判定する。最後の😍を消すと赤字へ戻る。
+- 確認：PCの履歴27件、Flutterの履歴17件成功。共有の320/393/1280pxで週別の色・追加・複数の😍のうち1つだけ削除・最後の削除を確認。393pxの合成データの画像を目視確認。実データ・実Googleは変更していない。
+- 試験準備時の失敗：ブラウザ未導入と導入中の起動を解消。追加したFlutter試験は既存の欄名を「週」と誤指定し「対象週」へ訂正。共有の色試験は既存の送信不能編集を残す試験と分離し、正常な送信完了を待つようにした。最終成功と区別する。
+- 全体ゲート `/workspace/scratch/heart-gate.log` は **ALL PASSED（68項目）**。PC401件・P’s CUBE214件・UTC27件・Flutter643件成功。Flutter analyzeは従来のinfo21件のみ、エラー・警告なし。P’s CUBEの実保存ページ3件は `PSCUBE_ARCHIVE_DIR` 未指定で1件SKIP（未確認）。公開用の閲覧／共有stageで既存の画面・同期・履歴試験も成功。
+- 公開準備：共有は版 `1129624e826b` の7ファイル、閲覧は `main.dart.js` のみ。閲覧のbootstrap差分はJSONのキー順だけと確認し、公開中の同内容を維持。GitHubへ準備したblobのSHAが手元と一致。APK・EXEは今回作成していない。
+- 反映：ソース `ef7b65d` を期間内の `database-ci/main` へ1回push。正本側にはpushしていない。共有 `227505a`、閲覧 `3711551` をそれぞれ既存mainへ反映。両Pagesは該当コミットでbuilt、変更した公開8ファイルのSHA-256が手元と一致。初回の閲覧JSは旧版が返り、再取得で新版の一致を確認した。共有の公開URLでも履歴編集・赤字の切り替え・再送の画面試験が320/393/1280pxですべて成功（Google通信は合成データの応答、実Driveへ試験値を書いていない）。両サイトの記録／履歴10パスは404。
+- PCは利用者の作業フォルダへ更新を取り込んで再起動すると反映。Androidのソースは対応済みだが今回はAPKを作成・インストールしていないため、実機には次回APK更新で反映する。iPhone Safari／Android実機での表示と実Google同期は未確認。
+
+## 【その日のまとめに0回転・500回転未満の台数を出す】2026-10-21 Claude
+
+- 利用者：共有カレンダーの「その日のまとめ」で、推定差枚を取れていない0回転などの台が何台あるかを「307/355（40台が0回転。8台が500回転未満）」のように出したい。出す画面は利用者が選び、**共有ページ（`share_viewer/`）とiPhoneの閲覧ページ（Flutter `calendar_day_page.dart`）**。PC・Androidには入れていない。
+- 数え方：数値異常の台を除いたその日の台のうち、0回転の台と1〜499回転の台（0回転は含めない）。0台の方は出さず、両方0台なら何も足さない。共有ページは `data.mjs` の `lowGamesNote`、Flutterは `lowGamesNote` で同じ規則。仕様は `EVENT_CALENDAR.md` に追記した。
+- 最初は正本 `imakurudev-eng/database` の古い `main`（`faba881`）を土台にして、ブランチ `claude/low-games-note` を正本へpushしていた（mainではないのでCIは動いていない）。10月後半の規則に従い、`database-ci` の `main`（`836cc62`）へ移し直した。正本のそのブランチは使わない。
+- 試験：共有ページの単体試験に境目（0・1・499・500）、画面試験に0回転・300回転の台がある日を足し、Flutterの単体試験も足した。Flutter 3.47.1（CIと同じ版）・Python 3.12で `check_before_build.sh` を流し、68項目 **ALL PASSED**。試験用ではなく改めてビルドした成果物を `database-share`・`database-viewer` に公開した。
+- CI：ブランチ `claude/low-games-note` から `database-ci` の `main` へのプルリクエスト（利用者が許可）。プルリクエストとmainへの取り込みで、CIは2回動く。
+
+## 【Windows CI：専用Python試験がWSLのbash.exeを選ぶ問題】2026-10-21 Codex
+
+- 利用者提示の失敗通知を確認。実行 `39562304448`（`3b70a54`）はfull・Ubuntu成功、Windowsのみ専用Python関連5件が失敗。ログは `Windows Subsystem for Linux has no installed distributions`。新しい実行 `39563859900`（`f5856f7`）でもWindowsの失敗を確認。CI再実行はしていない。
+- `test_project_python.py` が文字列 `bash` をsubprocessへ渡し、WindowsのPATH上のWSL入口を選んでいた。WindowsではPATH上のGitと同じインストール先の `bin/bash.exe` / `usr/bin/bash.exe` を絶対パスで選び、Linuxの選択は従来どおりにした。試験項目数・CIジョブ・アプリ本体は変更なし。
+- 既存の未コミット作業を保護し、CI先端 `f5856f7` から `../ci-bash-fix-20261021` に隔離。Windows・Python 3.14で `python -m unittest discover -s tests -p test_project_python.py -v` の12件が3.8秒で成功。GitHub側のPython 3.12での修正後実行は未確認。今回の変更について全体ゲート・APKビルドは不要として未実行。
+- 修正はまだpushしていない。共有mainへのpushは利用者の明示確認後、10月後半の送り先 `keyanbaitian6-cell/database-ci` へこの修正だけを1回送る。
+
+## 【CIへの接続復旧と、正本・CIの履歴の統合】2026-10-21 Codex
+
+- 利用者がCIリポジトリへ `imakurudev-eng` を招待し、その後に招待を承認したことで、このクラウドのGitからCI先端 `d92f56bb848af370308942954a9a397fa21dd3eb` を取得できた。APIでも読み取り・書き込み権限を確認。APIの通信先 `api.github.com` は先に環境下書きへ追加し、利用者の反映後にAPI接続と認証先 `imakurudev-eng` が確認できていた。接続復旧前の「Primary」「i」などの表示から認証先を推測した案内は根拠が不十分だった。
+- 統合前の比較：CI側だけに `988267b`・`e7069c7`・`fb361c3`・`8e78d82`・`87db6c9`・`0f53341`・`e2731af`・`9622267`・`d92f56b` の9件、こちら側だけに専用Python修正 `eef4d56` と運用文書 `10ee606` の2件があった。両方の履歴を保持する通常のmergeを実施。アプリのコード競合はなく、先頭へ追加された作業記録だけが競合したため、両側の記録を残して解決した。CI側のAndroid 0.5.41、イベント履歴の共有編集と同期、分析出力、推定差枚補正を保持する。
+- push先の月前半・後半の規則は維持。CI先の所有者は `keyanbaitian6-cell` のままで、クラウドでは共同作業者の `imakurudev-eng` の接続を使えることをAGENTSへ追記した。後半に正本へ代替pushしたり、既存の履歴を強制更新したりしない。
+- 統合後の `check_before_build.sh --local` は **LOCAL CHECKS PASSED**。PC395件・追加214件・UTC27件が成功。JS49スクリプト中296件成功・1件SKIP（非公開の保存ページ未指定）。環境検証12件とゲートのログ・早期停止3件を含む。共有の画面試験はstageから実行し、履歴の編集・再送復旧・狭い画面を含め成功。使用ブラウザはPlaywright 1.62.1とシステムChromium。Flutter全試験・analyze・新しい閲覧ページのビルドが必要な試験など15項目は未実行で、全体ゲート成功とは扱わない。Flutter/共有のアプリコードはCI先端と同一で、CI先端 `d92f56b` の全ジョブ成功はAPIで確認済み。今回はAPK・Web・EXEのビルドや公開は行わない。
+
+## 【月の前半・後半でCIのpush先を切り替える規則を受領】2026-10-21 Codex
+
+- 利用者が `keyanbaitian6-cell/database-ci` の `AGENTS.md` 本文を会話へ提示。そこには10/20の追加規則「日本時間の1〜15日は `origin`（正本）、16日〜月末は `database-ci` にだけpushし、履歴は1本に保つ」があった。正本から取得したこの作業環境のAGENTSには、その節が無かった。利用者から直接提示された新しい規則を優先する。
+- 前回の専用Python修正 `eef4d567daaa906cccc8e1a6f0c47e4961f8add8` は10/20に正本へpush済み。新しい規則では後半のため送り先が違った。利用者に説明して謝罪した。現在の正本の先端は `eef4d56`。利用者提示のAGENTSによれば、CI側には `988267b`（Android 0.5.41、補完機種の台数確認の修正）があり、正本の `3277043` には含まれていなかった。この作業環境では `988267b` のオブジェクトも取得できていないため、実際の先端・差分・統合方法は未確認。CI側の変更を消すpushや、別系統のコード開発を続けない。
+- この環境からCIリポジトリへのGitアクセスは「Repository not found」、指定されたAGENTSのWeb URLは404。利用者はGitHubアプリの許可対象へCIを追加し、再接続・新規タスクも試したが、取得成功は確認できていない。GitHub側の許可画面と2アカウントの接続画面は確認したが、実際に選ばれた認証先・拒否原因は未特定。環境のリポジトリ登録や「Primary」「i」の表示だけを原因と断定しない。CLIの認証設定を、デスクトップからクラウドへそのまま引き継げるとも扱わない。
+- 日本時間10/21を確認し、ルートAGENTSへ利用者提示の節を反映。Android側の常時正本pushという旧記述と開発手順もそろえた。今回は文書のみの変更。試験・CI再実行・追加pushは行わない。CIへのアクセスが可能になったら、その先端を読み取り専用で取得し、`988267b`・`eef4d56` と他の未取得コミットを保持する形で統合してから、期間内の側へ1回送る。強制pushはしない。
+
 ## 【デスクトップの専用Pythonを指定し、ビルド前に環境不足を確認する】2026-10-20 Codex
 
 - 利用者：朝、デスクトップでFlutterやPythonの環境確認に約40分かかり、ビルドできないまま出勤。「このプロジェクトにおける専用python構築とかできるってこと？それ指定しておいてほしい」。その朝の実行ログはクラウドからは未確認。過去のFlutterの誤検出（0バイトの別ファイル）・SeleniumのないPythonを選んだ記録と区別する。10/15の `588d573` で検証用Pythonが固定パスから自動検出へ変わっていたが、今回の失敗原因とは断定していない。
@@ -9,6 +226,76 @@
 - AIはWindowsで `database/.venv/Scripts/python.exe` を直接指定する。クラウド・CIのPython 3.12指定を、既存デスクトップのPythonを入れ替える指示と扱わない。起動・開発手順を `DEVELOPMENT_CHECKS.md` と両READMEに記した。
 - 検証：クラウドで専用Python 3.12.14を実際に構築し、同じ入口からの再実行・依存確認に成功。Xvfbを作業領域へ展開してPC 381件（今回追加の環境検証12件を含む）・P’s CUBE等207件成功。ゲートのログ・早期停止3件、stageした共有ページの画面試験2本（320/393/1280px）も成功。最初のPC試験は仮想画面がなく失敗し、画面を用意して再実行した。Flutter不足時の実ゲートの早期停止も確認。試験が生成した `:memory:.ses` は除去した。
 - 未確認：利用者のWindows上の `.cmd` 実行と専用環境構築、朝のビルド失敗原因。クラウドの環境構築を利用者のPCの設定完了とは扱わない。Windows側は更新を取り込んで `database/setup_python.cmd` を一度実行する必要がある。Flutter全試験・全体ゲート・APK/Web/EXEのビルドと公開は今回は行っていない。
+
+## 【メルヘン推定差枚：正確な幸町の差枚で終点を半px補正】2026-10-21 Codex
+
+- 依頼：幸町のジャグラーオンライン差枚は正確との利用者指定。「100枚以上外れてるものに関しては除外して再度検討、修正し公開push」。対象は確認してPC・Android・iPhone閲覧・共有カレンダーの4つ。APKは今回はビルドしない。
+- SQLiteを `mode=ro` で読み、補正前 `e2731af` の推定式で照合。正確値・グラフ・最大持玉が揃う7,745組のうち推定可能7,547組。絶対誤差100枚以上（100枚ちょうどを含む）672組を補正・評価から除き6,875組を固定。実記録の削除・数値更新は行わない。
+- 9/30〜10/9の3,622組で選んだ終点オフセット−0.50pxを、10/10〜19の3,253組へそのまま適用。平均絶対誤差8.13→4.68枚、中央値5→2枚、95%点24→13枚。除外後全体7.50→4.29枚。補正後に誤差100枚以上となる3組も再除外していない。長町南の正確値は0件なので、長町南での実際の改善量はわからない。
+- 修正：PC `core.py`、共通Dart `meruhen_net.dart`、共有 `net.mjs`。目盛り選択後の終点だけを半px補正。一日中ゼロなら0、推定不可は欠損、正確な `jo_net` は優先。採点・グラフ・最大持玉・保存形式は同じ。検討資料 `database/MERUHEN_NET_CALIBRATION_20261020.md`、再現用 `database/calibrate_meruhen_net.py`（読み取り専用、集計値だけ出力）。
+- 検証：保存済みグラフ22,538件でPython・Dart・JavaScriptの値と要確認印が全一致。合成グラフの正負・4点・ゼロ線・欠損・正確値優先の試験を追加し、旧例の期待値も補正後へ更新。新しい閲覧ページの実ブラウザ試験は320/393pxで合計+316・平均+105・3/4台を確認。共有ページは320/393/1280pxで補正後の合計・台別値を確認。
+- 全体ゲート最終 **ALL PASSED（68項目）**：Python383件＋追加214件＋UTC時刻27件、Flutter640件、JS60スクリプト、analyzeエラー・警告なし（既存info21件）。最初のゲートでは日別集計の旧期待値2,500枚が残って失敗し、2,489枚・平均1,245枚へ直したうえで最終ゲート成功。保存ページ3件の取り込み試験だけは `PSCUBE_ARCHIVE_DIR` 未指定で1件SKIP。専用Temp・Python3.14・`TZ=JST-9`。
+- 公開準備：`stage_share_viewer.py` と `stage_viewer.py` を通した生成物。実データ文字列90種類・スクリプトIDの混入なし。共有の版は `8f05657e84f3`。閲覧は現行0.5.41からのビルドで、前回公開0.5.39以降の既存P’s CUBE過去日取り込み修正も含む。
+- 控え：`../review_packages/meruhen-net-20261020/`（calibration.json、parity.log、gate-final、公開専用クローン）。既存の未追跡 `debug.log`・`rows.json` はコミットに含めない。
+- 配布範囲：PCは次の起動から新しいソースを使用する。利用者が取り込み中のため再起動操作はしない。Androidはソース更新・試験まででAPK作成・インストールなし。Android実機・iPhone Safariの実操作、実Google同期は未確認。
+- 公開：コード `9622267` から共有 `11959c0`、閲覧 `fdff106` を各mainへ1回push。両方のPages latest buildが当該コミットで **built**、エラーなし。Git内の内容を基準に変更ファイル13個（共有8・閲覧5）を配信URLのSHA-256と照合し、全件一致。`database_seed.json`・`assets/assets/database_seed.json`・`event_history.json`・`assets/assets/event_history.json`・`database-backup.json` は両サイトで404（計10パス）。
+- 公開後の画面：閲覧の新規数値試験（320/393px）と共有の画面試験（320/393/1280px）を公開URLに対して実行し成功。データは隔離ブラウザの合成記録。控え `public-verification.json`・`viewer-public-browser.log`・`share-public-browser.log`・Pages状態JSON。ソースはコードとこの公開記録をまとめ、月後半の `keyanbaitian6-cell/database-ci` へ1回pushする。CIの確認結果は最終報告と私用控えへ残す。
+
+## 【イベント履歴の指摘修正をClaudeが再確認・1件追加修正し、database-ciへpush・共有ページを公開】2026-10-20 Claude
+
+- 経緯：Claudeが `fb361c3` を読み取りレビューして7件を指摘（本体DBに共有の記号が入らない、未来時刻の同一セル再編集、除外件数の混同、30,000件超過、POST全体拒否、「表 済」表示、端末保存失敗の表示）。Codexが検証・修正し、報告書 `../review_packages/event-history-review-fixes-20261020/Claudeへの報告.md` を作成。利用者「問題があればclaudeで修正してOK」「修正完了したら公開pushまでしてOK」。
+- 再確認：報告書の5点（本体合流→写しの順序とロック、未来時刻の未送信だけの置き換え、PC・Androidの上限検査で原文保持・台データ取り込み継続〔PC `import_backup` は `history_error`、Androidは `on Object catch`〕、端末保存失敗で再送を止める、残る制約の書き方）をコードで確認し、いずれも妥当と判断。
+- 追加修正1：`database/output_worker.py`。本体DBを開くこと自体が失敗すると（ロック中など）、出力（バックアップ）全体が止まっていた。共有の取り込みだけ諦めて注意を出し、写しからのバックアップは続ける。再発試験 `test_backup_still_runs_when_the_live_database_cannot_be_opened`（`database/tests/test_output_worker.py`）。try句だけ外した写しでは「database is locked」で失敗、修正後は成功を確認。
+- 追加修正2：Codexの新規試験 `test_event_history_recovery_browser.mjs` が、このPCの全体ゲートで失敗（WindowsのPython標準出力cp932で `OVERLAY_JS` の🌈を出せない。製品コードではなく試験の問題）。既存試験と同じく `json.dumps` で受け取る形に直した。単独17件成功。
+- 全体ゲート（`check_before_build.sh`、Python 3.14・Flutter・Playwright、日本時間）：1回目は上記1件のみ失敗（66成功）、修正後の2回目は **67項目ALL PASSED**（PC382件・P’s CUBE等214件・UTC27件・Flutter639件・JS59本、Flutter analyzeはエラー・警告なし・既存info21件）。P’s CUBE等の件数には未コミットの別作業 `database/test_other_analysis.py` も含む（手元だけ。CIでは流れない）。
+- コミット：今回の修正と試験、`EVENT_HISTORY_REVIEW_FIXES_20261020.md`、この作業記録のうちCodexの今回の節とこの節だけ。先行の未コミット追記（10/18〜10/20の各節）・アナスロ分析・HTML変換・未追跡ファイルは含めていない。10/20は月後半なので `database-ci` へpush（正本originへはpushしない）。
+- push：`database-ci/main` へ `fb361c3..8e78d82` を1回。CI run 39416154391 は pc（Ubuntu・Windows、UTC）と full がすべて success。正本 `imakurudev-eng/database` へは月前半（11/1以降）に追いつかせる。`database-ci` にだけあるコミット：`988267b`・`e7069c7`・`fb361c3`・`8e78d82`（とこの記録のコミット）。
+- 共有ページを公開：`keyanbaitian6-cell/database-share/main` へ [4376404](https://github.com/keyanbaitian6-cell/database-share/commit/4376404)（source 8e78d82、版 `320ece4acd51`、`app.mjs` と版番号の付け替え7ファイル）。全体ゲートのstageと16ファイルが改行以外一致、記録の文字列・接続先IDの検査は該当なし。Pages built、公開URLの `sw.js` の版と `app.mjs` がコミットと一致。公開URLで `test_event_history_browser`・`test_share_viewer_browser` 成功（Google通信は模擬応答）。新しい `test_event_history_recovery_browser` は公開URLに未対応のため手元のstageでのみ確認。
+- 閲覧ページ（iPhone）は、Dartの変更が30,000件超過時のエラー文だけで通常の表示は変わらないため再公開しない。APKは作っていない（Androidの上限保護は次のAPKから）。Apps Scriptの貼り替えは不要。
+- 未確認：実Googleの一往復、実iPhone・Android・WebView2での動作、実DBの現在の状態。PCは更新したソースで再起動すると反映。
+
+## 【CIを動かすGitHubを月の前半・後半で使い分けるルール】2026-10-20 Claude
+
+- 利用者「この感じだと月半分ずつわけたら無難そうだね。毎月15日23時59分を境目に使い分けよう。共同ルールでお願いします。今は月後半だからciの方」。きっかけの質問：「このgithubを二つ使いこなすっていうのはcodexにも伝わってる？共同ルールに書き込んでる？」→ 確かめた結果、`AGENTS.md` にも本体フォルダの作業記録にも `database-ci` の記載は無く、Codexには伝わっていなかった（記載があったのは、`database-ci` と手元ブランチにだけあるこの作業記録の1節）。
+- 決まり：毎月1日0:00〜15日23:59（日本時間）は `imakurudev-eng/database`（`origin`、正本）、16日0:00〜月末は `keyanbaitian6-cell/database-ci` へpushする。期間外の側へはpushしない。期間が替わったら最新の `main` を新しい側へ1回pushして追いつかせ、履歴は1本に保つ。`.md` だけの変更はCIが動かない。詳しくは `AGENTS.md`「CI を動かす GitHub を月の前半・後半で使い分ける」。
+- `AGENTS.md` へ追記した（コード・試験は変更なし）。ルールの文は、`database-ci` へpushしたコミットと、本体フォルダの `AGENTS.md`（Codexが読む場所）の両方に入れた。
+- `database-ci` にだけあるコミット（2026-10-20時点）：`988267b`（Android 0.5.41）と、このルールのコミット。正本の `main`（`3277043`）にはまだ無い。本体フォルダにはCodexの未コミットの変更（`pubspec.yaml` の版など）があり、`988267b` と重なるので、Codexの作業が済んでから正本へ取り込む。
+- 未確認：Codexがこのルールを実際に読んで守るか。次にCodexが作業を始めたときに `AGENTS.md` を読むはず。
+
+## 【Android：補完機種のある端末で全台一覧が保存できない件の修正と 0.5.41】2026-10-20 Claude
+
+- 経緯：クラウドのClaudeの引き継ぎで、PCを `main=3277043` にそろえた（`EVENT_HISTORY.md` の未コミットの追記だけを退避し、早送りのあと `stash pop`。3方向で衝突なし、Codexの追記は残した）。CIは `imakurudev-eng` の枠切れのため `keyanbaitian6-cell/database-ci` へ `3277043` を1回push（run 39277197904、pc Ubuntu・Windows・full すべて成功）。PCは `start.cmd` で起動し、利用者の取り込みは止まらず進んだ。
+- 不具合：Androidで「保存できませんでした：FormatException: 対象のP’s CUBEページではありません。」。P’s CUBE版（0.5.39）でも通常版（0.5.40、Codexが10/20 01:50に `3277043` から作成。中の `pscube_capture.js` は main と一致）でも同じ。原因：全台一覧を読む前の台数確認 `PscubeStore.installationCount` が、保存済みの全機種のURLを `_site` で検査していた。アナスロの補完機種（`source_site: anaslo`、`url: null`、d5dac5b 以降）があると、どの全台一覧でも例外になる。PCの `installation_count` は同じ機種を飛ばしており、Androidだけ抜けていた。PCのDBには補完機種が9件ある。端末内のDBは読めないので、端末に補完機種があることは確かめていない（試験で同じ文が出ることは確認）。
+- 修正：`installationCount` で `source_site == 'anaslo' && url == null` の機種を飛ばす（`_machine` の検査・PCと同じ条件）。補完機種そのものは消さない。試験：`anaslo_import_test.dart` に1件（補完機種と通常の機種を入れ、台数24・別の貸玉はnull・機種2件のまま）。修正を外すと同じ FormatException で落ちることを確認。
+- 版：`0.5.41+2026102002`。全体ゲート **ALL PASSED**（65項目。Flutter 637件・PC 369件・P’s CUBEほか207件・UTCイベント27件、`TZ=JST-9`、Python 3.14）。別のセッションが本体フォルダで多数のファイルを編集中だったため、`C:\w\anfix`（ゲート）と `C:\w\anapk`（ビルド、同じ差分）の別の作業ツリーで行った。
+- APK：通常版 `com.keyan.database_android` 0.5.41 / 2026102002、SHA-256 `3b12bf91dfb1756b7ef55d8c1d1f8593a2376ee1349b9c922a682c591551fbc5`、署名は既存と同じ（`4332fcb9…a047`）。RFGL146LVVW へ `install -r` 成功、初回インストール日時 2026-09-16 07:52:31 は変わらず。控え：`../review_packages/android-apk-20261020b/`。P’s CUBE版（`.pscube`、0.5.39）は作り直していない。
+- 未確認：実機での取り込み（利用者が操作）。本体フォルダの `main` は、Codexの未コミットの `pubspec.yaml`（0.5.40）とぶつかるため、このコミットへ進めていない。
+
+## 【PCメルヘン取り込みに表だけモード】2026-10-19 Codex
+
+- 利用者「表だけ取り込んでいくの大変すぎる。自動で遷移しちゃうので」→「PCの取り込みに表だけモードを追加し、保存後は次の機種へ進む」案に「その形で追加する」。試験については利用者が「実装だけ進める」と指定。
+- 対象はPCメルヘンの既存取り込みブラウザ。カードに「表だけ取り込む（グラフを省略）」のチェック欄を追加。初期はOFF、その窓の間だけ保持。自動取り込み・保存中の切り替えは拒否する。
+- 表だけON：表の保存後は同じ店・日付の機種一覧へ戻り、未取得・台数増加・古い表の機種を選ぶ。グラフ不足だけの機種は選び直さず、グラフを保存したことにも扱わない。個別台ページで開始した場合もグラフを取り込まず機種一覧へ戻る。表示は「表 済 N台」および保存済み表の台数。
+- 通常OFF：従来の表→グラフの処理。DBへの表保存・値が変わった場合の既存グラフ処理・取り消し・ブラウザ終了後のバックアップは従来経路を使う。P’s CUBE、Android、iPhone／共有ページの画面は変更していない。
+- 変更：database/browser_import.py（モード・次の機種選択・保存後の継続）、database/auto_capture.py（チェック欄・個別台のグラフを省略）。操作をEVENT_HISTORY.mdへ追記。
+- 確認：Pythonはcompileで構文確認のみ（コード未実行）、注入JSはNode --check、git diff --check。利用者指定で試験の追加・実行、WebView2／実サイトの動作確認は行っていない。未コミット・未push、配布ビルドなし。
+- 既存の変更を保持。変更前の控えと差分は ../review_packages/table-only-capture-20261019/。利用者は取り込みブラウザを閉じて開き直すと新しいチェック欄を使える。
+
+
+## 【長町南イベント履歴：Claude修正版へPCを同期、共有・閲覧ページを公開】2026-10-19 Codex
+
+- 利用者がClaudeの引き継ぎと公開用パッチ2本を提示。公開範囲を確認し「両方の公開も進める」と回答。Apps Scriptは利用者が更新・新バージョンでデプロイ済みなので変更しない。
+- `git fetch origin` で本体 `origin/main=0fcc182` を確認。機能32ファイルだけを指定してstashし、`merge --ff-only origin/main`。stashの全32ファイルが `c82aa7e` と改行以外一致したため、そのstashだけをdrop。別途控えは `../review_packages/event-history-main-sync-20261019/`。
+- 無関係な既存変更8ファイルはバイト単位で不変を確認。AI_COLLABORATION.mdには既存の未コミット追記11行も残してこの節を追加。ソースmainへの新しいpushはしていない。
+- PCを通常終了し `database/start.cmd` で再起動。長町南の週表が開くことを実画面で確認。10/5・スーパーブラックジャックの既存記号と同じ値を選び直して保存し「共有へ反映」。記号の値は不変。同期先の `database-event-history.json` は07:00:13→07:53:26（日本時間）へ更新、4週76行・編集1件・除外0件。架空の台データは保存していない。
+- 公開先の親を確認：共有 `4d4288c`、閲覧 `bc46522`。専用クローンへ提供パッチをgit amで適用。共有のパッチは元ファイルのCRLFを含むため通常適用が失敗し、元に戻して `--keep-cr` で成功。公開用ビルドは作り直していない。
+- 公開：共有 `keyanbaitian6-cell/database-share` **c6f4215**（版4a9874df7a03）、閲覧 `keyanbaitian6-cell/database-viewer` **9d758b0**。各mainへ1回ずつpush。両方のPages latest buildが当該コミットでbuilt、エラーなし。
+- 公開前：共有の画面試験成功。閲覧の画面試験は初回、未来日のイベント入力欄待機で失敗。失敗画面を保存する診断だけを追加した同じ試験は成功。原因は未特定として残す。製品コードや試験の判定は変更していない。
+- 公開後：`SHARE_PUBLIC_URL` で `test_share_viewer_browser` 成功（320/393/1280px）、`VIEWER_PUBLIC_ORIGIN` で `test_viewer_event_calendar_browser` 成功（320/393/768px）。共有の履歴試験も公開URLで成功（週表・空欄から同日遷移・台詳細・固定列・取得失敗時のキャッシュ）。台データ・接続先の応答は隔離ブラウザ内の合成データ。
+- 公開ファイル15個（共有9・閲覧6）をGitコミット内のblobとSHA-256照合し全一致。Windows作業ツリーはCRLFへ変換されるため、照合先は作業ツリーではなくGit内の内容。両サイトで `database_seed.json`、`assets/assets/database_seed.json`、`event_history.json`、`assets/assets/event_history.json` が404。公開用クローンに実機種名・使用記号・接続先ID・既知の実記録文字列がないことも確認。
+- 記録・確認ログ：`../review_packages/event-history-release-20261019/`。本体の全体ゲート・CIは引き継ぎで成功済みのため同条件を再実行せず、配布済みパッチと公開URLの確認を実施。新しいAPKは作っていない。
+- 未確認：利用者のAndroid・iPhone Safariでの実操作、Googleクラウド側までの今回の編集の伝播。同期フォルダでの更新と公開ページの合成データ試験を、実機・実Googleの確認済みとは扱わない。
+
 
 ## 【GitHub Actions の利用分数を減らす：文書だけの変更では動かさない・重複ジョブをやめる】2026-10-18 Claude
 
@@ -131,6 +418,17 @@
 - **バラエティ：VB が事前の採用条件を満たした**（37.9% → 43.7%、+5.72pt［+2.75, +8.79］、Holm 0.0015、前半・後半・直近とも正）。しかし計画外の確認で、VBの台は翌日に2,000回転以上回される割合が +21.5pt 高く、回された台の中では +2.1pt（p=0.34）、3,000回転以上では +0.7pt。選んだ台の66%が10台に集中。直近66日だけでは p=0.20。**稼働の偏りで大部分が説明できるため、実装候補にしない。**
 - **その他機種 → ジャグラー・ハナハナ：改善なし**。現行60日モデルの再現 +0.723（p=0.0077、claude-v11と一致）。末尾を足す −0.09（Holm 0.90）、隣の台を足す −0.04（Holm 0.90）。隣にその他機種がある台は4.8%だけ。
 - 未同定の機種を除いても結論は同じ。アプリ・DB・JSON・共有Driveは変更せず、サイトへのアクセスなし、公開・APKなし。成果物はGit外 `../outputs/other-trends-20261018/claude-v1/`（`報告.md`・計画・スクリプト・全方式の結果）。
+
+## 【幸町のその他機種も分析専用JSONへ保存】2026-10-18 Codex
+
+- 利用者「ノーマルタイプ以外のデータもHTMLとしてまとめた。json作っておいた方がいい？それも分析用として保存してほしい」。途中で「機種同定できてないものがあるがもう変換する？」→原文の機種名を保持して分析用へ保存する説明に「OK」。実データの本番DB取り込み・共有・予想方式の変更は依頼されていない。
+- 開始時 `AGENTS.md`・本メモ・`CAPTURE_APP_DEVELOPMENT.md` を確認し、`git pull --ff-only origin main` で最新一致。通常権限の名前解決失敗後、通常環境の権限で成功。元 `9b703b7`、既存の未追跡 `debug.log` は触っていない。
+- `anaslo_converter.make_other_analysis`・`save_other_analysis` と変換画面の **その他機種の分析用に保存** ボタンを追加。既存のノーマル用ボタンとファイルは維持。幸町だけ有効、機種名の対応が未確定でも保存可。区分は「ジャグラー・ハナハナ以外」で、他のAタイプも含み、AT/ARTの確定分類ではない。通常の補完で除外した台・DB未登録台も分析用には残す。
+- 専用形式 `database-other-analysis`、`import_ready=false`、保存先 `html_converter/data/other_analysis/saiwaichou/other-analysis-saiwaichou-期間.json`（Git対象外）。原文の機種名・日付・台番号・G数・BB/RB・元HTMLのART回数/確率表示・原グラフ・出典URL/SHA-256を保持。HTMLにないART/MY/差枚/最大持玉/観測時刻/貸玉はnull。変換不能なグラフも原座標を捨てない。機種名の対応表・既存DBへは書き込まない。
+- **実データの保存完了**：手元の `downloaded_htmls/saiwaichou/` の2025/9/15〜2026/10/15、388日分HTMLを14個の月別JSONに変換。その他158,631台×日、同じ入力のジャグラー/ハナハナ58,640台×日を除外。元表217,271台×日がこの2区分へ重複なく分かれること、その他全件のG数/BB/RB/ART・原グラフ・出典が元データと一致することを確認。通常DB2本・ノーマル用JSON13本・対応表・元HTMLのSHA-256は前後一致。10/18以降の実績は未取得。サイト・共有Driveへアクセスなし。
+- 保存HTML欠測：4/27・8/9（利用者が元サイトに存在しないと確認済み）、10/7〜11・10/13（保存HTMLがない理由は不明）。この保存先の最終HTMLは10/15。既存DBの記録で穴埋めはしていない。
+- 検証：新規 `database/test_other_analysis.py` 7件＋既存幸町/変換試験、計43件成功。原文・欠測保持、分類の全件分割、別店舗拒否、通常取り込み拒否で隔離DBが不変、自動取り込み対象外、未確定名での画面保存、800pxで分析ボタンが収まること、P-STATIONでは無効を確認。`app.py --smoke` は `GUI_OK`。最初はWindowsのsandbox一時領域で権限エラーになったため、通常環境の隔離一時DBで再実行。実機の操作・公開・APK/EXE・全体ビルドゲートは実施していない。
+- 分析用の保管は今後の検証材料になるが、追加データによる精度改善はわからない。現行のノーマル予測モデルはそのまま。詳細はGit外 `../outputs/other-analysis-20261018/保存結果.md`・`export_result.json`・`export_archive.py`。ソース変更はローカル反映、commit・push・公開は今回行っていない。
 
 ## 【PCが直近7日分のバックアップ（database-backup-recent.json）も書き出す：Androidの読み込みを速く】2026-10-18 Claude
 
@@ -2930,3 +3228,409 @@ PC版の行クリック移動が利用者の実機で動いたため、Android�
 未確認：実サイトのHTML変更・極端な通信遅延・実機WebViewの実ページ遷移・PCの複数プロセス同時操作。既知の仕様上の制限（深夜0時の日付表示、1回分のみの取り消し、極端な遅延時の案内）は変更していない。
 
 APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan\\flutter\\bin\\cache\\lockfile`が残り、実行環境の承認利用上限でロック削除と再ビルドが拒否されたため未生成。既存の22:08 APKは今回の変更を含まない。
+
+
+## 2026-10-19週のバラエティ表を10/18構成から手動作成（2026-10-19、Codex）
+
+- 利用者「18日分の機種名で一回作りましょう」により、10/18保存済みの1〜3台機種67機種・68台で10/19〜10/25を作成。結果469セルは全空欄。10/19の台データは作らず、既存4週の結果も変更していない。
+- `lineup_day` は手動分類した10/19（現行形式は週内に限定）。元構成の参照日は10/18で、SQLiteの別のapp_stateと `../review_packages/variety-week-20261019/` に記録。通常バックアップには出典メタデータが含まれないため、控えも保持する。
+- 標準auto_backupで同期用履歴JSON・通常バックアップ等を更新（08:21:35+09:00、除外0・警告なし）。共有JSの既存パーサでも67機種・空欄で受理。実Google側の伝播・画面表示は未確認。PCの履歴窓を開き直して「バラエティ」を選ぶ。
+- ソース修正・ビルド・push・試験追加実行なし。既存の無関係な変更は保持。
+
+
+## 【Android通常版0.5.40を作成・接続端末へ更新】2026-10-20 Codex
+
+- 利用者「android版の新しいAPKつくってインストールまで」に対応。正本main `3277043` とorigin/mainが一致。通常版 `com.keyan.database_android` を0.5.40+2026102001へ更新し、SM-A253Cへ `adb install -r` でSuccess。新旧署名一致、初回インストール日時保持、起動要求成功・起動後のプロセスを確認。データ消去なし。
+- 初回の配布前ゲートは、前日の表だけモードによる通常時のmachine_statusへのfalseキー追加が既存試験2件に合わず失敗。通常時の返り値を維持する1行を修正し、修正後ゲートALL PASSED（65項目：PC369、P’s CUBE等214、UTCイベント27、Flutter636、analyze・Webビルド/stage・JS57本）。実保存ページの検査はアーカイブ未指定でSKIP。
+- APKは `../review_packages/android-apk-20261020/database-0.5.40-2026102001.apk`、SHA-256 `B84BB71AC8A59F2BA7DB5E04798F60A97F0F2928F1A00320EBA7D9B8342CDE9E`。配布記録・証拠ログは同じフォルダ。pubspecの版更新とPCの互換性修正は未コミット・未push。既存の無関係な変更は保持。
+- Androidで長町南のバラエティ結果は編集可能。今週の週表はPCバックアップの取り込みが必要で、今回その実機操作はしていない。実機の画面目視・顔文字編集・バックアップ往復・実Google反映は未確認。クローン更新・Web再公開・Apps Script更新なし。
+
+## 共有カレンダーで結果記号を編集（2026-10-20、Codex）
+
+- 利用者指定により、共有カレンダーの長町南「イベント履歴」で既存週表の顔文字・空欄を選んで保存できるようにした。週の新規作成はPCのみ。private Driveの `database-event-history-shared.json` に結果だけを保存し、PC出力は書き換えない。PCは履歴を開くとき／バックアップ前に合流する。GUI保存とworkerの取り込みは読み取り前の `BEGIN IMMEDIATE` で保護。
+- 接続先ごとの端末journalで未送信・送信済みの編集を保持。失敗後の再送、キャッシュ起動後の再送、送信中の編集、接続先変更を扱う。Apps Scriptが未更新なら編集欄を無効にして案内する。
+- Apps Scriptは今回更新が必要。共有用218行／自分用282行の `1000n` が利用者環境で構文エラーになったため、生成時に `BigInt("1000")` 形式へ変換し、関連試験を追加。両方のコピー用ファイルを更新し、利用者より「更新済」と申告。実Googleでの新しい記号保存はCodex側では未確認。
+- 最終全体ゲート `gate-release.log` は66項目すべて成功（PC373件、P’s CUBE214件、UTC27件、Flutter637件、JS58本ほか）。Flutter analyzeは既存info21件、エラー・警告なし。実保存P’s CUBEアーカイブ1件は入力未指定でSKIP。先行の全体ゲートでは既存の共有カレンダー取り込み試験が約4時間54分経過後にタイムアウト。原因未特定、診断追加後の同stage単独試験と最終全体ゲートで成功した。
+- 公開：`keyanbaitian6-cell/database-share/main` [36c2749](https://github.com/keyanbaitian6-cell/database-share/commit/36c274928c3154ead3a16c8e64fac52e2248247b)。9ファイルを1コミット・1push。Pages built、公開9ファイルはGit blobと一致。履歴・記録の6パスは404。公開URLで既存カレンダー試験と履歴の編集・再送試験（320/393/1280px）が成功。Google通信は試験応答へ置き換え、実データへ試験結果は書いていない。
+- iPhone閲覧ページは再公開していない。PCソースは再起動して使う。今回の変更を含むAPKは作っていない。実iPhone/Androidでの共有編集・実Drive同期・実PCへの共有結果取り込みは未確認。
+- 本体は `main=3277043` 上の未コミット差分。無関係な変更は保持、本体mainへは未push。コード・報告・機種名一覧・検証ログは `../review_packages/shared-history-edit-20261020/`、Claude用ZIPには実DB・バックアップ・接続先IDを含めない。
+
+## 【イベント履歴・表だけ取り込みを自己レビューしてCI側へ統合】2026-10-20 Codex
+
+- 利用者「直近の実装に問題点がないか自己分析」「修正してpushまで」。月半ば切替はAGENTS.mdで確認し、10/20のコードpush先を `keyanbaitian6-cell/database-ci/main` とする。正本 `origin/main` へは今回送らない。
+- CI側で先行していた `988267b`（Android 0.5.41）と `e7069c7`（切替ルール）を手元mainへfast-forward。両方の作業記録を残し、版は0.5.41のまま。正本側は3277043で、先行2コミットと今回のコミットはCI側だけにある。11月前半には同じmainの履歴を正本側へ送る。
+- 再現・修正：現在の週表にない未送信編集が他の正常な送信を止める／進んだ時計で作った編集が日時修正後の正常な編集も止める／顔文字変更で横スクロールが先頭へ戻る。送れない原文は端末へ残し、正常な分だけ最大100件ずつ送信。選択変更時も位置を保持する。修正前の失敗と修正後の3幅成功を記録。Apps Scriptはこの自己レビューで変更していないため再更新不要。
+- 表だけモードは、一時DBでグラフの省略・通常へ復帰・切替禁止を追加確認し、ローカル合成ページでも台のグラフを読まず一覧へ戻ることを確認。実店舗・実WebView2の再確認はしていない。
+- ローカル全体ゲートは66項目ALL PASSED。PC375件、P’s CUBE214件、UTC27件、Flutter638件、JS58本ほか。P’s CUBEの実保存アーカイブ1件は元資料未指定でSKIP、Flutter analyzeは既存info21件のみ。今回の追加修正はゲートのshare-stage前に完了し、確認対象stageと最終ソースの一致も確認した。
+- 前回未pushだったイベント履歴の共有編集・PC取り込み・表だけモードの関連差分も、今回の関連ファイルとして明示的にコミットする。無関係なアナスロ分析・HTML変換・試験・ログ・rows.jsonは含めない。保護対象6ファイルはハッシュ不変。作業記録は今回の節だけをstageし、他の未コミット追記を残す。控えのstash `self-review-before-ci-history-20261020` を保持。
+- 共有ページ：`keyanbaitian6-cell/database-share/main` へ [8805ddf](https://github.com/keyanbaitian6-cell/database-share/commit/8805ddfbe21c6fa63e94cb617f42973b1addfdcd) を1回push。Pages built、公開7ファイルはコミットと一致、履歴・記録6パスは404。公開URLで履歴・カレンダーの試験成功。閲覧ページの再公開、APK作成・インストールは行わない。
+- 利用者から共有ページ「動作確認OK」の申告あり。端末の種類とPC同期の詳細は不明。今回の確認は一時SQLite・模擬Google・隔離ブラウザで、実データへ試験結果は書かない。
+- 詳細：EVENT_HISTORY_SELF_REVIEW_20261020.md、検証控え `../review_packages/event-history-self-review-20261020/`。
+
+## 【イベント履歴の第三者指摘を再検証して修正】2026-10-20 Codex
+
+- 利用者「2のあと修正可能であれば3」により、添付レビュー7件を `main=fb361c3` の現行コードで検証した。再発試験を先に追加し、本体DBへの共有記号未保存、未来時刻の同一セル再編集、除外件数の混同、PC・Dartの件数超過保存、共有保存後の端末保存失敗の表示を確認・修正した。
+- 通常出力は、共有編集を本体DBへ合流して確定してから写しを作る。写しでの再取り込みは止めた。元DBが無いときに空DBを作らない。共有の除外件数にはPC保存済みの基準外原文を含めず、その原文は保持する。
+- 件数上限は各一覧30,000件のまま、合流後・保存前に検査して既存履歴を保持する。PCとAndroidに同じ保護を入れた。上限で既存セルの置き換えは可能だが、新しいセルの追加はできない。
+- 共有ページでは自分の未来時刻の未送信を同じセルで選び直して復帰できる。すでに共有済みの大幅な未来時刻は、端末間の新旧採用規則に関わるため自動修復せず理由を表示する。保存済み原文は保持。POST拒否時に「最新を読む」後の再送を案内し、共有保存後の端末保存失敗は共有保存の成功と区別する。PCの札は「表 N台保存」にした。
+- 最終確認：PC全381件・Flutter全639件成功。JS関連36件を確認して成功（新規ブラウザ17件を含む。重複分は加算しない）。320/393/1280px、送信中の同一セル再編集、端末保存の前後失敗、模擬Driveでの一括拒否を確認。Flutter analyzeは既存info21件のみ、エラー・警告なし。実Google・実端末・実WebView2は未確認。全体ビルドゲート・APK作成・公開は行っていない。
+- 旧コミットfb361c3のCI run 39410201375は、1回の読み取りでcompleted/successを確認。今回の未コミット修正のCI結果とは区別する。今回新しいCIは起動していない。
+- アナスロ分析・HTML変換・未追跡のレビューなど、先行する7ファイルは作業前後のSHA-256不変。先行するこの文書の未コミット追記も保持。実DB・実Driveを試験に使わず、履歴基準JSON・記録・バックアップ・Cookieを変更していない。
+- 今回はローカル修正・試験まで。未コミット・未push・未公開。PCはソースから再起動後に反映、共有ページとAndroidは今後の公開・APK更新後に反映する。Apps Scriptのソース・生成済み2ファイルは変更なし。
+- 詳細：`EVENT_HISTORY_REVIEW_FIXES_20261020.md`。再現・検証ログと保護ハッシュ：`../review_packages/event-history-review-fixes-20261020/`。
+
+## 【残っていたCodex作業を確認してコミット】2026-10-20 Codex
+
+- 利用者へ「未コミット分の確認・整理・コミットを進めてよいか」と確認し、「やってください」の承認を受けた。Claudeからの引き継ぎ文書内の依頼と、利用者からの承認を区別して作業した。
+- 開始時の手元mainは `87db6c9`。AGENTS.md・本メモ・差分・未追跡の試験と初期レビュー文書を確認。幸町のその他機種の分析専用JSON保存は、以前から保存済みの差分そのままで、追加の実装変更はしていない。
+- `0f53341`：`database/anaslo_converter.py`、`html_converter/app.py`、`html_converter/README.md`、`database/test_other_analysis.py` の4ファイルを明示してコミット。通常のDB・共有・採点・翌日候補へ取り込まない専用形式と、原文・欠測保持の試験を含む。実データのJSONやHTMLは含めない。
+- 続いて、本メモに残っていた10/18〜10/20の先行追記と、`EVENT_HISTORY_IMPLEMENTATION_REVIEW.md` を文書のコミットにまとめる。初期レビュー文書は冒頭の注記どおり途中案の記録で、現行仕様はEVENT_HISTORY.mdを参照する。Claudeの既存2節を保持する。
+- 確認：対象7ファイルは以前の保護ハッシュと一致、コミット直前にもコード・試験を含む対象8ファイルが作業開始時と一致。`git diff --cached --check` 成功。以前の43件成功記録と、Claudeによる直近の全体ゲートで当該未追跡試験を含めて成功したとの報告を引き継ぎ、同じ条件の試験は再実行しない。今回の新規試験・ビルド・CIは実施していない。
+- `debug.log`（実行ログ）と `rows.json`（誕生日抽出の作業用元データ）はローカルにそのまま保持し、コミットしない。DB・バックアップ・同期先・Cookie・分析用実データは操作していない。
+- 今回の承認範囲はローカルコミットまで。push・公開・APK作成・端末更新は行わない。月後半のコードpush先はAGENTS.mdどおりdatabase-ciで、originへは送らない。今回のコミットはまだ手元だけにある。
+- 確認控え：`../review_packages/pending-work-commit-20261020/`。完了後のコミット一覧と差分範囲は `../review_packages/event-history-review-fixes-20261020/Claudeへの報告.md` に追記する。過去の節にある「未コミット」は当時の状態として残す。
+
+## 【長町南バラエティ週表：顔文字の自動挿入（PCのみ）】2026-10-21 Claude
+
+- 利用者依頼：バラエティの週表に、その日の差枚で顔文字を自動で入れるボタンがほしい。+3000枚以上＝目がハート、1000〜2999＝笑顔、0〜999＝目を閉じた顔、それ以下＝苦しい顔。PCだけでよい（保存すれば共有にも反映されるため）。表示先は利用者が「PCのみ」と指定済み。
+- 実装：PCのイベント履歴窓に追加（`database/event_history.py`）。週表（4台構成・半列・バラエティ）を開くと、表の真上（スクロールしない位置）に「顔文字の自動挿入：[月日▼] [この日の差枚で顔文字を入れる]」の行を出す。月日は表示中の週の7日から選び、既定はその週で記録のある最後の日。選んだ日の列だけに入れる（利用者の追加指示「反映する月日を選ぶ」「配置は見やすい位置で」）。2026-10-21追加：利用者が「半列・4台のイベント機種にも同じように」と指示し、4台構成・半列の週表にも同じ行を出す（規則は同じ）。判定は `event_history_data.py` の `net_face`・`machine_day_nets`・`auto_faces`。記号は基準JSONの既存5つのうち4つ（+3000以上＝😍、1000〜2999＝😀、0〜999＝😌、マイナス＝🥶。😇は使わない）。新しい記号は足していない。
+- 差枚は画面と同じ `rack_net`（ジャグラーオンラインの差枚、無ければ推定差枚）を機種の全台で合計。1台でも差枚が分からない機種・日、数値異常の台がある機種・日は入れず「空欄のまま」と数えて知らせる。記録の無い日は数えない。
+- 入力済みのセルは変えない（空欄だけに入れる）。確認ダイアログで件数を出してから、1回の保存でまとめて入れる。利用者の指定した空欄日は入れない。
+- 試験：`tests/test_event_history.py` に4件（境目の値、空欄だけ入れる、全台の差枚が必要、ボタンが週表の上に出る・選んだ日だけに保存・記録の無い日は入れない）。画面の見た目は実画面で見ていない。履歴の試験26件成功。PC全試験・全体ゲートは未実行（PCだけの小変更。ビルド・push・コミットはしていない）。
+- 「0〜999」は0を含む。マイナスが1枚でもあれば🥶。台ごとでなく機種の合計で判定した（利用者に未確認。台ごとの判定がよければ変える）。
+
+## 【共有・iPhoneの履歴画面見直しをClaudeへ引継ぎ】2026-10-22 Codex
+
+- 利用者が見づらさ・週選択不足を指摘し、対象を共有カレンダーとiPhoneブラウザ版の両方に指定。1週表示・週選択・前後と最新週・スマホの機種カードを実装。追加指定の幸町の赤字は「表示週の最終記録日までの直近5暦日に優・良なし。空欄も数える」。前週の評価も参照し、未来の評価は使わない。PC・Androidアプリの表示・保存形式・採点は変更しない。
+- 利用者が5時間制限を懸念しClaudeへの引継ぎを指定。未コミット・未push・未公開のまま、CLAUDE_HISTORY_VIEW_HANDOFF_20261022.mdへ変更箇所・既存変更の保護・実行環境・次の作業と公開承認条件をまとめた。
+- 専用試験7件と共有の3幅の確認が成功。実行中の全体ゲートではPC412件・追加214件・UTC27件・Flutter654件とWebビルド・stage成功。全体成功ではない。生成GS2本の不一致、新規iPhoneブラウザ試験の日付の完全一致要素取得が失敗。修復と目視確認が残る。analyzeはエラー・警告なし・info24件（今回追加2件）。
+- 実DB3本と設定は作業前後のSHA-256不変。実Googleへの試験入力なし。詳細ログと差分控えは ../review_packages/history-redesign-20261022/。実行中ゲートを重複起動しない。
+- 引継ぎ資料作成直後に全体ゲートは終了コード1で終了。失敗は上記2件のみ、他項目成功。実行中のゲートはない。引継ぎ資料と控えの最終状態も更新済み。
+
+## 【共有・iPhoneの履歴画面見直し：引継ぎ後の修復と全体ゲート】2026-10-22 Claude
+
+- Codexの引継ぎ（CLAUDE_HISTORY_VIEW_HANDOFF_20261022.md）を受け、全体ゲートの失敗2件を修復した。
+- 失敗1：生成GS2本が共通検証コードと不一致。赤字判定 `historyGradeGap` を `share_viewer/event_history.mjs` に足したため。`build_event_history_share.mjs` で再生成し、差分は呼ばれない表示用関数17行だけと確認。既存Apps Scriptの貼り替えは不要（EVENT_HISTORY.mdに追記）。
+- 失敗2：`test_viewer_event_history_browser.mjs` が日付だけの完全一致で週を探していた。Flutterは選択欄の見出し「対象週」と値を1つの読み上げ要素にまとめるため、組で完全一致を確かめる形に変更。長町南の種別選択も、選択肢が文字でなく `menuitem` の名前を持つため役割と名前で選ぶ形に変更。確認内容（両店舗×320/393/1280px、前の週→最新の週、pageerrorなし、POSTなし）は弱めていない。
+- 共有の試験で、今日のコミットaa202fdで足した「優・良と記録なしの案内を別の行にする」確認が削られていた。新しい描画では曜日表示にも `small` を使うため、「良」のセルと `.history-no-record` で測る形に戻した（3幅）。
+- 今回追加分のanalyze info 2件（波括弧）を修正。`event_history.dart:101` のinfoは既存コミット分で触っていない。
+- 全体ゲート `check_before_build.sh`：ALL PASSED（70項目。PC412件、追加PC/P’s CUBE214件、UTC27件、Flutter654件、analyzeはinfo22件のみ、閲覧Webビルド・stage、共有stage、JS全試験）。PYTHONは `database/.venv`（既定のpythoncore-3.14はrapidocr・onnxruntimeが無く開始時に止まる）。ログは ../review_packages/history-redesign-20261022/gate2/。stageに `database_seed.json`・`event_history.json` が無いことを確認。
+- 画面確認：ゲート時の閲覧画像と、警告の出ない正常な合成データで撮った共有画像（両店舗×3幅、screenshots/claude-demo/）を目視。幸町の赤字は、前週日曜の優を数え、6日前の優は数えないことを確認。320pxの閲覧では「次の週」が2段目に回る（はみ出しなし）。
+- 実DB3本と設定のSHA-256は作業前と同じ。実Googleへの試験入力なし。実iPhone Safari・実Googleでの表示は未確認。
+- 利用者の承認後、今回分13ファイルだけを `5e86dc9` としてコミットし、`database-ci` の main へpush（10/22は月後半）。作業記録は他作業の未コミットの項を混ぜず、引継ぎの項と本項だけを入れた。他の先行変更は未コミットのまま保持。
+- 公開：手元に他作業の未コミット変更（P’s CUBEの `web/pscube/data.mjs`・`pubspec.yaml` など）があるため、`5e86dc9` だけのworktree（../outputs/history-redesign-20261022/src、seedはCIと同じく見本をコピー）でビルドし、`stage_viewer.py`・`stage_share_viewer.py` を通した。共有 `database-share` の `832a04d`、閲覧 `database-viewer` の `41b795c`。Pagesは両方成功。公開URLの配信ファイル（共有4本・閲覧3本）が公開リポジトリと一致、`database_seed.json`・`event_history.json` は404。公開物の閲覧で `test_viewer_event_history_browser`、公開URLの共有で `test_event_history_browser`（3幅）が成功。
+- CI：一つ前の `62ee80e` で `pc (windows-latest, UTC)` が `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day` で失敗済み。Codexが記録した `update_idletasks`→`root.update` の試験修正は手元に未コミットで、今回のコミットにも含めていないため、`5e86dc9` のCIも同じ箇所で落ちる見込み（今回の変更とは無関係。再実行していない）。
+
+## 【幸町の試験：Windowsでのボタン可視確認を修正してCIへ】2026-10-22 Claude
+
+- 利用者の指示で、手元に未コミットだった `database/tests/test_saiwaichou_history.py` の1行（`root.update_idletasks()`→`root.update()`、Windowsでは表示イベントも処理してから可視状態を確かめる）を確認した。Codexが2026-10-22のPC更新で記録した修正で、同ファイルに他の変更はない。
+- `62ee80e` のCIで `pc (windows-latest, UTC)` が落ちた `test_pc_week_auto_insert_preserves_manual_cells_and_checks_each_day`（`winfo_viewable()` が0）と同じ箇所。手元のWindowsで `database/.venv` のPythonにより、TZ=JST-9とUTC0の両方で同ファイル9件成功。
+- このファイルだけを `262c7c7` としてコミットし、本記録の別コミットと合わせて `database-ci` へ1回push。他の先行変更は未コミットのまま保持。
+
+## 【ACB：取得診断・更新工程・スマホ補完の基盤、画面対象確認待ち】2026-10-24 Codex
+
+- 利用者「ACBやろう」によりA→C→Bを着手。開始点は `49b7479`、作業前の変更なし。現状は未コミット・未push・未公開。③の重複日診断、④の追加構築やCI短縮は今回の範囲に広げない。
+- AはP’s CUBEの欠測理由と、認証値を除いた上限付き元数値をPC/Android/クラウド原本へ保存。公開閲覧には原本を出さない。通信なしの再解析コマンドを追加し、元ファイル・既知差枚を保護する。Cは出力元・Drive・Google処理の証拠を分けて運ぶ。Bはブラウザのバックアップを既存数値が一致する空欄差枚にだけ自動適用し、0枚・機種・イベント・新規台を保護する。仕様・制約は `CAPTURE_HEALTH.md`。
+- 根本の差枚パーサーに触れる前に `CAPTURE_APP_DEVELOPMENT.md` を参照。新しいサイト通信・自動再巡回は追加していない。実利用者のJSONは `/tmp` の調査用から試験データへコピーせず、固定の架空試験データを共有した。相談された10/23の過去原本にない正確な差枚は復元できない。
+- ルートAGENTS.mdの表示先確認規則に従い、PC・Android・iPhone閲覧・共有の4画面への表示でよいかを質問済み、回答未着。対象を自分で決めず、画面変更・公開は待つ。現段階は保存・統合・メタデータ・書式関数まで。
+- Google実運用のApps Scriptを更新する認証・接続は見つかっていない。生成コードと模擬Drive試験は進めるが、実Googleへ反映済みとは言わない。後半のsource push先はdatabase-ci。originへは送らない。画面対象の回答後に残りを仕上げ、全体ゲートと1回のpushにまとめる。
+- 現段階の検証：PCの `tests` 425件と追加214件が成功。関連JSは延べ実行でなく重複を除いた109件（取得診断・PS/Meru自動統合・保存通信・閲覧パーツ）が成功。Flutter全663件を試して661件成功・2件失敗。2件は新たな書き出し元時刻を追加したため、従来の「出力時刻だけを除く」比較がその時刻も比較していたもの。台・印・他工程の比較を維持し、出力ファイルとAndroidの書き出し時刻だけを除くよう修正し、該当ファイルと新規診断の計33件が成功。全Flutterを再度成功したとは報告しない。analyzeはエラー・警告なし、新規診断ファイルの指摘なし。全体ゲート・Windows・公開ページの新ビルド・実Googleでの統合は未確認。
+- 詳細ログは `/tmp/acb-pc-all.log`、`/tmp/acb-pc-pscube-all.log`、`/tmp/acb-backend-final.log` と同試験内の書出時刻比較を修正した `/tmp/acb-sync-fixed.log`、`/tmp/acb-flutter-all.log`、`/tmp/acb-dart-restored.log`、`/tmp/acb-dart-analyze-3.log`。作業中の不成功ログも消さず保持。`git diff --check` 成功。
+
+### ACBの4画面表示：利用者の回答後
+
+- 利用者「良いです」で4画面すべてへの表示を承認。PCの既存詳細窓、Androidの既存バックアップメニューとP’s CUBE取り込み画面、iPhoneの読込案内の下、共有カレンダーの折りたたみへ実装した。新しい独立UIや採点の変更はしない。台・営業日の差枚取得数、0枚、欠測理由と、書き出し・Drive・Google・端末読込を分ける。
+- メルヘン・P’s CUBEの両方で出力元の最新営業日とその日の台数を運ぶ。Googleで再出力したメルヘンの時刻をPCの書き出しと誤認しない。Androidのメルヘン出力も今後は時差の明確なUTCで書く。元から時差の不明な書き出しは未確認のままにする。
+- 共有の同期情報も端末保存に含め、再起動後に失わない。公開時の新モジュールの版・静的許可リスト・サービスワーカーの保存対象を一緒に更新。保存・画面試験には架空データのみ使用。
+- 全体検証1回目はAndroid取り込み画面の日付を `_day` と誤参照していたことを検出。`_targetDay` と実際の読込日へ直し、静的確認・関連6件が成功。失敗したゲートは途中停止してログを保持。修正後の全体ゲートを `check-acb-complete` で実行する。最初の失敗を成功としない。
+- 実接続で source/database-ci と公開database-viewerの書き込みが可能。公開database-shareは書き込み不可、未承認の招待なし。利用者に共同作業者の確認・招待を依頼し、公開ファイルの準備と検証を先行する。Google更新用認証は未提供のため、運用中のApps Scriptは未更新。既存のフォルダ・履歴方式・トリガーを保って更新する手順をCAPTURE_HEALTH.mdへ記載。
+- 最終の全体ゲート（`/tmp/acb-full-gate-3.log`、`/workspace/.cloud-setup/check-acb-release/`）は **ALL PASSED**。PC426件＋追加214件、UTC条件27件、Flutter664件、JS67ファイル350件が成功。analyzeはエラー・警告なし（既存info27件）。新しい閲覧・共有の3幅の画面試験と、旧Googleに対する補完案内を閉じてから従来操作を続ける試験を含む。
+- 2回目の全体ゲートでは新規画面試験のディレクトリ配信の誤りと、書き出し後の新しい案内ダイアログを従来の画面試験が閉じていないことを検出。どちらも試験側で修復し、表示内容を省略せず確認する。取得状況の本文はコピー用の編集フィールドを使わず、通常のテキストで読み上げ可能にした。3回目を最終結果とし、それ以前の失敗ログは保持。
+- ローカルの日本語フォントを使った393pxでの画像確認も実施。元の画面構成を保って詳細を表示。実iPhone実機とは別の隔離Chromiumの確認である。Google通信はすべて合成応答、実サイトへの新規アクセスなし。
+- 51ファイルを1つの機能コミットにまとめ、10/24（日本時間）のpush先はdatabase-ciのみ。開始点 `49b7479` と履歴をつなぎ、正本originには送らない。CI・公開の結果は確定後に追記する。Androidはソースのみで、新APK・EXEは作成していない。
+- 機能コミット **`d651159488515aa026251d0eba50531fbf1b6e15`** をdatabase-ci/mainへ1回反映した。APIの前提・ファイル・tree・commit SHAを照合し、forceなし。Git認証やトークンは抽出せず既存ghの接続を使用。
+- iPhone閲覧の公開コミット **`7ad3679a415bbe73fd73a090eea358802ec7118b`**（7ファイル）は、最終ゲートで試験したstageと全ファイルの内容一致を確認して反映。GitHub Pagesは同じSHAで `built`。公開URLへの直接HTTPはこの環境の制限があるため再試行せず、配信本文と実iPhoneは未確認。
+- 共有は試験済みstageを **`341e03fb5e045867b7a77848bedc8d980ab80f97`**（8ファイル）として `/workspace/.cloud-setup/share-publication` にローカルコミットのみ。親は公開mainの `e5e2308`。現在の接続は書き込み権限なし、未承認招待もないため未反映。利用者の招待が届いたら承認と同じSHAの反映を続ける。別の公開先へ勝手に置き換えない。
+- GitHub回帰試験は実行 **`40095966372`**。Windows・Ubuntuはともに成功し、全体ジョブを監視中。再実行操作はしていない。Google既存プロジェクトへの反映・実Driveからの補完・Android実機は未確認。
+- 引継ぎ資料：`/workspace/outputs/acb-google-share-handoff-20261024.zip`。生成GS2本、既存のフォルダID・履歴方式・トリガーを守る更新手順、共有ページの未反映パッチ、検証結果を収録。実データ・認証値は入れない。PC側は正本originだけでなくdatabase-ciから同じ履歴を取り込む必要があることも手順へ記載。
+- 最終確認：GitHub実行 `40095966372` は **3ジョブすべて成功**（Windows、Ubuntu、full）。初回の1回だけで成功し、CIの再実行はしていない。`d651159` の回帰確認として確定する。公開viewerのPagesも `7ad3679` で成功済み。
+- Google実稼働・共有公開・実端末は未反映の部分があるため「ACB全体が利用者端末まで反映済み」とは言わない。sourceはdatabase-ci、iPhone公開物はdatabase-viewerへ反映済み。共有は準備済みコミットとパッチ、Googleは生成コードと設定維持の手順、PCの取り込み元とAndroid未ビルドを引き継ぐ。
+- この結果・手順の追記は `.md` 2本だけの別コミットでdatabase-ciへ送る。既存のpaths-ignoreによりCIは追加で動かさない。正本originへは引き続き未反映で、次の月前半に同じmain履歴で追いつかせる。
+
+## 【D：回帰試験を維持したCI実行時間の短縮】2026-10-25（日本時間）Codex
+
+- 利用者「次にD」で、DのCI・クラウド検証の待ち時間短縮を着手。開始点 `4f944d0`、未コミット変更なし。ACBの共有公開権限待ち・Googleの既存スクリプト未更新は別件として維持し、アプリ画面・DB・採点・取得回数は変更しない。
+- 基準はACBの成功実行 `40095966372`（source `d651159`）。GitHubのjob/step時刻によるfull 850秒、Ubuntu/UTC 57秒、Windows/UTC 137秒。full内のツール導入62秒、Flutter依存解決42秒、ゲート736秒。Windowsを2倍にした素の合計1,181秒。ジョブごとに分で単純切上げした換算は22分（実際の課金明細は未取得）。手元の直前の成功ゲートのJS67ファイルのNode実行時間合計189.21秒。負荷や計測位置の差を無視して速度改善を断定しない。
+- `run_js_checks.mjs` でファイル単位の別プロセスと個別ログを保ったまま最大2本へ。手元の既定は1、CIのfullは2。元の67ファイルを除外せず、新しい実行制御の検証を1ファイル追加した。独立ブラウザ・ポート0・一時フォルダーの使い方を調べ、試験間で共有の公開stageを変更するものが無いことを確認。
+- 全体ゲートのFlutter依存解決を1回へ集約し、lockfile固定を維持。その後のtest/analyze/buildは `--no-pub`。依存解決失敗では古い閲覧ビルドを試験しない。CIの依存解決stepはゲートへ移し、削除していない。fullにも既存PCと同じpipキャッシュ指定を追加。SDK・Chromium・Webビルドのキャッシュや試験省略は追加しない。
+- ログに加えて工程別時間・JS全件の終了コード/実時間/最大同時数を出し、GitHub概要と7日保存artifactに残す。並行実行でも失敗の元ログの末尾120行（最大128KiB）を1グループとして表示。未実行・起動失敗・結果なしをALL PASSEDにしない。通常/失敗/未実行/同時実行の制限/依存解決の一回性の試験12件が成功。
+- 1回目の実ゲートはFlutter依存解決の実行ディレクトリの指定漏れを検出。Androidプロジェクトへ移動して解決するよう修正し、合成Flutterもpubspec.yamlのあるディレクトリ以外では失敗する再発試験にした。この回の未実行や短い時間を成功・高速化の実測として使わない。修正後のゲートは `check-d-verified` で実行する。
+- ジョブは従来の3つを維持。Windowsのローカルでも使う新しい実行制御の7試験のみWindowsへ追加し、UbuntuのPCジョブには重複追加しない。Windowsの重みを含む全体の分数は新しいCIの実測後に比較する。実行回数は、手元で検証してから1回のコードpushへまとめる。
+- 同時実行で既存画面試験の待機不足2件を検出。パチンコは台へのスムーズスクロール終了を3フレーム確認し、末尾の選択状態を待ってから従来の台一覧の完全一致を検証。イベントカレンダーは幅変更前の座標を保存せず、日付に一致するbuttonを選んでPlaywrightの安定待機で押す。対象2件は2本同時、さらにCPU2個に制限した条件でも成功。期待する台数・日付・イベント保存・削除・書き出しの確認は削除していない。
+- 最終の手元ゲートは `/workspace/.cloud-setup/check-d-release`、`/tmp/d-full-gate-3.log` で **ALL PASSED**。PC426＋214件、UTC条件27件、Flutter664件、JS68ファイル総数359件（成功358・保存例未配置の従来スキップ1件）。元の67ファイルは全件残し、新しい制御7件と既存ゲートの追加2件で9件増。analyzeはエラー・警告なし、pubspec.lockのSHA-256不変。
+- 手元のJSの実時間は189.21秒から111.18秒（約41.2%短縮、実測最大2本）。新規試験を含む比較である。失敗・未実行だった先行試行の短い値は除外した。これをそのままGitHubの分数削減とはせず、同一のsource系列のCI全体時間で比較する。
+- 新規制御の待合せ用試験はファイル名だけで役割を判定し、ユーザー名や親フォルダーにalphaを含む場合も影響させない。最終のファイル名判定の修正後、新規7件を単独で再確認して成功。Windows側の実行はpush後の1回で確認する。
+- 機能コミット **`cf0fe749a241a81ad68b861b608567875833d623`** を、2026-10-25日本時間の月後半先database-ciへ1回push。正本origin・公開ページは送付していない。GitHub実行 **`40117213308` は3ジョブすべて成功**。Windowsの新しい実行制御7件も含む。再実行操作なし。`regression-timings` artifact（ID 12569672555、2,423バイト）も保存された。
+- GitHub job開始・終了時刻の比較：full **850秒→657秒（14分10秒→10分57秒、約22.7%短縮）**、Ubuntu **57秒→62秒**、Windows **137秒→151秒**。Windowsを2倍にした素の合計 **1,181秒→1,021秒**、ジョブごとの分の単純切上げ換算 **22分→19分**。Windowsの追加検証とUbuntuの切上げ増を含めた結果。実行各1回の比較で、ランナー負荷・キャッシュにより変動する。請求明細の実値とは区別する。
+- 件数の補足：以前のJS350件という報告は総数で、内訳は成功349＋保存ページの例が未配置のスキップ1。今回もその1件は従来のまま未確認で、成功358＋スキップ1＝359。Dでスキップや除外を増やしていない。制御の7件・ゲートの2件を追加した。CIの全既存ジョブと条件は維持。
+- 比較資料・手元のtimings/JSONは `/workspace/outputs/ci-speedup-20261025/`。概要と使い方はDEVELOPMENT_CHECKS.md。CIの細かいstep時刻は新実行のAPIで返らなかったため、実測の比較はjob時刻を使う。工程別の診断は新しい概要・artifactから確認できる。新しいCIも1回で成功。
+
+
+## 【共有カレンダーの公開完了】2026-10-25 Codex
+
+- 利用者「入れました」を受け、接続中の `imakurudev-eng` に `keyanbaitian6-cell/database-share` の書き込み権限が付いたことをAPIで確認。公開mainは準備時の親 `e5e2308` のまま。未承認招待は無く、追加承認は不要だった。
+- 準備済みの公開フォルダー全19ファイルが、Dの最終成功ゲート `check-d-release/share` の同名ファイルとバイト一致することを確認。新しいビルド・試験の再実行はせず、その試験済み生成物の変更8ファイルをコミット `341e03fb5e045867b7a77848bedc8d980ab80f97` と同じSHAで1回反映。親・tree・commitを照合し、強制更新はしていない。
+- GitHub Pagesの最新ビルドが同じ `341e03f`、`status=built`、エラーなしになったことを確認。公開先は https://keyanbaitian6-cell.github.io/database-share/ 。共有の「更新・差枚の取得状況」と営業日切り替えの公開処理は完了。実iPhoneと配信本文の直接照合は未確認であり、実機確認済みとはしない。
+- 共有の権限待ちは解消。Google側の既存Apps Script更新は別途残る。今回の公開だけでスマホ補完の自動統合や更新工程の新しい情報が実Googleで有効になったとは扱わない。PCのソース更新・Android新APKも従来の未反映状態を維持する。
+- この完了記録だけをdatabase-ciへ送る。文書のみなので回帰CIを追加実行しない。
+
+
+## 【長町南の4大オススメ】2026-10-25 Codex
+
+- 利用者の最終指定：表示はPC・Androidアプリ・iPhone閲覧ページ・共有カレンダー。機種構成の選定・変更と週の追加はPCだけ。結果の顔文字は4画面すべてで編集する。既存の半列・4台構成・バラエティの構成と保存データを維持する。
+- 初回10/26〜11/1は画像と既存保存名から、スマスロ甲鉄城のカバネリ海門決戦・戦国乙女5・戦国乙女4・モンキーターンVの4枠。PCのプルダウンは、その週末までの最新の保存日1日の長町南の機種で、異なる台番号が7台以上のものだけ。別店舗・未来・日をまたいだ台数・重複行を候補の台数に混ぜない。選定済みの機種は台数が変わっても勝手に除かない。
+- 新しい構成は既存履歴の任意配列 `recommendations`、台別の顔文字は `recommendation_results` に独立して保存。従来の1週1種別制限や結果セルの鍵を変更せず、同じ週の別イベントとも併存する。PC/Androidの保存・バックアップ・合流、共有の読み書きを対応。原文不正は保持し、表示では採用しない。週ごとの構成・台日ごとの顔文字とも編集時刻のマイクロ秒まで比較する。
+- 4機種それぞれを既存のカード・週表に合わせ、台番号×7日間で表示。差枚は既存の確定差枚/推定差枚処理を使用し、推定は「約」。欠測は—、0枚は😌。台・日ごとの顔文字は自動判定・明示空欄・5種類の手入力を区別する。空の日で他の日を隠さない。数値記録は変更しない。PCは対象4機種の対象週だけを読み、画像プレビューをSQLで除き、曲線は差枚計算のため維持する。
+- iPhoneの長町南の既存週表も顔文字の選択・保存へ対応。幸町の優・良のPC限定は維持。共有の構成変更は画面に出さず、Apps ScriptのPOSTでも拒否する。Googleが新しい顔文字保存に未対応なら端末に残し、成功扱いにしない。通信失敗時の再送・別タブの送信中の変更の保持を実装。
+- 全体ゲートの旧仕様での初回は利用者の構成PC限定の追記を受け停止。修正後のゲートでは新規試験の接続URLの断片形式・再読み込み方法と、新モジュールを静的公開許可リストに加える試験更新が不足していた。模擬画面の試験を修正し、既存の許可リスト検査を新しい1ファイル分だけ拡張。共有の送信済み顔文字がオフライン再起動で消える点、スマホCSSが新規カードの機種名を隠す点も修正。旧失敗ログは `/tmp/recommendations-results-gate.log` に残す。
+- 関連のPC8件、Flutterの新規8件と既存履歴17件、JSモデル6件と両GS14件、閲覧/共有の320・393・1280pxの新規画面6件を確認。画面試験は合成Google応答と隔離Chromiumを使用し、実サイトへの調査アクセスはしていない。日本語・絵文字のローカルフォントを使った393pxの画像も確認。実iPhone/Android実機・実Googleへの反映は別途。
+- 最終の全体ゲート・CI・公開結果は確定後に追記する。Androidの新APKは未ビルド、EXEは作成しない。Googleの既存プロジェクトへは認証が無いため未反映。コピペ用4本（先の自動統合2本＋今回の閲覧/共有2本）と更新手順を `/workspace/outputs/four-recommendations/Google更新用4本.zip` に準備。閲覧/共有の2本は既存URLのデプロイを新バージョンへ更新する必要がある。
+- 最終全体ゲート `/workspace/.cloud-setup/check-recommendations-release`（記録 `/tmp/recommendations-release-gate.log`）は **ALL PASSED**。PC434件＋追加214件、UTC条件27件、Flutter672件、JS70ファイルで374件成功・従来の任意保存例1件スキップ。analyzeはエラー・警告なし（既存info27件）。iPhoneの既存週表の顔文字編集も新規画面試験内で確認。追加の実サイト通信・CI再実行はしていない。
+- ソース機能コミット **`d20082b31c83db9713d9c09361bfff202992e797`** を10/25日本時間の後半先database-ci/mainへ1回反映。正本originへは未送付。公開先は試験済みstageと全ファイルを照合し、viewer **`02474f33d6efc4f16b76c0cdb35bd30ffd73cc9e`**（main.dart.js 1ファイル）と共有 **`bc14a68982b88bfed9c1aa78dd9fd8a59b2141b1`**（9ファイル、新モデルを含む）を反映。両方のGitHub Pagesが同じSHAでbuiltになったことを確認した。実配信本文と実機は未確認。
+- GitHub実行 **`40145927929`** はWindows UTC（2分43秒）・Ubuntu UTC（1分6秒）が成功、**fullは10分21秒でゲートが失敗**。再実行していない。注記は汎用のexit code 1のみで失敗試験名は分からない。`regression-timings`（ID12581241989）と`regression-full-logs`（ID12581032201）は保存されている。ローカル全体成功を、CI全体成功と取り違えない。
+- timings取得はGitHub APIから302で **productionresultssa15.blob.core.windows.net** へ転送され、その先でForbidden。署名URLは記録・表示しない。GitHubの権限不足ではなく、現行環境の接続許可が必要な段階で止まることを確認。環境設定の既存のカスタム接続先6件を保持し、当該ホスト1件だけを下書きへ追加した（保存成功、requires_publish=true）。SDK・スクリプト・認証・リポジトリ登録は変更していない。下書き保存だけでは稼働中の通信許可が変わらないため、利用者が保存・公開した後にログ取得から調査を続ける必要がある。原因を推測して修正・CI再実行はしない。
+- Google実プロジェクト更新、Android新APK/実機、CI full失敗の原因確定は未完了。実装・両Web公開・ローカル全体確認・Windowsを含むPC CI成功までは完了として区別する。この完了/保留記録は文書だけのコミットで送り、追加CIは起動しない。
+
+
+## 【4大オススメの画面試験・固定保存先の修正】2026-10-25 Codex
+
+- 利用者の画像から、d20082bの実行#27（40145927929）の失敗は `test_recommendations_browser` の1ファイルだけで、ほかの全体ゲート試験は通っていることが判明。Windows/UbuntuのPC試験成功も画像とAPIで一致。
+- 新しく追加した画面試験が、393pxのときに調査画像を無条件で `/workspace/outputs/four-recommendations` に保存していた。クラウドの作業場所をGitHubランナーでも書き込めると誤って仮定した実装。ユーザーデータの保存処理とは別の、試験画像の保存先の問題。
+- Nodeの書き込み許可を `/tmp` だけにして同じ393px共有試験を実行し、当該mkdirが固定パスへのFileSystemWrite拒否で失敗することを再現（`/tmp/recommendations-readonly-red.log`）。GitHubの詳細ログは接続許可未適用で未取得だが、画面試験の環境依存の欠陥を確認できたため修正を進めた。
+- 画像保存は `RECOMMENDATIONS_SCREENSHOTS` が明示された場合だけに変更。通常のCIでも6ケースの構成確認・台別表示・顔文字保存・再読み込み・通信失敗時の端末保持・既存週表編集の検証は省かない。アプリや公開ファイル、Googleコードの変更はない。
+- 修正後は同じ `/tmp` 書き込み限定条件で全6件成功（`/tmp/recommendations-readonly-green.log`）。さらに画像保存先を `/tmp/recommendations-screenshots-checked` に明示し、該当2件が成功して両PNGの実生成も確認（`/tmp/recommendations-opt-in-checked.log`）。SDK・依存定義・試験数・ジョブは変更していない。アプリの新ビルド・公開は不要で、同じ試験済み公開用stageを使用した。
+- 原因不明の同一CIの再実行はせず、この修正と記録を1回のpushにまとめる。CIの新しい結果は確定後に追記する。
+- 修正コミット **`3d9db73dbe187a410a403cd30bc46bc8e77e1a19`** をdatabase-ci/mainへ反映。GitHub実行 **#28 / 40147393209 は全3ジョブ成功**（full 14分15秒、Windows UTC 2分47秒、Ubuntu UTC 1分4秒）。新しいコミットの確認であり、失敗した#27を再実行したものではない。CI全体の失敗は解消。追加のクラウド設定適用・ログ貼り付けを待たず、ローカルで再現した保存先の欠陥を修正して検証できた。
+- 利用者が使用制限を懸念してClaudeへの引き継ぎを希望。実行中ジョブは残っていない。Google既存スクリプトの手動更新・Android新APKと実機確認は従来どおり別途残る。公開ページや配布済みGoogleコードは今回変更していない。
+
+
+<!-- 以下4節は10/21〜22にPCの手元だけに書かれ未コミットだった記録。2026-10-25 Claudeが最新mainへ重ね直す際に移した（P’s CUBEの空系列の修正は、その後の正本の後継実装 aa39091 に置き換え済み）。 -->
+## 【P’s CUBE：新台の空の過去系列で差枚が全日未取得になる処理】2026-10-21 Codex
+
+- 利用者報告：Androidで「魔法少女にあこがれて」を16:22〜16:23頃に取り込み。「台別履歴（2日分）」は保存できるが「差枚は未取得：グラフの元数値が不正」。通常版APKの保護領域はADBで読めず、実端末の記録・API応答は未確認。
+- コードで確認した不整合：表もグラフも無い過去日は `missing_history_days` で省略しているが、差枚取得はAPIの空系列を全日エラーにしていた。共通 `web/pscube/data.mjs` は、その明示済み過去日かつ点が0件の系列だけを省略し、他の有効日の差枚は保存するよう修正。選択日・一部欠損・壊れた点・日付重複の拒否は維持。PC/Android共用assetsを再生成。
+- 確認済み：新台の空系列の専用単体試験1件と `test_pscube_net_capture.mjs`（生成済み実スクリプトをブラウザで実行、2日分＋空の過去5日、通信失敗時の欠損維持）が成功。全体ゲート・APK再ビルド・pushはしていない。端末に配布済みの2026102101には今回の差枚修正は含まれない。利用者は長い同等試験の反復を避けるよう指定。
+
+## 【PCバラエティ一覧：差枚見出しで並べ替え】2026-10-21 Codex
+
+- 依頼：PC版のバラエティタブの台一覧で、差枚を押すとソートしたい。`variety_rainbow.py` に「差枚の多い順／少ない順」を追加し、推定差枚の見出しクリックで切り替える。選択中は▼／▲を表示。「—」は両方向とも末尾、同差枚は台番号順。既存の「並べ方」と連動し、日付変更後も並べ方を引き継ぐ。操作を `RAINBOW.md` へ追記。
+- 確認：専用の合成SQLite・画面外のTkウィンドウでバラエティ関連12件成功。見出しを実際に押して正数・0・負数・欠損・同値の順序、日付切替、並べ替えだけではDBが不変なことを確認。その試験へ並べ替え後の🌈クリックが表示中の51番台にだけ保存される確認も追加し、当該1件を実行して成功。
+- PCのソースへ反映。実行中のアプリは再起動後に適用。実データベースは試験に使っていない。今回の変更のビルド・公開・pushは行っていない。
+
+## 【今週の長町南バラエティ表を保存済み最新構成へ更新】2026-10-21 Codex
+
+- 利用者が10/20の保存済み構成を承認し、Androidではまだ週表を読み込んでいないと回答。10/21の台データは未保存のため、今週10/19〜10/25だけを10/20の1〜3台機種66機種67台へ更新した（旧67機種68台）。追加3機種は空欄、対象外4機種には印なし。
+- 更新前にSQLite backupで整合した控えを保存。トランザクション内で週定義だけを差し替え、既存の印16個・全編集セル35件・対応付け・他週が不変、除外0を確認。初回の10/18構成による作成記録も保持し、今回の出典は別のapp_stateへ保存した。
+- 標準refresh_outputsで共有用database-event-history.jsonとAndroid用database-backup-auto.json／database-backup-recent.jsonを更新。3ファイルすべてで66機種67台・印の一致・除外0を確認、出力警告なし。実Google側の伝播と各端末の表示は未確認。
+- PCは履歴窓を開き直し、共有ページは「最新を読む」、Androidは更新後のPCバックアップを取り込む。ソース変更・ビルド・試験スイート実行・push・APK更新なし。無関係な作業差分は保持。
+- 更新内容と検証：`../review_packages/variety-week-refresh-20261021/applied.json`、`apply.log`、`output-result.json`。同フォルダのSQLite控え・履歴JSONは非公開の実データで、Gitや引き継ぎZIPには含めない。
+
+## 【PC起動元へ幸町バラエティの週単位入力を取り込み】2026-10-22 Codex
+
+- 利用者の直接更新指示により、database-ci/mainの62ee80e137dcc6968af648729597cb356f116298を、手元mainの7bda249からfast-forwardで取り込んだ。競合なし。開始時にPC版・取り込み・出力のプロセスとウィンドウは無かった。
+- 既存ローカル変更18ファイル・未追跡2件を保持。既存stash5件を全IDで照合し、今回の退避stashも再適用後に残した（合計6件）。作業記録の既存追記とクラウド追記を統合し、既存の追加・削除行が一致することを確認。
+- 更新前にSQLite3本の整合した控えと設定・既存変更の控えを保存。更新後は実際のdatabase/start.cmdから起動し、「結果を見る」→「幸町のバラエティ履歴」で日別・週単位のボタンを目視。週ボタンや評価欄は操作せず、実データへの試験入力なし。PC版と履歴画面は開いたまま。
+- 関連36件成功（幸町9件、イベント履歴27件）。最初はsandbox既定Tempの権限でSQLiteを開けず、専用Tempへ変更。Windowsでは新規試験のupdate_idletasksだけで可視状態を確認すると失敗したため、test_saiwaichou_history.pyの1行をroot.updateへ変更して表示イベントを処理すると成功した。製品コードは取り込んだコミットのまま。
+- 起動後の本体DBはファイルハッシュが変化したが、全テーブルの全行（記録・観測・候補・履歴を含むapp_state）は更新前の控えと一致。P’s CUBE・パチンコDB、設定、browser_layout、last_saveはハッシュも不変。
+- クラウドのPC410件・関連Web14件成功報告を引き継ぎ、今回は全体試験・APK・EXE・Web公開・push・CI起動なし。新規の試験調整とこの記録は未コミットで保持。
+- 非公開の検証控え：../review_packages/weekly-pc-update-20261022-175603/更新結果.md。SQLite・設定など実データを含むためGitへ追加しない。
+
+
+
+## 【4大オススメの取り込み・手元作業の重ね直し・PC高速化・取り込み画面のYouTube遮断・APK 0.5.42】2026-10-25 Claude
+
+- 引き継ぎ：Codex（クラウド）の `148e891` を database-ci から取得。CI #28（40147393209）が全3ジョブ成功であることを読むだけで確認し、再実行していない。同日朝の別セッションの下見（`../review_packages/cloud-import-20261025/`、実DB3本のSQLite backupと設定の控え）も確認。
+- 手元の保護：未コミット19ファイル＋未追跡3件を `../review_packages/claude-handoff-20261025/`（patch・未追跡の写し）と stash `claude-handoff-20261025` に保存し、main を `08a0174` から `148e891` へ早送り。利用者「最新版に重ねて仕上げる」により、衝突しない14ファイル（PCバラエティの差枚並べ替え、メルヘン取り込みの日付不一致・台の範囲の確認、Androidのリンク無し台、試験調整、版）を重ね直した。P’s CUBEの旧空系列修正（data.mjs・生成物2本）は正本の後継実装があるため外し、旧単体試験は新仕様（空・1点だけの日はその日だけ未取得、日付重複は全体拒否、選択日欠測は手動貼り付けで拒否）に書き直した。stashは消していない。
+- 全体ゲート1回目で2件失敗し修正：(1) `recommendations.plan` が、このPCのPython 3.14の `fromisoformat` で `T24:00` を翌日0時として通していた（CIの3.12・Android・JSは拒否）。時刻の正規表現で時00〜23・分秒00〜59に限定し、顔文字の時刻の24:00・12:60の試験を追加。(2) `test_check_before_build_logging.mjs` が偽flutterの場所を `C:/…` のままPATHへ入れ、Windowsでは「:」で割れて本物のFlutterを呼んでいた。試験の設定で `cygpath` 変換（実際のdev_env.shと同じ）。
+- 利用者報告（PC）：起動時の自動取り込みは「前回より新しい最新の1本」だけで、店舗ごとに分けて書き出した 07:10（長町南10/24）を飛ばし 09:39（幸町）だけを読んでいた。前回以降のAndroidバックアップを古い順にすべて読むよう変更（前回の記録が無い初回は最新1本、1本でも失敗したらそこで止めて次回再開）。また同期タブの「バックアップを読み込む」が、クラウドで増えた共有用ファイルの状況パネルに押されて窓の下に隠れていた。タブの中身を縦スクロールできるようにした（配置・見た目は不変）。両方の再発試験を追加（修正前は失敗を確認）。今回の起動では09:39を読み済みのため、07:10は利用者が手で読み込む必要がある。
+- 利用者依頼（PCの速度）：09:54の実DB控えの複製（5.6万台日）で画面の各ボタンを非表示で押して計測。原因と対策：DBを開くたびに全行の機種名を正規化していた→機種名の種類だけ点検／主キーが店・日・機種・台の順で機種ごとに店の全行を読んでいた→索引 `days_store_machine(store, machine, day)`／翌日候補が台ごとに機種の30日分をふるい直していた→機種・日ごとに材料を共有（書き込みで `_machine_cache` と一緒に捨てる）／バラエティの並べる日の判定が14日分の `day_records`（差枚推定・最終🌈の店全体検索を含む）を作っていた→台数だけを1回のSQLで数える。
+- 速度の結果（cProfile込み）：起動2.5→1.1秒、バラエティ🌈9.8→2.6秒、この日のまとめ17.0→9〜11秒、長町南の履歴3.0→1.5秒、幸町の履歴6.0→3.6秒。プロファイラ無しではまとめ7.0→5.3秒・3.8→2.4秒、幸町の翌日候補3.8→2.9秒。修正前後で、まとめのHTML2日分・翌日候補4件（両店×10/22・10/23）がバイト一致、並べる日は両店3時点で一致。残る主因は全記録のJSON解析（約3秒。幸町の翌日候補の式が14か月分を使う）で未対応。初回起動時に索引作成で約2秒かかり、DBが約4MB増える。
+- 利用者提案（取り込み画面のYouTube）：PC・Androidとも、読み込み後に差し込んだJSで枠を隠すだけで、YouTubeへの通信は起きていた。PCはメルヘン・P’s CUBE共通の `install_webview2_handlers` で、WebView2の通信フィルターによりYouTube系ホスト（youtube.com・youtube-nocookie.com・youtu.be・ytimg.com・googlevideo.com）への要求をサーバーへ送らず手元で204を返す。隠すJSは空の枠を詰めるため残す。実際のWebView2 SDKに `All` があることを確認、無い版は種類ごとに登録。Androidはwebview_flutterに要求を断るAPIが無く、ネイティブの追加と実機確認が要るため未実装。実サイトでの動作は未確認（調査のアクセスもしていない）。
+- Google更新用4本：`../outputs/four-recommendations-google-20261025/`（閲覧用・共有用・P’s CUBE/メルヘン自動統合。自動統合2本は10/17・10/18と同じく履歴フラグtrue・差分false、コピー用ページ・手順・sha256）。実Googleは利用者の作業で未更新。
+- APK：`0.5.42+2026102501`。通常版 `com.keyan.database_android`（SHA-256 `c7d9c3d6f5916816d9b7bd10916ed766dd436b2e959e80a52708438d6553b57f`）と P’s CUBE版 `.pscube`（`8cc7bbb1850ef9268b0a3f88c7a67ef812822a8bb76d79601106252c18d73feb`）、署名は既存と同じ `4332fcb9…a047`。`database_android/build/releases/0.5.42/`。2回目のALL PASSED後のAndroidソースから作成（その後の変更はPCだけ）。旧APK3本はごみ箱へ。端末へのインストール・実機確認は未実施。
+- 最終の全体ゲート（全修正後）は **ALL PASSED**：PC438件・追加215件・UTC27件、Flutter672件、analyzeはエラー・警告なし（既存info26件）、JS70ファイル377件（成功376・従来の任意1件スキップ）。記録 `../review_packages/claude-handoff-20261025/gate/`。
+- 実DB・設定は変更していない（読み取り専用の確認だけ）。PC版は再起動で反映。EXEは作らない。
+- 利用者「pushして」により、日本時間10/25 11:06に `975dd12` を後半の送り先 database-ci/main へ1回push（`148e891..975dd12`、早送り）。CI #29（40153171400）の開始を1回読んで確認した。結果は未確認で、再実行・定期の確認はしていない。正本originへは送っていない。
+- 利用者が07:10の長町南バックアップを手で読み込み、PCのDBに長町南10/24（355台・108機種）が入ったことを読み取り専用で確認。利用者がAPK 2本をインストールし、端末で両ID 0.5.42/2026102501、firstInstallTime保持（2026-09-16・2026-10-03）をadbで確認。利用者がGoogleの4本を貼り替え・実行済み。DriveのP’s CUBE閲覧用ファイルに `supplement_supported:true`（10:31、処理待ち0・失敗0）、メルヘンは10:59処理・処理待ち0・入力失敗1件（どのファイルかはGoogle側の `showMeruhenCloudStatus` でしか分からず未確認）。iPhone・共有での顔文字の往復は未確認。
+
+## 【CI #29の閲覧ページ試験の失敗原因と、iPhone閲覧ページ（メルヘン）長町南のイベント履歴でSafariが落ちる件】2026-10-25 Claude
+
+- CI #29（40153171400）：full だけ失敗、`test_rainbow_today_browser` の閲覧ページ320px。ログとスクリーンショットから原因を調べ、再実行していない。原因：閲覧ページは起動後に共有の🌈を後から取り込むが、開いたままの「本日」一覧・7日間の候補の画面が作り直されず、後から届いた印が出なかった（CIの混雑で取り込みが画面を開いたあとになると落ちる）。`viewer_pages.dart` に `viewerDataRevision`（ValueNotifier）を足し、`viewer_main.dart` のデータ差し替えで増やし、`rainbow_today.dart`・`variety_week.dart` が聞いて作り直すようにした。再発試験：Flutterに「開いたあとに届いたほかの端末の🌈も、本日の一覧に出る」、画面試験は閲覧ページで最初の🌈の応答を2秒遅らせる（公開中の02474f3では失敗、修正後は成功を確認）。
+- 利用者報告（iPhone・メルヘン閲覧ページ）：長町南のイベント履歴のバラエティ・4大オススメを開くとSafariが「問題が繰り返し起きました」で落ちる。原因：Webで編集できる週表の各セルが DropdownButton で、幅を決めるため全選択肢（顔文字・記号）を常に作る。66機種×7日で数百の選択欄と数千の絵文字を抱えていた。新部品 `face_menu.dart`（FaceMenuButton：今の値だけを描き、押したときに showMenu で選択肢を出す）に置き換え。`event_history.dart` の `_browserTable`（Webで編集可能なときだけ）と `recommendations_view.dart`。保存処理・読み上げ名（「日付 機種の顔文字」「日付 機種 台番の顔文字」）・選択肢・保存中に押せない動きは従来どおり。
+- メモリ（実データの複製、Chromiumのヘッドレスでバラエティ表示、JSヒープ）：公開中02474f3 ピーク328MB・残り226MB → 修正後 258MB・188MB。10/24版（f5722b8）は216MB・169MB で、10/24並みまでは戻っていない。描く絵文字は約3,200→約460に減るが、JSヒープの数字には出ない部分。iPhone実機での確認は未実施（公開後に利用者の確認が要る）。
+- 全体ゲートは **ALL PASSED**：PC438件・追加215件・UTC27件、Flutter673件、analyzeはエラー・警告なし（既存info26件、前回と同数）、JS70ファイル全成功。記録 `../review_packages/claude-handoff-20261025/gate/`（前回分は `gate-run3-passed/`）。
+- Androidの取り込み画面のYouTube遮断は別セッションがブランチ `claude/sleepy-matsumoto-84df0c`（`c1c801e`、そのセッションでALL PASSED）に作成。
+- 利用者「公開までお願い」により：(1) 閲覧ページを、616cf34のゲートでstage済みの物から database-viewer へ `9a25e4d` として公開（変更は main.dart.js・version.json 0.5.42・NOTICES・bootstrapの並び順だけ）。Pagesのデプロイ成功と公開中の version.json を確認。(2) `c1c801e` を main へ取り込み（`f506c48`）、取り込み後の全体ゲートも **ALL PASSED**（PC438・215・UTC27件、Flutter682件、analyze info26件のみ、JS70ファイル全成功）。閲覧ページのビルド（main.dart.js）は公開した物とバイト一致。(3) 同セッションの版上げ `a8dc7e4`（0.5.43+2026102502・作業メモだけ）を取り込み（`9d38d49`）、版を読む試験 test_android_release_rules 2件・test_check_before_build_logging 5件が成功。database-ci へ1回push。
+- 利用者がiPhoneで公開後の閲覧ページを確認し「問題ありません」（長町南のイベント履歴のバラエティ・4大オススメで落ちない）。
+- 利用者が0.5.43のAPK 2本をインストール。adbで両ID 0.5.43/2026102502、firstInstallTime保持（2026-09-16・2026-10-03）、更新12:28を確認。取り込み画面の動作とYouTubeへの通信が出ないことの実機確認は未実施（利用者が帰宅後に取り込みで確認予定）。
+
+## 【ローカルでできる改善の検討（PC版の残りの遅さ・閲覧ページのメモリ・試験時間）】2026-10-25 Claude
+
+- 利用者依頼「ローカル環境で行える改善案を検討、必要であれば改善まで」。対象サイト・実機は使わず、09:54の実DB控えの複製（読み取り専用）と今日のゲート記録で測った。コードは変更していない。
+- PC版：まとめ約5.3秒・幸町の翌日候補約2.9秒の残りは、記録のJSON解析（5.6万行・142MB、全件で約2.9秒）。中身はグラフ画像 `graph_measurement.preview_image` 47MB、曲線 `curve` 29MB、`source_graph.points` 13MB で全体の6割強。採点用の機種別キャッシュ（`_machine_rows`）が全機種分たまると、Python上で約650MBになる（このPCは16GB）。ただし曲線は差枚推定、画像は5日分の帯（`slump_days`）がキャッシュ経由で読むため、キャッシュから外すだけでは表示が変わる。画像・曲線を別の列や表へ分ける設計変更（バックアップ形式との互換を含む）が要るため、利用者の判断待ちとして実装しない。
+- 閲覧ページ：10/24版より残りメモリが約19MB多い（188MB／169MB）のは、Webで週表の顔文字を編集できるようにした（各セルが押せる部品になった）ため。iPhoneで問題なしと確認済みで、これ以上は効果が小さいと判断。
+- 試験：全体ゲートは約11分（JS 約5分、最長は test_recommendations_browser 36秒）。`CHECK_JS_JOBS=2` で並列にできるが、負荷で時間切れの失敗が出た例があり（今日の閲覧ページの試験、原因は修正済み）、既定の1のままにした。確認用フォルダを短い場所に置く決まりは別セッションが記録済み。
+- 利用者の判断：「差枚の精度上がるならまだしも下がる可能性あるのであれば控えたい」。保存の持ち方の見直しは行わない（精度は上がらず、移し替えの誤りで差枚推定が変わる危険だけがあるため）。
+
+## 【別の視点からの改善の検討（Google側の同期・Driveの共有フォルダ）】2026-10-25 Claude
+
+- 利用者依頼「別の視点からの改善案も検討」。速度ではなく、データ保護・同期・Driveの容量の面から、Driveの共有フォルダ（PCの G: の同期コピー）と PCの日別バックアップを読み取り専用で調べた。コード・Drive・DBは変更していない。
+- PCの日別バックアップは設計どおり Drive の `backups/` に1日1本・7日保持（10/22〜10/25）。ただし同じ場所に、書き込み途中で残った一時ファイル `.database-backup-2026-10-19〜21.json-*.tmp` が4本・計323MB残っている（`file_io.atomic_writer` の後始末が走らなかった。中断の原因は不明）。
+- **P’s CUBEのGoogle側の日別原本が同期のたびに書き直されている。** 共有フォルダに `database-history-day-pscube-*` が91日分で1,236本（7日より古い未参照分は設計どおり整理済みで、毎日約100本ずつ増減）。10/01分を比べると、16点と17点のグラフを行き来して27回書き直されていた。原因：PC閲覧用の入力（`kind:'pc'`）は閲覧用に16点へ間引いたグラフを持つ。`viewer_history_adapters.js` の pscube `merge` は、日別原本の完全なグラフを守る条件を `graph.kind === 'daily'` に限っている。そのため P’s CUBE の一覧グラフ（`overview`、多くは17点）が16点で上書きされ、次のAndroidバックアップで17点に戻る。影響：Driveの書き込み・閲覧用パーツの作り直し・Apps Scriptの1回あたりの処理枠（24日分・150秒）の浪費。原本が一時的に間引かれたグラフになる。差枚・回転数・当たりの数値は変わらない（守る条件は bb・rb・at_art・games・my の一致、間引きも最初・最後・最高・最低の点を残す）。
+- 改善案（利用者の判断待ち）：(1) 守る条件をグラフの種類によらず「同じ数値で原本の点が多いとき」に広げ、P’s CUBEの自動統合スクリプトを貼り替えてもらう。(2) 残った一時ファイル4本をごみ箱へ（Driveのごみ箱から戻せる）。
+- 利用者「両方お願いします」により実施。(2) 一時ファイル4本（計323MB）をPCのごみ箱へ移した（Shellでごみ箱に4本あることを確認）。(1) `viewer_history_adapters.js` の pscube `merge` で、数値（bb・rb・at_art・games・my）が同じで原本の点が多いとき、`daily` に加えて同じ種類のグラフ（overview）も原本を残すよう変更。生成物 `pscube_cloud_sync.gs`・`meruhen_cloud_sync.gs` を `build_viewer_parts.mjs` で作り直した（メルヘン側は同梱される同じ関数の文だけが変わり、動作は不変）。再発試験「PCの16点で一覧グラフ（17点）の原本を縮めず、同じ日を書き直し続けない」を追加（修正前は失敗を確認）。関連試験：pscube_cloud_sync 43件・meruhen_cloud_sync 30件・閲覧スクリプト2本11件・viewer_parts 13件成功。全体ゲート **ALL PASSED**（PC438・215・UTC27件、Flutter682件、analyze info26件のみ、JS70ファイル全成功）。
+- 貼り替え用：`../outputs/pscube-graph-guard-google-20261025/`（P’s CUBEの自動統合1本、履歴フラグtrue、コピー用ページ、sha256 `3265a66e…4d6b`）。今朝貼ったものとの差はこの条件の数行だけ。利用者「pushして」により `1ff0c23` を database-ci へ1回push（CI #31 40166177892）。利用者が14:37までにP’s CUBEの自動統合を貼り替え。その時点で新しい入力は無く（最後はPC 10:02・日別原本の書き込み11:31）、効果は未確認。11:30の版で16点になっている日は、次のAndroidバックアップで一度だけ17点へ戻り、その後のPC出力では縮まない見込み。
+- 利用者が Android 0.5.43 の取り込みを確認し「問題なかった」。メルヘンの入力失敗1件は、利用者の `showMeruhenCloudStatus` で `database-backup-android-20261018-143344.json`（10/18 14:34、101MB、48MiB超）と判明。読み取り専用で照合し、42,244件（2店・100日分）はすべてPCのDBにあり、回転数・BB・RBも一致。取りこぼしは無く、Google側が大きすぎて読めないと毎回報告しているだけ。
+- 利用者「このファイル消してもよいのでは？」により、同ファイルをPCのごみ箱へ移した（共有フォルダから消えたこと・ごみ箱にあることを確認。完全削除はしていない）。次のメルヘン同期で入力失敗の表示が消える見込み（未確認）。
+
+## 【iPhone閲覧ページ：長町南の今週のバラエティの顔文字が共有へ送れない】2026-10-25 Claude
+
+- 利用者報告（スクリーンショット）：閲覧ページ（メルヘン）の長町南のイベント履歴のバラエティで顔文字を選ぶと「顔文字は共有への送信待ちです：FormatException: 共有用Apps Scriptの更新後に再読み込みしてください。」。利用者が貼った自分用の閲覧スクリプトはデプロイ済みで、`shared_editing:true` を返す版だった。
+- 原因：今週（10/19〜25）のバラエティは、PCの週単位の入力で、共有の文書の `weeks` にだけある（Driveの `database-event-history.json` で確認。基準の `base.weeks` には無い）。閲覧ページの `_saveWebHistory` は、送信待ちへ足すときに `mergeHistoryEdits(送信待ち, 今回, base)` で照合しており、文書の `weeks` を渡していなかった。そのため今週分の顔文字は「該当する週がない」として送信待ちに残らず、送るものが無くて止まった。PCがまとめて作った週（`base.weeks`）は送れていた。共有カレンダー（別実装）は文書の週も照合しており、既存試験で確認済み。今日公開した版から閲覧ページでも顔文字を編集できるようにした部分で、この種類の週を試験していなかった。
+- 修正：`event_history.dart` で、照合のときだけ表示中の文書の `weeks` を渡す。送信待ちには週の定義を保存しない（`weeks` は空のまま）。再発試験 `tool/test_viewer_history_edit_browser.mjs`（文書の週だけにある週の顔文字を選ぶと共有へ送り、送信後に送信待ちが残らない、320/393px）。直す前のビルドでは失敗、修正後は成功を確認。test_viewer_event_history_browser・test_recommendations_browser 6件も成功。
+- 全体ゲート1回目は、新しい試験が393pxで1回失敗（送信待ちが消えるのを待たずに確かめていた試験側の問題。送信は届いていた）。返事の処理を待つよう直し、gateのstage物で3回連続成功。2回目の全体ゲートは **ALL PASSED**（PC438・215・UTC27件、Flutter682件、analyze info26件のみ、JS71ファイル全成功）。
+- 利用者が今週分で先に選んだ顔文字は端末にも残っていないため、公開後に選び直してもらう。
+- 閲覧ページを gate のstage物から database-viewer へ `ff0b2b9` として公開（変更は main.dart.js と version.json 0.5.43）。Pagesのデプロイ成功、公開中の main.dart.js がstage物とバイト一致を確認。database-ci へ1回push。iPhoneでの確認は利用者待ち。
+
+## 【iPhone閲覧ページ（メルヘン）がまだたまに落ちる件の調査】2026-10-25 Claude
+
+- 利用者「iPhoneブラウザ版のメルヘンの方がまだたまにクラッシュする。負荷かけすぎかな」。どの画面で落ちるかは未確認。コードは変更していない。
+- 測定（実データの写し：メルヘン閲覧用60日分・44,746件・41MB、Chromiumヘッドレス393px、JSヒープ）：起動直後の山は 10/24版 293MB、今朝の版 275MB、現在の公開版 `ff0b2b9` 374〜402MB（測るたびに±100MBぶれる）。再起動（端末保存からの読み込み）の山は3版とも 350〜480MB。今日の変更で大きく増えたものではなく、起動・再読み込みのたびに数百MBの山ができる作りが元々の負荷。
+- 中身：記録の文字量の約8割（28MB中22MB）がグラフの線 `graph_measurement.curve`。線を除いた同じデータでは、起動の山 400→185MB前後、再起動の山 350〜420→187MB、常駐 120→40MB。閲覧ページで線を使うのはグラフの描画だけ（`machine_sections.dart`・`shared_widgets.dart`）で、差枚の推定には使っていない。
+- 対策案（利用者の判断待ち）：(A) 閲覧ページだけで、読み込んだ線を軽い形に持ち替える（常駐が減る。起動時の山は少し減る程度）。(B) 線を、台の画面を開いたときだけ取りに行く（山が半分程度に。PC出力・Googleのスクリプト・閲覧ページ・共有カレンダーの変更が要る）。(C) 閲覧ページでは線を持たず、4点から復元した概略グラフを出す（いちばん軽いが見た目が変わる）。どれも差枚の数値は変えない。
+- **訂正**：上で「閲覧ページで線を使うのはグラフの描画だけで、差枚の推定には使っていない」と書いたのは誤り。閲覧ページ（`models.dart` の `meruhenNetEstimateDetail`）と共有カレンダー（`share_viewer/net.mjs`）は、線があれば線で目盛りを選び、無ければ4点で選ぶ。線を抜くだけでは推定差枚と※の印が変わる台があり、案Cは差枚が変わる。利用者が案Bを選び、設計を `../outputs/viewer-curve-lazy-design-20261025/設計.md` に書いた（線があるうちにGoogle側で差枚を計算して `net_estimate` として添え、線は日ごとの線パーツへ分け、台の画面を開いたときだけ読む）。実装は利用者の確認待ち。
+
+## 【iPhone閲覧ページ（メルヘン）：グラフの線を台の画面を開いたときだけ読む】2026-10-25 Claude
+
+- 利用者が設計（`../outputs/viewer-curve-lazy-design-20261025/設計.md`）を承認。「線を取りに行く間は薄く概略を出す形でよい」「差枚については今回の修正で絶対に誤差が出ないように」。
+- Google（メルヘン自動統合の生成元）：`tool/viewer_curves_split.js`（新規）で、閲覧用の日別パーツを書くときに線を外し、線があるうちに推定差枚を計算して `graph_measurement.net_estimate = {value, needs_check, max_hold, games}` と `curve_remote`・`curve_index`（その日の線パーツの通し番号）を添える。計算は共有カレンダーの `share_viewer/net.mjs` をそのまま同梱（`netModule()`、名前がぶつからないよう包む）。閲覧ページ（Dart）は最大持玉・回転数を整数に直して計算するため、両方が同じ値になる記録（最大持玉・回転数が整数、座標がすべて有限の数）だけ線を外し、それ以外は線を残す。外した線は `database-viewer-curves-meruhen-<hash>.json`（中身に日付を含む、1MiBごと）に置き、一覧に `curve_parts` を載せる（revision・signature にも含める）。日別原本は線を持ったまま。原本の無い古い日を閲覧用パーツから戻すときは線も戻す（`vpRestoreCurves`）。線を外す前の一覧は1回だけ日別原本から作り直す（`meruhenCurvesSplit`、30分ごと24日分）。古い線パーツは閲覧用パーツと同じく7日後に整理。
+- 閲覧用スクリプト2本：一覧にある線パーツだけを返す `?curves=<hash>`。
+- 閲覧ページ：`lib/remote_curve.dart`（新規）。起動時は線なしの記録だけを持ち、機種の画面のグラフ表示・台の画面で、その日の線パーツを1回だけ読む（直近6日分を保持）。読む間は概略を薄く出し、読めなければ「グラフの線を読み込めませんでした（もう一度読む）」。推定差枚は、線が無いときは添えた値を使い、最大持玉・回転数が計算時と違えば出さない（ずれた値を出さない）。線を読んだあとは線から計算し直す。`net_estimate` などは端末保存（IndexedDB）にもそのまま残る。共有カレンダー（`share_viewer/data.mjs`）も同じ規則で添えた値を使う。
+- 差枚の一致：合成600件（`tool/make_meruhen_net_parity.mjs` → `test/fixtures/meruhen_net_parity.json`、値あり463・※243・なし137）で、Google（vpSplitCurves）・閲覧ページ（Dart、線あり・線なし・線を読んだ後）・共有カレンダーの値と※が完全一致する試験を追加（`test_meruhen_cloud_sync.mjs` 4件、`test/meruhen_net_parity_test.dart` 4件）。実データの写し2つ（38,881件・38,887件、PC閲覧用60日分）でも、閲覧ページの推定差枚・※・表示の文字が線あり／線なしで不一致0件（一時的な試験で確認し、ファイルは削除。実データはリポジトリに入れていない）。
+- 画面試験 `tool/test_viewer_remote_curve_browser.mjs`：起動時と表だけでは線を読まない、グラフ表示で1回だけ読む、台の画面で線を描く、差枚は線の前後で同じ、読めないときは再読込で回復。
+- メモリ（実データの写し・Chromium・JSヒープ）：起動・再起動の山 283〜559MB → 205〜218MB、常駐 122MB → 41〜43MB。閲覧データの大きさ 41MB → 21MB。iPhone実機は未確認。
+- 全体ゲート **ALL PASSED**（PC438・222・UTC27件、Flutter704件、analyze info26件のみ、JS73ファイル全成功。別セッションの `d605d3f` を含む状態）。
+- 貼り替え用：`../outputs/viewer-curve-lazy-google-20261025/`（自分用・閲覧専用・メルヘン自動統合の3本。先に閲覧ページと共有カレンダーを公開してから貼る。P’s CUBEは不要）。
+- 閲覧ページを database-viewer `781e1ca`、共有カレンダーを database-share `3be52cc` として公開（いずれも source e338171、gateのstage物）。Pagesのデプロイ成功、公開中の main.dart.js がstage物と一致、共有の data.mjs に新しい処理が入っていることを確認。公開物には main にある別作業（P’s CUBEの自動取り込みの修正 `8c0ea20`、共有の app.mjs など前回公開後の変更）も含まれる。
+- **履歴の注意**：`e39e4e6`（作業記録だけのつもりのコミット）は、別のセッションが同じ作業フォルダで始めていたブランチ `claude/amazing-cerf-0nukce`（`8c0ea20` P’s CUBEの自動取り込み、`e43c940`）の取り込みを、私のコミットが完了させたマージになっていた。そのまま database-ci へ送っており、CI 40171960628 は成功。push済みのため履歴は書き換えない。以後、コミット前に MERGE_HEAD が無いことを確かめる。
+- 利用者がGoogleの3本を貼り替え（閲覧用2本は「デプロイを管理」→鉛筆→「新バージョン」でURLは不変）、`syncMeruhenCloud` を実行（17:23、22日更新・閲覧用40.1MB、158秒）。ドライブの一覧で85日中22日分に線パーツ（`history_rebuild_next` 22）。残りは30分ごとに24日分ずつ。iPhone実機は作り直し完了後に利用者が確認予定。
+- 利用者が `syncMeruhenCloud` を手動で続けて実行し、作り直しが完了（ドライブの一覧 17:47、`history_rebuild_next` なし、処理待ち0・失敗0）。85日中84日に線パーツ。残る10/25は記録0台の日。閲覧用パーツ 45.1MB → 26.6MB、線パーツ 26.5MB。CI #33（40175923624）成功。iPhone実機は未確認。
+
+## 【①〜⑤ 保存・同期・版の照合の改善】2026-10-26 Codex
+
+- 利用者がAstraの①の設計レビュー後、①〜⑤の実装を指定。⑤の表示先は4画面すべてと確認済み。基準はdatabase-ci/main `326c972`。既存の作業フォルダーを保護し、同じ先端・treeを検証した独立した作業フォルダー `/workspace/database-hardening` で実装した。旧質問のログ貼り付け依頼は解決済みで、回答待ち・再依頼にはしない。
+- ①は本体内の永続的な転送待ち＋別接続の転送へ変更。確定時刻の上限・重複防止・未転送や欠落の拒否・容量による休止と明示的な再開・出力コピーの除外を対応。基準点は初回に本体内で一貫して作るため、その分の容量・処理が一度必要。詳細はRELIABILITY_HARDENING.md。旧履歴・評価方式・係数・期間を変更しない。
+- ②はAndroid日別送信の古い版・同時刻で異なる内容の上書き拒否と、営業日・件数・版の受領照合。PCの初回も日別専用ファイルは照合する。③は不正原文を保持して顔文字編集を続け、小数秒6桁を自前解析。④は記録の取得先・版を捕捉し、古い画面へ別版の線を使わない。⑤は4画面の既存詳細へローカル版とGoogle処理版を表示し、未確認を区別。Google閲覧スクリプトの診断と設定保持の更新用ファイル作成ツールを追加した。
+- 先行ゲートは、復元後に仮想画面が起動していなかった点、出力コピーの接続用途を新しい引数で渡す試験差し替え、非同期転送の完了待ち、終了直前のスレッド登録解除の競合を検出した。仮想画面は既存の配置済みXvfbを起動。転送後の接続確認も終わるまでスレッドを登録し、DBを閉じる処理が待てるよう修正。Windowsのファイル解放を調べる既存試験は、スレッド内の接続でも明示的なcloseを確認する形へ拡張し、期待するデータ保護を省かない。同試験20回連続成功。先行失敗ログは/tmp/hardening-gate*.logと対応する作業フォルダーに保持。
+- 製品外の一時DBによる設計確認4項目に加え、製品の転送待ち・再送・取消・締切・プロセス終了・キー変更・休止／再開等の関連17件が成功。Flutterの関連11件と差枚一致600ケース、設定保持ツールの元ファイル保護・設定保持・上書き拒否も確認。最終全体ゲート・CI・公開結果は確定後に追記する。
+- Google実プロジェクトへの認証は無く未反映。Android新APKは未作成。実サイトへの追加調査アクセスはしていない。ソース・Web公開・実Google・実機を区別する。
+- 最終ゲート `/workspace/.cloud-setup/hardening-final-0471`（`/tmp/hardening-final-0471.log`）は **ALL PASSED**。PC455件＋追加226件、UTC条件27件、Flutter711件、analyze成功、JS全ファイルを実行した。公開stageの両画面が版 `0471b8c49eee` と一致し、記録用seedを除外したことも確認。Google更新用4本と設定保持ツール・手順を `/workspace/outputs/hardening-20261026/Google更新セット-0471b8c49eee.zip` に準備した。実Googleは未反映。
+- ソース機能コミット `dc0f75b46d9b11cbff31bb8f664bf25b57fac6bd` をdatabase-ci/mainへ反映。Webはviewer `a5dd884c1ba28e284a30a49272340a669d7957a4`（5ファイル）、share `0c6a362feb794cfdb46fe63c473daa68c8060070`（10ファイル）を公開。両Pagesが同じSHAでbuiltとなり、配信中のmain.dart.js・共有capture_health.mjsが最終stageとバイト一致することを確認。
+- CI `40267008778` はUbuntu成功、Windowsで追加した試験4件の終了時にWinError 32。ジョブ単体のログを取得でき、`with sqlite3.connect()` が接続を閉じないまま一時ファイルを削除していたと確認。該当試験を `closing` へ変更し、既存のSQLite解放確認にも4件を追加した。製品コード・公開物・Google生成物は変更しない。併せて、DBのバイト単位の不変を検証する既存試験では、比較前に背景の転送を完了させる。検証対象の元データ保護の比較は維持する。修正後、PC455件・追加226件が成功。旧CIの再実行はしない。
+- Windows向け試験修正は `f498738` として送付したが、バイト単位で不変を調べるP’s CUBEの試験1箇所の待機追加がコミットから漏れていた。送付直後の実行 `40267804978` を停止し、その2行も追加反映する。製品・Google生成物・公開ページの版は0471b8c49eeeのまま。失敗済み実行 `40267008778` の進行中のfullも、新しい実行で同条件を確認するため停止した。
+- 最終修正コミット **`59b6454e79b9054acfed7dd4c10fbc58a236f9a8`** のGitHub回帰実行 **`40267917933` は全3ジョブ成功**（Windows UTC・Ubuntu UTC・full）。旧実行を再実行したものではない。Windowsで失敗した4試験の明示的な接続closeと、その接続解放をLinuxでも確認する再発検証を含む。
+- 最終確認の内訳はPC455＋226件、UTC27件、Flutter711件、JS74ファイル・総数390件（成功389、従来の任意保存例1件スキップ）。既存試験・ジョブを削除していない。版0471b8c49eeeのGoogle更新セット4本が現在の生成物とバイト一致することを再確認。Google実反映・Android新APKは今回未実施。iPhone/共有の公開完了・実配信の内容照合と区別する。
+- 手元の反映手順・Google更新セット・検証集計は `/workspace/outputs/hardening-20261026/`。この最終記録だけを文書のコミットでdatabase-ciへ送り、回帰CIは追加起動しない。正本originへは月後半のため送らない。
+
+## 【P-STATION自動同期：グラフなしのPC再出力で停止する不具合】2026-10-26 Codex
+
+- 利用者が④のGoogleスクリプトを貼り替え、`syncPscubeCloud` 実行時に `コード.gs:1540` の `Cannot read properties of null (reading points)` を報告。合成Driveで同じ行番号・呼出経路の例外を再現した。新旧のグラフがともに空だとkind同士がundefinedで一致し、空の旧graphのpointsを直接読んでいた。10/25の原本保護処理にある不具合で、今回の配布前試験では空同士のケースが漏れていた。
+- 生成元 `viewer_history_adapters.js` で原本の点列が配列の場合だけ比較し、入力点列の欠損も安全に扱う。グラフが空のまま・省略・後から詳細ありの4件を追加。差枚と回転数が変わらないこと、同じ入力の別台も反映すること、変更なしで再書込みしないことを確認。既存のdaily60点・overview17点の原本保護も維持。
+- P’s CUBE同期・メルヘン同期・共通パーツ・版の96件、閲覧スクリプト2本の13件、計109件成功。生成物の一致・構文確認・差分検査も成功。サンドボックス内で子プロセス試験が停止したため、その試行を終了し、通常実行環境で109件を完了した。Windowsと今回の新コミットのCIはpush後に確認する。今回Web/APKはビルド・再公開しない。
+- 生成元から照合版を `124d21e9dcdb` へ再計算し、共通生成物を同期。公開中の閲覧・共有アプリは引き続き `0471b8c49eee`。別の処理部分の版として区別する。Google実環境の反映・同期完了は利用者の実行結果待ち。
+- 修正版④は製品外 `../outputs/hardening-20261026/04_P-STATION自動同期_修正版124d_全文.txt`。既存運用に合わせ履歴true・差分false、ソース既定値は変更しない。①〜③の再貼替は不要。独自FOLDER_IDがある場合は引き継ぐ。実データ・実サイトへアクセスしていない。pushは日本時間10/26のためdatabase-ciだけへ1回送る。
+
+
+## 【PC版：検証記録の転送が止まる・復元が終わらない不具合の修正】2026-10-26 Claude
+
+- 利用者「今日も少し修正を行いました。問題点や改善点がないかの検討、あれば修正をお願いします」「もし起動が必要なら起動したりしてくださいね」。対象は今日のコミット `326c972`（Android→PCのP’s CUBE当日分）・`dc0f75b`／`f498738`／`59b6454`／`159e5c3`（信頼性修正）・`e93e027`（P-STATION、database-ciのみ）。Android・閲覧ページ・共有カレンダー・Googleスクリプト側の差分は読んだ範囲で不具合なし。問題はPCの検証記録（`input_versions.py`）に集中していた。
+- **転送が止まる**：初版は「最後の接続を閉じたら転送を止める」作りで、PC版は操作ごとに接続を開け閉めするため、送れるのは接続が開いている一瞬だけだった。実DB（読み取りで確認）では16:27の起動で作られた初回の全件基準点のうち、30分後も長町南・幸町57,222件・P’s CUBE24,772件が転送待ちのまま（受領は1,400件と200件）。合成データ2,000件でも、閉じた3秒後に全件が残ることを再現。`as_of()` は締切前の未転送があると例外にするため、このままでは比較の入力を復元できない。→ `hold()`／`release()` を追加し、PC版（`app.py`）は起動中に2つのDBを保持、終了時に解放。本体が使用中で書けないときは次の保存を待たずに1秒おきに続きを送る。転送に成功したら直近のエラー表示を消す。
+- **復元が終わらない**：`as_of()` が版と受領をSQLで結合しており、旧形式の索引（versions_day）があると受領を版1件ごとに全件読む計画になった。実データ（版16.7万・受領8.3万）で5分以上終わらず、合成3万件でも修正前102秒。→ 受領を先に1回だけ読み込んで照合（判定の内容は同じ）。実データで長町南・幸町8.0秒、P’s CUBE1.6秒。
+- **検証記録の肥大**：受領の照合値に内容の写し（平均約1.2KB）を残しており、検証記録が内容の約2倍になっていた。→ SHA-256（64文字）にし、初版の写し形式の受領も同じ内容なら再送として扱う（実DBに写し形式1,600件あり、両形式の混在で動作を確認）。
+- その他：検証先が受け取って本体から消す前に止まった待ち行を、受領で照合して未転送に数えない。同じフォルダーのSQLiteでない `.db`（Thumbs.db等）で `as_of()` が止まらない。日本語WindowsでPYTHONUTF8なしだと落ちる試験 `test_saiwaichou_history.py` の2件に文字コード指定を追加（CIはPYTHONUTF8=1のため通っていた）。
+- 試験：`test_input_versions_outbox.py` に7件追加（保持中は閉じた後も送り切る・使用中の再試行・解放でファイルを手放す・受領はハッシュ・写し形式の受領との照合・受領済み待ち行とThumbs.db・大量の版の復元時間）。修正前のコードで追加試験が失敗することを確認。PC試験は tests 462件・ルートの試験 226件・UTCの行事試験 27件がすべて成功。Flutter・JS・閲覧ページの画面試験は対象コードを変えていないため今回流していない（未確認）。
+- 実機確認：利用者の了承のもと `database/start.cmd` から修正後のPC版を17:20に起動。約25秒で実DBの転送待ちが両方0件になり、`as_of()` の復元件数が本体の台数と一致（58,420件・24,091件）。PC版は起動したまま。実DBへの試験入力・実サイトアクセス・Google更新・APK/EXE/Webのビルドは行っていない。検証記録ファイルは基準点の再記録で約369MBになった（初版の写し形式のままなら、さらに約1億バイト増えていた）。
+- 前提として、手元mainをdatabase-ciの `e93e027` まで早送りしてから今回の修正を載せた。手元の未コミットの記録（Codex「PC版：クラウドの信頼性修正を取り込み」）は内容を変えずに残し、このコミットには含めていない。
+
+## 【Google更新・同期成功の確定／2つのAI間の引き継ぎ】2026-10-26 Codex
+
+### 利用者の報告で確認できた実反映
+
+- 利用者が「全部のスクリプト更新済」と報告。その後、`syncMeruhenCloud` と `syncPscubeCloud` について「両方実行済／成功確認済」と明示。Googleの4本は更新済み、メルヘンとP-STATIONの両自動同期は利用者による実行成功確認済みとして引き継ぐ。直前の項目にある「Google実環境の反映・同期完了は利用者の実行結果待ち」は、その報告より前の状態。
+- 更新対象の対応：①「自分用閲覧のApps Script」＝`database_android/tool/viewer_drive_script.gs`、②「読み取り専用スクリプト」＝`viewer_drive_script_readonly.gs`、③「メルヘン用」＝`meruhen_cloud_sync.gs`、④「P-STATION自動同期のApps Script」＝`pscube_cloud_sync.gs`。アンケート用は対象外。
+- ①〜③は配布済みの版 `0471b8c49eee`、④は例外修正後の版 `124d21e9dcdb` を案内した。④だけの修正版を渡した後に全更新・両同期成功の報告を受けた。実Googleのコード本文・デプロイ版・ファイル内容をCodexが直接取得して照合したわけではなく、実反映の根拠は利用者の報告。台別の値・実iPhone表示・共有への最終表示は今回新たには確認していない。
+- 自動同期用の配布2本は確認済みの従来運用に合わせ、`MERUHEN_HISTORY_VIEWER` / `PSCUBE_HISTORY_VIEWER` をtrue、`*_INCREMENTAL_VIEWER` をfalseにしていた。リポジトリ側の既定値falseは変えていない。`*_FOLDER_ID` の実設定値は未取得。既存に設定がある場合は保持するよう案内した。貼替手順では①②は既存デプロイの新バージョンでURLを維持、③④は保存後に同期関数を1回実行するよう案内。setup関数によるトリガー追加・重複実行は依頼していない。成功後に追加実行する必要はない。
+
+### 修正・検証・公開先を区別した現在地
+
+- ④のグラフなし例外の修正は `e93e027dcc7063b6d29f6f662d29ca997b900bb2`。生成元は `viewer_history_adapters.js`、再発試験は `test_pscube_cloud_sync.mjs`。旧版では新旧null・省略など3ケースが報告と同じ行・呼出経路で失敗し、修正版で追加4ケースすべて成功。グラフなしの数値保持・同じ入力の他台の反映・変更なしでの再書込防止と、既存の詳細60点／一覧17点の保護を確認した。
+- ローカル関連試験は計109件成功。実行：`node --test database_android/tool/test_pscube_cloud_sync.mjs database_android/tool/test_meruhen_cloud_sync.mjs database_android/tool/test_viewer_parts.mjs database_android/tool/test_release_info.mjs`（96件）、`node --test database_android/tool/test_viewer_drive_script.mjs database_android/tool/test_viewer_drive_script_readonly.mjs`（13件）。配布全文の構文・生成元と配布GSの一致・差分検査も成功。実データを使わない合成Driveで確認した。
+- 同修正のGitHub回帰実行 **40287955071は完了・全3ジョブ成功**（Ubuntu UTC・Windows UTC・full）。確認URL：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40287955071 。これは `e93e027` に対する結果。先行する `59b6454` の成功結果とは別。再実行はしていない。
+- iPhone閲覧の公開済みコミットは `database-viewer` の `a5dd884c1ba28e284a30a49272340a669d7957a4`、共有の公開済みコミットは `database-share` の `0c6a362feb794cfdb46fe63c473daa68c8060070`。両アプリの公開版は0471。④の修正後、Web再公開・新APK/EXEの作成は行っていない。Google処理版124dと公開アプリ版0471が異なるのはこのため。
+- 個別の貼替ファイルは作業環境内 `../outputs/hardening-20261026/01_自分用閲覧_全文.txt`、`02_読み取り専用スクリプト_全文.txt`、`03_メルヘン用_全文.txt`、**`04_P-STATION自動同期_修正版124d_全文.txt`**。修正版ではない旧④ファイルと取り違えない。このoutputsはGitHubに同梱されないため、別環境では生成元と上記の履歴設定から作る。コードをチャット上で手動短縮・整形して配布しない。
+
+### 共同作業の履歴・残る確認
+
+- 成功報告の直後は作業環境内の `outputs/hardening-20261026/反映状況.json` だけに書いていた。利用者の「記録したのをgithubにもかいてるよね？」を受け、本項でGitHubの共有記録にも反映する。今後は共有先への反映前に「GitHubへ記録済み」と言わず、保存先と反映状況を分けて報告する。
+- 追記の基準はdatabase-ci/main **`001972e202593f961b1ec858b111dce6cd50bb6a`**。これは別AI（Claude）のPC検証記録転送・復元修正で、親は `e93e027`。今回の記録はその最新の作業記録を取得して末尾へ追加し、Claudeの記録・コード・履歴を保持する。Codexの古いローカル先端e93e027をそのままpushして上書きしない。今回の変更はAGENTS.mdと本記録だけ。日本時間10/26なので反映先は `keyanbaitian6-cell/database-ci/main`。正本 `imakurudev-eng/database/main` への取り込みは前半への切替時にまとめる。
+- 上記のCI全成功を、後続のClaude修正001972eの試験結果として扱わない。Claude修正の実DB確認・試験内容は直前のClaude項目を参照し、そのコミット以降の確認は別途記録する。
+- 今回の依頼に残る作業はこの共有記録と記録ルールの反映確認。Google同期の成功確認は済んでいるので、同じログや再実行を利用者に繰り返し求めない。実データの台別・iPhone実機の表示確認と新APK導入は別途未確認。作業記録を読むためだけに対象サイトを開かない。
+
+
+## 【PC版：CI #42の異常終了の修正（転送スレッドは起動中だけ）・DBの控えの扱い・保存の重さの測定】2026-10-26 Claude
+
+### 依頼と基準
+
+- 利用者「保存が軽くなる方法があるのであれば修正対応。2についてはよくわからないから問題あるなら修正。3は控えなくても良い。クラウド作業でのスクリプトを張り替えたって報告した気がする」、その後CI失敗の通知を受けて「これは今修正中のやつだね」。直前のClaude項（`001972e`）の続き。基準はdatabase-ci/main `5783e92`（Codexの記録コミット。手元mainを早送りしてから修正を載せた）。
+
+### CI #42（`001972e`、実行 https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40293353918）の失敗と修正
+
+- 3ジョブとも失敗（pc Ubuntu UTC：終了コード134、pc Windows UTC：終了コード3、full：check_before_build.sh のPC試験が同じ理由で停止）。ログ（GitHub APIでジョブ単位に取得）では、`tkinter Variable.__del__` の「main thread is not in main loop」が約1秒おきに続いた後、`Tcl_AsyncDelete: async handler deleted by the wrong thread` でプロセスごと落ちた。落ちた位置は discover の約255件目（検証記録の試験の付近）。手元のPython 3.14では再現せず、CIの3.12で出た。test_tk_threads.py（2026-10-18）と同じ種類の問題。
+- 原因：Codexの初版（`dc0f75b`）は、保存の確定ごとに転送スレッドを起こす作りで、試験・スクリプトを含むどのプロセスでもスレッドが動く。`001972e` の使用中の再試行（1秒おき）でスレッドの寿命が延び、そのスレッドでGCが走って、前の試験が残したTkを片付けて落ちた。
+- 修正（`input_versions.py`）：転送スレッドは `hold()` している間（PC版の起動中）だけ動かす。保持中は同じプロセスの保存で起き、ほかに `POLL_SECONDS`（30秒）ごとに確かめて、取り込みブラウザなど別プロセスの保存も送る。使用中は `RETRY_SECONDS`（1秒）後に続きから。保持していないプロセスは保存してもスレッドを起こさず、転送待ちは本体に残る（`flush()`／`wait()` で明示的に送れる）。転送スレッドが本体を待つ時間を0.05秒から1秒に延ばした（検証先は従来どおり待たない）。`wait()` は保持中のスレッドを待たない。確定時刻（confirmed_at）の付け方は変えていない。
+- 試験：`tests/test_input_versions.py`・`tests/test_input_versions_outbox.py` に、別スレッドを動かす前にメインスレッドでGCする `setUpModule` を追加（test_pscube_auto.py と同じ方式）。追加試験：保持していなければ保存してもスレッドが起きない／保持中は別プロセス（subprocess）の保存も次の確認で送る／setUpModuleが残ったTkをメインスレッドで片付ける。
+- 最悪条件の確認：転送スレッドが始まるたびにそのスレッドで `gc.collect()` を強制し、Tkがメインスレッド以外で片付けられたら記録する仕掛けでPC試験全体を流した。修正前（`001972e`＋手元修正の途中）は `Tcl_AsyncDelete` で終了コード3。修正後は異常終了なし・該当0件（転送スレッドの起動26回）。この条件では画面の位置を確かめる `test_app_startup` の1件が重さで1回失敗したが、単独では最悪条件で3回とも成功し、通常条件では成功（転送とは無関係のタイミング差）。
+- CIの実行は #42 の1回だけで、起動はpush（スマホの通知画面には「pull_request」と出たが、APIの記録はpush）。
+
+### DBの控え（利用者の2）
+
+- `fix_anaslo_saved.py --apply` は `data` に `database.pre-anaslo-fix-*.sqlite3` を複製する（10/17に2回）。今後の控えには検証記録の表も入り、本体と同じ識別子を持つため、PCの「更新状況の詳細」に同じ記録が2重に出る（試験で再現：「転送待ち0件」「転送待ち2件」の2行）。→ 識別子ごとに記録番号が最も進んだ1つ（同じなら更新の新しい方）を本体とみなす `_recordings()` を追加し、詳細表示と `as_of()` の両方で使う。今ある控えは10/17以前で表を持たず、現時点の影響はない。
+
+### 保存の重さ（利用者の1）
+
+- 実DBの複製（読み取りで複製）で、取り込みと同じ単位（幸町 2026-10-25 SネオアイムジャグラーEX−KK 38台の一覧／グラフ付き1台）を検証記録あり・なしで各5回測った中央値：一覧670ms→635ms、1台137ms→144ms、台以外の確定50回237ms→252ms。差はばらつきの範囲で、検証記録は保存を重くしていない。プロファイルでは保存時間の約9割が翌日候補（仮）の記録（`_log_candidates`、Android版と同じ決め方で保存ごとに計算し直す既存の仕組み）、検証記録は約2%。翌日候補の計算は比較用の記録の内容に関わるため変更していない。
+
+### 検証記録の控え（利用者の3）
+
+- 利用者の判断で取らない。
+
+### Googleのスクリプト
+
+- 利用者はクラウドのCodexへ「全部のスクリプト更新済」「両方実行済／成功確認済」と報告済み（Codexの `5783e92` の記録。当初GitHubへの記載が漏れていた）。私の前の報告で「貼り替え待ち」と書いたのは、その記録が無い時点の作業記録の文言からの判断で誤り。
+- AIが直接確かめたこと：同期フォルダー（G:\マイドライブ\database共有）の `database-viewer-parts-pscube.json` は 17:32 に Google処理の版 `124d21e9dcdb` で処理済み、`database-viewer-parts-meruhen.json` は `0471b8c49eee`（`processor_release` は今日の修正で加わった項目なので、どちらも新しいスクリプトで動いている）。`e93e027` のメルヘン側の変更は版の文字と、メルヘンでは使わないP’s CUBE用の処理だけで、貼り替え不要。閲覧用2本（①②）の版は、PCに接続先が無いため直接は確かめていない（利用者の報告による）。
+
+### 試験・未確認
+
+- PC試験（通常条件、手元のPython 3.14）：tests 466件を2回・ルートの試験 226件・UTCの行事試験 27件がすべて成功。手元にPython 3.12が無いため、CIと同じ3.12での確認はpush後のCIで行う。Flutter・JS・画面試験は対象コードを変えていないため未実施。
+- 起動中のPC版（17:20起動）は `001972e` のコードのまま。本番のPC版はTkの本体（root）が起動中ずっと1つなので、今回の異常終了は試験のように多数のTkを作っては捨てる環境で起きる種類だが、次の起動から新しい作りになる。
+- 実DB・実サイト・Google・APK/EXE/Webには触れていない。Codexの未コミットの記録（「PC版：クラウドの信頼性修正を取り込み」）は内容を変えずに残し、このコミットには含めない。
+
+
+## 【GitHubの月の前半・後半の切り替え日に何をしても壊れないようにする】2026-10-26 Claude
+
+- 利用者「月半分でgithubアカウント使い分けるようにしたけど、切り替えた瞬間、1日とか16日とかって不具合出る恐れないの？」「当日に何をしても問題がないようにしておこう」。
+- **確かめたこと（アプリへの影響なし）**：PC・Android・閲覧ページ・共有カレンダー・Googleスクリプトのどれも `imakurudev-eng/database` と `database-ci` を参照していない（`git grep` で確認。公開ページは `keyanbaitian6-cell` の `database-viewer`・`database-share` から配信）。`regression.yml` に定期実行・秘密情報は無い。
+- **切り替えで起こり得たこと**：①正本の main にだけ `faba881`（10/21のREADME変更）があり、11/1にそのまま送ると拒否され、AIがforce pushすると履歴が壊れる。②正本の無料枠は日本時間の1日9時ごろに戻るため、それより前にコードを送るとCIが動かない恐れ。③AIの環境の時刻は世界標準時のことが多く（この作業でも `date` がGMT表示）、1日・16日の0時〜9時は前日と読んで送り先を間違える。④後半は正本が約95コミット遅れており、正本から作業を始めたAIは古いコードの上で作業する。
+- **対処**：`faba881` を手元の main へマージ（`f85b2eb`）。同じ変更は既に `836cc62` として入っていたため中身の差は無く、履歴だけがつながった。11/1の正本への送信は fast-forward になる。`tools/push_ci.py` を追加：送り先を日本時間で決め、正本・database-ciの両方の main を取得して、どちらも送るコミットの祖先でなければ止める（force pushしない）。正本へは日本時間の1日9時前にコード（.md以外）を送らない。送る前に、変わるファイル数とCIが動くかを表示する。`AGENTS.md` の「CI を動かす GitHub」に使い方と、新しい作業は2つのmainのうち新しい方を基準にすることを追記。
+- **試験**：`database/tests/test_push_ci.py` を追加（7件）。日付の境目（UTC 10/31 14:59→database-ci、15:00＝日本時間11/1 0:00→正本、11/15 15:00→database-ci）、1日9時の境、.mdだけの判定、手元の空リポジトリ2つで「11月最初の送信で後半の分が正本に入る」「もう一方にだけあるコミットで止まり、上書きしない／合わせてから送れる」「1日7時のコードは止め、.mdは送る」「送る物が無い」。実物の2つのリポジトリに確認モード（`--dry-run`）で、今（10/26→database-ci、中身の差なし）・11/1 7:00（止める）・11/1 10:00（正本へ239ファイル、CI1回）・11/16 0:30（database-ci）を確認。
+- このコミットと `f85b2eb` は `tools/push_ci.py` 自身で database-ci へ1回送る（.py を含むためCIが1回動く）。PUSH_RESULT

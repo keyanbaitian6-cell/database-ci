@@ -30,6 +30,11 @@ Android：`auto_capture_state.dart`・`web_import_page.dart`・`AutoCaptureServi
   取り込み日を指定して開いた全台一覧に、その日の日付タブが無い機種（入れ替えで入った新台。サイトは最新のタブを選ぶ）は、
   その機種のその日を「サイトに記録なし」として `state` の `absent_table_days` に覚え、保存せずに次へ進む（その日の未取得から外す）。
   指定日がタブより新しい（早朝でタブがまだ出ていない）ときは飛ばさない（2026-10-19、入れ替えの日に前日を取り込むと止まった）。
+  自動取り込みは表示中の日が取り込み日と違うページでは待つが、全台一覧で、判定が返す日付タブ（`days`）に取り込み日が無く、
+  取り込み日がタブの最新より前で、選ばれているタブがその中にあるときだけは読み取りへ進め、保存側が読み取り結果の日付タブで
+  確かめて飛ばす（2026-10-22。以前は読み取りの前に待ち続け、保存側の飛ばす処理まで届かなかった）。タブが読めない・取り込み日の
+  タブがある・取り込み日がタブより新しい・人間確認や読み込み中・台別ページの日付違いは、今までどおり待つ。
+  規則はPC `day_tab_absent`・Android `pscubeDayTabAbsent` で同じ（自動の判断と保存側の両方が使う）。
   台別ページへのリンクが無い台は、全台一覧の住所で代用せず「N番台の台別ページへのリンクがありません」で止める。
   利用者の確認（2026-10-19）：過去の日の全台一覧にも、その日ではなく今の台数・台が出る（前の日の台数は出ない）。
   前日のデータが無い機種は撤去されたと読む（撤去機種の最終日は取り込まない）。
@@ -37,6 +42,9 @@ Android：`auto_capture_state.dart`・`web_import_page.dart`・`AutoCaptureServi
   （実際の画面は未確認。利用者「止まる可能性があるなら今のうちに」2026-10-19）。共通JSはリンクも数値もすべて空の台を
   `missing_racks` として返し、0で埋めない。PC・Androidは、過去の日（日付タブの最新より前）に限り、保存した台＋その台
   ＝設置台数で受け付け、`state` の `absent_table_racks` に覚えて未取得の数え方に足す。全部そろった一覧を取り直したら消す。
+  その機種・その日の全台一覧を正しく保存できたら（数値なしの台を含む過去の日の一覧も）、同じトランザクションで
+  `absent_table_days` のその組み合わせだけを外し、未取得に戻す（2026-10-22。以前は外さず、機種ごと除外され続けた）。
+  拒否した一覧・保存に失敗した一覧では、記録も両方の印も変えない。
   今動いている日、数値のある台が1台も無いページ、数値があるのにリンクが無い台は、今までどおり理由を出して止める。
   各日の終点と始点の差を `net_medals` に保存する。MYとは別の値で、元数値のある日だけ付ける。
   通信失敗・拒否や元数値の形式不一致でも、台別の数値・グラフは今までどおり保存して次へ進み、差枚は空欄のまま（0にしない）
@@ -61,6 +69,15 @@ Android：`auto_capture_state.dart`・`web_import_page.dart`・`AutoCaptureServi
 - Android：`test/pscube_auto_test.dart`（4件）。
 - ブラウザ：`tool/test_pscube_auto_browser.mjs`（ダミーページ。実サイトには接続しない）。判定（3種類・確認画面・日付なし・対象外・
   最初のページ）、PC版カードのON/OFF表示、自動開始→保存→次ページ、二重開始なし、失敗の報告、360×300に収まる。
+- 日付タブが無い機種の自動の飛ばし（2026-10-22）：`tool/test_pscube_absent_tab_auto.mjs` が生成済みの判定・読み取りを模擬ページで動かし、
+  出力が `test/fixtures/pscube_absent_tab_auto.json` と同じかを確かめる。同じ出力で、PC `test_pscube_auto_absent_tab.py`
+  （`AutoPilot.tick`→取り込み開始→`submit_capture`→次のURL）と Android `test/pscube_auto_absent_tab_test.dart`
+  （`PscubeAutoGuard.decide`→`importPage`→次のURL）。「タブなし」の解除は `test_pscube_import.py`・`test/pscube_store_test.dart`。
+- Android画面の実動線（2026-10-25）：`test/pscube_auto_flow_test.dart` の10件は画面を作り、日付・開始／OFFのボタンを押し、
+  周期Timer→`_autoTick`→`_capture`→実SQLite Store→次ページを通す。単調時計・営業日の時計・Storeを注入でき、
+  15〜25秒の抽選待ち・一覧表示待ちは仮想時間で進める。WebView境界には上記の生成JSと照合済みの応答を返す。
+  タブなし2場面・次機種の保存・DB再読込・重複防止・待機5場面・読み取り中のOFF／移動・3回失敗後の待機を確認する。
+  時計を省略した通常起動の間隔・待機は従来どおり。実Android WebView・常駐通知サービス・実サイトの確認とは別。
 - 元グラフ：`tool/test_pscube_net_capture.mjs`（模擬通信）。正負の差枚を台別記録へ載せ、通信失敗・形式不一致・準備前でも台別の数値は返して差枚は空欄＋理由。
 - 実WebView2（PC）：`tests/smoke_pscube_net_capture.py`（一時DB・全通信をWebView2内で応答、実サイトに接続しない）。自動で一覧→全台→台別、差枚7日分の保存とMY不変、差枚の取得拒否でも台別を保存。
 
