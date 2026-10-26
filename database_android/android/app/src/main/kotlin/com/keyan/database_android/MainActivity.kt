@@ -27,15 +27,15 @@ class MainActivity : FlutterActivity() {
      * FLAG_KEEP_SCREEN_ON はこの画面が見えている間だけ効き、端末の「画面消灯までの時間」とは別に働く。
      * 明るさもこの画面だけの値で、OFFや画面を閉じたときに端末の明るさへ戻る。
      */
-    private fun keepScreenOnDimmed(on: Boolean) {
+    private fun keepScreenOnDimmed(on: Boolean, dim: Boolean = on) {
         val attributes = window.attributes
         if (on) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            attributes.screenBrightness = 0.05f
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            attributes.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         }
+        attributes.screenBrightness =
+            if (on && dim) 0.05f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = attributes
     }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -115,9 +115,12 @@ class MainActivity : FlutterActivity() {
                             result.success(null)
                         }
                         // 0時の自動取り込みの予約を待つ間（P’s CUBE、2026-10-26）。常駐サービスは起こさず、
-                        // 画面だけ消さずに暗くする（Android 15以降の常駐の1日6時間を待ち時間で使わない）。
+                        // 画面を消さないだけ（23時以降は暗くする）。Android 15以降の常駐の1日6時間を待ち時間で使わない。
                         "keepScreen" -> {
-                            keepScreenOnDimmed(call.argument<Boolean>("on") == true)
+                            keepScreenOnDimmed(
+                                call.argument<Boolean>("on") == true,
+                                call.argument<Boolean>("dim") == true,
+                            )
                             result.success(null)
                         }
                         else -> result.notImplemented()

@@ -41,7 +41,8 @@ class PscubeImportPage extends StatefulWidget {
   State<PscubeImportPage> createState() => _PscubeImportPageState();
 }
 
-class _PscubeImportPageState extends State<PscubeImportPage> {
+class _PscubeImportPageState extends State<PscubeImportPage>
+    with WidgetsBindingObserver {
   late final WebViewController _web;
   PscubeStore? _store;
   String? _script;
@@ -86,6 +87,12 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   DateTime? _midnightRetryAt;
   int _midnightReopens = 0;
   bool _midnightStarting = false;
+  // 予約を待つ間の画面（null＝普段どおり、'bright'＝消さない、'dim'＝消さずに暗く）。
+  // 23時までは明るさを変えない（昼に開いても暗くならない）。0時に始めた分が終わったら手放し、
+  // スマホを操作してアプリに戻ったときから、また次の0時を待つ（取り込み後に朝まで点けっぱなしにしない）。
+  String? _waitingScreen;
+  bool _releasedAfterRun = false;
+  bool _firedTonight = false;
   DateTime _now() => widget.now?.call() ?? DateTime.now();
   // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
   // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前3時で営業日が変わる。
@@ -104,6 +111,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _web = WebViewController();
     unawaited(_prepareBrowser());
     _autoTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
@@ -113,6 +121,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         unawaited(_loadEvent());
       }
       _midnightTick();
+      _updateWaitingScreen();
       unawaited(_autoTick());
     });
     unawaited(_initialize());
@@ -253,7 +262,6 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _midnightEnabled = midnight;
         _midnightArmedFor = midnight ? pscubeNextMidnight(_now()) : null;
       });
-      if (midnight) await _keepScreen(true);
     } catch (error) {
       if (mounted) setState(() => _status = '取り込みの準備ができません：$error');
     }
@@ -378,6 +386,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _auto.turnOff();
     _autoTimer?.cancel();
     if (Platform.isAndroid) {
@@ -579,15 +588,40 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       } catch (_) {}
     }
     // 常駐を止めると画面も普段どおりに戻る。予約中は次の0時まで画面を消さずに暗くしておく。
-    if (mounted && _midnightEnabled) await _keepScreen(true);
+    // 常駐を止めると画面も普段どおりに戻る。0時に始めた分が終わったら、次に操作されるまで画面を手放す。
+    _waitingScreen = null;
+    if (_firedTonight) {
+      _firedTonight = false;
+      _releasedAfterRun = true;
+    }
   }
 
-  /// 画面を消さずに暗くする（常駐サービスは起こさない。0時の予約を待つ間）。
-  Future<void> _keepScreen(bool on) async {
+  /// 0時の予約を待つ間の画面（常駐サービスは起こさない）。周期Timerから呼び、変わったときだけ切り替える。
+  void _updateWaitingScreen() {
+    if (_auto.enabled || _autoChanging) return; // 取り込み中は常駐の設定（消さずに暗く）。
+    final want = pscubeWaitingScreen(
+      reserved: _midnightEnabled,
+      released: _releasedAfterRun,
+      now: _now(),
+    );
+    if (want == _waitingScreen) return;
+    _waitingScreen = want;
     if (!Platform.isAndroid) return;
-    try {
-      await _autoService.invokeMethod<void>('keepScreen', {'on': on});
-    } catch (_) {}
+    unawaited(
+      _autoService
+          .invokeMethod<void>('keepScreen', {
+            'on': want != null,
+            'dim': want == 'dim',
+          })
+          .catchError((_) {}),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _releasedAfterRun) {
+      _releasedAfterRun = false; // 操作されたので、また次の0時を待つ。
+    }
   }
 
   Future<void> _setMidnight(bool enabled) async {
@@ -605,8 +639,8 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
       _midnightArmedFor = enabled ? pscubeNextMidnight(_now()) : null;
       _midnightRetryAt = null;
       _midnightReopens = 0;
+      _releasedAfterRun = false;
     });
-    if (!_auto.enabled) await _keepScreen(enabled);
   }
 
   /// 予約の0時を過ぎたら、前日の営業日を指定して自動取り込みをONにする。サイトとの接続が切れていれば
@@ -648,6 +682,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _midnightStarting = false;
         if (!mounted) return;
         if (_auto.enabled) {
+          _firedTonight = true;
           _rearmMidnight(_now(), 'ON・0時の予約で${shortDayLabel(day)}の分を始めました');
         } else {
           _midnightRetryAt = _now().add(const Duration(minutes: 1));
@@ -663,13 +698,15 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
     final day = iso(armed.subtract(const Duration(days: 1)));
     return '0時の予約：${shortDayLabel(iso(armed))} 0:00に${shortDayLabel(day)}の分を開始。'
-        'この画面を前に出したまま充電（画面は暗く点灯）';
+        'この画面を前に出したまま充電（画面は消さず、23時から暗く）';
   }
 
   void _rearmMidnight(DateTime now, String? message) {
-    _midnightArmedFor = pscubeNextMidnight(now);
-    _midnightRetryAt = null;
-    _midnightReopens = 0;
+    setState(() {
+      _midnightArmedFor = pscubeNextMidnight(now);
+      _midnightRetryAt = null;
+      _midnightReopens = 0;
+    });
     if (message != null) _autoMessage(message);
   }
 

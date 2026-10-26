@@ -175,6 +175,21 @@ void main() {
     );
   });
 
+  test('0時の予約を待つ間の画面：23時まで明るさはそのまま、23時から暗く。予約なし・取り込み後は普段どおり', () {
+    String? at(int hour, {bool reserved = true, bool released = false}) =>
+        pscubeWaitingScreen(
+          reserved: reserved,
+          released: released,
+          now: DateTime(2026, 10, 26, hour),
+        );
+    expect(at(15), 'bright', reason: '昼に開いても暗くしない');
+    expect(at(22), 'bright');
+    expect(at(23), 'dim');
+    expect(at(1), 'bright', reason: '0時に始められず待っている間（3時まで）');
+    expect(at(23, reserved: false), isNull);
+    expect(at(23, released: true), isNull, reason: '0時に始めた分が終わったら手放す');
+  });
+
   test('営業日は日本時間の午前3時で切り替わり、取り込み日は直近7日から選ぶ', () {
     expect(pscubeBusinessDay(DateTime(2026, 10, 4, 2, 59)), '2026-10-03');
     expect(pscubeBusinessDay(DateTime(2026, 10, 4, 3, 0)), '2026-10-04');

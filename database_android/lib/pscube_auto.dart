@@ -39,6 +39,14 @@ Object? pscubeMidnightDue(DateTime now, DateTime armedFor) {
 
 enum PscubeMidnight { missed }
 
+/// 0時の予約を待つ間の画面。null＝普段どおり（予約なし・0時に始めた分が終わって手放した後）、
+/// 'bright'＝消さない（23時まで。昼に開いても暗くしない）、'dim'＝消さずに暗く（23時から）。
+String? pscubeWaitingScreen({
+  required bool reserved,
+  required bool released,
+  required DateTime now,
+}) => !reserved || released ? null : (now.hour >= 23 ? 'dim' : 'bright');
+
 /// 取り込み日として選べる営業日（新しい順）。サイトが見せるのは本日〜6日前の7日分。
 List<String> pscubeRecentBusinessDays([DateTime? now, int count = 7]) {
   final latest = DateTime.parse('${pscubeBusinessDay(now)}T00:00:00Z');
