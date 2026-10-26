@@ -106,3 +106,94 @@ class OutboxTests(unittest.TestCase):
         iv.resume_recording(self.store.path)
         values=iv.as_of(self.root/iv.FILE_NAME,'meruhen',datetime.now().astimezone()+timedelta(seconds=1))
         self.assertEqual(next(iter(values.values()))['games'],4500)
+    def test_receipts_keep_a_hash_not_a_second_copy_of_the_content(self):
+        self.store.save([dict(ROW,memo='x'*2000)]);iv.flush(self.store.path)
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db:
+            self.assertEqual({r[0] for r in db.execute('SELECT length(digest) FROM iv_receipts')},{64})
+    def test_receipts_written_as_full_text_still_match_a_resend(self):
+        # 2026-10-26の初版は受領に内容の写しを残した。実DBにその形の受領と未削除の待ち行がある。
+        self.store.save([ROW]);pending=self.rows();iv.flush(self.store.path)
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db, db:
+            for seq,key,day,at,confirmed,kind,value in pending:
+                db.execute('UPDATE iv_receipts SET digest=? WHERE seq=?',(json.dumps(['meruhen',key,day,at,confirmed,kind,value],ensure_ascii=False),seq))
+        with self.store.db:self.store.db.executemany('INSERT INTO iv_outbox VALUES(?,?,?,?,?,?,?)',pending)
+        iv.flush(self.store.path)
+        self.assertEqual(self.rows(),[])
+    def test_received_but_not_yet_removed_rows_are_not_reported_as_unsent(self):
+        from datetime import datetime,timedelta
+        self.store.save([ROW]);pending=self.rows();iv.flush(self.store.path)
+        # 検証先の確定後、本体から消す前に止まった状態。
+        with self.store.db:self.store.db.executemany('INSERT INTO iv_outbox VALUES(?,?,?,?,?,?,?)',pending)
+        (self.root/'Thumbs.db').write_bytes(b'not a database')
+        cutoff=datetime.now().astimezone()+timedelta(seconds=1)
+        self.assertEqual(next(iter(iv.as_of(self.root/iv.FILE_NAME,'meruhen',cutoff).values()))['games'],ROW['games'])
+        self.store.save([dict(ROW,games=4100)])
+        with self.assertRaisesRegex(ValueError,'未転送'):
+            iv.as_of(self.root/iv.FILE_NAME,'meruhen',datetime.now().astimezone()+timedelta(seconds=1))
+
+
+class HeldTransferTests(unittest.TestCase):
+    """PC版は操作ごとに接続を閉じる。起動中は閉じた後も送り切る（2026-10-26、実DBで基準点5.7万件が残った）。"""
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.path=self.root/'db.sqlite3'
+        with patch.object(iv,'_schedule'):
+            with closing(Store(self.path,recording=False)) as store:
+                with store.db:
+                    store.db.executemany('INSERT INTO days VALUES(?,?,?,?,?)',[(ROW['store'],ROW['day'],ROW['machine'],rack,json.dumps(dict(ROW,rack=rack))) for rack in range(3*iv.BATCH)])
+            # 記録の開始（全件基準点）と保存。ここでは送らずに閉じる。
+            store=Store(self.path);store.save([dict(ROW,rack=1,games=4000)]);store.close()
+    def pending(self):
+        with closing(sqlite3.connect(self.path)) as db:return db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0]
+    def until_sent(self,seconds=15):
+        import time
+        deadline=time.monotonic()+seconds
+        while self.pending() and time.monotonic()<deadline:time.sleep(.05)
+        return self.pending()
+    def test_held_path_sends_what_closed_connections_left_without_another_save(self):
+        self.assertGreater(self.pending(),3*iv.BATCH)
+        iv.hold(self.path);self.addCleanup(iv.release,self.path)
+        self.assertEqual(self.until_sent(),0)
+        # 閉じた接続の後の保存も、保持している間は次の操作を待たずに送る。
+        store=Store(self.path);store.save([dict(ROW,rack=2,games=4200)]);store.close()
+        self.assertEqual(self.until_sent(),0)
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM versions WHERE kind='write'").fetchone()[0],2)
+    def test_busy_main_database_is_retried_instead_of_waiting_for_the_next_save(self):
+        real=iv.flush;calls=[]
+        def busy_once(path,**options):
+            calls.append(path)
+            if len(calls)==1:raise sqlite3.OperationalError('database is locked')
+            return real(path,**options)
+        with patch.object(iv,'RETRY_SECONDS',.05),patch.object(iv,'flush',side_effect=busy_once):
+            iv.hold(self.path)
+            try:self.assertEqual(self.until_sent(),0)
+            finally:iv.release(self.path)
+        self.assertGreaterEqual(len(calls),2)
+        self.assertNotIn(iv._key(self.path),iv.state())
+    def test_release_stops_the_transfer_and_lets_go_of_the_files(self):
+        iv.hold(self.path);iv.release(self.path)
+        self.assertNotIn(iv._key(self.path),iv._workers)
+        # Windowsでも消せる（転送が接続を持ったままにならない）。
+        (self.root/iv.FILE_NAME).unlink(missing_ok=True);self.path.unlink()
+
+
+class LargeHistoryTests(unittest.TestCase):
+    def test_as_of_reads_receipts_once_instead_of_per_version(self):
+        # 受領と版をSQLで結合すると、版1件ごとに受領を全件読む（2026-10-26、実データの版16.7万件で終わらなかった）。
+        import time
+        from datetime import datetime,timedelta
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/iv.FILE_NAME;count=30000;at='2026-10-26T12:00:00+09:00'
+            with closing(sqlite3.connect(path)) as db,db:
+                db.execute('CREATE TABLE versions (id INTEGER PRIMARY KEY, source TEXT NOT NULL,key TEXT NOT NULL,day TEXT,saved_at TEXT NOT NULL,kind TEXT NOT NULL,content TEXT)')
+                db.execute('CREATE TABLE iv_receipts (identity TEXT, seq INTEGER, digest TEXT NOT NULL, confirmed_at TEXT, version_id INTEGER, PRIMARY KEY(identity,seq))')
+                # 2026-10-25の初版が作った索引。実データにあり、これがあると結合が受領の全件読みになる。
+                db.execute('CREATE INDEX versions_key ON versions(source, key, id)')
+                db.execute('CREATE INDEX versions_day ON versions(source, day)')
+                db.executemany('INSERT INTO versions VALUES(?,?,?,?,?,?,?)',[(i,'meruhen',f'k{i}','2026-10-26',at,'baseline','{"games":1}') for i in range(1,count+1)])
+                db.executemany('INSERT INTO iv_receipts VALUES(?,?,?,?,?)',[('a',i,'0'*64,at,i) for i in range(1,count+1)])
+            started=time.monotonic()
+            values=iv.as_of(path,'meruhen',datetime.fromisoformat(at)+timedelta(seconds=1))
+            self.assertEqual(len(values),count)
+            self.assertLess(time.monotonic()-started,5)

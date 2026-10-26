@@ -34,7 +34,7 @@ def row(name, rack, net=None, location=SAIWAI_STORE, **kwargs):
 
 class SaiwaichouHistoryTests(unittest.TestCase):
     def test_common_fixture_keeps_same_name_and_week_separate_by_store(self):
-        doc = json.loads((Path(__file__).resolve().parents[2] / 'database_android/test/fixtures/saiwaichou_history_cases.json').read_text())
+        doc = json.loads((Path(__file__).resolve().parents[2] / 'database_android/test/fixtures/saiwaichou_history_cases.json').read_text(encoding='utf-8'))
         nested = doc[VARIETY_KEY]
         weeks, rejected = materialize(nested['base'], nested)
         self.assertEqual(rejected, doc['expected']['rejected'])
@@ -116,7 +116,7 @@ class SaiwaichouHistoryTests(unittest.TestCase):
                 self.assertEqual(a.history_edits_raw(), b.history_edits_raw())
                 sync = root / 'sync'; sync.mkdir(); save_settings(root, sync_dir=str(sync))
                 auto_backup(b, root, strict=True)
-                doc = json.loads((sync / FILE_NAME).read_text())
+                doc = json.loads((sync / FILE_NAME).read_text(encoding='utf-8'))
                 self.assertEqual(doc['base']['store'], STORE)
                 self.assertEqual(doc[VARIETY_KEY]['base'], saiwaichou_base())
                 weeks = materialize(doc[VARIETY_KEY]['base'], doc[VARIETY_KEY])[0]

@@ -10,6 +10,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
+import input_versions
 import pscube_import
 from event_calendar import PscubeEvents, open_event_calendar
 from event_history import open_event_history as show_event_history
@@ -1596,6 +1597,10 @@ def main():
 
     root.after(400, auto_sync_on_start)
     root.after(PSCUBE_SYNC_FIRST_MS, poll_pscube_from_sync)
+    # 翌日候補の比較用の検証記録は、操作ごとに接続を閉じても起動中は送り続ける（input_versions.hold）。
+    recording_paths = (DATA_DIR / 'database.sqlite3', DATA_DIR / 'pscube.sqlite3')
+    for path in recording_paths:
+        input_versions.hold(path)
     def close_app():
         if closing[0]:
             return
@@ -1628,6 +1633,9 @@ def main():
         output_worker.finish()
         if output_worker.thread is not None:
             output_worker.thread.join()
+        # 送り切れない分は本体に残り、次の起動で続きから送る。
+        for path in recording_paths:
+            input_versions.release(path)
         # The event loop has ended; release pending Tk callbacks on this thread.
         list(output_worker.poll())
         try:

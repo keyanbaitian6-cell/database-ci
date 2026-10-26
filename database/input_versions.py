@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import uuid
@@ -23,6 +24,17 @@ _known_paths = set()
 _guard = threading.Lock()
 BATCH = 200
 MAX_PENDING_BYTES = 64 * 1024 * 1024
+# 本体の保存中などで一時的に書けないとき、続きを送るまで待つ秒数。
+RETRY_SECONDS = 1
+
+
+def _key(path):
+    """同じDBを、接続・転送・保持で同じ名前として数える。"""
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _busy(error):
+    return isinstance(error, sqlite3.OperationalError) and 'locked' in str(error)
 
 
 def content(raw):
@@ -58,17 +70,10 @@ class Connection(sqlite3.Connection):
             sqlite3.Connection.rollback(self)
             _last_error[str(self.recording_path)] = repr(error)
     def close(self):
-        path = str(self.recording_path) if self.recording_path else None
+        path = _key(self.recording_path) if self.recording_path else None
         self.recording_path = None
         super().close()
-        worker = None
-        if path:
-            with _guard:
-                _clients[path] = max(0,_clients.get(path,1)-1)
-                if not _clients[path]:
-                    _stops.setdefault(path,threading.Event()).set()
-                    worker = _workers.get(path)
-            if worker and worker is not threading.current_thread(): worker.join(timeout=5)
+        if path: _leave(path)
 
     def commit(self):
         super().commit()
@@ -129,8 +134,8 @@ def attach(db, data_dir, source):
         path = Path(db.execute('PRAGMA database_list').fetchone()[2])
         if isinstance(db, Connection):
             if db.recording_path is None:
-                with _guard: _clients[str(path)] = _clients.get(str(path),0)+1
-            _known_paths.add(str(path))
+                with _guard: _clients[_key(path)] = _clients.get(_key(path),0)+1
+            _known_paths.add(_key(path))
             db.recording_path = path
             db._confirmed()
         _last_error.pop(source,None)
@@ -143,8 +148,35 @@ def attach(db, data_dir, source):
         return False
 
 
+def _leave(path, *, timeout=5):
+    """接続・保持を1つ減らす。最後の1つなら転送を止め、ファイルを手放すまで待つ。"""
+    worker = None
+    with _guard:
+        _clients[path] = max(0,_clients.get(path,1)-1)
+        if not _clients[path]:
+            _stops.setdefault(path,threading.Event()).set()
+            worker = _workers.get(path)
+    if worker and worker is not threading.current_thread(): worker.join(timeout=timeout)
+
+
+def hold(path):
+    """アプリの起動中、接続を閉じても転送を続ける。終了時に release() を呼ぶ。
+
+    PC版は操作ごとに接続を開いて閉じる。接続の数だけで転送を止めると、初回の全件基準点（数万件）や
+    閉じる直前の保存が次の操作まで送られず、締切までに検証先へ届かない（2026-10-26、実DBで確認）。
+    """
+    path = _key(path)
+    with _guard: _clients[path] = _clients.get(path,0)+1
+    _known_paths.add(path)
+    if Path(path).is_file(): _schedule(path)
+
+
+def release(path, *, timeout=5):
+    _leave(_key(path), timeout=timeout)
+
+
 def _schedule(path):
-    path = str(path)
+    path = _key(path)
     with _guard:
         if not _clients.get(path): return
         _stops.setdefault(path,threading.Event()).clear()
@@ -154,26 +186,50 @@ def _schedule(path):
         worker.start()
 
 
-def _run(path):
-    pending=False
+def _pending(path):
     try:
-        flush(path, background=True)
-        if _clients.get(str(path)) and not _stops[str(path)].is_set():
-            with closing(sqlite3.connect(path,timeout=.05)) as db:
-                pending=db.execute('SELECT 1 FROM iv_outbox LIMIT 1').fetchone() is not None
+        with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as db:
+            return db.execute('SELECT 1 FROM iv_outbox LIMIT 1').fetchone() is not None
+    except sqlite3.Error as error:
+        # 使用中で確かめられないときだけ、もう一度送ってみる。表が無いなどは送る物が無い。
+        return _busy(error)
+
+
+def _run(path):
+    stop = _stops[path]
+    finished = False
+    try:
+        while True:
+            try:
+                flush(path, background=True)
+            except sqlite3.OperationalError as error:
+                if not _busy(error): raise
+                # 本体の保存中など。次の保存を待たずに、少し待って続きから送る。
+                if stop.wait(RETRY_SECONDS): break
+                continue
+            _last_error.pop(path, None)
+            finished = True
+            break
     except (sqlite3.Error, OSError, ValueError) as error:
         _last_error[path]=repr(error)
     finally:
-        # 全接続を閉じるまで実行中として登録する。close()との競合で後始末を漏らさない。
         with _guard:
-            _workers.pop(str(path),None)
-        if pending: _schedule(path)
+            _workers.pop(path,None)
+    # 実行中に確定した行の _schedule() は何もしないので、後始末の後に確かめて続ける。
+    if finished and not stop.is_set() and _pending(path): _schedule(path)
+
+
+def _receipt_digest(text):
+    # 受領の照合値。内容の写しを残すと検証記録が内容の約2倍になる（2026-10-26）。
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def flush(path, *, background=False):
     """確定した待ち行だけ転送。読み取りロックを持ったまま検証先を待たない。"""
     path = Path(path)
+    if not path.is_file(): return
     with closing(sqlite3.connect(path, timeout=.05)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): return
         control = db.execute('SELECT identity,source,delivered_seq FROM iv_control').fetchone()
         if not control: return
         identity,source,delivered = control
@@ -191,15 +247,17 @@ def flush(path, *, background=False):
                 with db: db.execute('UPDATE iv_control SET paused_at=coalesce(paused_at,?)',(_now(),))
                 raise ValueError('本体の記録番号が巻き戻っています。復元したDBの再基準化が必要です。')
             while True:
-                if background and _stops.get(str(path),threading.Event()).is_set(): break
+                if background and _stops.get(_key(path),threading.Event()).is_set(): break
                 batch = db.execute('SELECT id,key,day,saved_at,confirmed_at,kind,content FROM iv_outbox ORDER BY id LIMIT ?', (BATCH,)).fetchall()
                 if not batch: break
                 with target:
                     for seq,key,day,at,confirmed,kind,value in batch:
-                        digest = json.dumps([source,key,day,at,confirmed,kind,value],ensure_ascii=False)
+                        text = json.dumps([source,key,day,at,confirmed,kind,value],ensure_ascii=False)
+                        digest = _receipt_digest(text)
                         old = target.execute('SELECT digest FROM iv_receipts WHERE identity=? AND seq=?',(identity,seq)).fetchone()
                         if old:
-                            if old[0]!=digest: raise ValueError('検証記録の同一番号で内容が異なります。')
+                            # 初期の受領は内容の写し（text）をそのまま持つ。どちらの形でも同じ内容なら再送扱い。
+                            if old[0] not in (digest, text): raise ValueError('検証記録の同一番号で内容が異なります。')
                             continue
                         version_id = target.execute('INSERT INTO versions(source,key,day,saved_at,kind,content) VALUES(?,?,?,?,?,?)',(source,key,day,at,kind,value)).lastrowid
                         target.execute('INSERT INTO iv_receipts VALUES(?,?,?,?,?)',(identity,seq,digest,confirmed,version_id))
@@ -240,33 +298,45 @@ def as_of(path, source, cutoff):
     if limit.tzinfo is None: raise ValueError('締切には時差を含めてください。')
     result={}
     checkpoints=[]
+    waiting=[]
     # 検証先にまだ届いていない変更・休止状態を完全な履歴と取り違えない。
     for candidate in Path(path).parent.iterdir():
         if candidate == Path(path) or candidate.suffix not in ('.db','.sqlite3') or not candidate.is_file(): continue
-        with closing(sqlite3.connect(candidate.resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as live:
-            if not live.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): continue
-            control=live.execute('SELECT source,paused_at,identity,delivered_seq FROM iv_control').fetchone()
-            if not control or control[0]!=source: continue
-            checkpoints.append((control[2],control[3]))
-            if control[1] and datetime.fromisoformat(control[1])<limit: raise ValueError('検証記録が休止中です。')
-            if any(datetime.fromisoformat(r[0])<limit for r in live.execute('SELECT saved_at FROM iv_outbox')): raise ValueError('未転送の検証記録があります。')
+        try:
+            with closing(sqlite3.connect(candidate.resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as live:
+                if not live.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): continue
+                control=live.execute('SELECT source,paused_at,identity,delivered_seq FROM iv_control').fetchone()
+                if not control or control[0]!=source: continue
+                checkpoints.append((control[2],control[3]))
+                if control[1] and datetime.fromisoformat(control[1])<limit: raise ValueError('検証記録が休止中です。')
+                waiting+=[(control[2],seq) for seq,at in live.execute('SELECT id,saved_at FROM iv_outbox') if datetime.fromisoformat(at)<limit]
+        except sqlite3.OperationalError:
+            raise  # 使用中などで読めない本体は、確かめられないので完全とはしない。
+        except sqlite3.DatabaseError:
+            continue  # SQLiteではない同名の拡張子のファイル（WindowsのThumbs.dbなど）。
     with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as db:
         tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for identity,seq in checkpoints:
             if seq and ('iv_receipts' not in tables or not db.execute('SELECT 1 FROM iv_receipts WHERE identity=? AND seq=?',(identity,seq)).fetchone()): raise ValueError('検証履歴の確定済み部分が失われています。')
-        resets=[]
+        # 検証先が受け取り、本体から消す前に止まった行は届いている（受領で照合する）。
+        for identity,seq in waiting:
+            if 'iv_receipts' not in tables or not db.execute('SELECT 1 FROM iv_receipts WHERE identity=? AND seq=?',(identity,seq)).fetchone():
+                raise ValueError('未転送の検証記録があります。')
+        # 受領は版の番号（version_id）で引く。索引が無いので、SQLで結合すると版1件ごとに受領を全件読み、
+        # 実データ（版16.7万・受領8.3万、2026-10-26）では終わらなかった。先に1回だけ読む。
+        received={}
         if 'iv_receipts' in tables:
-            for at,confirmed in db.execute("SELECT v.saved_at,r.confirmed_at FROM versions v JOIN iv_receipts r ON r.version_id=v.id WHERE v.source=? AND v.kind='reset'",(source,)):
-                if confirmed and datetime.fromisoformat(confirmed)<limit: resets.append(datetime.fromisoformat(at))
+            received=dict(db.execute('SELECT version_id,confirmed_at FROM iv_receipts WHERE version_id IS NOT NULL'))
+        resets=[]
+        for version_id,at in db.execute("SELECT id,saved_at FROM versions WHERE source=? AND kind='reset'",(source,)):
+            confirmed=received.get(version_id)
+            if confirmed and datetime.fromisoformat(confirmed)<limit: resets.append(datetime.fromisoformat(at))
         latest_reset=max(resets,default=None)
         if 'iv_gaps' in tables and any(datetime.fromisoformat(r[0])<limit and (latest_reset is None or datetime.fromisoformat(r[0])>latest_reset) for r in db.execute('SELECT paused_at FROM iv_gaps WHERE source=?',(source,))):
             raise ValueError('検証記録の休止区間があります。入力の完全性は未確認です。')
-        query = "SELECT v.key,v.saved_at,v.content,NULL,NULL,v.kind FROM versions v WHERE v.source=? ORDER BY v.id"
-        if 'iv_receipts' in tables:
-            query = "SELECT v.key,v.saved_at,v.content,r.version_id,r.confirmed_at,v.kind FROM versions v LEFT JOIN iv_receipts r ON r.version_id=v.id WHERE v.source=? ORDER BY v.id"
-        for key,at,value,version_id,confirmed,kind in db.execute(query,(source,)):
+        for version_id,key,at,value,kind in db.execute('SELECT id,key,saved_at,content,kind FROM versions WHERE source=? ORDER BY id',(source,)):
             if datetime.fromisoformat(at)>=limit: continue
-            if version_id is not None and (confirmed is None or datetime.fromisoformat(confirmed)>=limit):
+            if version_id in received and (received[version_id] is None or datetime.fromisoformat(received[version_id])>=limit):
                 raise ValueError('締切前の保存確定を確認できない記録があります。')
             if kind=='reset': result.clear();continue
             if key=='': continue
@@ -286,7 +356,7 @@ def recording_status_lines(directory):
                 pending=db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0]
                 label='長町南・幸町' if source=='meruhen' else 'P’s CUBE'
                 lines.append(f'{label}の検証記録：'+(f'休止中（{paused}以降の完全性は未確認）' if paused else f'転送待ち{pending}件'))
-                if str(path) in _last_error: lines.append('直近の転送エラー：'+_last_error[str(path)])
+                if _key(path) in _last_error: lines.append('直近の転送エラー：'+_last_error[_key(path)])
         except sqlite3.Error: lines.append(f'{path.name}の検証記録：状態を確認できません。')
     return lines or ['検証記録：未開始']
 
@@ -294,7 +364,7 @@ def recording_status_lines(directory):
 def resume_recording(path):
     """アプリを閉じ、転送先を復旧した後だけ実行する。休止中の過去は埋めない。"""
     path=Path(path)
-    if _clients.get(str(path)): raise ValueError('すべての書き込み接続を閉じてから再開してください。')
+    if _clients.get(_key(path)): raise ValueError('すべての書き込み接続を閉じてから再開してください。')
     flush(path)
     with closing(sqlite3.connect(path)) as db:
         source,paused=db.execute('SELECT source,paused_at FROM iv_control').fetchone()
