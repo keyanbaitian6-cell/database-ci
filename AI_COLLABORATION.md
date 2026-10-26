@@ -3752,3 +3752,17 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 取り戻し：PCは足すだけで消さないため、抜けた21機種（10/24・25は40機種）は、サイトにその日の日付タブが残っている間に取り込み直せば埋まる（タブが何日分残るかは未確認）。
 - 2:10・2:50・06:56 の uiautomator の画面情報は「自動取り込み：ON・残り8件・読み込み中…」のままだったが、当日分の送信（2:23）は「すべて取り込みました」の後にしか起きない。画面を消した後のFlutterの画面情報が更新されていないと考えられる（未確認）。
 - 次の手順（利用者の判断待ち）：機種一覧の読み取りで途中の一覧を受け付けない修正（PC・Android同じ規則）、APK作成。直すまでは、0時の予約も同じく途中で止まる見込み。
+
+### 【修正：P’s CUBE 機種一覧を最後まで読んでから自動取り込みを進める（Claude、2026-10-27、Android 0.5.47・PC）】
+
+- 依頼：直前の調査（10/24・25は19機種、10/26は38機種で止まった）に対し、利用者「直してください」。抜けた日の補完は、利用者「6日分？か7日分は次読み込む時によみとれるからね。その時に補完しましょう」（今回は取り込み直しをしない）。基準 `4a700a7`（database-ci/main。正本 `e8d2fa0` は含まれていることを確認）。
+- 変更（コード `822729e`）：
+  - 一覧の待ち方：台数の分からない一覧（＝機種一覧）は、一番下で4秒増えないことを、少し戻って着き直しながら3回確かめてから終わる（最後に増えてから戻った回数 `idleNudges` が2回）。続きが届いたら数え直す。以前は一番下で3秒増えなければ終わり。Android `lib/pscube_list_wait.dart`（`pscubeUnknownListNudges = 2`）、PC `database/pscube_import.py` の `SCROLL_SCRIPT` で同じ規則。全台一覧（設置台数が分かる）は従来どおり。機種一覧の読み取りは約12秒以上長くなる（1回の取り込みで1回）。
+  - 保存側：自動取り込み（`manual` でない）で、前回の機種一覧（`state.active_machine_keys`）より少なく、新しい機種も無い一覧は保存しない。メッセージ「機種一覧が前回より少なく（N→M機種）、新しい機種もありません…」。同じページの失敗として数え、取り直しのたびにまたスクロールする（3回で待機）。入れ替え（新しい機種がある）は減っていても受け付ける。手動の取り込みは受け付ける。Android `PscubeStore._checkIndexComplete`、PC `PscubeStore._check_index_complete`。
+  - 仕様の変化：撤去だけで機種が減った日は、自動（0時の予約を含む）では機種一覧で止まる。一覧を一番下まで表示して手動で取り込めば進む。既存の試験2件（撤去を表す `test_new_installation_skips_explicit_empty_days_and_keeps_old_machine_history`・Androidの「新台の全空欄の過去日…」）は手動の取り込みに変えた。
+  - 試験の追加：`test/pscube_list_wait_test.dart`（3.5秒遅れで20件ずつ届く61件、最初の到着を無視するサイト。台数不明の終わり方を「3回確かめる」に更新）、`tool/test_pscube_scroll.mjs`（PCのスクリプトで同じ2場面）、`test/pscube_store_test.dart`・`database/test_pscube_import.py`（減った一覧の拒否と並びの維持・入れ替えは受け付け・手動は受け付け）。修正前の待ち方では新しい試験が **20件で止まる**（実機と同じ）ことを確認、修正後は61件。
+  - 文書：`database/PSCUBE_AUTO_CAPTURE.md` に追記。
+- 試験：関係分（PC P’s CUBE 8ファイル114件、Flutter 5ファイル75件、PCスクロールJS）成功。`check_before_build.sh` **ALL PASSED**（`CHECK_BUILD_WORK=/c/w/cbw-listcut`。PC 478件・227件・27件、Flutter 722件、analyzeは既存infoのみ、JS 74項目、閲覧ページ・共有ページの作成と画面試験を含む）。
+- APK（ALL PASSEDと同じコード、`DATABASE_ANDROID_CLONE=original|pscube flutter build apk --release --no-pub`）：`database_android/build/releases/0.5.47/` の `database-0.5.47-2026102701.apk`（`com.keyan.database_android`、SHA-256 `ac98104ba514f7e3…`）と `database-pscube-0.5.47-2026102702.apk`（`.pscube`、`81df6823b3cd8771…`）。aapt2で版・ID、apksigner（Android Studioのjbr）で署名 `4332fcb9…`（前回と同じ）を確認。0.5.45・0.5.46のAPK4本はごみ箱へ。pubspecの最後は `0.5.47+2026102702`。端末への導入は利用者が行う（未実施）。
+- PC版：ソースは更新済み。動いているPC版には、再起動（P’s CUBEの取り込み画面を開き直し）まで反映されない。PCの機種一覧は59機種のまま。
+- 未確認：実サイトの機種一覧が20件ずつ届くこと・遅れの長さ（データの抜け方からの推定）。今夜（10/28 0:00、10/27分）の0時の予約で、P’s CUBE版0.5.47を入れれば59機種そろうか。抜けた10/24〜26は、次の取り込みで台別7日分から補完される分だけ埋まる（当たり0回の台は台別ページを開かないため、その台の日は埋まらない）。
