@@ -3712,3 +3712,13 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - `python tools/push_ci.py` で、機能修正5bc3293・APK作成記録c0676d9・端末導入確認18cc58eをまとめ、`keyanbaitian6-cell/database-ci/main` へ通常push成功。コードを含むmain更新は1回。送信先の `git ls-remote` が `18cc58e66eff03de21c3d306ad0c7b0fbb634e5c` と完全一致することを確認した。正本originへはpushしていない。
 - このコード送信で起動した回帰CIは実行ID **40330014047**、対象コミット **18cc58e66eff03de21c3d306ad0c7b0fbb634e5c**。URL：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40330014047 。1回の照会時点では **実行中（in_progress）** で、成功結果はまだ未確認。手元のALL PASSEDを、このGitHub CIの成功と取り違えない。CIの再実行・定期実行・監視の仕組みは追加していない。
 - この追記は送信結果と実行URLだけの文書変更。試験・ビルドの対象は変わらず、成功済みの同じ試験は再実行しない。追加の回帰CIを起動しない文書コミットとして、同じ期間内リポジトリへ共有する。端末上の両0.5.46の導入は利用者報告とADBの版確認済み、実サイトでの夜間取り込みやデータ内容の照合は別途未確認。
+
+
+## 【PC版：メルヘンがDriveへ上がらなかった件（Googleドライブの文字がG:→E:）】2026-10-26 Claude
+
+- 利用者「今とりあえずPCからメルヘン2店舗分取り込んだんだけどドライブへのアップロード機序はどうなってるんだっけ」。
+- 仕組み：PC版は保存のたびではなく、取り込みブラウザを閉じたとき等に1回、同期フォルダ（`data/settings.json` の `sync_dir`＝`G:/マイドライブ/database共有`）へ全期間・閲覧用・イベント履歴・Android用直近7日分を書き出す（`core._auto_backup`）。Googleドライブのアプリが同期し、メルヘン自動同期のスクリプト（30分ごと）が閲覧・共有用にまとめる。
+- AIが直接確かめたこと：23:41の書き出しが `backup-output-meruhen.json` で `unavailable`「同期フォルダが見つかりません」（最後の成功は10/26 0:17）。Googleドライブのアプリが23:12に起動し直しており、ドライブが `E:`（Google Drive）、`G:` はアクセス拒否、`E:\マイドライブ\database共有` に同じファイルがあった。利用者「多分PCのアカウント切り替えるときにそうなったんだね」「前もこのトラブルあった」（Windowsのアカウント切替で、もう一方のアカウントのドライブがG:を使った可能性。推定で未確認）。
+- 利用者がPCを再起動してG:に戻し、PC版（23:51起動）で「同期フォルダを指定」から同じフォルダを指定し直した（`choose_sync_dir`→`reexport_shared`、サイトへのアクセスなし）。23:53に5項目すべて成功（snapshot・backup・viewer・history・recent）を確認。
+- 対策案（利用者へ提示、未実装）：①同期フォルダに目印ファイル（番号）を置き、`G:` が無ければ他のドライブの `マイドライブ\database共有` を探して番号が一致したときだけ切り替える（別アカウントのDriveへは書かない）。P’s CUBE当日分の読み込みも同じ。②見つからないときはPC版の画面上部に赤帯で知らせる。③各Windowsアカウントの Google ドライブ設定でドライブ文字を別々に固定（利用者側）。
+- 利用者の質問「スマホが送るやつのためにPCを起動しておく必要ってないんだよね？」への回答（コードで確認）：Androidの当日分は Apps Script 経由でDriveの `pscube-day-android-YYYY-MM-DD.json` に入るのでPCは不要。ただし P-STATION 自動同期（`pscube_cloud_sync.gs`）は `pscube-backup-(auto|android|pc|browser)` だけを読み、当日分ファイルは読まない。読むのはPC版（2分ごと）だけなので、比較の記録（翌2時の締切）とiPhoneへの反映にはPC版の起動が要る。止まっていてもデータは失われず、次の起動の15秒後から読み込む。
