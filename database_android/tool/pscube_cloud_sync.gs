@@ -482,7 +482,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
-const APPLICATION_RELEASE = '0471b8c49eee';
+const APPLICATION_RELEASE = '124d21e9dcdb';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -917,7 +917,7 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
-const SCRIPT_RELEASE = '0471b8c49eee';
+const SCRIPT_RELEASE = '124d21e9dcdb';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -1536,8 +1536,12 @@ function vhPscube(folder, base, props, startedAt) {
         fresh = {...fresh, records: fresh.records.map(r => {
           const prior = previous.get(recordKey(r));
           const same = prior && ['bb', 'rb', 'at_art', 'games', 'my'].every(k => prior[k] === r[k]);
-          return same && (prior.graph?.kind === 'daily' || prior.graph?.kind === r.graph?.kind) &&
-            prior.graph.points.length > (r.graph?.points.length || 0)
+          // 新旧ともグラフなしならkindも両方undefinedになる。点列のある原本だけを保護する。
+          const previousPoints = prior?.graph?.points;
+          const incomingPoints = r.graph?.points;
+          return same && Array.isArray(previousPoints) &&
+            (prior.graph.kind === 'daily' || prior.graph.kind === r.graph?.kind) &&
+            previousPoints.length > (Array.isArray(incomingPoints) ? incomingPoints.length : 0)
             ? {...r, graph: prior.graph} : r;
         })};
       }

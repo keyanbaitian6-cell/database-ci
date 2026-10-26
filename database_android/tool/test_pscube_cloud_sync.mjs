@@ -71,6 +71,29 @@ test('P-STATION履歴：PCの16点で一覧グラフ（17点）の原本を縮�
   d.sync(); assert.equal(rawGraph().points.length, 16);
 });
 
+for (const [label, oldGraph, pcGraph] of [
+  ['新旧ともnull', null, null],
+  ['新旧とも省略', undefined, undefined],
+  ['省略からnull', undefined, null],
+  ['グラフなしから詳細あり', null, graph],
+]) test(`P-STATION履歴：PC再出力でグラフが空でも同期を止めない（${label}）`, () => {
+  const d = drive({history: true}); d.setup();
+  d.add('pscube-backup-android-20261014-120000.json', backup([record(7, '2026-10-12', {graph: oldGraph})]));
+  d.sync();
+  const baseFile = d.files.find(f => f.name === 'pscube-viewer-drive.json');
+  d.replace(baseFile, {...backup([record(1), record(7, '2026-10-12', {graph: pcGraph}), record(8)]), kind: 'viewer', source: 'pc'});
+  d.sync();
+  const ref = d.doc('database-viewer-parts-pscube.json').cloud_days.find(x => x.day === '2026-10-12');
+  const records = d.doc(ref.name).data.records;
+  const saved = records.find(r => r.rack === 7);
+  assert.deepEqual(saved.graph ?? null, pcGraph ?? null);
+  assert.equal(saved.net_medals, -300, 'グラフの有無で保存済みの差枚を変えない');
+  assert.equal(saved.games, 3000);
+  assert.ok(records.some(r => r.rack === 8), '同じ入力に含まれる別の台も反映する');
+  const writes = d.writes.length;
+  d.sync(); assert.equal(d.writes.length, writes, '変更がない再同期で書き直さない');
+});
+
 test('P-STATION履歴：新しい不正入力だけ報告・一時障害は次回再試行・旧入力削除でも履歴保持', () => {
   const d = drive({history: true}); d.setup();
   const bad = d.add('pscube-backup-android-20261014-000000.json', '{bad');

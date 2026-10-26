@@ -134,8 +134,12 @@ function vhPscube(folder, base, props, startedAt) {
         fresh = {...fresh, records: fresh.records.map(r => {
           const prior = previous.get(recordKey(r));
           const same = prior && ['bb', 'rb', 'at_art', 'games', 'my'].every(k => prior[k] === r[k]);
-          return same && (prior.graph?.kind === 'daily' || prior.graph?.kind === r.graph?.kind) &&
-            prior.graph.points.length > (r.graph?.points.length || 0)
+          // 新旧ともグラフなしならkindも両方undefinedになる。点列のある原本だけを保護する。
+          const previousPoints = prior?.graph?.points;
+          const incomingPoints = r.graph?.points;
+          return same && Array.isArray(previousPoints) &&
+            (prior.graph.kind === 'daily' || prior.graph.kind === r.graph?.kind) &&
+            previousPoints.length > (Array.isArray(incomingPoints) ? incomingPoints.length : 0)
             ? {...r, graph: prior.graph} : r;
         })};
       }
