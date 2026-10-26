@@ -450,6 +450,8 @@ class PscubeImportTests(unittest.TestCase):
     def test_installation_count_uses_the_current_machine_without_writing(self):
         self.machines[0]['expected_count'] = 31
         self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        import input_versions
+        input_versions.wait(self.store.path.parent)
         before = self.store.path.read_bytes()
         self.assertEqual(installation_count(self.store.path, self.machines[0]['url'] + '#scroll=6'), 31)
         self.assertEqual(installation_count(self.store.path, self.machines[1]['url']), 1)
