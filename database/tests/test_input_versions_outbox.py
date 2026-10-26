@@ -1,4 +1,5 @@
 """検証先の障害・途中取消・確定時刻を本体の保存から切り離す。"""
+from contextlib import closing
 import json
 import sqlite3
 import tempfile
@@ -18,7 +19,7 @@ class OutboxTests(unittest.TestCase):
     def rows(self):return self.store.db.execute('SELECT * FROM iv_outbox ORDER BY id').fetchall()
     def test_target_lock_never_blocks_save_and_pending_survives(self):
         iv.flush(self.store.path)
-        with sqlite3.connect(self.root/iv.FILE_NAME) as blocker:
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as blocker:
             blocker.execute('BEGIN IMMEDIATE')
             self.store.save([ROW])
             self.assertEqual(len(self.store.rows()),1)
@@ -37,7 +38,7 @@ class OutboxTests(unittest.TestCase):
         with self.store.db:
             self.store.db.executemany('INSERT INTO iv_outbox VALUES(?,?,?,?,?,?,?)',pending)
         iv.flush(self.store.path)
-        with sqlite3.connect(self.root/iv.FILE_NAME) as db:
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM versions WHERE key<>''").fetchone()[0],1)
     def test_conflicting_same_sequence_does_not_replace_history(self):
         self.store.save([ROW]);pending=self.rows();iv.flush(self.store.path)
@@ -94,8 +95,8 @@ class OutboxTests(unittest.TestCase):
             subprocess.run([sys.executable,'-c',code,directory,json.dumps(ROW)],env={**os.environ,'PYTHONPATH':str(Path(iv.__file__).parent)},check=True)
             path=Path(directory)/'data.sqlite3'
             iv.flush(path)
-            with sqlite3.connect(path) as db:self.assertEqual(db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0],0)
-            with sqlite3.connect(Path(directory)/iv.FILE_NAME) as db:self.assertEqual(db.execute("SELECT count(*) FROM versions WHERE kind='write'").fetchone()[0],1)
+            with closing(sqlite3.connect(path)) as db:self.assertEqual(db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0],0)
+            with closing(sqlite3.connect(Path(directory)/iv.FILE_NAME)) as db:self.assertEqual(db.execute("SELECT count(*) FROM versions WHERE kind='write'").fetchone()[0],1)
     def test_resume_rebases_current_state_without_filling_the_gap(self):
         from datetime import datetime,timedelta
         self.store.save([ROW]);iv.flush(self.store.path)

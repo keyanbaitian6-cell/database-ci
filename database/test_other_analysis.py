@@ -89,6 +89,8 @@ class OtherAnalysisTests(unittest.TestCase):
         self.assertFalse(is_pscube_backup(path))
         db = Store(self.folder / 'isolated.sqlite3')
         self.addCleanup(db.close)
+        import input_versions
+        input_versions.wait(db.path.parent)
         before = db.path.read_bytes()
         with self.assertRaises(ValueError):
             import_backup(db, path)

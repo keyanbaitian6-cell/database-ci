@@ -8,6 +8,8 @@ from unittest.mock import patch
 import test_atomic_backup as atomic_fixtures
 import test_record_deletions as deletion_fixtures
 import test_backup_output_status as output_fixtures
+import test_input_versions as version_fixtures
+import test_input_versions_outbox as outbox_fixtures
 
 
 class SqliteFixtureCleanupTests(unittest.TestCase):
@@ -20,6 +22,8 @@ class SqliteFixtureCleanupTests(unittest.TestCase):
             output_fixtures.BackupOutputStatusTests('test_combined_reexport_still_updates_meruhen_when_pscube_source_is_broken'),
             output_fixtures.BackupOutputStatusTests('test_combined_reexport_still_updates_pscube_when_meruhen_source_is_broken'),
         ]
+        cases += [version_fixtures.MeruhenVersionTests('test_existing_rows_become_one_baseline_and_preview_image_is_left_out')]
+        cases += [outbox_fixtures.OutboxTests(name) for name in ('test_process_exit_after_commit_keeps_transferable_pending','test_retry_after_target_commit_does_not_duplicate','test_target_lock_never_blocks_save_and_pending_survives')]
         connect, cleanup = sqlite3.connect, tempfile.TemporaryDirectory.cleanup
         connections = []
 

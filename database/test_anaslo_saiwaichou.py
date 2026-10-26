@@ -144,6 +144,8 @@ class MeruhenBackupTests(unittest.TestCase):
                       meruhen_row('2026-09-15', 600, 'L／オキドキデュオ2／FR'),
                       meruhen_row('2026-09-01', 781, 'SネオアイムジャグラーEX−KK', games=4999)])
         from anaslo_converter import read_meruhen_catalog
+        import input_versions
+        input_versions.wait(self.root)
         before = (self.root / 'database.sqlite3').read_bytes()
         self.catalog = read_meruhen_catalog(self.root / 'database.sqlite3')
         self.assertEqual((self.root / 'database.sqlite3').read_bytes(), before)

@@ -61,7 +61,7 @@ class MeruhenVersionTests(unittest.TestCase):
             input_versions.wait(root)
             # 検証先を失った状態を新しい完全な履歴と扱わない。
             # この試験では保存済み行からの新規基準点の作成を模擬する。
-            with sqlite3.connect(root / 'db.sqlite3') as raw:
+            with closing(sqlite3.connect(root / 'db.sqlite3')) as raw:
                 raw.execute('DROP TABLE iv_outbox');raw.execute('DROP TABLE iv_control')
             (root / input_versions.FILE_NAME).unlink()
             for _ in range(2):

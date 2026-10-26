@@ -104,6 +104,8 @@ class ConverterTests(unittest.TestCase):
         external = next(m for m in self.store.export_payload()['machines']
                         if m.get('source_site') == 'anaslo')
         self.assertIsNone(external['url'])
+        import input_versions
+        input_versions.wait(self.store.path.parent)
         before = self.store.path.read_bytes()
         self.assertEqual(installation_count(self.store.path, self.m['url']), self.m['expected_count'])
         self.assertEqual(self.store.path.read_bytes(), before)
@@ -111,6 +113,8 @@ class ConverterTests(unittest.TestCase):
     def test_source_only_catalog_does_not_supply_native_installation_count(self):
         payload = make_backup(self.staging, {'マイジャグラーV': '未知の機種'}, [])
         self.store.import_backup(payload)
+        import input_versions
+        input_versions.wait(self.store.path.parent)
         before = self.store.path.read_bytes()
         self.assertIsNone(installation_count(self.store.path, self.m['url']))
         self.assertEqual(self.store.path.read_bytes(), before)
@@ -141,6 +145,8 @@ class ConverterTests(unittest.TestCase):
 
     def test_catalog_readonly(self):
         put(self.store, self.m, [])
+        import input_versions
+        input_versions.wait(self.store.path.parent)
         before = self.store.path.read_bytes()
         self.assertEqual(read_catalog(self.store.path), [self.m])
         self.assertEqual(self.store.path.read_bytes(), before)
