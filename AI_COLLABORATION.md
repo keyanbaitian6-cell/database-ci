@@ -3561,3 +3561,27 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 試験：`test_input_versions_outbox.py` に7件追加（保持中は閉じた後も送り切る・使用中の再試行・解放でファイルを手放す・受領はハッシュ・写し形式の受領との照合・受領済み待ち行とThumbs.db・大量の版の復元時間）。修正前のコードで追加試験が失敗することを確認。PC試験は tests 462件・ルートの試験 226件・UTCの行事試験 27件がすべて成功。Flutter・JS・閲覧ページの画面試験は対象コードを変えていないため今回流していない（未確認）。
 - 実機確認：利用者の了承のもと `database/start.cmd` から修正後のPC版を17:20に起動。約25秒で実DBの転送待ちが両方0件になり、`as_of()` の復元件数が本体の台数と一致（58,420件・24,091件）。PC版は起動したまま。実DBへの試験入力・実サイトアクセス・Google更新・APK/EXE/Webのビルドは行っていない。検証記録ファイルは基準点の再記録で約369MBになった（初版の写し形式のままなら、さらに約1億バイト増えていた）。
 - 前提として、手元mainをdatabase-ciの `e93e027` まで早送りしてから今回の修正を載せた。手元の未コミットの記録（Codex「PC版：クラウドの信頼性修正を取り込み」）は内容を変えずに残し、このコミットには含めていない。
+
+## 【Google更新・同期成功の確定／2つのAI間の引き継ぎ】2026-10-26 Codex
+
+### 利用者の報告で確認できた実反映
+
+- 利用者が「全部のスクリプト更新済」と報告。その後、`syncMeruhenCloud` と `syncPscubeCloud` について「両方実行済／成功確認済」と明示。Googleの4本は更新済み、メルヘンとP-STATIONの両自動同期は利用者による実行成功確認済みとして引き継ぐ。直前の項目にある「Google実環境の反映・同期完了は利用者の実行結果待ち」は、その報告より前の状態。
+- 更新対象の対応：①「自分用閲覧のApps Script」＝`database_android/tool/viewer_drive_script.gs`、②「読み取り専用スクリプト」＝`viewer_drive_script_readonly.gs`、③「メルヘン用」＝`meruhen_cloud_sync.gs`、④「P-STATION自動同期のApps Script」＝`pscube_cloud_sync.gs`。アンケート用は対象外。
+- ①〜③は配布済みの版 `0471b8c49eee`、④は例外修正後の版 `124d21e9dcdb` を案内した。④だけの修正版を渡した後に全更新・両同期成功の報告を受けた。実Googleのコード本文・デプロイ版・ファイル内容をCodexが直接取得して照合したわけではなく、実反映の根拠は利用者の報告。台別の値・実iPhone表示・共有への最終表示は今回新たには確認していない。
+- 自動同期用の配布2本は確認済みの従来運用に合わせ、`MERUHEN_HISTORY_VIEWER` / `PSCUBE_HISTORY_VIEWER` をtrue、`*_INCREMENTAL_VIEWER` をfalseにしていた。リポジトリ側の既定値falseは変えていない。`*_FOLDER_ID` の実設定値は未取得。既存に設定がある場合は保持するよう案内した。貼替手順では①②は既存デプロイの新バージョンでURLを維持、③④は保存後に同期関数を1回実行するよう案内。setup関数によるトリガー追加・重複実行は依頼していない。成功後に追加実行する必要はない。
+
+### 修正・検証・公開先を区別した現在地
+
+- ④のグラフなし例外の修正は `e93e027dcc7063b6d29f6f662d29ca997b900bb2`。生成元は `viewer_history_adapters.js`、再発試験は `test_pscube_cloud_sync.mjs`。旧版では新旧null・省略など3ケースが報告と同じ行・呼出経路で失敗し、修正版で追加4ケースすべて成功。グラフなしの数値保持・同じ入力の他台の反映・変更なしでの再書込防止と、既存の詳細60点／一覧17点の保護を確認した。
+- ローカル関連試験は計109件成功。実行：`node --test database_android/tool/test_pscube_cloud_sync.mjs database_android/tool/test_meruhen_cloud_sync.mjs database_android/tool/test_viewer_parts.mjs database_android/tool/test_release_info.mjs`（96件）、`node --test database_android/tool/test_viewer_drive_script.mjs database_android/tool/test_viewer_drive_script_readonly.mjs`（13件）。配布全文の構文・生成元と配布GSの一致・差分検査も成功。実データを使わない合成Driveで確認した。
+- 同修正のGitHub回帰実行 **40287955071は完了・全3ジョブ成功**（Ubuntu UTC・Windows UTC・full）。確認URL：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40287955071 。これは `e93e027` に対する結果。先行する `59b6454` の成功結果とは別。再実行はしていない。
+- iPhone閲覧の公開済みコミットは `database-viewer` の `a5dd884c1ba28e284a30a49272340a669d7957a4`、共有の公開済みコミットは `database-share` の `0c6a362feb794cfdb46fe63c473daa68c8060070`。両アプリの公開版は0471。④の修正後、Web再公開・新APK/EXEの作成は行っていない。Google処理版124dと公開アプリ版0471が異なるのはこのため。
+- 個別の貼替ファイルは作業環境内 `../outputs/hardening-20261026/01_自分用閲覧_全文.txt`、`02_読み取り専用スクリプト_全文.txt`、`03_メルヘン用_全文.txt`、**`04_P-STATION自動同期_修正版124d_全文.txt`**。修正版ではない旧④ファイルと取り違えない。このoutputsはGitHubに同梱されないため、別環境では生成元と上記の履歴設定から作る。コードをチャット上で手動短縮・整形して配布しない。
+
+### 共同作業の履歴・残る確認
+
+- 成功報告の直後は作業環境内の `outputs/hardening-20261026/反映状況.json` だけに書いていた。利用者の「記録したのをgithubにもかいてるよね？」を受け、本項でGitHubの共有記録にも反映する。今後は共有先への反映前に「GitHubへ記録済み」と言わず、保存先と反映状況を分けて報告する。
+- 追記の基準はdatabase-ci/main **`001972e202593f961b1ec858b111dce6cd50bb6a`**。これは別AI（Claude）のPC検証記録転送・復元修正で、親は `e93e027`。今回の記録はその最新の作業記録を取得して末尾へ追加し、Claudeの記録・コード・履歴を保持する。Codexの古いローカル先端e93e027をそのままpushして上書きしない。今回の変更はAGENTS.mdと本記録だけ。日本時間10/26なので反映先は `keyanbaitian6-cell/database-ci/main`。正本 `imakurudev-eng/database/main` への取り込みは前半への切替時にまとめる。
+- 上記のCI全成功を、後続のClaude修正001972eの試験結果として扱わない。Claude修正の実DB確認・試験内容は直前のClaude項目を参照し、そのコミット以降の確認は別途記録する。
+- 今回の依頼に残る作業はこの共有記録と記録ルールの反映確認。Google同期の成功確認は済んでいるので、同じログや再実行を利用者に繰り返し求めない。実データの台別・iPhone実機の表示確認と新APK導入は別途未確認。作業記録を読むためだけに対象サイトを開かない。
