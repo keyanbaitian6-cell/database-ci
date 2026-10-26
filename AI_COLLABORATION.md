@@ -3697,3 +3697,11 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - **APK自体での検証**：aapt2（36.0.0）のbadgingで両方のID・表示名・versionName/Codeを確認。apksigner verify成功、証明書SHA-256は両方 `4332fcb94ea909187733f9e8e3537d428f84d3248e39eeda2baf64387ee7a047`（既存0.5.45と一致）。元のseedと両APK内seedのSHA-256は `28619184bad5ff0f9f7ec731a9244d2452e28e47d17ce312ddd76aef793e9f93` で一致し、作成前後も変わっていない。3つのABIのlibapp.soも通常版とP’s CUBE版でバイト一致。
 - **再現と根拠**：検証コード・plan.json・artifacts.json・各版のpubspec・ビルドログ・badging・署名ログは製品外 `../outputs/apk-0.5.46-20261026/`。検証は `JAVA_HOME` をAndroid Studioのjbrへ設定し、専用Pythonで `verify_apks.py` を実行する。別環境では版03で通常版をビルド・保存してから版04でP’s CUBE版をビルド・保存する。APKはGitへ追加しない。
 - **保護と未実施**：既存APK・実DB・設定・Cookie・署名鍵を削除／変更していない。Google生成物・照合版124dを再計算していないため、Googleの貼替不要。端末へのインストール・実機起動／夜間の実サイト動作・Web公開・PC再起動・GitHubへのpushは未実施。既存の未コミット共有記録8行と未追跡ファイルを保持し、今回の版更新と本項だけをローカルでコミットする。
+
+
+## 【APK 0.5.46の端末導入完了・修正と作成記録のpush承認】2026-10-26 Codex
+
+- 利用者「ありがとうインストール完了。pushもね」。通常版・P’s CUBE版のインストール完了は利用者確認済み。直前の2本の更新コマンド（adb -s RFGL146LVVW install -r）による導入として記録する。
+- CodexもADBの読み取りでRFGL146LVVW（SM_A253C）を確認。通常版はversionName 0.5.46／versionCode 2026102603、lastUpdateTime 2026-10-26 22:19:02。P’s CUBE版は0.5.46／2026102604、lastUpdateTime 22:19:09。firstInstallTimeは通常版2026-09-16、P’s CUBE版2026-10-03のまま。端末DBの内容・Cookie・夜間の実サイト動作を今回直接確認したという意味ではない。
+- 日本時間2026-10-26 22:20の `python tools/push_ci.py --dry-run` で、送り先がkeyanbaitian6-cell/database-ci、正本とdatabase-ci両方のmainが手元に含まれることを確認。手元の機能修正5bc3293、APK作成記録と版更新c0676d9、本項が今回の送信対象。正本へpushしない。コードが変わらず直近の全体ゲートALL PASSEDを利用できるため、同じ試験・ビルドは再実行しない。
+- 利用者の明示承認を受け、規定スクリプトで上記をまとめて通常のmain更新として送信する。APK本体・実データ・未追跡ファイルはGitへ追加しない。開始前からある共有記録8行は保持し、本項だけを追加する。CIの対象コミット・実行URLと送信結果は確認後に追記する。
