@@ -3705,3 +3705,10 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - CodexもADBの読み取りでRFGL146LVVW（SM_A253C）を確認。通常版はversionName 0.5.46／versionCode 2026102603、lastUpdateTime 2026-10-26 22:19:02。P’s CUBE版は0.5.46／2026102604、lastUpdateTime 22:19:09。firstInstallTimeは通常版2026-09-16、P’s CUBE版2026-10-03のまま。端末DBの内容・Cookie・夜間の実サイト動作を今回直接確認したという意味ではない。
 - 日本時間2026-10-26 22:20の `python tools/push_ci.py --dry-run` で、送り先がkeyanbaitian6-cell/database-ci、正本とdatabase-ci両方のmainが手元に含まれることを確認。手元の機能修正5bc3293、APK作成記録と版更新c0676d9、本項が今回の送信対象。正本へpushしない。コードが変わらず直近の全体ゲートALL PASSEDを利用できるため、同じ試験・ビルドは再実行しない。
 - 利用者の明示承認を受け、規定スクリプトで上記をまとめて通常のmain更新として送信する。APK本体・実データ・未追跡ファイルはGitへ追加しない。開始前からある共有記録8行は保持し、本項だけを追加する。CIの対象コミット・実行URLと送信結果は確認後に追記する。
+
+
+### 送信結果・CIの現在地（2026-10-26 Codex）
+
+- `python tools/push_ci.py` で、機能修正5bc3293・APK作成記録c0676d9・端末導入確認18cc58eをまとめ、`keyanbaitian6-cell/database-ci/main` へ通常push成功。コードを含むmain更新は1回。送信先の `git ls-remote` が `18cc58e66eff03de21c3d306ad0c7b0fbb634e5c` と完全一致することを確認した。正本originへはpushしていない。
+- このコード送信で起動した回帰CIは実行ID **40330014047**、対象コミット **18cc58e66eff03de21c3d306ad0c7b0fbb634e5c**。URL：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40330014047 。1回の照会時点では **実行中（in_progress）** で、成功結果はまだ未確認。手元のALL PASSEDを、このGitHub CIの成功と取り違えない。CIの再実行・定期実行・監視の仕組みは追加していない。
+- この追記は送信結果と実行URLだけの文書変更。試験・ビルドの対象は変わらず、成功済みの同じ試験は再実行しない。追加の回帰CIを起動しない文書コミットとして、同じ期間内リポジトリへ共有する。端末上の両0.5.46の導入は利用者報告とADBの版確認済み、実サイトでの夜間取り込みやデータ内容の照合は別途未確認。
