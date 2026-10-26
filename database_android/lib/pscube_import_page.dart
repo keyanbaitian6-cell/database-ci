@@ -435,8 +435,8 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   /// サイトの中のページから次のページへは、リンクをたどるのと同じ形（ページ内で移動）で
   /// 開く。アドレスを直接開くと「どのページから来たか」が付かず、普通のブラウザと
   /// 違って見えるため（PC版も同じ形）。サイトの外にいるときだけ直接開く。
-  Future<void> _open(String url) async {
-    if (!_browserReady || _busy || _opening) return;
+  Future<bool> _open(String url) async {
+    if (!_browserReady || _busy || _opening) return false;
     final target = Uri.parse(url);
     if (!PscubeConnection.allowedPage(target)) {
       throw const FormatException('対象のP’s CUBEページではありません。');
@@ -444,7 +444,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     setState(() => _opening = true);
     try {
       final current = Uri.tryParse(await _web.currentUrl() ?? '');
-      if (!mounted) return;
+      if (!mounted) return false;
       final insidePage =
           _connection.canCapture && current?.host == 'www.pscube.jp';
       _connection.start(url);
@@ -456,6 +456,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       } else {
         await _web.loadRequest(target);
       }
+      return true;
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -463,6 +464,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           _status = 'ページへ移動できませんでした。「もう一度開く」を試してください。';
         });
       }
+      return false;
     } finally {
       if (mounted) setState(() => _opening = false);
     }
@@ -676,19 +678,56 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     }
     final day = due as String;
     _midnightStarting = true;
-    setState(() => _targetDay = day);
-    unawaited(
-      _toggleAuto().whenComplete(() {
-        _midnightStarting = false;
-        if (!mounted) return;
-        if (_auto.enabled) {
-          _firedTonight = true;
-          _rearmMidnight(_now(), 'ON・0時の予約で${shortDayLabel(day)}の分を始めました');
-        } else {
-          _midnightRetryAt = _now().add(const Duration(minutes: 1));
+    unawaited(_startMidnight(day, armed));
+  }
+
+  Future<void> _startMidnight(String day, DateTime armed) async {
+    bool current() =>
+        mounted &&
+        _midnightEnabled &&
+        _midnightArmedFor == armed &&
+        _now().isBefore(
+          armed.add(const Duration(hours: pscubeBusinessDayCutoffHour)),
+        );
+    try {
+      final url = await _web.currentUrl();
+      if (!current() || _auto.enabled) return;
+      setState(() => _targetDay = day);
+      // 前日の全台一覧・台別を残したままでも、既存の機種一覧から全機種を対象日に巡る。
+      // 認証の操作やCookieの初期化は行わず、通常の移動と既存の日付照合を使う。
+      if (!_samePage(PscubeStore.index, url)) {
+        if (!await _open(PscubeStore.index)) {
+          if (current()) _retryMidnightStart('機種一覧を開けませんでした');
+          return;
         }
-      }),
-    );
+        if (!current() || _auto.enabled) return;
+      }
+      await _toggleAuto();
+      if (!current()) {
+        if (mounted && _auto.enabled) await _stopAuto('0時の予約を取り消しました');
+        return;
+      }
+      if (_auto.enabled) {
+        _firedTonight = true;
+        _rearmMidnight(_now(), 'ON・0時の予約で${shortDayLabel(day)}の分を始めました');
+      } else {
+        _retryMidnightStart(_autoStatus);
+      }
+    } catch (error) {
+      if (current()) _retryMidnightStart(error.toString());
+    } finally {
+      _midnightStarting = false;
+    }
+  }
+
+  void _retryMidnightStart(String reason) {
+    _midnightReopens++;
+    if (_midnightReopens >= 3) {
+      _rearmMidnight(_now(), '0時の予約：3回試しても始められませんでした。次の0時を待ちます：$reason');
+      return;
+    }
+    _midnightRetryAt = _now().add(const Duration(minutes: 1));
+    _autoMessage('0時の予約：開始できませんでした。1分後に再試行します：$reason');
   }
 
   String _midnightNote() {

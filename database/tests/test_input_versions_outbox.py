@@ -33,6 +33,32 @@ class OutboxTests(unittest.TestCase):
             with self.assertRaises(sqlite3.OperationalError):iv.flush(self.store.path)
             self.assertTrue(self.rows())
         iv.flush(self.store.path);self.assertEqual(self.rows(),[])
+    def test_commit_between_transfer_batches_keeps_confirmation_and_reconstruction(self):
+        from datetime import datetime, timedelta
+        iv.flush(self.store.path)
+        self.store.save([ROW])
+        original = iv._receipt_digest
+        inserted = False
+        def commit_during_transfer(text):
+            nonlocal inserted
+            if not inserted:
+                inserted = True
+                newer = dict(ROW, rack=ROW['rack']+1, games=4300)
+                self.store.db.execute('INSERT INTO days VALUES(?,?,?,?,?)',
+                    (newer['store'], newer['day'], newer['machine'], newer['rack'], json.dumps(newer)))
+                # 保存側のcommit直後、確定時刻を補う処理より先に転送側が進む。
+                sqlite3.Connection.commit(self.store.db)
+            return original(text)
+        with patch.object(iv, '_receipt_digest', side_effect=commit_during_transfer):
+            iv.flush(self.store.path)
+        self.store.db._confirmed()
+        iv.flush(self.store.path)
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM iv_receipts WHERE confirmed_at IS NULL').fetchone()[0], 0)
+        self.assertEqual(self.rows(), [])
+        values=iv.as_of(self.root/iv.FILE_NAME, 'meruhen', datetime.now().astimezone()+timedelta(seconds=1))
+        self.assertEqual(sorted(r['games'] for r in values.values()), [ROW['games'], 4300])
+
     def test_rollback_removes_pending_and_numeric_change(self):
         before=self.rows()
         with self.assertRaises(RuntimeError):

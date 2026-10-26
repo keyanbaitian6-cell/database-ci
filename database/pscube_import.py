@@ -605,6 +605,10 @@ def android_sync_files(folder) -> list[tuple[str, float, Path]]:
     return sorted(found, key=lambda item: (item[1], item[0]))
 
 
+class InvalidAndroidSyncFile(ValueError):
+    """Android同期ファイルの読取・事前検証で見つかった内容の不正。"""
+
+
 ANDROID_SYNC_SETTLE_SECONDS = 10  # Driveが書き終えたばかりのファイルは、次の確認まで待つ
 
 

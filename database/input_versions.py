@@ -233,7 +233,6 @@ def flush(path, *, background=False):
         control = db.execute('SELECT identity,source,delivered_seq FROM iv_control').fetchone()
         if not control: return
         identity,source,delivered = control
-        with db: db.execute('UPDATE iv_outbox SET confirmed_at=? WHERE confirmed_at IS NULL',(_now(),))
         with closing(sqlite3.connect(path.parent/FILE_NAME, timeout=.05)) as target:
             target.execute('CREATE TABLE IF NOT EXISTS versions (id INTEGER PRIMARY KEY, source TEXT NOT NULL,key TEXT NOT NULL,day TEXT,saved_at TEXT NOT NULL,kind TEXT NOT NULL,content TEXT)')
             target.execute('CREATE TABLE IF NOT EXISTS iv_receipts (identity TEXT, seq INTEGER, digest TEXT NOT NULL, confirmed_at TEXT, version_id INTEGER, PRIMARY KEY(identity,seq))')
@@ -248,7 +247,13 @@ def flush(path, *, background=False):
                 raise ValueError('本体の記録番号が巻き戻っています。復元したDBの再基準化が必要です。')
             while True:
                 if background and _stops.get(_key(path),threading.Event()).is_set(): break
-                batch = db.execute('SELECT id,key,day,saved_at,confirmed_at,kind,content FROM iv_outbox ORDER BY id LIMIT ?', (BATCH,)).fetchall()
+                # 保存側のcommitと確定時刻の追記の間でも、今回見えた行の確定を確認する。
+                # 同じトランザクション内で時刻を補って読み、別接続の新しい行がNULLのまま混ざるのを防ぐ。
+                # 検証先を待つ前に本体のロックは解放する。
+                with db:
+                    db.execute('BEGIN IMMEDIATE')
+                    db.execute('UPDATE iv_outbox SET confirmed_at=? WHERE confirmed_at IS NULL', (_now(),))
+                    batch = db.execute('SELECT id,key,day,saved_at,confirmed_at,kind,content FROM iv_outbox ORDER BY id LIMIT ?', (BATCH,)).fetchall()
                 if not batch: break
                 with target:
                     for seq,key,day,at,confirmed,kind,value in batch:

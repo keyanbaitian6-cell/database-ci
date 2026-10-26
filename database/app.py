@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from pathlib import Path
 import base64
+import json
 import math
 import os
 import re
@@ -1095,11 +1096,19 @@ def main():
 
     def import_pscube_file(latest, quiet=False, background=False):
         """P’s CUBEのバックアップ1つを専用の記録へ統合する（メルヘンの記録には混ぜない）。
-        background：起動中の自動読み込み。失敗は画面に出さず記録欄に書き、Falseを返す（次の確認でやり直す）。"""
+        background：起動中の自動読み込み。ファイル内容の不正を区別して例外を返し、呼び出し側が記録・再試行する。"""
         latest = Path(latest)
         store = pscube_import.PscubeStore(DATA_DIR / 'pscube.sqlite3')
         try:
-            summary = store.import_backup(latest)
+            source = latest
+            if background:
+                # 同じ内容を一度だけ読み、DBの読取・保存前の検証だけをファイル固有の失敗にする。
+                try:
+                    source = json.loads(latest.read_text(encoding='utf-8-sig'))
+                    store.import_backup(source, _validate_only=True)
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise pscube_import.InvalidAndroidSyncFile(str(exc)) from exc
+            summary = store.import_backup(source)
             schedule_outputs(pscube=True)
         except Exception as exc:
             if background:
@@ -1173,12 +1182,16 @@ def main():
                 try:
                     import_pscube_file(path, quiet=True, background=True)
                 except Exception as exc:  # noqa: BLE001 - 次の確認でやり直す
-                    message = f'P’s CUBEの自動読み込みに失敗しました（{name}、次の確認でやり直します）：{exc}'
+                    invalid = isinstance(exc, pscube_import.InvalidAndroidSyncFile)
+                    action = 'このファイルを保留して後のファイルを読みます。次の確認で再試行します' if invalid else '次の確認でやり直します'
+                    message = f'P’s CUBEの自動読み込みに失敗しました（{name}、{action}）：{exc}'
                     if pscube_sync_errors.get(name) != message:
                         pscube_sync_errors[name] = message
                         logbox.insert('end', message + '\n')
                         logbox.see('end')
-                    break
+                    if invalid:
+                        continue  # 原本と未読状態を保ち、正常な別の日の記録まで止めない。
+                    break  # DB使用中・同期フォルダの障害などは後続も試さず待つ。
                 pscube_sync_errors.pop(name, None)
                 seen = {**seen, name: mtime}
                 present = {n for n, _m, _p in files}

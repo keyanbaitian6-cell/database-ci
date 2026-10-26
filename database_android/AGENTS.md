@@ -10,8 +10,8 @@
 
 - **正本は GitHub `imakurudev-eng/database` の `main` だけ**。2026-09-25に新デザイン（旧ブランチ `codex/adopt-claude-ui`）と採点v10をマージした `5e6009c` 以降がそれ。
 - **Androidのデザインは新デザインの1つだけ**。9/23以前の旧デザインのコード・ブランチ・APKは使わない、復元しない、そこからビルドしない。デザインを2系統持たない。
-- 作業を始める前に必ず `git fetch origin` と `git pull origin main` をして、最新の `main` から始める。別のフォルダやクローン（例：`Documents/Codex/2026-09-24/a/work/database-claude-review`）の古い状態から作業しない。
-- APKは、最新の `main` を取り込んだ状態からだけビルドする。ビルドの前に `git status` と `git log origin/main..HEAD` / `git log HEAD..origin/main` で差分がないか確かめる。
+- 作業を始める前に、ルートの `AGENTS.md`「CI を動かす GitHub を月の前半・後半で使い分ける」に従い、正本と `database-ci` の両方の `main` を取得・比較する。2つの履歴を含む最新の `main` を基準にし、相手AIの変更と手元の未コミット変更を保持して取り込む。別のフォルダやクローン（例：`Documents/Codex/2026-09-24/a/work/database-claude-review`）の古い状態から作業しない。
+- APKは、両リポジトリの更新を確認して最新の `main` を取り込んだ状態からだけビルドする。ビルドの前に `git status` と、取得した両方の `main` に対する履歴の差を確認する。月後半の正本との未反映差分を、手元が古い状態と取り違えない。
 - **APKをビルドするたびに `database_android/pubspec.yaml` の `version:` の `+` の後ろ（versionCode）を上げる**。形式は `年月日+2桁`（例 `2026092601`、同じ日の2回目は `2026092602`）。下げない。古いAPKを上書きで入れられないようにするため（入れようとするとAndroidが拒否する）。万一古い版がDBを開いても、DB版が新しければ起動画面で止まる。
 - **`adb uninstall`・`pm clear`・アプリのデータ消去は、利用者がバックアップを書き出して中身を確かめるまで絶対にしない**。アンインストールすると端末内の記録・ゴミ箱・翌日候補の記録がすべて消える。`INSTALL_FAILED_VERSION_DOWNGRADE` が出たら、アンインストールではなく versionCode を上げてビルドし直す。
 - **閲覧ページ（database-viewer）を公開・更新するときは、必ず `tool/stage_viewer.py` を通す**。`build/web` には実際の記録（`assets/database_seed.json`）が同梱されるため、そのまま公開しない。

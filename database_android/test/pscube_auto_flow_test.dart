@@ -40,7 +40,9 @@ class _Controller extends BrowserController {
   final navigations = <String>[];
   int probes = 0;
   Completer<Object>? reading;
+  Completer<String?>? locating;
   bool failSave = false;
+  int failOpens = 0, failedOpens = 0;
   Map<String, dynamic> get data => _scenes[scene]!;
 
   void show(String name) {
@@ -50,13 +52,32 @@ class _Controller extends BrowserController {
     delegate.finished?.call(url!);
   }
 
+  void checkOpening() {
+    if (failOpens > 0) {
+      failOpens--;
+      failedOpens++;
+      throw StateError('回帰試験の移動失敗');
+    }
+  }
+
+  @override
+  Future<void> loadRequest(LoadRequestParams params) async {
+    checkOpening();
+    await super.loadRequest(params);
+  }
+
+  @override
+  Future<String?> currentUrl() => locating?.future ?? super.currentUrl();
+
   @override
   Future<void> runJavaScript(String script) async {
     if (script.startsWith('location.assign(')) {
+      checkOpening();
       final target = jsonDecode(
         script.substring('location.assign('.length, script.length - 1),
       ) as String;
       navigations.add(target);
+      if (target == PscubeStore.index) scene = 'index';
       url = target;
       delegate.started?.call(target);
       delegate.finished?.call(target);
@@ -406,6 +427,62 @@ void main() {
         endsWith('#0;0;20261018;0;cd_dai;1;0;0'),
         reason: '3時までの営業日（前日10/18）を取り込む',
       );
+      await finish(tester);
+    });
+
+    for (final previous in ['next_machine', 'rack_other_day']) {
+      testWidgets('$previous：0時の予約は古いページから機種一覧へ戻って対象日を取り込む', (tester) async {
+        clock = DateTime(2026, 10, 19, 23, 59, 59);
+        await open(tester, reserved: true);
+        platform.web.show(previous);
+        await tester.pumpAndSettle();
+        await passMidnight(tester, DateTime(2026, 10, 20, 0, 0, 1));
+        expect(find.text('自動取り込み：ON'), findsOneWidget);
+        await tick(tester);
+        expect(platform.web.captures, ['index']);
+        expect(platform.web.navigations, [
+          PscubeStore.index,
+          contains('#0;0;20261019;0;cd_dai;1;0;0'),
+        ]);
+        await finish(tester);
+      });
+    }
+
+    testWidgets('0時の開始準備中に予約を取り消すと、遅い結果で開始・移動しない', (tester) async {
+      clock = DateTime(2026, 10, 18, 23, 59, 59);
+      await open(tester, reserved: true);
+      platform.web.show('rack_other_day');
+      final locating = Completer<String?>();
+      platform.web.locating = locating;
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 1));
+      await tester.tap(find.byKey(const ValueKey('pscube-midnight-auto')));
+      await flushDatabase(tester);
+      await tester.pumpAndSettle();
+      locating.complete(platform.web.url);
+      await tester.pumpAndSettle();
+      expect(find.text('自動取り込み：OFF'), findsOneWidget);
+      expect(platform.web.navigations, isEmpty);
+      expect(platform.web.captures, isEmpty);
+      expect(await tester.runAsync(store.midnightAutoEnabled), isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('予約開始のページ移動に失敗しても1分間隔の3回までで止める', (tester) async {
+      clock = DateTime(2026, 10, 18, 23, 59, 59);
+      await open(tester, reserved: true);
+      platform.web.show('rack_other_day');
+      platform.web.failOpens = 10;
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 1));
+      expect(platform.web.failedOpens, 1);
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 40));
+      expect(platform.web.failedOpens, 1, reason: '1分より短い間隔で開き直さない');
+      for (var minute = 1; minute <= 4; minute++) {
+        await passMidnight(tester, DateTime(2026, 10, 19, 0, minute, 2));
+      }
+      expect(platform.web.failedOpens, 3);
+      expect(find.text('自動取り込み：OFF'), findsOneWidget);
+      expect(find.textContaining('3回試しても始められませんでした'), findsOneWidget);
+      expect(find.textContaining('0時の予約：10/20'), findsOneWidget);
       await finish(tester);
     });
 
