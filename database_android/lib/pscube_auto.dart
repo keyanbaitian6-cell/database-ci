@@ -9,9 +9,9 @@ import 'pscube_store.dart' show pscubeDayTabAbsent;
 /// 仕様：database/PSCUBE_AUTO_CAPTURE.md。
 const pscubeAutoMaxFailures = 3;
 
-/// 営業日（yyyy-mm-dd）。日本時間の午前2時まではまだ前日（利用者の指定、2026-10-04）。
+/// 営業日（yyyy-mm-dd）。日本時間の午前3時まではまだ前日（利用者の指定、2026-10-04は2時、2026-10-26に3時へ）。
 /// PC版 `business_day`・`recent_business_days`（database/pscube_import.py）と同じ規則。
-const pscubeBusinessDayCutoffHour = 2;
+const pscubeBusinessDayCutoffHour = 3;
 
 String pscubeBusinessDay([DateTime? now]) {
   final day = (now ?? DateTime.now()).subtract(
@@ -20,6 +20,24 @@ String pscubeBusinessDay([DateTime? now]) {
   String two(int value) => value.toString().padLeft(2, '0');
   return '${day.year}-${two(day.month)}-${two(day.day)}';
 }
+
+/// 0時の予約（2026-10-26 利用者「0時ちょうどに取り込みが起動して自動取り込みを開始する」案A）。
+/// 予約した時刻から見た次の0時（端末の時刻＝日本時間）。
+DateTime pscubeNextMidnight(DateTime now) =>
+    DateTime(now.year, now.month, now.day + 1);
+
+/// 予約の0時 [armedFor] を過ぎていれば、取り込む日（その時点の営業日＝前日）を返す。
+/// まだなら null。営業日が切り替わる3時を過ぎたら（端末が眠っていた等）その夜は始めず、
+/// [PscubeMidnight.missed] を返す（次の0時を待つ）。
+Object? pscubeMidnightDue(DateTime now, DateTime armedFor) {
+  if (now.isBefore(armedFor)) return null;
+  final limit = armedFor.add(
+    const Duration(hours: pscubeBusinessDayCutoffHour),
+  );
+  return now.isBefore(limit) ? pscubeBusinessDay(now) : PscubeMidnight.missed;
+}
+
+enum PscubeMidnight { missed }
 
 /// 取り込み日として選べる営業日（新しい順）。サイトが見せるのは本日〜6日前の7日分。
 List<String> pscubeRecentBusinessDays([DateTime? now, int count = 7]) {

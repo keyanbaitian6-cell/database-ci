@@ -1276,14 +1276,15 @@ class BackupSharingTests(unittest.TestCase):
         self.assertIn('save_overlay_layout', OVERLAY_JS)
         self.assertNotIn('database-overlay-pos', OVERLAY_JS)
 
-    def test_business_day_changes_at_2am(self):
-        """深夜2時までは前日扱い（9/22の26時＝9/23 1:59 までは9/22）。"""
+    def test_business_day_changes_at_3am(self):
+        """深夜3時までは前日扱い（9/22の27時＝9/23 2:59 までは9/22）。2026-10-26に2時から3時へ。"""
         from datetime import datetime
         from browser_import import today_iso
         self.assertEqual(today_iso(datetime(2026, 9, 22, 12, 0)), '2026-09-22')
         self.assertEqual(today_iso(datetime(2026, 9, 23, 0, 30)), '2026-09-22')
-        self.assertEqual(today_iso(datetime(2026, 9, 23, 1, 59, 59)), '2026-09-22')
-        self.assertEqual(today_iso(datetime(2026, 9, 23, 2, 0)), '2026-09-23')
+        self.assertEqual(today_iso(datetime(2026, 9, 23, 2, 30)), '2026-09-22')
+        self.assertEqual(today_iso(datetime(2026, 9, 23, 2, 59, 59)), '2026-09-22')
+        self.assertEqual(today_iso(datetime(2026, 9, 23, 3, 0)), '2026-09-23')
         # 月・年の変わり目
         self.assertEqual(today_iso(datetime(2026, 10, 1, 1, 0)), '2026-09-30')
         self.assertEqual(today_iso(datetime(2027, 1, 1, 1, 0)), '2026-12-31')

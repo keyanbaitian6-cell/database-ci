@@ -69,10 +69,10 @@ class DaySelectionTests(unittest.TestCase):
             self.bridge.set_tables_only(True)
         self.assertFalse(self.bridge.get_auto_capture()['tables_only'])
 
-    def test_business_days_change_at_2am(self):
-        days = recent_days(datetime(2026, 10, 4, 1, 59))
+    def test_business_days_change_at_3am(self):
+        days = recent_days(datetime(2026, 10, 4, 2, 59))
         self.assertEqual((days[0], days[1], days[-1], len(days)), ('2026-10-03', '2026-10-02', '2026-09-27', 7))
-        self.assertEqual(recent_days(datetime(2026, 10, 4, 2, 0))[0], '2026-10-04')
+        self.assertEqual(recent_days(datetime(2026, 10, 4, 3, 0))[0], '2026-10-04')
 
     def test_target_date_is_added_without_touching_the_name_encoding(self):
         url = f'{HOST}/standlist_slot/?kind_code=21&machine_name=L%2520%25E7%2594%25B2'

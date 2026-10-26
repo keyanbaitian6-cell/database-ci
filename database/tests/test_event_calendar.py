@@ -102,13 +102,16 @@ class MergeTests(unittest.TestCase):
 
 
 class InAdvanceTests(unittest.TestCase):
-    def test_entered_before_two_oclock_of_the_day_counts_as_in_advance(self):
+    def test_entered_before_three_oclock_of_the_day_counts_as_in_advance(self):
+        # 営業日の切り替えは3時（2026-10-26に2時から変更）。その日の3時より前の入力が「事前」。
         def ev(when):
             return dict(store='saiwaichou', day='2026-10-10', name='華の日', updated_at=when)
         self.assertTrue(date_event_in_advance(ev('2026-10-09T23:00:00+09:00')))
-        self.assertTrue(date_event_in_advance(ev('2026-10-10T01:59:59+09:00')))
-        self.assertTrue(date_event_in_advance(ev('2026-10-09T16:59:59Z')))
-        self.assertFalse(date_event_in_advance(ev('2026-10-10T02:00:00+09:00')))
+        self.assertTrue(date_event_in_advance(ev('2026-10-10T02:30:00+09:00')))
+        self.assertTrue(date_event_in_advance(ev('2026-10-10T02:59:59+09:00')))
+        self.assertTrue(date_event_in_advance(ev('2026-10-09T17:59:59Z')))
+        self.assertFalse(date_event_in_advance(ev('2026-10-10T03:00:00+09:00')))
+        self.assertFalse(date_event_in_advance(ev('2026-10-09T18:00:00Z')))
         self.assertFalse(date_event_in_advance(ev('2026-10-11T10:00:00+09:00')))
         self.assertFalse(date_event_in_advance(dict(store='saiwaichou', day='2026-10-10', name='華の日')))
 

@@ -199,8 +199,8 @@ def _timestamp(value):
 
 # イベントカレンダー（EVENT_CALENDAR.md、2026-10-07）：入力時刻つき・新しい方が上書き・消した印を残す。
 EVENT_JST = timezone(timedelta(hours=9))
-# 営業日は日本時間の午前2時で切り替わる（browser_import.BUSINESS_DAY_CUTOFF_HOUR と同じ）。
-EVENT_DAY_START_HOUR = 2
+# 営業日は日本時間の午前3時で切り替わる（browser_import.BUSINESS_DAY_CUTOFF_HOUR と同じ。2026-10-26に2時から3時へ）。
+EVENT_DAY_START_HOUR = 3
 
 
 def _record_after_deletion(row, mark):
@@ -400,7 +400,7 @@ def pull_shared_rainbow(store, folder):
 
 
 def date_event_in_advance(event):
-    """True when the event was entered before 02:00 JST of its day (the end of the
+    """True when the event was entered before 03:00 JST of its day (the end of the
     previous business day). Untimed events are never counted as entered in advance."""
     at = _event_time(event.get('updated_at'))
     if at is None:
@@ -2438,6 +2438,7 @@ def stale_capture_cutoff(day, since):
 
     since：今回の取り込みを始めた時刻（取り込みの画面を開いた・自動取り込みをONにした時刻）。
     その日の営業が終わった後（翌日の午前2時以降）の数値はもう変わらないので、そこで頭打ちにする。
+    閉店後の基準なので、営業日の切り替え（3時、2026-10-26）とは別に2時のまま（pscube_import.DAY_FINAL_HOUR）。
     P’s CUBE の `stale_cutoff`（pscube_import.py）と同じ考え方。"""
     if since is None or not day:
         return None

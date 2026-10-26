@@ -114,6 +114,12 @@ class MainActivity : FlutterActivity() {
                             keepScreenOnDimmed(false)
                             result.success(null)
                         }
+                        // 0時の自動取り込みの予約を待つ間（P’s CUBE、2026-10-26）。常駐サービスは起こさず、
+                        // 画面だけ消さずに暗くする（Android 15以降の常駐の1日6時間を待ち時間で使わない）。
+                        "keepScreen" -> {
+                            keepScreenOnDimmed(call.argument<Boolean>("on") == true)
+                            result.success(null)
+                        }
                         else -> result.notImplemented()
                     }
                 } catch (error: Exception) {

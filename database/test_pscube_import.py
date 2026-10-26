@@ -38,9 +38,10 @@ class PscubeImportTests(unittest.TestCase):
                 'detail_url': ROOT_URL + f'cgi-bin/nc-v06-001.php?cd_dai={rack}#{day.replace("-", "")}',
                 'graph': {'kind': 'overview', 'zero_y': 10, 'points': [[0, 10], [1, 8]]}}
 
-    def test_business_day_changes_at_2am_japan_time(self):
-        self.assertEqual(business_day(datetime(2026, 10, 4, 1, 59)), '2026-10-03')
-        self.assertEqual(business_day(datetime(2026, 10, 4, 2, 0)), '2026-10-04')
+    def test_business_day_changes_at_3am_japan_time(self):
+        # 2026-10-26に2時から3時へ。
+        self.assertEqual(business_day(datetime(2026, 10, 4, 2, 59)), '2026-10-03')
+        self.assertEqual(business_day(datetime(2026, 10, 4, 3, 0)), '2026-10-04')
         self.assertEqual(business_day(datetime(2026, 10, 4, 23, 30)), '2026-10-04')
         days = recent_business_days(datetime(2026, 10, 4, 1, 0))
         self.assertEqual((days[0], days[1], days[-1], len(days)), ('2026-10-03', '2026-10-02', '2026-09-27', 7))

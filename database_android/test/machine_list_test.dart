@@ -18,11 +18,12 @@ void main() {
       expect(isYouTubeUrl(null), isFalse);
     });
 
-    test('深夜2時までは前日扱い（9/22の26時＝9/23 1:59 までは9/22）', () {
+    test('深夜3時までは前日扱い（9/22の27時＝9/23 2:59 までは9/22、2026-10-26に2時から3時へ）', () {
       expect(todayIso(DateTime(2026, 9, 22, 12)), '2026-09-22');
       expect(todayIso(DateTime(2026, 9, 23, 0, 30)), '2026-09-22');
-      expect(todayIso(DateTime(2026, 9, 23, 1, 59, 59)), '2026-09-22');
-      expect(todayIso(DateTime(2026, 9, 23, 2)), '2026-09-23');
+      expect(todayIso(DateTime(2026, 9, 23, 2, 30)), '2026-09-22');
+      expect(todayIso(DateTime(2026, 9, 23, 2, 59, 59)), '2026-09-22');
+      expect(todayIso(DateTime(2026, 9, 23, 3)), '2026-09-23');
       // 月・年の変わり目
       expect(todayIso(DateTime(2026, 10, 1, 1)), '2026-09-30');
       expect(todayIso(DateTime(2027, 1, 1, 1)), '2026-12-31');

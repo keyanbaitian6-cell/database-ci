@@ -108,7 +108,7 @@ test('台の読み込み：数値異常の台は数えず、差枚の無い日�
   assert.equal(storeLabel('pscube:c740601:20'), 'P-STATION（20スロ）', '閲覧専用ページの表記');
 });
 
-test('イベント：入力時刻の新しい方、時刻のある方が勝つ、消した印は出さない、前日02:00までの入力は＊なし', () => {
+test('イベント：入力時刻の新しい方、時刻のある方が勝つ、消した印は出さない、その日の03:00より前の入力は＊なし（2026-10-26に2時から3時へ）', () => {
   const events = mergeEvents(
     [{store: 'saiwaichou', day: '2026-10-04', name: '半列'},
       {store: 'saiwaichou', day: '2026-10-05', name: '華の日', updated_at: '2026-10-05T12:00:00+09:00'}],
@@ -119,8 +119,9 @@ test('イベント：入力時刻の新しい方、時刻のある方が勝つ�
   assert.equal(eventLabel(events.get('saiwaichou|2026-10-04')), '4台構成');
   assert.equal(eventLabel(events.get('saiwaichou|2026-10-05')), '', '消した印');
   assert.equal(eventLabel(events.get('pscube:c740601:20|2026-10-06')), '業火の極');
-  assert.equal(enteredInAdvance({day: '2026-10-10', at: Date.parse('2026-10-10T01:59:59+09:00')}), true);
-  assert.equal(enteredInAdvance({day: '2026-10-10', at: Date.parse('2026-10-10T02:00:00+09:00')}), false);
+  assert.equal(enteredInAdvance({day: '2026-10-10', at: Date.parse('2026-10-10T02:30:00+09:00')}), true);
+  assert.equal(enteredInAdvance({day: '2026-10-10', at: Date.parse('2026-10-10T02:59:59+09:00')}), true);
+  assert.equal(enteredInAdvance({day: '2026-10-10', at: Date.parse('2026-10-10T03:00:00+09:00')}), false);
   assert.equal(eventLabel(mergeEvents([{store: 'saiwaichou', day: '2026-10-04', name: '半列'}]).get('saiwaichou|2026-10-04')), '半列＊', '時刻不明は＊');
 });
 

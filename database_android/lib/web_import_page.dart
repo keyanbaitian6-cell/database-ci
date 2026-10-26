@@ -107,8 +107,8 @@ bool isYouTubeUrl(String? url) => _youTubeUrlPattern.hasMatch(url ?? '');
 /// 「今日」で判定する（以前は保存済みの最新日だったため、今日の分を消すと
 /// 前日の「済」が出て紛らわしかった）。
 ///
-/// 営業日は深夜2時で切り替わる。0時〜2時は前日の日付を返す（例：9/22の26時＝
-/// 9/23 1:59 までは 2026-09-22）。PC版 `today_iso` と同じ規則。
+/// 営業日は深夜3時で切り替わる。0時〜3時は前日の日付を返す（例：9/22の27時＝
+/// 9/23 2:59 までは 2026-09-22）。PC版 `today_iso` と同じ規則。
 String todayIso([DateTime? now]) {
   final day = (now ?? DateTime.now()).subtract(
     const Duration(hours: businessDayCutoffHour),
@@ -117,8 +117,9 @@ String todayIso([DateTime? now]) {
   return '${day.year}-${two(day.month)}-${two(day.day)}';
 }
 
-/// 営業日の切り替わり時刻（時）。
-const businessDayCutoffHour = 2;
+/// 営業日の切り替わり時刻（時）。2026-10-26 利用者の指定で2時から3時へ（アプリ全体。
+/// 翌日候補の比較・評価の締切 `focusCutoffHour` は2時のまま）。
+const businessDayCutoffHour = 3;
 
 /// 機種一覧の見出し行（「機種名 台数 通常順 ピックアップ順」）か。
 /// 実サイトでは見出し行も機種の行と同じ tr.teram2-link-block で描画される。
@@ -284,7 +285,7 @@ class _WebImportPageState extends State<WebImportPage> {
   bool _legacyAdvanceAllowed = true;
   String _autoStatus = '停止中';
   // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
-  // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前2時で営業日が変わる。
+  // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前3時で営業日が変わる。
   String? _targetDay;
   String _direction = 'top';
   // 手動で取り込んでいるとき、いま済ませた機種。機種一覧へ戻ったあと、一覧の上から探し直さず
@@ -1647,7 +1648,7 @@ class _WebImportPageState extends State<WebImportPage> {
                       ),
                     ],
                   ),
-                  // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+                  // 日付指定取り込み：取り込む営業日を決める（日本時間の午前3時までは前日）。
                   // 上から／下から：機種を一覧のどちら側から取り込むか。押すと自動取り込みをONにする。
                   DropdownButtonFormField<String>(
                     key: ValueKey('meruhen-day-$_targetDay'),

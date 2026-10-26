@@ -1101,17 +1101,18 @@ def is_list_header(name):
     return text.startswith('機種名') and '台数' in text
 
 
-# 営業日の切り替わり時刻。深夜2時までは前日扱い（9/22の26時＝9/23 1:59 までは9/22）。
-BUSINESS_DAY_CUTOFF_HOUR = 2
+# 営業日の切り替わり時刻。深夜3時までは前日扱い（9/22の27時＝9/23 2:59 までは9/22）。
+# 2026-10-26 利用者の指定で2時から3時へ（アプリ全体。翌日候補の比較・評価の締切は2時のまま）。
+BUSINESS_DAY_CUTOFF_HOUR = 3
 
 
 def today_iso(now=None):
-    """「今日」の営業日（yyyy-mm-dd）。深夜2時までは前日の日付を返す。
+    """「今日」の営業日（yyyy-mm-dd）。深夜3時までは前日の日付を返す。
 
     サイトの機種一覧ページには日付が無い。そのページの取り込み状況（印・進み具合）は、
     サイトの日付選択の初期値と同じ「今日」で判定する（以前は保存済みの最新日で判定して
     いたため、今日の分を消すと前日の「済」が表示されて紛らわしかった）。
-    利用者の認識に合わせ、深夜0時〜2時はまだ前日（例：9/22の24時〜26時）として扱う。
+    利用者の認識に合わせ、深夜0時〜3時はまだ前日（例：9/22の24時〜27時）として扱う。
     """
     now = now or datetime.now()
     return (now - timedelta(hours=BUSINESS_DAY_CUTOFF_HOUR)).date().isoformat()
@@ -1121,7 +1122,7 @@ DIRECTIONS = ('top', 'bottom')
 
 
 def recent_days(now=None, count=7):
-    """取り込み日として選べる営業日（新しい順）。日本時間の午前2時までは前日が「今日」。"""
+    """取り込み日として選べる営業日（新しい順）。日本時間の午前3時までは前日が「今日」。"""
     latest = date.fromisoformat(today_iso(now))
     return [(latest - timedelta(days=i)).isoformat() for i in range(count)]
 

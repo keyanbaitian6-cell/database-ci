@@ -77,8 +77,18 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
   final _clock = Stopwatch()..start();
   Duration _elapsed() => widget.elapsed?.call() ?? _clock.elapsed;
   final _autoFailures = <String, int>{};
+  // 0時に自動取り込みを始める予約（2026-10-26 利用者指定、案A）。ONは端末に保存し、この画面を
+  // 開いている間、毎日0時に前日（3時までの営業日）を指定して自動取り込みをONにする。待つ間は画面を
+  // 消さずに暗くするだけで、常駐サービスは使わない（Android 15以降の1日6時間の上限を待ち時間で使わない）。
+  // 自動取り込み自体のONは従来どおり保存しない（開いた直後はOFF）。
+  bool _midnightEnabled = false;
+  DateTime? _midnightArmedFor;
+  DateTime? _midnightRetryAt;
+  int _midnightReopens = 0;
+  bool _midnightStarting = false;
+  DateTime _now() => widget.now?.call() ?? DateTime.now();
   // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
-  // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前2時で営業日が変わる。
+  // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前3時で営業日が変わる。
   String? _targetDay;
   String _direction = 'top';
   // {日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は取り直す。
@@ -97,11 +107,12 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
     _web = WebViewController();
     unawaited(_prepareBrowser());
     _autoTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      // 表示中のイベント名の日が変わった（日付指定・その日の完了・午前2時）ら読み直す。
+      // 表示中のイベント名の日が変わった（日付指定・その日の完了・午前3時）ら読み直す。
       if (_store != null && _eventShownDay != _eventDay && !_eventLoading) {
         _eventLoading = true;
         unawaited(_loadEvent());
       }
+      _midnightTick();
       unawaited(_autoTick());
     });
     unawaited(_initialize());
@@ -227,6 +238,7 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         await store.dayUploadSetting(),
       );
       final lastUpload = await store.lastDayUpload();
+      final midnight = await store.midnightAutoEnabled();
       if (!mounted) {
         await store.close();
         return;
@@ -238,7 +250,10 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         _lastBackup = backedUp;
         _upload = upload;
         _lastUpload = lastUpload;
+        _midnightEnabled = midnight;
+        _midnightArmedFor = midnight ? pscubeNextMidnight(_now()) : null;
       });
+      if (midnight) await _keepScreen(true);
     } catch (error) {
       if (mounted) setState(() => _status = '取り込みの準備ができません：$error');
     }
@@ -563,6 +578,99 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
         await _autoService.invokeMethod<void>('stop');
       } catch (_) {}
     }
+    // 常駐を止めると画面も普段どおりに戻る。予約中は次の0時まで画面を消さずに暗くしておく。
+    if (mounted && _midnightEnabled) await _keepScreen(true);
+  }
+
+  /// 画面を消さずに暗くする（常駐サービスは起こさない。0時の予約を待つ間）。
+  Future<void> _keepScreen(bool on) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _autoService.invokeMethod<void>('keepScreen', {'on': on});
+    } catch (_) {}
+  }
+
+  Future<void> _setMidnight(bool enabled) async {
+    final store = _store;
+    if (store == null) return;
+    try {
+      await store.setMidnightAutoEnabled(enabled);
+    } catch (error) {
+      _autoMessage('0時の予約を保存できませんでした：$error');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _midnightEnabled = enabled;
+      _midnightArmedFor = enabled ? pscubeNextMidnight(_now()) : null;
+      _midnightRetryAt = null;
+      _midnightReopens = 0;
+    });
+    if (!_auto.enabled) await _keepScreen(enabled);
+  }
+
+  /// 予約の0時を過ぎたら、前日の営業日を指定して自動取り込みをONにする。サイトとの接続が切れていれば
+  /// 1分おきに3回まで開き直す。3時（営業日の切り替え）を過ぎたら、その夜は始めずに次の0時を待つ。
+  void _midnightTick() {
+    final armed = _midnightArmedFor;
+    if (!mounted || !_midnightEnabled || armed == null || _midnightStarting) {
+      return;
+    }
+    final now = _now();
+    final due = pscubeMidnightDue(now, armed);
+    if (due == null) return;
+    if (due == PscubeMidnight.missed) {
+      _rearmMidnight(now, '0時の予約：3時までに始められませんでした。次の0時に始めます。');
+      return;
+    }
+    if (_auto.enabled) {
+      _rearmMidnight(now, null); // 手動で動かしている。今夜は何もしない。
+      return;
+    }
+    final retryAt = _midnightRetryAt;
+    if (retryAt != null && now.isBefore(retryAt)) return;
+    if (_autoChanging || _opening || _busy || _store == null) return;
+    if (!_browserReady || _connection.failure != null) {
+      if (_midnightReopens >= 3) {
+        _rearmMidnight(now, '0時の予約：ページを開き直せず、今夜は始めませんでした。次の0時に始めます。');
+        return;
+      }
+      _midnightReopens++;
+      _midnightRetryAt = now.add(const Duration(minutes: 1));
+      unawaited(_retryPage());
+      return;
+    }
+    final day = due as String;
+    _midnightStarting = true;
+    setState(() => _targetDay = day);
+    unawaited(
+      _toggleAuto().whenComplete(() {
+        _midnightStarting = false;
+        if (!mounted) return;
+        if (_auto.enabled) {
+          _rearmMidnight(_now(), 'ON・0時の予約で${shortDayLabel(day)}の分を始めました');
+        } else {
+          _midnightRetryAt = _now().add(const Duration(minutes: 1));
+        }
+      }),
+    );
+  }
+
+  String _midnightNote() {
+    final armed = _midnightArmedFor;
+    if (!_midnightEnabled || armed == null) return '';
+    String iso(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    final day = iso(armed.subtract(const Duration(days: 1)));
+    return '0時の予約：${shortDayLabel(iso(armed))} 0:00に${shortDayLabel(day)}の分を開始。'
+        'この画面を前に出したまま充電（画面は暗く点灯）';
+  }
+
+  void _rearmMidnight(DateTime now, String? message) {
+    _midnightArmedFor = pscubeNextMidnight(now);
+    _midnightRetryAt = null;
+    _midnightReopens = 0;
+    if (message != null) _autoMessage(message);
   }
 
   Future<void> _autoTick() async {
@@ -1143,33 +1251,67 @@ class _PscubeImportPageState extends State<PscubeImportPage> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               const SizedBox(height: 6),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _auto.enabled
-                        ? AppColors.appleBlue
-                        : AppColors.ash,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(48),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _auto.enabled
+                            ? AppColors.appleBlue
+                            : AppColors.ash,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(48),
+                      ),
+                      onPressed:
+                          _autoChanging ||
+                              _opening ||
+                              !_browserReady ||
+                              _connection.failure != null ||
+                              _store == null
+                          ? null
+                          : _toggleAuto,
+                      icon: Icon(
+                        _auto.enabled
+                            ? Icons.autorenew
+                            : Icons.pause_circle_outline,
+                      ),
+                      label: Text('自動取り込み：${_auto.enabled ? 'ON' : 'OFF'}'),
+                    ),
                   ),
-                  onPressed:
-                      _autoChanging ||
-                          _opening ||
-                          !_browserReady ||
-                          _connection.failure != null ||
-                          _store == null
-                      ? null
-                      : _toggleAuto,
-                  icon: Icon(
-                    _auto.enabled
-                        ? Icons.autorenew
-                        : Icons.pause_circle_outline,
+                  const SizedBox(width: 8),
+                  // 0時の予約（2026-10-26）。下のサイトの表示を狭くしないよう、ボタン1つにまとめる。
+                  Tooltip(
+                    message: '0時に自動取り込みを始める（予約）',
+                    child: FilledButton.icon(
+                      key: const ValueKey('pscube-midnight-auto'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _midnightEnabled
+                            ? AppColors.appleBlue
+                            : AppColors.ash,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(0, 48),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      onPressed: _store == null
+                          ? null
+                          : () => unawaited(_setMidnight(!_midnightEnabled)),
+                      icon: Icon(
+                        _midnightEnabled ? Icons.alarm_on : Icons.alarm_off,
+                      ),
+                      label: Text('0時：${_midnightEnabled ? '予約' : 'なし'}'),
+                    ),
                   ),
-                  label: Text('自動取り込み：${_auto.enabled ? 'ON' : 'OFF'}'),
-                ),
+                ],
               ),
-              // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+              if (_midnightEnabled) ...[
+                Text(
+                  _midnightNote(),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                // 下の欄の見出し（枠の上に重なる）と重ならないように空ける。
+                const SizedBox(height: 8),
+              ],
+              // 日付指定取り込み：取り込む営業日を決める（日本時間の午前3時までは前日）。
               // 上から／下から：機種を一覧のどちら側から取り込むか。押すと自動取り込みをONにする。
               DropdownButtonFormField<String>(
                 key: ValueKey('pscube-day-$_targetDay'),

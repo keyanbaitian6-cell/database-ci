@@ -117,7 +117,7 @@ AUTO_CAPTURE_JS = r'''
   autoStatus.id = 'database-auto-status';
   autoStatus.style.cssText = 'font-size:11px;white-space:normal;word-break:break-word';
   autoStatus.textContent = '確認画面ではONのまま待機。確認は手動で操作してください。';
-  // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+  // 日付指定取り込み：取り込む営業日を決める（日本時間の午前3時までは前日）。
   // 上から／下から：機種を一覧のどちら側から取り込むか。どちらも押すと自動取り込みをONにする。
   const autoDayBox = document.createElement('div');
   autoDayBox.style.cssText = 'font-size:12px;display:block';
@@ -173,7 +173,7 @@ AUTO_CAPTURE_JS = r'''
     if (modeChanged) { refreshProgress(); markMachines(); }
     autoSeconds.value = String(state.seconds);
     autoValue.textContent = '間隔：' + Number(state.seconds).toFixed(1) + '秒';
-    // 取り込み日の選択肢は、午前2時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
+    // 取り込み日の選択肢は、午前3時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
     const days = Array.isArray(state.days) ? state.days : [];
     if (JSON.stringify(days) !== autoDay.dataset.days) {
       autoDay.dataset.days = JSON.stringify(days);

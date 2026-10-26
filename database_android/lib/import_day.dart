@@ -5,7 +5,7 @@ library;
 import 'models.dart' show normalizeMachineName;
 
 /// 取り込み日として選べる営業日（新しい順）。[today] は営業日の今日
-/// （`todayIso()`：日本時間の午前2時までは前日）。
+/// （`todayIso()`：日本時間の午前3時までは前日）。
 List<String> recentImportDays(String today, [int count = 7]) {
   final latest = DateTime.parse('${today}T00:00:00Z');
   return [
@@ -39,7 +39,8 @@ String? targetDayMismatch(String? target, String? shown) {
 
 /// [day] の機種の表を、これより前に取ったきりなら取り直す（昼に取った数値を夜の分として残さない）。
 /// [since]：今回の取り込みを始めた時刻。その日の営業が終わった後（翌日の午前2時以降）の数値は
-/// もう変わらないので、そこで頭打ち。PC版 `stale_capture_cutoff`（core.py）と同じ。
+/// もう変わらないので、そこで頭打ち。PC版 `stale_capture_cutoff`（core.py）と同じ。閉店後の基準なので、
+/// 営業日の切り替え（3時、2026-10-26）とは別に2時のまま（3時にすると23時〜0時に取った分を取り直しに行く）。
 /// 取り込みを開き直しただけで、少し前（今夜）に取った分まで取り直さないよう、3時間の余裕を持たせる（昼と夜のような差だけを取り直す。2026-10-05、開き直した後に手動の「次へ」が済んだ機種の表へ向かった不具合）。営業が終わった日は、その日の23時より後に取った分を最終とみなす。
 const staleMargin = Duration(hours: 3);
 

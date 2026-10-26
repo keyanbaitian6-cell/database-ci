@@ -323,11 +323,11 @@ export function mergeEvents(...lists) {
   return merged;
 }
 
-/** その日の02:00（日本時間）より前に入力したか（＊を付けない）。date_events.enteredInAdvance と同じ。 */
+/** その日の03:00（日本時間、2026-10-26に2時から3時へ）より前に入力したか（＊を付けない）。date_events.enteredInAdvance と同じ。 */
 export function enteredInAdvance(event) {
   if (event.at == null) return false;
   const [y, m, d] = event.day.split('-').map(Number);
-  return event.at < Date.UTC(y, m - 1, d, 2 - 9);
+  return event.at < Date.UTC(y, m - 1, d, 3 - 9);
 }
 
 export function eventLabel(event) {

@@ -40,8 +40,11 @@ SHOP = 'c740601'
 HOST = 'www.pscube.jp'
 ROOT_URL = f'https://{HOST}/dedamajyoho-P-townDMMpachi/{SHOP}/'
 FORMAT = 'pscube-viewer'
-# 営業日の切り替わり時刻。日本時間の午前2時まではまだ前日の営業日（利用者の指定、2026-10-04）。
-BUSINESS_DAY_CUTOFF_HOUR = 2
+# 営業日の切り替わり時刻。日本時間の午前3時まではまだ前日の営業日（利用者の指定、2026-10-04は2時、2026-10-26に3時へ）。
+BUSINESS_DAY_CUTOFF_HOUR = 3
+# 営業が終わった日の数値を最終とみなす基準（翌日2時。STALE_MARGIN_HOURS を引いてその日の23時）。閉店後の時刻なので
+# 営業日の切り替え（3時）とは別に2時のまま。3時にすると23時〜0時に取った分を取り直しに行き、アクセスが増えるだけ。
+DAY_FINAL_HOUR = 2
 DIRECTIONS = ('top', 'bottom')
 # 取り込み日の日付タブがサイトに無かった機種と日（新台・入れ替え）。その日の未取得に数えない（2026-10-19）。
 ABSENT_DAYS_KEY = 'absent_table_days'
@@ -134,7 +137,7 @@ def reset_site(window, pilot, saving):
 
 
 def business_day(now: datetime | None = None) -> str:
-    """今の営業日（yyyy-mm-dd）。日本時間の午前2時までは前日として数える。"""
+    """今の営業日（yyyy-mm-dd）。日本時間の午前3時までは前日として数える。"""
     now = now or datetime.now()
     return (now - timedelta(hours=BUSINESS_DAY_CUTOFF_HOUR)).date().isoformat()
 
@@ -353,7 +356,7 @@ def stale_cutoff(day, fresh_since):
     since = _instant(fresh_since)
     if since is None or not day:
         return None
-    day_end = datetime.fromisoformat(f'{day}T00:00:00+09:00') + timedelta(days=1, hours=BUSINESS_DAY_CUTOFF_HOUR)
+    day_end = datetime.fromisoformat(f'{day}T00:00:00+09:00') + timedelta(days=1, hours=DAY_FINAL_HOUR)
     return min(since, day_end.timestamp()) - STALE_MARGIN_HOURS * 3600
 
 
@@ -1553,7 +1556,7 @@ def overlay_script(capture_script, index_url):
       auto.type = 'button';
       Object.assign(auto.style, {color:'white',padding:'10px',border:'2px solid #b8c5d8',borderRadius:'6px',fontSize:'14px',fontWeight:'bold',cursor:'pointer',background:'#526078'});
       auto.textContent = '自動取り込み：OFF（押すと開始）';
-      // 日付指定取り込み：取り込む営業日を決める（日本時間の午前2時までは前日）。
+      // 日付指定取り込み：取り込む営業日を決める（日本時間の午前3時までは前日）。
       // 上から／下から：機種を一覧のどちら側から取り込むか。どちらも押すと自動取り込みをONにする。
       const dayLabel = document.createElement('div');
       dayLabel.style.cssText = 'font-size:12px;display:block;color:#33445a';
@@ -1677,7 +1680,7 @@ def overlay_script(capture_script, index_url):
         seconds.value = String(state.seconds);
         value.textContent = '15〜25秒ランダム（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
         status.textContent = state.message;
-        // 取り込み日の選択肢は、午前2時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
+        // 取り込み日の選択肢は、午前3時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
         const days = Array.isArray(state.days) ? state.days : [];
         if (JSON.stringify(days) !== daySelect.dataset.days) {
           daySelect.dataset.days = JSON.stringify(days);

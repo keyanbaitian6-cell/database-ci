@@ -15,6 +15,7 @@ int? _instant(Object? text) =>
 /// [day] の記録がこれより古い「サイトの更新時刻」なら取り直す（昼に取った数値を夜の分として残さない）。
 /// [freshSince]：今回の取り込みで最初に保存したページのサイトの更新時刻。その日の営業が終わった後
 /// （翌日の午前2時以降）の数値はもう変わらないので、そこで頭打ち。PC版 `stale_cutoff` と同じ。
+/// 閉店後の基準なので、営業日の切り替え（3時、2026-10-26）とは別に2時のまま（PC `DAY_FINAL_HOUR`）。
 /// 取り込みを開き直しただけで、少し前（今夜）に取った分まで取り直さないよう、3時間の余裕を持たせる（昼と夜のような差だけを取り直す。2026-10-05、開き直した後に手動の「次へ」が済んだ機種の表へ向かった不具合）。営業が終わった日は、その日の23時より後に取った分を最終とみなす。
 const pscubeStaleMargin = Duration(hours: 3);
 
@@ -116,6 +117,9 @@ bool pscubeDayTabAbsent(String? day, Object? days) {
 
 /// 過去の日の全台一覧で、その日の数値もリンクも無かった台（増台した台）。台数の確認と未取得の数え方に足す。
 const pscubeAbsentRacksKey = 'absent_table_racks';
+
+/// 0時に自動取り込みを始める予約（[PscubeStore.midnightAutoEnabled]）。
+const pscubeMidnightAutoKey = 'midnight_auto';
 
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
@@ -1411,6 +1415,19 @@ class PscubeStore {
     () => db.insert('state', {
       'key': 'day_upload_last',
       'value': jsonEncode(value),
+    }, conflictAlgorithm: ConflictAlgorithm.replace),
+  );
+
+  /// 0時に自動取り込みを始める予約のON/OFF（2026-10-26、取り込み画面の切り替え）。
+  /// 端末の中だけに持つ（バックアップには入れない）。自動取り込み自体のONは従来どおり保存しない。
+  Future<bool> midnightAutoEnabled() async =>
+      (await _serial(() => _stateJson(pscubeMidnightAutoKey)))?['enabled'] ==
+      true;
+
+  Future<void> setMidnightAutoEnabled(bool enabled) => _serial(
+    () => db.insert('state', {
+      'key': pscubeMidnightAutoKey,
+      'value': jsonEncode({'enabled': enabled}),
     }, conflictAlgorithm: ConflictAlgorithm.replace),
   );
 

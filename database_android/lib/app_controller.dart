@@ -391,7 +391,7 @@ class AppController extends ChangeNotifier {
     await saving;
   }
 
-  /// 今日の日付（営業日、深夜2時で切り替わる）。テストで差し替える。
+  /// 今日の日付（営業日、深夜3時で切り替わる）。テストで差し替える。
   String Function() today = todayIso;
 
   /// 保存してよい最後の日（明日）。それより先は打ち間違いか端末の日付の狂い。

@@ -347,4 +347,98 @@ void main() {
     expect(await absent(), isEmpty);
     await finish(tester);
   });
+
+  // 0時の予約（2026-10-26）：画面を開いたまま0時をまたぐと、前日を指定して自動取り込みを始める。
+  group('0時の予約', () {
+    late DateTime clock;
+
+    Future<void> open(WidgetTester tester, {required bool reserved}) async {
+      activeTester = tester;
+      if (reserved) {
+        await tester.runAsync(() => store.setMidnightAutoEnabled(true));
+      }
+      await tester.binding.setSurfaceSize(const Size(390, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+        await flushDatabase(tester);
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PscubeImportPage(
+            elapsed: () => elapsed,
+            now: () => clock,
+            openStore: () async => store,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await flushDatabase(tester);
+      await tester.pumpAndSettle();
+      platform.web.show('index');
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> passMidnight(WidgetTester tester, DateTime to) async {
+      clock = to;
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        await flushDatabase(tester);
+      }
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('予約ONなら0時に前日を指定して始め、前日のページへ進む（開いた直後はOFFのまま）', (tester) async {
+      clock = DateTime(2026, 10, 18, 23, 59, 59);
+      await open(tester, reserved: true);
+      expect(
+        find.text('自動取り込み：OFF'),
+        findsOneWidget,
+        reason: '自動取り込み自体は開いた直後はOFF',
+      );
+      expect(find.textContaining('0時の予約：10/19'), findsOneWidget);
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 1));
+      expect(find.text('自動取り込み：ON'), findsOneWidget);
+      await tick(tester);
+      expect(platform.web.captures, ['index']);
+      expect(
+        platform.web.navigations.single,
+        endsWith('#0;0;20261018;0;cd_dai;1;0;0'),
+        reason: '3時までの営業日（前日10/18）を取り込む',
+      );
+      await finish(tester);
+    });
+
+    testWidgets('予約OFFなら0時になっても始めない。ボタンで予約すると端末に残る', (tester) async {
+      clock = DateTime(2026, 10, 18, 23, 59, 59);
+      await open(tester, reserved: false);
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 1));
+      expect(find.text('自動取り込み：OFF'), findsOneWidget);
+      expect(platform.web.probes, 0);
+      await tester.tap(find.byKey(const ValueKey('pscube-midnight-auto')));
+      await flushDatabase(tester);
+      await tester.pumpAndSettle();
+      expect(await tester.runAsync(store.midnightAutoEnabled), isTrue);
+      expect(
+        find.textContaining('0時の予約：10/20'),
+        findsOneWidget,
+        reason: '予約したのが0時過ぎなら次の0時',
+      );
+      await tester.tap(find.byKey(const ValueKey('pscube-midnight-auto')));
+      await flushDatabase(tester);
+      await tester.pumpAndSettle();
+      expect(await tester.runAsync(store.midnightAutoEnabled), isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('端末が眠って3時を過ぎたら、その夜は始めずに次の0時を待つ', (tester) async {
+      clock = DateTime(2026, 10, 18, 23, 59, 59);
+      await open(tester, reserved: true);
+      await passMidnight(tester, DateTime(2026, 10, 19, 3, 0, 1));
+      expect(find.text('自動取り込み：OFF'), findsOneWidget);
+      expect(find.textContaining('3時までに始められませんでした'), findsOneWidget);
+      expect(find.textContaining('0時の予約：10/20'), findsOneWidget);
+      await finish(tester);
+    });
+  });
 }

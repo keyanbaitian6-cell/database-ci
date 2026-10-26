@@ -31,7 +31,7 @@ class DateEvent {
   /// 「イベントを消した」印。
   bool get removed => name.isEmpty;
 
-  /// その日の02:00（日本時間、前の営業日の終わり）より前に入力したもの。
+  /// その日の03:00（日本時間、前の営業日の終わり）より前に入力したもの。
   /// 時刻の無いイベントは含めない（PC `core.date_event_in_advance` と同じ）。
   bool get enteredInAdvance {
     final at = eventTime(updatedAt);
@@ -85,8 +85,8 @@ class DateEvent {
 /// イベント名の最大文字数（PC `_valid_date_event` と同じ）。
 const eventNameMax = 60;
 
-/// 営業日は日本時間の午前2時で切り替わる（`businessDayCutoffHour` と同じ）。
-const eventDayStartHour = 2;
+/// 営業日は日本時間の午前3時で切り替わる（`businessDayCutoffHour` と同じ。2026-10-26に2時から3時へ）。
+const eventDayStartHour = 3;
 
 final _zoned = RegExp(r'(Z|[+-]\d{2}:?\d{2})$');
 

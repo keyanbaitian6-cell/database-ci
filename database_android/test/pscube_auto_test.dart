@@ -149,9 +149,35 @@ void main() {
     }
   });
 
-  test('営業日は日本時間の午前2時で切り替わり、取り込み日は直近7日から選ぶ', () {
-    expect(pscubeBusinessDay(DateTime(2026, 10, 4, 1, 59)), '2026-10-03');
-    expect(pscubeBusinessDay(DateTime(2026, 10, 4, 2, 0)), '2026-10-04');
+  test('0時の予約：次の0時から3時（営業日の切り替え）まで、前日を取り込む日として始める', () {
+    final armed = pscubeNextMidnight(DateTime(2026, 10, 26, 22, 30));
+    expect(armed, DateTime(2026, 10, 27));
+    expect(
+      pscubeNextMidnight(DateTime(2026, 10, 31, 0, 0, 1)),
+      DateTime(2026, 11, 1),
+    );
+    expect(
+      pscubeMidnightDue(DateTime(2026, 10, 26, 23, 59, 59), armed),
+      isNull,
+    );
+    expect(pscubeMidnightDue(DateTime(2026, 10, 27), armed), '2026-10-26');
+    expect(
+      pscubeMidnightDue(DateTime(2026, 10, 27, 2, 59, 59), armed),
+      '2026-10-26',
+    );
+    expect(
+      pscubeMidnightDue(DateTime(2026, 10, 27, 3), armed),
+      PscubeMidnight.missed,
+    );
+    expect(
+      pscubeMidnightDue(DateTime(2026, 10, 28, 1), armed),
+      PscubeMidnight.missed,
+    );
+  });
+
+  test('営業日は日本時間の午前3時で切り替わり、取り込み日は直近7日から選ぶ', () {
+    expect(pscubeBusinessDay(DateTime(2026, 10, 4, 2, 59)), '2026-10-03');
+    expect(pscubeBusinessDay(DateTime(2026, 10, 4, 3, 0)), '2026-10-04');
     expect(pscubeBusinessDay(DateTime(2026, 10, 4, 23, 30)), '2026-10-04');
     final days = pscubeRecentBusinessDays(DateTime(2026, 10, 4, 1, 0));
     expect(

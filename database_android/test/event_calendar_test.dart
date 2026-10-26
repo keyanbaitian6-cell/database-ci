@@ -59,10 +59,10 @@ void main() {
       );
     });
 
-    test('前日までに入力＝その日の02:00（日本時間）より前', () {
-      expect(ev('華の日', '2026-10-10T01:59:59+09:00').enteredInAdvance, isTrue);
-      expect(ev('華の日', '2026-10-09T16:59:59Z').enteredInAdvance, isTrue);
-      expect(ev('華の日', '2026-10-10T02:00:00+09:00').enteredInAdvance, isFalse);
+    test('前日までに入力＝その日の03:00（日本時間、2026-10-26に2時から3時へ）より前', () {
+      expect(ev('華の日', '2026-10-10T02:59:59+09:00').enteredInAdvance, isTrue);
+      expect(ev('華の日', '2026-10-09T17:59:59Z').enteredInAdvance, isTrue);
+      expect(ev('華の日', '2026-10-10T03:00:00+09:00').enteredInAdvance, isFalse);
       expect(ev('華の日').enteredInAdvance, isFalse);
     });
 

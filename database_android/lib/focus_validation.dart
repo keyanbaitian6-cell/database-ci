@@ -11,7 +11,9 @@ const focusValidationThrough = '2026-10-29';
 const focusValidationFinalOn = '2026-10-31';
 
 /// The prediction day D ends at 02:00 JST on D+1, the business-day rule the
-/// user fixed for imports (`businessDayCutoffHour`, `browser_import.py`).
+/// user fixed for imports when this plan was registered. The import business
+/// day moved to 03:00 on 2026-10-26 (`businessDayCutoffHour`); this registered
+/// evaluation cutoff deliberately stays at 02:00.
 /// Changed from 00:00 on 2026-10-07 at the user's direction; 00:00 stays as a
 /// sensitivity check that is never used for adoption.
 const focusCutoffHour = 2;
