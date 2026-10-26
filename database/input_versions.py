@@ -19,13 +19,17 @@ SOURCES = {
 _last_error = {}
 _workers = {}
 _clients = {}
+_holds = {}
 _stops = {}
+_wakes = {}
 _known_paths = set()
 _guard = threading.Lock()
 BATCH = 200
 MAX_PENDING_BYTES = 64 * 1024 * 1024
 # 本体の保存中などで一時的に書けないとき、続きを送るまで待つ秒数。
 RETRY_SECONDS = 1
+# 保持中に、別プロセス（取り込みブラウザなど）の保存を確かめる間隔。
+POLL_SECONDS = 30
 
 
 def _key(path):
@@ -148,75 +152,70 @@ def attach(db, data_dir, source):
         return False
 
 
-def _leave(path, *, timeout=5):
-    """接続・保持を1つ減らす。最後の1つなら転送を止め、ファイルを手放すまで待つ。"""
+def _leave(path):
+    with _guard: _clients[path] = max(0,_clients.get(path,1)-1)
+
+
+def hold(path):
+    """アプリの起動中だけ、別スレッドで転送を続ける。終了時に release() を呼ぶ。
+
+    転送のスレッドは保持している間だけ動かす（2026-10-26）。初版は保存の確定ごとにスレッドを起こし、
+    最後の接続を閉じると止めていた。PC版は操作ごとに接続を開け閉めするため、初回の全件基準点（実DBで約8万件）が
+    30分以上残った。また、どのプロセスでもスレッドが動くため、画面（Tk）を作る試験の途中でそのスレッドで
+    GCが走り「Tcl_AsyncDelete: async handler deleted by the wrong thread」で落ちた（CI 40293353918）。
+    保持していないプロセスの保存は本体の転送待ちに残り、保持しているPC版（30秒ごとに確認）か flush() が送る。
+    取り込みブラウザなど別プロセスの保存も、この確認で送られる。
+    """
+    path = _key(path)
+    with _guard: _holds[path] = _holds.get(path,0)+1
+    _known_paths.add(path)
+    _schedule(path)
+
+
+def release(path, *, timeout=5):
+    """保持を1つ減らす。最後なら転送を止め、ファイルを手放すまで待つ。残りは本体に残り、次に続きから送る。"""
+    path = _key(path)
     worker = None
     with _guard:
-        _clients[path] = max(0,_clients.get(path,1)-1)
-        if not _clients[path]:
+        _holds[path] = max(0,_holds.get(path,1)-1)
+        if not _holds[path]:
             _stops.setdefault(path,threading.Event()).set()
+            _wakes.setdefault(path,threading.Event()).set()
             worker = _workers.get(path)
     if worker and worker is not threading.current_thread(): worker.join(timeout=timeout)
 
 
-def hold(path):
-    """アプリの起動中、接続を閉じても転送を続ける。終了時に release() を呼ぶ。
-
-    PC版は操作ごとに接続を開いて閉じる。接続の数だけで転送を止めると、初回の全件基準点（数万件）や
-    閉じる直前の保存が次の操作まで送られず、締切までに検証先へ届かない（2026-10-26、実DBで確認）。
-    """
-    path = _key(path)
-    with _guard: _clients[path] = _clients.get(path,0)+1
-    _known_paths.add(path)
-    if Path(path).is_file(): _schedule(path)
-
-
-def release(path, *, timeout=5):
-    _leave(_key(path), timeout=timeout)
-
-
 def _schedule(path):
+    """保持中なら転送を起こす。保持していなければ何もしない（スレッドを起こさない）。"""
     path = _key(path)
     with _guard:
-        if not _clients.get(path): return
+        if not _holds.get(path): return
         _stops.setdefault(path,threading.Event()).clear()
+        _wakes.setdefault(path,threading.Event()).set()
         if path in _workers and _workers[path].is_alive(): return
         worker = threading.Thread(target=_run, args=(path,), daemon=True, name='input-versions-transfer')
         _workers[path] = worker
         worker.start()
 
 
-def _pending(path):
-    try:
-        with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as db:
-            return db.execute('SELECT 1 FROM iv_outbox LIMIT 1').fetchone() is not None
-    except sqlite3.Error as error:
-        # 使用中で確かめられないときだけ、もう一度送ってみる。表が無いなどは送る物が無い。
-        return _busy(error)
-
-
 def _run(path):
-    stop = _stops[path]
-    finished = False
+    stop, wake = _stops[path], _wakes[path]
     try:
-        while True:
+        while not stop.is_set():
+            # 送る前に印を消す。送っている間に確定した行は、印が付いてすぐ次の回で送る。
+            wake.clear()
+            delay = POLL_SECONDS
             try:
                 flush(path, background=True)
-            except sqlite3.OperationalError as error:
-                if not _busy(error): raise
-                # 本体の保存中など。次の保存を待たずに、少し待って続きから送る。
-                if stop.wait(RETRY_SECONDS): break
-                continue
-            _last_error.pop(path, None)
-            finished = True
-            break
-    except (sqlite3.Error, OSError, ValueError) as error:
-        _last_error[path]=repr(error)
+                _last_error.pop(path, None)
+            except (sqlite3.Error, OSError, ValueError) as error:
+                # 本体の保存中などは少し待って続きから。それ以外は表示して、次の確認でやり直す。
+                if _busy(error): delay = RETRY_SECONDS
+                else: _last_error[path] = repr(error)
+            wake.wait(delay)
     finally:
         with _guard:
-            _workers.pop(path,None)
-    # 実行中に確定した行の _schedule() は何もしないので、後始末の後に確かめて続ける。
-    if finished and not stop.is_set() and _pending(path): _schedule(path)
+            if _workers.get(path) is threading.current_thread(): _workers.pop(path)
 
 
 def _receipt_digest(text):
@@ -228,7 +227,8 @@ def flush(path, *, background=False):
     """確定した待ち行だけ転送。読み取りロックを持ったまま検証先を待たない。"""
     path = Path(path)
     if not path.is_file(): return
-    with closing(sqlite3.connect(path, timeout=.05)) as db:
+    # 本体は画面の読み書きと重なる。別スレッドで少し待ち、使用中の再試行を空回りさせない（検証先は待たない）。
+    with closing(sqlite3.connect(path, timeout=1)) as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): return
         control = db.execute('SELECT identity,source,delivered_seq FROM iv_control').fetchone()
         if not control: return
@@ -272,15 +272,15 @@ def flush(path, *, background=False):
 
 
 def wait(root):
-    """診断・試験用。通常の画面操作では待たない。"""
+    """診断・試験用。保持していないDBの転送待ちを、この場で送る（保持中は転送のスレッドが送る）。"""
     root=Path(root).resolve()
-    with _guard: workers=list(_workers.items())
-    for path,worker in workers:
-        if Path(path).parent.resolve()==root: worker.join(timeout=5)
     for path in list(_known_paths):
-        if Path(path).parent.resolve()==root:
-            try: flush(path)
-            except (sqlite3.Error,OSError,ValueError) as error: _last_error[path]=repr(error)
+        if Path(path).parent.resolve()!=root: continue
+        if _holds.get(path):
+            _schedule(path)
+            continue
+        try: flush(path)
+        except (sqlite3.Error,OSError,ValueError) as error: _last_error[path]=repr(error)
 
 
 def state(): return dict(_last_error)
@@ -293,6 +293,36 @@ def summary(path, days=7):
     return dict(kinds=kinds,recent=recent)
 
 
+def _recordings(directory, exclude=None):
+    """フォルダー内の、検証記録を持つ本体DBの状態と、読めなかったDB（パス, 例外）。
+
+    DBの控え（fix_anaslo_saved.py の database.pre-anaslo-fix-*.sqlite3 など）は本体と同じ識別子を持つ。
+    同じ識別子では記録番号が最も進んだ1つ（同じなら更新の新しい方）を本体とみなし、控えを
+    別の記録として数えない（更新状況の詳細に同じ記録が2重に出ていた、2026-10-26）。
+    """
+    found, failed = {}, []
+    for path in Path(directory).iterdir():
+        if path.name == FILE_NAME or path.suffix not in ('.db','.sqlite3') or not path.is_file(): continue
+        if exclude is not None and path == Path(exclude): continue
+        try:
+            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as db:
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): continue
+                control = db.execute('SELECT source,paused_at,identity,delivered_seq FROM iv_control').fetchone()
+                if not control: continue
+                sequence = db.execute("SELECT seq FROM sqlite_sequence WHERE name='iv_outbox'").fetchone()
+                outbox = db.execute('SELECT id,saved_at FROM iv_outbox').fetchall()
+            entry = dict(path=path, source=control[0], paused=control[1], identity=control[2], delivered=control[3],
+                         outbox=outbox, order=(sequence[0] if sequence else 0, path.stat().st_mtime))
+        except sqlite3.OperationalError as error:
+            failed.append((path, error))  # 使用中などで読めない本体は、確かめられない。
+            continue
+        except sqlite3.DatabaseError:
+            continue  # SQLiteではない同名の拡張子のファイル（WindowsのThumbs.dbなど）。
+        best = found.get(entry['identity'])
+        if best is None or entry['order'] > best['order']: found[entry['identity']] = entry
+    return sorted(found.values(), key=lambda e: e['path'].name), failed
+
+
 def as_of(path, source, cutoff):
     limit=datetime.fromisoformat(cutoff) if isinstance(cutoff,str) else cutoff
     if limit.tzinfo is None: raise ValueError('締切には時差を含めてください。')
@@ -300,20 +330,13 @@ def as_of(path, source, cutoff):
     checkpoints=[]
     waiting=[]
     # 検証先にまだ届いていない変更・休止状態を完全な履歴と取り違えない。
-    for candidate in Path(path).parent.iterdir():
-        if candidate == Path(path) or candidate.suffix not in ('.db','.sqlite3') or not candidate.is_file(): continue
-        try:
-            with closing(sqlite3.connect(candidate.resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as live:
-                if not live.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): continue
-                control=live.execute('SELECT source,paused_at,identity,delivered_seq FROM iv_control').fetchone()
-                if not control or control[0]!=source: continue
-                checkpoints.append((control[2],control[3]))
-                if control[1] and datetime.fromisoformat(control[1])<limit: raise ValueError('検証記録が休止中です。')
-                waiting+=[(control[2],seq) for seq,at in live.execute('SELECT id,saved_at FROM iv_outbox') if datetime.fromisoformat(at)<limit]
-        except sqlite3.OperationalError:
-            raise  # 使用中などで読めない本体は、確かめられないので完全とはしない。
-        except sqlite3.DatabaseError:
-            continue  # SQLiteではない同名の拡張子のファイル（WindowsのThumbs.dbなど）。
+    lives, failed = _recordings(Path(path).parent, exclude=path)
+    if failed: raise failed[0][1]  # 読めない本体があるときは、完全とはしない。
+    for live in lives:
+        if live['source']!=source: continue
+        checkpoints.append((live['identity'],live['delivered']))
+        if live['paused'] and datetime.fromisoformat(live['paused'])<limit: raise ValueError('検証記録が休止中です。')
+        waiting+=[(live['identity'],seq) for seq,at in live['outbox'] if datetime.fromisoformat(at)<limit]
     with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as db:
         tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for identity,seq in checkpoints:
@@ -347,17 +370,13 @@ def as_of(path, source, cutoff):
 
 def recording_status_lines(directory):
     lines=[]
-    for path in Path(directory).glob('*.sqlite3'):
-        if path.name==FILE_NAME: continue
-        try:
-            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as db:
-                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): continue
-                source,paused=db.execute('SELECT source,paused_at FROM iv_control').fetchone()
-                pending=db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0]
-                label='長町南・幸町' if source=='meruhen' else 'P’s CUBE'
-                lines.append(f'{label}の検証記録：'+(f'休止中（{paused}以降の完全性は未確認）' if paused else f'転送待ち{pending}件'))
-                if _key(path) in _last_error: lines.append('直近の転送エラー：'+_last_error[_key(path)])
-        except sqlite3.Error: lines.append(f'{path.name}の検証記録：状態を確認できません。')
+    lives, failed = _recordings(directory)
+    for live in lives:
+        label='長町南・幸町' if live['source']=='meruhen' else 'P’s CUBE'
+        paused=live['paused']
+        lines.append(f'{label}の検証記録：'+(f'休止中（{paused}以降の完全性は未確認）' if paused else f'転送待ち{len(live["outbox"])}件'))
+        if _key(live['path']) in _last_error: lines.append('直近の転送エラー：'+_last_error[_key(live['path'])])
+    lines += [f'{path.name}の検証記録：状態を確認できません。' for path, _error in failed]
     return lines or ['検証記録：未開始']
 
 

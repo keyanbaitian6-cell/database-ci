@@ -1,5 +1,6 @@
 """検証先の障害・途中取消・確定時刻を本体の保存から切り離す。"""
 from contextlib import closing
+import gc
 import json
 import sqlite3
 import tempfile
@@ -9,6 +10,12 @@ from unittest.mock import patch
 import input_versions as iv
 from core import Store
 from test_input_versions import ROW
+
+
+def setUpModule():
+    # 転送を別スレッドで動かす試験。前の試験のTkはメインスレッドで先に片付ける（test_input_versions.setUpModule と同じ理由）。
+    gc.collect()
+
 
 class OutboxTests(unittest.TestCase):
     def setUp(self):
@@ -131,6 +138,18 @@ class OutboxTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'未転送'):
             iv.as_of(self.root/iv.FILE_NAME,'meruhen',datetime.now().astimezone()+timedelta(seconds=1))
 
+    def test_database_copy_in_the_same_folder_is_not_a_second_recording(self):
+        # fix_anaslo_saved.py --apply は data に database.pre-anaslo-fix-*.sqlite3 を複製する。控えは本体と同じ識別子を持つ。
+        from datetime import datetime,timedelta
+        self.store.save([ROW]);iv.flush(self.store.path)
+        with closing(sqlite3.connect(self.root/'db.pre-anaslo-fix-20261026-180000.sqlite3')) as copy:self.store.db.backup(copy)
+        self.store.save([dict(ROW,games=4100)]);self.store.save([dict(ROW,games=4200)])
+        lines=iv.recording_status_lines(self.root)
+        self.assertEqual(lines,['長町南・幸町の検証記録：転送待ち2件'])
+        iv.flush(self.store.path)
+        self.assertEqual(iv.recording_status_lines(self.root),['長町南・幸町の検証記録：転送待ち0件'])
+        values=iv.as_of(self.root/iv.FILE_NAME,'meruhen',datetime.now().astimezone()+timedelta(seconds=1))
+        self.assertEqual(next(iter(values.values()))['games'],4200)
 
 class HeldTransferTests(unittest.TestCase):
     """PC版は操作ごとに接続を閉じる。起動中は閉じた後も送り切る（2026-10-26、実DBで基準点5.7万件が残った）。"""
@@ -197,3 +216,58 @@ class LargeHistoryTests(unittest.TestCase):
             values=iv.as_of(path,'meruhen',datetime.fromisoformat(at)+timedelta(seconds=1))
             self.assertEqual(len(values),count)
             self.assertLess(time.monotonic()-started,5)
+
+
+class LeftoverTkTests(unittest.TestCase):
+    def test_module_setup_collects_leftover_tk_on_the_main_thread(self):
+        import threading,tkinter as tk,weakref
+        import test_input_versions
+        enabled=gc.isenabled();gc.disable()
+        try:
+            gc.collect();freed=[]
+            try:root=tk.Tk()
+            except tk.TclError as error:self.skipTest(f'画面が無い環境：{error}')
+            root.withdraw();root.destroy()
+            root.cycle=root  # 循環参照：GCでしか片付かない
+            weakref.finalize(root,lambda:freed.append(threading.current_thread().name))
+            del root
+            self.assertEqual(freed,[])
+            test_input_versions.setUpModule();self.assertEqual(freed,[threading.main_thread().name])
+            # この試験モジュールも、始める前に同じように片付ける。
+            self.assertIn('gc',setUpModule.__code__.co_names)
+        finally:
+            if enabled:gc.enable()
+
+
+class ThreadOnlyWhileHeldTests(unittest.TestCase):
+    def test_saving_without_a_hold_never_starts_a_thread(self):
+        # 試験・スクリプトなど保持していないプロセスでは転送のスレッドを起こさない（CI 40293353918 の再発防止）。
+        import threading
+        before={t.ident for t in threading.enumerate()}
+        with tempfile.TemporaryDirectory() as directory:
+            with closing(Store(Path(directory)/'db.sqlite3')) as store:
+                store.save([ROW]);store.save([dict(ROW,games=4100)])
+                started=[t.name for t in threading.enumerate() if t.ident not in before]
+                self.assertEqual(started,[])
+                self.assertGreater(store.db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0],0)
+            iv.wait(directory)  # 診断・試験用の明示的な転送
+            with closing(sqlite3.connect(Path(directory)/'db.sqlite3')) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0],0)
+    def test_held_path_sends_saves_from_another_process_on_the_next_check(self):
+        import os,subprocess,sys,time
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'data.sqlite3'
+            with closing(Store(path)) as store:store.save([ROW])
+            with patch.object(iv,'POLL_SECONDS',.1):
+                iv.hold(path)
+                try:
+                    code="from pathlib import Path;from core import Store;import json,sys\ns=Store(Path(sys.argv[1]));s.save([json.loads(sys.argv[2])]);s.close()"
+                    subprocess.run([sys.executable,'-c',code,str(path),json.dumps(dict(ROW,games=4300))],env={**os.environ,'PYTHONPATH':str(Path(iv.__file__).parent)},check=True)
+                    deadline=time.monotonic()+15
+                    while time.monotonic()<deadline:
+                        with closing(sqlite3.connect(path)) as db:
+                            if not db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0]:break
+                        time.sleep(.05)
+                finally:iv.release(path)
+            with closing(sqlite3.connect(Path(directory)/iv.FILE_NAME)) as db:
+                self.assertIn('4300',db.execute("SELECT content FROM versions WHERE kind='write' ORDER BY id DESC LIMIT 1").fetchone()[0])

@@ -1,4 +1,5 @@
 """保存した記録の版（input_versions.py）。翌日候補の店舗別案を現行と並べて比べるための記録。"""
+import gc
 import json
 import sqlite3
 import tempfile
@@ -14,6 +15,13 @@ from pscube_import import PscubeStore
 ROW = dict(store='saiwaichou', kind_code=21, day='2026-10-14', machine='試験', rack=537,
            games=3000, bb=10, rb=5, captured_at='2026-10-14T23:00:00+09:00')
 KEY = 'saiwaichou\t2026-10-14\t試験\t537'
+
+
+def setUpModule():
+    # この試験は検証記録の転送を別スレッドで動かす。前の試験のTkが循環参照のまま残っていると、そのスレッドで
+    # GCが走ったときに片付けられ「Tcl_AsyncDelete: async handler deleted by the wrong thread」でプロセスごと
+    # 落ちる（2026-10-26 CI 40293353918、Python 3.12。test_tk_threads.py と同じ問題）。始める前にメインスレッドで片付ける。
+    gc.collect()
 
 
 def versions(root):
