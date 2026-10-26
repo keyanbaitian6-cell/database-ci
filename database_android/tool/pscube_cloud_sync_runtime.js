@@ -253,7 +253,7 @@ function pscubeCloudRun() {
       props.getProperty('pscubeCloudBackup') !== backupVersion || props.getProperty('pscubeCloudParts') !== partsVersion;
     const exportedAt = new Date().toISOString();
     const reports=selected.filter(i=>i.report).map(i=>i.report);
-    const health=mergeSyncStatus(data.sync_status,{version:1,writes:[],processed_at:exportedAt,pending:remaining,failed_inputs:Object.keys(failedVersions).length,supplement_supported:true,
+    const health=mergeSyncStatus(data.sync_status,{version:1,writes:[],processed_at:exportedAt,processor_release:SCRIPT_RELEASE,pending:remaining,failed_inputs:Object.keys(failedVersions).length,supplement_supported:true,
       ...(reports.length ? {supplement:{at:exportedAt,...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,reports.reduce((n,r)=>n+(r[k] || 0),0)]))}} : {})});
     const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt,sync_status:health,
       cloud_sync: {version: 1, inputs: versions, browser_baseline:browserBaseline}};

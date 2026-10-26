@@ -25,10 +25,10 @@ class OutputWorkerTests(unittest.TestCase):
             root = Path(directory); path = root / 'data' / 'database.sqlite3'
             store = Store(path); store.close()
             real_store, backups = core.Store, []
-            def opened(target):
+            def opened(target, **options):
                 if Path(target) == path:
                     raise sqlite3.OperationalError('database is locked')
-                return real_store(target)
+                return real_store(target, **options)
             def backup(db, data, *, strict, notices=None, import_shared=True):
                 backups.append(db.path)
             with patch('core.Store', side_effect=opened), patch('core.auto_backup', side_effect=backup):

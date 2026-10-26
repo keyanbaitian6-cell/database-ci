@@ -175,3 +175,15 @@ test('P’s CUBEの当日分は合言葉が合うときだけ書き、同じ日�
   // 台の記録の閲覧用ファイル・ほかのファイルは書き換えない。
   assert.equal(d.files.find(f => f.name === 'pscube-viewer-drive.json').text, '{}');
 });
+
+test('Android日別送信は古い版・同時刻で異なる内容を拒み、同じ版の再送は安全',()=>{
+  const d=drive({PSCUBE_UPLOAD_KEY:'合成の鍵12345678'});
+  const payload=at=>({file:'pscube-day',key:'合成の鍵12345678',day:'2026-10-26',backup:{format:'pscube-viewer',version:1,kind:'backup',source:'android',exported_at:at,machines:[],records:[{day:'2026-10-26',games:3000}]}});
+  const newest=payload('2026-10-26T23:00:00+09:00');
+  const reply=d.post(newest);assert.equal(reply.ok,true);assert.equal(reply.day,newest.day);assert.equal(reply.exported_at,newest.backup.exported_at);
+  assert.equal(d.post(newest).ok,true);
+  assert.match(d.post(payload('2026-10-26T22:00:00+09:00')).error,/古い版/);
+  const conflict=structuredClone(newest);conflict.backup.records[0].games=1000;
+  assert.match(d.post(conflict).error,/同じ版/);
+  assert.equal(JSON.parse(d.files.find(f=>f.name==='pscube-day-android-2026-10-26.json').text).records[0].games,3000);
+});

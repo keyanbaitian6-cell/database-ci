@@ -410,10 +410,10 @@ def date_event_in_advance(event):
 
 
 class Store:
-    def __init__(self, path):
+    def __init__(self, path, *, recording=True):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path)
+        self.db = input_versions.connect(self.path, recording=recording)
         try:
             self._initialize()
         except BaseException:
@@ -437,6 +437,8 @@ class Store:
         self.db.execute('CREATE TABLE IF NOT EXISTS app_state (state_key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         if self.state('date_events') is None:
             self.set_date_events(INITIAL_DATE_EVENTS)
+        self.db.commit()
+        input_versions.attach(self.db, self.path.parent, 'meruhen')
         self._merge_machine_spellings()
         self.db.commit()
         # 翌日候補の店舗別案を並べて比べるための版の記録（input_versions.py）。失敗しても開ける。

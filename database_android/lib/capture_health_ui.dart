@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'capture_health.dart';
+import 'release_info.dart';
 import 'models.dart';
 
 Map<String, dynamic> healthRecord(SlotRecord r) => {
@@ -39,6 +40,7 @@ Future<void> showCaptureHealth(
     }
   }
   final lines = [
+    'このアプリ・閲覧ページの版：$applicationRelease',
     ...updateStatusLines(
       syncStatus,
       exportedAt: exportedAt,

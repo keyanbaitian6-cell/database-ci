@@ -23,7 +23,14 @@ class SqliteFixtureCleanupTests(unittest.TestCase):
         connect, cleanup = sqlite3.connect, tempfile.TemporaryDirectory.cleanup
         connections = []
 
+        class TrackedConnection(sqlite3.Connection):
+            fixture_closed=False
+            def close(self):
+                super().close()
+                self.fixture_closed=True
+
         def track_connect(database, *args, **kwargs):
+            kwargs.setdefault('factory', TrackedConnection)
             connection = connect(database, *args, **kwargs)
             # Keep references so a GC run cannot hide missing explicit closes.
             connections.append((connection, Path(database).resolve()))
@@ -34,13 +41,16 @@ class SqliteFixtureCleanupTests(unittest.TestCase):
                       if path.is_relative_to(Path(folder.name).resolve())]
             try:
                 for connection in inside:
+                    if isinstance(connection,TrackedConnection):
+                        self.assertTrue(connection.fixture_closed,'検証転送の接続も一時ファイル削除前に閉じる')
+                        continue
                     with self.assertRaises(sqlite3.ProgrammingError,
                                            msg='SQLite must close before temporary files are removed'):
                         connection.execute('SELECT 1')
             finally:
                 # Leave no locked files even when checking the broken fixture.
                 for connection in inside:
-                    connection.close()
+                    if not isinstance(connection,TrackedConnection): connection.close()
                 cleanup(folder)
 
         result = unittest.TestResult()

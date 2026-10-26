@@ -17,7 +17,8 @@ def sync_status_lines(status, exported_at=None, loaded_at=None):
     def when(value):
         at = _time(value)
         return at.astimezone().strftime('%Y/%m/%d %H:%M:%S') if at else '未確認'
-    lines = []
+    from release_info import APPLICATION_RELEASE
+    lines = [f'このPCソースの版：{APPLICATION_RELEASE}', f'Google処理の版：{status.get("processor_release", "未確認")}']
     writes = status.get('writes', [])
     for w in writes[:3] if isinstance(writes, list) else []:
         if not isinstance(w, dict) or w.get('source') not in ('pc', 'android', 'browser'):
@@ -30,7 +31,7 @@ def sync_status_lines(status, exported_at=None, loaded_at=None):
             place = {'nagamachiminami':'長町南', 'saiwaichou':'幸町'}.get(st.get('store'), 'P’s CUBE')
             rate = f'（{st["rate"]}スロ）' if st.get('rate') else ''
             lines.append(f'この出力の最新日：{place}{rate} {st.get("day", "未確認")}・{st.get("count", "未確認")}台')
-    if not lines:
+    if len(lines)==2:
         lines.append('元ファイルの書き出し：未確認')
     lines.append(f'Google側の処理：{when(status.get("processed_at"))}')
     if status.get('pending') or status.get('failed_inputs'):

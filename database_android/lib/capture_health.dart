@@ -279,6 +279,9 @@ Map<String, dynamic>? validateSyncStatus(dynamic raw) {
   final result = <String, dynamic>{
     'version': 1,
     'writes': writes,
+    if (raw['processor_release'] is String &&
+        RegExp(r'^[a-f0-9]{12}$').hasMatch(raw['processor_release']))
+      'processor_release': raw['processor_release'],
     if (raw['processed_at'] != null) 'processed_at': raw['processed_at'],
   };
   for (final k in ['pending', 'failed_inputs']) {
@@ -358,6 +361,7 @@ Map<String, dynamic>? mergeSyncStatuses(dynamic first, dynamic second) {
         'pending',
         'failed_inputs',
         'supplement_supported',
+        'processor_release',
       ])
         if (latest[k] != null) k: latest[k],
     'supplement': ?supplement,
@@ -425,6 +429,7 @@ List<String> updateStatusLines(
     ],
   ];
   if (lines.isEmpty) lines.add('元ファイルの書き出し：未確認');
+  lines.add('Google処理の版：${status?['processor_release'] ?? '未確認'}');
   lines.add('Google側の処理：${when(status?['processed_at'])}');
   if ((status?['pending'] as int? ?? 0) > 0 ||
       (status?['failed_inputs'] as int? ?? 0) > 0) {

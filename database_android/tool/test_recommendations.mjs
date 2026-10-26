@@ -43,3 +43,13 @@ test('台ごとの顔文字は空欄と自動への復帰を区別し、不正�
   for(const change of [{value:'未知'},{rack:1.5},{day:'2026-11-02'},{updated_at:'2026-02-30T00:00:00Z'}])assert.throws(()=>recommendationResult({...r,...change}));
   for(const key of ['store','week','machine','rack','day','value','updated_at']){const raw={...r};delete raw[key];assert.throws(()=>recommendationResult(raw));}
 });
+
+test('小数秒6桁をDate.parseが扱わなくても編集順を失わず、不正原文のキーで停止しない',()=>{
+  const original=Date.parse;
+  try {
+    Date.parse=s=>/\.\d{4,6}(?:Z|[+-])/.test(String(s))?NaN:original(s);
+    const a={...RECOMMENDATION_DEFAULT,updated_at:'2026-10-25T00:00:00.123456Z'};
+    const b={...a,machines:['A','B','C','D'],updated_at:'2026-10-25T00:00:00.123457Z'};
+    assert.deepEqual(mergeRecommendations([a],[b]),[b]);
+  } finally {Date.parse=original;}
+});

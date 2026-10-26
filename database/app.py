@@ -1167,7 +1167,7 @@ def main():
             due, initial = pscube_import.android_sync_due(files, seen, datetime.now().timestamp())
             if initial is not None:
                 save_settings(DATA_DIR, pscube_android_synced=initial)
-                return
+                seen = initial
             for name, mtime, path in due:
                 try:
                     import_pscube_file(path, quiet=True, background=True)

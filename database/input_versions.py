@@ -1,162 +1,316 @@
-"""保存した記録の版を、別ファイル（input_versions.sqlite3）へ追記する。
-
-翌日候補の店舗別案を現行と並べて比べるため（NEXT_DAY_SHADOW_PLAN_20261025.md）、
-予測の締切（翌日02:00 JST）より前に何が保存されていたかを、あとから正確に作り直せるようにする。
-アプリはこのファイルを読まない。画面・候補・バックアップは変わらない。
-
-- 接続ごとの一時トリガー（TEMP TRIGGER）で、メルヘンの ``days``・P’s CUBEの ``records`` への
-  すべての書き込み（保存・復元・削除・機種名の統一など）を写す。経路ごとに処理を足さない。
-- 内容（取得時刻とグラフのプレビュー画像を除く）が直前の版と同じなら追記しない。
-- 最初に開いたとき、その時点の全行を出発点（baseline）として1回だけ記録する。
-- 準備に失敗したら記録しないだけで、保存は止めない（失敗の内容は ``state()`` で読める）。
-"""
+"""本体と同時に転送待ちを確定し、検証DBへ別接続で送る。"""
 from __future__ import annotations
-
+import hashlib
 import json
 import sqlite3
+import threading
+import uuid
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
 FILE_NAME = 'input_versions.sqlite3'
-SCHEMA = 'iv'
-# 版を比べるときに除く項目。取り直すたびに変わる時刻と、記録の大半を占めるプレビュー画像。
 VOLATILE_KEYS = ('captured_at', 'record_updated_at', 'observed_at', 'jo_captured_at')
 SOURCES = {
-    # source: (表, 鍵の式, 日付の式)
-    'meruhen': ('days', "{t}.store || char(9) || {t}.day || char(9) || {t}.machine || char(9) || {t}.rack", '{t}.day'),
-    'pscube': ('records', '{t}.key', "iv_day({t}.payload)"),
+ 'meruhen': ('days', "{t}.store || char(9) || {t}.day || char(9) || {t}.machine || char(9) || {t}.rack", '{t}.day'),
+ 'pscube': ('records', '{t}.key', 'iv_day({t}.payload)'),
 }
 _last_error = {}
+_workers = {}
+_clients = {}
+_stops = {}
+_known_paths = set()
+_guard = threading.Lock()
+BATCH = 200
+MAX_PENDING_BYTES = 64 * 1024 * 1024
 
 
 def content(raw):
-    """比べる・残す内容。読めない行はそのまま残す（版の記録で保存を止めない）。"""
-    try:
-        payload = json.loads(raw)
-    except (TypeError, ValueError):
-        return raw
-    if not isinstance(payload, dict):
-        return raw
-    payload = {k: v for k, v in payload.items() if k not in VOLATILE_KEYS}
-    measurement = payload.get('graph_measurement')
-    if isinstance(measurement, dict) and 'preview_image' in measurement:
-        payload['graph_measurement'] = {k: v for k, v in measurement.items() if k != 'preview_image'}
+    try: payload = json.loads(raw)
+    except (TypeError, ValueError): return raw
+    if not isinstance(payload, dict): return raw
+    payload = {k:v for k,v in payload.items() if k not in VOLATILE_KEYS}
+    g = payload.get('graph_measurement')
+    if isinstance(g, dict): payload['graph_measurement'] = {k:v for k,v in g.items() if k != 'preview_image'}
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _day(raw):
-    try:
-        value = json.loads(raw).get('day')
-    except (TypeError, ValueError, AttributeError):
-        return None
+    try: value = json.loads(raw).get('day')
+    except (TypeError, ValueError, AttributeError): return None
     return value if isinstance(value, str) else None
 
 
-def _now():
-    return datetime.now().astimezone().isoformat()
+def _now(): return datetime.now().astimezone().isoformat()
 
 
-def _has_baseline(db, source):
-    if db.execute(f"SELECT 1 FROM {SCHEMA}.sqlite_master WHERE type='table' AND name='versions'").fetchone() is None:
-        return False
-    return db.execute(f"SELECT 1 FROM {SCHEMA}.versions WHERE source=? AND key='' AND kind='baseline' LIMIT 1",
-                      (source,)).fetchone() is not None
+class Connection(sqlite3.Connection):
+    """保存確定を確認した上限時刻を残す。検証先の失敗は確定済み本体へ伝えない。"""
+    recording_path = None
+    def _confirmed(self):
+        if self.recording_path is None or self.in_transaction: return
+        try:
+            # 他接続の未確認行も、既に確定して見えているので安全な上限時刻になる。
+            sqlite3.Connection.execute(self, 'UPDATE iv_outbox SET confirmed_at=? WHERE confirmed_at IS NULL', (_now(),))
+            sqlite3.Connection.commit(self)
+            _schedule(self.recording_path)
+        except (sqlite3.Error, OSError) as error:
+            sqlite3.Connection.rollback(self)
+            _last_error[str(self.recording_path)] = repr(error)
+    def close(self):
+        path = str(self.recording_path) if self.recording_path else None
+        self.recording_path = None
+        super().close()
+        worker = None
+        if path:
+            with _guard:
+                _clients[path] = max(0,_clients.get(path,1)-1)
+                if not _clients[path]:
+                    _stops.setdefault(path,threading.Event()).set()
+                    worker = _workers.get(path)
+            if worker and worker is not threading.current_thread(): worker.join(timeout=5)
+
+    def commit(self):
+        super().commit()
+        self._confirmed()
+    def __exit__(self, *args):
+        result = super().__exit__(*args)
+        if args[0] is None: self._confirmed()
+        return result
+    def execute(self, sql, parameters=(), /):
+        result = super().execute(sql, parameters)
+        if sql.strip().rstrip(';').upper() in ('COMMIT', 'END', 'END TRANSACTION'): self._confirmed()
+        return result
+
+
+def connect(path, *, recording=True):
+    db = sqlite3.connect(path, factory=Connection)
+    db.recording_allowed = recording
+    return db
 
 
 def attach(db, data_dir, source):
-    """``db`` の書き込みを ``data_dir/input_versions.sqlite3`` へ写す。成功したらTrue。"""
-    table, key_sql, day_sql = SOURCES[source]
+    """本体内だけに一時トリガーを設定する。出力用コピーでは呼び出しても開始しない。"""
+    if not getattr(db, 'recording_allowed', True): return True
+    table,key_sql,day_sql = SOURCES[source]
     try:
         db.create_function('iv_content', 1, content, deterministic=True)
         db.create_function('iv_day', 1, _day, deterministic=True)
         db.create_function('iv_now', 0, _now)
-        if SCHEMA not in [row[1] for row in db.execute('PRAGMA database_list')]:
-            db.execute(f'ATTACH DATABASE ? AS {SCHEMA}', (str(Path(data_dir) / FILE_NAME),))
-        if not _has_baseline(db, source):
-            # 表と出発点を作るときだけ書き込みロックを取る。開くたびには取らない（他の処理の書き込み中でも
-            # 準備が失敗しないように。失敗した接続の書き込みは記録から漏れる）。
-            with db:
-                db.execute('BEGIN IMMEDIATE')
-                db.execute(f'CREATE TABLE IF NOT EXISTS {SCHEMA}.versions (id INTEGER PRIMARY KEY, source TEXT NOT NULL, '
-                           'key TEXT NOT NULL, day TEXT, saved_at TEXT NOT NULL, kind TEXT NOT NULL, content TEXT)')
-                db.execute(f'CREATE INDEX IF NOT EXISTS {SCHEMA}.versions_key ON versions(source, key, id)')
-                db.execute(f'CREATE INDEX IF NOT EXISTS {SCHEMA}.versions_day ON versions(source, day)')
-                # 出発点は1回だけ。空のDBでも印（鍵が空の行）を残し、あとで2度目の出発点を作らない。
-                if not _has_baseline(db, source):
-                    db.execute(f"INSERT INTO {SCHEMA}.versions(source, key, day, saved_at, kind, content) "
-                               f"SELECT ?, {key_sql.format(t=table)}, {day_sql.format(t=table)}, iv_now(), 'baseline', "
-                               f"iv_content(payload) FROM main.{table}", (source,))
-                    db.execute(f"INSERT INTO {SCHEMA}.versions(source, key, day, saved_at, kind, content) "
-                               "VALUES(?, '', NULL, iv_now(), 'baseline', NULL)", (source,))
-        # トリガーの中の追記先は「iv.」を付けて書けない（SQLiteの制限）。表名だけで書き、本体DB・一時領域に
-        # 同名の表が無いことを確かめて、つないだ記録ファイルの表に決まるようにする。
-        for schema in ('main', 'temp'):
-            if db.execute(f"SELECT 1 FROM {schema}.sqlite_master WHERE name='versions'").fetchone():
-                raise sqlite3.OperationalError(f'{schema} に versions 表があります。')
-        latest = (f"(SELECT content FROM {SCHEMA}.versions WHERE source='{source}' AND key={{key}} "
-                  'ORDER BY id DESC LIMIT 1)')
-        for event in ('INSERT', 'UPDATE'):
-            key = key_sql.format(t='new')
-            db.execute(f'DROP TRIGGER IF EXISTS temp.iv_{table}_{event.lower()}')
-            db.execute(f"CREATE TEMP TRIGGER iv_{table}_{event.lower()} AFTER {event} ON main.{table} "
-                       f"WHEN iv_content(new.payload) IS NOT {latest.format(key=key)} BEGIN "
-                       "INSERT INTO versions(source, key, day, saved_at, kind, content) "
-                       f"VALUES('{source}', {key}, {day_sql.format(t='new')}, iv_now(), 'write', iv_content(new.payload)); END")
-        key = key_sql.format(t='old')
-        db.execute(f'DROP TRIGGER IF EXISTS temp.iv_{table}_delete')
-        db.execute(f"CREATE TEMP TRIGGER iv_{table}_delete AFTER DELETE ON main.{table} "
-                   f"WHEN {latest.format(key=key)} IS NOT NULL BEGIN "
-                   "INSERT INTO versions(source, key, day, saved_at, kind, content) "
-                   f"VALUES('{source}', {key}, {day_sql.format(t='old')}, iv_now(), 'delete', NULL); END")
-        _last_error.pop(source, None)
+        db.create_function('iv_digest', 1, lambda raw: hashlib.sha256(content(raw).encode()).hexdigest(), deterministic=True)
+        with db:
+            db.execute('CREATE TABLE IF NOT EXISTS iv_control (singleton INTEGER PRIMARY KEY CHECK(singleton=1), identity TEXT NOT NULL, source TEXT NOT NULL, paused_at TEXT, pending_bytes INTEGER NOT NULL DEFAULT 0, delivered_seq INTEGER NOT NULL DEFAULT 0)')
+            db.execute('CREATE TABLE IF NOT EXISTS iv_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, day TEXT, saved_at TEXT NOT NULL, confirmed_at TEXT, kind TEXT NOT NULL, content TEXT)')
+            db.execute('CREATE TABLE IF NOT EXISTS iv_heads (key TEXT PRIMARY KEY,digest TEXT)')
+            fresh = db.execute('SELECT 1 FROM iv_control').fetchone() is None
+            if fresh:
+                db.execute('INSERT INTO iv_control(singleton,identity,source) VALUES(1,?,?)', (uuid.uuid4().hex,source))
+                # 基準点も本体内で一貫して確定する。以後、開くたびに作り直さない。
+                db.execute("INSERT INTO iv_outbox(key,saved_at,kind) VALUES('',iv_now(),'reset')")
+                db.execute(f"INSERT INTO iv_outbox(key,day,saved_at,kind,content) SELECT {key_sql.format(t=table)},{day_sql.format(t=table)},iv_now(),'baseline',iv_content(payload) FROM {table}")
+                db.execute(f"INSERT OR REPLACE INTO iv_heads SELECT {key_sql.format(t=table)},iv_digest(payload) FROM {table}")
+                db.execute("INSERT INTO iv_outbox(key,saved_at,kind) VALUES('',iv_now(),'baseline')")
+                db.execute('UPDATE iv_control SET pending_bytes=0')
+        # 基準点は既存DB全件を含むので容量上限の対象外。通常変更が増え続けた場合のみ休止。
+        for event in ('insert','update','delete'):
+            db.execute(f'DROP TRIGGER IF EXISTS temp.iv_{table}_{event}')
+        def emit(t, kind, key=None):
+            key = key or key_sql.format(t=t)
+            value = 'NULL' if kind=='delete' else f'iv_content({t}.payload)'
+            digest = 'NULL' if kind=='delete' else f'iv_digest({t}.payload)'
+            return f"INSERT INTO iv_outbox(key,day,saved_at,kind,content) VALUES({key},{day_sql.format(t=t)},iv_now(),'{kind}',{value}); INSERT INTO iv_heads VALUES({key},{digest}) ON CONFLICT(key) DO UPDATE SET digest=excluded.digest; UPDATE iv_control SET pending_bytes=pending_bytes+coalesce(length(CAST({value} AS BLOB)),0);"
+        for event in ('INSERT','UPDATE'):
+            condition = ' AND iv_digest(new.payload) IS NOT (SELECT digest FROM iv_heads WHERE key='+key_sql.format(t='new')+')'
+            tombstone = '' if event=='INSERT' else f"INSERT INTO iv_outbox(key,day,saved_at,kind) SELECT {key_sql.format(t='old')},{day_sql.format(t='old')},iv_now(),'delete' WHERE {key_sql.format(t='old')} IS NOT {key_sql.format(t='new')}; DELETE FROM iv_heads WHERE key={key_sql.format(t='old')} AND {key_sql.format(t='old')} IS NOT {key_sql.format(t='new')};"
+            db.execute(f"CREATE TEMP TRIGGER iv_{table}_{event.lower()} AFTER {event} ON main.{table} WHEN (SELECT paused_at FROM iv_control) IS NULL{condition} BEGIN {tombstone}{emit('new','write')} END")
+        db.execute(f"CREATE TEMP TRIGGER iv_{table}_delete AFTER DELETE ON main.{table} WHEN (SELECT paused_at FROM iv_control) IS NULL BEGIN {emit('old','delete')} END")
+        # サイズの判定をSQL内で行い、休止状態を全接続で共有する。既存待ち行は削除しない。
+        db.execute(f"CREATE TEMP TRIGGER IF NOT EXISTS iv_capacity AFTER INSERT ON iv_outbox WHEN new.kind<>'baseline' AND (SELECT pending_bytes FROM iv_control)>{MAX_PENDING_BYTES} BEGIN UPDATE iv_control SET paused_at=coalesce(paused_at,iv_now()); END")
+        path = Path(db.execute('PRAGMA database_list').fetchone()[2])
+        if isinstance(db, Connection):
+            if db.recording_path is None:
+                with _guard: _clients[str(path)] = _clients.get(str(path),0)+1
+            _known_paths.add(str(path))
+            db.recording_path = path
+            db._confirmed()
+        _last_error.pop(source,None)
         return True
-    except (sqlite3.Error, OSError) as exc:
-        _last_error[source] = repr(exc)
-        try:
-            for event in ('insert', 'update', 'delete'):
-                db.execute(f'DROP TRIGGER IF EXISTS temp.iv_{table}_{event}')
-        except sqlite3.Error:
-            pass
+    except (sqlite3.Error, OSError) as error:
+        _last_error[source] = repr(error)
+        for event in ('insert','update','delete'):
+            try: db.execute(f'DROP TRIGGER IF EXISTS temp.iv_{table}_{event}')
+            except sqlite3.Error: pass
         return False
 
 
-def state():
-    """直近の準備の失敗（無ければ空）。"""
-    return dict(_last_error)
+def _schedule(path):
+    path = str(path)
+    with _guard:
+        if not _clients.get(path): return
+        _stops.setdefault(path,threading.Event()).clear()
+        if path in _workers and _workers[path].is_alive(): return
+        worker = threading.Thread(target=_run, args=(path,), daemon=True, name='input-versions-transfer')
+        _workers[path] = worker
+        worker.start()
+
+
+def _run(path):
+    pending=False
+    try:
+        flush(path, background=True)
+        if _clients.get(str(path)) and not _stops[str(path)].is_set():
+            with closing(sqlite3.connect(path,timeout=.05)) as db:
+                pending=db.execute('SELECT 1 FROM iv_outbox LIMIT 1').fetchone() is not None
+    except (sqlite3.Error, OSError, ValueError) as error:
+        _last_error[path]=repr(error)
+    finally:
+        # 全接続を閉じるまで実行中として登録する。close()との競合で後始末を漏らさない。
+        with _guard:
+            _workers.pop(str(path),None)
+        if pending: _schedule(path)
+
+
+def flush(path, *, background=False):
+    """確定した待ち行だけ転送。読み取りロックを持ったまま検証先を待たない。"""
+    path = Path(path)
+    with closing(sqlite3.connect(path, timeout=.05)) as db:
+        control = db.execute('SELECT identity,source,delivered_seq FROM iv_control').fetchone()
+        if not control: return
+        identity,source,delivered = control
+        with db: db.execute('UPDATE iv_outbox SET confirmed_at=? WHERE confirmed_at IS NULL',(_now(),))
+        with closing(sqlite3.connect(path.parent/FILE_NAME, timeout=.05)) as target:
+            target.execute('CREATE TABLE IF NOT EXISTS versions (id INTEGER PRIMARY KEY, source TEXT NOT NULL,key TEXT NOT NULL,day TEXT,saved_at TEXT NOT NULL,kind TEXT NOT NULL,content TEXT)')
+            target.execute('CREATE TABLE IF NOT EXISTS iv_receipts (identity TEXT, seq INTEGER, digest TEXT NOT NULL, confirmed_at TEXT, version_id INTEGER, PRIMARY KEY(identity,seq))')
+            target.execute('CREATE TABLE IF NOT EXISTS iv_gaps (identity TEXT PRIMARY KEY,source TEXT,paused_at TEXT)')
+            target.commit()
+            if delivered and not target.execute('SELECT 1 FROM iv_receipts WHERE identity=? AND seq=?',(identity,delivered)).fetchone():
+                with db: db.execute('UPDATE iv_control SET paused_at=coalesce(paused_at,?)',(_now(),))
+                raise ValueError('検証先の確定済み履歴が見つかりません。復旧まで記録を休止します。')
+            maximum = db.execute("SELECT seq FROM sqlite_sequence WHERE name='iv_outbox'").fetchone()
+            if target.execute('SELECT 1 FROM iv_receipts WHERE identity=? AND seq>? LIMIT 1',(identity,maximum[0] if maximum else 0)).fetchone():
+                with db: db.execute('UPDATE iv_control SET paused_at=coalesce(paused_at,?)',(_now(),))
+                raise ValueError('本体の記録番号が巻き戻っています。復元したDBの再基準化が必要です。')
+            while True:
+                if background and _stops.get(str(path),threading.Event()).is_set(): break
+                batch = db.execute('SELECT id,key,day,saved_at,confirmed_at,kind,content FROM iv_outbox ORDER BY id LIMIT ?', (BATCH,)).fetchall()
+                if not batch: break
+                with target:
+                    for seq,key,day,at,confirmed,kind,value in batch:
+                        digest = json.dumps([source,key,day,at,confirmed,kind,value],ensure_ascii=False)
+                        old = target.execute('SELECT digest FROM iv_receipts WHERE identity=? AND seq=?',(identity,seq)).fetchone()
+                        if old:
+                            if old[0]!=digest: raise ValueError('検証記録の同一番号で内容が異なります。')
+                            continue
+                        version_id = target.execute('INSERT INTO versions(source,key,day,saved_at,kind,content) VALUES(?,?,?,?,?,?)',(source,key,day,at,kind,value)).lastrowid
+                        target.execute('INSERT INTO iv_receipts VALUES(?,?,?,?,?)',(identity,seq,digest,confirmed,version_id))
+                # 転送先の確定後だけ受領を更新する。
+                with db:
+                    db.execute('UPDATE iv_control SET delivered_seq=max(delivered_seq,?)',(batch[-1][0],))
+                    db.executemany('DELETE FROM iv_outbox WHERE id=?', [(r[0],) for r in batch])
+                    db.execute('UPDATE iv_control SET pending_bytes=max(0,pending_bytes-?)',(sum(len((r[6] or '').encode()) for r in batch if r[5]!='baseline'),))
+            gap = db.execute('SELECT paused_at FROM iv_control').fetchone()[0]
+            if gap:
+                with target: target.execute('INSERT OR REPLACE INTO iv_gaps VALUES(?,?,?)',(identity,source,gap))
+
+
+def wait(root):
+    """診断・試験用。通常の画面操作では待たない。"""
+    root=Path(root).resolve()
+    with _guard: workers=list(_workers.items())
+    for path,worker in workers:
+        if Path(path).parent.resolve()==root: worker.join(timeout=5)
+    for path in list(_known_paths):
+        if Path(path).parent.resolve()==root:
+            try: flush(path)
+            except (sqlite3.Error,OSError,ValueError) as error: _last_error[path]=repr(error)
+
+
+def state(): return dict(_last_error)
 
 
 def summary(path, days=7):
-    """確認用：記録の種類ごとの件数と、直近の日ごとの書き込み件数・最後の保存時刻。"""
-    with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as db:
-        kinds = db.execute("SELECT source, kind, COUNT(*) FROM versions WHERE key<>'' GROUP BY source, kind").fetchall()
-        recent = db.execute("SELECT source, day, COUNT(*), MAX(saved_at) FROM versions WHERE kind<>'baseline' "
-                            'GROUP BY source, day ORDER BY day DESC LIMIT ?', (days * 2,)).fetchall()
-    return dict(kinds=kinds, recent=recent)
+    with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as db:
+        kinds=db.execute("SELECT source,kind,COUNT(*) FROM versions WHERE key<>'' GROUP BY source,kind").fetchall()
+        recent=db.execute("SELECT source,day,COUNT(*),MAX(saved_at) FROM versions WHERE kind<>'baseline' GROUP BY source,day ORDER BY day DESC LIMIT ?",(days*2,)).fetchall()
+    return dict(kinds=kinds,recent=recent)
 
 
 def as_of(path, source, cutoff):
-    """``cutoff``（時刻つきISO文字列またはdatetime）より前に保存されていた内容を {鍵: 内容(dict)} で返す。
-
-    消された行・出発点より後に初めて保存された行は、その時刻までの状態どおりに扱う。
-    """
-    limit = datetime.fromisoformat(cutoff) if isinstance(cutoff, str) else cutoff
-    if limit.tzinfo is None:
-        raise ValueError('締切には時差を含めてください。')
-    result = {}
-    with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as db:
-        for key, saved_at, value in db.execute(
-                "SELECT key, saved_at, content FROM versions WHERE source=? AND key<>'' ORDER BY id", (source,)):
-            if datetime.fromisoformat(saved_at) >= limit:
-                continue
-            if value is None:
-                result.pop(key, None)
-            else:
-                result[key] = json.loads(value)
+    limit=datetime.fromisoformat(cutoff) if isinstance(cutoff,str) else cutoff
+    if limit.tzinfo is None: raise ValueError('締切には時差を含めてください。')
+    result={}
+    checkpoints=[]
+    # 検証先にまだ届いていない変更・休止状態を完全な履歴と取り違えない。
+    for candidate in Path(path).parent.iterdir():
+        if candidate == Path(path) or candidate.suffix not in ('.db','.sqlite3') or not candidate.is_file(): continue
+        with closing(sqlite3.connect(candidate.resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as live:
+            if not live.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): continue
+            control=live.execute('SELECT source,paused_at,identity,delivered_seq FROM iv_control').fetchone()
+            if not control or control[0]!=source: continue
+            checkpoints.append((control[2],control[3]))
+            if control[1] and datetime.fromisoformat(control[1])<limit: raise ValueError('検証記録が休止中です。')
+            if any(datetime.fromisoformat(r[0])<limit for r in live.execute('SELECT saved_at FROM iv_outbox')): raise ValueError('未転送の検証記録があります。')
+    with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as db:
+        tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for identity,seq in checkpoints:
+            if seq and ('iv_receipts' not in tables or not db.execute('SELECT 1 FROM iv_receipts WHERE identity=? AND seq=?',(identity,seq)).fetchone()): raise ValueError('検証履歴の確定済み部分が失われています。')
+        resets=[]
+        if 'iv_receipts' in tables:
+            for at,confirmed in db.execute("SELECT v.saved_at,r.confirmed_at FROM versions v JOIN iv_receipts r ON r.version_id=v.id WHERE v.source=? AND v.kind='reset'",(source,)):
+                if confirmed and datetime.fromisoformat(confirmed)<limit: resets.append(datetime.fromisoformat(at))
+        latest_reset=max(resets,default=None)
+        if 'iv_gaps' in tables and any(datetime.fromisoformat(r[0])<limit and (latest_reset is None or datetime.fromisoformat(r[0])>latest_reset) for r in db.execute('SELECT paused_at FROM iv_gaps WHERE source=?',(source,))):
+            raise ValueError('検証記録の休止区間があります。入力の完全性は未確認です。')
+        query = "SELECT v.key,v.saved_at,v.content,NULL,NULL,v.kind FROM versions v WHERE v.source=? ORDER BY v.id"
+        if 'iv_receipts' in tables:
+            query = "SELECT v.key,v.saved_at,v.content,r.version_id,r.confirmed_at,v.kind FROM versions v LEFT JOIN iv_receipts r ON r.version_id=v.id WHERE v.source=? ORDER BY v.id"
+        for key,at,value,version_id,confirmed,kind in db.execute(query,(source,)):
+            if datetime.fromisoformat(at)>=limit: continue
+            if version_id is not None and (confirmed is None or datetime.fromisoformat(confirmed)>=limit):
+                raise ValueError('締切前の保存確定を確認できない記録があります。')
+            if kind=='reset': result.clear();continue
+            if key=='': continue
+            if value is None: result.pop(key,None)
+            else: result[key]=json.loads(value)
     return result
 
 
-if __name__ == '__main__':
-    import sys
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / 'data' / FILE_NAME
-    print(json.dumps(summary(target), ensure_ascii=False, indent=1))
+def recording_status_lines(directory):
+    lines=[]
+    for path in Path(directory).glob('*.sqlite3'):
+        if path.name==FILE_NAME: continue
+        try:
+            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.05)) as db:
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='iv_control'").fetchone(): continue
+                source,paused=db.execute('SELECT source,paused_at FROM iv_control').fetchone()
+                pending=db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0]
+                label='長町南・幸町' if source=='meruhen' else 'P’s CUBE'
+                lines.append(f'{label}の検証記録：'+(f'休止中（{paused}以降の完全性は未確認）' if paused else f'転送待ち{pending}件'))
+                if str(path) in _last_error: lines.append('直近の転送エラー：'+_last_error[str(path)])
+        except sqlite3.Error: lines.append(f'{path.name}の検証記録：状態を確認できません。')
+    return lines or ['検証記録：未開始']
+
+
+def resume_recording(path):
+    """アプリを閉じ、転送先を復旧した後だけ実行する。休止中の過去は埋めない。"""
+    path=Path(path)
+    if _clients.get(str(path)): raise ValueError('すべての書き込み接続を閉じてから再開してください。')
+    flush(path)
+    with closing(sqlite3.connect(path)) as db:
+        source,paused=db.execute('SELECT source,paused_at FROM iv_control').fetchone()
+        if not paused: return
+        if db.execute('SELECT 1 FROM iv_outbox LIMIT 1').fetchone(): raise ValueError('未転送の記録があります。')
+        table,key_sql,day_sql=SOURCES[source]
+        db.create_function('iv_content',1,content)
+        db.create_function('iv_day',1,_day)
+        db.create_function('iv_now',0,_now)
+        db.create_function('iv_digest',1,lambda raw:hashlib.sha256(content(raw).encode()).hexdigest())
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('UPDATE iv_control SET identity=?,paused_at=NULL,pending_bytes=0,delivered_seq=0',(uuid.uuid4().hex,))
+            db.execute("INSERT INTO iv_outbox(key,saved_at,kind) VALUES('',iv_now(),'reset')")
+            db.execute(f"INSERT INTO iv_outbox(key,day,saved_at,kind,content) SELECT {key_sql.format(t=table)},{day_sql.format(t=table)},iv_now(),'baseline',iv_content(payload) FROM {table}")
+            db.execute('DELETE FROM iv_heads')
+            db.execute(f"INSERT INTO iv_heads SELECT {key_sql.format(t=table)},iv_digest(payload) FROM {table}")
+        with db: db.execute('UPDATE iv_outbox SET confirmed_at=? WHERE confirmed_at IS NULL',(_now(),))
+    flush(path)

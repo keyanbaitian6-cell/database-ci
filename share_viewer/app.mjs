@@ -1,4 +1,4 @@
-import {RECOMMENDATION_TYPE, recommendationPlans, recommendationDays, recommendationRows, recommendationFace, RECOMMENDATION_FACES, recommendationResult, recommendationResultKey, mergeRecommendationResults, recommendationNotOlder} from './recommendations.mjs';
+import {RECOMMENDATION_TYPE, recommendationPlans, recommendationDays, recommendationRows, recommendationFace, RECOMMENDATION_FACES, recommendationResult, recommendationResultKey, mergeRecommendationResults, recommendationNotOlder, recommendationEditMs} from './recommendations.mjs';
 import {updateStatusLines,netHealth} from './capture_health.mjs';
 import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, historyCell, historyEditKey, mergeHistoryCells, newHistoryCell, historyGradeGap} from './event_history.mjs';
 // 閲覧専用の共有ページ（お試し、2026-10-09。EVENT_CALENDAR.md「閲覧専用の共有ページ」）。
@@ -1245,6 +1245,7 @@ function openBirthdays(first) {
 
 // 4機種の構成はPCの定義を使い、顔文字の未送信分だけを接続先ごとに端末保存する。
 const recommendationSending=new Set();
+function validRecommendationResult(raw) {try {recommendationResult(raw);return true;}catch{return false;}}
 function localRecommendationResults(id=state.id) {
   const text=store.get(`database-share-recommendation-results:${id}`);
   if(!text)return [];
@@ -1261,7 +1262,7 @@ function recommendationView(view) {
   const results=mergeRecommendationResults(state.historyDocument?.recommendation_results??[],cached,{strict:false});
   const resultIndex=new Map();
   for(const raw of results)try{const r=recommendationResult(raw);resultIndex.set(recommendationResultKey(r),r);}catch{/* 不正な原文は保存先に残す。 */}
-  const pending=cached.filter(r=>r.pending===true);
+  const pending=cached.filter(r=>r?.pending===true&&validRecommendationResult(r));
   const records=[...state.model.byDay.values()].flat();view.recRows=[];
   return `<div class="history-navigation"><label>対象週 <select data-recommendation-week aria-label="4大オススメの対象週">${plans.map(p=>`<option value="${p.week}"${p===current?' selected':''}>${p.week}〜${recommendationDays(p.week)[6]}</option>`).join('')}</select></label></div>
     <p class="note">機種構成・週の追加はPCで行います。顔文字はここで選んで保存できます。</p>
@@ -1283,7 +1284,10 @@ function queueRecommendationResult(field) {
   try {
     const fields=JSON.parse(decodeURIComponent(field.dataset.recommendationResult)),key=recommendationResultKey(fields),local=localRecommendationResults();
     let now=Date.now();
-    for(const r of [...(state.historyDocument?.recommendation_results??[]),...local])if(recommendationResultKey(r)===key&&Number.isFinite(Date.parse(r.updated_at)))now=Math.max(now,Date.parse(r.updated_at)+1);
+    for(const r of [...(state.historyDocument?.recommendation_results??[]),...local]) {
+      try {if(recommendationResultKey(r)===key)now=Math.max(now,recommendationEditMs(r)+1);}
+      catch { /* 不正な原文は残し、有効な編集だけを時刻比較する。 */ }
+    }
     if(now>Date.now()+5*60*1000)throw Error('共有済みの編集時刻が未来です。端末の日時を確認してください。');
     const entry=recommendationResult({...fields,value:field.value==='auto'?null:field.value,updated_at:new Date(now).toISOString(),device:'shared'});
     const pending=local.filter(r=>recommendationResultKey(r)!==key);pending.push({...entry,pending:true});
@@ -1300,7 +1304,7 @@ async function flushRecommendationResults() {
   recommendationSending.add(id);
   try {
     while(state.id===id) {
-      const pending=localRecommendationResults(id).filter(r=>r.pending===true).slice(0,100);if(!pending.length)break;
+      const pending=localRecommendationResults(id).filter(r=>r?.pending===true&&validRecommendationResult(r)).slice(0,100);if(!pending.length)break;
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),TIMEOUT_MS);let answer;
       try {
         const response=await fetch(`https://script.google.com/macros/s/${id}/exec`,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({file:'event-history',cells:[],recommendation_results:pending}),signal:controller.signal});
@@ -1316,7 +1320,7 @@ async function flushRecommendationResults() {
         return {...saved,pending:false};
       });
       localStorage.setItem(key,JSON.stringify(remaining));
-      if(state.id===id){state.historyDocument=answer.history;state.eventHistory=parsePrivateHistory(mergeHistoryCells(answer.history,localHistoryEdits(id),{strict:false}));state.recommendationNotice=remaining.some(r=>r.pending===true)?'残りの顔文字を送信中です。':'顔文字を共有へ保存しました。';}
+      if(state.id===id){state.historyDocument=answer.history;state.eventHistory=parsePrivateHistory(mergeHistoryCells(answer.history,localHistoryEdits(id),{strict:false}));state.recommendationNotice=remaining.some(r=>r?.pending===true&&validRecommendationResult(r))?'残りの顔文字を送信中です。':'顔文字を共有へ保存しました。';}
     }
   }catch(e){state.recommendationNotice=`顔文字は共有への送信待ちです。端末には残っています。${e.message}`;}
   finally{recommendationSending.delete(id);if(state.id===id)state.historyRedraw?.();}

@@ -102,10 +102,17 @@ Future<({bool ok, String message})> uploadPscubeDay(
   } catch (error) {
     return finish(false, '$labelの分を送れませんでした：$error');
   }
-  if (reply is Map && reply['ok'] == true) {
+  if (reply is Map &&
+      reply['ok'] == true &&
+      reply['day'] == day &&
+      reply['records'] == count &&
+      reply['exported_at'] == backup['exported_at']) {
     return finish(true, '$labelの分（$count台）をDriveへ送りました。');
   }
-  final error = reply is Map ? reply['error'] : null;
+  final error = reply is Map
+      ? reply['error'] ??
+            (reply['ok'] == true ? '保存の確認情報が一致しません。閲覧用スクリプトを更新してください。' : null)
+      : null;
   return finish(false, '$labelの分を送れませんでした：${error ?? 'スクリプトの返事が読めません'}');
 }
 
@@ -136,7 +143,10 @@ Future<String> postToScript(Uri url, String body) async {
       final next = await client.getUrl(url.resolve(location));
       response = await next.close().timeout(const Duration(seconds: 60));
     }
-    final text = await response.transform(utf8.decoder).join();
+    final text = await response
+        .transform(utf8.decoder)
+        .join()
+        .timeout(const Duration(seconds: 30));
     if (response.statusCode != 200) {
       throw HttpException('スクリプトの返事が ${response.statusCode} でした。');
     }

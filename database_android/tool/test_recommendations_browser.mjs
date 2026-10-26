@@ -31,7 +31,7 @@ try {
       const context=await browser.newContext({viewport:{width,height:950},serviceWorkers:'block'}),page=await context.newPage(),errors=[],posts=[];
       page.on('pageerror',e=>errors.push(e.message));
       if(process.env.VIEWER_TEST_FONT){const font=await fs.readFile(process.env.VIEWER_TEST_FONT),emoji=process.env.VIEWER_TEST_EMOJI_FONT?await fs.readFile(process.env.VIEWER_TEST_EMOJI_FONT):font;await context.route('https://fonts.gstatic.com/**',r=>r.fulfill({contentType:'font/otf',headers:{'access-control-allow-origin':'*'},body:r.request().url().includes('notocoloremoji')?emoji:font}));}
-      let history={format:'database-event-history',version:1,base:{version:2,store:'nagamachiminami',symbols:['😍','😀','😌','🥶','😇'],weeks:[{type:'4台構成',from:'2026-10-19',to:'2026-10-25',machines:[{name:'旧週の機種',count:1,record_name:'旧週の機種',results:Array(7).fill('')}]}]},cells:[],links:[],weeks:[],recommendations:[],recommendation_results:[],shared_editing:true,recommendations_editing:false,recommendation_results_editing:true};
+      let history={format:'database-event-history',version:1,base:{version:2,store:'nagamachiminami',symbols:['😍','😀','😌','🥶','😇'],weeks:[{type:'4台構成',from:'2026-10-19',to:'2026-10-25',machines:[{name:'旧週の機種',count:1,record_name:'旧週の機種',results:Array(7).fill('')}]}]},cells:[],links:[],weeks:[],recommendations:[],recommendation_results:[null,{不正な原文:true}],shared_editing:true,recommendations_editing:false,recommendation_results_editing:true};
       let failPosts=false;
       await context.route('https://script.google.com/**',async route=>{
         const request=route.request(),file=new URL(request.url()).searchParams.get('file');

@@ -17,6 +17,7 @@ KEY = 'saiwaichou\t2026-10-14\t試験\t537'
 
 
 def versions(root):
+    input_versions.wait(root)
     with closing(sqlite3.connect(root / input_versions.FILE_NAME)) as db:
         return db.execute("SELECT source, key, day, kind, content FROM versions WHERE key<>'' ORDER BY id").fetchall()
 
@@ -42,6 +43,7 @@ class MeruhenVersionTests(unittest.TestCase):
                 store.delete(ROW['store'], ROW['day'], ROW['machine'], ROW['rack'])
             kinds = [kind for *_rest, kind, _content in versions(root)]
             self.assertEqual(kinds, ['write', 'write', 'delete'])
+            input_versions.wait(root)
             path = root / input_versions.FILE_NAME
             self.assertEqual(input_versions.as_of(path, 'meruhen', before_change)[KEY]['games'], 3000)
             self.assertEqual(input_versions.as_of(path, 'meruhen', after_change)[KEY]['games'], 3500)
@@ -56,6 +58,11 @@ class MeruhenVersionTests(unittest.TestCase):
             graph = dict(end_x=10, end_y=20, curve=[[0, 1]], preview_image='data:image/png;base64,AAAA')
             with closing(Store(root / 'db.sqlite3')) as store:
                 store.save([dict(ROW, graph_measurement=graph)])
+            input_versions.wait(root)
+            # 検証先を失った状態を新しい完全な履歴と扱わない。
+            # この試験では保存済み行からの新規基準点の作成を模擬する。
+            with sqlite3.connect(root / 'db.sqlite3') as raw:
+                raw.execute('DROP TABLE iv_outbox');raw.execute('DROP TABLE iv_control')
             (root / input_versions.FILE_NAME).unlink()
             for _ in range(2):
                 Store(root / 'db.sqlite3').close()
@@ -83,8 +90,9 @@ class MeruhenVersionTests(unittest.TestCase):
             with closing(Store(root / 'db.sqlite3')) as store:
                 store.save([ROW])
                 self.assertEqual(len(store.rows()), 1)
-                self.assertEqual(store.state('input_versions_failures'), '1')
-                self.assertTrue(store.state('input_versions_last_error'))
+                input_versions.wait(root)
+                self.assertTrue(input_versions.state())
+                self.assertGreater(store.db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0],0)
 
 
 class PscubeVersionTests(unittest.TestCase):
@@ -113,6 +121,7 @@ class PscubeVersionTests(unittest.TestCase):
             with closing(Store(root / 'database.sqlite3')) as store:
                 store.save([ROW])
             PscubeStore(root / 'pscube.sqlite3').close()
+            input_versions.wait(root)
             with closing(sqlite3.connect(root / input_versions.FILE_NAME)) as db:
                 marks = db.execute("SELECT source FROM versions WHERE key='' AND kind='baseline' ORDER BY source").fetchall()
             self.assertEqual(marks, [('meruhen',), ('pscube',)])

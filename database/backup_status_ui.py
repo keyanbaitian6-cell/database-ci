@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from backup_status import status_text
+from input_versions import recording_status_lines
 from sync_health import synced_status, sync_status_lines, local_net_lines
 
 
@@ -62,7 +63,7 @@ class BackupStatusPanel(ttk.Frame):
                         '\n\nGoogle側の状況（同期フォルダに届いた情報。最新とは限りません）\n' +
                         '\n\n'.join(('長町南・幸町' if source=='meruhen' else 'P’s CUBE')+'\n'+
                           '\n'.join(sync_status_lines(synced_status(self.folder(),source))) for source in ('meruhen','pscube')) +
-                        '\n\nPC内の最新日の差枚取得状況\n'+'\n'.join(local_net_lines(self.data_dir)))
+                        '\n\n'+ '\n'.join(recording_status_lines(self.data_dir)) + '\n\nPC内の最新日の差枚取得状況\n'+'\n'.join(local_net_lines(self.data_dir)))
             text.configure(state='disabled')
         read_details()
         buttons = ttk.Frame(window)

@@ -257,7 +257,7 @@ function pscubeCloudRun() {
       props.getProperty('pscubeCloudBackup') !== backupVersion || props.getProperty('pscubeCloudParts') !== partsVersion;
     const exportedAt = new Date().toISOString();
     const reports=selected.filter(i=>i.report).map(i=>i.report);
-    const health=mergeSyncStatus(data.sync_status,{version:1,writes:[],processed_at:exportedAt,pending:remaining,failed_inputs:Object.keys(failedVersions).length,supplement_supported:true,
+    const health=mergeSyncStatus(data.sync_status,{version:1,writes:[],processed_at:exportedAt,processor_release:SCRIPT_RELEASE,pending:remaining,failed_inputs:Object.keys(failedVersions).length,supplement_supported:true,
       ...(reports.length ? {supplement:{at:exportedAt,...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,reports.reduce((n,r)=>n+(r[k] || 0),0)]))}} : {})});
     const backup = {...data, kind: 'backup', source: 'cloud', exported_at: exportedAt,sync_status:health,
       cloud_sync: {version: 1, inputs: versions, browser_baseline:browserBaseline}};
@@ -482,6 +482,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
+const APPLICATION_RELEASE = '0471b8c49eee';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -623,7 +624,7 @@ function validateSyncStatus(raw) {
     })};
   });
   if (new Set(writes.map(w => w.source)).size !== writes.length || (raw.processed_at != null && !ndTime(raw.processed_at))) throw new Error('更新状況の形式が不正です。');
-  const result={version:1,writes,...(raw.processed_at ? {processed_at:raw.processed_at} : {})};
+  const result={version:1,writes,...(typeof raw.processor_release==='string'&&/^[a-f0-9]{12}$/.test(raw.processor_release)?{processor_release:raw.processor_release}:{}),...(raw.processed_at ? {processed_at:raw.processed_at} : {})};
   for (const key of ['pending','failed_inputs']) if (raw[key]!=null) {
     if (!Number.isSafeInteger(raw[key]) || raw[key]<0 || raw[key]>1000000) throw new Error('更新状況の形式が不正です。');
     result[key]=raw[key];
@@ -663,6 +664,7 @@ function updateStatusLines(status, {exportedAt,loadedAt,checkedAt} = {}) {
     `${({pc:'PC',android:'Android',browser:'iPhone・ブラウザ'})[w.source]}の書き出し：${when(w.at)}／Driveファイルの更新：${when(w.drive_at)}`,
     ...w.stores.map(s=>`この出力の最新日：${storeName(s)} ${s.day}・${s.count}台`)]);
   if (!lines.length) lines.push('元ファイルの書き出し：未確認');
+  lines.push(`このページの版：${APPLICATION_RELEASE}`,`Google処理の版：${value?.processor_release || '未確認'}`);
   lines.push(`Google側の処理：${when(value?.processed_at)}`);
   if (value?.pending || value?.failed_inputs) lines.push(`Google側の処理待ち ${value.pending || 0}件・入力失敗 ${value.failed_inputs || 0}件`);
   lines.push(`閲覧データの書き出し：${when(exportedAt)}`,`この端末の読み込み：${when(loadedAt)}`);
@@ -685,7 +687,7 @@ function mergeSyncStatus(...items) {
     }
     if (status.processed_at && (!processed_at || Date.parse(status.processed_at)>=Date.parse(processed_at))) {
       processed_at=status.processed_at;
-      meta=Object.fromEntries(['pending','failed_inputs','supplement_supported'].filter(k=>status[k]!=null).map(k=>[k,status[k]]));
+      meta=Object.fromEntries(['pending','failed_inputs','supplement_supported','processor_release'].filter(k=>status[k]!=null).map(k=>[k,status[k]]));
     }
     if (status.supplement && (!supplement || Date.parse(status.supplement.at)>=Date.parse(supplement.at))) supplement=status.supplement;
   }
@@ -915,6 +917,7 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
+const SCRIPT_RELEASE = '0471b8c49eee';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -1348,7 +1351,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
   const browserReports=pending.filter(i=>i.report).map(i=>i.report);
   const supplement=browserReports.length ? {at:new Date().toISOString(),
     ...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,browserReports.reduce((n,r)=>n+(r[k] || 0),0)]))} : null;
-  m.header.sync_status={version:1,writes:[],...health,pending:remainingNow,failed_inputs:failuresNow,
+  m.header.sync_status={version:1,writes:[],...health,processor_release:SCRIPT_RELEASE,pending:remainingNow,failed_inputs:failuresNow,
     ...(site==='pscube' ? {supplement_supported:true} : {}),
     ...((changedDays || processed || !health?.processed_at) ? {processed_at:new Date().toISOString()} : {}),...(supplement ? {supplement} : {})};
   const {exported_at, ...stableHeader} = m.header;

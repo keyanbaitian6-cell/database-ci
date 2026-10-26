@@ -33,6 +33,8 @@ class BackupIntegrityTests(unittest.TestCase):
 
     def assert_rejected_without_changes(self, text):
         self.path.write_text(text, encoding='utf-8')
+        import input_versions
+        input_versions.wait(Path(self.tmp.name))
         before = self.db.db.iterdump()
         before = list(before)
         with self.assertRaises(ValueError):

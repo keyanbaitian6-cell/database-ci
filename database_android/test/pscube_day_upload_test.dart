@@ -130,6 +130,8 @@ void main() {
           'ok': true,
           'name': 'pscube-day-android-2026-10-26.json',
           'records': 1,
+          'day': sent['day'],
+          'exported_at': sent['backup']['exported_at'],
         });
       },
     );
@@ -173,6 +175,19 @@ void main() {
     );
     expect(r.ok, isFalse);
     expect(r.message, contains('接続できません'));
+    r = await uploadPscubeDay(
+      store,
+      '2026-10-26',
+      setting,
+      poster: (_, _) async => jsonEncode({
+        'ok': true,
+        'day': '2026-10-25',
+        'records': 1,
+        'exported_at': '古い版',
+      }),
+    );
+    expect(r.ok, isFalse);
+    expect(r.message, contains('確認情報'));
     r = await uploadPscubeDay(
       store,
       '2026-10-25',

@@ -188,7 +188,7 @@ function vhSync(folder, base, props, adapter, startedAt) {
   const browserReports=pending.filter(i=>i.report).map(i=>i.report);
   const supplement=browserReports.length ? {at:new Date().toISOString(),
     ...Object.fromEntries(['applied','unmatched','mismatched','known'].map(k=>[k,browserReports.reduce((n,r)=>n+(r[k] || 0),0)]))} : null;
-  m.header.sync_status={version:1,writes:[],...health,pending:remainingNow,failed_inputs:failuresNow,
+  m.header.sync_status={version:1,writes:[],...health,processor_release:SCRIPT_RELEASE,pending:remainingNow,failed_inputs:failuresNow,
     ...(site==='pscube' ? {supplement_supported:true} : {}),
     ...((changedDays || processed || !health?.processed_at) ? {processed_at:new Date().toISOString()} : {}),...(supplement ? {supplement} : {})};
   const {exported_at, ...stableHeader} = m.header;

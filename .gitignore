@@ -35,3 +35,6 @@ database_android/assets/database_seed.json
 sources/
 .DS_Store
 Thumbs.db
+
+# 更新用ツールのPython生成物
+/tools/__pycache__/

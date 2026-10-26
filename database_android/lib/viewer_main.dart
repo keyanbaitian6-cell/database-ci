@@ -381,13 +381,15 @@ class _ViewerHomeState extends State<ViewerHome> {
     _data = data;
     // グラフの線は台の画面を開いたときにその日の分だけ読む（remote_curve.dart）。
     clearRemoteCurves();
+    final curveUrl = _remote;
+    final curveParts = data.curveParts;
     remoteCurveFetcher = data.curveParts.isEmpty
         ? null
         : (day) async {
-            final url = _remote;
+            final url = curveUrl;
             if (url == null) throw StateError('Googleドライブの自動読み込みが設定されていません。');
             final refs = [
-              for (final c in data.curveParts)
+              for (final c in curveParts)
                 if (c['day'] == day) c,
             ];
             if (refs.isEmpty) throw StateError('この日のグラフの線がありません。');
@@ -399,6 +401,7 @@ class _ViewerHomeState extends State<ViewerHome> {
                 (row as List)[0] as int: SavedCurve(row[1] as List),
             };
           };
+    bindRemoteCurves(data.records, remoteCurveFetcher);
     _dataVersion++;
     viewerDataRevision.value++;
     _scoredFor = null;

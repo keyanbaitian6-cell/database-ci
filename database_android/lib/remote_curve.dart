@@ -13,7 +13,20 @@ typedef RemoteCurveFetcher = Future<Map<int, List<List<double>>>> Function(
 
 RemoteCurveFetcher? remoteCurveFetcher;
 
-final _days = <String, Future<Map<int, List<List<double>>>>>{};
+final _days =
+    <(RemoteCurveFetcher, String), Future<Map<int, List<List<double>>>>>{};
+final _recordFetchers = Expando<RemoteCurveFetcher>();
+
+/// 記録と取得先の版を結び付け、開いたままの古い画面でも別版の線を使わない。
+void bindRemoteCurves(List<SlotRecord> records, RemoteCurveFetcher? fetcher) {
+  if (fetcher == null) return;
+  for (final record in records) {
+    if (record.graph?.remoteCurve == true) _recordFetchers[record] = fetcher;
+  }
+}
+
+RemoteCurveFetcher? _fetcher(SlotRecord record) =>
+    _recordFetchers[record] ?? remoteCurveFetcher;
 
 /// 読んだ線を持っておく日数（5日分の帯を1つ開ける分）。
 const _keepDays = 6;
@@ -24,7 +37,7 @@ void clearRemoteCurves() => _days.clear();
 /// 線をまだ読んでいない記録か。
 bool needsRemoteCurve(SlotRecord record) {
   final graph = record.graph;
-  return remoteCurveFetcher != null &&
+  return _fetcher(record) != null &&
       graph != null &&
       graph.remoteCurve &&
       graph.curve == null &&
@@ -34,10 +47,11 @@ bool needsRemoteCurve(SlotRecord record) {
 /// 線を入れた記録の写し。線が見つからなければ例外。
 Future<SlotRecord> loadRemoteCurve(SlotRecord record) async {
   final graph = record.graph!;
-  final fetch = remoteCurveFetcher!;
-  var day = _days.remove(record.day);
+  final fetch = _fetcher(record)!;
+  final key = (fetch, record.day);
+  var day = _days.remove(key);
   day ??= fetch(record.day);
-  _days[record.day] = day;
+  _days[key] = day;
   while (_days.length > _keepDays) {
     _days.remove(_days.keys.first);
   }
@@ -47,7 +61,7 @@ Future<SlotRecord> loadRemoteCurve(SlotRecord record) async {
     return record.copyWith(graph: graph.withCurve(curve));
   } on Object {
     // 失敗した日は覚えず、次に開いたときに読み直す。
-    if (identical(_days[record.day], day)) _days.remove(record.day);
+    if (identical(_days[key], day)) _days.remove(key);
     rethrow;
   }
 }

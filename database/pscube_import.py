@@ -613,7 +613,9 @@ def android_sync_due(files, seen, now):
     戻り値は（読むファイルの一覧, 次に覚える seen の初期値 または None）。
     """
     if seen is None:
-        return [], {name: mtime for name, mtime, _path in files}
+        initial = {name:mtime for name,mtime,_path in files if not name.startswith('pscube-day-android-')}
+        due = [(name,mtime,path) for name,mtime,path in files if name.startswith('pscube-day-android-') and now-mtime>=ANDROID_SYNC_SETTLE_SECONDS]
+        return due, initial
     return [(name, mtime, path) for name, mtime, path in files
             if seen.get(name) != mtime and now - mtime >= ANDROID_SYNC_SETTLE_SECONDS], None
 
@@ -664,10 +666,10 @@ def installation_count(db_path, current_url):
 
 
 class PscubeStore:
-    def __init__(self, path):
+    def __init__(self, path, *, recording=True):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path)
+        self.db = input_versions.connect(self.path, recording=recording)
         self.db.execute('CREATE TABLE IF NOT EXISTS machines (key TEXT PRIMARY KEY, payload TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, payload TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS rack_captures (key TEXT PRIMARY KEY)')

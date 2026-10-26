@@ -23,7 +23,7 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
             try:
                 with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(sqlite3.connect(snapshot)) as destination:
                     source.backup(destination)
-                store = factory(snapshot)
+                store = factory(snapshot, recording=False)
             except Exception as error:
                 if source_name == 'pscube':
                     from backup_status import BackupStatus

@@ -353,6 +353,8 @@ class PscubeImportTests(unittest.TestCase):
         rack = {**payload, 'records': six, 'history_latest_day': '2026-10-02'}
         rack.pop('missing_history_days', None)
         self.store.import_page(rack, record['detail_url'], expected_day=self.day)
+        import input_versions
+        input_versions.wait(self.store.path.parent)
         before = list(self.store.db.iterdump())
         old_shape = {key: value for key, value in rack.items() if key != 'history_latest_day'}
         with self.assertRaisesRegex(ValueError, '連続した7日分'):
@@ -651,6 +653,8 @@ class PscubeImportTests(unittest.TestCase):
 
     def test_nonconsecutive_days_and_wrong_rack_reject_before_writing(self):
         machine, record, payload = self.seed_rack()
+        import input_versions
+        input_versions.wait(self.store.path.parent)
         before = list(self.store.db.iterdump())
         broken = json.loads(json.dumps(payload))
         broken['records'][-1] = self.record(machine, 1526, '2026-09-20')
@@ -676,6 +680,8 @@ class PscubeImportTests(unittest.TestCase):
         payload = self.page(current['detail_url'], [new], [{**current, 'net_medals': 125,
             'graph': {'kind': 'daily', 'zero_y': 10, 'points': [[0, 10], [1, 6]]}}])
         payload['missing_history_days'] = missing
+        import input_versions
+        input_versions.wait(self.store.path.parent)
         before = list(self.store.db.iterdump())
         for broken in (None, missing[:-1], missing + [missing[0]], [self.day, *missing[1:]],
                        ['2020-01-01', *missing[1:]], [[previous_day], *missing[1:]]):
@@ -708,6 +714,8 @@ class PscubeImportTests(unittest.TestCase):
         machine, record, _ = self.seed_rack()
         target = self.store.export_viewer(Path(self.tmp.name) / 'viewer.json')
         before = target.read_bytes()
+        import input_versions
+        input_versions.wait(Path(self.tmp.name))
         database_before = list(self.store.db.iterdump())
         record['graph']['points'] = [[0, 10], [1, float('nan')]]
         with self.assertRaisesRegex(ValueError, '座標'):
