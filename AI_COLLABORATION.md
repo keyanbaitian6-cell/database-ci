@@ -3876,3 +3876,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 対象（共有カレンダー `share_viewer/index.html` のCSSだけ）：4大オススメの表（`.recommendation-table`、1台おきに帯 `#e6eef8`、行の両端を角丸、帯の行の顔文字・差枚の欄は白）と、イベント履歴の週表（`.history-table`：長町南の4台構成・半列・バラエティ、幸町のバラエティ履歴。PC幅は1行おきに帯、スマホ幅は機種ごとの枠線をやめて1機種おきに帯、帯の行の記号欄は白）。表の幅・押せる範囲・保存処理は不変。
 - 再発試験：`test_recommendations_browser.mjs`（共有側、1台おきに帯）と `test_event_history_browser.mjs`（320/393/1280px、1機種おきに帯・スマホ幅は枠線なし）に追加。基準は手元main `6695c1a`（database-ci/main と同じ）。作業記録の別AI（Codex）の未コミットの追記は含めていない。
 - 全体ゲート **ALL PASSED**（PC478・230・UTC27件、Flutter728件、analyze info26件のみ、JS74ファイル全成功）。
+- 共有カレンダーを database-share `e604313`（source ed8ce0f、gateのstage物）として公開。Pagesのデプロイ成功、公開中の index.html に帯の指定が入っていることを確認。公開の差分は今回のCSSと版番号だけ。`python tools/push_ci.py` で database-ci へ1回push（この記録を含む）。CIの結果は未確認。iPhone実機は利用者の確認待ち。
