@@ -8,7 +8,7 @@ from pathlib import Path
 
 from datetime import datetime
 
-from pscube_import import PscubeIndexRetry, PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days, same_page, table_url_for_day
+from pscube_import import BROWSER_ARGUMENTS, PscubeIndexRetry, PscubeStore, ROOT_URL, business_day, keep_page_timers, installation_count, recent_business_days, same_page, table_url_for_day
 
 
 class PscubeImportTests(unittest.TestCase):
@@ -37,6 +37,21 @@ class PscubeImportTests(unittest.TestCase):
                 'games': 1854, 'my': 1921, 'observed_at': '2026-10-01T12:00:00+09:00',
                 'detail_url': ROOT_URL + f'cgi-bin/nc-v06-001.php?cd_dai={rack}#{day.replace("-", "")}',
                 'graph': {'kind': 'overview', 'zero_y': 10, 'points': [[0, 10], [1, 8]]}}
+
+    def test_capture_window_keeps_page_timers_when_hidden(self):
+        # 2026-10-28：見えない窓で時計が抑えられ、全台一覧が6台のまま時間切れになった。起動設定に足す。
+        environ = {}
+        keep_page_timers(environ)
+        arguments = environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']
+        for flag in ('IntensiveWakeUpThrottling', 'CalculateNativeWinOcclusion', 'ElasticOverscroll',
+                     '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+                     '--disable-backgrounding-occluded-windows'):
+            self.assertIn(flag, arguments)
+        keep_page_timers(environ)
+        self.assertEqual(environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'], arguments, '2回目で重ねない')
+        environ = {'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS': '--lang=ja'}
+        keep_page_timers(environ)
+        self.assertEqual(environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'], '--lang=ja ' + BROWSER_ARGUMENTS)
 
     def test_business_day_changes_at_3am_japan_time(self):
         # 2026-10-26に2時から3時へ。

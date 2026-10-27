@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import hashlib
 import math
+import os
 import re
 import secrets
 import shutil
@@ -74,6 +75,10 @@ SCROLL_SCRIPT = r'''(async () => {
   const countCards = () => target === null ? (findList()?.children.length ?? -1)
     : document.querySelectorAll('li[id^="li-"]').length;
   const atBottom = () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
+  // サイトの続きの読み込み（jquery.inview）は、250ミリ秒ごとに「最後の台が画面内か」を調べ、スクロール位置は
+  // scroll の通知が来たときだけ取り直す。窓を最小化・裏に回すと描画が止まり、scroll の通知が出ないため、
+  // 位置が古いまま続きが出ず、途中で止まった（2026-10-28、利用者の報告）。動かすたびに通知を出す。
+  const moved = () => window.dispatchEvent(new Event('scroll'));
   let last = -1, quiet = 0, nudges = 0, idleNudges = 0, armed = true;
   for (let tick = 0; tick < 360; tick++) {          // 追加待機も含め、実際の経過時間で最長90秒
     checkTime();
@@ -92,17 +97,20 @@ SCROLL_SCRIPT = r'''(async () => {
       if (armed) {                                   // 着いたときに1回だけ：最後の台を見せて、一番下まで
         list.lastElementChild?.scrollIntoView({block:'end'});
         window.scrollTo(0, document.documentElement.scrollHeight);
+        moved();
         armed = false;
       }
       else if (quiet >= 16) {                        // 4秒増えない：少し戻って、もう一度下へ
         if (++nudges > 5) return;
         idleNudges++;                                  // 最後に増えてから戻った回数（台数不明の終わりの判定）
         window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));
+        moved();
         armed = true; quiet = 0;
         await sleep(400);
       }
     } else {
       window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));
+      moved();
       armed = true;
     }
     await sleep(250);
@@ -1824,8 +1832,26 @@ def overlay_script(capture_script, index_url):
     '''.replace('SCROLL_SCRIPT', SCROLL_SCRIPT).replace('CAPTURE_SCRIPT', capture_script).replace('INDEX_URL', json.dumps(index_url))
 
 
+# 窓を最小化・裏に回しても、ページの時計（取り込みのスクロール、サイトの続きの読み込みの見回り）を抑えさせない。
+# 既定では見えない窓が5分続くと、ページの時計が1分に1回まで抑えられ、全台一覧が6台のまま「一覧の読み込みが
+# 時間切れ」になり、3回で待機していた（2026-10-28、利用者の報告。実WebView2とローカルの模擬ページで再現）。
+# サイトへの通信の間隔は Python 側（15〜25秒）が決めるので変わらない。pywebview の既定（ElasticOverscroll）も含める。
+BROWSER_ARGUMENTS = ('--disable-features=ElasticOverscroll,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling '
+                     '--disable-background-timer-throttling --disable-renderer-backgrounding '
+                     '--disable-backgrounding-occluded-windows')
+
+
+def keep_page_timers(environ=os.environ):
+    """WebView2 の起動設定（環境変数）に BROWSER_ARGUMENTS を足す。取り込み窓のプロセスの中だけで効く。"""
+    current = environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '').strip()
+    if BROWSER_ARGUMENTS not in current:
+        environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = f'{current} {BROWSER_ARGUMENTS}'.strip()
+
+
 def run_session(db_path, export_path):
     import webview
+
+    keep_page_timers()
 
     script = CAPTURE.read_text(encoding='utf-8')
     probe = PROBE.read_text(encoding='utf-8')

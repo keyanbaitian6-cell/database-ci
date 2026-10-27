@@ -15,9 +15,10 @@ const list = {
 await assert.rejects(runInNewContext(scroll, {
   performance: {now: () => elapsed},
   document: {querySelector: () => list, documentElement: {get scrollHeight() { return bottom ? 100 : 1000; }}},
-  window: {scrollY: 0, innerHeight: 100, scrollTo() {}, scrollBy(x, y) {
+  window: {scrollY: 0, innerHeight: 100, scrollTo() {}, dispatchEvent() {}, scrollBy(x, y) {
     if (y < 0) { bottom = false; nudged = true; } else bottom = true;
   }},
+  Event: class {},
   setTimeout(callback, ms) { elapsed += ms; callback(); },
 }), /時間切れ/);
 assert.equal(elapsed, 90000, '増加・着き直しの待機も含めて90秒で打ち切る');
@@ -165,8 +166,33 @@ try {
   assert.ok(calls.by < 40, `少しずつ進む（${calls.by}回）`);
   console.log(`stalled page: intoView=${calls.intoView} by=${calls.by} elapsed=${Date.now() - startedAt}ms`);
 
+  // 5b. 実サイトの全台一覧（jquery.inview）：250msごとに「最後の台が画面内か」を調べ、入ったら6台足す。
+  //     スクロール位置は scroll の通知が来たときだけ取り直す。窓を最小化・裏に回すと描画が止まり、本物の
+  //     scroll の通知が出ないため、位置が古いまま6台で止まった（2026-10-28、PC）。アプリが通知を出せば24台まで読む。
+  const hidden = await browser.newPage({viewport: {width: 1050, height: 780}});
+  await hidden.setContent(tall(6));
+  await hidden.evaluate(scale => {
+    window.addEventListener('scroll', e => { if (e.isTrusted) e.stopImmediatePropagation(); }, true);
+    let offset = null;
+    window.addEventListener('scroll', () => { offset = null; });
+    setInterval(() => {
+      const list = document.querySelector('li[id^="li-"]').parentElement, last = list.lastElementChild;
+      offset = offset ?? window.pageYOffset;
+      const top = last.getBoundingClientRect().top + window.pageYOffset;
+      const inView = top + last.offsetHeight > offset && top < offset + window.innerHeight;
+      if (last.dataset.inview === String(inView)) return;
+      last.dataset.inview = String(inView);
+      if (!inView) return;
+      for (let k = 0; k < 6 && list.children.length < 24; k++) {
+        const card = document.createElement('li'); card.id = `li-${list.children.length + 1}`; card.style.height = '150px'; list.append(card);
+      }
+    }, 250 * scale);
+  }, SCALE);
+  await run(hidden, 24);
+  assert.equal(await hidden.locator('li').count(), 24, '本物の scroll 通知が届かない窓でも、続きを最後まで読む');
+
   // 6. 台別など一覧がないページは、そのまま返る。
   await page.setContent('<h2>台別7日履歴</h2>');
   await run(page, null);
-  console.log('PASS: replacement lists load all 61 cards; a machine list of unknown size arriving 20 at a time 3.5s late (even when only a second arrival starts it) reaches 61;bottom-only lazy load reaches 7 of 7 and 64 of 64 in batches; delayed 6 -> 31 waits for the installation count; a stalled list is not hammered (few scrolls, at most 5 retries); rack page returns without scrolling');
+  console.log('PASS: replacement lists load all 61 cards; a machine list of unknown size arriving 20 at a time 3.5s late (even when only a second arrival starts it) reaches 61;bottom-only lazy load reaches 7 of 7 and 64 of 64 in batches; delayed 6 -> 31 waits for the installation count; a stalled list is not hammered (few scrolls, at most 5 retries); an inview list whose native scroll events are suppressed (hidden window) reaches 24 of 24; rack page returns without scrolling');
 } finally { await browser.close(); }
