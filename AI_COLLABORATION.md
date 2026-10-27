@@ -21,8 +21,9 @@
   - `database/test_pscube_import.py` に起動設定の試験（必要な設定がそろう・2回目で重ねない・既存の値を残す）。
   - 任意の実WebView2試験 `database/tests/smoke_pscube_hidden_list.py`（ローカルのインラインページ・一時プロファイル、最小化40秒、猶予10秒）：**修正あり24/24台（hidden のまま）、なし6台**。
   - 流した試験：PC `test_pscube_import test_pscube_auto test_pscube_direction` 76件、PC直下 231件、PC tests 478件、JS `test_pscube_scroll.mjs`・`test_pscube_auto_browser.mjs` 成功（`TZ=JST-9`）。全体チェック `check_before_build.sh` は流していない（ビルドしないため。Flutter・閲覧ページは変更なし）。
+- push・CI：利用者の承認（元セッション経由「お願い」）を受け、元セッションが `python tools/push_ci.py` で `cf0370f`・`096712a` を `keyanbaitian6-cell/database-ci` の main へ1回push（`f2b165f..096712a`、日本時間10/28 06:40）。正本へは送っていない。CI（Regression checks）https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40588756794 は対象 `096712a` で**成功**（06:40〜06:55。`pc (ubuntu-latest, UTC)`・`pc (windows-latest, UTC)`・`full` の3ジョブとも success。結果はClaudeが `gh run view` で直接確認）。
 - 反映：動いているPC版の取り込み窓は古い処理のまま。**P’s CUBEの取り込み窓を閉じて開き直すと反映**（本体ごと再起動でもよい）。取り込み窓の古いWebView2が残っていると新しい起動設定で開けないことがあるので、窓を閉じてから開き直す。EXE・APK・公開は無し。
-- 未確認：実サイトでの修正後の取り込み（利用者の確認待ち）。最小化以外（他の窓の後ろに完全に隠れる）の実機での挙動は、起動設定で抑えない作りにしたが直接は試していない。今夜の取り込み（10/27分）の残りは修正前の処理で動いている。
+- 未確認：実サイトでの修正後の取り込み（利用者が取り込み窓を閉じて開き直し、最小化のまま一覧が進むかを確かめるまで未確認。CI成功は模擬ページ・試験での確認で、実サイトでの確認ではない）。最小化以外（他の窓の後ろに完全に隠れる）の実機での挙動は、起動設定で抑えない作りにしたが直接は試していない。今夜の取り込み（10/27分）の残りは修正前の処理で動いている。
 
 ## 【P’s CUBE：履歴の初回移行待ちが長い件の読み取り調査】2026-10-27 Codex
 
