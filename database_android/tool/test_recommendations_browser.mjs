@@ -86,6 +86,9 @@ try {
           assert.ok(fit.length>0&&fit.every(f=>f.inside),`顔文字が欄からはみ出す（${width}px）`);
           assert.ok(fit.every(f=>f.cover&&f.hidden),'透明の選択欄が欄全体に重なる');
           assert.match(fit[0].text,/^[^ ]+▾$/,'欄には顔文字だけ（「自動」の文字は出さない）');
+          // 2026-10-27 利用者「B案」：1台おきに薄い色の帯で、台ごとの区切りを見やすくする。
+          const bands=await page.locator('.recommendation-table').first().locator('tbody tr').evaluateAll(rows=>rows.map(r=>getComputedStyle(r.querySelector('td')).backgroundColor));
+          assert.ok(bands.length>=2&&bands.every((c,i)=>(c==='rgb(230, 238, 248)')===(i%2===0)),`1台おきに帯：${bands.join(' / ')}`);
           await page.getByLabel('2026-10-26 100番の顔文字',{exact:true}).selectOption('😇');
         }else {
           assert.equal(await page.getByRole('button',{name:'4機種を保存',exact:true}).count(),0);

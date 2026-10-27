@@ -68,6 +68,10 @@ try{
   assert.equal(await page.locator('#sheet-title').innerText(),'長町南のイベント履歴');
   assert.equal(await page.locator('.history-table td .history-symbol').first().inputValue(),'');
   assert.equal(await page.locator('.history-table select').count(),14);
+  // 2026-10-27 利用者「B案」：1機種おきに薄い色の帯（スマホ幅では枠線を使わない）。
+  const bands=await page.locator('.history-table tbody tr').evaluateAll(rows=>rows.map(r=>({row:getComputedStyle(r).backgroundColor,cell:getComputedStyle(r.querySelector('td')).backgroundColor,border:getComputedStyle(r).borderTopWidth})));
+  assert.ok(bands.every((b,i)=>((width<=700?b.row:b.cell)==='rgb(230, 238, 248)')===(i%2===0)),`1機種おきに帯（${width}px）：${JSON.stringify(bands)}`);
+  if(width<=700) assert.ok(bands.every(b=>b.border==='0px'),'スマホ幅の週表は枠線を使わない');
   const fixed=page.locator('.history-table tbody th').first();const left=(await fixed.boundingBox()).x;
   await page.locator('.history-overflow').evaluate(e=>e.scrollLeft=500);
   assert.ok(Math.abs((await fixed.boundingBox()).x-left)<2,'機種名を横スクロールで動かさない');

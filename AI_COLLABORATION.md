@@ -3869,3 +3869,10 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 全体ゲート **ALL PASSED**（PC478・230・UTC27件、Flutter728件、analyze info26件のみ、JS74ファイル全成功）。
 - 共有カレンダーを database-share `aeb7b4f`（source 5c6293d、gateのstage物）として公開。Pagesのデプロイ成功、公開中の app.mjs に修正が入っていることを確認。公開の差分は今回の修正と版番号だけ。iPhone実機は利用者の確認待ち。database-ci へのpushは、手元にある別AI（Codex）の未送信コミット9件（`b331b03` P’s CUBEの取り込み停止、`cbf109c` Android 0.5.48 APK など）も一緒に送ることになるため、利用者の確認待ち。
 - 利用者「Codexの分も含めてpushして」により、`python tools/push_ci.py` で `1de33a5` を database-ci/main へ1回push（`f6f5f45..1de33a5`、Codexの未送信9件 `b331b03`〜`ef90f21` を含む）。CI: https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40504146137 （開始を確認、結果は未確認）。Codexの未コミットの作業記録の追記は手元に残したまま（コミット・pushしていない）。
+
+## 【共有カレンダー：週表・4大オススメを1行おきの帯で区切る（B案）】2026-10-27 Claude
+
+- 利用者：「184番とか185番とか区切りが少し見づらい。台番別に顔文字と差枚を週ごとに囲って欲しい。案ができたら提示して」。案A（台番ごとに線の枠）と案B（1台おきに薄い色の帯）を393pxの画像で提示し、利用者「B案」「この表方式を使っているすべてのページに採用。共有だけでいい」。閲覧ページ（Flutter）は変えていない。
+- 対象（共有カレンダー `share_viewer/index.html` のCSSだけ）：4大オススメの表（`.recommendation-table`、1台おきに帯 `#e6eef8`、行の両端を角丸、帯の行の顔文字・差枚の欄は白）と、イベント履歴の週表（`.history-table`：長町南の4台構成・半列・バラエティ、幸町のバラエティ履歴。PC幅は1行おきに帯、スマホ幅は機種ごとの枠線をやめて1機種おきに帯、帯の行の記号欄は白）。表の幅・押せる範囲・保存処理は不変。
+- 再発試験：`test_recommendations_browser.mjs`（共有側、1台おきに帯）と `test_event_history_browser.mjs`（320/393/1280px、1機種おきに帯・スマホ幅は枠線なし）に追加。基準は手元main `6695c1a`（database-ci/main と同じ）。作業記録の別AI（Codex）の未コミットの追記は含めていない。
+- 全体ゲート **ALL PASSED**（PC478・230・UTC27件、Flutter728件、analyze info26件のみ、JS74ファイル全成功）。
