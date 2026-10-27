@@ -75,6 +75,17 @@ try {
           assert.equal(await row.locator('td').nth(0).locator('select').inputValue(),'auto');
           assert.match(await row.locator('td').nth(1).locator('option:checked').innerText(),/—/);
           assert.match(await row.locator('td').nth(2).innerText(),/0/);
+          // 2026-10-27：選択欄の文字（「😌 自動」）と矢印が1列に収まらず、iPhoneで顔文字が見切れていた。
+          // 欄には顔文字だけを出し、透明の選択欄をちょうど重ねる。
+          const fit=await page.locator('.recommendation-pick').evaluateAll(picks=>picks.map(pick=>{
+            const shown=pick.querySelector('.recommendation-face-shown'),select=pick.querySelector('select');
+            const p=pick.getBoundingClientRect(),t=shown.getBoundingClientRect(),q=select.getBoundingClientRect();
+            return {inside:t.left>=p.left-0.5&&t.right<=p.right+0.5,cover:Math.abs(q.left-p.left)<1&&Math.abs(q.right-p.right)<1&&Math.abs(q.top-p.top)<1&&Math.abs(q.bottom-p.bottom)<1,
+              hidden:getComputedStyle(select).opacity==='0',text:shown.textContent};
+          }));
+          assert.ok(fit.length>0&&fit.every(f=>f.inside),`顔文字が欄からはみ出す（${width}px）`);
+          assert.ok(fit.every(f=>f.cover&&f.hidden),'透明の選択欄が欄全体に重なる');
+          assert.match(fit[0].text,/^[^ ]+▾$/,'欄には顔文字だけ（「自動」の文字は出さない）');
           await page.getByLabel('2026-10-26 100番の顔文字',{exact:true}).selectOption('😇');
         }else {
           assert.equal(await page.getByRole('button',{name:'4機種を保存',exact:true}).count(),0);
@@ -86,7 +97,10 @@ try {
         assert.equal(posts.length,1);assert.equal(posts[0].recommendation_results[0].value,'😇');assert.equal(posts[0].recommendation_results[0].rack,100);
         assert.equal(posts[0].recommendations,undefined,'閲覧・共有からは構成を送信しない');
         await open();
-        if(kind==='share')assert.equal(await page.getByLabel('2026-10-26 100番の顔文字',{exact:true}).inputValue(),'😇');
+        if(kind==='share'){
+          assert.equal(await page.getByLabel('2026-10-26 100番の顔文字',{exact:true}).inputValue(),'😇');
+          assert.equal(await page.locator('.recommendation-table').first().locator('.recommendation-face-shown').first().textContent(),'😇▾','選んだ顔文字を欄に出す');
+        }
         else assert.match(await page.getByRole('button',{name:/2026-10-26 .*100番の顔文字/}).innerText(),/😇/);
         // 画像は調査時の明示指定だけ。GitHubランナーにクラウド専用の保存先はない。
         if(width===393 && process.env.RECOMMENDATIONS_SCREENSHOTS){
