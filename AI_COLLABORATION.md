@@ -1,5 +1,17 @@
 # database AI共同作業メモ
 
+## 【Android：修正済み0.5.48の両APK作成・インストールコマンド提示】2026-10-27 Codex
+
+- 利用者「じゃあビルドとコマンド提示までお願いします」により、APK保留を解除して通常版・P’s CUBE版を作成。依頼の終点はビルドとコマンド提示であり、端末へのインストールは行っていない。基準は修正コミット `b331b0362c36fdeade04621a9db5c0a6d97db76b`。両mainを再取得し、database-ci/main `f6f5f45` と origin/main `e8d2fa0` の両方がこの履歴に含まれることを確認した。
+- `RELIABILITY_HARDENING.md` に従い、`build_release_info.py` → `build_viewer_parts.mjs` → `build_event_history_share.mjs` の順で照合用の版を再生成し、`build_pscube_capture.mjs` でもPC・Android共通の生成済みJSを更新。版は `09e2c8670954`。生成済みJSには、既存の生成元にある版表示・`processor_release` の保持も反映される。アプリ・Google向け生成物の版の一致試験は成功。Googleスクリプトの貼り替え・デプロイやWeb公開は行っていない。
+- この配布元で `bash database_android/tool/check_before_build.sh` を実行して **ALL PASSED**。PC通常478件・追加230件・UTC条件27件、Flutter728件成功。静的解析は警告・エラー0、情報26件。JS・ブラウザ74スクリプトの実行は全て成功（非公開保存ページの任意試験1件はスキップ）。`TZ=JST-9`、`CHECK_JS_JOBS=2`、ログは `../cbw-apk0548-20261027/`。照合用生成物を更新したため、前回成功だけを流用せず、この配布元で全体チェックを実施した。
+- `DATABASE_ANDROID_CLONE=original`、`flutter build apk --release --no-pub` で通常版 `0.5.48+2026102704` を作成し、完成品を別名へ保存。その後 `pubspec.yaml` のversionCodeを再び上げ、`DATABASE_ANDROID_CLONE=pscube` でP’s CUBE版 `0.5.48+2026102705` を作成。全体チェック後の2本目に伴う差はパッケージ設定と版番号だけで、Dart・JS等のソースは変えていない。版番号変更後のリリース規則・照合用の版の4試験も成功。`pubspec.yaml` の最終値は `0.5.48+2026102705`。
+- 配布先は `database_android/build/releases/0.5.48/`。通常版 `database-0.5.48-2026102704.apk`（96,505,897バイト、`com.keyan.database_android`、表示名 `database`）、P’s CUBE版 `database-pscube-0.5.48-2026102705.apk`（96,505,925バイト、`com.keyan.database_android.pscube`、表示名 `database P’s CUBE`）。aapt2で版・ID・表示名を確認。
+- APKのSHA-256：通常版 `123157233c03eaa44360a09b08f1901fd60d5d98295555fec082fd3ace45b779`、P’s CUBE版 `4424e226da28ca1b631c6432e29555d3396fc6afa5ff9b951aaa7826f3fa3b1f`。同フォルダの `SHA256SUMS.txt`・`verification.json` に検証値、`build-original.log`・`build-pscube.log` にビルド結果を保存。
+- apksignerで両APKの署名を検証し、証明書SHA-256は旧0.5.47の配布APKと同じ `4332fcb94ea909187733f9e8e3537d428f84d3248e39eeda2baf64387ee7a047`。両APKのseed・capture・probeは元ファイルと同一、arm64-v8a・armeabi-v7a・x86_64の `libapp.so` は両APKでそれぞれ同一。照合用の版はDartの共通ライブラリ内（UTF-16）とcaptureの資産内に含まれることを確認した。初回のASCII文字列だけの検索は一致しなかったが、UTF-16で確認でき、APKの欠落ではなかった。
+- 接続端末 `RFGL146LVVW` は読み取りだけ実施。通常版0.5.46／2026102603、P’s CUBE版0.5.46／2026102604で、新APKの版番号が上であることを確認。提示する更新コマンドは、`database_android` フォルダで `adb -s RFGL146LVVW install -r ".\build\releases\0.5.48\database-0.5.48-2026102704.apk"` と `adb -s RFGL146LVVW install -r ".\build\releases\0.5.48\database-pscube-0.5.48-2026102705.apk"`。コマンドは実行していない。
+- 旧APKは保持。実DB・Cookie・バックアップ・端末データは変更せず、アンインストール・データ消去・EXE作成・pushは行っていない。今回の生成物と版・本節だけをコミットし、既存の別作業の未コミット記録と未追跡ファイルは残す。実サイト・実Androidでの取り込み、無人0時予約の確認は利用者の上書き更新後に残る。
+
 ## 【P’s CUBE：Astra指摘の停止後再読み込みと一覧90秒上限を修正】2026-10-27 Codex（Sol）
 
 - 依頼：利用者「ではastraが挙げた問題点の修正をお願いします」。Astraの読み取りレビューで再現された2点を修正する。両mainを再取得し、基準は `f6f5f45fef9675f0a258cd1d08ee4b42750217c5`（database-ci/main と同じ。origin/main `e8d2fa0` は祖先）。Claudeの3回制限・Android画面経路の修正を保持する。APKは以前の利用者指示で保留、EXEは作らない。
