@@ -3867,3 +3867,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 修正：`share_viewer/app.mjs` で、欄には顔文字（無ければ「—」）と小さな▾だけを `.recommendation-face-shown` に出し、透明の選択欄（opacity 0、欄全体に重ねる、文字16pxでiPhoneの拡大を防ぐ）を上に置く。押すと従来どおり「😌 自動」「空欄」「😍」…を選べる。保存・送信・差枚の表示は不変。CSSは `share_viewer/index.html`。
 - 再発試験：`database_android/tool/test_recommendations_browser.mjs` の共有側（320/393/1280px）に、顔文字が欄からはみ出さない・透明の選択欄が欄全体に重なる・欄に「自動」の文字を出さない・選んだ顔文字が欄に出る、を追加。修正前の作りでは失敗、修正後は成功を確認。393pxの画像で目視確認。
 - 全体ゲート **ALL PASSED**（PC478・230・UTC27件、Flutter728件、analyze info26件のみ、JS74ファイル全成功）。
+- 共有カレンダーを database-share `aeb7b4f`（source 5c6293d、gateのstage物）として公開。Pagesのデプロイ成功、公開中の app.mjs に修正が入っていることを確認。公開の差分は今回の修正と版番号だけ。iPhone実機は利用者の確認待ち。database-ci へのpushは、手元にある別AI（Codex）の未送信コミット9件（`b331b03` P’s CUBEの取り込み停止、`cbf109c` Android 0.5.48 APK など）も一緒に送ることになるため、利用者の確認待ち。
