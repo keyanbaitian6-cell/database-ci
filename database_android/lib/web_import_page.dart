@@ -117,8 +117,8 @@ String todayIso([DateTime? now]) {
   return '${day.year}-${two(day.month)}-${two(day.day)}';
 }
 
-/// 営業日と2026-10-25の翌日候補比較計画の締切は3時。
-/// 旧focus計画の締切 `focusCutoffHour` は別に2時のまま。
+/// 営業日の切り替えは3時。翌日候補の比較・評価の締切（2026-10-25の比較計画と
+/// 旧focus計画の `focusCutoffHour`）は、2026-10-28から別に翌日8時（3店舗の最も早い開店時刻）。
 const businessDayCutoffHour = 3;
 
 /// 機種一覧の見出し行（「機種名 台数 通常順 ピックアップ順」）か。

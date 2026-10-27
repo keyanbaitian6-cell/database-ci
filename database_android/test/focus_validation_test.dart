@@ -75,7 +75,7 @@ void main() {
     final late = [
       for (final r in full)
         r.day == '2026-09-30'
-            ? r.copyWith(capturedAt: '2026-10-01T02:00:00+09:00')
+            ? r.copyWith(capturedAt: '2026-10-01T08:00:00+09:00')
             : r,
     ];
     expect(buildFocusValidation(late), isEmpty);
@@ -108,5 +108,35 @@ void main() {
       '2026-09-30',
     });
     expect(buildFocusValidation(full, cutoffHour: 0), isEmpty);
+  });
+  test('締切は翌日8時（2026-10-28〜、3店舗の最も早い開店時刻）。2時締切の感度確認では外れる', () {
+    final full = [
+      for (final day in [
+        '2026-09-27',
+        '2026-09-28',
+        '2026-09-29',
+        '2026-09-30',
+        '2026-10-01',
+      ])
+        for (var rack = 1; rack <= 4; rack++)
+          SlotRecord(
+            store: 'saiwaichou',
+            day: day,
+            machine: 'A',
+            rack: rack,
+            games: 4000,
+            bb: 40 - rack * 3,
+            rb: 0,
+            maxHold: 1000,
+            capturedAt: day == '2026-09-30'
+                ? '2026-10-01T07:59:00+09:00'
+                : '${day}T23:00:00+09:00',
+          ),
+    ];
+    expect(focusCutoffHour, 8);
+    expect(buildFocusValidation(full).map((g) => g.baseline.day).toSet(), {
+      '2026-09-30',
+    });
+    expect(buildFocusValidation(full, cutoffHour: 2), isEmpty);
   });
 }

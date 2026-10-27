@@ -106,8 +106,7 @@ void main(List<String> args) {
       'final_on_or_after': focusValidationFinalOn,
       'cutoff':
           'Before next-day 0$focusCutoffHour:00 JST (business day); captured_at required; no earlier-value repair',
-      'sensitivity_cutoff':
-          'Before next-day 00:00 JST, reported only, never used for adoption',
+      'sensitivity_cutoff': 'Before next-day 00:00 and 02:00 JST (earlier cutoffs), reported only, never used for adoption',
       'bootstrap_rounds': focusFinalBootstrapRounds,
       'bootstrap_seed': focusFinalBootstrapSeed,
       'minimum_days': focusFinalMinimumDays,
@@ -140,6 +139,17 @@ void main(List<String> args) {
     result['sensitivity_cutoff_0000'] = {
       'progress': focusProgress(midnight, full, from: from, through: through),
       'outcomes': focusOutcomeSummary(midnight),
+    };
+    // 2026-10-07〜10-28の締切。8時へ変えた後も、前の締切での結果を並べる。
+    final two = buildFocusValidation(
+      full,
+      cutoffHour: 2,
+      from: from,
+      through: through,
+    );
+    result['sensitivity_cutoff_0200'] = {
+      'progress': focusProgress(two, full, from: from, through: through),
+      'outcomes': focusOutcomeSummary(two),
     };
   }
   if (mode == 'interim') {

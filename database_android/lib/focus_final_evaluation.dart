@@ -371,7 +371,8 @@ String captureBucket(SlotRecord r) {
   if (hours < 22) return 'day_00_22';
   if (hours < 24) return 'day_22_24';
   if (hours < 26) return 'next_00_02';
-  return 'next_02_later';
+  if (hours < 32) return 'next_02_08';
+  return 'next_08_later';
 }
 
 const captureBuckets = [
@@ -380,7 +381,8 @@ const captureBuckets = [
   'day_00_22',
   'day_22_24',
   'next_00_02',
-  'next_02_later',
+  'next_02_08',
+  'next_08_later',
 ];
 
 /// 店舗・日ごとの記録数と取得時刻の区分。[from] 以降の日だけ。

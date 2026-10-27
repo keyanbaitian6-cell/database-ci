@@ -10,13 +10,13 @@ const focusValidationFrom = '2026-09-30';
 const focusValidationThrough = '2026-10-29';
 const focusValidationFinalOn = '2026-10-31';
 
-/// The prediction day D ends at 02:00 JST on D+1, the business-day rule the
-/// user fixed for imports when this plan was registered. The import business
-/// day moved to 03:00 on 2026-10-26 (`businessDayCutoffHour`); this registered
-/// evaluation cutoff deliberately stays at 02:00.
-/// Changed from 00:00 on 2026-10-07 at the user's direction; 00:00 stays as a
-/// sensitivity check that is never used for adoption.
-const focusCutoffHour = 2;
+/// The prediction day D ends at 08:00 JST on D+1, the earliest opening time of
+/// the three stores (user decision 2026-10-28, before the final evaluation):
+/// until then only D's closed values can be captured. Earlier cutoffs were
+/// 00:00 (registered) and 02:00 (2026-10-07, after the interim view); both stay
+/// as sensitivity checks that are never used for adoption. The import business
+/// day (`businessDayCutoffHour`, 03:00) is a separate rule.
+const focusCutoffHour = 8;
 
 /// Ties on the unrounded recent index go to the rack with more games on the
 /// prediction day (user decision 2026-10-07, fixed before any result of the

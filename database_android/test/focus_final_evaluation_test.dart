@@ -216,7 +216,9 @@ void main() {
     expect(captureBucket(at('2026-10-01T21:59:00+09:00')), 'day_00_22');
     expect(captureBucket(at('2026-10-01T23:59:59+09:00')), 'day_22_24');
     expect(captureBucket(at('2026-10-01T15:00:00Z')), 'next_00_02');
-    expect(captureBucket(at('2026-10-02T02:00:00+09:00')), 'next_02_later');
+    expect(captureBucket(at('2026-10-02T02:00:00+09:00')), 'next_02_08');
+    expect(captureBucket(at('2026-10-02T07:59:00+09:00')), 'next_02_08');
+    expect(captureBucket(at('2026-10-02T08:00:00+09:00')), 'next_08_later');
     expect(captureBucket(at('2026-09-30T23:00:00+09:00')), 'before_day');
   });
 

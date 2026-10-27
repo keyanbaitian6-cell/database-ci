@@ -3902,3 +3902,15 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 再発試験：`test_recommendations_browser.mjs`（共有側、1台おきに帯）と `test_event_history_browser.mjs`（320/393/1280px、1機種おきに帯・スマホ幅は枠線なし）に追加。基準は手元main `6695c1a`（database-ci/main と同じ）。作業記録の別AI（Codex）の未コミットの追記は含めていない。
 - 全体ゲート **ALL PASSED**（PC478・230・UTC27件、Flutter728件、analyze info26件のみ、JS74ファイル全成功）。
 - 共有カレンダーを database-share `e604313`（source ed8ce0f、gateのstage物）として公開。Pagesのデプロイ成功、公開中の index.html に帯の指定が入っていることを確認。公開の差分は今回のCSSと版番号だけ。`python tools/push_ci.py` で database-ci へ1回push（この記録を含む）。CIの結果は未確認。iPhone実機は利用者の確認待ち。
+
+## 【翌日候補の比較・評価の締切を翌日08:00 JSTへ（2つの計画、評価前）】2026-10-28 Claude
+
+- 経緯：10/27分のP’s CUBEの取り込みが、PCの取り込み窓の不具合（最小化した窓で一覧の続きが出ない。`cf0370f` で修正、利用者が「直ってる」と確認）で03:00の締切を過ぎた。利用者「今の取り込みだけは取り込み時刻を書き換えて3時前ということにできない？」→ AIは、検証記録（`input_versions.sqlite3`）の時刻の書き換えは記録の正しさを壊し、別の控えとの照合でも不整合になるので勧めず、締切そのものを開店前へ延ばす案を出した。
+- 利用者の申告：開店はメルヘン幸町8時・長町南9時・P-STATION（P’s CUBEで取り込む店）8時。P’s CUBEの更新開始は8時20分ごろ。利用者「9時開店もありますが、すべての締め切りを日本時間の朝8時に固定でお願いします」。
+- 変更（記録の時刻は書き換えていない）：
+  - `NEXT_DAY_SHADOW_PLAN_20261025.md`（店舗別比較、予測日10/26〜11/24）：締切 D+1 03:00 → **08:00 JST**。変更の日付・理由を計画書に追記。締切を決め打ちしたプログラムはまだ無い（評価は11/26以降に `input_versions.as_of(..., 締切)` で1回）。成績は誰も見ていない（作業記録で確認）。
+  - `NEXT_DAY_FOCUS_PLAN_20260930.md`（★の注目、予測日9/30〜10/29、最終評価10/31以降）：`focusCutoffHour` 2 → **8**（`database_android/lib/focus_validation.dart`）。10/07の途中の確認（2:00締切）を見た後の変更なので、`tool/focus_final_evaluation.dart` は 0:00 に加えて 2:00 の締切の結果も `sensitivity_cutoff_0200` として並べる（判定には使わない）。取得時刻の区分を `next_00_02`・`next_02_08`・`next_08_later` に分けた（`lib/focus_final_evaluation.dart`）。
+  - コメント・文書の追従：`database/browser_import.py`・`database_android/lib/web_import_page.dart`（営業日3時と締切8時を区別）、`database/PSCUBE_SYNC.md`、`database/IMPORT_DAY_AND_DIRECTION.md`。
+- 変えていないもの：アプリの営業日の切り替え（3時、`BUSINESS_DAY_CUTOFF_HOUR`・`businessDayCutoffHour`）。イベントの「前日までに入力」（その日の03:00）。固定済みの過去の分析（`research/next_day_shadow_20261025/frozen_analysis/` の02:00、ハッシュ固定）と、完了済みの過去の検証ツール（`predictionCutoff` の既定0:00を使う star_review・strong_rack_review・reference/low_activity の比較・`backtest_next_day` など）。いずれも当時の報告の再現用なので変えない。新しく分析するときに締切8時を使う。
+- 試験：`flutter test test/focus_validation_test.dart test/focus_final_evaluation_test.dart` 17件成功（07:59は入り2時締切では外れる、08:00は外れる、区分の境目を追加）。変更したDart 6ファイルの `flutter analyze` は問題なし。`browser_import.py` は構文確認だけ（コメントのみの変更）。全体ゲートは流していない（ビルド・公開はしない）。
+- 未確認：実データでの最終評価の出力（10/31以降に1回だけ実行する計画なので、今は実行していない）。
