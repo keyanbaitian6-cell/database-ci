@@ -112,6 +112,31 @@ class PscubeImportTests(unittest.TestCase):
             self.assertNotIn('index', pilot.failures)
             backup.assert_called_once()
 
+    def test_index_retry_does_not_reload_after_stop_or_connection_failure(self):
+        from auto_capture import AutoCapture
+        from pscube_import import AutoPilot
+        from test_pscube_auto import Clock, FakeWindow, PROBE
+        for stop in ('off', 'connection'):
+            with self.subTest(stop=stop):
+                pilot = AutoPilot(FakeWindow(), PROBE,
+                                  auto=AutoCapture(clock=Clock(), minimum=5, maximum=60, default=10))
+                pilot.configure(True, 10)
+                pilot.pending = 'index'
+                pilot.index_confirmation = {'machine'}
+                pilot.index_confirmation_page = 0
+                if stop == 'off':
+                    pilot.configure(False, 10)
+                else:
+                    pilot.connection_failed('通信エラー')
+                self.assertIsNone(pilot.index_confirmation)
+                # 停止直後に保存処理から返った古い再確認の結果も、再読み込みさせない。
+                pilot.index_confirmation = {'late-result'}
+                result = {'retry_index': True, 'next_url': self.index_url}
+                pilot.finished(result=result)
+                self.assertFalse(result['reload'])
+                self.assertIsNone(pilot.index_confirmation)
+                self.assertIsNone(pilot.index_confirmation_page)
+
     def test_auto_stops_reopening_an_index_that_differs_every_time(self):
         # 開き直すたびに違う減った一覧が返り続けても、一晩じゅう開き直さない（3回で止めて待機）。
         from auto_capture import AutoCapture

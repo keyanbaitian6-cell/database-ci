@@ -1,3 +1,5 @@
+import 'dart:async';
+
 /// 一覧に対して行うスクロールの種類。
 enum PscubeScroll {
   /// 動かさず、台数と位置だけ読む。
@@ -32,8 +34,34 @@ Future<void> waitForPscubeList({
   required bool Function() isCurrent,
   int? expectedCount,
   Future<void> Function(Duration)? delay,
+  Duration Function()? elapsed,
 }) async {
-  final wait = delay ?? (duration) => Future<void>.delayed(duration);
+  final clock = Stopwatch()..start();
+  final now = elapsed ?? () => clock.elapsed;
+  final started = now();
+  final pause = delay ?? (duration) => Future<void>.delayed(duration);
+  FormatException timeout() =>
+      const FormatException('一覧の読み込みが時間切れになりました。保存せずに再試行します。');
+  Duration remaining() {
+    final left = pscubeListTimeout - (now() - started);
+    if (left <= Duration.zero) throw timeout();
+    return left;
+  }
+
+  Future<T> bounded<T>(Future<T> Function() action) async {
+    final left = remaining();
+    final value = await action().timeout(
+      left,
+      onTimeout: () => throw timeout(),
+    );
+    remaining();
+    return value;
+  }
+
+  Future<void> wait(Duration duration) => bounded(() {
+    final left = remaining();
+    return pause(duration < left ? duration : left);
+  });
   var last = -1;
   var quiet = 0;
   var nudges = 0;
@@ -43,7 +71,7 @@ Future<void> waitForPscubeList({
   var action = PscubeScroll.none;
   for (var tick = 0; tick < pscubeListMaxTicks; tick++) {
     if (!isCurrent()) return;
-    final view = await scroll(action);
+    final view = await bounded(() => scroll(action));
     action = PscubeScroll.none;
     if (!isCurrent() || view.count < 0) return;
     if (view.count > last) {
@@ -82,9 +110,13 @@ Future<void> waitForPscubeList({
     }
     await wait(const Duration(milliseconds: 250));
   }
+  throw timeout(); // 回数の安全上限でも、未完了の一覧を保存させない。
 }
 
-/// 1回250ミリ秒で、最長およそ90秒。
+/// 追加待機・WebViewの問い合わせも含む時間上限。
+const pscubeListTimeout = Duration(seconds: 90);
+
+/// ループ回数の安全上限。実時間の上限は [pscubeListTimeout]。
 const pscubeListMaxTicks = 360;
 
 /// 台数が不明の一覧で、終わる前に少し戻って下へ着き直す回数（PC版 `SCROLL_SCRIPT` と同じ）。

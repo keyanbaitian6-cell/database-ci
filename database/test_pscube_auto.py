@@ -432,16 +432,17 @@ class AutoPilotTests(unittest.TestCase):
         self.pilot.tick()
         self.assertTrue(finished.is_set(), '問い合わせ中でも保存完了の処理は進む')
 
-    def test_a_capture_that_never_finishes_is_released_after_90_seconds(self):
+    def test_list_can_wait_90_seconds_before_the_capture_watchdog_expires(self):
         self.pilot.configure(True, 10)
         self.window.probe = page('A')
         self.wait(10)
         self.pilot.tick()
         self.assertEqual(self.pilot.pending, 'A')
-        self.wait(60)
+        self.wait(91)
         self.pilot.tick()
-        self.assertEqual(self.window.calls.count('start'), 1, '90秒までは待つ')
-        self.wait(40)
+        self.assertEqual(self.pilot.pending, 'A', '一覧90秒のあと、読み取り・保存通知の余裕を残す')
+        self.assertEqual(self.pilot.failures, {})
+        self.wait(29)
         self.pilot.tick()
         self.assertIn('やり直します', self.message())
         self.assertEqual(self.pilot.failures, {'A': 1})

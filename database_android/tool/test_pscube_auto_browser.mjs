@@ -74,13 +74,19 @@ await page.goto(`${base}nc-v05-011.php?cd_ps=2&bai=20`);
 assert.equal((await page.evaluate(src => JSON.parse(eval(src)), probe)).ready, true);
 
 // ---- PC版の取り込みカード ----
-async function install(url, api) {
+async function install(url, api, script = overlay) {
   await page.goto(url);
   await page.evaluate(stub => {
     window.__calls = [];
     window.pywebview = { api: {
       get_installation_count: async () => stub.expected_count ?? 2,
-      submit_page: async payload => { window.__calls.push(['submit', JSON.parse(payload)]); sessionStorage.setItem('submitted', payload); if (stub.fail) throw new Error(stub.fail); return stub.result; },
+      submit_page: async payload => {
+        window.__calls.push(['submit', JSON.parse(payload)]);
+        sessionStorage.setItem('submitted', payload);
+        if (stub.fail) throw new Error(stub.fail);
+        if (stub.stop_before_result) window.__pscubeRenderAuto({enabled: false, seconds: 20, revision: 99, message: '停止中'});
+        return stub.result;
+      },
       capture_failed: async message => { window.__calls.push(['failed', message]); return true; },
       retry_page: async () => { window.__calls.push(['retry']); return true; },
       reset_site: async () => { window.__calls.push(['reset']); return 'サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。'; },
@@ -98,7 +104,28 @@ async function install(url, api) {
       },
     } };
   }, api);
-  await page.evaluate(overlay);
+  await page.evaluate(script);
+}
+// 一覧待機の期限に達した場合は、途中のページを保存APIへ渡さない。
+await install(mUrl, {result: {}}, overlay.replace('90000 * scale', '1'));
+await page.evaluate(() => window.__pscubeStartCapture());
+await page.waitForFunction(() => window.__calls.some(c => c[0] === 'failed'));
+assert.equal(await page.evaluate(() => window.__calls.some(c => c[0] === 'submit')), false);
+assert.match(await page.locator('#database-pscube-capture').innerText(), /時間切れ/);
+// 保存結果の通知直前にOFFにした場合と、Python側が再読み込みを禁止した場合は移動しない。
+for (const localStop of [true, false]) {
+  await install(mUrl, {stop_before_result: localStop, result: {
+    retry_index: true, next_url: mUrl, ...(localStop ? {} : {reload: false}),
+  }});
+  await page.evaluate(() => window.__pscubeRenderAuto({enabled: true, seconds: 20, revision: 10, message: 'ON'}));
+  let navigated = false;
+  const onNavigation = frame => { if (frame === page.mainFrame()) navigated = true; };
+  page.on('framenavigated', onNavigation);
+  await page.evaluate(() => window.__pscubeStartCapture());
+  await page.waitForFunction(() => window.__calls.some(c => c[0] === 'submit') && !window.__pscubeBusy);
+  await page.waitForTimeout(100);
+  page.off('framenavigated', onNavigation);
+  assert.equal(navigated, false, `停止後の再確認で再読み込みしない（画面側停止：${localStop}）`);
 }
 await install(mUrl, { result: { kind: '全台一覧', remaining: 2, next_url: `${base}nc-v06-001.php?cd_dai=1#20261001`, backup: 'バックアップ済み' } });
 assert.equal(await page.locator('#database-pscube-auto').innerText(), '自動取り込み：OFF（押すと開始）', '起動時はOFF');

@@ -1,5 +1,17 @@
 # database AI共同作業メモ
 
+## 【P’s CUBE：Astra指摘の停止後再読み込みと一覧90秒上限を修正】2026-10-27 Codex（Sol）
+
+- 依頼：利用者「ではastraが挙げた問題点の修正をお願いします」。Astraの読み取りレビューで再現された2点を修正する。両mainを再取得し、基準は `f6f5f45fef9675f0a258cd1d08ee4b42750217c5`（database-ci/main と同じ。origin/main `e8d2fa0` は祖先）。Claudeの3回制限・Android画面経路の修正を保持する。APKは以前の利用者指示で保留、EXEは作らない。
+- 指摘1：PCは自動OFF・通信エラーで止まっていても、遅れて返る `retry_index` が再読み込みを許可した。`AutoPilot.configure(False, ...)` と `connection_failed` で確認待ちの集合を破棄し、`finished` でも無効状態の再確認結果には `reload=False` を付けて集合を破棄する。取り込みカードも自動OFFの状態では再読み込みしない。Androidの既存の停止確認と同じ扱いにする。
+- 指摘2：従来の360回×250msには、増加時・着き直し時の400msが含まれず、Astraの仮想時計で合計105.2秒になる。PC `SCROLL_SCRIPT` は `performance.now()`、Android `waitForPscubeList` は `Stopwatch` を使い、すべての追加待機を含む90秒の期限を設ける。残り時間で最後の待機を切り詰める。AndroidのWebView問い合わせ自体にも残り時間のtimeoutを付ける。回数上限は別の安全上限として保持し、時間・回数の上限到達を正常完了にせず、時間切れの例外にする。呼び出し側は途中一覧を保存せず、既存の失敗上限に数える。PCの全体監視は一覧90秒＋読み取り・保存通知の余裕30秒＝120秒に変更し、一覧を待っている途中で取り込みの印を外さない。
+- 試験追加：PC `test_pscube_import.py` でOFF・通信エラー後の候補破棄と遅い結果の再読み込み禁止を確認。`test_pscube_auto.py` で91秒では待機し120秒で全体監視が解除されることを確認。`tool/test_pscube_scroll.mjs` で実スクリプトと仮想単調時計を使い、件数増加・着き直しが続いても待機の合計90秒で例外になることを確認。`tool/test_pscube_auto_browser.mjs` で画面側OFF／処理側の再読み込み禁止、時間切れ時に保存APIを呼ばないことを確認。Android `test/pscube_list_wait_test.dart` で追加待機・問い合わせ込み90秒、回数上限でも正常終了しないこと、返事のない問い合わせの打ち切りを確認。元からある140機種の読み切り試験も保持。
+- 修正前の失敗：PCの新試験1件のOFF・通信エラーの2場面が候補を保持したままで失敗、PC実スクリプトの仮想時計試験は時間切れを返さず失敗。Windowsサンドボックスでは一時DBの作成・削除とDart補助ファイル更新が拒否されたため、通常のWindows環境で再実行して、環境エラーと製品コードの失敗を区別した。
+- 修正後の関連確認：PC `python -m unittest test_pscube_import test_pscube_auto test_pscube_direction` 75件成功。Android `flutter test --no-pub test/pscube_list_wait_test.dart test/pscube_auto_flow_test.dart test/pscube_store_test.dart test/pscube_auto_test.dart` 78件成功。PCのスクロールと取り込みカードの模擬ブラウザ試験成功。実WebView2 `155.0.4283.62` で `database/tests/smoke_pscube_delayed_list.py` 成功（ローカルのインラインHTML・専用プロファイル・一時DBだけ。遅い6→31台を待ち、一時DBのSHA-256不変）。実サイトには接続していない。
+- 最終版の全体チェック：`bash database_android/tool/check_before_build.sh` は **ALL PASSED**。PC通常478件・追加230件・UTC条件27件、Flutter728件成功。静的解析は警告・エラー0、情報26件（既存と同数）。JS・ブラウザ74スクリプト成功、非公開保存ページを使う任意試験1件はスキップ。閲覧Webの試験用ビルド・stageと共有stage成功、公開はしていない。ログは `../cbw-astra-fixes-20261027/`、`TZ=JST-9` でプロセス起動後のUTCオフセット+09:00を実測。`CHECK_JS_JOBS=2` は全スクリプトを保持し、既存の並列実行機能だけを使用。差分の空白検査も成功。
+- コミット対象は今回の7コード・試験ファイルと本節だけ。以前からある本ファイルの別の追記（PCクラウド更新の記録等）と未追跡ファイルはコミットに混ぜない。APKの保留とレビューの流れを保持し、pushは行わない。
+- 未確認・保留：実サイト・Android実機での運用、無人0時予約、実WebView2でOFFと通知が競合する操作は未確認。WebView2で直接確認したのはローカルの遅延一覧待機。90秒はアプリ側の待機・問い合わせの期限であり、OSが処理を長時間停止した場合などに実時間を厳密に保証するものではない。同じ途中一覧が2回続く場合と、前回より減らない途中一覧を見分けられない方式上の限界は引き続き残る。実DB・Cookie・バックアップは変更せず、他AIの未コミット記録・未追跡ファイルを保持する。APK・EXE・公開・pushは未実施。
+
 ## 【P’s CUBE：機種一覧の再確認（Codex）のレビューと修正・開き直しは3回まで】2026-10-27 Claude
 
 - 依頼：利用者「AI_COLLABORATION.md の先頭に作業報告をまとめてくれてます。必要な修正あればclaudeもお願いします」。直下のCodexの項目（未コミットの変更）をレビューし、必要な所を直した。基準は手元 main `010f881`（database-ci/main と同じ。origin/main `e8d2fa0` はその祖先）。

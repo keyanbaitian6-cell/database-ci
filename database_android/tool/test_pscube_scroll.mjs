@@ -2,9 +2,25 @@
 // 実サイトには接続しない。待ち時間は scrollDelayScale で縮める（台数の判定は待ち回数で数える）。
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const source = readFileSync(new URL('../../database/pscube_import.py', import.meta.url), 'utf8');
 const scroll = source.match(/SCROLL_SCRIPT = r'''([\s\S]*?)'''/)[1];
+// 実際のスクリプトを仮想の単調時計で動かし、追加の400ms待機も90秒に含むことを確認する。
+let elapsed = 0, count = 20, bottom = true, nudged = false;
+const list = {
+  get children() { return {length: count}; },
+  lastElementChild: {scrollIntoView() { if (nudged) { count += 20; nudged = false; } }},
+};
+await assert.rejects(runInNewContext(scroll, {
+  performance: {now: () => elapsed},
+  document: {querySelector: () => list, documentElement: {get scrollHeight() { return bottom ? 100 : 1000; }}},
+  window: {scrollY: 0, innerHeight: 100, scrollTo() {}, scrollBy(x, y) {
+    if (y < 0) { bottom = false; nudged = true; } else bottom = true;
+  }},
+  setTimeout(callback, ms) { elapsed += ms; callback(); },
+}), /時間切れ/);
+assert.equal(elapsed, 90000, '増加・着き直しの待機も含めて90秒で打ち切る');
 const SCALE = 0.1;
 // SCROLL_SCRIPT は、取り込み画面の中で expectedCount（設置台数。不明なら未定義）を参照する。
 const run = (page, count) => page.evaluate(({script, count, scale}) => {

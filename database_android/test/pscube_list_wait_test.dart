@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:database_android/pscube_list_wait.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -70,6 +72,7 @@ void main() {
         isCurrent: () => true,
         scroll: list.scroll,
         delay: list.delay,
+        elapsed: () => list.elapsed,
       );
       expect(list.count, 31);
       expect(list.elapsed, greaterThan(const Duration(seconds: 3)));
@@ -83,6 +86,7 @@ void main() {
       isCurrent: () => true,
       scroll: list.scroll,
       delay: list.delay,
+      elapsed: () => list.elapsed,
     );
     expect(list.count, 64);
     expect(list.elapsed, lessThan(const Duration(seconds: 30)));
@@ -100,6 +104,7 @@ void main() {
       isCurrent: () => true,
       scroll: list.scroll,
       delay: list.delay,
+      elapsed: () => list.elapsed,
     );
     final arrives = list.actions.where((a) => a == PscubeScroll.arrive).length;
     final nudges = list.actions.where((a) => a == PscubeScroll.nudge).length;
@@ -120,6 +125,7 @@ void main() {
       isCurrent: () => true,
       scroll: list.scroll,
       delay: list.delay,
+      elapsed: () => list.elapsed,
     );
     expect(list.count, 6);
     expect(
@@ -144,6 +150,7 @@ void main() {
         isCurrent: () => true,
         scroll: list.scroll,
         delay: list.delay,
+        elapsed: () => list.elapsed,
       );
       expect(list.count, 61, reason: '最初の到着を無視するサイト：$ignored回');
     }
@@ -154,9 +161,11 @@ void main() {
     var bottom = false;
     var wasNudged = false;
     var nudges = 0;
+    var elapsed = Duration.zero;
     await waitForPscubeList(
       isCurrent: () => true,
-      delay: (_) async {},
+      delay: (duration) async => elapsed += duration,
+      elapsed: () => elapsed,
       scroll: (action) async {
         if (action == PscubeScroll.nudge) {
           bottom = false;
@@ -202,20 +211,86 @@ void main() {
     expect(calls, 1);
   });
 
-  test('最長でも360回（およそ90秒）で終わる', () async {
+  test('追加待機も含めて90秒で時間切れを返す', () async {
     var calls = 0;
     var elapsed = Duration.zero;
-    await waitForPscubeList(
-      expectedCount: 31,
-      isCurrent: () => true,
-      // 台は増えず、一番下でも上でもない位置を行き来する（戻る回数の上限にも掛からない状態）
-      scroll: (_) async {
-        calls++;
-        return (count: 6, atBottom: false);
-      },
-      delay: (duration) async => elapsed += duration,
+    await expectLater(
+      waitForPscubeList(
+        expectedCount: 31,
+        isCurrent: () => true,
+        // 台は増えず、一番下でも上でもない位置を行き来する（戻る回数の上限にも掛からない状態）
+        scroll: (_) async {
+          calls++;
+          return (count: 6, atBottom: false);
+        },
+        delay: (duration) async => elapsed += duration,
+        elapsed: () => elapsed,
+      ),
+      throwsFormatException,
+    );
+    expect(calls, lessThanOrEqualTo(pscubeListMaxTicks));
+    expect(elapsed, pscubeListTimeout);
+  });
+
+  test('増加・戻り・問い合わせの時間も含めて90秒で打ち切る', () async {
+    var elapsed = const Duration(hours: 1);
+    var count = 20;
+    var bottom = true;
+    var nudged = false;
+    await expectLater(
+      waitForPscubeList(
+        isCurrent: () => true,
+        elapsed: () => elapsed,
+        delay: (duration) async => elapsed += duration,
+        scroll: (action) async {
+          elapsed += const Duration(milliseconds: 20);
+          if (action == PscubeScroll.nudge) {
+            bottom = false;
+            nudged = true;
+          } else if (action == PscubeScroll.step) {
+            bottom = true;
+          } else if (action == PscubeScroll.arrive && nudged) {
+            count += 20;
+            nudged = false;
+          }
+          return (count: count, atBottom: bottom);
+        },
+      ),
+      throwsFormatException,
+    );
+    expect(elapsed, const Duration(hours: 1, seconds: 90));
+    expect(count, greaterThan(140));
+  });
+
+  test('回数上限も未完了の一覧を正常終了にしない', () async {
+    var calls = 0;
+    await expectLater(
+      waitForPscubeList(
+        expectedCount: 31,
+        isCurrent: () => true,
+        elapsed: () => Duration.zero,
+        scroll: (_) async {
+          calls++;
+          return (count: 6, atBottom: false);
+        },
+        delay: (_) async {},
+      ),
+      throwsFormatException,
     );
     expect(calls, pscubeListMaxTicks);
-    expect(elapsed, const Duration(milliseconds: 250 * 360 + 400));
+  });
+
+  test('問い合わせが返らなくても残り時間で打ち切る', () async {
+    final never = Completer<PscubeListView>();
+    var reads = 0;
+    await expectLater(
+      waitForPscubeList(
+        isCurrent: () => true,
+        elapsed: () =>
+            reads++ == 0 ? Duration.zero : const Duration(milliseconds: 89990),
+        scroll: (_) => never.future,
+      ),
+      throwsFormatException,
+    );
   });
 }

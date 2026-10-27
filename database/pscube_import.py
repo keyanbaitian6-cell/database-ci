@@ -63,12 +63,20 @@ SCROLL_SCRIPT = r'''(async () => {
   const findList = () => document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
   const target = typeof expectedCount === 'number' ? expectedCount : null;
   const scale = typeof scrollDelayScale === 'number' ? scrollDelayScale : 1;   // 試験用：待ち時間の倍率
-  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms * scale));
+  const deadline = performance.now() + 90000 * scale;
+  const timeout = () => new Error('一覧の読み込みが時間切れになりました。保存せずに再試行します。');
+  const checkTime = () => { if (performance.now() >= deadline) throw timeout(); };
+  const sleep = async ms => {
+    checkTime();
+    await new Promise(resolve => setTimeout(resolve, Math.min(ms * scale, deadline - performance.now())));
+    checkTime();
+  };
   const countCards = () => target === null ? (findList()?.children.length ?? -1)
     : document.querySelectorAll('li[id^="li-"]').length;
   const atBottom = () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
   let last = -1, quiet = 0, nudges = 0, idleNudges = 0, armed = true;
-  for (let tick = 0; tick < 360; tick++) {          // 1回250ミリ秒、最長およそ90秒
+  for (let tick = 0; tick < 360; tick++) {          // 追加待機も含め、実際の経過時間で最長90秒
+    checkTime();
     const list = findList();
     if (!list) return;
     const count = countCards();
@@ -99,6 +107,7 @@ SCROLL_SCRIPT = r'''(async () => {
     }
     await sleep(250);
   }
+  throw timeout();                                // 回数の安全上限でも、未完了の一覧を保存させない
 })()'''
 
 
@@ -1320,7 +1329,8 @@ class AutoPilot:
     EVAL_TIMEOUT = 10
     # 取り込み（全台の表示→読み取り→保存）がこの秒数たっても終わらなければ、印を外してやり直す
     # （ページ内の処理が途中で消えた場合に「取り込み中」のまま進まなくなるのを防ぐ）。
-    PENDING_TIMEOUT = 90
+    # 一覧待機90秒に、読み取り・保存通知の余裕30秒を足す。一覧を待っている途中で解除しない。
+    PENDING_TIMEOUT = 120
 
     def __init__(self, evaluate, probe_script, saving=lambda: False, auto=None, eval_timeout=None):
         self.evaluate = evaluate
@@ -1399,6 +1409,7 @@ class AutoPilot:
                 return self.state()
             if enabled and not self.auto.state()['enabled']:
                 self.fresh_since = {}
+            if not enabled or not self.auto.state()['enabled']:
                 self.index_confirmation = None
                 self.index_confirmation_page = None
             self.auto.configure(enabled, seconds)
@@ -1412,6 +1423,7 @@ class AutoPilot:
         """Native WebView2 callback: no JS/UI wait here."""
         with self._lock:
             self.connection_error = message
+            self.index_confirmation = self.index_confirmation_page = None
             self.auto.configure(False, self.auto.state()['seconds'])
             self.auto.pause(message)
 
@@ -1525,6 +1537,10 @@ class AutoPilot:
                     if enabled:
                         self.auto.pause(f'ON・保存できませんでした（{self.failures[signature]}回目）：{error}')
             elif result is not None and result.get('retry_index'):
+                if not enabled or self.connection_error:
+                    result['reload'] = False
+                    self.index_confirmation = self.index_confirmation_page = None
+                    return
                 # 再確認も同じページの失敗に数える。読むたびに違う一覧が返り続けても、開き直しは3回まで
                 # （数えないと、一晩じゅう機種一覧を開き直し続ける。Android `_capture` と同じ）。
                 count = None
@@ -1691,7 +1707,7 @@ def overlay_script(capture_script, index_url):
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
         if (result.retry_index) {
           capturedUrl = null;
-          if (result.reload === false) { idle('機種一覧が前回より少なく、保存していません'); return; }
+          if (!autoEnabled || result.reload === false) { idle('機種一覧が前回より少なく、保存していません'); return; }
           idle('機種一覧を開き直して確認します');
           location.reload();
           return;
