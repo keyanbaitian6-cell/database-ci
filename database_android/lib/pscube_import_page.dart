@@ -435,7 +435,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   /// サイトの中のページから次のページへは、リンクをたどるのと同じ形（ページ内で移動）で
   /// 開く。アドレスを直接開くと「どのページから来たか」が付かず、普通のブラウザと
   /// 違って見えるため（PC版も同じ形）。サイトの外にいるときだけ直接開く。
-  Future<bool> _open(String url) async {
+  Future<bool> _open(String url, {bool reload = false}) async {
     if (!_browserReady || _busy || _opening) return false;
     final target = Uri.parse(url);
     if (!PscubeConnection.allowedPage(target)) {
@@ -451,7 +451,9 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       _page++;
       _auto.nextPage(_page);
       setState(() => _loading = true);
-      if (insidePage) {
+      if (insidePage && reload) {
+        await _web.runJavaScript('location.reload()');
+      } else if (insidePage) {
         await _web.runJavaScript('location.assign(${jsonEncode(url)})');
       } else {
         await _web.loadRequest(target);
@@ -571,6 +573,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       }
       _autoDone.clear();
       _autoFailures.clear();
+      _store?.resetIndexConfirmation();
       _freshSince.clear();
       _auto.turnOn();
       setState(() => _autoStatus = 'ON・次の取り込みを待っています');
@@ -583,6 +586,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
 
   Future<void> _stopAuto(String message) async {
     _auto.turnOff();
+    _store?.resetIndexConfirmation();
     if (mounted) setState(() => _autoStatus = message);
     if (Platform.isAndroid) {
       try {
@@ -912,6 +916,31 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         // The save has finished. _open itself still rejects a concurrent save.
         setState(() => _busy = false);
         await _open(result.nextUrl!);
+      }
+    } on PscubeIndexRetry catch (error) {
+      if (mounted && autoSignature != null && _auto.enabled && _page == page) {
+        // 再確認も同じページの失敗に数える。読むたびに違う一覧が返り続けても、開き直しは3回まで
+        // （数えないと、一晩じゅう機種一覧を開き直し続ける。PC `AutoPilot.finished` と同じ）。
+        final count = (_autoFailures[autoSignature] ?? 0) + 1;
+        _autoFailures[autoSignature] = count;
+        if (count >= pscubeAutoMaxFailures) {
+          // 3回目は開き直さない（この後は待機）。
+          store.resetIndexConfirmation();
+          _autoMessage(
+            'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
+            '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）',
+          );
+        } else {
+          _autoMessage('ON・機種一覧を開き直し、もう一度確認します（$count回目）');
+          setState(() => _busy = false);
+          if (!await _open(PscubeStore.index, reload: true)) {
+            store.resetIndexConfirmation();
+          }
+        }
+      } else {
+        // 保存中に自動取り込みを止めた・ページが替わったとき：開き直さず、保存しなかったことだけ示す。
+        store.resetIndexConfirmation();
+        if (mounted) setState(() => _status = '$error（保存していません）');
       }
     } catch (error) {
       if (mounted) {

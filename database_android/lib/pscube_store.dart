@@ -121,10 +121,19 @@ const pscubeAbsentRacksKey = 'absent_table_racks';
 /// 0時に自動取り込みを始める予約（[PscubeStore.midnightAutoEnabled]）。
 const pscubeMidnightAutoKey = 'midnight_auto';
 
+/// 減った機種一覧を、開き直してもう一度確かめる必要がある。
+class PscubeIndexRetry implements Exception {
+  const PscubeIndexRetry();
+  @override
+  String toString() => '機種一覧が減ったため、開き直してもう一度確認します。';
+}
+
 /// P's CUBE records live apart from the Meruhen database and its store codes.
 class PscubeStore {
   PscubeStore._(this.db);
   final Database db;
+  Set<String>? _indexConfirmation;
+  void resetIndexConfirmation() => _indexConfirmation = null;
   Future<void> _pending = Future<void>.value();
 
   Future<T> _serial<T>(Future<T> Function() action) {
@@ -464,7 +473,11 @@ class PscubeStore {
         for (final machine in machines)
           if (!isExcludedMachine(machine['machine'] as String?)) machine,
       ];
-      if (!manual) await _checkIndexComplete(machines);
+      if (!manual) {
+        await _checkIndexComplete(machines);
+      } else {
+        resetIndexConfirmation();
+      }
     } else if (isExcludedMachine(machines.first['machine'] as String?)) {
       throw FormatException(
         '${machines.first['machine']}は取り込みの対象外です（沖ドキ）。保存しませんでした。',
@@ -906,10 +919,7 @@ class PscubeStore {
     };
   }
 
-  /// 自動取り込みの機種一覧：前回の機種一覧より少なく、新しい機種も無いときは保存しない
-  /// （PC `_check_index_complete` と同じ）。サイトは機種一覧を20件ずつ届けるため、続きが届く前に
-  /// 読み取ると後ろの機種が抜け、その機種を無いものとして「すべて取り込みました」で止まった
-  /// （2026-10-24〜26）。撤去で減っただけのときは、利用者が手動で取り込めば受け付ける。
+  /// 減った一覧は、開き直した後も同じ集合なら受け付ける。
   Future<void> _checkIndexComplete(List<Map<String, dynamic>> machines) async {
     final rows = await db.query(
       'state',
@@ -917,18 +927,23 @@ class PscubeStore {
       where: 'key=?',
       whereArgs: ['active_machine_keys'],
     );
-    if (rows.isEmpty) return;
+    if (rows.isEmpty) {
+      _indexConfirmation = null;
+      return;
+    }
     final previous = (jsonDecode(rows.first['value'] as String) as List)
         .cast<String>()
         .toSet();
     final shown = machines.map(_key).toSet();
-    if (shown.length < previous.length && previous.containsAll(shown)) {
-      throw FormatException(
-        '機種一覧が前回より少なく（${previous.length}→${shown.length}機種）、新しい機種もありません。'
-        '続きを読み込み終える前の一覧かもしれないため、保存しませんでした。'
-        '撤去で減ったときは、一覧を一番下まで表示してから手動で取り込んでください。',
-      );
+    final confirmed = _indexConfirmation;
+    if (shown.length < previous.length &&
+        (confirmed == null ||
+            shown.length != confirmed.length ||
+            !confirmed.containsAll(shown))) {
+      _indexConfirmation = shown;
+      throw const PscubeIndexRetry();
     }
+    _indexConfirmation = null;
   }
 
   Future<({String? url, int remaining})> nextTarget([

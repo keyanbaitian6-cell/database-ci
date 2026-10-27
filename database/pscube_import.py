@@ -73,7 +73,7 @@ SCROLL_SCRIPT = r'''(async () => {
     if (!list) return;
     const count = countCards();
     if (count > last) {                              // 続きが届いた：描画が落ち着くのを待つ
-      last = count; quiet = 0; armed = true; idleNudges = 0;   // 新しい最後の台まで、もう一度下へ
+      last = count; quiet = 0; armed = true; nudges = 0; idleNudges = 0;   // 新しい最後の台まで、もう一度下へ
       await sleep(400);
     } else if (atBottom()) quiet++;
     // 設置台数が分かっていれば届いたら終わり。不明（機種一覧）なら、一番下で4秒増えないことを、少し戻って
@@ -675,8 +675,15 @@ def installation_count(db_path, current_url):
         return counts.pop() if len(counts) == 1 else None
 
 
+class PscubeIndexRetry(ValueError):
+    def __init__(self, keys):
+        super().__init__('機種一覧が減ったため、開き直してもう一度確認します。')
+        self.keys = keys
+
+
 class PscubeStore:
-    def __init__(self, path, *, recording=True):
+    def __init__(self, path, *, recording=True, index_confirmation=None):
+        self.index_confirmation = index_confirmation
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = input_versions.connect(self.path, recording=recording)
@@ -709,19 +716,14 @@ class PscubeStore:
         return row[0] if row else None
 
     def _check_index_complete(self, machines):
-        """自動取り込みの機種一覧：前回の機種一覧より少なく、新しい機種も無いときは保存しない
-        （Android `_checkIndexComplete` と同じ）。サイトは機種一覧を20件ずつ届けるため、続きが届く前に
-        読み取ると後ろの機種が抜け、その機種を無いものとして「すべて取り込みました」で止まった
-        （2026-10-24〜26、Android）。撤去で減っただけのときは、利用者が手動で取り込めば受け付ける。"""
+        """減った一覧は、開き直した後も同じ集合なら受け付ける。"""
         stored = self._state('active_machine_keys')
         if stored is None:
             return
         previous = set(json.loads(stored))
         shown = {_machine_key(m) for m in machines}
-        if len(shown) < len(previous) and shown <= previous:
-            raise ValueError(f'機種一覧が前回より少なく（{len(previous)}→{len(shown)}機種）、新しい機種もありません。'
-                             '続きを読み込み終える前の一覧かもしれないため、保存しませんでした。'
-                             '撤去で減ったときは、一覧を一番下まで表示してから手動で取り込んでください。')
+        if len(shown) < len(previous) and shown != self.index_confirmation:
+            raise PscubeIndexRetry(shown)
 
     def import_page(self, raw, current_url, expected_day=None, direction='top', manual=False, fresh_since=None):
         """expected_day：取り込み日を指定しているときの日付。表示中の日付と違うページは保存しない。
@@ -1339,6 +1341,9 @@ class AutoPilot:
         # {日付: 今回の取り込みで最初に保存したページのサイトの更新時刻}。これより古い数値の機種は取り直す。
         # 画面を開いている間（手動の取り込みも）続き、自動取り込みをONにするたびに作り直す。
         self.fresh_since = {}
+        self.index_confirmation = None
+        self.index_confirmation_page = None
+        self.loaded_pages = 0
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
 
@@ -1394,6 +1399,8 @@ class AutoPilot:
                 return self.state()
             if enabled and not self.auto.state()['enabled']:
                 self.fresh_since = {}
+                self.index_confirmation = None
+                self.index_confirmation_page = None
             self.auto.configure(enabled, seconds)
             if enabled:
                 self.failures.clear()
@@ -1422,6 +1429,7 @@ class AutoPilot:
         """新しいページ：間隔ぶん待ってから判定する。途中で消えた取り込み（ページ移動）は待たない。"""
         with self._lock:
             self.loading_page = False
+            self.loaded_pages += 1
             if self.pending is not None and not self.saving():
                 self.pending = None
                 self.pending_since = None
@@ -1516,6 +1524,20 @@ class AutoPilot:
                     self.failures[signature] = self.failures.get(signature, 0) + 1
                     if enabled:
                         self.auto.pause(f'ON・保存できませんでした（{self.failures[signature]}回目）：{error}')
+            elif result is not None and result.get('retry_index'):
+                # 再確認も同じページの失敗に数える。読むたびに違う一覧が返り続けても、開き直しは3回まで
+                # （数えないと、一晩じゅう機種一覧を開き直し続ける。Android `_capture` と同じ）。
+                count = None
+                if signature is not None:
+                    count = self.failures[signature] = self.failures.get(signature, 0) + 1
+                if count is not None and count >= self.MAX_FAILURES:
+                    result['reload'] = False                 # 3回目は開き直さない（この後は待機）
+                    self.index_confirmation = self.index_confirmation_page = None
+                if enabled:
+                    self.auto.pause('ON・機種一覧を開き直し、もう一度確認します' + (f'（{count}回目）' if count else '')
+                                    if result.get('reload', True) else
+                                    'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
+                                    '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）')
             elif result is not None:
                 if signature is not None:
                     self.done.add(signature)
@@ -1546,10 +1568,21 @@ def submit_capture(db_path, export_path, pilot, raw, current_url):
         # 自動取り込みがOFFのとき（手動）は、一覧の最初からではなく、保存したページの次へ進む。
         manual = not pilot.auto.state()['enabled']
         direction, target_day, fresh_since = pilot.direction, pilot.target_day, dict(pilot.fresh_since)
-    db = PscubeStore(db_path)
+    with pilot._lock:
+        confirmed = (pilot.index_confirmation if pilot.index_confirmation_page is not None
+                     and pilot.loaded_pages > pilot.index_confirmation_page else None)
+    db = PscubeStore(db_path, index_confirmation=confirmed)
     try:
-        result = db.import_page(raw, current_url, expected_day=target_day, direction=direction,
-                                manual=manual, fresh_since=fresh_since)
+        try:
+            result = db.import_page(raw, current_url, expected_day=target_day, direction=direction,
+                                    manual=manual, fresh_since=fresh_since)
+        except PscubeIndexRetry as retry:
+            with pilot._lock:
+                pilot.index_confirmation = retry.keys
+                pilot.index_confirmation_page = pilot.loaded_pages
+            return {'retry_index': True, 'next_url': current_url.split('#')[0]}
+        pilot.index_confirmation = None
+        pilot.index_confirmation_page = None
         pilot.fresh_since = result.pop('fresh_since')
         result['direction'] = direction
         result['backup'] = auto_backup(db, export_path)
@@ -1656,6 +1689,13 @@ def overlay_script(capture_script, index_url):
       window.pscubeCaptureFailed = error => { idle(String(error)); };
       window.pscubeCaptureComplete = result => {
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
+        if (result.retry_index) {
+          capturedUrl = null;
+          if (result.reload === false) { idle('機種一覧が前回より少なく、保存していません'); return; }
+          idle('機種一覧を開き直して確認します');
+          location.reload();
+          return;
+        }
         const way = result.direction === 'bottom' ? '下から' : result.direction === 'top' ? '上から' : '';
         idle(`${result.skipped || result.kind + 'を保存'} · 残り${result.remaining}${way ? '（' + way + '）' : ''}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
         capturedUrl = null;

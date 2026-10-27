@@ -1,5 +1,35 @@
 # database AI共同作業メモ
 
+## 【P’s CUBE：機種一覧の再確認（Codex）のレビューと修正・開き直しは3回まで】2026-10-27 Claude
+
+- 依頼：利用者「AI_COLLABORATION.md の先頭に作業報告をまとめてくれてます。必要な修正あればclaudeもお願いします」。直下のCodexの項目（未コミットの変更）をレビューし、必要な所を直した。基準は手元 main `010f881`（database-ci/main と同じ。origin/main `e8d2fa0` はその祖先）。
+- レビューで問題なしとしたもの：減った一覧を1回目は保存せず覚え、開き直して同じ集合なら保存する仕組み（PC `PscubeIndexRetry`・`AutoPilot.index_confirmation`／`loaded_pages`、Android `_indexConfirmation`）。PCで読み込み完了の通知が無いまま同じ画面を2回目にしない作り。自動の開始・停止・手動一覧で覚えた集合を消すこと。一覧待ちの「少し戻る」回数を増えるたびに数え直すこと（上限の約90秒は残る）。コメントの3時・2時の区別。`build_release_info.py` は既にUTF-8指定済み（Codexの確認どおり）。
+- **直したこと1（重要）：再確認に回数の上限が無かった。** Codex版は再確認のたびに失敗の数えを消していた（PC `failures.pop`、Android `_autoFailures.remove`）。読むたびに違う減った一覧が返り続けると、間隔ごとに機種一覧を開き直し続け、一晩じゅう対象サイトへアクセスする。再確認も同じページの失敗に数えるよう直した。撤去の日（2回目で同じ）は1回目で1、保存で消える。違い続けたら3回目は開き直さずに待機し、その後は従来の「同じページで3回失敗したため待機中」になる。
+  - PC `AutoPilot.finished`：再確認で `failures` を1増やす。3回目は `result['reload']=False` とし、覚えた集合を消す。取り込みカードのJS（`overlay_script` の `pscubeCaptureComplete`）は `reload === false` なら開き直さず「機種一覧が前回より少なく、保存していません」と出す。
+  - Android `pscube_import_page.dart` の `_capture`：再確認で `_autoFailures` を1増やす。`pscubeAutoMaxFailures`（3）に達したら開き直さず、覚えた集合を消して待機の文言を出す。
+- **直したこと2（小）：Androidで条件に合わない再確認が黙って終わっていた。** 保存中に自動を止めた・ページが替わったとき、`PscubeIndexRetry` を受けても状態の行が「読み取っています…」のままだった。覚えた集合を消し、「機種一覧が減ったため、開き直してもう一度確認します。（保存していません）」を出すようにした。
+- 試験（足した・直したもの）：
+  - PC `database/test_pscube_import.py`：Codexの `…does_not_count_as_failure` を `test_auto_retry_survives_store_reopen_and_counts_toward_the_page_limit` に改め、再確認で数えが1になり保存で消えることを確かめる。新規 `test_auto_stops_reopening_an_index_that_differs_every_time`（6機種のあと2・3・4機種の一覧が続くと、開き直しは2回、3回目は `reload` が False、数えは3、機種の並びは変わらない）。Codex版のままでは数えが0で `reload` も付かないため失敗する内容。
+  - Android `test/pscube_auto_flow_test.dart`（模擬WebViewで画面の周期Timer→`_capture`→実Storeを通す）：模擬に `location.reload()` と、機種一覧の読み取りごとに返す機種を変える `indexPicks` を足した。新規グループ「減った機種一覧の再確認」2件：撤去で減った一覧は1回開き直して2回目で保存（機種の並びが2機種に）／違い続けると読み取り3回・開き直し2回で止まり、4回目は読まずに「同じページで3回失敗したため待機中」、機種の並びは変わらない。Codex版では模擬に再読み込みが無く、画面の流れの試験は無かった。
+  - 関連試験：PC `unittest test_pscube_import test_pscube_auto test_pscube_direction` 74件成功。Android `flutter test --no-pub test/pscube_auto_flow_test.dart test/pscube_store_test.dart test/pscube_list_wait_test.dart test/pscube_auto_test.dart` 75件成功。`dart format` 済み。
+  - 全体チェック：`bash database_android/tool/check_before_build.sh`（`TZ=JST-9`・`PYTHONUTF8=1`・`CHECK_BUILD_WORK=/c/w/cbw-idxretry`）**ALL PASSED**：PC tests 478件・PC直下229件・UTC 27件、Flutter 725件、JS・画面試験の各段成功（OK 83段）。この全体チェックの後、試験の模擬の変数名 `reloads` が元の `BrowserController.reloads` と重なって解析の注意が2件増えていた（28件）ため `pageReloads` に改め、その試験19件と `flutter analyze`（注意26件。Codexの記録と同じ件数で、警告・エラーなし）を流し直して成功。
+- 残る限界（Codexの記録と同じ）：同じ途中の一覧が開き直しても2回続けて返れば、集合の一致では完全な一覧と区別できない。前回より減らない途中の一覧もこの検知では区別できない。実サイトの読み込みの作り・Android実機・実WebView2の再読み込みは未確認。対象サイトは開いていない。実DBには入力していない。
+- 版・配布：`pubspec.yaml` はCodexの `0.5.48+2026102703` のまま。APKは利用者の指示で保留中（作っていない）。EXEは作らない。
+
+## 【P’s CUBE：機種一覧の再確認・Claudeへのレビュー依頼】2026-10-27 Codex
+
+- 利用者の依頼：撤去のみ・入れ替え時の機種一覧、自動取り込み停止、長い一覧の読み切りをPCとAndroidで同じ規則に直し、試験する。基準は両main取得後の database-ci/main `010f881`（origin/main `e8d2fa0` はその祖先）。元の修正は `822729e`。直前のClaude引き継ぎを参照。
+- PC `database/pscube_import.py` とAndroid `database_android/lib/pscube_store.dart`：前回の active_machine_keys より機種集合が少ないとき、新機種の有無に関係なく初回は保存せず集合を覚える。開き直した次の一覧が同じ集合なら保存し、異なれば新しい集合を覚えて再確認する。手動取り込みは従来どおり。PCは画面を開いている間の AutoPilot に保持し、保存用Storeの開き直しをまたぐ。AndroidはStoreのメモリに保持し、自動開始・停止や手動一覧で破棄する。
+- PCの取り込みカードとAndroidの取り込み画面は、自動の再確認を通常の保存失敗として数えず、一覧を明示的に reload する。PCは再読み込み後のページ読み込み完了通知が無ければ同じ画面を2回目としない。Androidは再読み込み開始に失敗した場合、候補を消す。読み直しのたびに既存の一覧待機処理を通す。停止・通信エラーや、非同期イベントと再読み込みが前後する場合の安全性をClaudeに重点レビューしてほしい。
+- PC `SCROLL_SCRIPT` とAndroid `pscube_list_wait.dart` は、件数が増えたら少し戻る回数を数え直す。既存の360回・約90秒の上限は保持。PCのJSとAndroidの模擬一覧で、5回を超える着き直しを必要とする140機種を確認する試験を追加。
+- PC `browser_import.py` とAndroid `web_import_page.dart` のコメントは営業日・2026-10-25比較計画の締切3時と、別の旧focus計画の2時を区別。値は変更していない。`database_android/tool/build_release_info.py` は現在 `read_text`/`write_text` で既にすべてUTF-8指定済みであり、追加変更不要と確認した。
+- `database/test_pscube_import.py`・`database_android/test/pscube_store_test.dart`：減少時の初回拒否、違う集合は再確認、順序違いの同じ集合、撤去だけの2回目保存、入れ替えで途中の一覧が初回に保存されないことを検査。PCの `submit_capture` から再確認を経て再び保存する試験と、読み込み完了通知がない場合に保存しない試験も追加。Androidの一覧待機とPCのJSにも長い一覧の試験を追加。
+- 限界：同じ途中一覧が開き直し後も2回続けて返れば、機種集合の一致だけでは完全な一覧との区別はできない。前回より機種数が減らない途中一覧もこの減少検知では区別できない。対象サイトの実際の遅延・並び順・無人0時予約、Android実機および実WebView2の再読み込みは未確認。対象サイトは開いていない。試験は合成データ・一時DBで行い、実DBには入力していない。修正前の新試験の失敗は未確認。
+- 利用者は「apkビルドはちょっとまってね」「修正終わったらclaudeに見てもらうので作業報告をまとめてね」と指示。APKは作らず、SHA-256・署名・実機導入は未確認。EXEも作らない。pubspecの予定版は `0.5.48+2026102703`、未ビルド。コミット・pushは未実施。対象の実サイト、Cookie、保存データ、既存の他AIの未コミット変更には触れていない。
+- 最終版の全体チェック：`TZ=JST-9`・専用作業フォルダ `database_android/build/check-pscube-final-20261027` で `bash database_android/tool/check_before_build.sh` を実行し **ALL PASSED**。PC tests 478件、PC直下228件、UTC条件27件、Flutter 723件成功。静的解析は警告・エラーなし、情報26件。JS・ブラウザは74スクリプトを実行し、非公開の保存ページを使う任意試験1件はスキップ。他の実行対象は成功。閲覧Webのビルド・公開用stageと共有stageは試験用に生成し成功、公開はしていない。試験プロセスと同じTZ指定でPythonのUTCオフセット+09:00を確認。
+- 最終版の関連試験：PC `python -m unittest test_pscube_import test_pscube_auto test_pscube_direction` 73件、Android `flutter test --no-pub test/pscube_store_test.dart test/pscube_list_wait_test.dart test/pscube_auto_test.dart` 56件成功。PCの `test_pscube_scroll.mjs` も模擬ページで成功。再読み込み保護を追加する前に始めた全体チェックもALL PASSEDだったが、途中でコードが変わったため最終版の根拠には使わず、上記の全体チェックを再実行した。差分の空白チェック成功。
+- レビュー後にコードを修正した場合は、その最終版で全体チェックを実施し、利用者がAPK保留を解除した後にのみAPKをビルドする。pushは利用者指定の `python tools/push_ci.py` で1回、送信前に両mainと差分を確認する。
+
 ## 【P’s CUBE：機種一覧の読み切り修正（0.5.47）の問題点の洗い出し・Codexへの引き継ぎ】2026-10-27 Claude
 
 - 依頼：利用者「修正と改善だけやろうかな。codexで新しい思考スタイルがでたのでそれに修正をやらせます。opusにはなにか問題点がないかを洗い出して」「プロンプト作ってください」。Claudeは洗い出しだけで、コードは変えていない。修正はCodexが行う。

@@ -117,8 +117,8 @@ String todayIso([DateTime? now]) {
   return '${day.year}-${two(day.month)}-${two(day.day)}';
 }
 
-/// 営業日の切り替わり時刻（時）。2026-10-26 利用者の指定で2時から3時へ（アプリ全体。
-/// 翌日候補の比較・評価の締切 `focusCutoffHour` は2時のまま）。
+/// 営業日と2026-10-25の翌日候補比較計画の締切は3時。
+/// 旧focus計画の締切 `focusCutoffHour` は別に2時のまま。
 const businessDayCutoffHour = 3;
 
 /// 機種一覧の見出し行（「機種名 台数 通常順 ピックアップ順」）か。
@@ -957,8 +957,7 @@ class _WebImportPageState extends State<WebImportPage> {
       final allDone = target.reason == 'all_done';
       final machineFinished = allDone || target.reason == 'linkless';
       if (target.reason == 'linkless') {
-        step =
-            '個別リンクがない台は未取得のまま残し、機種一覧へ移動します。';
+        step = '個別リンクがない台は未取得のまま残し、機種一覧へ移動します。';
       } else if (allDone) {
         // 機種のグラフが全部済んだら、サイト自身の機種一覧ページへ案内する。
         // 読み込み後は、その一覧から次の未取込機種も探す。
@@ -970,7 +969,10 @@ class _WebImportPageState extends State<WebImportPage> {
             '${firstOfMachine ? '最初の未取り込み台へ移動します。' : ''}'
             '次：${target.rack}番台（残り${target.remaining}台）';
       }
-      _flow.expectPage(notice: '$saved$step $warning'.trim(), advance: machineFinished);
+      _flow.expectPage(
+        notice: '$saved$step $warning'.trim(),
+        advance: machineFinished,
+      );
       _flow.startLoading();
       _afterMachine = machineFinished && autoToken == null ? machine : null;
       try {

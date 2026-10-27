@@ -42,7 +42,10 @@ class _Controller extends BrowserController {
   Completer<Object>? reading;
   Completer<String?>? locating;
   bool failSave = false;
-  int failOpens = 0, failedOpens = 0;
+  int failOpens = 0, failedOpens = 0, pageReloads = 0;
+
+  /// 機種一覧を読むたびに返す機種（読み取りの機種の番号）。空なら読み取りのまま。
+  final indexPicks = <List<int>>[];
   Map<String, dynamic> get data => _scenes[scene]!;
 
   void show(String name) {
@@ -71,7 +74,12 @@ class _Controller extends BrowserController {
 
   @override
   Future<void> runJavaScript(String script) async {
-    if (script.startsWith('location.assign(')) {
+    if (script == 'location.reload()') {
+      checkOpening();
+      pageReloads++;
+      delegate.started?.call(url!);
+      delegate.finished?.call(url!);
+    } else if (script.startsWith('location.assign(')) {
       checkOpening();
       final target = jsonDecode(
         script.substring('location.assign('.length, script.length - 1),
@@ -93,6 +101,14 @@ class _Controller extends BrowserController {
     if (script == 'window.__pscubeCaptureResult') {
       if (reading != null) return reading!.future;
       if (failSave) return jsonEncode({'error': '回帰試験の読み取り失敗'});
+      if (scene == 'index' && indexPicks.isNotEmpty) {
+        final capture = Map<String, dynamic>.from(data['capture'] as Map);
+        final machines = capture['machines'] as List;
+        capture['machines'] = [
+          for (final i in indexPicks.removeAt(0)) machines[i],
+        ];
+        return jsonEncode(capture);
+      }
       return jsonEncode(data['capture']);
     }
     if (script.startsWith('window.__pscubeCaptureRun ===')) return true;
@@ -367,6 +383,70 @@ void main() {
     expect(await rows(), isEmpty);
     expect(await absent(), isEmpty);
     await finish(tester);
+  });
+
+  // 2026-10-27：前回より少ない機種一覧は、開き直して同じなら保存（撤去）。違い続けても開き直しは3回まで。
+  group('減った機種一覧の再確認', () {
+    Future<List<String>> seedActive(WidgetTester tester, int extra) async {
+      final keys = [
+        for (final m
+            in (_scenes['index']!['capture'] as Map)['machines'] as List)
+          jsonEncode([m['store'], m['rate'], m['machine']]),
+        for (var i = 0; i < extra; i++) jsonEncode(['c740601', '20', '撤去機種$i']),
+      ];
+      await tester.runAsync(
+        () => store.db.insert('state', {
+          'key': 'active_machine_keys',
+          'value': jsonEncode(keys),
+        }),
+      );
+      return keys;
+    }
+
+    Future<List<String>> active(WidgetTester tester) async {
+      final state = (await tester.runAsync(
+        () => store.db.query(
+          'state',
+          where: 'key=?',
+          whereArgs: ['active_machine_keys'],
+        ),
+      ))!;
+      return (jsonDecode(state.single['value'] as String) as List)
+          .cast<String>();
+    }
+
+    testWidgets('撤去で減った一覧は、開き直して同じなら保存する', (tester) async {
+      final keys = await seedActive(tester, 1);
+      await mount(tester);
+      await tick(tester);
+      expect(platform.web.captures, ['index']);
+      expect(platform.web.pageReloads, 1, reason: '1回目は保存せず開き直す');
+      expect(await active(tester), keys);
+      await tick(tester);
+      expect(platform.web.captures, ['index', 'index']);
+      expect(await active(tester), keys.take(2).toList());
+      await finish(tester);
+    });
+
+    testWidgets('開き直すたびに違う減った一覧なら、3回で止めて開き直さない', (tester) async {
+      final keys = await seedActive(tester, 3);
+      await mount(tester);
+      platform.web.indexPicks.addAll([
+        [0],
+        [1],
+        [0, 1],
+      ]);
+      for (var i = 1; i <= 3; i++) {
+        await tick(tester);
+        expect(platform.web.captures, hasLength(i));
+      }
+      expect(platform.web.pageReloads, 2, reason: '3回目は開き直さない');
+      await tick(tester);
+      expect(platform.web.captures, hasLength(3));
+      expect(find.textContaining('同じページで3回失敗したため待機中'), findsOneWidget);
+      expect(await active(tester), keys);
+      await finish(tester);
+    });
   });
 
   // 0時の予約（2026-10-26）：画面を開いたまま0時をまたぐと、前日を指定して自動取り込みを始める。

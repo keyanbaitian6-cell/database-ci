@@ -63,6 +63,28 @@ try {
     await slowIndex.close();
   }
 
+  // 増えるたびに着き直しが必要な長い機種一覧（全体で5回を超える）。
+  const longIndex = await browser.newPage({viewport: {width: 1050, height: 780}});
+  await longIndex.setContent(tallIndex(20));
+  await longIndex.evaluate(() => {
+    let wasBottom = false, ignored = false;
+    window.addEventListener('scroll', () => {
+      const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 5;
+      const arrived = bottom && !wasBottom;
+      wasBottom = bottom;
+      const list = document.querySelector('#ulKI');
+      if (!arrived || list.children.length >= 140) return;
+      if (!ignored) { ignored = true; return; }
+      ignored = false;
+      for (let k = 0; k < 20; k++) {
+        const card = document.createElement('li'); card.style.height = '150px'; list.append(card);
+      }
+    });
+  });
+  await run(longIndex, null);
+  assert.equal(await longIndex.locator('#ulKI li').count(), 140);
+  await longIndex.close();
+
   // 2. 実サイト（2026-10-02 PC版で表示6台・設置7台）：最後の台が見えても続きは来ず、ページの一番下まで
   //    スクロールしたときだけ次の台が増える。
   const tall = (n) => `<div style="height:300px">header</div><ul>${Array.from({length: n}, (_, i) => `<li id="li-${i + 1}" style="height:150px">${i + 1}</li>`).join('')}</ul><footer style="height:1500px">Footer</footer>`;

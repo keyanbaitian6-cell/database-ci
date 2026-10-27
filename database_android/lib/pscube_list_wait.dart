@@ -51,6 +51,7 @@ Future<void> waitForPscubeList({
       last = view.count;
       quiet = 0;
       armed = true;
+      nudges = 0;
       idleNudges = 0;
       await wait(const Duration(milliseconds: 400));
     } else if (view.atBottom) {

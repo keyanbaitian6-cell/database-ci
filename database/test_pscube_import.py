@@ -8,7 +8,7 @@ from pathlib import Path
 
 from datetime import datetime
 
-from pscube_import import PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days, same_page, table_url_for_day
+from pscube_import import PscubeIndexRetry, PscubeStore, ROOT_URL, business_day, installation_count, recent_business_days, same_page, table_url_for_day
 
 
 class PscubeImportTests(unittest.TestCase):
@@ -46,25 +46,99 @@ class PscubeImportTests(unittest.TestCase):
         days = recent_business_days(datetime(2026, 10, 4, 1, 0))
         self.assertEqual((days[0], days[1], days[-1], len(days)), ('2026-10-03', '2026-10-02', '2026-09-27', 7))
 
-    def test_auto_refuses_an_index_cut_short_before_the_rest_of_the_list_arrived(self):
-        # 2026-10-24〜26：20件ずつ届く機種一覧を途中で読み取り、後ろの機種を取り込まずに終わった。
+    def test_auto_confirms_decreased_index_after_reopening(self):
         machines = [{**self.machines[0], 'machine': f'L機種{n}',
                      'url': ROOT_URL + f'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L機種{n}'}
                     for n in range(5)]
         self.store.import_page(self.page(self.index_url, machines), self.index_url)
-        with self.assertRaisesRegex(ValueError, r'前回より少なく（5→3機種）'):
-            self.store.import_page(self.page(self.index_url, machines[:3]), self.index_url)
-        active = json.loads(self.store._state('active_machine_keys'))
-        self.assertEqual(len(active), 5, '拒否した一覧で機種の並びを置き換えない')
-        self.assertEqual(self.store.next_target(self.day, 'bottom')[0], machines[-1]['url'])
-        # 入れ替え（新しい機種がある）は、減っていても自動で受け付ける。
-        replaced = machines[:2] + [{**machines[0], 'machine': 'L新台',
-                                    'url': ROOT_URL + 'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L新台'}]
-        self.store.import_page(self.page(self.index_url, replaced), self.index_url)
+        previous = self.store._state('active_machine_keys')
+        reduced = machines[:3]
+        with self.assertRaises(PscubeIndexRetry) as first:
+            self.store.import_page(self.page(self.index_url, reduced), self.index_url)
+        self.assertEqual(self.store._state('active_machine_keys'), previous)
+        # 入れ替えの日に読み切れなかった一覧は、前の集合と異なるので再確認する。
+        changed = machines[:2] + [{**machines[0], 'machine': 'L新台',
+                                   'url': ROOT_URL + 'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L新台'}]
+        self.store.index_confirmation = first.exception.keys
+        with self.assertRaises(PscubeIndexRetry) as second:
+            self.store.import_page(self.page(self.index_url, changed), self.index_url)
+        self.assertEqual(self.store._state('active_machine_keys'), previous)
+        self.store.index_confirmation = second.exception.keys
+        self.store.import_page(self.page(self.index_url, list(reversed(changed))), self.index_url)
         self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 3)
-        # 撤去で減っただけなら、手動の取り込みで受け付ける。
-        self.store.import_page(self.page(self.index_url, replaced[:2]), self.index_url, manual=True)
+        # 撤去だけでも最初は保存せず、再確認後に保存する。
+        with self.assertRaises(PscubeIndexRetry) as third:
+            self.store.import_page(self.page(self.index_url, changed[:2]), self.index_url)
+        self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 3)
+        self.store.index_confirmation = third.exception.keys
+        self.store.import_page(self.page(self.index_url, changed[:2]), self.index_url)
         self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 2)
+
+    def test_auto_retry_survives_store_reopen_and_counts_toward_the_page_limit(self):
+        from auto_capture import AutoCapture
+        from pscube_import import AutoPilot, submit_capture
+        from test_pscube_auto import Clock, FakeWindow, PROBE
+        clock = Clock()
+        pilot = AutoPilot(FakeWindow(), PROBE,
+                          auto=AutoCapture(clock=clock, minimum=5, maximum=60, default=10))
+        pilot.configure(True, 10)
+        self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        before = self.store._state('active_machine_keys')
+        reduced = self.page(self.index_url, self.machines[:1])
+        with patch('pscube_import.auto_backup', return_value='backup') as backup:
+            pilot.pending = 'index'
+            retry = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
+                                   pilot, reduced, self.index_url)
+            pilot.finished(result=retry)
+            self.assertTrue(retry['retry_index'])
+            self.assertEqual(retry['next_url'], self.index_url)
+            self.assertEqual(self.store._state('active_machine_keys'), before)
+            # 再確認も同じページの失敗に数える（開き直しは3回まで）。保存できたら数えをやめる。
+            self.assertEqual(pilot.failures.get('index', 0), 1)
+            self.assertNotEqual(retry.get('reload'), False)
+            backup.assert_not_called()
+            # 読み込み完了の通知が無ければ、同じ内容でも再確認とは扱わない。
+            retry_again = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
+                                         pilot, reduced, self.index_url)
+            self.assertTrue(retry_again['retry_index'])
+            self.assertEqual(self.store._state('active_machine_keys'), before)
+            pilot.loaded()
+            pilot.pending = 'index'
+            saved = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
+                                   pilot, reduced, self.index_url)
+            pilot.finished(result=saved)
+            self.assertNotIn('retry_index', saved)
+            self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 1)
+            self.assertNotIn('index', pilot.failures)
+            backup.assert_called_once()
+
+    def test_auto_stops_reopening_an_index_that_differs_every_time(self):
+        # 開き直すたびに違う減った一覧が返り続けても、一晩じゅう開き直さない（3回で止めて待機）。
+        from auto_capture import AutoCapture
+        from pscube_import import AutoPilot, submit_capture
+        from test_pscube_auto import Clock, FakeWindow, PROBE
+        machines = [{**self.machines[0], 'machine': f'L機種{n}',
+                     'url': ROOT_URL + f'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L機種{n}'}
+                    for n in range(6)]
+        pilot = AutoPilot(FakeWindow(), PROBE,
+                          auto=AutoCapture(clock=Clock(), minimum=5, maximum=60, default=10))
+        pilot.configure(True, 10)
+        self.store.import_page(self.page(self.index_url, machines), self.index_url)
+        before = self.store._state('active_machine_keys')
+        results = []
+        with patch('pscube_import.auto_backup', return_value='backup') as backup:
+            for size in (2, 3, 4):
+                pilot.pending = 'index'
+                result = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
+                                        pilot, self.page(self.index_url, machines[:size]), self.index_url)
+                pilot.finished(result=result)
+                pilot.loaded()
+                results.append(result)
+        self.assertTrue(all(r['retry_index'] for r in results))
+        self.assertEqual([r.get('reload', True) for r in results], [True, True, False])
+        self.assertEqual(pilot.failures['index'], AutoPilot.MAX_FAILURES)
+        self.assertEqual(self.store._state('active_machine_keys'), before)
+        backup.assert_not_called()
 
     def test_direction_picks_the_machine_from_the_top_or_the_bottom_of_the_list(self):
         self.store.import_page(self.page(self.index_url, self.machines), self.index_url)

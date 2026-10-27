@@ -149,6 +149,36 @@ void main() {
     }
   });
 
+  test('多数の機種で増えるたびに戻り回数を数え直し最後まで待つ', () async {
+    var count = 20;
+    var bottom = false;
+    var wasNudged = false;
+    var nudges = 0;
+    await waitForPscubeList(
+      isCurrent: () => true,
+      delay: (_) async {},
+      scroll: (action) async {
+        if (action == PscubeScroll.nudge) {
+          bottom = false;
+          wasNudged = true;
+          nudges++;
+        } else if (action == PscubeScroll.step) {
+          bottom = true;
+        } else if (action == PscubeScroll.arrive) {
+          bottom = true;
+          if (wasNudged && count < 140) {
+            count += 20;
+            bottom = false;
+            wasNudged = false;
+          }
+        }
+        return (count: count, atBottom: bottom);
+      },
+    );
+    expect(count, 140);
+    expect(nudges, greaterThan(5));
+  });
+
   test('台別など一覧がないページは待機しない', () async {
     await waitForPscubeList(
       isCurrent: () => true,
