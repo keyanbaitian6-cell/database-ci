@@ -145,11 +145,17 @@ updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
 }
 
 /// 最上位のオブジェクトで [key] の値がある位置。無ければ start が -1 で、end は閉じ括弧の位置
-/// （empty は中身が無いか）。最上位がオブジェクトとして読めなければ null。
+/// （empty は中身が無いか）。次のときは null を返し、呼び出し側はまるごと読む（従来どおり）：
+/// 最上位がオブジェクトとして読めない、[key] が最上位に2つ以上ある（まるごと読むと後の方が使われる。
+/// 2026-10-29 Codexのレビュー）、最上位の値に数・true・false・null 以外の裸の語がある（`"tail":BROKEN`）、
+/// 括弧の種類が合わない。入れ子の中身までは検査しない（全体の妥当性検査ではない）。
 ({int start, int end, bool empty})? topLevelJsonValue(String text, String key) {
   const quote = 0x22, backslash = 0x5c, colon = 0x3a, comma = 0x2c;
   const openBrace = 0x7b, closeBrace = 0x7d, openBracket = 0x5b;
   const closeBracket = 0x5d;
+  final literal = RegExp(
+    r'^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$',
+  );
   final n = text.length;
   int space(int i) {
     while (i < n) {
@@ -173,20 +179,21 @@ updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
     return -1;
   }
 
-  // 値の終わりの次の位置。
+  // 値の終わりの次の位置（読めなければ -1）。
   int skipValue(int i) {
     if (i >= n) return -1;
     final first = text.codeUnitAt(i);
     if (first == quote) return string(i);
     if (first != openBrace && first != openBracket) {
+      final from = i;
       while (i < n) {
         final c = text.codeUnitAt(i);
         if (c == comma || c == closeBrace || c == closeBracket) break;
         i++;
       }
-      return i;
+      return literal.hasMatch(text.substring(from, i).trimRight()) ? i : -1;
     }
-    var depth = 0;
+    final closers = <int>[];
     while (i < n) {
       final c = text.codeUnitAt(i);
       if (c == quote) {
@@ -194,10 +201,11 @@ updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
         if (i < 0) return -1;
         continue;
       }
-      if (c == openBrace || c == openBracket) depth++;
+      if (c == openBrace) closers.add(closeBrace);
+      if (c == openBracket) closers.add(closeBracket);
       if (c == closeBrace || c == closeBracket) {
-        depth--;
-        if (depth == 0) return i + 1;
+        if (closers.isEmpty || closers.removeLast() != c) return -1;
+        if (closers.isEmpty) return i + 1;
       }
       i++;
     }
@@ -208,10 +216,14 @@ updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
   if (i >= n || text.codeUnitAt(i) != openBrace) return null;
   i = space(i + 1);
   var members = 0;
+  ({int start, int end})? found;
   while (i < n) {
     if (text.codeUnitAt(i) == closeBrace) {
+      if (members > 0 && text.codeUnitAt(i - 1) == comma) return null;
       if (space(i + 1) != n) return null;
-      return (start: -1, end: i, empty: members == 0);
+      return found == null
+          ? (start: -1, end: i, empty: members == 0)
+          : (start: found.start, end: found.end, empty: false);
     }
     if (text.codeUnitAt(i) != quote) return null;
     final keyEnd = string(i);
@@ -222,11 +234,15 @@ updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
     final start = space(i + 1);
     final end = skipValue(start);
     if (end < 0) return null;
-    if (name == key) return (start: start, end: end, empty: false);
+    if (name == key) {
+      if (found != null) return null; // 同じ名前が2つ：まるごと読む
+      found = (start: start, end: end);
+    }
     members++;
     i = space(end);
     if (i < n && text.codeUnitAt(i) == comma) {
       i = space(i + 1);
+      if (i < n && text.codeUnitAt(i) == closeBrace) return null;
     } else if (i >= n || text.codeUnitAt(i) != closeBrace) {
       return null;
     }

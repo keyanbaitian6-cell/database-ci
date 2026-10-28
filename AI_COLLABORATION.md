@@ -4060,3 +4060,18 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 途中の失敗と対処：Flutterの幅320px閲覧試験が、画面下の説明文を長くしたことで落ちた（週の選択欄が画面外で破棄されるため）。説明文を短くして元の試験のまま成功させた（文言を元の長さに戻すと成功することで原因を確認）。
 - 試験：手元で `bash database_android/tool/check_before_build.sh` が **ALL PASSED**（83項目：PC全試験・P’s CUBE試験・UTCのイベント試験、Flutter全試験とanalyze、閲覧ページ・共有カレンダーをその場でビルド・stageしての画面試験を含むJS全試験。対象は d5d5ab0 に今回の未コミット変更を載せた作業ツリー）。個別には PC `test_saiwaichou_history`・`test_event_history` 37件、Flutter `event_history_browser_layout_test`・`saiwaichou_history_test`・`event_history_test` 29件、Node `test_saiwaichou_history.mjs` 6件、共有の画面試験 `test_event_history_browser.mjs`（320/393/1280px）が成功。再発試験：自動の優・良の境界（2,499/2,500、0、マイナス、台数不足、差枚不明、記録なし、手入力優先、保存しない）、赤字の境界（+800ちょうど／+801、6日前・最終日の翌日は対象外、前週またぎ、台数違い、手入力の優、今日を除く）、PCのボタン廃止と「自動」で空欄保存、AndroidとPCの表の赤字、共有の自動良と赤字。
 - 未実施：push（database-ci）、閲覧ページ・共有カレンダーの公開、Android新APKの作成。実機・実iPhoneでの表示確認、実DBを使ったPC画面の目視は未確認。実DB・設定・Googleは変更していない。
+
+## 【Codexの性能レビュー（R1〜R6）への対応：🌈で線を読み直さない・同名キーの差し替え・測定の作り直し】2026-10-29 Claude
+
+- 経緯：利用者「作業終了後パフォーマンスに問題ないかをcodexにも診断してもらいます」→ Codexが `../outputs/viewer-rainbow-memory-20261029/Codexレビュー報告書.md` を作成（R1 🌈のたびに線を再取得、R2 5msタイマーの取り逃し、R3 時間に固定1.5秒・成否判定なし、R4 線なし・印0件だけの条件、R5 同名キー重複と壊れた後続での食い違い、R6 単位・出力保護・配信範囲・通信遮断）。利用者は公開を「Codexの診断後に」と判断済み。対応の詳細は同フォルダー `Claude対応報告書.md`。
+- 基準：database-ci/main `d5d5ab0`。作業中に別のClaudeセッションが `1dc4b17`（幸町バラエティ履歴の優・良の自動表示・赤字、閲覧ページと共有カレンダーの表示も変更）を手元mainにコミットし、database-ciへ送っていた。下の全体ゲートと照合版はそれを含む状態。
+- **R1（修正）**：`database_android/lib/viewer_main.dart` の `_show` に `rainbowOnly` を追加。🌈の保存からは線の保持（`clearRemoteCurves`）と取得処理を作り直さず、写した記録へ今の取得処理を `bindRemoteCurves` で結び付ける。Drive読み直し・データ差し替えは従来どおり作り直す（`_attachRemoteCurves`）。保存の待ち中に表示が差し替わっていれば、その新しい内容へ印を当てる。試験 `tool/test_viewer_remote_curve_browser.mjs` に「台の画面で線を読んだあと🌈を付け外ししても線の要求が増えない・線で描いたまま・送信2回・エラー0」を追加（失敗後再読込の条件でも）。
+- **R5（修正）**：`rainbow_marks.dart` の `topLevelJsonValue` は最上位を最後まで読み、同じ名前（エスケープ含む）が2つ、最上位の裸の語が数・true・false・null以外、括弧の種類の食い違い、末尾のカンマのときは null（全体解析へ。壊れていれば FormatException で保存しない）。入れ子の中身までは検査しない。試験 `test/rainbow_marks_test.dart`「duplicate or broken top level falls back to the full read」：修正前（3ec14cb）では重複の確認で失敗、修正後は成功。
+- **測定v2**（製品外、`measure_v2.mjs`・`make_data_v2.py`・`run_all_v2.mjs`・生の値 `results_v2.jsonl`）：JSヒープは「サンプル最大」としてサンプル数・最大間隔つき、描画用プロセスのPrivate/WorkingSetをブラウザーの外（PowerShell）から読む、時間は「表示まで」「送信まで」で固定待ちなし、送信・端末保存・開き直し・エラー・線の読み直しを判定（外れたら終了コード1）、ローカルと模擬応答以外の通信とService Workerを止める。データは46,170件の4条件（基本・線あり・線＋印1,000・線＋印10,000、18.44〜19.57MiB）、各2回。
+  - 6ad81ba（公開中）：JSヒープのサンプル最大 389〜451MiB（読み取りが最大1.2秒空いた）、Private +230〜290MiB、表示まで1.8〜2.6秒、線あり条件で線を1回読み直し（不合格）。
+  - 3ec14cb：197〜226MiB、Private +76〜165MiB、0.5〜1.0秒、線を1回読み直し（不合格）。
+  - **今回の修正**：197〜226MiB、Private +78〜152MiB、0.55〜1.3秒、**線の読み直し0回、4条件×2回すべて合格**。
+  - 限界：Windows Chromiumの値でiPhone Safariではない。JSヒープは真の山ではなく、OSの値も50ms未満の山は取り逃しうる。この値でiPhoneが安全かはわからない。
+- 元の報告の訂正：「400MB→215MB」はJSヒープのサンプル最大でMiB、時間「2.1秒」は固定1.5秒と送信待ちを含む。「結果の文字は従来と同じ」はこのアプリが書いた形（字下げなし・同名重複なし）に限る。
+- 照合版 `ea9781178913` → **`013244a75edf`**（`1dc4b17` を含む今のソースから。生成物11ファイルは版の文字だけ、Google 4本の貼り替え不要）。全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-rbr15`、単独）**ALL PASSED**（83段）：PC tests 488件・PC直下231件・UTC 27件、Flutter 746件、analyze エラー・警告0・info 28件、JS 74ファイル全成功。stage `C:\w\cbw-rbr15\viewer`（版 `013244a75edf`）。
+- 未実施・未確認：閲覧ページの公開（利用者の判断待ち。公開すると `1dc4b17` の閲覧ページの変更も一緒に出る）。共有カレンダーの公開。実iPhoneでの確認。起動時・Drive読み直し・共有🌈取り込みの山、印46,170件の条件、送信失敗後の再操作、🌈を別の保存領域へ移す案、PCの `as_of()` の旧新比較（いずれもCodexの指摘のうち今回は未着手）。

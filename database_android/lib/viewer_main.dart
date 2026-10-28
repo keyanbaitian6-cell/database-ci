@@ -274,8 +274,9 @@ class _ViewerHomeState extends State<ViewerHome> {
       await saveViewerData(update.text);
       marks = update.marks;
     }
-    final next = data.withRainbowMarks(marks);
-    if (mounted) setState(() => _show(next));
+    // 保存を待つ間にDriveの読み直しで表示が差し替わっていたら、その新しい内容へ当てる（古い内容に戻さない）。
+    final next = (_data ?? data).withRainbowMarks(marks);
+    if (mounted) setState(() => _show(next, rainbowOnly: true));
     final done = on
         ? '${record.rack}番台に$rainbowMarkを付けました。'
         : '${record.rack}番台の$rainbowMarkを外しました。';
@@ -384,8 +385,24 @@ class _ViewerHomeState extends State<ViewerHome> {
     if (url != null) await _refreshFromDrive(manual: true);
   }
 
-  void _show(ViewerData data) {
+  /// [rainbowOnly]：🌈の印だけを変えた内容（[ViewerData.withRainbowMarks]）。線パーツと取得先は
+  /// 同じなので、読んだ線と取得処理をそのまま使う（付け外しのたびに線を読み直していた、2026-10-29
+  /// Codexのレビュー）。写した記録にも同じ取得処理を結び付ける。
+  void _show(ViewerData data, {bool rainbowOnly = false}) {
     _data = data;
+    if (rainbowOnly) {
+      bindRemoteCurves(data.records, remoteCurveFetcher);
+    } else {
+      _attachRemoteCurves(data);
+    }
+    _dataVersion++;
+    viewerDataRevision.value++;
+    _scoredFor = null;
+    final first = data.records.firstOrNull;
+    if (!data.records.any((r) => r.store == _store)) _store = first?.store;
+  }
+
+  void _attachRemoteCurves(ViewerData data) {
     // グラフの線は台の画面を開いたときにその日の分だけ読む（remote_curve.dart）。
     clearRemoteCurves();
     final curveUrl = _remote;
@@ -409,11 +426,6 @@ class _ViewerHomeState extends State<ViewerHome> {
             };
           };
     bindRemoteCurves(data.records, remoteCurveFetcher);
-    _dataVersion++;
-    viewerDataRevision.value++;
-    _scoredFor = null;
-    final first = data.records.firstOrNull;
-    if (!data.records.any((r) => r.store == _store)) _store = first?.store;
   }
 
   Future<void> _pick() async {

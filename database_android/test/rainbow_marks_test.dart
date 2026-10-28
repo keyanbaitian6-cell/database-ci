@@ -119,6 +119,60 @@ void main() {
     expect(topLevelJsonValue('{"a":"}', 'rainbow_marks'), isNull);
   });
 
+  // 2026-10-29 Codexのレビュー（R5）：最上位に同じ名前が2つあると、最初の方だけ差し替え、まるごと読む
+  // 再読込（後の方が使われる）と食い違った。壊れた後続（"tail":BROKEN）でも保存が進んでいた。
+  test('duplicate or broken top level falls back to the full read', () {
+    final body = jsonEncode([raw(1085)]);
+    final duplicate = '{"records":$body,"rainbow_marks":[],"rainbow_marks":[]}';
+    final escaped =
+        '{"records":$body,"rainbow_marks":[],"rainbow\\u005fmarks":[]}';
+    for (final text in [duplicate, escaped]) {
+      expect(topLevelJsonValue(text, 'rainbow_marks'), isNull);
+      final record = recordOf(text, 1085);
+      final update = updateRainbowMark(text, record, true, now);
+      final reread = ViewerData.parse(update.text);
+      final shown = ViewerData.parse(text).withRainbowMarks(update.marks);
+      expect(
+        reread.records.single.rainbow,
+        shown.records.single.rainbow,
+        reason: '保存直後の表示と再読込が同じ',
+      );
+      expect(reread.records.single.rainbow, isTrue);
+      expect(
+        jsonDecode(sharedRainbowBodyOf(update.marks)),
+        jsonDecode(sharedRainbowBody(update.text)),
+      );
+    }
+    final marked = setRainbowMark(
+      doc([raw(1085)]),
+      recordOf(doc([raw(1085)]), 1085),
+      true,
+      now,
+    );
+    final marks = jsonEncode((jsonDecode(marked) as Map)['rainbow_marks']);
+    for (final broken in [
+      '{"rainbow_marks":$marks,"records":$body,"tail":BROKEN}',
+      '{"rainbow_marks":$marks,"records":$body,"tail":[1}',
+      '{"rainbow_marks":$marks,"records":$body,}',
+    ]) {
+      expect(topLevelJsonValue(broken, 'rainbow_marks'), isNull);
+      final record = recordOf(doc([raw(1085)]), 1085);
+      expect(
+        () => updateRainbowMark(broken, record, true, now),
+        throwsFormatException,
+        reason: '壊れた内容は保存へ進めない：$broken',
+      );
+    }
+    // 数・真偽・null の最上位の値は読める。
+    expect(
+      topLevelJsonValue(
+        '{"version":1,"x":-2.5e3,"ok":true,"none":null,"rainbow_marks":[]}',
+        'rainbow_marks',
+      ),
+      isNotNull,
+    );
+  });
+
   // 2026-10-29：閲覧ページは🌈を付けるたびに端末の内容をまるごと3回読み、iPhoneで落ちた。
   // 保存後の表示は読み直さず、表示中の内容へ印を当てる。読み直したときと同じ表示・同じ送信内容になる。
   test('applying the saved marks equals reading the saved text again', () {

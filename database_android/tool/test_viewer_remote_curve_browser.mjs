@@ -55,12 +55,13 @@ const browser = await chromium.launch({headless: true, executablePath: process.e
 try {
   for (const failFirst of [false, true]) {
     const context = await browser.newContext({viewport: {width: 393, height: 852}});
-    const page = await context.newPage(), errors = [], curveRequests = [];
+    const page = await context.newPage(), errors = [], curveRequests = [], posts = [];
     page.on('pageerror', e => errors.push(e.message));
     let failing = failFirst;
     await context.route('https://script.google.com/**', route => {
       const url = new URL(route.request().url()), headers = {'access-control-allow-origin': '*'};
       const json = body => route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify(body)});
+      if (route.request().method() === 'POST') { posts.push(JSON.parse(route.request().postData())); return json({ok: true, marks: 1, changed: 1}); }
       if (url.searchParams.has('curves')) {
         curveRequests.push(url.searchParams.get('curves'));
         if (failing) return json({error: '試験の読み込み失敗'});
@@ -110,6 +111,18 @@ try {
       await seen('保存時のグラフの線から描いたグラフです。', '台の画面で線を描く');
       await seen(expectedText[0], '線を読んだあとの推定差枚');
       assert.equal(curveRequests.length, failFirst ? 3 : 1, failFirst ? '失敗した日は覚えず読み直す' : '同じ日の線は読み直さない');
+      // 🌈だけの付け外しでは、読んだ線をそのまま使う（付け外しのたびに読み直していた、2026-10-29 Codexのレビュー）。
+      const beforeToggle = curveRequests.length;
+      await page.getByRole('button', {name: '🌈 付ける', exact: true}).click();
+      await page.getByRole('button', {name: '🌈 外す', exact: true}).waitFor();
+      await page.getByRole('button', {name: '🌈 外す', exact: true}).click();
+      await page.getByRole('button', {name: '🌈 付ける', exact: true}).waitFor();
+      const rainbowPosts = () => posts.filter(p => p.file === 'rainbow').length;
+      for (let i = 0; i < 40 && rainbowPosts() < 2; i++) await page.waitForTimeout(100);
+      await page.waitForTimeout(800);
+      assert.equal(rainbowPosts(), 2, '付け外しを2回とも送る');
+      await seen('保存時のグラフの線から描いたグラフです。', '🌈のあとも線で描く');
+      assert.equal(curveRequests.length, beforeToggle, '🌈の付け外しでは線を読み直さない');
       assert.deepEqual(errors, []);
     } catch (error) {
       console.error(JSON.stringify({failFirst, errors, curveRequests, labels: (await labels()).slice(0, 2000)}));
