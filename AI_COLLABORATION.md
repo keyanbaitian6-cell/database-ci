@@ -3915,3 +3915,17 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 試験：`flutter test test/focus_validation_test.dart test/focus_final_evaluation_test.dart` 17件成功（07:59は入り2時締切では外れる、08:00は外れる、区分の境目を追加）。変更したDart 6ファイルの `flutter analyze` は問題なし。`browser_import.py` は構文確認だけ（コメントのみの変更）。全体ゲートは流していない（ビルド・公開はしない）。
 - 未確認：実データでの最終評価の出力（10/31以降に1回だけ実行する計画なので、今は実行していない）。
 - push・CI：利用者「70913a4 と 52bbe69 を database-ci へpushしてください」。`python tools/push_ci.py` で `keyanbaitian6-cell/database-ci` へ1回（096712a..52bbe69、日本時間10/28 07:09）。CI https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40592651495 は対象 `52bbe69` で、full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の3ジョブとも成功（07:09〜07:25）。正本 `imakurudev-eng/database` へは11/1以降の前半に送る。
+
+## 【iPhone閲覧ページ：同じ日・機種の前の台／次の台へ移動】2026-10-28 Codex
+
+- 依頼：利用者「iPhoneブラウザ版で次とか前の日にはいけるが次の台に移る機能は実装可能？」に対し、同じ日付・同じ機種の台番号順で前後移動する案を提示。その後「実装お願い。公開までね。」と実装・公開の許可を得た。対象はiPhone閲覧ページのメルヘン・P’s CUBE両方。PC・Androidアプリ・共有カレンダーの操作は対象外。
+- 基準はdatabase-ci/main `10bcba8c7847e080d34a233a4d62de93ff84b465`。正本main `e8d2fa069f637661b94917c6b4da2df2937c395a` とのGitHub比較でahead136・behind0、正本の未統合変更がないことを確認した。相手AIの翌日08:00締切の更新等を含む最新ソースを使い、それらを巻き戻さない。クラウドの旧作業フォルダーは変更せず、`/workspace/database-viewer-nav` に最新のソースを取得し、Git treeと基準コミットのSHAがGitHubと一致することを確認。
+- 実装は `database_android/lib/viewer_pages.dart` の `ViewerRecordPage` 内だけ。台番号の見出しと日付操作の間に「前の台」「現在位置／台数」「次の台」を48pxの行で追加。選択中の店舗・日付・機種の記録を台番号の昇順に並べ、番号が飛んでいても次に記録のある台へ移る。P’s CUBEの店舗キーには貸玉区分も含まれるため、別の貸玉へ移らない。先頭／末尾の該当ボタンは無効、循環しない。
+- 日付移動・履歴の日付選択は従来どおり。台移動では親へ日付変更を通知せず、画面をpushせずに選択台を変更するため、戻る履歴が増えない。`SavedGraphPage` に移動先の記録・点数・全記録を渡し、記録キーで作り直すことで旧台のグラフやスクロール状態を残さない。🌈の操作も現在の表示記録を使う。数値・採点・保存・同期の規則は変更しない。
+- 欠測日へ移った場合も空欄の説明と既存の入替／台番号変更案内を残す。同機種に別の台の記録があれば、その番号に近い前後の台へ移れる。記録0台・1台では移動できないボタンを無効にし、日付移動は残す。
+- Flutter試験 `test/viewer_navigation_test.dart` に4件追加：メルヘン／P’s CUBEそれぞれで番号順の往復・別店別機種と別日の除外・日付保持・数値と点数更新・境界無効・戻る履歴を増やさない・320px幅とスクロール中の操作、欠測日と0台、1台だけの機種。実装前は「次の台」が無いため2系統の新試験が失敗することを確認。関連3ファイル `viewer_navigation_test.dart`・`viewer_replacement_test.dart`・`viewer_scroll_top_test.dart` の30件が成功。
+- Web画面試験 `tool/test_viewer_replacement_browser.mjs` を拡張し、メルヘン／P’s CUBEの両方で1085→1088→1085の往復・日付保持・端での無効化と、320／393／768pxの表示を検証する。既存の入替履歴・台番号変更の確認も残す。試験は保存済み合成データを隔離したブラウザのIndexedDBに入れる方式で、実データ・実サイトへの調査アクセスをしない。
+- 生成元の内容から照合版 `7d53f2650a30` を計算し、生成スクリプトで共通生成物を同期。今回の機能にGoogleスクリプトの貼替は不要。Androidの新APK・PCのEXEは作成しない。共有カレンダーは公開更新しない。全体ゲート・公開・CIの確定結果は以下に追記する。
+
+- 最終全体ゲート `/workspace/.cloud-setup/check-viewer-rack-20261028`（ログ `/tmp/viewer-nav-gate.log`）は **ALL PASSED**。実行は `CHECK_BUILD_WORK=... CHECK_JS_JOBS=2 bash database_android/tool/check_before_build.sh`。PC478件＋追加231件、UTC27件、Flutter733件、analyze成功（既存info26件）、JS全74ファイル成功（計394件、成功393・従来の任意保存例1件スキップ）。試験・ジョブの削減はしていない。`tool/stage_viewer.py` の公開用stageを使用し、seed・イベント履歴JSONを含まないことも確認。320pxのメルヘン・393pxのP’s CUBE画像で操作欄・日付欄の配置を目視確認した。実iPhoneは未確認。
+- `python tools/push_ci.py --dry-run` はGit接続の認証段階で停止（GitHub CLIのAPI接続には読み書き権限があるが、通常のgit HTTPS認証は使えなかった）。設定や秘密を変更せず、指定スクリプトの日本時間の送り先判定を利用し、API経由で両mainの祖先関係と送信直前の参照不変を確認して、同じ履歴を非強制更新する。月後半のdatabase-ciだけに送る。

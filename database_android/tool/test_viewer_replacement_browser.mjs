@@ -60,7 +60,25 @@ for(const source of ['meruhen','pscube']) {
   await page.getByText('この日の機種一覧　2機種・8台',{exact:true}).scrollIntoViewIfNeeded();
   await machine('化物語');
   await page.getByText('1085',{exact:true}).first().click();
-  await page.waitForTimeout(500);
+  await page.getByText('1085番台',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'前の台',exact:true}).isDisabled(),true);
+  for (const rack of [1086,1087,1088]) {
+    await page.getByRole('button',{name:'次の台',exact:true}).click();
+    await page.getByText(`${rack}番台`,{exact:true}).waitFor();
+    await page.getByRole('button',{name:/表示する日付.*2026-10-05/s}).waitFor();
+  }
+  assert.equal(await page.getByRole('button',{name:'次の台',exact:true}).isDisabled(),true);
+  for (const width of [320,393,768]) {
+    await page.setViewportSize({width,height:852});
+    await page.getByRole('button',{name:'前の台',exact:true}).waitFor();
+    await page.screenshot({path:`/tmp/viewer-rack-navigation-${source}-${width}.png`});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'台移動欄が横にはみ出さない');
+  }
+  await page.setViewportSize({width:393,height:852});
+  for (const rack of [1087,1086,1085]) {
+    await page.getByRole('button',{name:'前の台',exact:true}).click();
+    await page.getByText(`${rack}番台`,{exact:true}).waitFor();
+  }
   await page.getByRole('button',{name:'前の記録日',exact:true}).click();
   await page.waitForTimeout(500);
   await page.getByRole('button',{name:'この日の「北斗」を見る',exact:true}).waitFor();
@@ -80,7 +98,7 @@ for(const source of ['meruhen','pscube']) {
   await page.getByRole('button',{name:'この日の機種一覧を見る',exact:true}).click();
   await page.getByText('1100',{exact:true}).first().waitFor();
   assert.deepEqual(errors,[]);
-  console.log(`PASS: ${source}, replacement history, relocated rack, 320/393/768px`);
+  console.log(`PASS: ${source}, rack navigation, replacement history, relocated rack, 320/393/768px`);
   await context.close();
 }
 }finally {await browser.close();await new Promise(resolve=>server.close(resolve));}

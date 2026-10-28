@@ -300,6 +300,148 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final store in ['nagamachiminami', 'pscube:c740601:20']) {
+    testWidgets('台を番号順に往復し、日付・店舗・機種を保つ（$store）', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final selected = rec('2026-09-28', store: store, rack: 20);
+      final changedDays = <String>[];
+      await tester.pumpWidget(
+        app(
+          ViewerRecordPage(
+            data: ViewerData(
+              records: [
+                rec('2026-09-28', store: store, rack: 30, games: 4300),
+                selected,
+                rec('2026-09-28', store: store, rack: 10, games: 4100),
+                rec('2026-09-28', store: store, machine: '別機種', rack: 21),
+                rec('2026-09-28', store: '別店舗', rack: 22),
+                rec('2026-09-27', store: store, rack: 10, games: 400),
+                rec('2026-09-27', store: store, rack: 30, games: 4400),
+              ],
+            ),
+            record: selected,
+            onDayChanged: changedDays.add,
+          ),
+        ),
+      );
+      await tester.tap(find.text('次の台'));
+      await tester.pumpAndSettle();
+      var page = tester.widget<SavedGraphPage>(find.byType(SavedGraphPage));
+      expect(page.record.rack, 30);
+      expect(page.record.games, 4300);
+      expect(page.record.day, '2026-09-28');
+      expect(page.record.store, store);
+      expect(page.record.machine, selected.machine);
+      expect(
+        tester
+            .widget<TextButton>(find.byKey(const ValueKey('viewer-next-rack')))
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.text('前の台'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('前の台'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextButton>(
+              find.byKey(const ValueKey('viewer-previous-rack')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(changedDays, isEmpty, reason: '台移動では親の日付を変更しない');
+      await tester.tap(find.byTooltip('前の記録日'));
+      await tester.pumpAndSettle();
+      page = tester.widget<SavedGraphPage>(find.byType(SavedGraphPage));
+      expect(page.record.rack, 10);
+      expect(page.record.day, '2026-09-27');
+      expect(page.record.games, 400);
+      expect(page.score!.total, isNull);
+      await tester.tap(find.text('次の台'));
+      await tester.pumpAndSettle();
+      page = tester.widget<SavedGraphPage>(find.byType(SavedGraphPage));
+      expect(page.record.rack, 30);
+      expect(page.record.day, '2026-09-27');
+      expect(page.record.games, 4400);
+      expect(changedDays, ['2026-09-27']);
+      expect(
+        Navigator.of(tester.element(find.byType(SavedGraphPage))).canPop(),
+        isFalse,
+        reason: '台移動で戻る履歴を積み増さない',
+      );
+      await tester.drag(find.byType(ListView).first, const Offset(0, -450));
+      await tester.pumpAndSettle();
+      expect(find.text('前の台').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: '320pxでも操作欄がはみ出さない');
+    });
+  }
+
+  testWidgets('欠測日でも同じ機種の前後の台へ移れ、0台なら両方無効', (tester) async {
+    await phone(tester);
+    final selected = rec('2026-09-28', rack: 20);
+    await tester.pumpWidget(
+      app(
+        ViewerRecordPage(
+          data: ViewerData(
+            records: [
+              selected,
+              rec('2026-09-27', rack: 10),
+              rec('2026-09-27', rack: 30),
+              rec('2026-09-26', machine: '別機種', rack: 20),
+            ],
+          ),
+          record: selected,
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pumpAndSettle();
+    expect(find.text('この日の記録はありません'), findsOneWidget);
+    await tester.tap(find.text('次の台'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<SavedGraphPage>(find.byType(SavedGraphPage)).record.rack,
+      30,
+    );
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pumpAndSettle();
+    for (final key in ['viewer-previous-rack', 'viewer-next-rack']) {
+      expect(
+        tester.widget<TextButton>(find.byKey(ValueKey(key))).onPressed,
+        isNull,
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('1台だけの機種では台移動を無効にし、日付移動は残す', (tester) async {
+    await phone(tester);
+    final selected = rec('2026-09-28');
+    await tester.pumpWidget(
+      app(
+        ViewerRecordPage(
+          data: ViewerData(records: [selected, rec('2026-09-27')]),
+          record: selected,
+        ),
+      ),
+    );
+    for (final key in ['viewer-previous-rack', 'viewer-next-rack']) {
+      expect(
+        tester.widget<TextButton>(find.byKey(ValueKey(key))).onPressed,
+        isNull,
+      );
+    }
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<SavedGraphPage>(find.byType(SavedGraphPage)).record.day,
+      '2026-09-27',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('答え合わせは全日表示を残し、選んだ日のカードだけに絞れる', (tester) async {
     await phone(tester);
     final records = [

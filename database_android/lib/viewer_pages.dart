@@ -331,6 +331,7 @@ class ViewerRecordPage extends StatefulWidget {
 
 class _ViewerRecordPageState extends State<ViewerRecordPage> {
   late String _day = widget.record.day;
+  late SlotRecord _selected = widget.record;
   // 🌈を付け外ししたら、新しい内容で表示し直す。
   late ViewerData _data = widget.data;
   bool _savingRainbow = false;
@@ -355,8 +356,23 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
 
   @override
   Widget build(BuildContext context) {
-    final original = widget.record;
+    final original = _selected;
     final data = _data;
+    // 日付や機種を変えず、その日の記録がある台だけを台番号順に移る。
+    // 欠測日へ移ったときも、現在の番号の前後にある同機種の台へ進める。
+    final rows =
+        data.records
+            .where(
+              (r) =>
+                  r.store == original.store &&
+                  r.machine == original.machine &&
+                  r.day == _day,
+            )
+            .toList()
+          ..sort((a, b) => a.rack.compareTo(b.rack));
+    final previous = rows.where((r) => r.rack < original.rack).lastOrNull;
+    final next = rows.where((r) => r.rack > original.rack).firstOrNull;
+    final index = rows.indexWhere((r) => r.rack == original.rack);
     final record = data.records
         .where(
           (r) =>
@@ -366,12 +382,55 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
               r.day == _day,
         )
         .firstOrNull;
-    final bar = ViewerDateBar(
+    final dateBar = ViewerDateBar(
       days: viewerDays(data.records, original.store),
       day: _day,
       event: data.dateEventFor(original.store, _day)?.name,
       eventFor: (day) => data.dateEventFor(original.store, day)?.name,
       onChanged: _changeDay,
+    );
+    final bar = PreferredSize(
+      preferredSize: Size.fromHeight(dateBar.preferredSize.height + 48),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 48,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextButton.icon(
+                    key: const ValueKey('viewer-previous-rack'),
+                    onPressed: previous == null
+                        ? null
+                        : () => setState(() => _selected = previous),
+                    icon: const Icon(Icons.chevron_left),
+                    label: const Text('前の台'),
+                  ),
+                ),
+                Text(
+                  index < 0
+                      ? '${rows.length}台の記録'
+                      : '${index + 1} / ${rows.length}台',
+                  style: const TextStyle(fontSize: 12, color: AppColors.ash),
+                ),
+                Expanded(
+                  child: TextButton.icon(
+                    key: const ValueKey('viewer-next-rack'),
+                    onPressed: next == null
+                        ? null
+                        : () => setState(() => _selected = next),
+                    icon: const Icon(Icons.chevron_right),
+                    iconAlignment: IconAlignment.end,
+                    label: const Text('次の台'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          dateBar,
+        ],
+      ),
     );
     if (record == null) {
       final sameNumber = widget.data.records

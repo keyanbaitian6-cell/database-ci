@@ -1,4 +1,4 @@
-const SCRIPT_RELEASE = '09e2c8670954';
+const SCRIPT_RELEASE = '7d53f2650a30';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
