@@ -25,6 +25,7 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
     this.event,
     this.eventFor,
     this.allowAll = false,
+    this.latestAction,
   });
   final List<String> days;
   final String? day;
@@ -35,10 +36,13 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
   final String? Function(String day)? eventFor;
   final bool allowAll;
 
+  /// 台の詳細でだけ使う、最新記録への操作。タップ領域の分だけ高さを確保する。
+  final Widget? latestAction;
+
   // 枠つきの入力欄は、見出し（「表示する日付」）を枠の上の線にまたがって描く。上に余白が
   // 無いと、見出しの上半分が上の帯に隠れて切れる（2026-10-01、利用者の指摘）。
   @override
-  Size get preferredSize => const Size.fromHeight(92);
+  Size get preferredSize => Size.fromHeight(latestAction == null ? 92 : 112);
 
   @override
   Widget build(BuildContext context) {
@@ -99,14 +103,24 @@ class ViewerDateBar extends StatelessWidget implements PreferredSizeWidget {
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              event ?? '記録がある日へ切り替え',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: event == null ? AppColors.ash : AppColors.appleBlue,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    event ?? '記録がある日へ切り替え',
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: event == null
+                          ? AppColors.ash
+                          : AppColors.appleBlue,
+                    ),
+                  ),
+                ),
+                if (latestAction case final action?) action,
+              ],
             ),
           ],
         ),
@@ -334,17 +348,27 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
   late SlotRecord _selected = widget.record;
   // 🌈を付け外ししたら、新しい内容で表示し直す。
   late ViewerData _data = widget.data;
-  bool _savingRainbow = false;
+  SlotRecord? _savingRainbow;
 
   Future<void> _setRainbow(SlotRecord record, bool on) async {
     final editor = viewerRainbowEditor;
-    if (editor == null || _savingRainbow) return;
-    setState(() => _savingRainbow = true);
+    if (editor == null || _savingRainbow != null) return;
+    setState(() => _savingRainbow = record);
     try {
       final next = await editor(record, on);
       if (next != null && mounted) setState(() => _data = next);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${record.rack}番台の🌈保存を完了できませんでした。表示を確認して、もう一度お試しください。',
+            ),
+          ),
+        );
+      }
     } finally {
-      if (mounted) setState(() => _savingRainbow = false);
+      if (mounted) setState(() => _savingRainbow = null);
     }
   }
 
@@ -352,6 +376,40 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
     if (day == null || day == _day) return;
     setState(() => _day = day);
     widget.onDayChanged?.call(day);
+  }
+
+  Future<void> _chooseRack(List<SlotRecord> rows) async {
+    final selected = await showDialog<SlotRecord>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('台番号を選択'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: MediaQuery.sizeOf(context).height * .5,
+          child: ListView.builder(
+            itemCount: rows.length,
+            itemBuilder: (context, index) {
+              final row = rows[index];
+              return ListTile(
+                title: Text('${row.rack}番台'),
+                selected: row.rack == _selected.rack,
+                trailing: row.rack == _selected.rack
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => Navigator.pop(context, row),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
+    if (selected != null && mounted) setState(() => _selected = selected);
   }
 
   @override
@@ -382,12 +440,43 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
               r.day == _day,
         )
         .firstOrNull;
+    final recordedDays =
+        data.records
+            .where(
+              (r) =>
+                  r.store == original.store &&
+                  r.machine == original.machine &&
+                  r.rack == original.rack,
+            )
+            .map((r) => r.day)
+            .toSet()
+            .toList()
+          ..sort((a, b) => b.compareTo(a));
+    final latestDay = recordedDays.firstOrNull;
+    final savingStatus = _savingRainbow == null
+        ? null
+        : _RainbowSavingStatus(record: _savingRainbow!);
     final dateBar = ViewerDateBar(
       days: viewerDays(data.records, original.store),
       day: _day,
       event: data.dateEventFor(original.store, _day)?.name,
       eventFor: (day) => data.dateEventFor(original.store, day)?.name,
       onChanged: _changeDay,
+      latestAction: Tooltip(
+        message: 'この台の最新の記録へ戻る',
+        child: TextButton(
+          key: const ValueKey('viewer-latest-record'),
+          style: TextButton.styleFrom(
+            minimumSize: const Size(64, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            tapTargetSize: MaterialTapTargetSize.padded,
+          ),
+          onPressed: latestDay == null || latestDay == _day
+              ? null
+              : () => _changeDay(latestDay),
+          child: const Text('最新へ', style: TextStyle(fontSize: 12)),
+        ),
+      ),
     );
     final bar = PreferredSize(
       preferredSize: Size.fromHeight(dateBar.preferredSize.height + 48),
@@ -408,11 +497,18 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
                     label: const Text('前の台'),
                   ),
                 ),
-                Text(
-                  index < 0
-                      ? '${rows.length}台の記録'
-                      : '${index + 1} / ${rows.length}台',
-                  style: const TextStyle(fontSize: 12, color: AppColors.ash),
+                Tooltip(
+                  message: '台番号を選択',
+                  child: TextButton(
+                    key: const ValueKey('viewer-select-rack'),
+                    onPressed: rows.isEmpty ? null : () => _chooseRack(rows),
+                    child: Text(
+                      index < 0
+                          ? '${rows.length}台の記録 ▾'
+                          : '${index + 1} / ${rows.length}台 ▾',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
                 ),
                 Expanded(
                   child: TextButton.icon(
@@ -449,19 +545,12 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
             r.machine == original.machine &&
             r.rack != original.rack,
       );
-      final recordedDays =
-          widget.data.records
-              .where(
-                (r) =>
-                    r.store == original.store &&
-                    r.machine == original.machine &&
-                    r.rack == original.rack,
-              )
-              .map((r) => r.day)
-              .toList()
-            ..sort((a, b) => b.compareTo(a));
       return Scaffold(
-        appBar: AppBar(title: Text('${original.rack}番台'), bottom: bar),
+        appBar: AppBar(
+          title: Text('${original.rack}番台'),
+          bottom: bar,
+          actions: [if (savingStatus != null) savingStatus],
+        ),
         body: SafeArea(
           child: ListView(
             padding: const EdgeInsets.all(16),
@@ -528,13 +617,36 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
       allRecords: data.records,
       dateNavigation: bar,
       scrollTopButton: true,
+      rainbowStatus: savingStatus,
       onOpenDay: _changeDay,
       onRainbow:
           viewerRainbowEditor == null ||
               !storeNames.containsKey(record.store) ||
-              _savingRainbow
+              _savingRainbow != null
           ? null
           : (on) => _setRainbow(record, on),
     );
   }
+}
+
+/// 保存待ちの間も対象台を明示し、別の台での連打を防ぐ。
+class _RainbowSavingStatus extends StatelessWidget {
+  const _RainbowSavingStatus({required this.record});
+  final SlotRecord record;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: 8),
+    child: Tooltip(
+      message: '${record.day}・${record.rack}番台の🌈を保存中',
+      child: OutlinedButton(
+        key: const ValueKey('viewer-rainbow-saving'),
+        onPressed: null,
+        child: Text(
+          '${record.rack}番台\n🌈保存中',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 11),
+        ),
+      ),
+    ),
+  );
 }

@@ -79,6 +79,20 @@ for(const source of ['meruhen','pscube']) {
     await page.getByRole('button',{name:'前の台',exact:true}).click();
     await page.getByText(`${rack}番台`,{exact:true}).waitFor();
   }
+  // 直接選択で離れた番号へ飛んでも日付と機種を保持する。
+  await page.getByRole('button',{name:'1 / 4台 ▾',exact:true}).click();
+  await page.getByLabel('Alert',{exact:true}).getByText('台番号を選択',{exact:true}).waitFor();
+  await page.screenshot({path:`/tmp/viewer-rack-picker-${source}.png`});
+  await page.getByText('1088番台',{exact:true}).click();
+  await page.getByRole('button',{name:'4 / 4台 ▾',exact:true}).waitFor();
+  await page.getByRole('button',{name:/表示する日付.*2026-10-05/s}).waitFor();
+  await page.getByRole('button',{name:'4 / 4台 ▾',exact:true}).click();
+  await page.getByText('1085番台',{exact:true}).click();
+  await page.getByRole('button',{name:'前の記録日',exact:true}).click();
+  await page.getByRole('button',{name:'この日の「北斗」を見る',exact:true}).waitFor();
+  await page.getByRole('button',{name:'最新へ',exact:true}).click();
+  await page.getByRole('button',{name:/表示する日付.*2026-10-05/s}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'最新へ',exact:true}).isDisabled(),true);
   await page.getByRole('button',{name:'前の記録日',exact:true}).click();
   await page.waitForTimeout(500);
   await page.getByRole('button',{name:'この日の「北斗」を見る',exact:true}).waitFor();

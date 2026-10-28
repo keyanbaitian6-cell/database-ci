@@ -319,6 +319,7 @@ class SavedGraphPage extends StatefulWidget {
     this.scrollTopButton = false,
     this.onOpenDay,
     this.onRainbow,
+    this.rainbowStatus,
   });
   final SlotRecord record;
   final ScoreResult? score;
@@ -326,6 +327,9 @@ class SavedGraphPage extends StatefulWidget {
   /// 確定が出た台の印🌈を付ける（true）・外す（false）。あれば題の右に🌈のボタンを出す
   /// （閲覧ページだけ。Android版では付けない。RAINBOW.md「iPhoneから付ける」）。
   final ValueChanged<bool>? onRainbow;
+
+  /// 閲覧ページの保存待ち表示。他の画面では指定しない。
+  final Widget? rainbowStatus;
   final List<SlotRecord>? allRecords;
   final PreferredSizeWidget? dateNavigation;
 
@@ -365,7 +369,9 @@ class _SavedGraphPageState extends State<SavedGraphPage> {
         title: Text('${record.rack}番台${record.rainbow ? ' $rainbowMark' : ''}'),
         bottom: widget.dateNavigation,
         actions: [
-          if (widget.onRainbow case final onRainbow?)
+          if (widget.rainbowStatus case final status?)
+            status
+          else if (widget.onRainbow case final onRainbow?)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: record.rainbow
