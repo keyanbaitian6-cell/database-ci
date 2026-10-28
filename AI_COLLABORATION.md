@@ -4059,7 +4059,8 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 実DBの確認（`database/data/database.sqlite3` を `mode=ro` で読むだけ）：幸町の週表6週（2026-09-21〜10-26）。ボタンで保存済みの優・良1,290件はすべて自動判定と一致（食い違い0）。保存済みの空欄は1件（09-28の週）で、今後は自動表示。新しい赤字は各週96〜98機種中30〜42機種（10-26の週は最終日10-28で42機種）。PCの差枚読み込みは実DBで1週0.2〜0.3秒、窓を開いている間は同じ期間を読み直さない。
 - 途中の失敗と対処：Flutterの幅320px閲覧試験が、画面下の説明文を長くしたことで落ちた（週の選択欄が画面外で破棄されるため）。説明文を短くして元の試験のまま成功させた（文言を元の長さに戻すと成功することで原因を確認）。
 - 試験：手元で `bash database_android/tool/check_before_build.sh` が **ALL PASSED**（83項目：PC全試験・P’s CUBE試験・UTCのイベント試験、Flutter全試験とanalyze、閲覧ページ・共有カレンダーをその場でビルド・stageしての画面試験を含むJS全試験。対象は d5d5ab0 に今回の未コミット変更を載せた作業ツリー）。個別には PC `test_saiwaichou_history`・`test_event_history` 37件、Flutter `event_history_browser_layout_test`・`saiwaichou_history_test`・`event_history_test` 29件、Node `test_saiwaichou_history.mjs` 6件、共有の画面試験 `test_event_history_browser.mjs`（320/393/1280px）が成功。再発試験：自動の優・良の境界（2,499/2,500、0、マイナス、台数不足、差枚不明、記録なし、手入力優先、保存しない）、赤字の境界（+800ちょうど／+801、6日前・最終日の翌日は対象外、前週またぎ、台数違い、手入力の優、今日を除く）、PCのボタン廃止と「自動」で空欄保存、AndroidとPCの表の赤字、共有の自動良と赤字。
-- 未実施：push（database-ci）、閲覧ページ・共有カレンダーの公開、Android新APKの作成。実機・実iPhoneでの表示確認、実DBを使ったPC画面の目視は未確認。実DB・設定・Googleは変更していない。
+- **ソース反映**：利用者「pushして」により `1dc4b177b7eed2c37f8a748245beab29f12c5d89` を `python tools/push_ci.py` で database-ci へ1回push（日本時間10/29 07:58、`d5d5ab0..1dc4b17`）。**CI成功・全3ジョブ成功**：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40783965658 （full・pc ubuntu UTC・pc windows UTC）。正本へは送っていない（月後半）。
+- 未実施：閲覧ページ・共有カレンダーの公開（公開すると別作業の🌈の変更 `3ec14cb` 以降も一緒に出るため、利用者の判断待ち）、Android新APKの作成。実機・実iPhoneでの表示確認、実DBを使ったPC画面の目視は未確認。実DB・設定・Googleは変更していない。PCは `database/start.cmd` から起動し直すと反映。
 
 ## 【Codexの性能レビュー（R1〜R6）への対応：🌈で線を読み直さない・同名キーの差し替え・測定の作り直し】2026-10-29 Claude
 
