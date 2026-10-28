@@ -3967,3 +3967,10 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - ブラウザの追加試験では、Flutterの読み上げ通知とダイアログ見出しが同じ文言になったため、見出しの検索をダイアログ内へ限定。また欠測説明は読み上げ要素として一体化されるため、既存の「この日の北斗を見る」操作ボタンを待機対象にした。製品の仕様や待機時間は変更していない。両サイトの追加操作試験は成功、台選択ダイアログと320px幅の画面を目視確認した。
 - 最終確認用の環境はDISPLAY=:103、`CHECK_BUILD_WORK=/workspace/.cloud-setup/check-viewer-quick-release-20261028 CHECK_JS_JOBS=2 bash database_android/tool/check_before_build.sh`。analyzeはエラー・警告なし、info28件（従来26件＋今回の任意Widgetのnull判定を簡潔に書けるという提案2件）。試験の削除・スキップ追加・CI条件の変更はしていない。
 - 最終全ゲートは **ALL PASSED**。PC478＋231件、UTC27件、Flutter739件成功、analyzeエラー・警告なし。JS74ファイルすべて成功（集計394件、成功393・既存の任意保存例1件スキップ）。試験済みstageを公開に使用し、実データ用seedとイベント履歴JSONがないことを確認。公開差分はmain.dart.js・capture_health.mjs・viewer_parts.mjsの3ファイルだけ。
+
+- **ソース反映完了**：database-ci/main `a9a3318f4d5ccc5e09d1cd27ad803359c98fa44c`（16ファイル）。コミット直後にクラウドの実行接続が切れたが、復旧後にリモートmainが基準464dbeb5のままで未送信と確認してから、既存のAPI輸送で送信した。日本時間の月後半判定・両mainの包含・直前のhead不変・ローカルとリモートのtree／commit SHA一致・非強制更新を確認。正本へは送っていない。
+- **公開完了**：database-viewer `84eb8d7594a74bbb4bf5d062e07fd16bc0072b05`、親d8548ed4。Pagesの同SHAがbuilt（2026-10-28T06:42:35Z）。試験済みstageから3ファイルだけ反映、削除なし。配信中main.dart.js・capture_health.mjs・viewer_parts.mjs・index.html・pscube/index.htmlをHTTPで読み戻し、stageと5ファイルすべてバイト一致を確認した。公開先は https://keyanbaitian6-cell.github.io/database-viewer/ と https://keyanbaitian6-cell.github.io/database-viewer/pscube/ 。
+- 利用者の操作：ページを再読み込みし、台詳細の中央「○／○台 ▾」を押して台番号を選ぶ。「最新へ」で表示中の台の最新記録へ戻る。メルヘンの🌈付け外しでは保存中に対象の台番号を表示する。保存データの消去・JSONの再取り込み・Googleスクリプト再貼替は不要。
+- **GitHub追加回帰は実行中**： https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40645422433 、対象a9a3318f。2026-10-28の公開直後確認ではUbuntu UTC成功、Windows UTCとfullはin_progress。今回の手元全ゲートALL PASSEDと、GitHub側の未完了を区別する。CI再実行はしていない。次に結果を確認する際は、この同じ実行の完了結果を読むこと。以前の40608276311の成功を今回の成功として扱わない。
+- 検証ログ・全体の所要時間・JS集計・画面画像・公開配信照合・送信SHAは製品外 `../outputs/viewer-quick-navigation-20261028/` に保存。引き継ぎの根拠は本記録とGitHubコミット／実行URL。実iPhoneのSafariでの操作は未確認。今回の最後の反映は本記録だけの文書コミットで、追加CIや再公開は行わない。
+- 配信中main.dart.jsのSHA-256：`b37c5bf77dbbe6cad94b78a80e2d0aef2e2ac7addadf8149145f8f6c8b4d6c98`（3172471バイト）。
