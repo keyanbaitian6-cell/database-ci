@@ -125,8 +125,24 @@ void main() {
       rb: 2,
     );
     var saved = false;
+    // 2台機種の10/21は2台とも差枚が分かり合計+700枚→自動で良（保存しない）。+800枚以下なので赤字。
+    SlotRecord twin(int rack, int net) => SlotRecord(
+      store: saiwaichouHistoryStore,
+      day: '2026-10-21',
+      machine: '2台機種',
+      rack: rack,
+      games: 1000,
+      bb: 4,
+      rb: 2,
+      extra: {'jo_net': net},
+    );
     final data = ViewerData(
-      records: [row(historyStore, 90), row(saiwaichouHistoryStore, 1)],
+      records: [
+        row(historyStore, 90),
+        row(saiwaichouHistoryStore, 1),
+        twin(2, 500),
+        twin(3, 200),
+      ],
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -144,7 +160,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('幸町のバラエティ履歴'), findsOneWidget);
     expect(find.text('優'), findsOneWidget);
-    expect(find.text('良'), findsOneWidget);
+    expect(find.text('良'), findsNWidgets(2));
+    expect(saved, isFalse, reason: '自動の優・良は保存しない');
     expect(
       find.byWidgetPredicate(
         (w) =>
@@ -156,6 +173,11 @@ void main() {
       tester.widget<Text>(find.text('同名機種')).style?.color,
       isNot(const Color(0xffb91c1c)),
     );
+    expect(
+      tester.widget<Text>(find.text('2台機種')).style?.color,
+      const Color(0xffb91c1c),
+    );
+    expect(find.textContaining('赤字：2026-10-21までの5日間'), findsOneWidget);
     await tester.tap(find.text('開く →').first);
     await tester.pumpAndSettle();
     final page = tester.widget<ViewerMachinePage>(

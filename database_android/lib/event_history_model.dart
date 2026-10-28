@@ -66,16 +66,110 @@ DateTime historyDate(Object? raw) {
 
 String historyDay(DateTime d) => d.toUtc().toIso8601String().substring(0, 10);
 
-/// 表示週の最終記録日までの5暦日。空欄も数え、前週の優・良も参照する。
-bool historyGradeGap(
+/// 幸町の赤字（利用者指定、2026-10-29）：今日を除いた直前5暦日に、機種の合計差枚が
+/// +800枚を超えた日が無い機種。記録の無い日・差枚不明の日は「超えていない」と数え、
+/// 手入力の優（2,500枚以上の意味）は超えた日と数える。PC event_history_data.grade_gap と同じ。
+const saiwaichouGapNet = 800;
+const saiwaichouGapDays = 5;
+
+/// 店の台を日ごとに分ける（自動の優・良と赤字の差枚計算用）。
+Map<String, List<SlotRecord>> historyRacksByDay(
+  List<SlotRecord> records, {
+  String store = saiwaichouHistoryStore,
+}) {
+  final out = <String, List<SlotRecord>>{};
+  for (final r in records) {
+    if (r.store == store) (out[r.day] ??= []).add(r);
+  }
+  return out;
+}
+
+/// 週表の機種のその日の合計差枚。保存名が決まり、全台の差枚が分かり（数値異常の台なし）、
+/// 台数が週表と同じときだけ。PC event_history_data.item_day_net と同じ。
+int? saiwaichouMachineNet(
+  Map machine,
+  String day,
+  Map<String, List<SlotRecord>> racks,
+) {
+  final rows = racks[day];
+  if (rows == null) return null;
+  final name = historySavedName(machine, {for (final r in rows) r.machine});
+  if (name == null) return null;
+  final mine = rows.where((r) => r.machine == name).toList();
+  if (mine.length != machine['count'] ||
+      mine.any((r) => hasImplausibleNumbers(r) || r.netValue == null)) {
+    return null;
+  }
+  return mine.fold<int>(0, (sum, r) => sum + r.netValue!);
+}
+
+/// 2,500枚以上は優、0〜2,499枚は良。マイナス・不明は空欄（PC net_grade と同じ）。
+String saiwaichouNetGrade(int? total) => total == null || total < 0
+    ? ''
+    : total >= 2500
+    ? '優'
+    : '良';
+
+/// 空欄のマスに、その日の機種合計差枚からの優・良を入れた週一覧（表示用。保存しない）。
+/// 手入力の優・良はそのまま（2026-10-29 利用者指定、4大オススメと同じく表示時に自動判定）。
+List<Map<String, dynamic>> saiwaichouAutoWeeks(
+  List<Map<String, dynamic>> weeks,
+  Map<String, List<SlotRecord>> racks,
+) => [
+  for (final w in weeks)
+    {
+      ...w,
+      'machines': [
+        for (final m in w['machines'] as List)
+          {
+            ...m as Map,
+            'results': [
+              for (var i = 0; i < 7; i++)
+                (m['results'] as List)[i] as String != ''
+                    ? (m['results'] as List)[i] as String
+                    : saiwaichouNetGrade(
+                        saiwaichouMachineNet(
+                          m,
+                          historyDay(
+                            historyDate(w['from']).add(Duration(days: i)),
+                          ),
+                          racks,
+                        ),
+                      ),
+            ],
+          },
+      ],
+    },
+];
+
+/// 赤字判定の最終日：表示週の最後の記録日。ただし今日（日本時間）は含めない。
+String? saiwaichouGapEnd(String? lastRecordDay, DateTime now) {
+  if (lastRecordDay == null) return null;
+  final jst = now.toUtc().add(const Duration(hours: 9));
+  final yesterday = historyDay(
+    DateTime.utc(
+      jst.year,
+      jst.month,
+      jst.day,
+    ).subtract(const Duration(days: 1)),
+  );
+  return lastRecordDay.compareTo(yesterday) < 0 ? lastRecordDay : yesterday;
+}
+
+/// [endDay] までの5暦日に、合計差枚が+800枚を超えた日も優の日も無ければ true。
+/// 前週にまたがる日も、同じ機種名・明示的な保存名の週表から優を探す。
+bool saiwaichouGradeGap(
   Iterable<Map<String, dynamic>> weeks,
   Map machine,
-  String? lastDay,
+  String? endDay,
+  Map<String, List<SlotRecord>> racks,
 ) {
-  if (lastDay == null) return false;
-  final end = historyDate(lastDay);
-  for (var offset = 0; offset < 5; offset++) {
+  if (endDay == null) return false;
+  final end = historyDate(endDay);
+  for (var offset = 0; offset < saiwaichouGapDays; offset++) {
     final target = historyDay(end.subtract(Duration(days: offset)));
+    final total = saiwaichouMachineNet(machine, target, racks);
+    if (total != null && total > saiwaichouGapNet) return false;
     for (final week in weeks) {
       if (week['type'] != 'バラエティ' ||
           target.compareTo(week['from'] as String) < 0 ||
@@ -96,7 +190,7 @@ bool historyGradeGap(
           saved['results'][historyDate(target)
               .difference(historyDate(week['from']))
               .inDays];
-      if (value == '優' || value == '良') return false;
+      if (value == '優') return false;
     }
   }
   return true;

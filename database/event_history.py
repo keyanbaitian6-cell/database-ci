@@ -11,7 +11,8 @@ import recommendations as rec
 from event_history_data import (ASSET, KINDS, STORE, load_base, empty_edits, materialize,
     clean_edits, edit_key, saved_name, machine_candidates, variety_week_lineup, capture_shortfall, stamp,
     SHORTFALL_DAYS, machine_day_nets, auto_faces, SAIWAI_STORE, VARIETY_KEY,
-    saiwaichou_base, store_edits, store_kinds, net_face, net_grade)
+    saiwaichou_base, store_edits, store_kinds, net_face, machine_day_totals, auto_grades,
+    gap_end, gap_range, grade_gap, GAP_NET)
 
 HISTORY_FILE = ASSET
 EVENT_TYPES = KINDS
@@ -29,8 +30,8 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     saiwaichou = location == SAIWAI_STORE
     title = '幸町のバラエティ履歴' if saiwaichou else '長町南のイベント履歴'
     result_name = '優・良' if saiwaichou else '顔文字'
-    rule_text = '2,500枚以上＝優　0〜2,499枚＝良　マイナス・差枚不明は空欄' if saiwaichou else '+3000枚以上＝😍　1000〜2999枚＝😀　0〜999枚＝😌　マイナス＝🥶'
-    skipped_text = 'マイナス・差枚不明・台数不足の空欄' if saiwaichou else '差枚の分からない空欄'
+    rule_text = '+3000枚以上＝😍　1000〜2999枚＝😀　0〜999枚＝😌　マイナス＝🥶'
+    skipped_text = '差枚の分からない空欄'
     window = tk.Toplevel(parent)
     window.history_store = location
     window.title(title)
@@ -57,7 +58,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     dirty = [False]
     name_labels = {}
     ttk.Label(frame, text=title, style='H2.TLabel').pack(anchor='w')
-    ttk.Label(frame, text=('優・良はPCで入力・修正します。→ はその機種・その日のデータを開きます。' if saiwaichou else
+    ttk.Label(frame, text=('優・良は自動で表示し、手入力・修正はPCで行います。→ はその機種・その日のデータを開きます。' if saiwaichou else
                           '記号はプルダウンで編集します。→ はその機種・その日のデータを開きます。記号の意味は未設定です。')).pack(anchor='w')
     controls = ttk.Frame(frame)
     controls.pack(fill='x', pady=8)
@@ -70,19 +71,24 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     week_combo.pack(side='left', padx=8)
     content = ttk.Frame(frame)
     content.pack(fill='both', expand=True)
-    # 顔文字の自動挿入：表の真上（スクロールしない位置）。週表を開いているときだけ出す（4台構成・半列・バラエティ共通）。
+    # 表の真上（スクロールしない位置）。週表を開いているときだけ出す。
     auto_row = ttk.Frame(frame)
-    auto_daily = ttk.Frame(auto_row)
-    auto_daily.pack(fill='x')
     auto_day = tk.StringVar()
-    ttk.Label(auto_daily, text=f'{result_name}の自動挿入：').pack(side='left')
-    auto_combo = ttk.Combobox(auto_daily, textvariable=auto_day, state='readonly', width=10)
-    auto_combo.pack(side='left', padx=4)
-    ttk.Button(auto_daily, text=f'この日の差枚で{result_name}を入れる', command=lambda: auto_insert()).pack(side='left')
-    ttk.Label(auto_daily, text=f'  {rule_text}（空欄だけ）').pack(side='left')
+    gap_note = tk.StringVar()
     if saiwaichou:
-        ttk.Button(auto_row, text='この週の差枚で優・良を入れる',
-                   command=lambda: auto_insert(whole_week=True)).pack(anchor='w', pady=(4, 0))
+        # 幸町の優・良は表示のたびに差枚から自動判定する（2026-10-29 利用者指定、4大オススメと同じ）。自動の値は保存しない。
+        ttk.Label(auto_row, text='空欄の日は、その日の機種合計差枚から自動表示：2,500枚以上＝優　0〜2,499枚＝良　'
+                  'マイナス・差枚不明・台数不足は—。手入力した優・良が優先（「自動」で戻す）').pack(anchor='w')
+        ttk.Label(auto_row, textvariable=gap_note, foreground='#b91c1c').pack(anchor='w')
+    else:
+        # 顔文字の自動挿入（4台構成・半列・バラエティ共通）。
+        auto_daily = ttk.Frame(auto_row)
+        auto_daily.pack(fill='x')
+        ttk.Label(auto_daily, text=f'{result_name}の自動挿入：').pack(side='left')
+        auto_combo = ttk.Combobox(auto_daily, textvariable=auto_day, state='readonly', width=10)
+        auto_combo.pack(side='left', padx=4)
+        ttk.Button(auto_daily, text=f'この日の差枚で{result_name}を入れる', command=lambda: auto_insert()).pack(side='left')
+        ttk.Label(auto_daily, text=f'  {rule_text}（空欄だけ）').pack(side='left')
     canvas = tk.Canvas(content, highlightthickness=0)
     vertical = ttk.Scrollbar(content, orient='vertical', command=canvas.yview)
     horizontal = ttk.Scrollbar(content, orient='horizontal', command=canvas.xview)
@@ -126,6 +132,18 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
     def save(group, entry):
         save_many(group, [entry])
 
+    totals_cache = {}
+
+    def day_totals(first, last):
+        # 窓を開いている間は同じ期間を読み直さない（1週で約0.2〜0.3秒）。
+        if (first, last) not in totals_cache:
+            db = Store(db_path)
+            try:
+                totals_cache[(first, last)] = machine_day_totals(db, first, last, location)
+            finally:
+                db.close()
+        return totals_cache[(first, last)]
+
     def names_for(w):
         return set().union(*(names for d,names in index.items() if w['from'] <= d <= w['to']))
 
@@ -159,7 +177,11 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         previous = next((c['value'] for c in clean_edits(edits[0], base)[0]['cells'] if c['type'] == w['type']
                          and c['week'] == w['from'] and c['machine'] == item['name'] and c['day'] == d), previous)
         try:
-            save('cells', dict(store=location, type=w['type'], week=w['from'], machine=item['name'], day=d, value=value.get()))
+            save('cells', dict(store=location, type=w['type'], week=w['from'], machine=item['name'], day=d,
+                               value='' if value.get() == '自動' else value.get()))
+            if saiwaichou:
+                render()  # 自動の表示と赤字を手入力に合わせて描き直す。
+                return
             # 最新の編集を重ねてから判定し、😍を付け外しした直後にも機種名の色を更新する。
             for week in materialize(base, edits[0])[0]:
                 for machine in week['machines']:
@@ -167,7 +189,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
                     if label is not None:
                         label.configure(foreground='#b91c1c' if not saiwaichou and week['type'] == 'バラエティ' and '😍' not in machine['results'] else '')
         except Exception as error:
-            value.set(previous)
+            value.set(previous or ('自動' if saiwaichou else ''))
             messagebox.showerror('保存できません', str(error), parent=window)
 
     recommendation_drafts = {}
@@ -277,7 +299,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         week_combo.configure(values=list(labels))
         if reset or chosen.get() not in labels: chosen.set(next(iter(labels), ''))
         w = labels.get(chosen.get())
-        if w is not None:
+        if w is not None and not saiwaichou:
             first_day = date.fromisoformat(w['from'])
             options = [f"{(first_day+timedelta(days=i)).isoformat()} {WEEKDAYS[i]}" for i in range(7)]
             auto_combo.configure(values=options)
@@ -285,6 +307,8 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
                 # 既定は、その週で保存済みの記録がある最後の日（無ければ週の初日）。
                 recorded = [o for o in options if o.split()[0] in index]
                 auto_day.set(recorded[-1] if recorded else options[0])
+            auto_row.pack(fill='x', pady=(0, 6), before=content)
+        elif w is not None:
             auto_row.pack(fill='x', pady=(0, 6), before=content)
         else:
             auto_row.pack_forget()
@@ -296,22 +320,39 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         ttk.Label(table, text='機種名・台数', padding=8).grid(row=0,column=0,sticky='w')
         for i,d in enumerate(days):
             ttk.Label(table, text=f'{d[5:]} {WEEKDAYS[i]}', padding=8).grid(row=0,column=i+1)
+        automatic, totals, end = {}, {}, None
+        if saiwaichou:
+            recorded = sorted(d for d in index if w['from'] <= d <= w['to'])
+            end = gap_end(recorded[-1] if recorded else None)
+            try:
+                totals = day_totals(min(w['from'], gap_range(end)[0]) if end else w['from'], w['to'])
+            except (OSError, sqlite3.Error) as error:
+                status.set(f'差枚を読めないため自動の優・良と赤字を表示できません：{error}')
+            automatic = auto_grades(w, totals, index)
+            gap_note.set(f'赤字：{end}までの5日間、機種合計差枚が+{GAP_NET}枚を超えた日なし'
+                         '（今日は含めない。記録なし・差枚不明の日も超えていないと数え、手入力の優は超えた日と数える）'
+                         if end else 'この週は記録がないため赤字判定はしません。')
         if w.get('lineup_day'):
             status.set(f"分類日：{w['lineup_day']}（作成時の構成で固定）" + ('・次の保存か「共有へ反映」で共有用ファイルを更新' if dirty[0] else ''))
         for row,item in enumerate(w['machines'],1):
             namebox = ttk.Frame(table, padding=(4,4))
             namebox.grid(row=row,column=0,sticky='w')
+            red = (grade_gap(weeks, item, end, totals, index) if saiwaichou else
+                   w['type'] == 'バラエティ' and '😍' not in item['results'])
             name_label = ttk.Label(namebox, text=f"{item['name']}  {item['count']}台", width=38,
-                                   foreground='#b91c1c' if not saiwaichou and w['type'] == 'バラエティ' and '😍' not in item['results'] else '')
+                                   foreground='#b91c1c' if red else '')
             name_label.pack(anchor='w')
             name_labels[(w['type'], w['from'], item['name'])] = name_label
             ttk.Button(namebox, text='保存名の対応を確認', command=lambda w=w,m=item: link_machine(w,m)).pack(anchor='w')
             for i,d in enumerate(days):
                 cell=ttk.Frame(table,padding=(4,4)); cell.grid(row=row,column=i+1)
-                value=tk.StringVar(value=item['results'][i])
-                combo=ttk.Combobox(cell,textvariable=value,values=['',*base['symbols']],state='readonly',width=4)
+                saved_value=item['results'][i]
+                value=tk.StringVar(value=(saved_value or '自動') if saiwaichou else saved_value)
+                combo=ttk.Combobox(cell,textvariable=value,values=['自動' if saiwaichou else '',*base['symbols']],state='readonly',width=5 if saiwaichou else 4)
                 combo.pack(side='left')
-                combo.bind('<<ComboboxSelected>>',lambda _,w=w,m=item,d=d,v=value,p=item['results'][i]: changed_symbol(w,m,d,v,p))
+                combo.bind('<<ComboboxSelected>>',lambda _,w=w,m=item,d=d,v=value,p=saved_value: changed_symbol(w,m,d,v,p))
+                if saiwaichou and not saved_value:
+                    ttk.Label(cell,text=automatic.get((item['name'],d),'—'),width=2).pack(side='left',padx=(2,0))
                 name=saved_name(item,index.get(d,set()))
                 ttk.Button(cell,text='→' if name else '—',width=3,state='normal' if name else 'disabled',
                     command=lambda n=name,d=d:on_pick(n,d)).pack(side='left')
@@ -340,29 +381,23 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
             render()
         except Exception as error: messagebox.showerror('週表を作成できません',str(error),parent=window)
 
-    def auto_insert(whole_week=False):
-        # 週単位でも日ごとの合計差枚で判定し、入力済みのセルは変えない。
+    def auto_insert():
+        # 長町南の顔文字。選んだ日の合計差枚で判定し、入力済みのセルは変えない。
         weeks, _rejected = materialize(base, edits[0])
         w = next((x for x in weeks if x['type'] == kind.get() and f"{x['from']}〜{x['to']}" == chosen.get()), None)
         target = auto_day.get()
-        if w is None or (not whole_week and not target):
+        if w is None or not target:
             messagebox.showinfo('自動挿入', 'イベントの週と日付を選んでから押してください。', parent=window)
             return
-        target = None if whole_week else target.split()[0]
-        targets = [(date.fromisoformat(w['from']) + timedelta(days=i)).isoformat()
-                   for i in range(7)] if whole_week else [target]
-        target_label = f"{w['from']}〜{w['to']}" if whole_week else target
+        target = target_label = target.split()[0]
         try:
             db = Store(db_path)
             try:
-                nets = {}
-                for d in targets:
-                    expected = {saved_name(m, index.get(d, set())): m['count'] for m in w['machines']} if saiwaichou else None
-                    nets.update(machine_day_nets(db, d, d, location, expected))
+                nets = machine_day_nets(db, target, target, location)
             finally:
                 db.close()
             cells, skipped = auto_faces(w, nets, index, base['symbols'], base.get('user_blank_days', ()),
-                                        only_day=target, classify=net_grade if saiwaichou else net_face)
+                                        only_day=target)
             if not cells:
                 messagebox.showinfo('自動挿入', f'{target_label}に入れられる空欄がありません。' + (f'\n{skipped_text}が{skipped}件あります。' if skipped else ''), parent=window)
                 return

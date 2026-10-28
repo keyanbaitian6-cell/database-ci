@@ -2,6 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {parsePrivateHistory, mergeHistoryCells, historyGradeGap} from '../../share_viewer/event_history.mjs';
+import {saiwaichouMachineNet, saiwaichouGrade, saiwaichouGapEnd, saiwaichouGap} from '../../share_viewer/data.mjs';
+
+test('自動の優・良は全台の差枚と週表の台数がそろう日だけ（PC・閲覧ページと同じ境界）',()=>{
+  const r=net=>({net});
+  assert.equal(saiwaichouMachineNet([r(2000),r(500)],2),2500);
+  assert.equal(saiwaichouMachineNet([r(2000)],2),null,'台数不足');
+  assert.equal(saiwaichouMachineNet([r(2000),r(null)],2),null,'差枚不明の台');
+  assert.equal(saiwaichouMachineNet([],1),null,'記録なし');
+  for(const [total,grade] of [[-1,''],[0,'良'],[2499,'良'],[2500,'優'],[null,'']]) assert.equal(saiwaichouGrade(total),grade);
+});
+
+test('赤字は今日を除いた直前5日に+800枚を超えた日も優も無い機種',()=>{
+  const nets={}, grades={};
+  const gap=(end='2026-10-20')=>saiwaichouGap(end,d=>({net:nets[d]??null,grade:grades[d]??''}));
+  assert.equal(gap(),true,'記録なし・差枚不明は超えていないと数える');
+  nets['2026-10-16']=801; assert.equal(gap(),false,'5日目の+801枚');
+  delete nets['2026-10-16']; nets['2026-10-20']=800; assert.equal(gap(),true,'+800枚ちょうどは超えていない');
+  nets['2026-10-15']=9000; nets['2026-10-21']=9000; assert.equal(gap(),true,'範囲外の日は見ない');
+  grades['2026-10-18']='良'; assert.equal(gap(),true);
+  grades['2026-10-18']='優'; assert.equal(gap(),false,'手入力の優は超えた日と数える');
+  assert.equal(gap(null),false,'記録のない週を赤くしない');
+  const now=Date.parse('2026-10-28T16:00:00Z'); // 日本時間10/29 1:00
+  assert.equal(saiwaichouGapEnd('2026-10-29',now),'2026-10-28','今日（日本時間）は含めない');
+  assert.equal(saiwaichouGapEnd('2026-10-25',now),'2026-10-25');
+  assert.equal(saiwaichouGapEnd(null,now),null);
+});
 
 test('赤字は最終記録日までの5暦日で判定し、前週・境界・空欄・未来・対応名を区別する',()=>{
   const machine={name:'機種A',record_name:'保存名A'};

@@ -10,8 +10,89 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('赤字は最終記録日まで5暦日。週またぎ・空欄・境界・未来を区別する', () {
-    final machine = {'name': '機種A', 'record_name': '保存名A'};
+  SlotRecord rack(String day, String machine, int rack, int? net) => SlotRecord(
+    store: saiwaichouHistoryStore,
+    day: day,
+    machine: machine,
+    rack: rack,
+    games: 1000,
+    bb: 4,
+    rb: 2,
+    extra: {'jo_net': ?net},
+  );
+  test('幸町の自動の優・良：全台の差枚と週表の台数がそろう日だけ。手入力が優先', () {
+    final week = <String, dynamic>{
+      'type': 'バラエティ',
+      'from': '2026-10-19',
+      'to': '2026-10-25',
+      'machines': [
+        {
+          'name': '機種A',
+          'record_name': '機種A',
+          'count': 1,
+          'results': ['良', '', '', '', '', '', ''],
+        },
+        {
+          'name': '機種B',
+          'record_name': '機種B',
+          'count': 2,
+          'results': List.filled(7, ''),
+        },
+      ],
+    };
+    final racks = historyRacksByDay([
+      rack('2026-10-19', '機種A', 1, 5000),
+      rack('2026-10-19', '機種B', 2, 2000),
+      rack('2026-10-19', '機種B', 3, 500),
+      rack('2026-10-20', '機種B', 2, 3000),
+      rack('2026-10-21', '機種B', 2, 0),
+      rack('2026-10-21', '機種B', 3, -1),
+      rack('2026-10-22', '機種B', 2, 0),
+      rack('2026-10-22', '機種B', 3, 0),
+      rack('2026-10-23', '機種B', 2, 9000),
+      rack('2026-10-23', '機種B', 3, null),
+      rack('2026-10-24', '機種A', 1, 2499),
+      SlotRecord(
+        store: saiwaichouHistoryStore,
+        day: '2026-10-25',
+        machine: '機種A',
+        rack: 1,
+        games: 88888888,
+        bb: 4,
+        rb: 2,
+        extra: {'jo_net': 9000},
+      ),
+      SlotRecord(
+        store: historyStore,
+        day: '2026-10-20',
+        machine: '機種A',
+        rack: 1,
+        games: 1000,
+        bb: 4,
+        rb: 2,
+        extra: {'jo_net': 9000},
+      ),
+    ]);
+    final shown = saiwaichouAutoWeeks([week], racks).single['machines'] as List;
+    expect(shown[0]['results'], ['良', '', '', '', '', '良', '']);
+    expect(shown[1]['results'], ['優', '', '', '良', '', '', '']);
+    expect(
+      (week['machines'] as List)[1]['results'],
+      List.filled(7, ''),
+      reason: '元の週表は変えない',
+    );
+    for (final (total, grade) in [
+      (-1, ''),
+      (0, '良'),
+      (2499, '良'),
+      (2500, '優'),
+      (null, ''),
+    ]) {
+      expect(saiwaichouNetGrade(total), grade);
+    }
+  });
+  test('幸町の赤字：今日を除いた直前5日に+800枚を超えた日も優も無い。週またぎ・境界・台数を区別する', () {
+    final machine = {'name': '機種A', 'record_name': '保存名A', 'count': 1};
     final previous = List.filled(7, ''), current = List.filled(7, '');
     final weeks = <Map<String, dynamic>>[
       {
@@ -31,19 +112,55 @@ void main() {
         ],
       },
     ];
-    expect(historyGradeGap(weeks, machine, '2026-10-20'), isTrue);
+    bool gap(List<SlotRecord> records, [String? end = '2026-10-20']) =>
+        saiwaichouGradeGap(weeks, machine, end, historyRacksByDay(records));
+    expect(gap([]), isTrue, reason: '記録なし・差枚不明は超えていないと数える');
+    expect(
+      gap([rack('2026-10-16', '保存名A', 1, 801)]),
+      isFalse,
+      reason: '前週の5日目',
+    );
+    expect(
+      gap([rack('2026-10-20', '保存名A', 1, 800)]),
+      isTrue,
+      reason: '+800枚ちょうどは超えていない',
+    );
+    expect(
+      gap([rack('2026-10-15', '保存名A', 1, 9000)]),
+      isTrue,
+      reason: '6日前は対象外',
+    );
+    expect(
+      gap([rack('2026-10-21', '保存名A', 1, 9000)]),
+      isTrue,
+      reason: '最終日より後は対象外',
+    );
+    expect(
+      gap([
+        rack('2026-10-20', '保存名A', 1, 9000),
+        rack('2026-10-20', '保存名A', 2, 0),
+      ]),
+      isTrue,
+      reason: '台数が週表と違う合計は使わない',
+    );
     previous[4] = '良';
-    expect(historyGradeGap(weeks, machine, '2026-10-20'), isFalse);
+    expect(gap([]), isTrue, reason: '良は超えた日と数えない');
+    previous[4] = '優';
+    expect(gap([]), isFalse, reason: '手入力の優は超えた日と数える');
     (weeks[0]['machines'] as List)[0]['name'] = '旧表示名';
-    expect(historyGradeGap(weeks, machine, '2026-10-20'), isFalse);
+    expect(gap([]), isFalse, reason: '明示した保存名で前週と対応');
     previous[4] = '';
     previous[3] = '優';
-    current[2] = '良';
-    expect(historyGradeGap(weeks, machine, '2026-10-20'), isTrue);
-    current[1] = '良';
-    expect(historyGradeGap(weeks, machine, '2026-10-20'), isFalse);
-    expect(historyGradeGap(weeks, {'name': '別機種'}, '2026-10-20'), isTrue);
-    expect(historyGradeGap(weeks, machine, null), isFalse);
+    expect(gap([]), isTrue, reason: '5日前の優は対象外');
+    expect(gap([], null), isFalse, reason: '記録のない週は赤くしない');
+    final now = DateTime.utc(2026, 10, 28, 16); // 日本時間10/29 1:00
+    expect(
+      saiwaichouGapEnd('2026-10-29', now),
+      '2026-10-28',
+      reason: '今日（日本時間）は含めない',
+    );
+    expect(saiwaichouGapEnd('2026-10-25', now), '2026-10-25');
+    expect(saiwaichouGapEnd(null, now), isNull);
   });
   for (final width in [320.0, 393.0, 1280.0]) {
     for (final location in [historyStore, saiwaichouHistoryStore]) {

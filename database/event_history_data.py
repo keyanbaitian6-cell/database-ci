@@ -1,6 +1,6 @@
 """週イベント履歴の基準、編集、バックアップ共通処理。数値記録には触れない。"""
 from copy import deepcopy
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import json
 import math
@@ -405,9 +405,9 @@ def net_grade(total):
     return '優' if total >= 2500 else '良'
 
 
-def machine_day_nets(db, first, last, location=STORE, expected_counts=None):
-    """{(日, 機種名): 合計差枚}。全台の差枚が分かる機種・日だけ（一部の台しか分からない合計は出さない）。
-    差枚は画面と同じ rack_net（ジャグラーオンラインの差枚、無ければ推定差枚）。数値異常の台がある機種・日も出さない。"""
+def machine_day_totals(db, first, last, location=STORE):
+    """{(日, 機種名): (合計差枚, 台数)}。差枚の分からない台・数値異常の台が1台でもあれば合計は None。
+    差枚は画面と同じ rack_net（ジャグラーオンラインの差枚、無ければ推定差枚）。"""
     from core import rack_net, implausible_numbers
     query = ("SELECT day, machine, json_extract(payload,'$.games'), json_extract(payload,'$.bb'), json_extract(payload,'$.rb'),"
              " json_extract(payload,'$.max_hold'), json_extract(payload,'$.graph_measurement'),"
@@ -428,8 +428,77 @@ def machine_day_nets(db, first, last, location=STORE, expected_counts=None):
             totals[key] = None
         else:
             totals[key] = totals.get(key, 0) + net
-    return {k: v for k, v in totals.items() if v is not None and
-            (expected_counts is None or counts[k] == expected_counts.get(k[1]))}
+    return {k: (totals[k], counts[k]) for k in totals}
+
+
+def machine_day_nets(db, first, last, location=STORE, expected_counts=None):
+    """{(日, 機種名): 合計差枚}。全台の差枚が分かる機種・日だけ（一部の台しか分からない合計は出さない）。
+    数値異常の台がある機種・日も出さない。"""
+    return {k: total for k, (total, count) in machine_day_totals(db, first, last, location).items()
+            if total is not None and (expected_counts is None or count == expected_counts.get(k[1]))}
+
+
+def item_day_net(item, d, totals, names_by_day):
+    """週表の機種のその日の合計差枚。保存名が決まり、全台の差枚が分かり、台数が週表と同じときだけ。"""
+    name = saved_name(item, names_by_day.get(d, set()))
+    total, count = totals.get((d, name), (None, 0)) if name else (None, 0)
+    return total if count == item['count'] else None
+
+
+def auto_grades(week, totals, names_by_day):
+    """幸町：空欄のマスに表示する優・良 {(機種名, 日): 記号}（保存しない。手入力の優・良が優先）。"""
+    first = day(week['from'])
+    out = {}
+    for item in week['machines']:
+        for i, current in enumerate(item['results']):
+            d = (first + timedelta(days=i)).isoformat()
+            grade = net_grade(item_day_net(item, d, totals, names_by_day)) if current == '' else None
+            if grade:
+                out[(item['name'], d)] = grade
+    return out
+
+
+# 幸町の赤字（利用者指定、2026-10-29）：今日を除いた直前5暦日に、機種の合計差枚が+800枚を超えた日が無い機種。
+# 記録の無い日・差枚不明の日は「超えていない」と数える。手入力の優（2,500枚以上の意味）は超えた日と数える。
+GAP_NET = 800
+GAP_DAYS = 5
+
+
+def today_jst():
+    return datetime.now(timezone(timedelta(hours=9))).date()
+
+
+def gap_end(last_record_day, today=None):
+    """赤字判定の最終日：表示週の最後の記録日。ただし今日（日本時間）は含めない。表示週に記録が無ければ None。"""
+    if last_record_day is None:
+        return None
+    return min(last_record_day, ((today or today_jst()) - timedelta(days=1)).isoformat())
+
+
+def gap_range(end_day):
+    """赤字判定に使う最初と最後の日。"""
+    return (day(end_day) - timedelta(days=GAP_DAYS - 1)).isoformat(), end_day
+
+
+def grade_gap(weeks, item, end_day, totals, names_by_day):
+    """end_day までの5暦日に、合計差枚が+800枚を超えた日も手入力の優の日も無ければ True。
+    前週にまたがる日も、同じ機種名・明示的な保存名の週表から優を探す。"""
+    if end_day is None:
+        return False
+    end = day(end_day)
+    for offset in range(GAP_DAYS):
+        d = (end - timedelta(days=offset)).isoformat()
+        total = item_day_net(item, d, totals, names_by_day)
+        if total is not None and total > GAP_NET:
+            return False
+        for w in weeks:
+            if w['type'] != 'バラエティ' or not w['from'] <= d <= w['to']:
+                continue
+            saved = next((m for m in w['machines'] if m['name'] == item['name'] or
+                          (item.get('record_name') and m.get('record_name') == item['record_name'])), None)
+            if saved and saved['results'][(day(d) - day(w['from'])).days] == '優':
+                return False
+    return True
 
 
 def auto_faces(week, nets, names_by_day, symbols, blank_days=(), only_day=None, classify=net_face):

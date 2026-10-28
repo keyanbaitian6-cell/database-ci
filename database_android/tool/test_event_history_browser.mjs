@@ -36,7 +36,9 @@ const records=[{store:base.store,day:'2026-10-05',machine:'L ﾃｽﾄ',rack:101
   {store:base.store,day:'2026-10-06',machine:'L ﾃｽﾄ',rack:102,games:3500,bb:10,rb:6},
   {store:base.store,day:'2026-10-07',machine:'L+ﾃｽﾄ',rack:777,games:2000,bb:8,rb:4},
   {store:base.store,day:'2026-10-19',machine:'同名機種',rack:90,games:1000,bb:4,rb:2},
-  {store:'saiwaichou',day:'2026-10-19',machine:'同名機種',rack:610,games:1000,bb:4,rb:2,jo_net:2500}];
+  {store:'saiwaichou',day:'2026-10-19',machine:'同名機種',rack:610,games:1000,bb:4,rb:2,jo_net:2500},
+  // 2台機種の10/21：2台とも差枚が分かり合計+500枚→自動で良。+800枚以下なので赤字のまま。
+  ...[[611,300],[612,200]].map(([rack,jo_net])=>({store:'saiwaichou',day:'2026-10-21',machine:'L スマスロ 長い機種名の折り返しを確認するテスト機種',rack,games:1000,bb:4,rb:2,jo_net}))];
 const responses={'':{format:'database-backup',version:1,records},pscube:{format:'pscube-viewer',version:1,records:[]},'event-history':history};
 const engine=process.env.HISTORY_BROWSER||'chromium';
 const browser=await engines[engine].launch(engine==='chromium'?{headless:true,executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox']}:{headless:true});
@@ -233,7 +235,10 @@ try{
   await page.getByRole('button',{name:'最新の週へ',exact:true}).click();
   assert.equal(await page.locator('[data-history-week]').inputValue(),'2026-10-19');
   assert.equal(await page.locator('.history-symbol').first().innerText(),'優');
-  assert.equal(await page.locator('.history-grade-gap').count(),1,'最終記録日より後の良は赤字判定に含めない');
+  assert.equal(await page.locator('.history-grade-gap').count(),1,'+800枚以下と良だけの機種を赤字にし、手入力の優の機種は赤くしない');
+  assert.match(await page.locator('.history-gap-note').innerText(),/2026-10-21までの5日間、\+800枚超えなし/);
+  assert.equal(await page.locator('.history-table tbody tr').nth(1).locator('td').nth(2).locator('.history-symbol').innerText(),'良','空欄の日は差枚から自動で良');
+  assert.equal(await page.locator('.history-table tbody tr').nth(0).locator('td').nth(2).locator('.history-symbol').innerText(),'—','記録の無い日は自動で付けない');
   assert.equal(posts.length,beforeWeekNavigation,'閲覧と週移動で保存通信を送らない');
   assert.equal(await page.locator('.history-table tbody tr').nth(1).locator('td').nth(1).evaluate(cell=>{
     const grade=cell.querySelector('.history-symbol'), note=cell.querySelector('.history-no-record');

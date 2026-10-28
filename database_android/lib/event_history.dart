@@ -44,6 +44,35 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
     widget.data.records,
     store: widget.store,
   );
+  late final _racks = historyRacksByDay(
+    widget.data.records,
+    store: widget.store,
+  );
+
+  /// 幸町：空欄のマスに差枚からの優・良を入れた週一覧（表示のたびに判定し、保存しない）。
+  List<Map<String, dynamic>> _weeks() {
+    final weeks = historyWeeks(_base!, _edits);
+    return _saiwaichou ? saiwaichouAutoWeeks(weeks, _racks) : weeks;
+  }
+
+  /// 幸町の赤字判定の最終日（表示週の最後の記録日。今日は含めない）。
+  String? _gapEnd(Map<String, dynamic> week) {
+    final recorded =
+        _index.keys
+            .where(
+              (d) =>
+                  d.compareTo(week['from'] as String) >= 0 &&
+                  d.compareTo(week['to'] as String) <= 0,
+            )
+            .toList()
+          ..sort();
+    return saiwaichouGapEnd(recorded.lastOrNull, DateTime.now());
+  }
+
+  String _gapNote(String? end) => end == null
+      ? 'この週は記録がないため赤字判定はしません。'
+      : '赤字：$endまでの5日間、+$saiwaichouGapNet枚超えなし（今日を除く）。';
+
   String _type = historyTypes.first;
   String? _week, _error;
   String _status = '';
@@ -123,7 +152,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
           widget.store,
         );
         status = _saiwaichou
-            ? '優・良の入力・修正はPCで行います。'
+            ? '優・良は差枚から自動で表示します。手入力・修正はPCで行います。'
             : _editable
             ? '編集は端末に保存します。バックアップをPCへ取り込むと共有へ反映します。'
             : '';
@@ -441,17 +470,8 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
       (i) => historyDay(first.add(Duration(days: i))),
     );
     final machines = week['machines'] as List;
-    final recordedDays =
-        _index.keys
-            .where(
-              (d) =>
-                  d.compareTo(week['from'] as String) >= 0 &&
-                  d.compareTo(week['to'] as String) <= 0,
-            )
-            .toList()
-          ..sort();
-    final lastRecordDay = recordedDays.lastOrNull;
-    final allWeeks = historyWeeks(_base!, _edits);
+    final gapEnd = _saiwaichou ? _gapEnd(week) : null;
+    final allWeeks = _weeks();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -466,9 +486,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
-              lastRecordDay == null
-                  ? 'この週は記録がないため赤字判定はしません。'
-                  : '赤字：$lastRecordDayまでの直近5暦日、優・良なし（空欄の日を含む）。',
+              _gapNote(gapEnd),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -492,10 +510,11 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
                     fontSize: 15,
                     color:
                         (_saiwaichou &&
-                                historyGradeGap(
+                                saiwaichouGradeGap(
                                   allWeeks,
                                   machine as Map,
-                                  lastRecordDay,
+                                  gapEnd,
+                                  _racks,
                                 )) ||
                             (!_saiwaichou &&
                                 week['type'] == 'バラエティ' &&
@@ -642,6 +661,8 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
     final rowHeight =
         (_editable ? 132.0 : 112.0) * MediaQuery.textScalerOf(context).scale(1);
     const headingHeight = 50.0, columnWidth = 112.0;
+    final gapEnd = _saiwaichou ? _gapEnd(w) : null;
+    final allWeeks = _saiwaichou ? _weeks() : const <Map<String, dynamic>>[];
     Widget nameCell(Map m) => SizedBox(
       height: rowHeight,
       child: Padding(
@@ -653,9 +674,11 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
             Text(
               displayMachineName(m['name'] as String),
               style:
-                  !_saiwaichou &&
-                      w['type'] == 'バラエティ' &&
-                      !(m['results'] as List).contains('😍')
+                  (_saiwaichou &&
+                          saiwaichouGradeGap(allWeeks, m, gapEnd, _racks)) ||
+                      (!_saiwaichou &&
+                          w['type'] == 'バラエティ' &&
+                          !(m['results'] as List).contains('😍'))
                   ? const TextStyle(color: Color(0xffb91c1c))
                   : null,
               maxLines: 2,
@@ -678,6 +701,14 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Text("分類日：${w['lineup_day']}（作成時の構成で固定）"),
+          ),
+        if (_saiwaichou)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              _gapNote(gapEnd),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -834,10 +865,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
         body: const Center(child: CircularProgressIndicator()),
       );
     }
-    final weeks = historyWeeks(
-      base,
-      _edits,
-    ).where((w) => w['type'] == _type).toList();
+    final weeks = _weeks().where((w) => w['type'] == _type).toList();
     if (widget.browserLayout) {
       weeks.sort(
         (a, b) => (b['from'] as String).compareTo(a['from'] as String),
@@ -979,7 +1007,7 @@ class _EventHistoryPageState extends State<EventHistoryPage> {
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: Text(
                 _saiwaichou
-                    ? '2,500枚以上＝優、0〜2,499枚＝良。マイナス・差枚不明は空欄です。入力・修正はPCのみ。'
+                    ? '空欄の日は差枚から自動（2,500枚以上＝優、0〜2,499枚＝良、マイナス・不明は—）。手入力はPCのみで優先。'
                     : '記号の意味は未設定です。「開く」は、その機種・その日の保存データを表示します。',
               ),
             ),
