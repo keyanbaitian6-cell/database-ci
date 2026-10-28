@@ -61,6 +61,25 @@ class ViewerData {
 
   static ViewerData parse(String text) => _parseDocument(jsonDecode(text));
 
+  /// 端末に保存した🌈の印 [marks]（全部）を当てた内容。端末の内容を読み直した [parse] と同じ表示に
+  /// なる（同じ [applyRainbowMarks] の規則。当て済みの印は記録の rainbow_at と同じ時刻なので変わらない）。
+  /// 読み直すと、iPhoneでは一時的なメモリが足りず落ちた（2026-10-29）。
+  ViewerData withRainbowMarks(Map<String, RainbowMark> marks) => ViewerData(
+    records: applyRainbowMarks(records, marks),
+    rainbowMarks: marks,
+    dateEvents: dateEvents,
+    eventNames: eventNames,
+    file: file,
+    exportedAt: exportedAt,
+    exportedAtText: exportedAtText,
+    source: source,
+    loadedAt: loadedAt,
+    skipped: skipped,
+    keptOlder: keptOlder,
+    syncStatus: syncStatus,
+    curveParts: curveParts,
+  );
+
   static ViewerData _parseDocument(Object? decoded) {
     if (decoded is! Map || decoded['records'] is! List) {
       throw const FormatException('databaseのバックアップファイルではありません。');

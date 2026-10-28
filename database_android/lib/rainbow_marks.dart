@@ -90,11 +90,34 @@ List<Map<String, Object>> _json(Map<String, RainbowMark> marks) => [
 ];
 
 /// 端末の内容 [text] で、[record] の🌈を付ける・外す（付け外しした時刻を今に）。
-String setRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
-  final decoded = Map<String, dynamic>.from(jsonDecode(text) as Map);
-  final marks = rainbowMarksOf(decoded);
+String setRainbowMark(String text, SlotRecord record, bool on, DateTime now) =>
+    updateRainbowMark(text, record, on, now).text;
+
+/// [setRainbowMark] と同じ変更で、付け外しした印 [mark] と全部の印 [marks] も返す。
+/// 閲覧ページの保存では、表示中のデータへこの印だけを当て、共有へ送る中身も [marks] から作る。
+/// 端末の内容をもう一度まるごと読み直さない（iPhoneで🌈を付けると落ちた、2026-10-29）。
+///
+/// 端末の内容は数十MBあり、まるごと読むと一時的に数百MBを使う。印は最上位の `rainbow_marks` に
+/// しか無いので、その値の部分だけを読んで差し替える（並び・ほかの中身は変えない）。最上位の形が
+/// 読めないときだけ、従来どおりまるごと読む。
+({String text, RainbowMark mark, Map<String, RainbowMark> marks})
+updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
+  final span = topLevelJsonValue(text, 'rainbow_marks');
+  final Map<String, dynamic>? decoded;
+  final Map<String, RainbowMark> marks;
+  if (span == null) {
+    decoded = Map<String, dynamic>.from(jsonDecode(text) as Map);
+    marks = rainbowMarksOf(decoded);
+  } else {
+    decoded = null;
+    marks = span.start < 0
+        ? <String, RainbowMark>{}
+        : rainbowMarksOf({
+            'rainbow_marks': jsonDecode(text.substring(span.start, span.end)),
+          });
+  }
   final key = '${record.store}|${record.day}|${record.rack}';
-  marks[key] = RainbowMark(
+  final mark = RainbowMark(
     store: record.store,
     day: record.day,
     rack: record.rack,
@@ -105,7 +128,110 @@ String setRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
       _later(marks[key]?.updatedAt, record.extra['rainbow_at'] as String?),
     ),
   );
-  return jsonEncode({...decoded, 'rainbow_marks': _json(marks)});
+  marks[key] = mark;
+  final value = jsonEncode(_json(marks));
+  final String updated;
+  if (decoded != null) {
+    updated = jsonEncode({...decoded, 'rainbow_marks': _json(marks)});
+  } else if (span!.start >= 0) {
+    updated = text.substring(0, span.start) + value + text.substring(span.end);
+  } else {
+    // 無ければ最後に足す（まるごと読んで足したときと同じ並び）。
+    updated =
+        '${text.substring(0, span.end)}${span.empty ? '' : ','}'
+        '"rainbow_marks":$value${text.substring(span.end)}';
+  }
+  return (text: updated, mark: mark, marks: marks);
+}
+
+/// 最上位のオブジェクトで [key] の値がある位置。無ければ start が -1 で、end は閉じ括弧の位置
+/// （empty は中身が無いか）。最上位がオブジェクトとして読めなければ null。
+({int start, int end, bool empty})? topLevelJsonValue(String text, String key) {
+  const quote = 0x22, backslash = 0x5c, colon = 0x3a, comma = 0x2c;
+  const openBrace = 0x7b, closeBrace = 0x7d, openBracket = 0x5b;
+  const closeBracket = 0x5d;
+  final n = text.length;
+  int space(int i) {
+    while (i < n) {
+      final c = text.codeUnitAt(i);
+      if (c != 0x20 && c != 0x0a && c != 0x0d && c != 0x09) break;
+      i++;
+    }
+    return i;
+  }
+
+  // 文字列の終わりの次の位置。
+  int string(int i) {
+    for (i++; i < n; i++) {
+      final c = text.codeUnitAt(i);
+      if (c == backslash) {
+        i++;
+      } else if (c == quote) {
+        return i + 1;
+      }
+    }
+    return -1;
+  }
+
+  // 値の終わりの次の位置。
+  int skipValue(int i) {
+    if (i >= n) return -1;
+    final first = text.codeUnitAt(i);
+    if (first == quote) return string(i);
+    if (first != openBrace && first != openBracket) {
+      while (i < n) {
+        final c = text.codeUnitAt(i);
+        if (c == comma || c == closeBrace || c == closeBracket) break;
+        i++;
+      }
+      return i;
+    }
+    var depth = 0;
+    while (i < n) {
+      final c = text.codeUnitAt(i);
+      if (c == quote) {
+        i = string(i);
+        if (i < 0) return -1;
+        continue;
+      }
+      if (c == openBrace || c == openBracket) depth++;
+      if (c == closeBrace || c == closeBracket) {
+        depth--;
+        if (depth == 0) return i + 1;
+      }
+      i++;
+    }
+    return -1;
+  }
+
+  var i = space(0);
+  if (i >= n || text.codeUnitAt(i) != openBrace) return null;
+  i = space(i + 1);
+  var members = 0;
+  while (i < n) {
+    if (text.codeUnitAt(i) == closeBrace) {
+      if (space(i + 1) != n) return null;
+      return (start: -1, end: i, empty: members == 0);
+    }
+    if (text.codeUnitAt(i) != quote) return null;
+    final keyEnd = string(i);
+    if (keyEnd < 0) return null;
+    final name = jsonDecode(text.substring(i, keyEnd));
+    i = space(keyEnd);
+    if (i >= n || text.codeUnitAt(i) != colon) return null;
+    final start = space(i + 1);
+    final end = skipValue(start);
+    if (end < 0) return null;
+    if (name == key) return (start: start, end: end, empty: false);
+    members++;
+    i = space(end);
+    if (i < n && text.codeUnitAt(i) == comma) {
+      i = space(i + 1);
+    } else if (i >= n || text.codeUnitAt(i) != closeBrace) {
+      return null;
+    }
+  }
+  return null;
 }
 
 String? _later(String? a, String? b) {
@@ -159,10 +285,12 @@ String? withSharedRainbow(String stored, String shared) {
 }
 
 /// スクリプトへ送る中身：この端末の🌈（全部。前に送れなかった分も届く）。
-String sharedRainbowBody(String text) => jsonEncode({
-  'file': 'rainbow',
-  'marks': _json(rainbowMarksOf(jsonDecode(text) as Map)),
-});
+String sharedRainbowBody(String text) =>
+    sharedRainbowBodyOf(rainbowMarksOf(jsonDecode(text) as Map));
+
+/// [sharedRainbowBody] と同じ中身を、読み取り済みの印から作る。
+String sharedRainbowBodyOf(Map<String, RainbowMark> marks) =>
+    jsonEncode({'file': 'rainbow', 'marks': _json(marks)});
 
 /// スクリプトの返事を、利用者への知らせにする。送れたら ok が true。古いスクリプト（🌈を足す前）は
 /// 「指定できないファイルです」と返すので、スクリプトの更新を案内する。

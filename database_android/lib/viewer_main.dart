@@ -265,9 +265,16 @@ class _ViewerHomeState extends State<ViewerHome> {
       _say('$rainbowMarkを保存できませんでした（読み込んだ内容がありません。読み込み直してください）。');
       return null;
     }
-    final text = setRainbowMark(stored, record, on, DateTime.now());
-    await saveViewerData(text);
-    final next = ViewerData.parse(text);
+    // 端末の内容をまるごと読むのは、ここで印を書き換える1回だけ。表示は今の内容へ印を当て、共有へ送る
+    // 中身も印から作る（以前は保存後に2回読み直し、iPhoneで🌈を付けると落ちた、2026-10-29）。
+    final Map<String, RainbowMark> marks;
+    {
+      final update = updateRainbowMark(stored, record, on, DateTime.now());
+      stored = null;
+      await saveViewerData(update.text);
+      marks = update.marks;
+    }
+    final next = data.withRainbowMarks(marks);
     if (mounted) setState(() => _show(next));
     final done = on
         ? '${record.rack}番台に$rainbowMarkを付けました。'
@@ -279,7 +286,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     }
     try {
       final result = rainbowSendResult(
-        await postSharedEvents(url, sharedRainbowBody(text)),
+        await postSharedEvents(url, sharedRainbowBodyOf(marks)),
       );
       _say(
         result.ok

@@ -4029,3 +4029,18 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 利用者の操作：閲覧ページを再読み込みし、メルヘンで🌈を付け外しして、右上の「○○番台 🌈保存中」が1行で欠けずに出ることを確かめる。保存データの消去・Googleスクリプトの貼り替え・同期の再実行は不要。実iPhoneでの見た目は利用者の確認待ち（AIの確認はFlutterの試験の幅320・393pxだけ）。
 - **GitHub回帰も完了・全3ジョブ成功**：実行 https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40727325687 、対象 `6cfa9d0ec274346f6366e5c01cd23f0eae07b6d7`。full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) すべて成功。再実行はしていない。この記録だけの文書コミットを追加でdatabase-ciへ送る（.mdだけなのでCIは動かない）。
 - **利用者の確認（2026-10-29）**：公開後、利用者「OKdesu」。iPhoneで🌈を付け外ししたときの「○○番台 🌈保存中」の表示に問題がないことを、利用者が実iPhoneで確認したものとして記録する（AIは実機の画面を見ていない）。これで今回の閲覧ページの修正（台移動・台選択・最新へ・保存中表示）は、利用者の実iPhoneでの確認まで完了。
+
+## 【iPhone閲覧ページ（メルヘン）：🌈を付けるとSafariが落ちる件・保存の一時メモリを減らす】2026-10-29 Claude
+
+- 利用者報告：保存中の表示（6ad81ba）は「OKdesu」だが、「問題が繰り返しおきましたという表示が出て落ちます」。質問への回答：🌈を付けたときに落ちる、メルヘン、保存中の表示を直した今回の公開後に落ちた（その前の確認では落ちなかった）。
+- 測定（実データの写し：`database/data/database-viewer.json` から線と画像を外し、iPhoneが端末に持つ形に近づけた46,170件・18.4MB。合成の化物語4台を足して開く。Chromium 393px、`performance.memory` を5msごと、前後は `gc()` 後。Googleへの通信は偽物で外へ出ない。スクリプトは製品外 `C:\w\rbmem\measure.mjs`）：🌈を1回付けると、公開前の版 84eb8d7 も今の版 6ad81ba も 109MB → 山 約400MB（+290MB）→ 後 129MB。今回の公開で増えたものではない。Safariの「問題が繰り返し起きました」はページのメモリ不足で出るもので、10/25にもメルヘンの閲覧ページで同じ症状を直している（同日の項）。この一時的な山がiPhoneの上限付近にあり、そのときのほかの使い方しだいで落ちる・落ちないが分かれたと考える（実機のメモリ上限は測れず、わかりません）。
+- 原因：`viewer_main.dart` の `_editRainbow` が、1回の🌈で端末の内容（数十MB）をまるごと3回読んでいた。①`setRainbowMark` が印を書き換えるため全体を `jsonDecode`→`jsonEncode`、②保存後に `ViewerData.parse(text)` で表示用に全部作り直し、③共有へ送る中身を `sharedRainbowBody(text)` がもう一度全体を読んで作る。その間、古い表示用データも残っていた。
+- 修正（保存される中身・送る中身・表示の規則は変えない）：
+  - `rainbow_marks.dart`：`updateRainbowMark` を追加。端末の内容の最上位の `rainbow_marks` の値の位置だけを探し（`topLevelJsonValue`、文字列の中の括弧・エスケープを飛ばして数える）、その部分だけを読んで差し替える。無ければ最後に足す（まるごと読んで足したときと同じ並び）。最上位がオブジェクトとして読めないときだけ従来どおりまるごと読む。`setRainbowMark` はこれを使う形にし、結果の文字は従来と同じ。共有へ送る中身は読み取り済みの印から `sharedRainbowBodyOf` で作る（`sharedRainbowBody` と同じ中身）。
+  - `viewer_data.dart`：`withRainbowMarks`。表示中のデータへ、保存した印すべてを従来と同じ `applyRainbowMarks` の規則で当てる（当て済みの印は記録の rainbow_at と同時刻なので変わらない）。
+  - `viewer_main.dart`：上の2つを使い、保存後の読み直しをやめた。
+- 効果（同じ測定）：🌈の山 約400MB → **215MB**（増え方 +290MB → **+105MB**）、後 129MB → 109MB、時間 3.2秒 → 2.1秒（各2回で同じ値）。途中の形（読み直しだけやめた版）は山 332MB。
+- 試験：`test/rainbow_marks_test.dart` に2件。①差し替えた結果が、まるごと読んで書き直した従来の結果と同じ文字・同じ中身（文字列中の括弧・引用符・逆斜線、入れ子の同名の項目、途中にある印、値がnull、字下げのある形）。近道が実際に使われていること（読めずに従来の読み方へ戻っていない）と、読めない形は従来の読み方へ戻ることも確かめる。②印を5回付け外しして、表示中のデータへ印を当てた結果が、保存した内容を読み直した結果（台ごとの🌈・rainbow_at・印の一覧）と同じ、送る中身も同じ。🌈関連4ファイル33件、`rainbow_marks_test.dart` 7件成功。閲覧ページの🌈の画面試験（`test_viewer_rainbow_browser.mjs`：端末保存・送信内容・開き直し）は全体ゲートで流れる。
+- 照合版を生成し直し `70f7982b98a0` → **`ea9781178913`**（生成物11ファイルは版の文字だけ。Googleの4本の貼り替えは不要）。全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-rbmem`、単独実行、残っている処理が無いことを先に確認）**ALL PASSED**（83段）：PC tests 487件・PC直下231件・UTC 27件、Flutter 744件、analyze エラー・警告0・info 28件（以前と同数）、JS 74ファイル全成功（`test_viewer_rainbow_browser` を含む）。公開するstage `C:\w\cbw-rbmem\viewer` でも測り直し、109MB → 山215MB（+106MB）→ 109MB、2.1秒。
+- 未確認：実iPhoneのメモリ上限・実機で落ちないこと（利用者の確認待ち）。Chromiumの `performance.memory` はJSヒープだけで、描画（CanvasKit/WebAssembly）やSafari独自の使い方は含まない。iPhoneが端末に持つ実際の内容は、Googleの閲覧用パーツ由来で、今回の写し（PCの閲覧用ファイルから線を外したもの）と同じではない。起動時・Driveの読み直し時の山（10/25の項で205〜218MB）は今回変えていない。
+- 測定の再現：製品外 `../outputs/viewer-rainbow-memory-20261029/`（`measure.mjs`・`make_data.py`・報告書）。実データの写しは個人のデータなのでリポジトリ・GitHubに入れない。
