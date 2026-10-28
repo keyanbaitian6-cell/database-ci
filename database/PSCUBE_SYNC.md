@@ -81,8 +81,10 @@ P’s CUBE用に移したもの。**メルヘンの記録・設定・ファイ�
 - **PC**（`app.poll_pscube_from_sync`、`pscube_import.android_sync_files`・`android_sync_due`）：起動の15秒後と
   2分おきに同期フォルダを見て、`pscube-day-android-*.json` と `pscube-backup-android-*.json` の新しい版
   （名前と更新時刻が前に読んだものと違い、書かれてから10秒以上たったもの）を古い順に読み込む。読めたものを
-  `data/settings.json` の `pscube_android_synced` に覚える。初めて使うときは、その時点のファイルを読み込み済み
-  として扱う（古いバックアップを読み直さない）。失敗したファイルは覚えず、次の確認でやり直す（同じ失敗は記録欄に
+  `data/settings.json` の `pscube_android_synced` に覚える。初めて使うとき（`pscube_android_synced` が無いとき）は、
+  全期間のバックアップ `pscube-backup-android-*.json` だけをその時点で読み込み済みとして扱い（古いバックアップを
+  読み直さない）、日別専用ファイル `pscube-day-android-*.json` は書かれてから10秒以上たっていれば読み込む
+  （`android_sync_due`、2026-10-26の変更。それまでは日別ファイルも既読にしていた）。失敗したファイルは覚えず、次の確認でやり直す（同じ失敗は記録欄に
   1回だけ書き、画面には出さない）。PC版が起動していなければ読めない。
 - 利用者の作業（1回）：スクリプトを貼り直して「新バージョン」でデプロイし、スクリプト プロパティに
   `PSCUBE_UPLOAD_KEY` を足す。アプリの雲のボタンで、同じURL・合言葉を入れる。

@@ -3971,6 +3971,55 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - **ソース反映完了**：database-ci/main `a9a3318f4d5ccc5e09d1cd27ad803359c98fa44c`（16ファイル）。コミット直後にクラウドの実行接続が切れたが、復旧後にリモートmainが基準464dbeb5のままで未送信と確認してから、既存のAPI輸送で送信した。日本時間の月後半判定・両mainの包含・直前のhead不変・ローカルとリモートのtree／commit SHA一致・非強制更新を確認。正本へは送っていない。
 - **公開完了**：database-viewer `84eb8d7594a74bbb4bf5d062e07fd16bc0072b05`、親d8548ed4。Pagesの同SHAがbuilt（2026-10-28T06:42:35Z）。試験済みstageから3ファイルだけ反映、削除なし。配信中main.dart.js・capture_health.mjs・viewer_parts.mjs・index.html・pscube/index.htmlをHTTPで読み戻し、stageと5ファイルすべてバイト一致を確認した。公開先は https://keyanbaitian6-cell.github.io/database-viewer/ と https://keyanbaitian6-cell.github.io/database-viewer/pscube/ 。
 - 利用者の操作：ページを再読み込みし、台詳細の中央「○／○台 ▾」を押して台番号を選ぶ。「最新へ」で表示中の台の最新記録へ戻る。メルヘンの🌈付け外しでは保存中に対象の台番号を表示する。保存データの消去・JSONの再取り込み・Googleスクリプト再貼替は不要。
-- **GitHub追加回帰は実行中**： https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40645422433 、対象a9a3318f。2026-10-28の公開直後確認ではUbuntu UTC成功、Windows UTCとfullはin_progress。今回の手元全ゲートALL PASSEDと、GitHub側の未完了を区別する。CI再実行はしていない。次に結果を確認する際は、この同じ実行の完了結果を読むこと。以前の40608276311の成功を今回の成功として扱わない。
+- **GitHub追加回帰は実行中**： https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40645422433 、対象a9a3318f。2026-10-28の公開直後確認ではUbuntu UTC成功、Windows UTCとfullはin_progress。今回の手元全ゲートALL PASSEDと、GitHub側の未完了を区別する。CI再実行はしていない。次に結果を確認する際は、この同じ実行の完了結果を読むこと。以前の40608276311の成功を今回の成功として扱わない。**（2026-10-29 Claude追記：同じ実行40645422433を `gh run view` で一度確認し、status completed・conclusion success、full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の3ジョブとも成功、対象 `a9a3318f4d5ccc5e09d1cd27ad803359c98fa44c`。再実行はしていない。）**
 - 検証ログ・全体の所要時間・JS集計・画面画像・公開配信照合・送信SHAは製品外 `../outputs/viewer-quick-navigation-20261028/` に保存。引き継ぎの根拠は本記録とGitHubコミット／実行URL。実iPhoneのSafariでの操作は未確認。今回の最後の反映は本記録だけの文書コミットで、追加CIや再公開は行わない。
 - 配信中main.dart.jsのSHA-256：`b37c5bf77dbbe6cad94b78a80e2d0aef2e2ac7addadf8149145f8f6c8b4d6c98`（3172471バイト）。
+
+## 【最近の更新の見直し：最終評価の実行時刻・閲覧ページ欠測日の古い内容を修正】2026-10-29 Claude
+
+- 依頼：利用者「最近の更新で問題点がないか検討、修正までお願いします」。基準は手元main `b0daba9`（database-ci/mainと同じ。正本mainは `e8d2fa0` で、その祖先）。見直した範囲は10/27〜10/28のコード変更：P’s CUBE非表示窓のスクロール（`cf0370f`）、翌日候補の締切8時化（`52bbe69`）、閲覧ページの前後の台（`3e9a7a3`）、台番号の直接選択・最新へ・🌈保存中表示（`a9a3318`）、共有カレンダーの帯・顔文字（`ed8ce0f`・`5c6293d`）。`a9a3318` のCI https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40645422433 は3ジョブとも成功で完了していたことを確認（Codex記録の「実行中」を更新）。
+- **問題1（修正）：★注目の最終評価が、10/30の締切より前に実行できた。** `focusFinalBlocker`（`database_android/lib/focus_final_evaluation.dart`）は日本時間の日付が10/31以上かだけを見ていた。`52bbe69` で締切を翌日8時にしたため、10/31の0:00〜7:59に `--mode final` を走らせると、最後の翌日（10/30）の閉店後の数値がそろう前に、1回きりの最終評価を実行できてしまう（2時締切のときも0〜2時の隙間はあった）。正解ラベル（翌日の点数）は締切で絞らず実行時点の記録をそのまま使うため、途中の値で採否が決まりうる。→ `predictionCutoff('2026-10-30', hour: focusCutoffHour)`（10/31 08:00 JST）より前は止めるようにした。評価の方法・期間・判定基準・感度確認は変えていない。計画書 `NEXT_DAY_FOCUS_PLAN_20260930.md` の「実行」の行も「10/31の8:00より前は止まる」に更新。試験 `test/focus_final_evaluation_test.dart`：10/31 0:00・7:59は止まる、8:00は通る。
+- **問題2（修正）：閲覧ページの台詳細で、🌈を付け外しした後に欠測日の案内から開く画面へ古い内容を渡していた。** `ViewerRecordPage`（`database_android/lib/viewer_pages.dart`）の欠測日の分岐だけが `widget.data`（画面を開いたときの内容）を使い、🌈保存後の `_data` を使っていなかった。例：1085番台に🌈を付ける→次の記録日（別機種だけの日）→「この日の『別機種』を見る」→前の記録日→元の機種を開くと🌈が消えて見える。同分岐の4か所を `data` にそろえた。表示の仕様・保存形式は変えていない。試験 `test/viewer_quick_navigation_test.dart` に1件追加。修正前のコードでは最後の🌈の確認で失敗、修正後は成功を確認した。
+- 問題なしと判断したもの：台の前後移動・直接選択（同じ店舗キー・日付・機種だけ、日付通知なし、戻る履歴を増やさない）、「最新へ」（同じ店舗・機種・台番号の最新日）、日付欄の高さ（112px内に収まる）、共有カレンダーの顔文字（`face` は生のままHTMLに入るが、`recommendationResult` が固定の5種類・空欄・nullだけに絞るため安全）、P’s CUBEの `keep_page_timers`（取り込み窓のプロセスの環境変数だけ。pywebview既定の ElasticOverscroll も含む）。Androidの取り込みはJSでのスクロールを使っておらず、同じ修正は不要。
+- **未確認**：Codexの10/29記録にある「クラウド点検で提案された比較用履歴の欠落検出2件」は、内容がこのPCの記録・出力フォルダーに無く、今回は確認できていない（未修正のまま）。内容が分かれば別途確認する。
+- 試験：`flutter test --no-pub test/viewer_quick_navigation_test.dart test/viewer_navigation_test.dart test/viewer_replacement_test.dart test/viewer_scroll_top_test.dart test/focus_final_evaluation_test.dart test/focus_validation_test.dart` 54件成功。変更4ファイルの `flutter analyze` は、今回の分は問題なし（既存のinfo 2件 `use_null_aware_elements` は `a9a3318` からのもので触れていない）。
+- 全体ゲート：`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-review1029` で `bash database_android/tool/check_before_build.sh` を実行し **ALL PASSED**（83段）。PC tests 478件・PC直下231件・UTC 27件、Flutter 740件（Codex記録の739件＋今回の1件）、`flutter analyze` はエラー・警告0・info 28件（Codex記録と同数、今回の追加なし）、JS 74ファイルすべて成功。ログは `C:wgate-review1029.log` と `C:ww-review1029`。このPC試験は次の項の `input_versions.py` 変更より前のコードで流れた。ビルドした閲覧ページは試験用で、公開していない。
+- 変更していないもの：AI_COLLABORATION.md にあるCodexの未コミットの追記（10/26・10/29の項）はそのまま残した。利用者の続く指示（コミット・push・ビルド・公開をしない）に合わせ、この修正も未コミット。閲覧ページの公開も未実施なので、問題2の修正は再公開するまで利用者のiPhoneには届かない。APK・EXE・Googleスクリプト・同期・実DB・対象サイトへのアクセスは無し。
+
+## 【点検の残件：比較用履歴の完全性判定（as_of）の修正・運用文書の整合・未確認事項の整理】2026-10-29 Claude
+
+- 依頼：利用者「先日の読み取り点検で挙がった残件を確認し、まだ存在する不具合を修正」。範囲はコード修正・回帰試験・仕様書と共有記録まで。**コミット・push・APK／EXE／Webのビルド・公開・Googleスクリプトの貼替・端末操作はしない**（直前の項のClaudeの修正も、この指示に合わせて未コミットのまま）。
+- 基準：手元main `b0daba9`（= database-ci/main。正本main `e8d2fa0` はその祖先で、正本だけにあるコミットは無い。2026-10-29に両方をfetchして確認）＋直前の項のClaudeの未コミット修正（`focus_final_evaluation.dart`・`viewer_pages.dart` ほか）。Codexの未コミットの記録（10/26・10/29の項）は保持。
+- **優先1：`database/input_versions.py` の `as_of()`（修正）**
+  - 再検証（一時フォルダーの合成DBだけ、`database/.venv` のPython 3.14.6、`TZ=JST-9`）：
+    - A **成立**：本体DBの未転送（games 3500）があるのに、検証DBだけを別フォルダーへ写すと、`as_of()` は古い値（3000）を返した。同じフォルダーでは「未転送」で止まる。原因：`_recordings()` が本体を見つけられないと照合対象が空になり、そのまま結果を作っていた。
+    - B **成立**：最終番号の受領は残したまま、途中の受領と版、または版の行だけを消すと、538番台が欠けた `[537, 539]` を返した。原因：本体の `delivered_seq` の受領が1件あるかしか見ていなかった。
+  - 修正：`as_of()` に次の検査を追加（例外の文言で区別）。①その記録元の本体DBが同じフォルダーに無い→「本体DBが無く」。②今の本体の識別子の受領番号が、最初の基準点（reset）から1つずつ続いていない→「途中の受領」。③受領はあるのに版の行が無い→「版が失われ」。④締切前に確定した最後の基準点より後に、今の本体の受領で照合できない版がある→「照合できない」。⑤締切前に確定した基準点が無い→「基準点が無く」。過去時刻の書き換え、欠落の推測補完、履歴の削除はしていない。通常の読み出しと評価入力を分ける別関数は作らず、`as_of()` を「完全性確認済みの評価入力」として扱う（呼び出し元は試験だけで、仕様書もそう定義しているため）。
+  - 実データとの整合（`database/data/input_versions.sqlite3` を `mode=ro` で読むだけ）：受領の識別子は2つ（meruhen `aecf5cb9…` 1〜63365、pscube `8985c62d…` 1〜29948）で、どちらも番号の抜けなし・先頭はreset、受領に対応しない版0、版の無い受領0、受領のversion_idのNULL 0。受領の無い旧形式の直接追記（meruhen 2026-10-25 20:31〜10-26 00:10、pscube 10-26 00:20）は、reset（meruhen 10-26 16:27:05、pscube 16:27:56）より前にだけある。修正後の `as_of(..., '2026-10-29T08:00:00+09:00')` は meruhen 61,081件（11.3秒）、pscube 24,907件（1.9秒）。pscubeの1回目は起動中のPC版の転送中で「未転送」と止まり（既存の検査どおり）、転送待ち0件を確認した直後の2回目で通った。
+  - 試験：`database/tests/test_input_versions_outbox.py` に `CompletenessTests` 9件を追加（正常な履歴、検証DBだけのコピー、別の記録元の本体、途中の受領と版の欠落、版の行だけの欠落、先頭の受領の欠落、照合できない版の混入、旧形式の直接追記がreset前にあるだけなら通る、基準点より前の締切）。既存の大量履歴の試験は本体を置かずに `as_of()` を呼んでいたため、実データと同じ形（先頭reset・照合用の本体の `iv_control`）にそろえた（処理時間の上限5秒は同じ）。修正前のコードでは追加分のうち7件が失敗し（正常・旧形式の2件と既存28件は成功）、修正後は `TZ=JST-9`（実測UTC+9）で38件、`TZ=UTC`（実測+0）で38件すべて成功：`cd database && .venv/Scripts/python.exe -m unittest discover -s tests -p 'test_input_versions*.py'`。正常な再送・旧形式の受領・DBの控えの重複排除・休止と再開・締切跨ぎ・処理時間の既存試験は変更せず成功。PC全試験は直前の全体チェック（as_of変更前）で成功済みで、`as_of()` を呼ぶのはこの2ファイルだけなので、PC全試験は流し直していない。
+  - 文書：`RELIABILITY_HARDENING.md` の検証記録の節に、上の検査と旧形式の扱いを追記。
+- **優先2：文書の整合（文書だけ）**
+  - `AGENTS.md`：「新しい作業は2つのmainのうち新しい方」（旧61行目）と「基準は正本の最新main」（旧103行目）を、「両方のmainを含む最新の履歴を基準。正本は保管先の指定」にそろえた。正本main `e8d2fa0` に `tools/`（`push_ci.py`）が無いことを `git ls-tree` で確認し、正本から複製した環境では database-ci の main を取り込んでから `push_ci.py --dry-run` する手順を追記。
+  - `NEXT_DAY_SHADOW_PLAN_20261025.md`：記録の説明（10/25初版の直接追記）に、10/26以降の転送待ち・受領・resetの仕組み、実データのreset時刻、`as_of()` の完全性検査を追記。案・期間・締切・判定基準・評価不能日の定義は変えていない。`as_of()` が止まったときの扱い（再実行か、その日を除くか）は評価前に利用者に確認する、と書いた（定義を勝手に広げない）。
+  - `database/PSCUBE_SYNC.md`：初回の説明を実装（`pscube_import.android_sync_due`、615〜647行）に合わせ、全期間バックアップは既読扱い、日別専用ファイルは10秒たてば読み込む、に訂正。
+  - `CAPTURE_HEALTH.md`：冒頭に「現在地（2026-10-29）」を追加。Googleの4本は10/25の貼替・10/26の利用者報告で更新済み、APKは0.5.42以降（最新0.5.48は利用者が導入完了と報告、AIは端末の版を再確認していない）。下の10/24時点の「未反映」「APK作成しない」は履歴として残した。`.gs` の既定値は実運用の設定ではなく、設定移植（`tools/prepare_google_updates.py`）なしの全文貼替をしないこと、照合版の文字だけの違いでは貼替不要なことを明記。
+  - `RELIABILITY_HARDENING.md`：「Googleの実プロジェクトは更新していない」「新APKは別途」に10/26時点の記述であることと、その後の利用者報告への参照を添えた。`.gs` 既定値の注意も同じ内容で追記。
+  - `NEXT_DAY_FOCUS_PLAN_20260930.md`：直前の項の修正（最終評価は10/31 8:00以降）に合わせた実行条件の行。
+  - CI：Codexの記録で「実行中」だった40645422433を一度確認し、完了・3ジョブ成功を同じ行に追記。再実行なし。
+- **優先3：未確認事項の整理**
+  - P’s CUBE 10/25（`pscube.sqlite3` と `input_versions.sqlite3` を `mode=ro`、`PscubeStore` の初期化を通さず `next_target` だけ呼んで確認）：今は10/24・10/25・10/26とも59機種295台。**1205番台の10/25の記録は解決済み**（検証記録で2026-10-28 07:39:45にPCへ保存。誰の取り込みかは記録が無くわかりません）。**未取得判定は今も28件**（処理件数で台数ではない。次は前回と同じ1067番台の10/25台別ページ）で未解決。参考：同じ判定で10/27は20件、10/28は63件（取り込みの途中か未実施かはわかりません。`fresh_since` なしの判定なので、アプリの表示と数が違うことがある）。
+  - 最小化状態の取り込み（`cf0370f`）：AIの確認は模擬ページ＋実WebView2の任意試験（24/24台）まで。実サイトでは利用者が「直ってる」と報告（10/28の項）したが、最小化のまま連続で進んだかをAIは見ていない。**2026-10-29 利用者報告：「実サイトで取り込み窓最小化のままで取り込みできた」。** 利用者による実サイトでの確認として記録する（AIは実サイト・取り込み画面を見ていない。どの日・何台分かは報告に無い）。実iPhone Safariでの台移動・台選択・最新へ・🌈保存中表示は未確認（Chromium 320／393／768pxの画面試験のみ）。Androidの取り込み→Drive→PCの反映は、10/25分について端末側の完了報告（利用者）と、PCに10/25の295台が入っていること（AI、読み取り）は別の証拠で、どの経路で入ったかはわかりません。
+  - 店舗別30日比較：実装済みは記録（`input_versions`）と締切時点の復元・完全性検査（`as_of()`）まで。評価処理（現行と案の候補の作り直し・成績の集計）は未実装で、11/26以降に1回の計画。今回、評価処理の実装や途中成績の算出はしていない。
+  - 時刻の用途：営業日の切替03:00（`BUSINESS_DAY_CUTOFF_HOUR`・`businessDayCutoffHour`）、比較・評価の締切08:00（`focusCutoffHour`・店舗別比較の計画）、凍結分析の02:00と過去の検証ツールの0:00は別物。今回どれも一括置換していない。
+  - Codexの10/29記録の「比較用履歴の欠落検出2件」は、今回の指摘A・Bのことと理解して修正した（指摘の原文はこのPCに無く、同じものかの最終確認はわかりません）。
+- 実DB・設定・Cookie・IndexedDB・バックアップ・署名鍵は変更していない（実DBは `mode=ro` で読むだけ）。対象サイトへの接続、同期・自動取り込みの開始、端末操作はしていない。ビルドを伴う全体ゲートは、この残件の作業では流していない（直前の項の全体チェックは、この作業の前のコードで実施）。
+
+## 【iPhone閲覧ページ：🌈保存中の表示の見切れを修正・公開】2026-10-29 Claude
+
+- 利用者の確認（iPhone Safari、メルヘン長町南171番台・10/28の画面）：前の台・次の台・台番号の一覧・最新へ・🌈保存中の表示は「各動作OK」。ただし🌈を付けるときの右上「171番台／🌈保存中」の2行の文字が、枠の下で見切れていた。利用者「これ修正したら公開へ」。これで前の項の「コミット・pushしない」は解除され、この項でコミット・push・公開まで行う。
+- 原因：`_RainbowSavingStatus`（`database_android/lib/viewer_pages.dart`）が、既定の大きさの `OutlinedButton` に2行の文字を入れていた。上の帯の中でボタンの高さが字の高さに足りず、下が切れた。試験でも等倍で再現（字に必要な高さ32pxに対して28pxに切られる）。
+- 修正：文字を1行の「○○番台 🌈保存中」にし、ボタンの余白を小さく（高さ最小32px、左右8px）。文字は最大幅120px・高さ40pxの中で、入りきらなければ縮める（`FittedBox`）。ボタンは押せないまま、対象台・日のツールチップ、保存中の二重操作の防止は同じ。
+- 試験：`test/viewer_quick_navigation_test.dart` に、幅320px・393pxで、字が必要な高さより小さく切られないこと・ボタンが上の帯の中と画面の幅に収まることを確かめる2件を追加。修正前は2件とも失敗（28 < 31.5）。既存の保存中の試験の文言を1行表示に合わせた。文字1.6倍の条件も試したが、はみ出したのは日付欄（大きい文字には元から未対応）で今回の表示とは別のため、試験に入れていない。関連6ファイル56件成功：`flutter test --no-pub test/viewer_quick_navigation_test.dart test/viewer_navigation_test.dart test/viewer_replacement_test.dart test/viewer_scroll_top_test.dart test/focus_final_evaluation_test.dart test/focus_validation_test.dart`。
+- 照合版：これまでの公開と同じく `build_release_info.py`→`build_viewer_parts.mjs`→`build_event_history_share.mjs` で生成し直し、`c7e3b406a437` → **`70f7982b98a0`**。生成物11ファイルの差分は版の文字だけ（Googleの4本も版の文字だけなので、貼り替えは不要）。
+- 全体ゲートの経緯：1回目（`C:\w\cbw-rainbow1029`）は版を生成し直す前に始めたので止めたが、裏の処理が止まらず、2回目と同じ作業フォルダー・ログに書き込んだ（2回目は終了コード0・ALL PASSEDだったが、同時実行で汚れているため根拠にしない）。残った処理が無いことを確かめ、別の作業フォルダーで3回目を単独で実行した。
+- 3回目の全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-rbfit3`、ログ `C:\w\gate-rbfit3.log`）は **ALL PASSED**（83段）：PC tests 487件（前の項の `as_of` 試験9件を含む）・PC直下231件・UTC 27件、Flutter 742件、`flutter analyze` はエラー・警告0・info 28件（以前と同数）、JS 74ファイルすべて成功。公開用stage（`C:\w\cbw-rbfit3\viewer`）の `main.dart.js` に版 `70f7982b98a0` が入っていることを確認。

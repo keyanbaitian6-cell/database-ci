@@ -529,7 +529,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
       ),
     );
     if (record == null) {
-      final sameNumber = widget.data.records
+      final sameNumber = data.records
           .where(
             (r) =>
                 r.store == original.store &&
@@ -538,7 +538,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
                 r.machine != original.machine,
           )
           .toList();
-      final otherNumbers = widget.data.records.any(
+      final otherNumbers = data.records.any(
         (r) =>
             r.store == original.store &&
             r.day == _day &&
@@ -569,7 +569,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => ViewerRecordPage(
-                          data: widget.data,
+                          data: data,
                           record: other,
                           onDayChanged: widget.onDayChanged,
                         ),
@@ -589,7 +589,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => ViewerMachinePage(
-                        data: widget.data,
+                        data: data,
                         store: original.store,
                         machine: original.machine,
                         day: _day,
@@ -638,13 +638,26 @@ class _RainbowSavingStatus extends StatelessWidget {
     padding: const EdgeInsets.only(right: 8),
     child: Tooltip(
       message: '${record.day}・${record.rack}番台の🌈を保存中',
+      // 2行の文字はボタンの高さに収まらず、iPhoneで下が見切れた（2026-10-29、利用者の画面）。
+      // 1行にし、入りきらないときは縮めて、欠けずに上の帯へ収める。
       child: OutlinedButton(
         key: const ValueKey('viewer-rainbow-saving'),
         onPressed: null,
-        child: Text(
-          '${record.rack}番台\n🌈保存中',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 11),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 32),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 120, maxHeight: 40),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '${record.rack}番台 🌈保存中',
+              maxLines: 1,
+              style: const TextStyle(fontSize: 11),
+            ),
+          ),
         ),
       ),
     ),

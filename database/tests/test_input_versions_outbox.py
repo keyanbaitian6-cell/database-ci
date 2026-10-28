@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 import input_versions as iv
 from core import Store
-from test_input_versions import ROW
+from test_input_versions import KEY, ROW
 
 
 def setUpModule():
@@ -177,6 +177,72 @@ class OutboxTests(unittest.TestCase):
         values=iv.as_of(self.root/iv.FILE_NAME,'meruhen',datetime.now().astimezone()+timedelta(seconds=1))
         self.assertEqual(next(iter(values.values()))['games'],4200)
 
+class CompletenessTests(unittest.TestCase):
+    """2026-10-29：as_of() が検証DB単体のコピーや、途中の受領・版が欠けた履歴を完全な入力として返していた。"""
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.patch=patch.object(iv,'_schedule');self.patch.start();self.addCleanup(self.patch.stop)
+        self.store=Store(self.root/'db.sqlite3');self.addCleanup(self.store.close)
+        for rack in (537,538,539):self.store.save([dict(ROW,rack=rack)])
+        iv.flush(self.store.path)
+    def cutoff(self):
+        from datetime import datetime,timedelta
+        return datetime.now().astimezone()+timedelta(seconds=1)
+    def racks(self,path=None):
+        return sorted(r['rack'] for r in iv.as_of(path or self.root/iv.FILE_NAME,'meruhen',self.cutoff()).values())
+    def middle(self):
+        # 途中（2番目）の書き込みの受領番号と版の番号。最終番号の受領は残る。
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db:
+            return db.execute("SELECT r.seq,r.version_id FROM iv_receipts r JOIN versions v ON v.id=r.version_id WHERE v.kind='write' ORDER BY r.seq LIMIT 1 OFFSET 1").fetchone()
+    def test_complete_history_is_returned(self):
+        self.assertEqual(self.racks(),[537,538,539])
+    def test_verification_copy_without_its_main_database_is_not_complete(self):
+        # 本体には未転送の変更がある。検証DBだけを別フォルダーへ写すと、それを照合できない。
+        import shutil
+        self.store.save([dict(ROW,rack=537,games=3500)])
+        with tempfile.TemporaryDirectory() as other:
+            shutil.copy(self.root/iv.FILE_NAME,Path(other)/iv.FILE_NAME)
+            with self.assertRaisesRegex(ValueError,'本体DBが無く'):self.racks(Path(other)/iv.FILE_NAME)
+        with self.assertRaisesRegex(ValueError,'未転送'):self.racks()
+    def test_main_database_of_another_source_does_not_count(self):
+        with self.assertRaisesRegex(ValueError,'本体DBが無く'):iv.as_of(self.root/iv.FILE_NAME,'pscube',self.cutoff())
+    def test_missing_middle_receipt_and_version_is_detected(self):
+        seq,version=self.middle()
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db,db:
+            db.execute('DELETE FROM versions WHERE id=?',(version,));db.execute('DELETE FROM iv_receipts WHERE seq=?',(seq,))
+        with self.assertRaisesRegex(ValueError,'途中の受領'):self.racks()
+    def test_missing_version_row_with_its_receipt_left_is_detected(self):
+        _seq,version=self.middle()
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db,db:db.execute('DELETE FROM versions WHERE id=?',(version,))
+        with self.assertRaisesRegex(ValueError,'版が失われ'):self.racks()
+    def test_missing_first_receipts_are_detected(self):
+        # 基準点（reset）から先頭の受領がまとめて欠けた場合も、残りの番号は続いているので個数だけでは分からない。
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db,db:
+            first=db.execute('SELECT min(seq) FROM iv_receipts').fetchone()[0]
+            db.execute('DELETE FROM versions WHERE id IN (SELECT version_id FROM iv_receipts WHERE seq=?)',(first,))
+            db.execute('DELETE FROM iv_receipts WHERE seq=?',(first,))
+        with self.assertRaisesRegex(ValueError,'途中の受領'):self.racks()
+    def test_version_not_traceable_to_the_main_database_is_detected(self):
+        # 受領の無い版（旧形式の直接追記と同じ形）が基準点より後に混ざっている。
+        with closing(sqlite3.connect(self.root/iv.FILE_NAME)) as db,db:
+            db.execute("INSERT INTO versions(source,key,day,saved_at,kind,content) VALUES('meruhen','x','2026-10-14','2026-10-26T00:00:00+09:00','write','{\"rack\":1}')")
+        with self.assertRaisesRegex(ValueError,'照合できない'):self.racks()
+    def test_old_direct_rows_before_the_baseline_are_still_accepted(self):
+        # 2026-10-25〜26の初版は受領なしで直接追記した。その後の基準点（reset）より前にだけあり、結果に入らない。
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            with closing(sqlite3.connect(root/iv.FILE_NAME)) as db,db:
+                db.execute('CREATE TABLE versions (id INTEGER PRIMARY KEY, source TEXT NOT NULL,key TEXT NOT NULL,day TEXT,saved_at TEXT NOT NULL,kind TEXT NOT NULL,content TEXT)')
+                db.execute("INSERT INTO versions(source,key,day,saved_at,kind,content) VALUES('meruhen','old','2026-10-14','2026-10-25T20:31:51+09:00','baseline','{\"rack\":1}')")
+            with closing(Store(root/'db.sqlite3')) as store:
+                store.save([ROW]);iv.flush(store.path)
+                self.assertEqual(sorted(iv.as_of(root/iv.FILE_NAME,'meruhen',self.cutoff())),[KEY])
+    def test_cutoff_before_any_baseline_is_not_complete(self):
+        with self.assertRaisesRegex(ValueError,'基準点が無く'):
+            iv.as_of(self.root/iv.FILE_NAME,'meruhen','2026-10-01T08:00:00+09:00')
+
+
 class HeldTransferTests(unittest.TestCase):
     """PC版は操作ごとに接続を閉じる。起動中は閉じた後も送り切る（2026-10-26、実DBで基準点5.7万件が残った）。"""
     def setUp(self):
@@ -236,8 +302,16 @@ class LargeHistoryTests(unittest.TestCase):
                 # 2026-10-25の初版が作った索引。実データにあり、これがあると結合が受領の全件読みになる。
                 db.execute('CREATE INDEX versions_key ON versions(source, key, id)')
                 db.execute('CREATE INDEX versions_day ON versions(source, day)')
-                db.executemany('INSERT INTO versions VALUES(?,?,?,?,?,?,?)',[(i,'meruhen',f'k{i}','2026-10-26',at,'baseline','{"games":1}') for i in range(1,count+1)])
-                db.executemany('INSERT INTO iv_receipts VALUES(?,?,?,?,?)',[('a',i,'0'*64,at,i) for i in range(1,count+1)])
+                # 実データと同じく、識別子の最初の番号は基準点（reset）。
+                db.execute("INSERT INTO versions VALUES(1,'meruhen','',NULL,?,'reset',NULL)",(at,))
+                db.executemany('INSERT INTO versions VALUES(?,?,?,?,?,?,?)',[(i,'meruhen',f'k{i}','2026-10-26',at,'baseline','{"games":1}') for i in range(2,count+2)])
+                db.executemany('INSERT INTO iv_receipts VALUES(?,?,?,?,?)',[('a',i,'0'*64,at,i) for i in range(1,count+2)])
+            # 照合する本体（転送済みで待ち行なし）。
+            with closing(sqlite3.connect(Path(directory)/'db.sqlite3')) as db,db:
+                db.execute('CREATE TABLE iv_control (singleton INTEGER PRIMARY KEY, identity TEXT NOT NULL, source TEXT NOT NULL, paused_at TEXT, pending_bytes INTEGER NOT NULL DEFAULT 0, delivered_seq INTEGER NOT NULL DEFAULT 0)')
+                db.execute('CREATE TABLE iv_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, day TEXT, saved_at TEXT NOT NULL, confirmed_at TEXT, kind TEXT NOT NULL, content TEXT)')
+                db.execute("INSERT INTO iv_control VALUES(1,'a','meruhen',NULL,0,?)",(count+1,))
+                db.execute("INSERT INTO sqlite_sequence VALUES('iv_outbox',?)",(count+1,))
             started=time.monotonic()
             values=iv.as_of(path,'meruhen',datetime.fromisoformat(at)+timedelta(seconds=1))
             self.assertEqual(len(values),count)

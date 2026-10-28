@@ -329,6 +329,12 @@ def _recordings(directory, exclude=None):
 
 
 def as_of(path, source, cutoff):
+    """締切前に保存が確定した内容を、完全性を確かめた上で作り直す（評価の入力用）。
+
+    同じフォルダーに、その記録元の本体DB（識別子が一致するもの）が要る。本体の未転送・休止、
+    受領の番号の抜け、受領に対応する版の欠落、本体で照合できない版があれば例外にし、
+    不完全な入力を返さない（2026-10-29：検証DBだけのコピーや、途中の受領・版が欠けた履歴を返していた）。
+    """
     limit=datetime.fromisoformat(cutoff) if isinstance(cutoff,str) else cutoff
     if limit.tzinfo is None: raise ValueError('締切には時差を含めてください。')
     result={}
@@ -342,10 +348,19 @@ def as_of(path, source, cutoff):
         checkpoints.append((live['identity'],live['delivered']))
         if live['paused'] and datetime.fromisoformat(live['paused'])<limit: raise ValueError('検証記録が休止中です。')
         waiting+=[(live['identity'],seq) for seq,at in live['outbox'] if datetime.fromisoformat(at)<limit]
+    # 本体が無いと未転送・休止を照合できない（検証DB単体のコピーなど）。
+    if not checkpoints: raise ValueError('同じフォルダーに記録元の本体DBが無く、入力の完全性を確認できません。')
+    identities={identity for identity,_seq in checkpoints}
     with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as db:
         tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for identity,seq in checkpoints:
             if seq and ('iv_receipts' not in tables or not db.execute('SELECT 1 FROM iv_receipts WHERE identity=? AND seq=?',(identity,seq)).fetchone()): raise ValueError('検証履歴の確定済み部分が失われています。')
+            if 'iv_receipts' not in tables: continue
+            # 受領の番号は本体の転送待ちの番号で、基準点（reset）から1つずつ続く。最終番号の受領だけでなく、
+            # 途中の受領が抜けていないことと、最初が基準点であることを確かめる。
+            first,last,count=db.execute('SELECT min(seq),max(seq),count(*) FROM iv_receipts WHERE identity=?',(identity,)).fetchone()
+            if count and (count!=last-first+1 or not db.execute("SELECT 1 FROM iv_receipts r JOIN versions v ON v.id=r.version_id WHERE r.identity=? AND r.seq=? AND v.kind='reset' AND v.source=?",(identity,first,source)).fetchone()):
+                raise ValueError('検証履歴の途中の受領が失われています。')
         # 検証先が受け取り、本体から消す前に止まった行は届いている（受領で照合する）。
         for identity,seq in waiting:
             if 'iv_receipts' not in tables or not db.execute('SELECT 1 FROM iv_receipts WHERE identity=? AND seq=?',(identity,seq)).fetchone():
@@ -353,8 +368,11 @@ def as_of(path, source, cutoff):
         # 受領は版の番号（version_id）で引く。索引が無いので、SQLで結合すると版1件ごとに受領を全件読み、
         # 実データ（版16.7万・受領8.3万、2026-10-26）では終わらなかった。先に1回だけ読む。
         received={}
+        owners={}
         if 'iv_receipts' in tables:
-            received=dict(db.execute('SELECT version_id,confirmed_at FROM iv_receipts WHERE version_id IS NOT NULL'))
+            for version_id,confirmed,identity in db.execute('SELECT version_id,confirmed_at,identity FROM iv_receipts WHERE version_id IS NOT NULL'):
+                received[version_id]=confirmed
+                owners[version_id]=identity
         resets=[]
         for version_id,at in db.execute("SELECT id,saved_at FROM versions WHERE source=? AND kind='reset'",(source,)):
             confirmed=received.get(version_id)
@@ -362,14 +380,26 @@ def as_of(path, source, cutoff):
         latest_reset=max(resets,default=None)
         if 'iv_gaps' in tables and any(datetime.fromisoformat(r[0])<limit and (latest_reset is None or datetime.fromisoformat(r[0])>latest_reset) for r in db.execute('SELECT paused_at FROM iv_gaps WHERE source=?',(source,))):
             raise ValueError('検証記録の休止区間があります。入力の完全性は未確認です。')
+        present=set()
+        used=None  # 最後の基準点（reset）から後の版。結果はここからだけ作る。
         for version_id,key,at,value,kind in db.execute('SELECT id,key,saved_at,content,kind FROM versions WHERE source=? ORDER BY id',(source,)):
+            present.add(version_id)
             if datetime.fromisoformat(at)>=limit: continue
             if version_id in received and (received[version_id] is None or datetime.fromisoformat(received[version_id])>=limit):
                 raise ValueError('締切前の保存確定を確認できない記録があります。')
-            if kind=='reset': result.clear();continue
-            if key=='': continue
+            if kind=='reset': result.clear();used=[]
+            if used is not None: used.append(version_id)
+            if kind=='reset' or key=='': continue
             if value is None: result.pop(key,None)
             else: result[key]=json.loads(value)
+        if used is None: raise ValueError('締切前に確定した基準点が無く、入力の完全性を確認できません。')
+        # 最後の基準点より後は、今の本体の受領で照合できる版だけ。受領の無い旧形式（2026-10-25〜26の直接追記）や
+        # 再開前の識別子の版は、その基準点より前にだけあり、結果に入らない。
+        if any(owners.get(v) not in identities for v in used):
+            raise ValueError('本体で照合できない検証記録があります。入力の完全性は未確認です。')
+        # 今の本体の受領に対応する版が残っているか（版の行だけ消えた履歴を返さない）。
+        if any(owners[v] in identities and v not in present for v in owners):
+            raise ValueError('受領済みの検証記録の版が失われています。')
     return result
 
 

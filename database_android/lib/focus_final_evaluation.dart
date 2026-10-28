@@ -344,6 +344,12 @@ String? focusFinalBlocker(
     return '最終評価日（$focusValidationFinalOn）より前です（日本時間 $today）';
   }
   final labelDay = shiftDay(focusValidationThrough, 1);
+  // 最後の翌日（10/30）の閉店後の数値は、その締切（翌日8時）まで取り込まれうる。最終評価は1回だけ
+  // なので、締切より前（10/31の0時〜8時）には実行しない（2026-10-29、締切を8時にした後の見直し）。
+  final labelCutoff = predictionCutoff(labelDay, hour: focusCutoffHour);
+  if (now.isBefore(labelCutoff)) {
+    return '$labelDay（最後の予測日の翌日）の取り込みの締切（翌日$focusCutoffHour時）より前です（日本時間 $today）';
+  }
   if (!lastLabelDayMissingOk) {
     for (final store in storeNames.keys) {
       if (!full.any((r) => r.store == store && r.day == labelDay)) {

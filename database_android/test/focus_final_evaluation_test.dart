@@ -163,7 +163,7 @@ void main() {
     expect(focusDirectDifference(groups).values, isEmpty);
   });
 
-  test('最終評価は10/31（日本時間）より前は実行しない、10/30の記録も要る', () {
+  test('最終評価は10/31 8時（日本時間、10/30の締切）より前は実行しない、10/30の記録も要る', () {
     SlotRecord rec(String store, String day) => SlotRecord(
       store: store,
       day: day,
@@ -182,8 +182,17 @@ void main() {
       focusFinalBlocker(DateTime.utc(2026, 10, 30, 14, 59), complete),
       isNotNull,
     );
+    // 10/31 0:00〜7:59 JST は、10/30の閉店後の数値がまだ締切（8時）まで入りうる。
     expect(
       focusFinalBlocker(DateTime.utc(2026, 10, 30, 15, 0), complete),
+      contains('締切'),
+    );
+    expect(
+      focusFinalBlocker(DateTime.utc(2026, 10, 30, 22, 59), complete),
+      contains('締切'),
+    );
+    expect(
+      focusFinalBlocker(DateTime.utc(2026, 10, 30, 23, 0), complete),
       isNull,
     );
     final missing = [rec('saiwaichou', '2026-10-30')];
