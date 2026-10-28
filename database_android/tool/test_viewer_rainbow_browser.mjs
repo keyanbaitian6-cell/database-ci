@@ -67,8 +67,11 @@ try {
   }, {data: meruhen, script});
   const stored = () => page.evaluate(async () => {
     const db = await new Promise((resolve, reject) => { const q = indexedDB.open('database-viewer', 1); q.onsuccess = () => resolve(q.result); q.onerror = () => reject(q.error); });
-    const value = await new Promise((resolve, reject) => { const r = db.transaction('kv').objectStore('kv').get('data'); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
-    db.close(); return JSON.parse(value);
+    const get = key => new Promise((resolve, reject) => { const r = db.transaction('kv').objectStore('kv').get(key); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
+    const data = await get('data'), marks = await get('rainbow_marks');
+    db.close();
+    // 🌈の印は本体と別の 'rainbow_marks' に置く（2026-10-29）。本体の文字そのものも返す（書き直していないか）。
+    return {...JSON.parse(data), rainbow_marks: JSON.parse(marks || '[]'), text: data};
   });
   async function home() {
     await page.goto(origin + prefix);
@@ -88,6 +91,9 @@ try {
   // ほかの端末の🌈（共有ファイル）が端末の内容に入る。
   for (let i = 0; i < 60 && !((await stored()).rainbow_marks || []).length; i++) await page.waitForTimeout(250);
   assert.deepEqual((await stored()).rainbow_marks.map(m => [m.rack, m.on]), [[1086, true]]);
+  // 共有の🌈を取り込んでも、付け外ししても、本体（数十MBになる）は書き直さない（2026-10-29、iPhoneで落ちた）。
+  const original = JSON.stringify(meruhen);
+  assert.equal((await stored()).text, original, '共有の🌈の取り込みで本体を書き直さない');
   await rack(1085);
   const toggle = page.getByRole('button', {name: '🌈 付ける', exact: true});
   await toggle.waitFor();
@@ -95,6 +101,8 @@ try {
   await page.getByRole('button', {name: '🌈 外す', exact: true}).waitFor();
   await page.getByText('1085番台 🌈', {exact: true}).waitFor();
   for (let i = 0; i < 40 && !posts.length; i++) await page.waitForTimeout(250);
+  assert.equal((await stored()).text, original, '🌈の付け外しで本体を書き直さない');
+  assert.ok((await stored()).rainbow_marks.some(m => m.rack === 1085 && m.day === '2026-10-10' && m.on === true), '端末の印に入る');
   const sent = posts.at(-1);
   assert.equal(sent.file, 'rainbow');
   assert.ok(sent.marks.some(m => m.rack === 1085 && m.day === '2026-10-10' && m.on === true && /T/.test(m.updated_at)), JSON.stringify(sent));

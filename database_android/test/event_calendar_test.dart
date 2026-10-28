@@ -435,6 +435,31 @@ void main() {
         ),
         isNull,
       );
+      // 2026-10-29：開くたびに端末の本体を読まないよう、表示中のイベントで先に確かめる。
+      // 判定は「withSharedEvents が変える（null でない）」と同じになる。
+      final current = ViewerData.parse(stored).dateEvents;
+      final sameAgain = jsonEncode({
+        'format': 'database-events',
+        'events': [
+          for (final e in current.values)
+            if (e.updatedAt != null) e.toJson(),
+        ],
+      });
+      for (final text in [
+        shared,
+        sameAgain,
+        '{broken',
+        jsonEncode({'error': '見つかりません'}),
+        jsonEncode({'format': 'database-events', 'events': []}),
+      ]) {
+        expect(
+          ViewerData.sharedEventsChange(current, text),
+          ViewerData.withSharedEvents(stored, text) != null,
+          reason: text,
+        );
+      }
+      expect(ViewerData.sharedEventsChange(current, shared), isTrue);
+      expect(ViewerData.sharedEventsChange(current, sameAgain), isFalse);
     });
 
     test('送る中身：入力時刻つきだけ、合言葉は入れない', () {
@@ -549,7 +574,12 @@ void main() {
   group('カレンダーの差枚（2026-10-08）', () {
     const base =
         'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
-    Map<String, Object?> rec(String day, int rack, int? net, {int games = 3000}) => {
+    Map<String, Object?> rec(
+      String day,
+      int rack,
+      int? net, {
+      int games = 3000,
+    }) => {
       'store': 'c740601',
       'rate': '20',
       'machine': 'マイジャグラーV',
@@ -562,7 +592,8 @@ void main() {
       'at_art': 0,
       'net_medals': ?net,
       'observed_at': '2026-10-05T23:00:00+09:00',
-      'detail_url': '${base}nc-v06-001.php?cd_dai=$rack#${day.replaceAll('-', '')}',
+      'detail_url':
+          '${base}nc-v06-001.php?cd_dai=$rack#${day.replaceAll('-', '')}',
     };
     Map<String, Object?> doc(List<Map<String, Object?>> records) => {
       'format': 'pscube-viewer',
@@ -604,13 +635,27 @@ void main() {
       final day = lookup(scope, '2026-10-04')!;
       expect((day.total, day.captured, day.racks), (900, 2, 3));
       expect(dayNetCellLabel(day), '+900');
-      expect(lookup(scope, '2026-10-05')!.total, isNull, reason: '差枚が1台も無い日は0にしない');
+      expect(
+        lookup(scope, '2026-10-05')!.total,
+        isNull,
+        reason: '差枚が1台も無い日は0にしない',
+      );
       expect(dayNetCellLabel(lookup(scope, '2026-10-05')), isNull);
       expect(lookup(scope, '2026-10-20'), isNull, reason: '記録の無い日');
-      expect(lookup('nagamachiminami', '2026-10-04'), isNull, reason: '別の店は混ぜない');
+      expect(
+        lookup('nagamachiminami', '2026-10-04'),
+        isNull,
+        reason: '別の店は混ぜない',
+      );
       expect(
         dayNetCellLabel(
-          const DayNet(day: 'x', total: -1500, captured: 2, racks: 2, needsCheck: 1),
+          const DayNet(
+            day: 'x',
+            total: -1500,
+            captured: 2,
+            racks: 2,
+            needsCheck: 1,
+          ),
         ),
         '-1,500',
         reason: 'マスには※を付けない',
@@ -622,7 +667,10 @@ void main() {
     test('P’s CUBEのイベントは入力時刻を持ち、前日までの入力は＊が付かない', () {
       final events = pscubeDateEvents(doc(const []));
       final event = events.single.event;
-      expect((event.store, event.updatedAt), (scope, '2026-10-05T12:00:00.000Z'));
+      expect(
+        (event.store, event.updatedAt),
+        (scope, '2026-10-05T12:00:00.000Z'),
+      );
       expect(eventCellLabel(event), '業火の極');
     });
 
@@ -656,7 +704,8 @@ void main() {
                   : null,
               namesFor: (_) => const [],
               onSave: (_, _, _) async {},
-              netFor: (store, day) => store == 'nagamachiminami' ? nets[day] : null,
+              netFor: (store, day) =>
+                  store == 'nagamachiminami' ? nets[day] : null,
               netNote: dailyNetNote('nagamachiminami'),
             ),
           ),
@@ -671,7 +720,10 @@ void main() {
         );
         expect(minus.data, '-4,300');
         expect(minus.style!.color, const Color(0xFFC62828));
-        expect(find.byKey(const ValueKey('event-net-2026-10-06')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('event-net-2026-10-06')),
+          findsNothing,
+        );
         expect(find.text('半列'), findsOneWidget);
         expect(find.textContaining('推定'), findsWidgets);
         expect(tester.takeException(), isNull, reason: '狭い画面でもはみ出さない');
@@ -754,13 +806,20 @@ void main() {
       final summary = calendarDaySummary(records());
       expect(summary.top.map((r) => r.rack).take(5), [21, 1, 5, 4, 12]);
       expect(summary.top.length, 10);
-      expect(summary.top.any((r) => r.rack == 13), isFalse, reason: '数値異常の台は入れない');
-      expect(summary.top.any((r) => r.rack == 3), isFalse, reason: '差枚の無い台は入れない');
       expect(
-        summary.machines.map((m) => (m.machine, m.racks, m.average)),
-        [('機種B', 2, 8500), ('機種A', 15, 1767)],
-        reason: '1台だけの機種Cは入れない、数値異常の台は数えない',
+        summary.top.any((r) => r.rack == 13),
+        isFalse,
+        reason: '数値異常の台は入れない',
       );
+      expect(
+        summary.top.any((r) => r.rack == 3),
+        isFalse,
+        reason: '差枚の無い台は入れない',
+      );
+      expect(summary.machines.map((m) => (m.machine, m.racks, m.average)), [
+        ('機種B', 2, 8500),
+        ('機種A', 15, 1767),
+      ], reason: '1台だけの機種Cは入れない、数値異常の台は数えない');
     });
 
     testWidgets('記録のある日はまとめを開き、そこからイベント編集・台の詳細へ。先の日は入力', (tester) async {
@@ -824,7 +883,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('華の日'), findsOneWidget, reason: 'カレンダーにも出る');
       // 記録の無い先の日は、今までどおりイベント名の入力。
-      await tester.ensureVisible(find.byKey(const ValueKey('event-day-2026-10-30')));
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('event-day-2026-10-30')),
+      );
       await tester.tap(find.byKey(const ValueKey('event-day-2026-10-30')));
       await tester.pumpAndSettle();
       expect(find.byType(TextField), findsOneWidget);

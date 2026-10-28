@@ -117,11 +117,14 @@ try {
     if(kind==='viewer') {
       const stored=await page.evaluate(async()=>{
         const db=await new Promise(r=>{const q=indexedDB.open('database-viewer',1);q.onsuccess=()=>r(q.result);});
-        const result=await new Promise(r=>{const q=db.transaction('kv').objectStore('kv').get('data');q.onsuccess=()=>r(q.result);});db.close();return JSON.parse(result);
+        const get=key=>new Promise(r=>{const q=db.transaction('kv').objectStore('kv').get(key);q.onsuccess=()=>r(q.result);});
+        const data=JSON.parse(await get('data')),marks=JSON.parse(await get('rainbow_marks')||'[]');db.close();return {data,marks};
       });
-      assert.equal(stored.records.filter(r=>r.day==='2026-10-14').length,1);
-      assert.equal(stored.records.find(r=>r.day==='2026-10-14').games,4567);
-      assert.equal(stored.rainbow_marks.find(m=>m.rack===1101&&m.day==='2026-10-14').on,false);
+      assert.equal(stored.data.records.filter(r=>r.day==='2026-10-14').length,1);
+      assert.equal(stored.data.records.find(r=>r.day==='2026-10-14').games,4567);
+      // 🌈の印は本体と別の 'rainbow_marks' に置く（2026-10-29）。前からの印は本体にもありうるので、新しい方を見る。
+      const mark=[...(stored.data.rainbow_marks||[]),...stored.marks].filter(m=>m.rack===1101&&m.day==='2026-10-14').sort((a,b)=>a.updated_at.localeCompare(b.updated_at)).at(-1);
+      assert.equal(mark.on,false);
     }
     if(kind==='share') {
       const beforeFailure=posts.length;

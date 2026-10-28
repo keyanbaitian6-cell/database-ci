@@ -121,6 +121,48 @@ void main() {
 
   // 2026-10-29 Codexのレビュー（R5）：最上位に同じ名前が2つあると、最初の方だけ差し替え、まるごと読む
   // 再読込（後の方が使われる）と食い違った。壊れた後続（"tail":BROKEN）でも保存が進んでいた。
+  // 2026-10-29：閲覧ページは🌈の印を本体と別の 'rainbow_marks' に置く。印の作り方・読み書きは従来と同じ。
+  test('marks kept apart from the data use the same rules', () {
+    final text = doc([
+      raw(1085),
+      raw(1086, extra: {'rainbow_at': '2026-10-11T23:00:00+09:00'}),
+    ]);
+    for (final rack in [1085, 1086]) {
+      final record = recordOf(text, rack);
+      final update = updateRainbowMark(text, record, true, now);
+      final mark = nextRainbowMark(
+        rainbowMarksOf(jsonDecode(text) as Map),
+        record,
+        true,
+        now,
+      );
+      expect(mark.toJson(), update.mark.toJson());
+    }
+    final marked = updateRainbowMark(text, recordOf(text, 1085), true, now);
+    final stored = rainbowMarksText(marked.marks);
+    expect(
+      rainbowMarksFromText(stored).map((k, v) => MapEntry(k, v.toJson())),
+      marked.marks.map((k, v) => MapEntry(k, v.toJson())),
+    );
+    expect(rainbowMarksFromText(null), isEmpty);
+    expect(() => rainbowMarksFromText('{broken'), throwsFormatException);
+    // 印を本体に書かずに当てても、本体へ書いて読み直したときと同じ表示。
+    final shown = ViewerData.parse(text)
+        .withRainbowMarks(rainbowMarksFromText(stored));
+    expect(
+      [for (final r in shown.records) r.rainbow],
+      [for (final r in ViewerData.parse(marked.text).records) r.rainbow],
+    );
+    final shared = jsonEncode({
+      'format': 'database-rainbow',
+      'version': 1,
+      'marks': jsonDecode(stored),
+    });
+    expect(sharedRainbowMarks(shared)!.keys, marked.marks.keys);
+    expect(sharedRainbowMarks('{broken'), isNull);
+    expect(sharedRainbowMarks(jsonEncode({'error': 'x'})), isNull);
+  });
+
   test('duplicate or broken top level falls back to the full read', () {
     final body = jsonEncode([raw(1085)]);
     final duplicate = '{"records":$body,"rainbow_marks":[],"rainbow_marks":[]}';

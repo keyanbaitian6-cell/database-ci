@@ -100,6 +100,12 @@ class _ViewerHomeState extends State<ViewerHome> {
   ({List<ProvisionalCandidate> candidates, int machines, int judged})?
   _candidates;
 
+  /// 本体と別に置いた🌈の印（端末の 'rainbow_marks'、2026-10-29）。起動時に読み、付け外し・共有の
+  /// 取り込みで更新する。表示する内容には [_show] で必ず当てる（本体に前から入っている印とは
+  /// 付け外しした時刻の新しい方）。読めなかったら [_deviceMarksError] に残し、上書きしない。
+  Map<String, RainbowMark> _deviceMarks = const {};
+  Object? _deviceMarksError;
+
   @override
   void initState() {
     super.initState();
@@ -123,6 +129,7 @@ class _ViewerHomeState extends State<ViewerHome> {
 
   Future<void> _start() async {
     _remote = loadRemoteUrl();
+    await _readDeviceMarks();
     try {
       // 手元での確認用：同じサイト内のファイルを ?load= で読む。
       final url = Uri.base.queryParameters['load'];
@@ -221,33 +228,77 @@ class _ViewerHomeState extends State<ViewerHome> {
         }
         return;
       }
-      final stored = await loadViewerData();
-      if (stored == null) return;
-      var text = stored;
       try {
-        text =
-            ViewerData.withSharedEvents(
-              text,
-              await fetchSharedEvents(url, 'events'),
-            ) ??
-            text;
+        final shared = await fetchSharedEvents(url, 'events');
+        // 表示中のイベントで変わらないと分かれば、端末の本体は読まない。
+        final stored = ViewerData.sharedEventsChange(data.dateEvents, shared)
+            ? await loadViewerData()
+            : null;
+        if (stored != null) {
+          final text = ViewerData.withSharedEvents(stored, shared);
+          if (text != null) {
+            await saveViewerData(text);
+            if (mounted) setState(() => _show(ViewerData.parse(text)));
+          }
+        }
       } on Object {
         // イベントが読めなくても🌈は読む。
       }
-      // ほかの端末（別のiPhoneなど）で付け外しした🌈。PCが取り込む前でも表示に入れる。
+      // ほかの端末（別のiPhoneなど）で付け外しした🌈。PCが取り込む前でも表示に入れる。本体とは別の
+      // 印だけを書き、本体は読み直さない（本体の書き直しと読み直しで、iPhoneが落ちた、2026-10-29）。
       try {
-        text =
-            withSharedRainbow(text, await fetchSharedEvents(url, 'rainbow')) ??
-            text;
+        final shared = sharedRainbowMarks(
+          await fetchSharedEvents(url, 'rainbow'),
+        );
+        if (shared != null && shared.isNotEmpty) {
+          await _addDeviceMarks(shared.values);
+        }
       } on Object {
         // 古いスクリプト（🌈を足す前）・通信の失敗では何もしない。
       }
-      if (identical(text, stored)) return;
-      await saveViewerData(text);
-      if (mounted) setState(() => _show(ViewerData.parse(text)));
     } on Object {
       // 表示中の内容はそのまま。
     }
+  }
+
+  /// 端末の 'rainbow_marks' を読んで [_deviceMarks] にする。読めなければ前の値のまま
+  /// [_deviceMarksError] に残す（壊れた印を空で上書きしない）。
+  Future<void> _readDeviceMarks() async {
+    try {
+      _deviceMarks = rainbowMarksFromText(await loadRainbowMarks());
+      _deviceMarksError = null;
+    } on Object catch (error) {
+      _deviceMarksError = error;
+    }
+  }
+
+  /// 印を足して端末に保存し、表示へ当てる。本体（数十MB）は読み書きしない。全部の印を返す。
+  /// ほかのタブが書いた印も落とさないよう、書く直前に読み直して合わせる。
+  Future<Map<String, RainbowMark>> _addDeviceMarks(
+    Iterable<RainbowMark> incoming,
+  ) async {
+    await _readDeviceMarks();
+    if (_deviceMarksError case final error?) {
+      throw StateError('端末の$rainbowMarkの印を読めませんでした：$error');
+    }
+    final data = _data;
+    final current = mergeRainbowMarks(
+      data?.rainbowMarks ?? const {},
+      _deviceMarks.values,
+    ).marks;
+    final merged = mergeRainbowMarks(current, incoming);
+    if (merged.changed == 0 && _deviceMarks.length == current.length) {
+      return current;
+    }
+    await saveRainbowMarks(rainbowMarksText(merged.marks));
+    _deviceMarks = merged.marks;
+    final shown = _data;
+    if (shown != null && mounted) {
+      setState(
+        () => _show(shown.withRainbowMarks(merged.marks), rainbowOnly: true),
+      );
+    }
+    return merged.marks;
   }
 
   /// 台の画面の🌈のボタン（RAINBOW.md「iPhoneから付ける」）：端末に保存してすぐ表示に入れ、
@@ -255,28 +306,16 @@ class _ViewerHomeState extends State<ViewerHome> {
   Future<ViewerData?> _editRainbow(SlotRecord record, bool on) async {
     final data = _data;
     if (data == null || data.source == 'pscube') return null;
-    String? stored;
-    try {
-      stored = await loadViewerData();
-    } on Object {
-      stored = null;
-    }
-    if (stored == null) {
-      _say('$rainbowMarkを保存できませんでした（読み込んだ内容がありません。読み込み直してください）。');
-      return null;
-    }
-    // 端末の内容をまるごと読むのは、ここで印を書き換える1回だけ。表示は今の内容へ印を当て、共有へ送る
-    // 中身も印から作る（以前は保存後に2回読み直し、iPhoneで🌈を付けると落ちた、2026-10-29）。
-    final Map<String, RainbowMark> marks;
-    {
-      final update = updateRainbowMark(stored, record, on, DateTime.now());
-      stored = null;
-      await saveViewerData(update.text);
-      marks = update.marks;
-    }
-    // 保存を待つ間にDriveの読み直しで表示が差し替わっていたら、その新しい内容へ当てる（古い内容に戻さない）。
-    final next = (_data ?? data).withRainbowMarks(marks);
-    if (mounted) setState(() => _show(next, rainbowOnly: true));
+    // 印は本体（数十MB）と別の 'rainbow_marks' に書く。本体は読み書きしない（2026-10-29。それまでは
+    // 付け外しのたびに本体をまるごと読み書きし、iPhoneで🌈を付けると落ちた）。
+    final current = mergeRainbowMarks(
+      data.rainbowMarks,
+      _deviceMarks.values,
+    ).marks;
+    final marks = await _addDeviceMarks([
+      nextRainbowMark(current, record, on, DateTime.now()),
+    ]);
+    final next = _data;
     final done = on
         ? '${record.rack}番台に$rainbowMarkを付けました。'
         : '${record.rack}番台の$rainbowMarkを外しました。';
@@ -389,6 +428,10 @@ class _ViewerHomeState extends State<ViewerHome> {
   /// 同じなので、読んだ線と取得処理をそのまま使う（付け外しのたびに線を読み直していた、2026-10-29
   /// Codexのレビュー）。写した記録にも同じ取得処理を結び付ける。
   void _show(ViewerData data, {bool rainbowOnly = false}) {
+    if (_deviceMarks.isNotEmpty && data.source != 'pscube') {
+      final merged = mergeRainbowMarks(data.rainbowMarks, _deviceMarks.values);
+      if (merged.changed > 0) data = data.withRainbowMarks(merged.marks);
+    }
     _data = data;
     if (rainbowOnly) {
       bindRemoteCurves(data.records, remoteCurveFetcher);

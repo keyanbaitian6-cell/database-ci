@@ -294,6 +294,29 @@ class ViewerData {
 
   /// 共有カレンダーのファイル [shared]（`{format: database-events, events}`）の入力時刻つきイベントを、
   /// 端末の内容 [stored] に足す（新しい方が残る）。変わらなければ・読めなければ null。
+  /// 共有ファイルのイベント [shared] を、表示中のイベント [current]（端末の内容から作ったもの）に
+  /// 足すと変わるか。[withSharedEvents] と同じ規則（時刻つきだけ・付け外しした時刻の新しい方）。
+  /// 変わらなければ端末の本体（数十MB）を読まずに済む（開くたびに読んでいた、2026-10-29）。
+  static bool sharedEventsChange(
+    Map<String, DateEvent> current,
+    String shared,
+  ) {
+    Object? doc;
+    try {
+      doc = jsonDecode(shared);
+    } on FormatException {
+      return false;
+    }
+    if (doc is! Map ||
+        doc['format'] != 'database-events' ||
+        doc['events'] is! List) {
+      return false;
+    }
+    final incoming = _events({'date_events': doc['events']}).values
+        .where((event) => event.updatedAt != null);
+    return mergeDateEvents(current, incoming).changed > 0;
+  }
+
   static String? withSharedEvents(String stored, String shared) {
     Object? doc;
     try {

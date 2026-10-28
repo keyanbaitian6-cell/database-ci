@@ -50,6 +50,19 @@ Future<void> saveViewerData(String text, {bool meruhen = false}) async {
 
 Future<String?> loadViewerData() async => (await _load().toDart)?.toDart;
 
+@JS('databaseViewer.loadMarks')
+external JSPromise<JSString?> _loadMarks();
+
+@JS('databaseViewer.saveMarks')
+external JSPromise<JSAny?> _saveMarks(JSString text);
+
+/// 本体と別に置いた🌈の印（JSONの配列）。無ければ null。
+Future<String?> loadRainbowMarks() async => (await _loadMarks().toDart)?.toDart;
+
+Future<void> saveRainbowMarks(String text) async {
+  await _saveMarks(text.toJS).toDart;
+}
+
 /// Googleのスクリプト（…/exec）から、Driveの最新を読む。ファイルの書き出し
 /// 時刻が [unlessExportedAt]（表示中の内容の時刻）と同じなら、先頭の1行だけで
 /// 読むのをやめて null を返す（中身が同じなので読み直さない）。

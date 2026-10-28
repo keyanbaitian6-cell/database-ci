@@ -540,7 +540,7 @@ function postEventHistory(cells=[],recommendations=[],results=[]) {
 
 // END EVENT_HISTORY_SHARED
 // BEGIN GENERATED VIEWER PARTS
-const SCRIPT_RELEASE = '013244a75edf';
+const SCRIPT_RELEASE = 'ffe8aa28f95b';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

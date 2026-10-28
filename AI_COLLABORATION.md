@@ -4077,3 +4077,22 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 元の報告の訂正：「400MB→215MB」はJSヒープのサンプル最大でMiB、時間「2.1秒」は固定1.5秒と送信待ちを含む。「結果の文字は従来と同じ」はこのアプリが書いた形（字下げなし・同名重複なし）に限る。
 - 照合版 `ea9781178913` → **`013244a75edf`**（`1dc4b17` を含む今のソースから。生成物11ファイルは版の文字だけ、Google 4本の貼り替え不要）。全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-rbr15`、単独）**ALL PASSED**（83段）：PC tests 488件・PC直下231件・UTC 27件、Flutter 746件、analyze エラー・警告0・info 28件、JS 74ファイル全成功。stage `C:\w\cbw-rbr15\viewer`（版 `013244a75edf`）。
 - 未実施・未確認：閲覧ページの公開（利用者の判断待ち。公開すると `1dc4b17` の閲覧ページの変更も一緒に出る）。共有カレンダーの公開。実iPhoneでの確認。起動時・Drive読み直し・共有🌈取り込みの山、印46,170件の条件、送信失敗後の再操作、🌈を別の保存領域へ移す案、PCの `as_of()` の旧新比較（いずれもCodexの指摘のうち今回は未着手）。
+
+## 【閲覧ページ（メルヘン）：🌈の印を本体と別に保存・開いたときの山の測定】2026-10-29 Claude
+
+- **前の項（Codexレビュー R1〜R6 への対応 `d9f8e92`）の公開完了（利用者「両方ごと公開」）**：database-viewer **`18ddae1e084e9675e541e28845b1c53d845e8b72`**（親 `6ad81ba`、source `d9f8e92`、照合版 `013244a75edf`）。試験済みstage `C:\w\cbw-rbr15\viewer` をそのまま写し、差分は main.dart.js・capture_health.mjs・viewer_parts.mjs の3ファイル。別のClaudeセッションの `1dc4b17`（幸町バラエティ履歴の優・良の自動表示・赤字）の閲覧ページ分も含む（共有カレンダーは公開していない）。Pages built。配信の main.dart.js（3,176,990バイト、SHA-256 `88368f9486888b04d95338f015c69b80d448861ab67346bdcaa992f6a5f602bc`、版 `013244a75edf` を含む）と viewer_parts.mjs はstageとバイト一致、capture_health.mjs・index.html・pscube/index.html は改行（CRLF/LF）だけ違い中身一致。
+- **前の項のCI**：`d9f8e92` は https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40784242971 で3ジョブとも成功（再実行なし）。
+- 依頼：利用者「待っている間残り2点も終わらせましょう」。残り2点＝Codexレビューのうち未着手だった ①起動時・Drive読み直し時の山の測定（4.4）、②🌈を本体と別の保存領域へ移す案（4.1）。基準はdatabase-ci/main `71b5eac`（別セッションの記録コミット）＋本項の未コミット変更。
+- ① 測定（製品外 `measure_startup.mjs`・`run_startup.mjs`、生の値 `results_startup.jsonl`、データは `make_data_v2.py` の基本46,170件・18.44MiB）。4条件：local（自動読み込みなし）、same（Drive・共有とも変化なし）、rainbow（共有にほかの端末の🌈1件）、drive（Driveに新しい書き出し）。Driveは古いスクリプトと同じく `?check=1` に全文を返す模擬（新しいスクリプトの部品分け読み込みは測っていない）。公開中の `18ddae1` の結果（JSヒープのサンプル最大／描画用プロセスPrivateの山）：local 212／393MiB、same 309／490MiB、**rainbow 316〜516／644〜725MiB**、drive 357〜480／572〜691MiB。🌈を付けたとき（約200MiB）より、開いたときに共有の🌈を取り込む方が大きかった。原因：`_pullShared` が共有の🌈・イベントを取り込むたびに、端末の本体（数十MB）を読み、変われば書き直して `ViewerData.parse` で解析し直す。変化が無くても共有イベントの照合のため本体を読んで解析していた。
+- ② 実装（保存される本体の形・送る中身・表示の規則は変えない）：
+  - `web/index.html`：`databaseViewer.loadMarks`／`saveMarks`。同じ IndexedDB `database-viewer`／`kv` の別のキー `rainbow_marks`（JSONの配列）。`lib/viewer_bridge_web.dart`・`viewer_bridge_stub.dart` に `loadRainbowMarks`／`saveRainbowMarks`。
+  - `lib/viewer_main.dart`：起動時に別の印を読んで `_deviceMarks` に持ち、`_show` でどの経路の表示にも当てる（本体に前から入っている印とは `mergeRainbowMarks` で付け外しした時刻の新しい方）。🌈の付け外し（`_editRainbow`）と共有の🌈の取り込み（`_pullShared`）は `_addDeviceMarks` で小さい印だけを、書く直前に読み直して合わせてから保存し、表示中のデータへ当てる（線の保持はそのまま）。本体は読み書きしない。別の印が読めないときは空で上書きせず、付け外しを止めて案内する。
+  - `lib/viewer_data.dart`：`sharedEventsChange`。共有イベントが表示中のイベントで変わらないなら本体を読まない（`withSharedEvents` と同じ規則）。
+  - `lib/rainbow_marks.dart`：`nextRainbowMark`（`updateRainbowMark` と同じ印の作り方）、`rainbowMarksText`／`rainbowMarksFromText`、`sharedRainbowMarks`。
+  - 仕様書 `RAINBOW.md`「持ち方（端末）」に保存先の変更を追記。
+- 試験：`test/rainbow_marks_test.dart`「marks kept apart from the data use the same rules」（印の作り方・読み書き・本体に書かずに当てても読み直しと同じ表示・共有ファイルの読み取り）、`test/event_calendar_test.dart`（`sharedEventsChange` が `withSharedEvents` の変える／変えないと一致）、関連5ファイル66件成功。画面試験：`tool/test_viewer_rainbow_browser.mjs` に「共有の🌈の取り込みでも付け外しでも本体の文字が変わらない・印は別の保存先に入る」を追加（公開中の版では最初の確認で失敗、修正版で成功）、`test_rainbow_today_browser.mjs` は印を両方の保存先から新しい方で見るよう変更（4件成功）、`test_viewer_remote_curve_browser.mjs` 成功。
+- 効果（修正版 `C:\w\viewer-fix3`、各2回、判定すべて合格）：🌈を付けたとき JSヒープのサンプル最大 197〜226 → **133〜145MiB**、描画用プロセスPrivateの増え方 +80〜150 → **+5〜10MiB**、表示まで0.4〜0.7秒（印10,000件でも）。開いたとき：rainbow 316〜516／644〜725 → **263〜271／492〜498MiB**、same 309／490 → 263〜270／447〜497MiB、local 210／380〜383MiB（不変）、**drive 438／634〜692MiB（不変。新旧2つの本体を合わせる `prepareMerge` が残る。今ではいちばん大きな山）**。Windows Chromiumの値で、iPhone Safariの値ではない。
+- 照合版 `013244a75edf` → **`ffe8aa28f95b`**（生成物11ファイルは版の文字だけ、Google 4本の貼り替え不要）。
+- 全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-sepmk`、単独、基準 `71b5eac`、途中で別セッションの記録コミット `1e23f4a`（文書だけ）が入ったが照合版は同じ）**ALL PASSED**（83段）：PC tests 488件・PC直下231件・UTC 27件、Flutter 747件、analyze エラー・警告0・info 28件、JS 74ファイル全成功。stage `C:\w\cbw-sepmkiewer`（版 `ffe8aa28f95b`）。
+- 未実施：この変更の閲覧ページへの公開（利用者の判断待ち）。実iPhoneでの確認。Driveに新しい書き出しがある日の山（`prepareMerge`）の改善。
+- 測定・対応の詳細：`../outputs/viewer-rainbow-memory-20261029/Claude対応報告書.md` の追記。

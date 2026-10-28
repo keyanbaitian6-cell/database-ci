@@ -116,19 +116,8 @@ updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
             'rainbow_marks': jsonDecode(text.substring(span.start, span.end)),
           });
   }
-  final key = '${record.store}|${record.day}|${record.rack}';
-  final mark = RainbowMark(
-    store: record.store,
-    day: record.day,
-    rack: record.rack,
-    on: on,
-    // 記録の rainbow_at（PCの時刻）・前の印より必ず後にする。
-    updatedAt: eventStamp(
-      now,
-      _later(marks[key]?.updatedAt, record.extra['rainbow_at'] as String?),
-    ),
-  );
-  marks[key] = mark;
+  final mark = nextRainbowMark(marks, record, on, now);
+  marks[mark.key] = mark;
   final value = jsonEncode(_json(marks));
   final String updated;
   if (decoded != null) {
@@ -248,6 +237,51 @@ updateRainbowMark(String text, SlotRecord record, bool on, DateTime now) {
     }
   }
   return null;
+}
+
+/// [record] の🌈を付ける・外す印。時刻は今で、[marks] の同じ台・日の印と記録の rainbow_at
+/// （PCの時刻）より必ず後にする。
+RainbowMark nextRainbowMark(
+  Map<String, RainbowMark> marks,
+  SlotRecord record,
+  bool on,
+  DateTime now,
+) {
+  final key = '${record.store}|${record.day}|${record.rack}';
+  return RainbowMark(
+    store: record.store,
+    day: record.day,
+    rack: record.rack,
+    on: on,
+    updatedAt: eventStamp(
+      now,
+      _later(marks[key]?.updatedAt, record.extra['rainbow_at'] as String?),
+    ),
+  );
+}
+
+/// 本体と別に置く印の文字（JSONの配列。閲覧ページの 'rainbow_marks'、2026-10-29）。
+String rainbowMarksText(Map<String, RainbowMark> marks) =>
+    jsonEncode(_json(marks));
+
+/// [rainbowMarksText] の文字から印を読む。無い・読めない値は飛ばす。配列でなければ例外。
+Map<String, RainbowMark> rainbowMarksFromText(String? text) =>
+    text == null ? {} : rainbowMarksOf({'rainbow_marks': jsonDecode(text)});
+
+/// 共有ファイル（`{format: database-rainbow, marks}`）の印。形が違えば null。
+Map<String, RainbowMark>? sharedRainbowMarks(String shared) {
+  Object? doc;
+  try {
+    doc = jsonDecode(shared);
+  } on FormatException {
+    return null;
+  }
+  if (doc is! Map ||
+      doc['format'] != 'database-rainbow' ||
+      doc['marks'] is! List) {
+    return null;
+  }
+  return rainbowMarksOf({'rainbow_marks': doc['marks']});
 }
 
 String? _later(String? a, String? b) {
