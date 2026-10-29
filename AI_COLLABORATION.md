@@ -4355,3 +4355,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
   - 旧本文の文字列そのもの（365日でUTF-16約207MiB）は残る。実Safariで完走するかは未確認。
 - 未対応：レビューの指摘4（時刻のミリ秒比較）・指摘5（明示削除と空の完成日の優先規則）、確定前の失敗で残る本文の整理、独立した🌈の印の引継ぎ、画面の切替。製品画面は新しいストアをまだ呼ばない。Web公開・Google更新・APKはしていない。
 - 全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-dsfix23`、単独）**ALL PASSED**（84段）：PC tests 489件・PC直下231件・UTC 27件、Flutter 750件、analyze エラー・警告0・info 28件、JS 75ファイル全成功（日別ストア20件を含む）。`c6f9149` は文書だけなので、この結果はそのまま有効。
+- **CI完了・全3ジョブ成功**：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40911132340 、対象 `8f5121dba0d6a2db8e637fabb1c66f05f8fe24ba`（本修正、`python tools/push_ci.py` で日本時間10/30 01:23にdatabase-ciへ1回push、`c6f9149..8f5121d`）。full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) すべて成功。再実行なし。
