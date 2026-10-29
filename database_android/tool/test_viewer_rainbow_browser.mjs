@@ -127,7 +127,7 @@ try {
   });
   const largeStart=posts.length;
   await page.getByRole('button',{name:'🌈 付ける',exact:true}).click();
-  await page.getByText(/5,000件を超える🌈の共有にはGoogleスクリプトの更新/).waitFor();
+  await page.getByText(/5,000件を超える🌈の共有にはGoogleスクリプトの更新/).last().waitFor();
   assert.equal(posts.length,largeStart,'旧Googleへ大量の分割送信をしない');
   assert.equal((await stored()).rainbow_marks.length,5003,'端末には全件残る');
   batchSupported=true;
