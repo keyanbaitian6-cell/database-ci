@@ -4183,3 +4183,47 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 更新用として案内したのは照合版 **deae592f690c** の個別TXT2本。実Googleのコード本文・デプロイ版・診断応答をAIが直接取得して照合したわけではない。実反映の根拠は今回の利用者報告で、実iPhoneでの付け外し・複数端末間の共有成功・実ファイルの件数までAIが確認したとは扱わない。
 - Web公開は前述のdatabase-viewer **f132484** とdatabase-share **ffa759d** のまま完了済み。今回の報告のために再公開、同期関数の追加実行、トリガーの作り直し、試験・ビルドの再実行は行っていない。既存ページは再読み込みして利用できる。自動同期用2本を今回新たに更新したとの報告ではなく、10/26の4本更新・両同期成功の過去記録も保持する。
 - ソース5b7cff8に対するCI **40858073885** は本確認時点でin_progressのまま。Googleのデプロイ完了とCIの成否を混同せず、再実行していない。本追記は両mainを取得・確認してから共有記録だけに追加し、月後半のdatabase-ciへ文書コミットとして反映する。
+
+## 【日別保存ストア・旧本文からの移行基盤の実装と合成検証（画面切替なし）】2026-10-29 Codex
+
+### 依頼・基準・参照した資料
+
+- 利用者の依頼は閲覧ページのデータ増加に備えた段階2（日別保存・範囲読込・旧本文の照合移行・中断再開・60/180/365日測定）。画面への一斉切替、実データへの移行実行、Web公開、Google更新、APK作成は明示的に対象外。
+- 開始時の手元は正本 `e8d2fa069f637661b94917c6b4da2df2937c395a`、未コミット変更なし。正本とdatabase-ciのmainを取得・比較し、database-ci **`05405ab1b8ed08f7bae9d292bc216b4b8f30fb09`** へfast-forwardして実装。正本のみ0コミット、CI側のみ166コミットで、後者が前者を含む。相手AIの履歴・共有記録を保持。取得オブジェクトはGitのSHA照合と `git fsck --connectivity-only --no-dangling` で検査した。終了前の再確認でも両先端は同じだった。
+- 通常のGitは最初にプロキシ接続制約、その後に非公開CIリポジトリの認証で失敗。ネットワークを使用できる実行条件で正本はfetchできたが、CIはGit認証不可。既存 `gh api` 認証とGitHub接続ツールでは両mainを読めた。秘密値は読み出さず、Git Database APIで不足オブジェクトを取得・SHAを一致させて同じ履歴を取得した。正本の古いコードだけで実装していない。
+- 読んだもの：ルートと `database_android/AGENTS.md`、本記録のAstra設計検討・🌈保存保護と分割送信・Web公開・Google対応確認とデプロイ完了、`VIEWER_MEMORY_MIGRATION.md`、`RAINBOW.md`、関連する保存・通信・Flutterモデル/採点/候補/推移/低稼働・共有ページ・試験。元の **`Astra設計検討報告書.md` はリポジトリ、今回の `/workspace/outputs`、library-files、shared に見つからず**、本記録の要約（元資料60,137バイト・SHA先頭7dd66483833f3e11という出典）を参照した。原本を全文再読したとは扱わない。
+- Google閲覧用2本は直前の利用者報告によりデプロイ完了済み。古い「貼替待ち」へ戻さない。案内済み版deae592f690cをAIが実Googleから照合したのではない。公開済みWebはdatabase-viewer f132484 / database-share ffa759dのまま。前回ソース5b7cff8のCI **40858073885はcompleted/success** と今回APIで確認した（https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40858073885）。これは今回のソースの試験結果ではない。
+
+### 変更・確定条件・保持した仕様
+
+- 生成元 `database_android/tool/viewer_day_store.js` を追加し、`build_viewer_parts.mjs` から閲覧・共有両方の `viewer_parts.mjs` に組み込む。公開API `createViewerDayStore` の `inspect` / `readRange` / `streamRange` / `writeDays` / `readMetadata` / `migrateLegacy` / `syncParts` を追加。**既存の製品画面からは呼ばない**。
+- 既存の日別通信の形式・SHA-256・JSON正規化・一覧/部品検査・8部品バッチ・詳細線の参照を再利用する。旧 `vpCache.get` は全日本文を集めるため範囲読込の内部では使わない。旧DBをアップグレードせず、新DB `database-viewer-days-v1` で本文と索引を分離。本文は日・店舗ごとの不変hash参照。
+- 保存した本文を読み戻し検証した後、開始時の索引と現在の索引の完全一致をreadwriteトランザクション内で確認し、索引・版・移行受領をまとめて確定する。容量不足、write失敗、abort、通信失敗、並行接続の先行確定は旧索引を保持。索引にもSHA-256を付け破損を検出。読み始めた範囲は不変本文への参照を固定し、他タブ更新で版を混ぜない。
+- v2一覧で変わった日だけ取得・保存し、結果として全期間のrecordsを作らない。同じ日の同じ店舗本文も再書込しない。更新なしは本文の読取・書込・通信なし。指定日・店舗の読込で範囲外本文のgetが無いことを実IndexedDB要求の監視で確認。Google対象期間外は保持。明示削除・完成した空の日・未取得・欠損・破損・通信失敗を区別する。
+- 移行は旧本文の全体をJSON.parseせず、台1件ずつ検査して日別の文字位置を控え、日ごとに保存する。全期間の解析済み詳細線を同時に作らない。旧本文自体とUTF-8ハッシュ入力は全期間分必要で、移行時の山は残る。本文の指紋・移行版・全日数/件数・日別キー/全内容のhash/件数/移行時本文参照を保存。再開時は確定済みの日も照合し、全日完了後だけcompleteにする。旧本文の削除APIは無い。移行中は新通常更新を拒否し旧経路を利用できる。旧本文が変わった場合は停止し、別の一貫した移行先を必要とする。
+- 🌈を外した印、イベントの名前nullによる解除、record_deletions、更新時刻、未知のJSON項目を保持。旧本文の見出しは独立したlegacy本文としてそのまま残す。Google補助情報はparts本文として時刻優先で累積し、期間外で省略された情報を落とさない。独立した端末内の印は既存保存先のまま。今回のGoogle保存保護・分割送信・対応確認は変更しない。
+- 採点v12、候補の方式・期間、差枚、営業日、評価締切、詳細線の遅延取得は未変更。`VIEWER_DAY_STORE.md` に、表示日だけでは足りない前30日の採点比較、通常候補30暦日/10記録日、幸町ノーマルの60日、台推移の7記録日と各日の採点入力、店舗記録日の欠落で打ち切る入替/低稼働、長期の最終🌈等の依存を整理した。範囲を絞った全画面の同値性を確認済みとはしていない。
+- 生成した照合版は **7a22f7731058**。Google4本の差分は照合版の文字だけで、Googleの動作・設定・公開済みデプロイを更新する必要はない。今回Google更新は行っていない。
+
+### 再発試験・全体ゲート
+
+- `database_android/tool/test_viewer_day_store.mjs` を通常の `test_*.mjs` 配置へ追加。合成データと実Chromium IndexedDBで**16件成功**。60/180/365日の再開と7日/1店舗読込、同一キー全項目/件数/見出し照合、更新なし、1日更新、期間外保持、空/削除/未取得、破損本文/索引/欠損、元本文変更、重複、整形JSON、P’s CUBE、並行接続、2タブでの保存参照、abort/容量不足、途中通信失敗と再実行、終了要求、移行後通常更新の巻戻し防止を確認。
+- 初回試験で、正規化JSONのオブジェクト項目順を文字列で比較していた試験と、空日の模擬一覧に範囲外のcurve_partsを残した試験が失敗。比較を項目順に依存しない内容照合にし、模擬一覧の範囲を正しく直した。2タブ試験ではPlaywrightの単一ページ専用contextの制限を踏んだため、明示的なbrowser contextへ修正。v1試験もv2専用curve_partsを除いた正しいv1一覧に直した。製品の検査を弱めて成功扱いにはしていない。
+- 実行：`source /workspace/.cloud-setup/env.sh` → `bash /workspace/.cloud-setup/start.sh` → `node --test database_android/tool/test_viewer_day_store.mjs`。初期のXvfb起動はソケット制約で失敗したが、ネットワーク/ローカルソケットが利用可能な実行条件で起動確認を完了してからゲートを実行。
+- `CHECK_BUILD_WORK=/workspace/database/work/day-store-gate CHECK_JS_JOBS=2 bash database_android/tool/check_before_build.sh` は **ALL PASSED**。PC tests489件＋PC直下231件＋UTC27件＝747件、Flutter750件。analyzeはエラー/警告0・既存info28件。今回のソースから検証用Webをビルド・stageし、閲覧/共有の画面試験を含むJS全75ファイル成功、**425件中424成功・任意保存例1件スキップ**（PSCUBE_ARCHIVE_DIR未指定、実サイト確認の代用にしない）。ソースの公開・APK作成はしていない。
+- 工程時間：PC22/10/0秒、Flutter試験174秒、analyze4秒、検証用viewer build44秒、JS316秒（2本並行）。生ログは作業領域 `work/day-store-gate.log` / `work/day-store-gate/`。作業領域はコミットせず、再現スクリプト・仕様・測定結果をGitHubへ残す。
+
+### 残る山・次の切替手順
+
+- **今回実装・確認したのは保存・移行の基盤**。既存の rememberViewerHistory / fetchViewerParts / readViewerHistory / ViewerData.prepareMerge が全期間を集め直す製品経路は残る。Workerは使用していない。Flutterモデル化、CanvasKit、Safariの上限、実機移行、Googleの実応答、製品の全経路を通したピーク削減は今回未確認。
+- 補助情報（印・イベント・削除・候補等）の見出しはまだ一括。旧本文・旧キャッシュ・不変本文の旧版・未参照の途中本文を自動回収しないため、移行時の追加容量と長期の旧版保存量にも残課題がある。削除や保存期間短縮で隠さない。
+- 次のAIは `VIEWER_DAY_STORE.md` / `VIEWER_DAY_STORE_MEASUREMENTS.md` を読み、①読取専用の保存診断、②一貫した旧本文スナップショットと独立印の引継ぎ、③日・店舗の小さな索引を画面へ渡す橋渡し、④一画面ずつの新旧結果照合、⑤採点/候補/入替/週表の入力範囲と集計の同値化、⑥巨大JSONをDartへ渡さない経路への切替、の順で進める。実データ移行や公開は今回の権限に含めない。表示対象が変わる場合はAGENTS.mdの画面確認規則に従う。
+
+### 合成測定の結果・再現方法
+
+- `database_android/tool/viewer_day_store_fixture.mjs` と `measure_viewer_day_store.mjs` を追加。再現は `node database_android/tool/measure_viewer_day_store.mjs work/day-measure.json`（個別は末尾に `365` 等）。最終コード・全体ゲート終了後に独立実行し、**60/180/365日×11条件＝33条件が完走**。合成770件/日、2店舗、1日2通信部品。46,200/138,600/281,050件、部品本文約24.0/72.0/145.9MiB。詳細は `VIEWER_DAY_STORE_MEASUREMENTS.md`、生値は `research/viewer_day_store_20261029/measurements.json`。
+- 初回移行・半分から再開・再実行全日照合・現行rememberViewerHistoryの旧本文引継ぎと、新旧の部品初回/更新なし/1日更新、新APIの7日1店舗読込を測った。Node24.19.0、Chromium154.0.8037.57、Linux、CPU割当3。各条件1回、ヒープとrenderer群RSSを10ms観測。同期処理の短い山の取り逃し、外部化された文字列/ネイティブ領域、GC/圧縮/OS差があり、真の最大値やSafari限界とはしない。
+- **通常利用の基盤**：全期間で更新なしは本文get/put/通信0。1日更新は当該日の2部品を1要求、本文get3（補助見出し＋新規本文の読み戻し）、put2（変わった店舗と見出し）、過去全日の本文を読まない。7日1店舗はどの保存期間でもget7・2,695件。365日の7日読込は29ms・ヒープ観測最大11.1MiB、1日更新49ms・30.2MiB。
+- **移行の山**：365日初回移行16,564ms・ヒープ観測最大870.9MiB・renderer RSS最大約1,291.0MiB。旧本文・ハッシュ用UTF-8・位置一覧を保持するため山は残る。再開13,526ms・313.1MiB、再実行照合10,272ms・308.8MiB。実Safariでの完走は未確認。旧本文を消して山を隠したり、実データへこの移行を走らせたりしていない。
+- **製品の現行経路に残る山**：365日で更新なしでも365日本文を読み28万1,050件を再構成、1,774ms・ヒープ観測最大646.9MiB。1日更新でも365日本文を読み、1,842ms・712.9MiB。この模擬にはFlutterのprepareMerge/モデル化/描画を含めない。新API未接続の製品が改善済みとは扱わない。新APIの初回保存は検査・日ごとの書込に時間がかかる（365日10,581ms、ヒープ114.7MiB）。
+- ソースのmain反映は日本時間10/29・月後半のdatabase-ciのみ。標準の `python tools/push_ci.py` を使い、通常Gitの認証不可の場合は既存API認証への通信変換を作業領域で行う。スクリプトの期間判定・両mainの祖先確認・差分提示は維持し、GitオブジェクトのSHA一致と更新直前のmainを再検査、force:falseで1回だけ送る。公開物・Google・APKへの反映とは区別する。実際の反映コミット/CI URLは確定後の追記に記録する。
