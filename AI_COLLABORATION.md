@@ -4227,3 +4227,10 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - **移行の山**：365日初回移行16,564ms・ヒープ観測最大870.9MiB・renderer RSS最大約1,291.0MiB。旧本文・ハッシュ用UTF-8・位置一覧を保持するため山は残る。再開13,526ms・313.1MiB、再実行照合10,272ms・308.8MiB。実Safariでの完走は未確認。旧本文を消して山を隠したり、実データへこの移行を走らせたりしていない。
 - **製品の現行経路に残る山**：365日で更新なしでも365日本文を読み28万1,050件を再構成、1,774ms・ヒープ観測最大646.9MiB。1日更新でも365日本文を読み、1,842ms・712.9MiB。この模擬にはFlutterのprepareMerge/モデル化/描画を含めない。新API未接続の製品が改善済みとは扱わない。新APIの初回保存は検査・日ごとの書込に時間がかかる（365日10,581ms、ヒープ114.7MiB）。
 - ソースのmain反映は日本時間10/29・月後半のdatabase-ciのみ。標準の `python tools/push_ci.py` を使い、通常Gitの認証不可の場合は既存API認証への通信変換を作業領域で行う。スクリプトの期間判定・両mainの祖先確認・差分提示は維持し、GitオブジェクトのSHA一致と更新直前のmainを再検査、force:falseで1回だけ送る。公開物・Google・APKへの反映とは区別する。実際の反映コミット/CI URLは確定後の追記に記録する。
+
+### GitHub反映の確定
+
+- 実装コミット **`81a7de20efd6fc1381ee34575760f9a1bcb32452`**（21ファイル）を日本時間2026-10-29 20:44に **`keyanbaitian6-cell/database-ci/main`** へ反映し、APIでmainのSHA一致を確認した。正本mainへのpushはしていない。
+- `python tools/push_ci.py --dry-run` の通常Git認証は失敗。作業領域のAPI通信変換を `PATH` に加え、同じ `tools/push_ci.py --dry-run` が両mainの祖先・期間・21ファイル/CI1回を確認して成功。その後 `PATH=/workspace/database/work/api-git:$PATH python tools/push_ci.py` を1回実行。既存gh認証で29個のGitオブジェクトのSHAを照合し、直前のmainを確認してforce:falseで更新した。スクリプト本体・月前半/後半ルール・CI構成は変更していない。通信変換のFETCH_HEAD書込を調整した確認モードの失敗ではmain更新は発生していない。
+- 今回ソースのCIは **40867757181**、対象SHAは上記81a7de2、確認時点は **in_progress**（https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40867757181）。成功済みと扱わず、前回5b7cff8の成功とも混同しない。再実行はしていない。ローカルの全体ゲートALL PASSEDは今回ソースに対する確認。
+- この反映確認の追記だけを文書コミットとして同じ期間内mainへ送る。文書のみのためCIを追加起動しない。公開Web・Googleデプロイ・同期・APKは今回未変更。今回の生成GSの版文字だけを理由に、利用者へ再デプロイを求めない。
