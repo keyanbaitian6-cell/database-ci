@@ -853,3 +853,23 @@ export function characterBirthdayCellLabel(names) {
   const more = names.length > 2 ? ` ほか${names.length - 2}名` : '';
   return `🎂 ${names.slice(0, 2).join('・')}${more}`;
 }
+
+// 旧Googleスクリプトの1回5,000件制限を守り、失敗時は以降を送らない。
+// 呼び出し元は端末の印を保持し、次の操作で再送する（部分成功も同じ時刻で安全に再送）。
+export async function sendRainbowBatches(marks, post) {
+  for (let start = 0; start < marks.length; start += 5000) {
+    const result = await post({file: 'rainbow', marks: marks.slice(start, start + 5000)});
+    if (result?.ok !== true) return result ?? {error: '返事が読めません'};
+  }
+  return {ok: true};
+}
+
+// 独立保存の印は、一部でも読めなければ書き込みを止める。表示用の寛容な統合とは分ける。
+export function storedRainbowMarks(text) {
+  if (text === null) return [];
+  const marks = JSON.parse(text);
+  if (!Array.isArray(marks) || marks.some(m => !validMark(m))) {
+    throw new Error('保存済みの🌈を確認できません。');
+  }
+  return mergeMarks([], marks);
+}

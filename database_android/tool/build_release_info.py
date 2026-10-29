@@ -8,10 +8,11 @@ paths=[]
 for directory in ['database','database_android/lib','database_android/web','database_android/tool','share_viewer']:
     for p in (ROOT/directory).rglob('*'):
         name=p.relative_to(ROOT).as_posix()
-        if p.is_file() and not p.name.startswith('test_') and not any(part in ('test','tests') for part in p.relative_to(ROOT).parts) and p.suffix in {'.py','.dart','.js','.mjs','.html'} and name not in EXCLUDED and not any(part.startswith('.') or part=='__pycache__' for part in p.relative_to(ROOT).parts): paths.append(p)
+        if p.is_file() and not p.name.startswith('test_') and not any(part in ('test','tests') for part in p.relative_to(ROOT).parts) and p.suffix in {'.py','.dart','.js','.mjs','.html','.gs'} and name not in EXCLUDED and not any(part.startswith('.') or part=='__pycache__' for part in p.relative_to(ROOT).parts): paths.append(p)
 h=hashlib.sha256()
 for p in sorted(set(paths)):
     text=p.read_text(encoding='utf-8').replace('\r\n','\n')
+    if p.suffix == '.gs': text=text.split('\n// BEGIN GENERATED VIEWER PARTS\n')[0]
     text=re.sub(r"(?:export )?const (?:APPLICATION_RELEASE|SCRIPT_RELEASE) = '[a-f0-9]{12}';\n",'',text)
     h.update(p.relative_to(ROOT).as_posix().encode()+b'\0'+text.encode()+b'\0')
 version=h.hexdigest()[:12]

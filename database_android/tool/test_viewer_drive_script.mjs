@@ -7,7 +7,7 @@ import vm from 'node:vm';
 
 const source = await fs.readFile(new URL('./viewer_drive_script.gs', import.meta.url), 'utf8');
 
-function drive(properties = {}) {
+function drive(properties = {}, code = source) {
   const files = [];
   const folder = (name) => ({
     name,
@@ -51,7 +51,7 @@ function drive(properties = {}) {
     JSON, Date, Object, Array, isNaN,
   };
   vm.createContext(context);
-  vm.runInContext(source, context);
+  vm.runInContext(code, context);
   const post = (body) => JSON.parse(context.doPost({postData: {contents: JSON.stringify(body)}}).body);
   const get = (file) => JSON.parse(context.doGet({parameter: {file}}).body);
   return {files, post, get, locks, shared, root};
@@ -186,4 +186,60 @@ test('Android日別送信は古い版・同時刻で異なる内容を拒み、�
   const conflict=structuredClone(newest);conflict.backup.records[0].games=1000;
   assert.match(d.post(conflict).error,/同じ版/);
   assert.equal(JSON.parse(d.files.find(f=>f.name==='pscube-day-android-2026-10-26.json').text).records[0].games,3000);
+});
+
+// Astraの指摘：要求の上限を保存全体にも使うと、5,001件目の次の送信で全履歴を失う。
+for (const name of ['viewer_drive_script.gs', 'viewer_drive_script_readonly.gs']) {
+  const code = await fs.readFile(new URL('./' + name, import.meta.url), 'utf8');
+  const markAt = rack => ({store:'saiwaichou', day:'2026-10-28', rack, on:true, updated_at:'2026-10-29T00:00:00Z'});
+  test(name + ': 5,000件を超える統合・再送でも全件と外した印を保持する', () => {
+    const d = drive({}, code);
+    assert.equal(d.post({file:'rainbow', marks:Array.from({length:5000}, (_, i) => markAt(i + 1))}).ok, true);
+    assert.equal(d.post({file:'rainbow', marks:[markAt(5001)]}).marks, 5001);
+    const off = {...markAt(1), on:false, updated_at:'2026-10-29T01:00:00Z'};
+    assert.equal(d.post({file:'rainbow', marks:[markAt(5002), off]}).marks, 5002);
+    assert.equal(d.post({file:'rainbow', marks:[off]}).changed, 0);
+    assert.equal(d.get('rainbow').marks.find(m => m.rack === 1).on, false);
+    assert.match(d.post({file:'rainbow', marks:Array.from({length:5001}, (_, i) => markAt(i + 1))}).error, /形式/);
+    assert.equal(d.get('rainbow').marks.length, 5002);
+  });
+  test(name + ': 壊れた既存ファイル・形式違い・不正な1件を上書きせずロックを解放する', () => {
+    for (const text of ['{broken', 'null', '{}', JSON.stringify({format:'wrong',version:1,marks:[]}),
+      JSON.stringify({format:'database-rainbow',version:2,marks:[]}),
+      JSON.stringify({format:'database-rainbow',version:1,marks:[markAt(1), {...markAt(2), on:'yes'}]})]) {
+      const d = drive({}, code);d.post({file:'rainbow',marks:[markAt(1)]});
+      const file=d.files.find(f=>f.name==='database-rainbow-shared.json');file.text=text;const at=file.updated;
+      assert.match(d.post({file:'rainbow',marks:[markAt(3)]}).error,/保存済み/);
+      assert.equal(file.text,text);assert.equal(file.updated,at);
+      assert.deepEqual(d.locks.slice(-2),['lock','release']);
+    }
+  });
+  test(name + ': 保存総数の上限を超えたら削らず元のファイルを残す', () => {
+    // 本番10万件の境界を小さくして同じ分岐を検証する。
+    const d=drive({}, code.replace('const RAINBOW_STORED_MAX = 100000;', 'const RAINBOW_STORED_MAX = 2;'));
+    d.post({file:'rainbow',marks:[markAt(1),markAt(2)]});
+    const file=d.files.find(f=>f.name==='database-rainbow-shared.json');const before=file.text;
+    assert.match(d.post({file:'rainbow',marks:[markAt(3)]}).error,/上限/);
+    assert.equal(file.text,before);assert.equal(d.get('rainbow').marks.length,2);
+  });
+}
+
+test('共有イベント：既存ファイルが不正なら変更しない（メルヘン・P’s CUBE）',()=>{
+  for(const key of ['events','pscube-events']) {
+    const event={store:key==='events'?'saiwaichou':'c740601',day:'2026-10-28',name:'周年',updated_at:'2026-10-29T00:00:00Z',...(key==='events'?{}:{rate:'20'})};
+    for(const broken of ['{broken','null',JSON.stringify({format:'database-events',version:1,kind:'wrong',events:[]})]) {
+      const d=drive();assert.equal(d.post({file:key,events:[event]}).ok,true);
+      const file=d.files.find(f=>f.name===(key==='events'?'database-events-shared.json':'pscube-events-shared.json'));
+      file.text=broken;assert.match(d.post({file:key,events:[event]}).error,/保存済み/);assert.equal(file.text,broken);
+      assert.deepEqual(d.locks.slice(-2),['lock','release']);
+    }
+  }
+});
+
+test('共有イベント：要求上限を超えて保存済みでも消さずに統合する',()=>{
+  const d=drive();
+  const events=Array.from({length:5000},(_,i)=>({store:'s'+i,day:'2026-10-28',name:'周年',updated_at:'2026-10-29T00:00:00Z'}));
+  assert.equal(d.post({file:'events',events}).events,5000);
+  assert.equal(d.post({file:'events',events:[{...events[0],store:'next'}]}).events,5001);
+  assert.equal(d.post({file:'events',events:[{...events[0],store:'last'}]}).events,5002);
 });

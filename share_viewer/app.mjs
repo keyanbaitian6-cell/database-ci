@@ -14,7 +14,7 @@ import {
   MERUHEN_STORES, calendarDay, compactSigned, dayNet, daySummaries, daySummary, displayMachineName, eventLabel, indexRecords, lowGamesNote,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel, TOP_RACKS_OPEN, viewerNameFrom, winRateText,
   IDLE_DAY_CHOICES, IDLE_DEFAULT_DAYS, IDLE_DEFAULT_GAMES, IDLE_GAMES_CHOICES, idleVarietyRacks, storeDays,
-  RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
+  storedRainbowMarks, sendRainbowBatches, RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
   RAINBOW_COUNT_DAYS, applyRainbowMarks, markTime, mergeMarks, varietyRecordRows,
   ROTATION_DAYS, byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
   SUFFIX_PERIODS, hasSuffixSummary, suffixesOf, zoromeEndingsOf, suffixLabel, suffixReport,
@@ -895,9 +895,16 @@ async function toggleRainbow(key) {
     ? rainbowTodayRows(state.model.byDay, state.model.marks, s, day).rows.find(x => x.rack === rack)?.marker : null;
   const r = actual ?? pending;
   if (!r) return;
-  const old = localMarks().find(m => m.store === s && m.day === day && m.rack === rack);
+  let saved;
+  try {
+    saved = storedRainbowMarks(localStorage.getItem(MARKS_KEY));
+  } catch {
+    toast('保存済みの🌈を確認できません。元の内容を保持して操作を止めました。');
+    return;
+  }
+  const old = saved.find(m => m.store === s && m.day === day && m.rack === rack);
   const mark = {store: s, day, rack, on: !r.rainbow, updated_at: markTime(Date.now(), r.rainbowAt, old?.updated_at)};
-  const marks = mergeMarks(localMarks(), [mark]);
+  const marks = mergeMarks(saved, [mark]);
   try {
     localStorage.setItem(MARKS_KEY, JSON.stringify(marks));
   } catch {
@@ -909,11 +916,14 @@ async function toggleRainbow(key) {
   state.model.marks = mergeMarks(state.model.marks, [mark]);
   const done = mark.on ? `${rack}番台に${RAINBOW}を付けました。` : `${rack}番台の${RAINBOW}を外しました。`;
   try {
-    const response = await fetch(`https://script.google.com/macros/s/${state.id}/exec`, {
-      method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, credentials: 'omit',
-      body: JSON.stringify({file: 'rainbow', marks}),
+    const result = await sendRainbowBatches(marks, async body => {
+      const response = await fetch(`https://script.google.com/macros/s/${state.id}/exec`, {
+        method: 'POST', headers: {'Content-Type': 'text/plain;charset=utf-8'}, credentials: 'omit',
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(`共有先の応答：${response.status}`);
+      return response.json();
     });
-    const result = await response.json();
     toast(result.ok ? `${done}共有しました。` : `${done}（この端末には残しました。共有には送れませんでした：${result.error ?? '返事が読めません'}）`);
   } catch (error) {
     toast(`${done}（この端末には残しました。共有には送れませんでした。次に付け外しするときにまた送ります）`);

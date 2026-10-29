@@ -505,3 +505,26 @@ test('その日のまとめ：0回転の台と500回転未満の台の数（2026
   assert.equal(lowGamesNote([10].map(g)), '（1台が500回転未満）');
   assert.equal(lowGamesNote([500, 1000].map(g)), '', 'どちらも無ければ何も出さない');
 });
+
+
+test('🌈の分割送信：5,001件以上を保持し、失敗で停止して再送できる', async () => {
+  const {sendRainbowBatches}=await import('../../share_viewer/data.mjs');
+  const marks=Array.from({length:10001},(_,i)=>({rack:i+1,on:i%2===0,updated_at:'2026-10-29T00:00:00Z'}));
+  const before=JSON.stringify(marks), sent=[];
+  const failed=await sendRainbowBatches(marks,async body=>{sent.push(body);return sent.length===2?{error:'合成の失敗'}:{ok:true};});
+  assert.equal(failed.error,'合成の失敗');assert.deepEqual(sent.map(b=>b.marks.length),[5000,5000]);
+  const retry=[];assert.equal((await sendRainbowBatches(marks,async body=>{retry.push(body);return {ok:true};})).ok,true);
+  assert.deepEqual(retry.map(b=>b.marks.length),[5000,5000,1]);
+  assert.deepEqual(retry.flatMap(b=>b.marks),marks);assert.equal(JSON.stringify(marks),before);
+  await assert.rejects(sendRainbowBatches(marks,async()=>{throw Error('通信失敗');}),/通信失敗/);
+});
+
+
+test('🌈の独立保存：不正な1件も捨てずに停止し、重複は新しい方を残す', async () => {
+  const {storedRainbowMarks}=await import('../../share_viewer/data.mjs');
+  const old={store:'saiwaichou',day:'2026-10-28',rack:1,on:true,updated_at:'2026-10-29T00:00:00Z'};
+  const newer={...old,on:false,updated_at:'2026-10-29T01:00:00Z'};
+  for(const text of ['null','{}','[null]',JSON.stringify([old,{bad:true}])]) assert.throws(()=>storedRainbowMarks(text));
+  assert.deepEqual(storedRainbowMarks(null),[]);
+  assert.deepEqual(storedRainbowMarks(JSON.stringify([newer,old])),[newer]);
+});

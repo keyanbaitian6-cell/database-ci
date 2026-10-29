@@ -264,9 +264,23 @@ RainbowMark nextRainbowMark(
 String rainbowMarksText(Map<String, RainbowMark> marks) =>
     jsonEncode(_json(marks));
 
-/// [rainbowMarksText] の文字から印を読む。無い・読めない値は飛ばす。配列でなければ例外。
-Map<String, RainbowMark> rainbowMarksFromText(String? text) =>
-    text == null ? {} : rainbowMarksOf({'rainbow_marks': jsonDecode(text)});
+/// 独立保存の印は一部でも壊れていたら止める。壊れた項目を捨てて上書きしない。
+Map<String, RainbowMark> rainbowMarksFromText(String? text) {
+  if (text == null) return {};
+  final raw = jsonDecode(text);
+  if (raw is! List) throw const FormatException('保存済みの🌈が配列ではありません。');
+  final result = <String, RainbowMark>{};
+  for (final item in raw) {
+    final mark = RainbowMark.tryFromJson(item);
+    if (mark == null) throw const FormatException('保存済みの🌈に読めない印があります。');
+    final previous = result[mark.key];
+    result[mark.key] = mergeRainbowMarks(
+      previous == null ? {} : {mark.key: previous},
+      [mark],
+    ).marks[mark.key]!;
+  }
+  return result;
+}
 
 /// 共有ファイル（`{format: database-rainbow, marks}`）の印。形が違えば null。
 Map<String, RainbowMark>? sharedRainbowMarks(String shared) {
@@ -341,6 +355,23 @@ String sharedRainbowBody(String text) =>
 /// [sharedRainbowBody] と同じ中身を、読み取り済みの印から作る。
 String sharedRainbowBodyOf(Map<String, RainbowMark> marks) =>
     jsonEncode({'file': 'rainbow', 'marks': _json(marks)});
+
+/// 旧スクリプトでも受け取れる5,000件以下に分けて順に送る。
+/// 途中で失敗したら止める。端末の印は消さず、次の操作で全件を再送できる。
+Future<({bool ok, String message})> sendSharedRainbowMarks(
+  Map<String, RainbowMark> marks,
+  Future<String> Function(String body) post,
+) async {
+  final keys = marks.keys.toList()..sort();
+  for (var start = 0; start < keys.length; start += 5000) {
+    final batch = <String, RainbowMark>{
+      for (final key in keys.skip(start).take(5000)) key: marks[key]!,
+    };
+    final result = rainbowSendResult(await post(sharedRainbowBodyOf(batch)));
+    if (!result.ok) return result;
+  }
+  return (ok: true, message: '');
+}
 
 /// スクリプトの返事を、利用者への知らせにする。送れたら ok が true。古いスクリプト（🌈を足す前）は
 /// 「指定できないファイルです」と返すので、スクリプトの更新を案内する。

@@ -210,6 +210,22 @@ try {
     assert.match(await page.locator('.toast').innerText(), /日付が変わりました。表を確認してから押してください。/);
     assert.equal(await day(), '2026-10-12');
     assert.equal(posts.length, 1, '日付が変わった後の押下は送らない');
+    // 端末の履歴が5,000件を超える場合も、画面から5,000件ずつ送る。
+    await page.evaluate(() => {
+      const key='database-share-rainbow', old=JSON.parse(localStorage.getItem(key)||'[]');
+      localStorage.setItem(key,JSON.stringify([...old,...Array.from({length:5001},(_,i)=>({store:'saiwaichou',day:'2026-01-01',rack:60000+i,on:false,updated_at:'2026-10-01T00:00:00Z'}))]));
+    });
+    const batchStart=posts.length;
+    await cell(1202,'10/10','を外す').click();
+    for (let i=0;i<80 && posts.length<batchStart+2;i++) await page.waitForTimeout(100);
+    assert.deepEqual(posts.slice(batchStart).map(p=>p.marks.length),[5000,3]);
+    // 壊れた保存内容は消さず、送信もしない。
+    await page.evaluate(()=>localStorage.setItem('database-share-rainbow','[null]'));
+    const corruptStart=posts.length;
+    await cell(1202,'10/10','を付ける').click();
+    assert.match(await page.locator('.toast').last().innerText(),/元の内容を保持/);
+    assert.equal(await page.evaluate(()=>localStorage.getItem('database-share-rainbow')),'[null]');
+    assert.equal(posts.length,corruptStart);
     assert.deepEqual(errors, []);
     await context.close();
   }

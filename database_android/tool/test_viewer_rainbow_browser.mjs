@@ -116,6 +116,20 @@ try {
   for (let i = 0; i < 40 && posts.length === before; i++) await page.waitForTimeout(250);
   assert.ok(posts.slice(before).some(p => p.marks.some(m => m.rack === 1085 && m.on === false)));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no page overflow');
+  // 独立保存が5,000件を超えても、実際の画面から分割して全件を送る。
+  await page.evaluate(async () => {
+    const db=await new Promise((resolve,reject)=>{const q=indexedDB.open('database-viewer',1);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    const tx=db.transaction('kv','readwrite'), store=tx.objectStore('kv'), get=store.get('rainbow_marks');
+    get.onsuccess=()=>store.put(JSON.stringify([...JSON.parse(get.result),...Array.from({length:5001},(_,i)=>({store:'nagamachiminami',day:'2026-01-01',rack:60000+i,on:false,updated_at:'2026-10-01T00:00:00Z'}))]),'rainbow_marks');
+    await new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();
+  });
+  const largeStart=posts.length;
+  await page.getByRole('button',{name:'🌈 付ける',exact:true}).click();
+  for(let i=0;i<80 && posts.length<largeStart+2;i++) await page.waitForTimeout(100);
+  const batches=posts.slice(largeStart);
+  assert.deepEqual(batches.map(p=>p.marks.length),[5000,3]);
+  assert.equal(new Set(batches.flatMap(p=>p.marks).map(m=>`${m.store}|${m.day}|${m.rack}`)).size,5003);
+  assert.equal((await stored()).text,original,'分割送信でも本体を変更しない');
   assert.deepEqual(errors, []);
   console.log('PASS: viewer rack page 🌈 toggle saves on the device, posts {file: rainbow}, survives reload, pulls other devices\' marks');
   await context.close();

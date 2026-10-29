@@ -44,6 +44,80 @@ SlotRecord recordOf(String text, int rack) =>
     ViewerData.parse(text).records.firstWhere((r) => r.rack == rack);
 
 void main() {
+  test(
+    'separate marks reject partial corruption and keep the newest duplicate',
+    () {
+      const first = RainbowMark(
+        store: 'saiwaichou',
+        day: '2026-10-28',
+        rack: 1,
+        on: true,
+        updatedAt: '2026-10-29T00:00:00Z',
+      );
+      const newer = RainbowMark(
+        store: 'saiwaichou',
+        day: '2026-10-28',
+        rack: 1,
+        on: false,
+        updatedAt: '2026-10-29T01:00:00Z',
+      );
+      for (final text in [
+        'null',
+        '{}',
+        '[null]',
+        jsonEncode([
+          first.toJson(),
+          {'bad': true},
+        ]),
+      ]) {
+        expect(() => rainbowMarksFromText(text), throwsFormatException);
+      }
+      expect(rainbowMarksFromText(null), isEmpty);
+      expect(
+        rainbowMarksFromText(
+          jsonEncode([newer.toJson(), first.toJson()]),
+        )[first.key]!.on,
+        false,
+      );
+    },
+  );
+  test(
+    'rainbow batches retain all marks and stop on failure for a safe retry',
+    () async {
+      final marks = <String, RainbowMark>{};
+      for (var i = 1; i <= 10001; i++) {
+        final mark = RainbowMark(
+          store: 'saiwaichou',
+          day: '2026-10-28',
+          rack: i,
+          on: i.isEven,
+          updatedAt: '2026-10-29T00:00:00Z',
+        );
+        marks[mark.key] = mark;
+      }
+      final before = rainbowMarksText(marks), sent = <List>[];
+      final failed = await sendSharedRainbowMarks(marks, (body) async {
+        sent.add((jsonDecode(body) as Map)['marks'] as List);
+        return sent.length == 2 ? '{"error":"合成の失敗"}' : '{"ok":true}';
+      });
+      expect(failed.ok, false);
+      expect(sent.map((x) => x.length), [5000, 5000]);
+      sent.clear();
+      final retry = await sendSharedRainbowMarks(marks, (body) async {
+        sent.add((jsonDecode(body) as Map)['marks'] as List);
+        return '{"ok":true}';
+      });
+      expect(retry.ok, true);
+      expect(sent.map((x) => x.length), [5000, 5000, 1]);
+      expect(sent.expand((x) => x).map((x) => x['rack']).toSet().length, 10001);
+      expect(rainbowMarksText(marks), before);
+      await expectLater(
+        sendSharedRainbowMarks(marks, (_) async => throw StateError('通信失敗')),
+        throwsStateError,
+      );
+    },
+  );
+
   final now = DateTime.utc(2026, 10, 11, 13);
 
   // 2026-10-29：端末の内容はまるごと読まず、最上位の rainbow_marks だけを差し替える。まるごと読んで

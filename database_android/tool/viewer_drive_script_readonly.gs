@@ -45,7 +45,9 @@ const EVENT_FILES = {
 };
 // 🌈のファイル（自分用スクリプトと同じ。?file=rainbow で読む、POSTで足し込む）。
 const RAINBOW_FILE = { name: 'database-rainbow-shared.json', beside: 'database-viewer.json' };
+// 1回の要求と保存全体の上限を分ける。古い印・外した印も削らない。
 const RAINBOW_MAX = 5000;
+const RAINBOW_STORED_MAX = 100000;
 const EVENT_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
 
 function doGet(e) {
@@ -114,10 +116,13 @@ function postRainbow(marks) {
     let current = [];
     if (file) {
       try {
-        current = validMarks(JSON.parse(file.getBlob().getDataAsString('UTF-8')).marks) || [];
+        const saved = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
+        current = saved && saved.format === 'database-rainbow' && saved.version === 1
+          ? validMarks(saved.marks, Infinity) : null;
       } catch (_) {
-        current = [];
+        current = null;
       }
+      if (!current) return respond(JSON.stringify({error: '保存済みの🌈を確認できません。元のファイルを保持して送信を止めました。'}));
     }
     const marksByKey = {};
     for (const m of current) marksByKey[markKey(m)] = m;
@@ -131,6 +136,7 @@ function postRainbow(marks) {
     }
     const merged = Object.keys(marksByKey).sort().map(k => marksByKey[k]);
     if (changed === 0 && file) return respond(JSON.stringify({ ok: true, marks: merged.length, changed: 0 }));
+    if (merged.length > RAINBOW_STORED_MAX) return respond(JSON.stringify({error: '共有の🌈が保存上限に達しました。元のファイルと端末の印を保持しています。'}));
     const text = JSON.stringify(rainbowDocument(merged));
     if (file) file.setContent(text);
     else folderBeside(RAINBOW_FILE.beside).createFile(RAINBOW_FILE.name, text, 'application/json');
@@ -148,8 +154,8 @@ function markKey(m) {
   return m.store + '|' + m.day + '|' + ('00000' + m.rack).slice(-5);
 }
 
-function validMarks(marks) {
-  if (!Array.isArray(marks) || marks.length > RAINBOW_MAX) return null;
+function validMarks(marks, max = RAINBOW_MAX) {
+  if (!Array.isArray(marks) || marks.length > max) return null;
   const result = [];
   for (const m of marks) {
     if (!m || typeof m !== 'object') return null;
@@ -540,7 +546,7 @@ function postEventHistory(cells=[],recommendations=[],results=[]) {
 
 // END EVENT_HISTORY_SHARED
 // BEGIN GENERATED VIEWER PARTS
-const SCRIPT_RELEASE = 'ffe8aa28f95b';
+const SCRIPT_RELEASE = '87b4b6bd4e83';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

@@ -325,8 +325,9 @@ class _ViewerHomeState extends State<ViewerHome> {
       return next;
     }
     try {
-      final result = rainbowSendResult(
-        await postSharedEvents(url, sharedRainbowBodyOf(marks)),
+      final result = await sendSharedRainbowMarks(
+        marks,
+        (body) => postSharedEvents(url, body),
       );
       _say(
         result.ok
