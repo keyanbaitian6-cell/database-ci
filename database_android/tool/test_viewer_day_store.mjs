@@ -146,6 +146,37 @@ test('欠損・破損・移行元変更・重複キーを空と扱わない', as
   assert.equal(r.status, 'running');
 });
 
+// 2026-10-29 レビュー指摘1：途中の日の検査で落ちると running が確定済みのまま残り、再実行も通常更新もできなかった。
+test('検査で落ちる旧本文は何も確定せず、未完了の移行は捨てて別の旧本文で始め直せる', async () => {
+  const r = await run(async () => {
+    const s = module.createViewerDayStore({dbName: 'abandon'}), days = [], errors = [];
+    for (let i = 0; i < 3; i++) days.push(rowsAt(i, 4));
+    days[2].push({...days[2][0]}); // 3日目にだけ同じキー
+    try { await s.migrateLegacy(key, {text: JSON.stringify({...header, records: days.flat()}), site: 'meruhen'}); } catch (e) { errors.push(e.code); }
+    const afterBad = await s.inspect(key);
+    const partial = await s.migrateLegacy(key, {text: legacyText(3, 4), site: 'meruhen', maxDays: 1});
+    const other = JSON.stringify({...header, exported_at: '2026-01-09T00:00:00Z', records: days.flat().slice(0, -1)});
+    try { await s.migrateLegacy(key, {text: other, site: 'meruhen'}); } catch (e) { errors.push(e.code); }
+    const abandoned = await s.abandonMigration(key);
+    const gone = (await s.readRange(key, {days: [dayAt(0)]}))[0].state;
+    const done = await s.migrateLegacy(key, {text: other, site: 'meruhen'});
+    try { await s.abandonMigration(key); } catch (e) { errors.push(e.code); }
+    try { await module.createViewerDayStore({dbName: 'abandon-none'}).abandonMigration(key); } catch (e) { errors.push(e.code); }
+    return {errors, afterBad: {revision: afterBad.revision, migration: afterBad.migration ?? null},
+      partialRevision: partial.revision, partial: partial.migration.status,
+      abandoned: {revision: abandoned.revision, migration: abandoned.migration ?? null, days: Object.keys(abandoned.days).length,
+        metadata: Object.keys(abandoned.metadata).length, prior: abandoned.abandonedMigration.days},
+      gone, done: done.migration.status, total: done.migration.totalRecords,
+      afterDone: (await s.readRange(key, {from: dayAt(0), to: dayAt(2)})).reduce((n, d) => n + d.records.length, 0)};
+  });
+  assert.deepEqual(r.errors, ['corrupt', 'source-changed', 'migration-complete', 'no-migration']);
+  assert.deepEqual(r.afterBad, {revision: 0, migration: null}, '検査で落ちる旧本文では running を確定しない');
+  assert.equal(r.partial, 'running');
+  assert.deepEqual(r.abandoned, {revision: r.partialRevision + 1, migration: null, days: 0, metadata: 0, prior: 1});
+  assert.equal(r.gone, 'unfetched');
+  assert.equal(r.done, 'complete'); assert.equal(r.total, 12); assert.equal(r.afterDone, 12);
+});
+
 test('旧JSONの整形・エスケープ・順序・不正末尾とP’s CUBEを確認する', async () => {
   const r = await run(async () => {
     const errors = [];

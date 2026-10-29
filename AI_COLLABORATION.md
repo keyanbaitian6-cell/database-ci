@@ -4254,3 +4254,16 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - CI：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40867757181（対象 `81a7de2`）は、full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の3ジョブとも成功。再実行なし。
 - 次の手順（優先順位）：①指摘1、②指摘2、③指摘5の規則決め、④指摘3、⑤指摘4、⑥独立した🌈の印の引継ぎと、既存の `mergeRainbowMarks`・`mergeDateEvents` との同値性の試験、⑦一画面ずつ新旧の結果を照合して切替・実iPhone確認。
 - 行っていないこと：製品コードの修正、再発試験の通常回帰への追加、全体ゲート・ビルド・公開・Google更新・APK。再発試験は直す前に足すと全体ゲートが失敗するため、再現スクリプトとして置いた。
+
+## 【日別保存ストア：レビュー指摘1（移行の途中失敗で running が戻せない）を修正】2026-10-29 Claude
+
+- 依頼：利用者「Claudeが直す」（直前の独立レビューの指摘1）。基準：database-ci/main `7d068e3`（正本 `e8d2fa0` を含む）。作業フォルダーのCodexの未コミットの記録（AI_COLLABORATION.md、18行）は保持し、このコミットに含めない。
+- 原因：`database_android/tool/viewer_day_store.js` の `migrateLegacy` は、見出しと `running` を確定してから、日ごとの処理の中で初めて同じキーの重複を検査していた。途中の日で落ちると `running` が残り、同じ旧本文の再実行は同じ日で失敗し、直した旧本文は `source-changed`、`writeDays`・`syncParts` は `migration-running` で拒否された。移行領域を捨てる手段も無かった。
+- 修正：
+  - `vdLegacy` で位置を控えるときに、日ごとのキーの集合で重複を検査する（解析済みの記録は持たない）。外枠・行の形・営業日・キー・重複・見出しの検査を、`running` の確定より前に全日分済ませる。落ちる旧本文では何も確定しない。
+  - `abandonMigration(key)` を追加。`running` の移行だけを、索引にあるのが移行で入れた日と `legacy` 見出しだけであることを確かめてから捨て、空の索引を比較確定する（版は1つ進み、`abandonedMigration` に元の指紋・日数・時刻を残す）。完了した移行は `migration-complete`、移行が無ければ `no-migration`、移行以外の確定内容があれば `not-migration-only` で拒否。旧本文・旧経路・本文ストアには触れない（捨てた本文の回収は別途）。
+  - 移行を始める条件「空の領域」を、版の番号ではなく日・補助情報の有無で判断するように変更（捨てた後に始め直せるように）。
+  - 仕様書 `VIEWER_DAY_STORE.md` の「旧本文の移行」に追記。生成物（閲覧・共有の `viewer_parts.mjs`、同一）と照合版を作り直し（`7a22f7731058`→ **`0de91497c686`**。Googleの4本は版の文字だけ、貼り替え不要）。
+- 試験：`database_android/tool/test_viewer_day_store.mjs` に「検査で落ちる旧本文は何も確定せず、未完了の移行は捨てて別の旧本文で始め直せる」を追加（落ちる旧本文の後は revision 0・移行なし、途中まで→別の旧本文は `source-changed`→捨てる→別の旧本文で完了12件、完了後の破棄は `migration-complete`、移行なしは `no-migration`）。修正前のコード（生成物が旧のまま）では、この1件が失敗し16件が成功。修正後は17件すべて成功（`node --test database_android/tool/test_viewer_day_store.mjs`、Windows・Playwright付属Chromium）。レビューの再現 `../outputs/viewer-day-store-review-20261029/review_probe.mjs` も修正後に流し、P1・P1b は revision 0 で何も確定せず、通常更新・直した旧本文の移行が通ることを確認（`review_probe_after_fix.json`）。
+- 未対応（レビューの指摘2〜5、独立した🌈の印の引継ぎ、画面の切替）は変えていない。製品画面は新しいストアをまだ呼ばない。Web公開・Google更新・APKはしていない。
+- 全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-dsfix1`、単独、基準 `7d068e3`＋本修正）**ALL PASSED**（84段）：PC tests 489件・PC直下231件・UTC 27件、Flutter 750件、analyze エラー・警告0・info 28件、JS 75ファイル全成功（日別ストア17件を含む）。

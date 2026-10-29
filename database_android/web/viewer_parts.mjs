@@ -1,5 +1,5 @@
 // 生成元: tool/build_viewer_parts.mjs
-const SCRIPT_RELEASE = '7a22f7731058';
+const SCRIPT_RELEASE = '0de91497c686';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -418,13 +418,19 @@ function vdLegacy(text, site) {
   for (const field of ['date_events', 'rainbow_marks', 'record_deletions']) {
     if (header[field] !== undefined && (!Array.isArray(header[field]) || header[field].some(v => !v || typeof v !== 'object' || !vdDay(v.day) || typeof v.store !== 'string'))) vdFail('旧本文の印・イベント・削除情報が不正です。');
   }
-  const offsets = new Map(); let count = 0;
+  // 日ごとの検査（キー・日付・重複）は、移行を「running」として確定する前に全日分済ませる。途中の日で
+  // 初めて失敗すると、確定済みの running が戻せず、通常更新も拒否されたまま残った（2026-10-29 レビュー指摘1）。
+  // 保持するのは位置とキーだけで、解析済みの記録は持たない。
+  const offsets = new Map(), keys = new Map(); let count = 0;
   i = space(recordsStart + 1);
   while (i < recordsEnd - 1) {
     const end = vdValueEnd(text, i), row = JSON.parse(text.slice(i, end));
     if (!vdDay(row?.day)) vdFail('旧本文の営業日が不正です。');
     vdRows([row], row.day);
-    if (!offsets.has(row.day)) offsets.set(row.day, []);
+    if (!offsets.has(row.day)) { offsets.set(row.day, []); keys.set(row.day, new Set()); }
+    const id = vdKey(row);
+    if (keys.get(row.day).has(id)) vdFail('同じキーの記録が重複しています。');
+    keys.get(row.day).add(id);
     offsets.get(row.day).push([i, end]); count++;
     i = space(end);
     if (i === recordsEnd - 1) break;
@@ -563,7 +569,8 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     let head = await inspect(key);
     if (head.migration && head.migration.sourceHash !== sourceHash) throw vdError('source-changed', '旧本文が変わりました。別の移行領域で照合してください。');
     if (!head.migration) {
-      if (head.revision) throw vdError('not-empty', '移行先に既存の確定内容があります。');
+      // 版の番号ではなく中身で判断する（abandonMigration で捨てた後の空の領域からは始め直せる）。
+      if (Object.keys(head.days).length || Object.keys(head.metadata).length) throw vdError('not-empty', '移行先に既存の確定内容があります。');
       const ref = await stage(key, parsed.header);
       head = await publish(key, head, {...head, metadata: {legacy: ref}, migration: {
         version: 1, sourceHash, status: 'running', totalDays: parsed.offsets.size, totalRecords: parsed.count, receipts: {}}});
@@ -595,6 +602,20 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     if (alreadyComplete) return head;
     const next = structuredClone(head); next.migration.status = 'complete';
     return publish(key, head, next);
+  }
+  // 未完了の移行領域を捨てて、別の旧本文で始め直せるようにする（2026-10-29 レビュー指摘1）。running の間は
+  // 通常更新を拒否しているので、索引にあるのは移行で入れた日と見出しだけ。それを確かめてから空の索引を
+  // 比較確定する。旧本文・旧経路・本文ストアには触れない（捨てた本文の回収は別途）。完了した移行は捨てない。
+  async function abandonMigration(key) {
+    const head = await inspect(key);
+    if (!head.migration) throw vdError('no-migration', '捨てる移行がありません。');
+    if (head.migration.status !== 'running') throw vdError('migration-complete', '完了した移行は捨てません。');
+    const migrated = new Set(Object.keys(head.migration.receipts));
+    if (Object.keys(head.days).some(day => !migrated.has(day)) || Object.keys(head.metadata).some(source => source !== 'legacy')) {
+      throw vdError('not-migration-only', '移行以外の確定内容があるため捨てられません。');
+    }
+    return publish(key, head, {schema: 1, revision: head.revision, days: {}, metadata: {},
+      abandonedMigration: {sourceHash: head.migration.sourceHash, days: migrated.size, at: new Date().toISOString()}});
   }
   function mergeMetadata(previous, incoming) {
     const result = {...previous, ...incoming};
@@ -659,7 +680,7 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     next.partsSource = {at: stamp, revision: m.revision, headerHash: inputHash};
     return publish(key, head, next);
   }
-  return {inspect, writeDays, readRange, streamRange, readMetadata, migrateLegacy, syncParts};
+  return {inspect, writeDays, readRange, streamRange, readMetadata, migrateLegacy, abandonMigration, syncParts};
 }
 
 export {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, readViewerHistory, createViewerDayStore};
