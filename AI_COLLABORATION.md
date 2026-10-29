@@ -4169,3 +4169,10 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - HTTPで配信中の変更14ファイル＋閲覧の入口2ファイルを読み戻し、**全16ファイルがstageと完全一致**。閲覧main.dart.jsは3,178,436バイト、SHA-256 **14ce37bf0eae3a8f46020ba893c4f52cd135a6af01afeaf118d3d12528a5d677**。共有app.mjsのSHA-256は **a9ee935469c8c68eeb03bd583a186b80cd3176f9758561f530e3e8e61e7cf44f**。配信照合結果はクラウド内 `outputs/astra-publication-20261029/配信照合結果.json`、stageの変更ファイルと照合値は `公開配布物照合.json`。デプロイ完了前の最初の読み戻しは旧版だったが、完了後のキャッシュを避けた読み戻しで全件一致を確認した。キャッシュや端末データを消す操作はしていない。
 - ソース・公開前記録は **`5b7cff8996c949325eec086597e1158cf9c9e51f`** まで `python tools/push_ci.py` でdatabase-ci/mainへ1回反映（9fd2aea..5b7cff8。c962e4dと012244cを含む）。今回の追加分のCIは **40858073885**、対象5b7cff8、確認時in_progress： https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40858073885 。結果はまだ未確認、再実行していない。公開の根拠は今回の最終ローカル全体ゲートのALL PASSEDと、そのstage・公開配信のバイト一致。結果を記す本追記だけの後続コミットも同じ送り先へ反映し、追加のCIを起こさない。正本originにコードは送っていない。
 - **残る反映は今回のGoogle閲覧用2本**：追加保護を有効にするには、上のdeae592f690c版2本を対応する既存Googleプロジェクトへ貼り替え、既存デプロイを新バージョンへ更新する。配布GS2本とコミット済みソースの内容・sha256も再照合して一致。Google実環境の現在の本文・印数・この2本の更新完了は未確認。Google未更新時の大量送信停止を含めて公開しており、Web公開だけでGS側の保存保護まで更新されたとは扱わない。実iPhoneでの操作は利用者の確認が必要で、AIの直接確認とはしない。
+
+## 【Google更新用の配布をTXTへ（ZIPを開けない環境への対応）】2026-10-29 Codex
+
+- 利用者「この環境zip開けないからtxtファイルか何かでまとめて」。この環境で利用者に渡す更新コードは、ZIPだけで渡さず、直接開けるTXT全文と手順を用意する。
+- `outputs/astra-publication-20261029/` に `00_更新手順_deae592f690c.txt`、`01_自分用閲覧_全文_deae592f690c.txt`、`02_読み取り専用_全文_deae592f690c.txt`、`Google更新用2本_まとめ_deae592f690c.txt` を作成。まとめ版は手順と2本の全文を含む読み物で、実際の貼替には説明・区切りを含まない個別TXTを使う。
+- 個別TXT2本は配布済みGSとバイト単位で一致（53,024／45,310バイト）。既存のsha256とも一致を確認。ソース・Googleの設定・Web公開物は変更していない。Google側の貼替完了を確認した記録ではない。
+- TXTはクラウド内の配布物でGitHubには同梱しない。別環境では照合版deae592f690cの `database_android/tool/viewer_drive_script.gs` と `viewer_drive_script_readonly.gs` をUTF-8のTXTへそのままコピーして再現できる。今回のGitHub変更は本記録だけで、CI・試験・ビルド・公開の再実行はしない。
