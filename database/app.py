@@ -876,6 +876,23 @@ def main():
     for note in startup_notes:
         logbox.insert('end', note)
 
+    def watch_capture_window(process, label, take_message):
+        """自動取り込みが全部終わると取り込み窓は自分で閉じる（2026-10-30、サイトへの接続を止めるため）。
+        窓のプロセスが終わったら、その結果をログ欄に出す。"""
+        def check():
+            if process.poll() is None:
+                root.after(2000, check)
+                return
+            try:
+                message = take_message()
+            except Exception:  # noqa: BLE001 - the notice is only a convenience
+                message = None
+            logbox.insert('end', f'{label}：{message}。取り込み画面を閉じ、サイトへの接続を止めました。\n' if message
+                          else f'{label}の取り込み画面を閉じました。\n')
+            logbox.see('end')
+
+        root.after(2000, check)
+
     def open_browser_import():
         try:
             if getattr(sys, 'frozen', False):
@@ -891,7 +908,7 @@ def main():
             else:
                 command = [sys.executable, str(ROOT / 'browser_import.py'),
                            str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports')]
-            subprocess.Popen(
+            process = subprocess.Popen(
                 command,
                 cwd=str(ROOT))
             logbox.insert(
@@ -901,6 +918,13 @@ def main():
             logbox.see('end')
         except OSError as exc:
             messagebox.showerror('起動できません', f'ブラウザ取り込みを開始できません：{exc}', parent=root)
+            return
+
+        def meruhen_message():
+            import browser_import
+            return browser_import.take_finished_message(DATA_DIR)
+
+        watch_capture_window(process, 'メルヘン', meruhen_message)
 
     def open_pscube_import():
         try:
@@ -917,11 +941,13 @@ def main():
                            str(ROOT / 'data' / 'pscube-viewer.json')]
             else:
                 command = [sys.executable, str(ROOT / 'pscube_import.py')]
-            subprocess.Popen(command, cwd=str(ROOT))
+            process = subprocess.Popen(command, cwd=str(ROOT))
             logbox.insert('end', 'P’s CUBE の取り込み画面を開きました。\n')
             logbox.see('end')
         except OSError as exc:
             messagebox.showerror('起動できません', f'P’s CUBEを開始できません：{exc}', parent=root)
+            return
+        watch_capture_window(process, 'P’s CUBE', lambda: pscube_import.take_finished_message(DATA_DIR))
 
     def values():
         name, target = machine.get().strip(), day.get().strip()

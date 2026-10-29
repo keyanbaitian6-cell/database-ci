@@ -4382,3 +4382,28 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-dsfix45`、単独。動いていたのは利用者のPCアプリ `app.py`・`pscube_import.py` だけで、ゲートの残りのプロセスは無し）：84段のうち82段成功、失敗2段は上の日付の試験だけ（pc-tests 489件中1件、pc-event-timezone-utc 27件中1件）。試験を直したあと、その2段を同じ条件で流し直して成功（PC tests 489件 OK、`TZ=UTC` 27件 OK）。ほかの段：PC直下231件、Flutter 750件、analyze エラー・警告0・info 28件、JS 75ファイル全成功（日別ストア23件を含む）。**1回の実行で ALL PASSED ではない**（直した2段だけ流し直した）。ビルド・公開はしないので、この扱いにした。
 - しなかったこと：実データの移行、製品画面の切替、Web公開、Googleスクリプトの貼り替え、APK作成。新しいストアは製品画面からまだ呼ばれないので、iPhone・PCの今の表示は変わらない。
 - 未確認・次の手順：実iPhone Safariでの移行・時刻の比較（`vdTime`）、iPhoneに保存された旧本文の件数、確定前の失敗で残る本文の整理、独立した🌈の印の引継ぎ、範囲を絞った入力で結果が変わる件（同値性レビュー指摘1）、画面の切替。
+
+- 追記（CI）：`cc43d86` は database-ci の Actions https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40956683418 で full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の3ジョブとも成功（再実行なし）。
+
+## 【PC：自動取り込みが全部終わったら取り込み窓を閉じる（P’s CUBE・メルヘン）】2026-10-30 Claude
+
+- 依頼：利用者「P’s cubeもメルヘンも、各取り込み終わったら停止してほしいね。多分アクセスしつづけてる」。確認で対象は **PCのP’s CUBE**、止め方は **窓・画面を閉じる** を選択。作業中に「メルヘンも簡単に直せそうなら直しておいてね。PC版。」と追加。Androidは対象外（P’s CUBEの0時の予約は画面を開いたまま待つため）。基準：database-ci/main `cc43d86`（正本 `e8d2fa0` を含む）。対象サイトには接続していない（コードと試験だけで確認）。
+- 原因（コードで確認、実サイトの通信量は測っていない）：
+  - P’s CUBE（`database/pscube_import.py`）：自動取り込みは「すべて取り込みました（自動取り込みを停止しました）」でOFFになるが、取り込み窓はサイトのページを開いたまま。窓は最小化しても遅れないよう、タイマーの間引きを切っている（`keep_page_timers`、WebView2の `--disable-background-timer-throttling` など）ので、サイトのページの定期通信（2026-10-06に問題になった `jquery.netcube.alive.js` など）が動き続けうる。この日も利用者のPCで `pscube_import.py` が0:39から6時過ぎまで動いていた（プロセスの起動時刻で確認。その間の通信は確認していない）。
+  - メルヘン（`database/browser_import.py`）：機種一覧で未取り込みが無くなっても、自動取り込みがONのまま機種一覧に留まり（`next_unimported_machine` が `all_done` を返すだけ）、窓もサイトのページを開いたままだった。
+- 変更：
+  - P’s CUBE：`AutoPilot.completed` に完了の文を覚え（自動取り込みを再びONにすると消える）、`close_when_finished`（取り込みのタイマーの回りで呼ぶ）が、保存中でないことを確かめてから、結果の文を `data/pscube-capture-finished.json` に書いて窓を閉じる。書けなくても窓は閉じる。
+  - メルヘン：画面のJSが自動の移動のときだけ `auto: true` を付けて `next_unimported_machine` を呼ぶ。自動取り込みがONで結果が `all_done` なら、OFFにして文を覚える（中身の判断は `_next_unimported_machine` に名前を変えて従来のまま）。`close_when_finished` が、保存の処理（子プロセス）・保存結果の反映待ち・保存の受付が無いことを確かめてから、`data/meruhen-capture-finished.json` に書いて窓を閉じる。閉じたあとのバックアップは従来どおり子プロセスの終了を待ってから行う。
+  - 共通：`database/file_io.py` に `write_notice`／`take_notice`（1回だけの知らせ。読めないファイルも消す）。取り込み窓は起動時に前回の知らせを消す。
+  - メイン画面（`database/app.py`）：取り込み窓のプロセスを2秒ごとに見て、終わったら「P’s CUBE：（結果）。取り込み画面を閉じ、サイトへの接続を止めました。」または「〜の取り込み画面を閉じました。」をログ欄に出す（`watch_capture_window`）。
+  - 手動の取り込み・手動の「次へ」では閉じない。
+  - 文書：`database/PSCUBE_AUTO_CAPTURE.md`、`database/README.md`（自動取り込み（PC版））。
+- 試験：
+  - `database/test_pscube_auto.py` に `CloseWhenFinishedTests` 5件：残りがある・保存中は閉じず、全部取り込んだら閉じて知らせが1回読める。日付指定の文、再ONで理由が消える。手動の取り込みでは閉じない。知らせが書けなくても閉じる。壊れた知らせは None で消える。
+  - `database/tests/test_meruhen_close.py`（新規）3件：自動で `all_done` ならOFF・閉じる・知らせ。手動の「次へ」・残りあり・OFF後では閉じない。保存の処理が動いている間・反映待ちの間は閉じない、再ONで理由が消える。
+  - 修正前のコードでは、足した名前（`close_when_finished` など）が無いため、どちらの試験も読み込みで失敗する。
+  - PCの試験：`tests` 492件・直下 `test_*.py` 236件・`TZ=UTC` の `test_event_calendar` 27件、すべて成功（`TZ=JST-9`）。
+  - 照合版 `a11059827edc` → **`e6ba23d7a593`**（Pythonの変更による。閲覧・共有の生成物とGoogleの4本は版の文字だけ、貼り替え不要）。
+- 実際のWebView2の窓が閉じること・閉じたあとメイン画面のログ欄に出ること・サイトの通信が止まることは、PCで未確認（利用者の次の自動取り込みで確認してほしい点）。PCは `database/start.cmd` から起動し直すと反映される。EXEは作っていない。
+- 全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-close1`、単独）**ALL PASSED**（84段）：PC tests 492件・PC直下236件・UTC 27件、Flutter 750件、analyze エラー・警告0・info 28件、JSの試験全成功。
+- しなかったこと：Android の変更、APK・EXE・Web公開、Googleスクリプトの貼り替え。

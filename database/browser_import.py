@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from PIL import Image, ImageDraw
 from auto_capture import AUTO_CAPTURE_JS, AutoCapture
+from file_io import take_notice, write_notice
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page, retry_target
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
@@ -777,7 +778,7 @@ OVERLAY_JS = (
     "    const machines = (await waitForMachineLinks()).map(({name, url, count, rack_scope}) => ({name, url, count, rack_scope}));\n"
     "    if (!valid()) return;\n"
     "    const after = revision === null ? (new URLSearchParams(location.hash.replace(/^#/, '')).get('database_after') || '') : '';\n"
-    "    const raw = await window.pywebview.api.next_unimported_machine(JSON.stringify({...id, kind_code, machines, after}));\n"
+    "    const raw = await window.pywebview.api.next_unimported_machine(JSON.stringify({...id, kind_code, machines, after, auto: revision !== null}));\n"
     "    const data = JSON.parse(raw);\n"
     "    if (!valid()) return;\n"
     "    const finish = () => {\n"
@@ -1439,6 +1440,8 @@ class _Bridge:
         # この画面を開いている間だけ覚え、次の機種を探すときに飛ばす（開き直せばもう一度見る：
         # サイトが一時的に空を返しただけなら、次は取り込める）。
         self._no_racks = set()
+        # 自動取り込みが機種一覧で「未取り込みなし」になったときの文。窓はこれを見て閉じる（close_when_finished）。
+        self._completed = None
         self._advance_generation = None
         self._auto_session = 0
         self._advance_session = None
@@ -1496,6 +1499,7 @@ class _Bridge:
                 return self.get_auto_capture()
             if enabled and not self._auto.state()['enabled']:
                 self._fresh_since = datetime.now().astimezone()
+                self._completed = None
             self._auto.configure(enabled, seconds)
             self._auto_session += 1
             self._manual_continuation = False
@@ -1832,6 +1836,26 @@ class _Bridge:
                            'message': no_racks_notice(day, machine)}, ensure_ascii=False)
 
     def next_unimported_machine(self, raw):
+        """`_next_unimported_machine` の結果を返す。自動取り込みが機種一覧で「未取り込みなし」になったら、
+        自動取り込みをOFFにして、窓を閉じる理由を覚える（2026-10-30 利用者「各取り込み終わったら停止してほしい」。
+        それまではONのまま機種一覧に留まり、窓もサイトのページを開いたままだった）。手動の「次へ」では閉じない。"""
+        result = self._next_unimported_machine(raw)
+        try:
+            request = json.loads(raw) if isinstance(raw, str) else raw
+            data = json.loads(result)
+        except (TypeError, ValueError):
+            return result
+        if isinstance(request, dict) and request.get('auto') is True and isinstance(data, dict) and data.get('reason') == 'all_done':
+            with self._auto._lock:
+                state = self._auto.state()
+                if state['enabled']:
+                    message = data.get('message') or '未取り込みの機種・グラフはありません。'
+                    self._completed = f'{message}（自動取り込みを停止しました）'
+                    self._auto.configure(False, state['seconds'])
+                    self._auto.pause(self._completed)
+        return result
+
+    def _next_unimported_machine(self, raw):
         """Choose the next item from the displayed machine list.
 
         A partially imported machine takes priority so its missing graphs are
@@ -2401,6 +2425,27 @@ def _save_pachinko_graph(payload, db_path, root, messagebox):
         messagebox.showerror('取り込みできません', str(exc), parent=root.get())
 
 
+FINISHED_NAME = 'meruhen-capture-finished.json'
+
+
+def close_when_finished(bridge, window, data_dir) -> bool:
+    """自動取り込みが機種一覧で「未取り込みなし」になり、保存の処理も終わっていれば、結果の文を親画面への知らせに
+    残して窓を閉じる（2026-10-30 利用者「各取り込み終わったら停止してほしい」、PCのメルヘン）。閉じたあとの
+    バックアップは、今までどおり run_session が保存の処理の終了を待ってから行う。手動の取り込みでは閉じない。"""
+    message = bridge._completed
+    if (not message or bridge._submit_lock.locked() or bridge._pending_advance is not None
+            or any(child.poll() is None for child in bridge._children)):
+        return False
+    write_notice(Path(data_dir) / FINISHED_NAME, message)
+    window.destroy()
+    return True
+
+
+def take_finished_message(data_dir) -> str | None:
+    """取り込み窓が閉じたあとに親画面が呼ぶ。自動で閉じたときの結果の文を返して知らせを消す（無ければ None）。"""
+    return take_notice(Path(data_dir) / FINISHED_NAME)
+
+
 def run_session(db_path, reports_folder):
     """Open the embedded browser. Table/graph review happens in separate
     processes spawned by :class:`_Bridge`; this also runs one background
@@ -2412,6 +2457,7 @@ def run_session(db_path, reports_folder):
     import threading
     import webview
 
+    take_finished_message(Path(db_path).parent)  # 前回の窓の知らせが残っていれば消す
     layout = load_browser_layout(Path(db_path).parent, _desktop_rect())
     bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()), layout=layout)
     placement = layout['window']
@@ -2456,6 +2502,11 @@ def run_session(db_path, reports_folder):
                 state = bridge.get_auto_capture()
                 if state['enabled']:
                     bridge._auto.pause('ON・待機：' + str(exc), state['revision'])
+            try:
+                if close_when_finished(bridge, window, Path(db_path).parent):
+                    return
+            except Exception:
+                pass
 
     native_handlers = []
 

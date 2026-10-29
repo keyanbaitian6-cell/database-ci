@@ -8,7 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 from auto_capture import AutoCapture
-from pscube_import import AutoPilot, recent_business_days, PscubeRandomCapture
+from pscube_import import (AutoPilot, FINISHED_NAME, PscubeRandomCapture, close_when_finished, recent_business_days,
+                           take_finished_message)
 
 PROBE = 'PROBE'
 START = 'window.__pscubeStartCapture ? window.__pscubeStartCapture() : false'
@@ -534,6 +535,77 @@ class SessionStartTests(unittest.TestCase):
             self.assertIs(started['private_mode'], False, 'シークレットモードではCookieが残らない')
             self.assertEqual(Path(started['storage_path']), (Path(tmp) / 'data' / 'pscube-webview').resolve())
             self.assertTrue(Path(started['storage_path']).is_dir())
+
+
+class CloseWhenFinishedTests(unittest.TestCase):
+    """自動取り込みが全部終わったら取り込み窓を閉じる（2026-10-30 利用者「各取り込み終わったら停止してほしい」）。
+    窓はタイマーを間引かない設定なので、サイトのページを開いたままだと取り込みのあともサイトの定期通信が続いていた。"""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.window = FakeWindow()
+        self.saving = False
+        self.pilot = AutoPilot(self.window, PROBE, saving=lambda: self.saving,
+                               auto=AutoCapture(clock=self.clock, minimum=5, maximum=60, default=10))
+        self.destroyed = []
+        self.browser = types.SimpleNamespace(destroy=lambda: self.destroyed.append(True))
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data = Path(self.tmp.name)
+
+    def capture(self, signature, next_url, day=None):
+        if day:
+            self.pilot.configure(True, 5, day)
+        elif not self.pilot.state()['enabled']:
+            self.pilot.configure(True, 5)
+        self.window.probe = {**page(signature, '台別7日分'), **({'day': day} if day else {})}
+        self.clock.now += 5
+        self.pilot.tick()
+        self.pilot.finished(result={'next_url': next_url, 'remaining': 0 if next_url is None else 3, 'kind': '台別7日分'})
+
+    def close(self):
+        return close_when_finished(self.pilot, lambda: self.saving, self.browser, self.data)
+
+    def test_closes_only_after_auto_capture_took_everything(self):
+        self.capture('A', 'https://www.pscube.jp/next')
+        self.assertFalse(self.close(), '残りがあるうちは閉じない')
+        self.capture('B', None)
+        self.assertEqual(self.pilot.completed, 'すべて取り込みました（自動取り込みを停止しました）')
+        self.saving = True
+        self.assertFalse(self.close(), '保存中は閉じない')
+        self.saving = False
+        self.assertTrue(self.close())
+        self.assertEqual(self.destroyed, [True])
+        self.assertEqual(take_finished_message(self.data), 'すべて取り込みました（自動取り込みを停止しました）')
+        self.assertIsNone(take_finished_message(self.data), '知らせは1回で消える')
+
+    def test_day_message_and_restart_clears_the_finished_state(self):
+        day = recent_business_days()[1]
+        self.capture('C', None, day)
+        self.assertIn('の分をすべて取り込みました', self.pilot.completed)
+        self.pilot.configure(True, 5)
+        self.assertIsNone(self.pilot.completed, 'もう一度ONにしたら閉じる理由は消える')
+        self.assertFalse(self.close())
+
+    def test_manual_capture_does_not_close(self):
+        self.window.probe = page('D', '台別7日分')
+        self.pilot.finished(result={'next_url': None, 'remaining': 0, 'kind': '台別7日分'})
+        self.assertIsNone(self.pilot.completed)
+        self.assertFalse(self.close())
+        self.assertEqual(self.destroyed, [])
+
+    def test_closes_even_if_the_notice_cannot_be_written(self):
+        self.capture('E', None)
+        blocker = self.data / 'blocker'
+        blocker.write_text('x', encoding='utf-8')  # フォルダーの代わりにファイルがあり、知らせを書けない
+        self.assertTrue(close_when_finished(self.pilot, lambda: False, self.browser, blocker))
+        self.assertEqual(self.destroyed, [True], 'サイトへの接続を止めるほうを優先する')
+
+    def test_broken_or_absent_notice_reads_as_none(self):
+        self.assertIsNone(take_finished_message(self.data))
+        (self.data / FINISHED_NAME).write_text('{', encoding='utf-8')
+        self.assertIsNone(take_finished_message(self.data))
+        self.assertFalse((self.data / FINISHED_NAME).exists())
 
 
 if __name__ == '__main__':

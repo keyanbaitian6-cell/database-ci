@@ -20,7 +20,7 @@ import unicodedata
 import time
 from contextlib import closing, nullcontext
 from datetime import date, datetime, timedelta, timezone
-from file_io import atomic_copy, atomic_writer
+from file_io import atomic_copy, atomic_writer, take_notice, write_notice
 import input_versions
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -1362,6 +1362,8 @@ class AutoPilot:
         self.index_confirmation = None
         self.index_confirmation_page = None
         self.loaded_pages = 0
+        # 自動取り込みが「すべて取り込みました」で止まったときの文。窓はこれを見て閉じる（close_when_finished）。
+        self.completed = None
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
 
@@ -1417,6 +1419,7 @@ class AutoPilot:
                 return self.state()
             if enabled and not self.auto.state()['enabled']:
                 self.fresh_since = {}
+                self.completed = None
             if not enabled or not self.auto.state()['enabled']:
                 self.index_confirmation = None
                 self.index_confirmation_page = None
@@ -1569,8 +1572,9 @@ class AutoPilot:
                 if enabled and not result.get('next_url'):
                     self.auto.configure(False, self.auto.state()['seconds'])
                     day, self.target_day = self.target_day, None
-                    self.auto.pause('すべて取り込みました（自動取り込みを停止しました）' if not day else
-                                    f'{_short_day(day)}の分をすべて取り込みました（自動取り込みを停止しました）')
+                    self.completed = ('すべて取り込みました（自動取り込みを停止しました）' if not day else
+                                      f'{_short_day(day)}の分をすべて取り込みました（自動取り込みを停止しました）')
+                    self.auto.pause(self.completed)
                 elif enabled:
                     self.auto.pause(f'ON・{result.get("skipped") or result.get("kind", "") + "を保存"}・残り{result.get("remaining", "?")}件・'
                                     f'次のページへ（{DIRECTION_LABELS[self.direction]}）'
@@ -1848,10 +1852,34 @@ def keep_page_timers(environ=os.environ):
         environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = f'{current} {BROWSER_ARGUMENTS}'.strip()
 
 
+FINISHED_NAME = 'pscube-capture-finished.json'
+
+
+def close_when_finished(pilot, saving, window, data_dir) -> bool:
+    """自動取り込みが「すべて取り込みました」で止まり、保存も終わっていれば、結果の文を親画面への知らせに残して窓を閉じる。
+
+    取り込み窓はタイマーを間引かない設定（keep_page_timers）なので、サイトのページを開いたままにすると、取り込みの
+    あともサイトの定期通信が続く（2026-10-30 利用者「各取り込み終わったら停止してほしい」、PCのP’s CUBEだけ）。
+    手動の取り込みでは閉じない。知らせが書けなくても窓は閉じる（サイトへの接続を止めるほうを優先する）。"""
+    message = pilot.completed
+    if not message or saving():
+        return False
+    write_notice(Path(data_dir) / FINISHED_NAME, message)
+    window.destroy()
+    return True
+
+
+def take_finished_message(data_dir) -> str | None:
+    """取り込み窓が閉じたあとに親画面が呼ぶ。自動で閉じたときの結果の文を返して知らせを消す（無ければ None）。"""
+    return take_notice(Path(data_dir) / FINISHED_NAME)
+
+
 def run_session(db_path, export_path):
     import webview
 
     keep_page_timers()
+    data_dir = Path(db_path).resolve().parent
+    take_finished_message(data_dir)  # 前回の窓の知らせが残っていれば消す（親画面に古い結果を出さない）
 
     script = CAPTURE.read_text(encoding='utf-8')
     probe = PROBE.read_text(encoding='utf-8')
@@ -1963,6 +1991,11 @@ def run_session(db_path, export_path):
         while not stop.wait(0.1):
             try:
                 bridge.pilot.tick()
+            except Exception:
+                pass
+            try:
+                if close_when_finished(bridge.pilot, bridge._capture_lock.locked, window, data_dir):
+                    return
             except Exception:
                 pass
 
