@@ -122,7 +122,8 @@ test('容量不足・索引確定時のabortで旧本文と前回確定内容を
   assert.equal(r.intact, true); assert.equal(r.done, 'complete');
 });
 
-test('欠損・破損・移行元変更・重複キーを空と扱わない', async () => {
+// 重複キーは2026-10-30から止めずに取り込み、印を付ける（下の「旧経路が飛ばす記録…」で確かめる）。
+test('欠損・破損・移行元変更を空と扱わない', async () => {
   const r = await run(async () => {
     const s = module.createViewerDayStore({dbName: 'corrupt'}), text = legacyText(3, 4);
     const h = await s.migrateLegacy(key, {text, site: 'meruhen', maxDays: 1}), errors = [];
@@ -140,11 +141,9 @@ test('欠損・破損・移行元変更・重複キーを空と扱わない', as
       await damage(value); try { await s.readRange(key, {days: [dayAt(0)]}); } catch (e) { errors.push(e.code); }
       try { await s.migrateLegacy(key, {text, site: 'meruhen'}); } catch (e) { errors.push(e.code); }
     }
-    const bad = JSON.stringify({...header, records: [rowsAt(0, 4)[0], rowsAt(0, 4)[0]]});
-    try { await module.createViewerDayStore({dbName: 'duplicate'}).migrateLegacy(key, {text: bad, site: 'meruhen'}); } catch (e) { errors.push(e.code); }
     return {errors, status: (await s.inspect(key)).migration.status};
   });
-  assert.deepEqual(r.errors, ['source-changed', 'corrupt', 'corrupt', 'missing', 'missing', 'corrupt']);
+  assert.deepEqual(r.errors, ['source-changed', 'corrupt', 'corrupt', 'missing', 'missing']);
   assert.equal(r.status, 'running');
 });
 
@@ -153,11 +152,12 @@ test('検査で落ちる旧本文は何も確定せず、未完了の移行は�
   const r = await run(async () => {
     const s = module.createViewerDayStore({dbName: 'abandon'}), days = [], errors = [];
     for (let i = 0; i < 3; i++) days.push(rowsAt(i, 4));
-    days[2].push({...days[2][0]}); // 3日目にだけ同じキー
-    try { await s.migrateLegacy(key, {text: JSON.stringify({...header, records: days.flat()}), site: 'meruhen'}); } catch (e) { errors.push(e.code); }
+    // 3日目の最後の記録だけJSONとして読めない（先頭0の数）。旧経路も読めない内容なので、今も止める。
+    const bad = JSON.stringify({...header, records: days.flat()}).replace(/"games":(\d+)(?![\s\S]*"games")/, '"games":0$1');
+    try { await s.migrateLegacy(key, {text: bad, site: 'meruhen'}); } catch (e) { errors.push(e.code || e.name); }
     const afterBad = await s.inspect(key);
     const partial = await s.migrateLegacy(key, {text: legacyText(3, 4), site: 'meruhen', maxDays: 1});
-    const other = JSON.stringify({...header, exported_at: '2026-01-09T00:00:00Z', records: days.flat().slice(0, -1)});
+    const other = JSON.stringify({...header, exported_at: '2026-01-09T00:00:00Z', records: days.flat()});
     try { await s.migrateLegacy(key, {text: other, site: 'meruhen'}); } catch (e) { errors.push(e.code); }
     const abandoned = await s.abandonMigration(key);
     const gone = (await s.readRange(key, {days: [dayAt(0)]}))[0].state;
@@ -171,7 +171,7 @@ test('検査で落ちる旧本文は何も確定せず、未完了の移行は�
       gone, done: done.migration.status, total: done.migration.totalRecords,
       afterDone: (await s.readRange(key, {from: dayAt(0), to: dayAt(2)})).reduce((n, d) => n + d.records.length, 0)};
   });
-  assert.deepEqual(r.errors, ['corrupt', 'source-changed', 'migration-complete', 'no-migration']);
+  assert.deepEqual(r.errors, ['SyntaxError', 'source-changed', 'migration-complete', 'no-migration']);
   assert.deepEqual(r.afterBad, {revision: 0, migration: null}, '検査で落ちる旧本文では running を確定しない');
   assert.equal(r.partial, 'running');
   assert.deepEqual(r.abandoned, {revision: r.partialRevision + 1, migration: null, days: 0, metadata: 0, prior: 1});
@@ -278,7 +278,8 @@ test('旧JSONの整形・エスケープ・順序・不正末尾とP’s CUBEを
     const doc = {records: [{...rowsAt(0, 4)[0], note: '括弧 [ ] { } と \\"', graph_measurement: {curve: [[0, 1], [2, 3]]}}], ...header, format: 'pscube-viewer'};
     const s = module.createViewerDayStore({dbName: 'pscube'}), text = JSON.stringify(doc, null, 2);
     const h = await s.migrateLegacy('p', {text, site: 'pscube'}), saved = await s.readRange('p', {days: [dayAt(0)]});
-    for (const bad of [text + 'x', text.replace('"records": [', '"records": [null,'), text.replace(/\n}$/, ',\n}'), '{"records":[],"records":[]}']) {
+    // 記録が null の行は旧経路も飛ばすので保留として取り込む（2026-10-30）。JSONとして読めない本文だけを拒否する。
+    for (const bad of [text + 'x', text.replace('"records": [', '"records": [,'), text.replace(/\n}$/, ',\n}'), '{"records":[],"records":[]}']) {
       try { await module.createViewerDayStore({dbName: 'bad-json-' + errors.length}).migrateLegacy('p', {text: bad, site: 'pscube'}); } catch (e) { errors.push(e.name); }
     }
     const f = await fixture(3, 4, -1, 'pscube'), p = module.createViewerDayStore({dbName: 'pscube-parts'});
@@ -374,7 +375,8 @@ test('旧v1一覧・範囲なし・不正な印を拒否し、終了要求後も
     const store = module.createViewerDayStore({dbName: 'validation'}), f = await fixture(3, 4), errors = [];
     try { await store.syncParts(endpoint, 'meruhen', {...f.manifest, version: 1, curve_parts: undefined}, f.get); } catch (e) { errors.push(e.code); }
     try { await store.readRange(key); } catch (e) { errors.push(e.code); }
-    const bad = {...header, rainbow_marks: [null], records: rowsAt(0, 4)};
+    // 印の一覧が配列でなければ旧経路も読めないので止める。1件だけ使えない印は取り込む（下の試験）。
+    const bad = {...header, rainbow_marks: {}, records: rowsAt(0, 4)};
     try { await store.migrateLegacy(key, {text: JSON.stringify(bad), site: 'meruhen'}); } catch (e) { errors.push(e.code); }
     const before = (await store.inspect(key)).revision, controller = new AbortController(); controller.abort();
     try { await store.migrateLegacy(key, {text: legacyText(3, 4), site: 'meruhen', signal: controller.signal}); } catch (e) { errors.push(e.name); }
@@ -386,4 +388,121 @@ test('旧v1一覧・範囲なし・不正な印を拒否し、終了要求後も
   });
   assert.deepEqual(r.errors, ['legacy-manifest', 'range-required', 'corrupt', 'AbortError']);
   assert.equal(r.before, 0); assert.equal(r.unchanged, true); assert.equal(r.state, 'empty');
+});
+
+// 2026-10-30 同値性レビュー指摘2・利用者「取り込んだうえで印を付ける」：旧経路（Dart）が1件飛ばす・まとめるだけの内容で
+// 移行全体を止めていた。保留・重複・無視した件数を移行の記録に残し、保存した内容は変えない。
+test('旧経路が飛ばす記録・重複キー・使えない印は止めずに取り込み、件数と理由を残す', async () => {
+  const r = await run(async () => {
+    const s = module.createViewerDayStore({dbName: 'tolerant'}), rows = rowsAt(0, 4), errors = [];
+    const records = [...rows, {...rows[0], games: 4321}, {...rows[1], rack: 0}, null, {...rows[2], rack: '5'}, {...rows[3], day: '2025-02-30'}];
+    const doc = {...header, history_days: [dayAt(0), dayAt(1), '2025-02-30'],
+      rainbow_marks: [...header.rainbow_marks, {store: 'saiwaichou', day: dayAt(0), rack: 3, on: true}],
+      date_events: [...header.date_events, {store: 'saiwaichou', day: dayAt(1), name: null}, {store: 5, day: dayAt(0), name: '数値の店舗'}],
+      records};
+    const text = JSON.stringify(doc), done = await s.migrateLegacy(key, {text, site: 'meruhen'});
+    const days = await s.readRange(key, {days: [dayAt(0), dayAt(1)]}), held = await s.readQuarantine(key);
+    const meta = await s.readMetadata(key, 'legacy'), again = await s.migrateLegacy(key, {text, site: 'meruhen'});
+    // 新しい書き込みは従来どおり重複キーを拒否する。
+    try { await s.writeDays(key, {expectedRevision: done.revision, updates: {[dayAt(2)]: {state: 'complete', records: [rowsAt(2, 1)[0], rowsAt(2, 1)[0]]}}}); } catch (e) { errors.push(e.code); }
+    await s.collect(key, {graceMs: 0});
+    const kept = (await s.readQuarantine(key)).length;
+    // 版2（保留・重複の扱いの前）の移行領域は照合せずに止め、捨ててやり直せる。
+    const v2 = module.createViewerDayStore({dbName: 'tolerant-v2'});
+    await v2.migrateLegacy(key, {text, site: 'meruhen', maxDays: 0});
+    // 照合値（正規化JSONのSHA-256）も作り直し、版2の正しい索引として置く。
+    const heads = (mode, fn) => new Promise(resolve => { const req = indexedDB.open('tolerant-v2', 1); req.onsuccess = () => {
+      const db = req.result, tx = db.transaction('heads', mode), out = fn(tx.objectStore('heads'));
+      tx.oncomplete = () => { db.close(); resolve(out.result); };
+    }; });
+    const canonical = v => Array.isArray(v) ? '[' + v.map(canonical).join(',') + ']' : v && typeof v === 'object'
+      ? '{' + Object.keys(v).sort().filter(k => v[k] !== undefined).map(k => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}' : JSON.stringify(v);
+    const record = await heads('readonly', store => store.get(key));
+    record.value.migration.version = 2; record.hash = await hash(canonical(record.value));
+    await heads('readwrite', store => store.put(record, key));
+    try { await v2.migrateLegacy(key, {text, site: 'meruhen'}); } catch (e) { errors.push(e.code); }
+    await v2.abandonMigration(key);
+    const redone = await v2.migrateLegacy(key, {text, site: 'meruhen'});
+    return {migration: done.migration, states: days.map(d => d.state), day0: days[0].records, duplicates: days[0].duplicates ?? null,
+      held, records, meta, doc, same: again.revision === done.revision, errors, kept, redone: redone.migration.status};
+  });
+  const {migration: m} = r;
+  assert.equal(m.status, 'complete'); assert.equal(m.version, 3);
+  assert.equal(m.totalDays, 2); assert.equal(m.totalRecords, 5); assert.equal(m.duplicates, 1);
+  assert.equal(m.quarantine.count, 4); assert.deepEqual(m.quarantine.reasons, {rack: 2, 'not-object': 1, day: 1});
+  assert.deepEqual(m.ignored, {rainbow_marks: 1, date_events: 2, history_days: 1});
+  assert.deepEqual(r.states, ['complete', 'empty']);
+  // 重複キーの2件はどちらもそのまま残り、日の読み出しに印（余分な件数）が付く。
+  // 本文は店舗ごとに分けて保存するので、並び順に依存せずに比べる。
+  const canonical = v => Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, canonical(v[k])])) : v;
+  const sorted = rows => rows.map(row => JSON.stringify(canonical(row))).sort();
+  assert.deepEqual(sorted(r.day0), sorted(r.records.slice(0, 5))); assert.equal(r.duplicates, 1);
+  // 保留した行は日の本文に入らず、理由つき・旧本文の並びで読める。回収の対象にもならない。
+  assert.deepEqual(r.held, [{reason: 'rack', row: r.records[5]}, {reason: 'not-object', row: null},
+    {reason: 'rack', row: r.records[7]}, {reason: 'day', row: r.records[8]}]);
+  assert.equal(r.kept, 4);
+  // 見出しは使えない印・イベント・日を含めてそのまま保存する（表示で旧経路と同じ規則で選り分ける）。
+  const {records: _, ...expectedHeader} = r.doc;
+  assert.deepEqual(r.meta, expectedHeader);
+  assert.equal(r.same, true);
+  assert.deepEqual(r.errors, ['corrupt', 'migration-version']);
+  assert.equal(r.redone, 'complete');
+});
+
+// 2026-10-29 レビュー指摘4：Date.parse はミリ秒までなので、マイクロ秒だけ古い削除時刻・印が新しい方を上書きした。
+test('印・削除情報の時刻はマイクロ秒まで比べ、時差の無い時刻は受け付けない', async () => {
+  const r = await run(async () => {
+    const s = module.createViewerDayStore({dbName: 'micro'}), f = await fixture(3, 4), snapshots = [], errors = [];
+    await s.syncParts(endpoint, 'meruhen', f.manifest, f.get);
+    const send = async (exported, mark, deletion) => {
+      const m = structuredClone(f.manifest); m.header.exported_at = exported;
+      m.header.rainbow_marks = [{...m.header.rainbow_marks[0], ...mark}];
+      m.header.record_deletions = [{...m.header.record_deletions[0], ...deletion}];
+      await s.syncParts(endpoint, 'meruhen', m, () => { throw Error('本文通信'); });
+      const saved = await s.readMetadata(key, 'parts');
+      snapshots.push({mark: saved.rainbow_marks[0], deletion: saved.record_deletions[0]});
+    };
+    // ①新しい（同じミリ秒の中で）。②マイクロ秒だけ古い。③同じ時刻の別の書き方（届いた側を採る）。④9桁の小数で1マイクロ秒新しい。
+    await send('2026-01-03T00:00:00Z', {on: true, updated_at: '2026-01-02T00:00:00.123900Z'}, {deleted_at: '2026-01-02T09:00:00.123900+09:00'});
+    await send('2026-01-04T00:00:00Z', {on: false, updated_at: '2026-01-02T00:00:00.123100Z'}, {deleted_at: '2026-01-02T09:00:00.1231+09:00', note: '古い'});
+    await send('2026-01-05T00:00:00Z', {on: false, updated_at: '2026-01-02T09:00:00.1239+09:00'}, {deleted_at: '2026-01-02T00:00:00.123900Z', note: '同時刻'});
+    await send('2026-01-06T00:00:00Z', {on: true, updated_at: '2026-01-02T00:00:00.123901999Z'}, {deleted_at: '2026-01-02T00:00:00.123901999Z', note: '9桁'});
+    const before = (await s.inspect(key)).revision;
+    for (const [mark, deletion] of [[{updated_at: '2026-01-02T00:00:01'}, {}], [{}, {deleted_at: '2026-01-02T00:00:01'}]]) {
+      try { await send('2026-01-07T00:00:00Z', mark, deletion); } catch (e) { errors.push(e.code); }
+    }
+    let deleted; try { await s.writeDays(key, {expectedRevision: before, updates: {[dayAt(0)]: {state: 'deleted', records: [], deleted_at: '2026-01-08T00:00:00'}}}); } catch (e) { deleted = e.code; }
+    return {snapshots, errors, deleted, unchanged: (await s.inspect(key)).revision === before};
+  });
+  const [first, older, tie, nine] = r.snapshots;
+  assert.deepEqual([first.mark.on, first.mark.updated_at], [true, '2026-01-02T00:00:00.123900Z']);
+  assert.equal(first.deletion.deleted_at, '2026-01-02T09:00:00.123900+09:00');
+  assert.deepEqual(older, first, 'マイクロ秒だけ古い印・削除時刻で上書きしない');
+  assert.deepEqual([tie.mark.on, tie.deletion.note], [false, '同時刻']);
+  assert.deepEqual([nine.mark.on, nine.deletion.note], [true, '9桁']);
+  assert.deepEqual(r.errors, ['corrupt', 'corrupt']); assert.equal(r.deleted, 'corrupt'); assert.equal(r.unchanged, true);
+});
+
+// 2026-10-29 レビュー指摘5：端末で明示削除した日が、Googleの「部品なしの完成日」で empty に置き換わり、削除時刻が消えた。
+test('端末の明示削除はGoogleの空の日・削除前の書き出しで戻らず、削除後の書き出しでだけ置き換わる', async () => {
+  const r = await run(async () => {
+    const s = module.createViewerDayStore({dbName: 'deleted-day'}), f = await fixture(3, 4), seen = [];
+    let head = await s.syncParts(endpoint, 'meruhen', f.manifest, f.get);
+    const deletedAt = '2026-01-03T00:00:00.000500Z';
+    head = await s.writeDays(key, {expectedRevision: head.revision, updates: {[dayAt(1)]: {state: 'deleted', records: [], deleted_at: deletedAt}}});
+    const look = async () => { const [d] = await s.readRange(key, {days: [dayAt(1)]}); seen.push({state: d.state, deleted_at: d.deleted_at ?? null, count: d.records.length}); };
+    const sync = async (m, get = () => { throw Error('削除した日に通信'); }) => { await s.syncParts(endpoint, 'meruhen', m, get); await look(); };
+    const at = exported => { const m = structuredClone(f.manifest); m.header.exported_at = exported; return m; };
+    // ①記録はあるが、書き出しが削除よりマイクロ秒だけ前（ミリ秒では同じ）。②削除と同じ時刻。
+    await sync(at('2026-01-03T00:00:00.000400Z'));
+    await sync(at(deletedAt));
+    // ③削除より後の書き出しだが、その日は部品なし（完成した空の日）。
+    await sync({...at('2026-01-04T00:00:00Z'), days: [dayAt(1)], parts: [], curve_parts: [], count: 0, revision: 'd'.repeat(64)});
+    // ④削除より後の書き出しで記録がある：Googleの内容で置き換える。
+    await sync(at('2026-01-05T00:00:00Z'), f.get);
+    return seen;
+  });
+  const kept = {state: 'deleted', deleted_at: '2026-01-03T00:00:00.000500Z', count: 0};
+  assert.deepEqual(r.slice(0, 3), [kept, kept, kept]);
+  assert.deepEqual(r[3], {state: 'complete', deleted_at: null, count: 4});
 });

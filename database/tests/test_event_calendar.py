@@ -220,11 +220,13 @@ class PscubeCalendarTests(unittest.TestCase):
     def test_the_calendar_backend_saves_and_runs_the_backup_hook(self):
         from event_calendar import PscubeEvents
         called = []
-        events = PscubeEvents(self.path, lambda store: called.append(store.date_event_for('2026-10-30')))
-        events.save('pscube', ['2026-10-30'], '末尾イベ')
+        # 保存は今の時刻で記録されるので、ずっと先の日を使う（2026-10-30にした日付は、その日の3時を過ぎると
+        # 「前もって登録」でなくなり＊が付いて失敗した、2026-10-30）。
+        events = PscubeEvents(self.path, lambda store: called.append(store.date_event_for('2099-10-30')))
+        events.save('pscube', ['2099-10-30'], '末尾イベ')
         entries, names = events.load('pscube')
-        self.assertEqual((entries['2026-10-30']['name'], names, called), ('末尾イベ', ['末尾イベ'], ['末尾イベ']))
-        self.assertEqual(cell_text(date(2026, 10, 30), entries['2026-10-30']), '30\n末尾イベ')
+        self.assertEqual((entries['2099-10-30']['name'], names, called), ('末尾イベ', ['末尾イベ'], ['末尾イベ']))
+        self.assertEqual(cell_text(date(2099, 10, 30), entries['2099-10-30']), '30\n末尾イベ')
 
 
 

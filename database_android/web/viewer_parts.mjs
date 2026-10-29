@@ -1,5 +1,5 @@
 // 生成元: tool/build_viewer_parts.mjs
-const SCRIPT_RELEASE = '7571b3c041a3';
+const SCRIPT_RELEASE = 'a11059827edc';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -361,6 +361,7 @@ function vdRefs(head) {
   for (const d of Object.values(head.days || {})) for (const s of d.shards) refs.add(s.hash);
   for (const m of Object.values(head.metadata || {})) refs.add(m.hash);
   for (const r of Object.values(head.migration?.receipts || {})) for (const s of r.shards) refs.add(s.hash);
+  if (head.migration?.quarantine) refs.add(head.migration.quarantine.hash);
   return refs;
 }
 const vdError = (code, message) => Object.assign(new Error(message), {code});
@@ -368,16 +369,52 @@ const vdFail = message => { throw vdError('corrupt', message); };
 const vdDay = day => typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) &&
   Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day;
 const vdKey = row => JSON.stringify([row.store, row.day, row.machine, row.rack, row.kind_code ?? null, row.rate ?? null]);
-function vdRows(rows, day) {
+// 時刻を比べられる数（ミリ秒×1000＋マイクロ秒）。小数秒は6桁まで比べる（Date.parse はミリ秒までで、マイクロ秒だけ
+// 古い削除時刻・印が新しい方を上書きした、2026-10-29 レビュー指摘4）。Safari に4桁以上の小数秒を渡さないよう、
+// Date.parse には3桁に切り詰めた文字を渡す。時差の無い時刻・読めない時刻は NaN。
+function vdTime(value) {
+  const m = typeof value === 'string' && /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})$/.exec(value);
+  if (!m) return NaN;
+  const fraction = (m[2] || '').padEnd(6, '0'), zone = m[3] === 'Z' ? 'Z' : m[3].replace(/^([+-]\d{2}):?(\d{2})$/, '$1:$2');
+  const base = m[1].length === 16 ? `${m[1]}:00` : m[1]; // 秒の無い時刻
+  const ms = Date.parse(`${base}.${fraction.slice(0, 3)}${zone}`);
+  return Number.isFinite(ms) ? ms * 1000 + Number(fraction.slice(3, 6)) : NaN;
+}
+// 記録として保存できない理由（旧経路の Dart も表示で飛ばす内容）。問題が無ければ null。
+function vdRowProblem(row, day) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return 'not-object';
+  if (!vdDay(row.day) || (day !== undefined && row.day !== day)) return 'day';
+  if (typeof row.store !== 'string' || !row.store) return 'store';
+  if (typeof row.machine !== 'string') return 'machine';
+  if (!Number.isSafeInteger(row.rack) || row.rack < 1) return 'rack';
+  return null;
+}
+// 印・イベント・削除情報の1件の識別と、使えない理由（旧経路の Dart もその1件を無視する内容）。問題が無ければ null。
+const vdAnnotationId = (field, row) => JSON.stringify(field === 'date_events' ? [row.store, row.day]
+  : field === 'rainbow_marks' ? [row.store, row.day, row.rack] : [row.store, row.day, row.machine, row.rack]);
+function vdAnnotationProblem(field, row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return 'not-object';
+  if (!vdDay(row.day)) return 'day';
+  if (typeof row.store !== 'string') return 'store';
+  const clock = field === 'record_deletions' ? 'deleted_at' : 'updated_at', at = vdTime(row[clock]);
+  if (row[clock] !== undefined && !Number.isFinite(at)) return 'time';
+  if (field === 'rainbow_marks' && (typeof row.on !== 'boolean' || !Number.isSafeInteger(row.rack) || row.rack < 1 || !Number.isFinite(at))) return 'mark';
+  if (field === 'record_deletions' && (!Number.isFinite(at) || typeof row.machine !== 'string' || !Number.isSafeInteger(row.rack))) return 'deletion';
+  if (field === 'date_events' && !(typeof row.name === 'string' || row.name === null && Number.isFinite(at))) return 'event';
+  return null;
+}
+// 同じキーの記録の余分な件数。
+function vdDuplicates(rows) {
+  const keys = new Set(); let extra = 0;
+  for (const row of rows) { const key = vdKey(row); if (keys.has(key)) extra++; else keys.add(key); }
+  return extra;
+}
+// allowDuplicates：旧本文から移した日だけ、同じキーの記録をそのまま残す（旧経路の Dart は1台にまとめて表示する。
+// 2026-10-30 利用者「取り込んだうえで印を付ける」）。新しい書き込み・Googleの部品は従来どおり重複を拒否する。
+function vdRows(rows, day, {allowDuplicates = false} = {}) {
   if (!Array.isArray(rows)) vdFail('日別の記録が配列ではありません。');
-  const keys = new Set();
-  for (const row of rows) {
-    if (!row || row.day !== day || typeof row.store !== 'string' || !row.store ||
-        typeof row.machine !== 'string' || !Number.isSafeInteger(row.rack) || row.rack < 1) vdFail('記録のキー・日付が不正です。');
-    const key = vdKey(row);
-    if (keys.has(key)) vdFail('同じキーの記録が重複しています。');
-    keys.add(key);
-  }
+  for (const row of rows) if (vdRowProblem(row, day)) vdFail('記録のキー・日付が不正です。');
+  if (!allowDuplicates && vdDuplicates(rows)) vdFail('同じキーの記録が重複しています。');
   return rows;
 }
 function vdHead(head) {
@@ -389,7 +426,10 @@ function vdHead(head) {
     if (new Set(value.shards.map(s => s.store)).size !== value.shards.length) vdFail('店舗索引が重複しています。');
     for (const shard of value.shards) if (typeof shard.store !== 'string' || !/^[a-f0-9]{64}$/.test(shard.hash) ||
       !Number.isSafeInteger(shard.count) || shard.count < 1 || !Number.isSafeInteger(shard.bytes)) vdFail('本文索引が破損しています。');
+    if (value.duplicates !== undefined && (!Number.isSafeInteger(value.duplicates) || value.duplicates < 1)) vdFail('日別索引が破損しています。');
   }
+  const q = head.migration?.quarantine;
+  if (q !== undefined && (!/^[a-f0-9]{64}$/.test(q?.hash) || !Number.isSafeInteger(q.count) || q.count < 1)) vdFail('保留した記録の索引が破損しています。');
   if (head.released !== undefined && (!Array.isArray(head.released) ||
       head.released.some(r => !/^[a-f0-9]{64}$/.test(r?.hash) || !Number.isFinite(Date.parse(r.at))))) vdFail('回収待ちの一覧が破損しています。');
   return head;
@@ -432,20 +472,30 @@ function vdLegacy(text, site) {
   const header = JSON.parse(text.slice(0, recordsStart) + '[]' + text.slice(recordsEnd));
   if (header.version !== 1 || header.format !== (site === 'meruhen' ? 'database-backup' : 'pscube-viewer')) vdFail('旧本文の形式・版が不正です。');
   delete header.records;
-  for (const field of ['date_events', 'rainbow_marks', 'record_deletions']) {
-    if (header[field] !== undefined && (!Array.isArray(header[field]) || header[field].some(v => !v || typeof v !== 'object' || !vdDay(v.day) || typeof v.store !== 'string'))) vdFail('旧本文の印・イベント・削除情報が不正です。');
+  // 印・イベント・削除情報は見出しのまま legacy に保存し、表示の時に旧経路と同じ規則で選り分ける。配列でなければ
+  // 旧経路も読めないので止めるが、旧経路が無視するだけの1件（時刻なし・存在しない日付など）では止めず、件数を残す
+  // （2026-10-30 利用者「取り込んだうえで印を付ける」）。
+  const ignored = {};
+  for (const field of VD_ANNOTATION_FIELDS) {
+    if (header[field] === undefined) continue;
+    if (!Array.isArray(header[field])) vdFail('旧本文の印・イベント・削除情報が配列ではありません。');
+    const bad = header[field].filter(v => vdAnnotationProblem(field, v)).length;
+    if (bad) ignored[field] = bad;
   }
   // 1回目の走査は各記録の形・営業日を確かめ、日ごとに位置（開始・終了の数の並び）だけを控える。日ごとの
   // 重複と内容の指紋は vdLegacyDays が1日ずつ確かめる（全日のキーや解析済みの記録を同時に持たない、
   // 2026-10-29 レビュー指摘3）。どちらも移行を running として確定する前に済ませる（指摘1）。
-  const offsets = new Map(); let count = 0;
+  // 記録として保存できない行（台番号0・文字列、存在しない日付など、旧経路の Dart も飛ばす行）は捨てずに「保留」へ
+  // 位置と理由だけを控える（2026-10-30）。JSONとして読めない行は旧経路も読めないので止める。
+  const offsets = new Map(), quarantine = {spans: [], reasons: []}; let count = 0;
   i = space(recordsStart + 1);
   while (i < recordsEnd - 1) {
-    const end = vdValueEnd(text, i), row = JSON.parse(text.slice(i, end));
-    if (!vdDay(row?.day)) vdFail('旧本文の営業日が不正です。');
-    vdRows([row], row.day);
-    if (!offsets.has(row.day)) offsets.set(row.day, []);
-    offsets.get(row.day).push(i, end); count++;
+    const end = vdValueEnd(text, i), row = JSON.parse(text.slice(i, end)), problem = vdRowProblem(row);
+    if (problem) { quarantine.spans.push(i, end); quarantine.reasons.push(problem); }
+    else {
+      if (!offsets.has(row.day)) offsets.set(row.day, []);
+      offsets.get(row.day).push(i, end); count++;
+    }
     i = space(end);
     if (i === recordsEnd - 1) break;
     if (text[i++] !== ',') vdFail('旧本文の記録区切りが不正です。');
@@ -453,8 +503,12 @@ function vdLegacy(text, site) {
     if (i === recordsEnd - 1) vdFail('旧本文の末尾カンマは不正です。');
   }
   // 明示された空の日も移す。期間内の穴から削除や空を推測しない。
-  for (const day of header.history_days || []) { if (!vdDay(day)) vdFail('旧本文の日一覧が不正です。'); if (!offsets.has(day)) offsets.set(day, []); }
-  return {header, offsets, count};
+  if (header.history_days !== undefined && !Array.isArray(header.history_days)) vdFail('旧本文の日一覧が配列ではありません。');
+  for (const day of header.history_days || []) {
+    if (!vdDay(day)) { ignored.history_days = (ignored.history_days || 0) + 1; continue; }
+    if (!offsets.has(day)) offsets.set(day, []);
+  }
+  return {header, offsets, count, quarantine, ignored};
 }
 // 控えた位置から、その日の記録だけを解析する。
 const vdDayRows = (text, spans) => {
@@ -469,12 +523,15 @@ const vdFingerprint = values => vpClientHash(vpCanonical([...values].sort((a, b)
 async function vdLegacyDays(text, parsed) {
   const days = new Map();
   for (const [day, spans] of [...parsed.offsets].sort(([a], [b]) => a.localeCompare(b))) {
-    const rows = vdDayRows(text, spans);
-    vdRows(rows, day);
-    days.set(day, {hash: await vdFingerprint(rows), count: rows.length});
+    const rows = vdDayRows(text, spans), duplicates = vdDuplicates(rows);
+    vdRows(rows, day, {allowDuplicates: true});
+    days.set(day, {hash: await vdFingerprint(rows), count: rows.length, ...(duplicates ? {duplicates} : {})});
   }
-  const sourceHash = await vpClientHash(vpCanonical({version: 2, header: parsed.header, days: [...days]}));
-  return {days, sourceHash};
+  // 保留した行は、旧本文の並びのまま理由を添えて1つの本文にする。
+  const held = vdDayRows(text, parsed.quarantine.spans).map((row, k) => ({reason: parsed.quarantine.reasons[k], row}));
+  const quarantine = held.length ? {rows: held, hash: await vpClientHash(vpCanonical(held))} : null;
+  const sourceHash = await vpClientHash(vpCanonical({version: 3, header: parsed.header, days: [...days], quarantine: quarantine?.hash ?? null}));
+  return {days, sourceHash, quarantine};
 }
 function createViewerDayStore({dbName = VD_DB} = {}) {
   async function open() {
@@ -579,10 +636,10 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
       };
     });
   }
-  async function prepareDay(key, day, update, previous) {
+  async function prepareDay(key, day, update, previous, {allowDuplicates = false} = {}) {
     if (!vdDay(day) || !update || !['complete', 'deleted'].includes(update.state)) vdFail('日別更新の状態が不正です。');
-    const rows = vdRows(update.records, day), groups = new Map();
-    if (update.state === 'deleted' && (rows.length || !update.deleted_at || !Number.isFinite(Date.parse(update.deleted_at)))) vdFail('明示削除には削除時刻と空の本文が必要です。');
+    const rows = vdRows(update.records, day, {allowDuplicates}), groups = new Map(), duplicates = vdDuplicates(rows);
+    if (update.state === 'deleted' && (rows.length || !Number.isFinite(vdTime(update.deleted_at)))) vdFail('明示削除には削除時刻（時差つき）と空の本文が必要です。');
     for (const row of rows) { if (!groups.has(row.store)) groups.set(row.store, []); groups.get(row.store).push(row); }
     const shards = [];
     for (const [store, items] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
@@ -592,6 +649,7 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
       shards.push({...old || await stage(key, value), store, count: items.length});
     }
     return {state: update.state === 'deleted' ? 'deleted' : rows.length ? 'complete' : 'empty', shards,
+      ...(duplicates ? {duplicates} : {}),
       ...(update.deleted_at ? {deleted_at: update.deleted_at} : {}),
       ...(update.parts ? {parts: update.parts} : {})};
   }
@@ -625,12 +683,18 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
         if (range.stores && !range.stores.includes(shard.store)) continue;
         const body = await readBody(key, shard);
         if (body.day !== day || body.store !== shard.store || body.records?.length !== shard.count || body.records.some(r => r.store !== shard.store)) vdFail('本文と索引の範囲が一致しません。');
-        vdRows(body.records, day); records.push(...body.records);
+        vdRows(body.records, day, {allowDuplicates: Boolean(descriptor.duplicates)}); records.push(...body.records);
       }
-      yield {day, state: descriptor.state, revision: head.revision, records, ...(descriptor.deleted_at ? {deleted_at: descriptor.deleted_at} : {})};
+      yield {day, state: descriptor.state, revision: head.revision, records,
+        ...(descriptor.duplicates ? {duplicates: descriptor.duplicates} : {}), ...(descriptor.deleted_at ? {deleted_at: descriptor.deleted_at} : {})};
     }
   }
   async function readRange(key, range) { const days = []; for await (const day of streamRange(key, range)) days.push(day); return days; }
+  // 移行で保留した行（理由つき、旧本文の並び）。無ければ空の配列。
+  async function readQuarantine(key, head) {
+    head ||= await inspect(key);
+    return head.migration?.quarantine ? readBody(key, head.migration.quarantine) : [];
+  }
   async function readMetadata(key, source, head) {
     head ||= await inspect(key);
     const value = head.metadata[source] ? await readBody(key, head.metadata[source]) : null;
@@ -641,18 +705,23 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
   async function migrateLegacy(key, {text, site, maxDays = Infinity, signal} = {}) {
     if (!['meruhen', 'pscube'].includes(site) || !(maxDays === Infinity || Number.isInteger(maxDays) && maxDays >= 0)) vdFail('移行条件が不正です。');
     const parsed = vdLegacy(text, site);
-    mergeMetadata(null, parsed.header);
-    const {days: prints, sourceHash} = await vdLegacyDays(text, parsed);
+    const {days: prints, sourceHash, quarantine} = await vdLegacyDays(text, parsed);
     let head = await inspect(key);
-    // 版1（2026-10-29まで）は全文のハッシュを指紋にしていたので、同じ旧本文でも指紋が一致しない。捨ててやり直す。
-    if (head.migration && head.migration.version !== 2) throw vdError('migration-version', '古い版の移行です。abandonMigration で捨ててからやり直してください。');
+    // 版1（全文のハッシュ）・版2（保留・重複の扱いの前）とは指紋の作り方が違い、同じ旧本文でも一致しない。捨ててやり直す。
+    if (head.migration && head.migration.version !== 3) throw vdError('migration-version', '古い版の移行です。abandonMigration で捨ててからやり直してください。');
     if (head.migration && head.migration.sourceHash !== sourceHash) throw vdError('source-changed', '旧本文が変わりました。別の移行領域で照合してください。');
     if (!head.migration) {
       // 版の番号ではなく中身で判断する（abandonMigration で捨てた後の空の領域からは始め直せる）。
       if (Object.keys(head.days).length || Object.keys(head.metadata).length) throw vdError('not-empty', '移行先に既存の確定内容があります。');
       const ref = await stage(key, parsed.header);
+      // 保留した行（旧経路も表示で飛ばす行）は理由つきで別の本文に残し、件数と理由ごとの数を移行の記録に書く。
+      const held = quarantine ? {...await stage(key, quarantine.rows), count: quarantine.rows.length,
+        reasons: quarantine.rows.reduce((n, r) => ({...n, [r.reason]: (n[r.reason] || 0) + 1}), {})} : null;
+      const duplicates = [...prints.values()].reduce((n, d) => n + (d.duplicates || 0), 0);
       head = await publish(key, head, {...head, metadata: {legacy: ref}, migration: {
-        version: 2, sourceHash, status: 'running', totalDays: parsed.offsets.size, totalRecords: parsed.count, receipts: {}}});
+        version: 3, sourceHash, status: 'running', totalDays: parsed.offsets.size, totalRecords: parsed.count, receipts: {},
+        ...(held ? {quarantine: held} : {}), ...(duplicates ? {duplicates} : {}),
+        ...(Object.keys(parsed.ignored).length ? {ignored: parsed.ignored} : {})}});
     }
     const alreadyComplete = head.migration.status === 'complete';
     if (vpCanonical(await readMetadata(key, 'legacy', head)) !== vpCanonical(parsed.header)) vdFail('旧本文の見出しが一致しません。');
@@ -671,7 +740,7 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
       const rows = vdDayRows(text, spans);
       if (rows.length !== count || await vdFingerprint(rows) !== hash) vdFail('旧本文が移行中に変わりました。');
       const next = structuredClone(head);
-      next.days[day] = await prepareDay(key, day, {state: 'complete', records: rows});
+      next.days[day] = await prepareDay(key, day, {state: 'complete', records: rows}, undefined, {allowDuplicates: true});
       next.migration.receipts[day] = {hash, count: rows.length, shards: next.days[day].shards};
       head = await publish(key, head, next); processed++;
     }
@@ -697,21 +766,18 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
   }
   function mergeMetadata(previous, incoming) {
     const result = {...previous, ...incoming};
-    for (const field of ['date_events', 'rainbow_marks', 'record_deletions']) {
+    for (const field of VD_ANNOTATION_FIELDS) {
       if (previous?.[field] === undefined && incoming[field] === undefined) continue;
       const entries = new Map();
       for (const [which, list] of [[0, previous?.[field]], [1, incoming[field]]]) {
         if (list === undefined) continue;
         if (!Array.isArray(list)) vdFail('印・イベント・削除情報が配列ではありません。');
         for (const row of list) {
-          if (!row || !vdDay(row.day) || typeof row.store !== 'string') vdFail('印・イベント・削除情報が不正です。');
-          const id = JSON.stringify(field === 'date_events' ? [row.store, row.day] : field === 'rainbow_marks' ? [row.store, row.day, row.rack] : [row.store, row.day, row.machine, row.rack]);
-          const old = entries.get(id), clock = field === 'record_deletions' ? 'deleted_at' : 'updated_at';
-          const at = Date.parse(row[clock]), before = Date.parse(old?.[clock]);
-          if (row[clock] !== undefined && (!Number.isFinite(at) || !/(Z|[+-]\d{2}:?\d{2})$/.test(row[clock]))) vdFail('印・イベント・削除情報の時刻が不正です。');
-          if (field === 'rainbow_marks' && (typeof row.on !== 'boolean' || !Number.isSafeInteger(row.rack) || row.rack < 1 || !Number.isFinite(at))) vdFail('独立した印が不正です。');
-          if (field === 'record_deletions' && (!Number.isFinite(at) || typeof row.machine !== 'string' || !Number.isSafeInteger(row.rack))) vdFail('削除情報が不正です。');
-          if (field === 'date_events' && !(typeof row.name === 'string' || row.name === null && Number.isFinite(at))) vdFail('イベントが不正です。');
+          const problem = vdAnnotationProblem(field, row);
+          if (problem) vdFail(`印・イベント・削除情報が不正です（${problem}）。`);
+          const id = vdAnnotationId(field, row), old = entries.get(id), clock = field === 'record_deletions' ? 'deleted_at' : 'updated_at';
+          const at = vdTime(row[clock]), before = vdTime(old?.[clock]);
+          // 同じ時刻なら届いた側を採る（既存の mergeRainbowMarks・mergeDateEvents と同じ）。比べるのはマイクロ秒まで。
           if (!old || Number.isFinite(at) && (!Number.isFinite(before) || at >= before) || !which) entries.set(id, row);
         }
       }
@@ -719,6 +785,7 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     }
     return result;
   }
+
   // v2日別通信の別入口。既存fetchViewerPartsと異なり、戻り値に全recordsを作らない。
   async function syncParts(url, site, manifest, getJson) {
     const m = vpValidManifest(structuredClone(manifest), site);
@@ -732,6 +799,12 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     for (const day of m.days) {
       const refs = m.parts.filter(p => p.day === day), signature = refs.map(p => ({hash: p.hash, bytes: p.bytes, count: p.count}));
       if (vpCanonical(head.days[day]?.parts) === vpCanonical(signature)) continue;
+      // 端末で明示削除した日（2026-10-29 レビュー指摘5で決めた規則）：Googleも空なら、削除時刻つきの削除を残す
+      // （どちらも記録なしで、削除の時刻を失わない）。Googleに記録があっても、書き出しが削除より前なら戻さない。
+      // 削除より後の書き出しの記録なら、Googleの内容で置き換える（時刻の新しい方、ほかの印・削除情報と同じ考え方）。
+      // 書き出し時刻が読めない（時差なしなど）ときは、新しいと言えないので削除を残す。
+      const current = head.days[day];
+      if (current?.state === 'deleted' && (!refs.length || !(vdTime(m.header.exported_at) > vdTime(current.deleted_at)))) continue;
       const rows = [];
       for (let i = 0; i < refs.length; i += VP_BATCH) {
         const batch = refs.slice(i, i + VP_BATCH), request = new URL(url); request.search = ''; request.hash = '';
@@ -764,7 +837,7 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     next.partsSource = {at: stamp, revision: m.revision, headerHash: inputHash};
     return publish(key, head, next);
   }
-  return {inspect, writeDays, readRange, streamRange, readMetadata, migrateLegacy, abandonMigration, syncParts, collect};
+  return {inspect, writeDays, readRange, streamRange, readMetadata, readQuarantine, migrateLegacy, abandonMigration, syncParts, collect};
 }
 
 export {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, readViewerHistory, createViewerDayStore};
