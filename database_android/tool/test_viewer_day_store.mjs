@@ -30,8 +30,9 @@ test('日・店舗の範囲外の本文を読まず、1日更新でも過去本�
   assert.equal(result.stats.requests, 1);
   assert.deepEqual(result.oldHash, result.newHash);
   assert.equal(result.io.filter(r => r.method === 'getAll' || r.method === 'openCursor').length, 0);
-  // 書き戻し照合だけ。旧日・同日の他店舗の本文は読まない。
-  assert.equal(result.io.filter(r => r.store === 'bodies' && r.method === 'get').length, 3);
+  // 変わった店舗の本文と見出しの書き戻し照合、統合のための前回の見出しと印・イベント・削除情報（2026-10-29に見出しと
+  // 分けた）だけ。旧日・同日の他店舗の本文は読まない。
+  assert.equal(result.io.filter(r => r.store === 'bodies' && r.method === 'get').length, 4);
 });
 
 test('移行の中断・再開・再実行でキーと全項目・印・削除情報を保持する', async () => {
@@ -125,7 +126,8 @@ test('欠損・破損・移行元変更・重複キーを空と扱わない', as
   const r = await run(async () => {
     const s = module.createViewerDayStore({dbName: 'corrupt'}), text = legacyText(3, 4);
     const h = await s.migrateLegacy(key, {text, site: 'meruhen', maxDays: 1}), errors = [];
-    try { await s.migrateLegacy(key, {text: text + ' ', site: 'meruhen'}); } catch (e) { errors.push(e.code); }
+    // 指紋は内容から作る（2026-10-29、全文のUTF-8複製をやめた）。空白だけの違いは同じ旧本文、値の違いは変更。
+    try { await s.migrateLegacy(key, {text: text.replace('"games":5000', '"games":5001'), site: 'meruhen'}); } catch (e) { errors.push(e.code); }
     const ref = h.days[dayAt(0)].shards[0];
     async function damage(value) {
       await new Promise((resolve, reject) => { const req = indexedDB.open('corrupt', 1); req.onsuccess = () => {
@@ -175,6 +177,99 @@ test('検査で落ちる旧本文は何も確定せず、未完了の移行は�
   assert.deepEqual(r.abandoned, {revision: r.partialRevision + 1, migration: null, days: 0, metadata: 0, prior: 1});
   assert.equal(r.gone, 'unfetched');
   assert.equal(r.done, 'complete'); assert.equal(r.total, 12); assert.equal(r.afterDone, 12);
+});
+
+// 2026-10-29 レビュー指摘2：参照が外れた本文が残り続け、書き出し時刻が変わるたびに印・イベントを丸ごと書き直していた。
+test('参照が外れた本文を猶予後に回収し、使用中・移行の受領・参照し直した本文は消さない', async () => {
+  const r = await run(async () => {
+    const s = module.createViewerDayStore({dbName: 'collect'}), days = 5, count = 4;
+    const bodies = () => new Promise(resolve => { const q = indexedDB.open('collect', 1); q.onsuccess = () => {
+      const db = q.result, rq = db.transaction('bodies').objectStore('bodies').getAllKeys();
+      rq.onsuccess = () => { db.close(); resolve(rq.result.length); }; }; });
+    const refs = head => { const set = new Set();
+      for (const d of Object.values(head.days)) for (const x of d.shards) set.add(x.hash);
+      for (const m of Object.values(head.metadata)) set.add(m.hash);
+      for (const x of Object.values(head.migration?.receipts || {})) for (const y of x.shards) set.add(y.hash);
+      return set; };
+    // 移行した日を、あとでGoogleの内容で置き換える。受領が指す移行時の本文は消さない。
+    await s.migrateLegacy(key, {text: legacyText(days, count), site: 'meruhen'});
+    const base = await fixture(days, count);
+    base.manifest.header.rainbow_marks = Array.from({length: 300}, (_, i) => ({store: 'saiwaichou', day: dayAt(i % days), rack: i + 1, on: i % 2 === 0, updated_at: '2026-01-01T00:00:00Z'}));
+    let head = await s.syncParts(endpoint, 'meruhen', base.manifest, base.get);
+    const annotationsRef = head.metadata['parts:annotations'].hash;
+    // 最終日だけ変わる書き出しを3回。書き出し時刻も毎回変わる。
+    for (let n = 1; n <= 3; n++) {
+      const f = await fixture(days, count, days - 1);
+      f.manifest.header = {...base.manifest.header, exported_at: `2026-01-0${n + 1}T00:00:00Z`};
+      const rows = rowsAt(days - 1, count, true).map(x => ({...x, games: x.games + n})), texts = [];
+      for (let half = 0; half < 2; half++) texts.push(JSON.stringify(rows.slice(half * 2, half * 2 + 2)));
+      const parts = f.manifest.parts.filter(p => p.day !== dayAt(days - 1));
+      for (const text of texts) parts.push({hash: await hash(text), day: dayAt(days - 1), count: 2, bytes: new TextEncoder().encode(text).length});
+      f.manifest.parts = parts; f.manifest.revision = await hash(JSON.stringify(parts) + n);
+      head = await s.syncParts(endpoint, 'meruhen', f.manifest, async url => {
+        const q = new URL(url).searchParams;
+        return {format: f.manifest.format, revision: f.manifest.revision, parts: q.get('parts').split(',').map(h => ({hash: h, text: texts[parts.slice(-2).findIndex(p => p.hash === h)]}))};
+      });
+    }
+    const sameAnnotations = head.metadata['parts:annotations'].hash === annotationsRef;
+    const beforeCollect = await bodies(), released = (head.released || []).length;
+    const early = await s.collect(key); // 既定の猶予（10分）の内は消さない
+    const collected = await s.collect(key, {graceMs: 0});
+    const after = await s.inspect(key), live = refs(after), afterCount = await bodies();
+    const all = await s.readRange(key, {from: dayAt(0), to: dayAt(days - 1)});
+    const again = await s.collect(key, {graceMs: 0});
+    // 参照し直し：外れた内容に戻すと、その本文は回収待ちから外れ、消されない。
+    const s2 = module.createViewerDayStore({dbName: 'collect-revert'}), f0 = await fixture(2, 4);
+    let h2 = await s2.syncParts(endpoint, 'meruhen', f0.manifest, f0.get);
+    const original = h2.days[dayAt(0)].shards.map(x => x.hash);
+    h2 = await s2.writeDays(key, {expectedRevision: h2.revision, updates: {[dayAt(0)]: {state: 'complete', records: rowsAt(0, 4, true)}}});
+    const releasedOnce = (h2.released || []).map(x => x.hash);
+    h2 = await s2.writeDays(key, {expectedRevision: h2.revision, updates: {[dayAt(0)]: {state: 'complete', records: rowsAt(0, 4)}}});
+    await s2.collect(key, {graceMs: 0});
+    const reverted = (await s2.readRange(key, {days: [dayAt(0)]}))[0].records.length;
+    return {sameAnnotations, released, beforeCollect, early: early.removed, collected: collected.removed, afterCount, live: live.size,
+      allDays: all.length, allRecords: all.reduce((n, d) => n + d.records.length, 0), again: again.removed,
+      receiptsKept: Object.values(after.migration.receipts).every(x => x.shards.every(y => live.has(y.hash))),
+      originalReleased: original.some(h => releasedOnce.includes(h)), stillReleased: ((await s2.inspect(key)).released || []).some(x => original.includes(x.hash)), reverted};
+  });
+  assert.equal(r.sameAnnotations, true, '書き出し時刻だけの変化で印・イベント・削除情報を書き直さない');
+  assert.ok(r.released > 0); assert.equal(r.early, 0); assert.equal(r.collected, r.released);
+  assert.equal(r.afterCount, r.live, '回収後は参照中の本文だけが残る'); assert.equal(r.again, 0);
+  assert.deepEqual({days: r.allDays, records: r.allRecords}, {days: 5, records: 20});
+  assert.equal(r.receiptsKept, true, '移行の受領が指す本文は回収しない');
+  assert.equal(r.originalReleased, true); assert.equal(r.stillReleased, false); assert.equal(r.reverted, 4);
+});
+
+test('確定する索引が指す本文が無ければ確定しない（回収と重なった場合）', async () => {
+  const r = await run(async () => {
+    const s = module.createViewerDayStore({dbName: 'publish-missing'}), f = await fixture(2, 4);
+    const head = await s.syncParts(endpoint, 'meruhen', f.manifest, f.get);
+    const getKey = IDBObjectStore.prototype.getKey;
+    // 確定の直前に本文が回収されたのと同じ状態：実在確認で「無い」を返す。
+    IDBObjectStore.prototype.getKey = function(...args) {
+      const request = getKey.apply(this, args);
+      if (this.name === 'bodies') Object.defineProperty(request, 'result', {get: () => undefined});
+      return request;
+    };
+    let code;
+    try { await s.writeDays(key, {expectedRevision: head.revision, updates: {[dayAt(0)]: {state: 'complete', records: rowsAt(0, 4, true)}}}); }
+    catch (e) { code = e.code; } finally { IDBObjectStore.prototype.getKey = getKey; }
+    return {code, unchanged: (await s.inspect(key)).revision === head.revision};
+  });
+  assert.deepEqual(r, {code: 'missing', unchanged: true});
+});
+
+// 2026-10-29 レビュー指摘3：旧本文の指紋のため全文をUTF-8に複製していた（365日で数百MBの一時領域）。
+test('移行で旧本文の全文をまとめてUTF-8に変換しない', async () => {
+  const r = await run(async () => {
+    const s = module.createViewerDayStore({dbName: 'no-full-encode'}), text = legacyText(20, 20);
+    const encode = TextEncoder.prototype.encode; let largest = 0;
+    TextEncoder.prototype.encode = function(value = '') { largest = Math.max(largest, String(value).length); return encode.call(this, value); };
+    try { await s.migrateLegacy(key, {text, site: 'meruhen'}); } finally { TextEncoder.prototype.encode = encode; }
+    return {largest, total: text.length, status: (await s.inspect(key)).migration.status};
+  });
+  assert.equal(r.status, 'complete');
+  assert.ok(r.largest < r.total / 5, `一度に変換した最大 ${r.largest} 文字（全文 ${r.total} 文字）`);
 });
 
 test('旧JSONの整形・エスケープ・順序・不正末尾とP’s CUBEを確認する', async () => {

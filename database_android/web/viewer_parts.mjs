@@ -1,5 +1,5 @@
 // 生成元: tool/build_viewer_parts.mjs
-const SCRIPT_RELEASE = '0de91497c686';
+const SCRIPT_RELEASE = '7571b3c041a3';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -348,6 +348,21 @@ async function fetchViewerDocument(url, site, getJson, cache) {
 
 // 段階2の保存基盤。既存画面はまだ呼ばない。本文を持たない索引と不変の本文を分離する。
 const VD_DB = 'database-viewer-days-v1';
+// 参照が外れた本文を消すまでの猶予。読み込みを始めた処理は開始時の索引を固定して本文を読むので、
+// この時間より長く古い版を読み続けた処理だけが「missing」になる（空として成功はしない）。
+const VD_GRACE_MS = 10 * 60 * 1000;
+// Google由来の補助情報のうち、大きくなる印・イベント・削除情報。見出し（書き出し時刻・線の参照など、書き出しの
+// たびに変わる小さいもの）と別の本文にして、中身が変わらなければ書き直さない（レビュー指摘2）。
+const VD_ANNOTATIONS = 'parts:annotations';
+const VD_ANNOTATION_FIELDS = ['date_events', 'rainbow_marks', 'record_deletions'];
+// 索引が参照する本文（日の本文・補助情報・移行の受領）。受領が指す本文は移行の再照合に使うので回収しない。
+function vdRefs(head) {
+  const refs = new Set();
+  for (const d of Object.values(head.days || {})) for (const s of d.shards) refs.add(s.hash);
+  for (const m of Object.values(head.metadata || {})) refs.add(m.hash);
+  for (const r of Object.values(head.migration?.receipts || {})) for (const s of r.shards) refs.add(s.hash);
+  return refs;
+}
 const vdError = (code, message) => Object.assign(new Error(message), {code});
 const vdFail = message => { throw vdError('corrupt', message); };
 const vdDay = day => typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) &&
@@ -375,6 +390,8 @@ function vdHead(head) {
     for (const shard of value.shards) if (typeof shard.store !== 'string' || !/^[a-f0-9]{64}$/.test(shard.hash) ||
       !Number.isSafeInteger(shard.count) || shard.count < 1 || !Number.isSafeInteger(shard.bytes)) vdFail('本文索引が破損しています。');
   }
+  if (head.released !== undefined && (!Array.isArray(head.released) ||
+      head.released.some(r => !/^[a-f0-9]{64}$/.test(r?.hash) || !Number.isFinite(Date.parse(r.at))))) vdFail('回収待ちの一覧が破損しています。');
   return head;
 }
 // JSONの値の終わりだけ探す。構文検査は各行とrecordsを除いた外枠のJSON.parseで行う。
@@ -418,20 +435,17 @@ function vdLegacy(text, site) {
   for (const field of ['date_events', 'rainbow_marks', 'record_deletions']) {
     if (header[field] !== undefined && (!Array.isArray(header[field]) || header[field].some(v => !v || typeof v !== 'object' || !vdDay(v.day) || typeof v.store !== 'string'))) vdFail('旧本文の印・イベント・削除情報が不正です。');
   }
-  // 日ごとの検査（キー・日付・重複）は、移行を「running」として確定する前に全日分済ませる。途中の日で
-  // 初めて失敗すると、確定済みの running が戻せず、通常更新も拒否されたまま残った（2026-10-29 レビュー指摘1）。
-  // 保持するのは位置とキーだけで、解析済みの記録は持たない。
-  const offsets = new Map(), keys = new Map(); let count = 0;
+  // 1回目の走査は各記録の形・営業日を確かめ、日ごとに位置（開始・終了の数の並び）だけを控える。日ごとの
+  // 重複と内容の指紋は vdLegacyDays が1日ずつ確かめる（全日のキーや解析済みの記録を同時に持たない、
+  // 2026-10-29 レビュー指摘3）。どちらも移行を running として確定する前に済ませる（指摘1）。
+  const offsets = new Map(); let count = 0;
   i = space(recordsStart + 1);
   while (i < recordsEnd - 1) {
     const end = vdValueEnd(text, i), row = JSON.parse(text.slice(i, end));
     if (!vdDay(row?.day)) vdFail('旧本文の営業日が不正です。');
     vdRows([row], row.day);
-    if (!offsets.has(row.day)) { offsets.set(row.day, []); keys.set(row.day, new Set()); }
-    const id = vdKey(row);
-    if (keys.get(row.day).has(id)) vdFail('同じキーの記録が重複しています。');
-    keys.get(row.day).add(id);
-    offsets.get(row.day).push([i, end]); count++;
+    if (!offsets.has(row.day)) offsets.set(row.day, []);
+    offsets.get(row.day).push(i, end); count++;
     i = space(end);
     if (i === recordsEnd - 1) break;
     if (text[i++] !== ',') vdFail('旧本文の記録区切りが不正です。');
@@ -441,6 +455,26 @@ function vdLegacy(text, site) {
   // 明示された空の日も移す。期間内の穴から削除や空を推測しない。
   for (const day of header.history_days || []) { if (!vdDay(day)) vdFail('旧本文の日一覧が不正です。'); if (!offsets.has(day)) offsets.set(day, []); }
   return {header, offsets, count};
+}
+// 控えた位置から、その日の記録だけを解析する。
+const vdDayRows = (text, spans) => {
+  const rows = [];
+  for (let k = 0; k < spans.length; k += 2) rows.push(JSON.parse(text.slice(spans[k], spans[k + 1])));
+  return rows;
+};
+// 記録キー・件数・全項目（印・削除時刻を含む）の、並び順に依存しない指紋。受領の照合にも使う。
+const vdFingerprint = values => vpClientHash(vpCanonical([...values].sort((a, b) => vdKey(a).localeCompare(vdKey(b)))));
+// 2回目の走査：1日ずつ解析して重複を確かめ、日ごとの指紋を作る。旧本文の指紋は、見出しと日ごとの指紋から作る
+// （全文をUTF-8に複製してハッシュしない。365日の初回移行で全文の写しが山を押し上げていた、レビュー指摘3）。
+async function vdLegacyDays(text, parsed) {
+  const days = new Map();
+  for (const [day, spans] of [...parsed.offsets].sort(([a], [b]) => a.localeCompare(b))) {
+    const rows = vdDayRows(text, spans);
+    vdRows(rows, day);
+    days.set(day, {hash: await vdFingerprint(rows), count: rows.length});
+  }
+  const sourceHash = await vpClientHash(vpCanonical({version: 2, header: parsed.header, days: [...days]}));
+  return {days, sourceHash};
 }
 function createViewerDayStore({dbName = VD_DB} = {}) {
   async function open() {
@@ -459,7 +493,7 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     try {
       return await new Promise((resolve, reject) => {
         const tx = db.transaction(names, mode); let result, failure;
-        const fail = error => { failure = error; tx.abort(); };
+        const fail = error => { if (failure) return; failure = error; try { tx.abort(); } catch { /* 既に終了 */ } };
         tx.oncomplete = () => resolve(result);
         tx.onabort = () => reject(failure || tx.error || vdError('aborted', '保存処理が中断されました。'));
         tx.onerror = () => { /* abortで失敗を返す。 */ };
@@ -490,18 +524,57 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     if (vpCanonical(await readBody(key, ref)) !== text) vdFail('書き戻した本文が一致しません。');
     return ref;
   }
+  // 索引の比較確定。参照が外れた本文は released に時刻つきで控え（collect が猶予後に消す）、新しく参照する
+  // 本文は同じトランザクションで実在を確かめる（回収と重なって消えた本文を指す索引を作らない、レビュー指摘2）。
   async function publish(key, expected, next) {
-    const before = vpCanonical(expected), unchanged = before === vpCanonical(next);
+    const before = vpCanonical(expected), oldRefs = vdRefs(expected), newRefs = vdRefs(next), at = new Date().toISOString();
+    const released = (expected.released || []).filter(r => !newRefs.has(r.hash)), known = new Set(released.map(r => r.hash));
+    for (const hash of oldRefs) if (!newRefs.has(hash) && !known.has(hash)) released.push({hash, at});
+    if (released.length) next.released = released; else delete next.released;
+    const unchanged = before === vpCanonical(next);
     if (!unchanged) next.revision = expected.revision + 1;
-    const hash = await vpClientHash(vpCanonical(next));
-    return transaction(['heads'], 'readwrite', (tx, done, fail) => {
-      const store = tx.objectStore('heads'), request = store.get(key);
+    const hash = await vpClientHash(vpCanonical(next)), added = [...newRefs].filter(h => !oldRefs.has(h));
+    return transaction(['heads', 'bodies'], 'readwrite', (tx, done, fail) => {
+      const store = tx.objectStore('heads'), bodies = tx.objectStore('bodies'), request = store.get(key);
       request.onsuccess = () => {
         try {
           const current = vdHead(request.result?.value);
           if (vpCanonical(current) !== before) throw vdError('conflict', 'ほかの処理が先に確定しました。再読込が必要です。');
-          if (!unchanged) store.put({value: next, hash}, key);
-          done(next);
+          if (unchanged) { done(next); return; }
+          const commit = () => { store.put({value: next, hash}, key); done(next); };
+          let pending = added.length;
+          if (!pending) { commit(); return; }
+          for (const h of added) {
+            const check = bodies.getKey(bodyKey(key, h));
+            check.onsuccess = () => {
+              if (check.result === undefined) fail(vdError('missing', '確定する本文がありません（回収と重なりました）。やり直してください。'));
+              else if (--pending === 0) commit();
+            };
+          }
+        } catch (e) { fail(e); }
+      };
+    });
+  }
+  // 参照が外れてから graceMs 以上たった本文を消す。索引の比較と本文の削除を1つのトランザクションで行うので、
+  // その間に別の確定が同じ本文を参照し直していれば conflict で止まり、何も消さない。旧本文・旧経路には触れない。
+  // 確定前に失敗して索引に載らなかった本文（released に無いもの）はここでは消さない。
+  async function collect(key, {graceMs = VD_GRACE_MS, now = Date.now()} = {}) {
+    const head = await inspect(key), refs = vdRefs(head);
+    const due = (head.released || []).filter(r => now - Date.parse(r.at) >= graceMs && !refs.has(r.hash)).map(r => r.hash);
+    if (!due.length) return {removed: 0, revision: head.revision};
+    const gone = new Set(due), next = structuredClone(head);
+    next.released = head.released.filter(r => !gone.has(r.hash));
+    if (!next.released.length) delete next.released;
+    next.revision = head.revision + 1;
+    const before = vpCanonical(head), hash = await vpClientHash(vpCanonical(next));
+    return transaction(['heads', 'bodies'], 'readwrite', (tx, done, fail) => {
+      const store = tx.objectStore('heads'), request = store.get(key);
+      request.onsuccess = () => {
+        try {
+          if (vpCanonical(vdHead(request.result?.value)) !== before) throw vdError('conflict', 'ほかの処理が先に確定しました。回収は次の機会に行います。');
+          for (const h of due) tx.objectStore('bodies').delete(bodyKey(key, h));
+          store.put({value: next, hash}, key);
+          done({removed: due.length, revision: next.revision});
         } catch (e) { fail(e); }
       };
     });
@@ -560,38 +633,43 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
   async function readRange(key, range) { const days = []; for await (const day of streamRange(key, range)) days.push(day); return days; }
   async function readMetadata(key, source, head) {
     head ||= await inspect(key);
-    return head.metadata[source] ? readBody(key, head.metadata[source]) : null;
+    const value = head.metadata[source] ? await readBody(key, head.metadata[source]) : null;
+    // 'parts' は見出しと印・イベント・削除情報を合わせて返す（分ける前と同じ形）。
+    if (source === 'parts' && value && head.metadata[VD_ANNOTATIONS]) return {...value, ...await readBody(key, head.metadata[VD_ANNOTATIONS])};
+    return value;
   }
   async function migrateLegacy(key, {text, site, maxDays = Infinity, signal} = {}) {
     if (!['meruhen', 'pscube'].includes(site) || !(maxDays === Infinity || Number.isInteger(maxDays) && maxDays >= 0)) vdFail('移行条件が不正です。');
-    const sourceHash = await vpClientHash(text), parsed = vdLegacy(text, site);
+    const parsed = vdLegacy(text, site);
     mergeMetadata(null, parsed.header);
+    const {days: prints, sourceHash} = await vdLegacyDays(text, parsed);
     let head = await inspect(key);
+    // 版1（2026-10-29まで）は全文のハッシュを指紋にしていたので、同じ旧本文でも指紋が一致しない。捨ててやり直す。
+    if (head.migration && head.migration.version !== 2) throw vdError('migration-version', '古い版の移行です。abandonMigration で捨ててからやり直してください。');
     if (head.migration && head.migration.sourceHash !== sourceHash) throw vdError('source-changed', '旧本文が変わりました。別の移行領域で照合してください。');
     if (!head.migration) {
       // 版の番号ではなく中身で判断する（abandonMigration で捨てた後の空の領域からは始め直せる）。
       if (Object.keys(head.days).length || Object.keys(head.metadata).length) throw vdError('not-empty', '移行先に既存の確定内容があります。');
       const ref = await stage(key, parsed.header);
       head = await publish(key, head, {...head, metadata: {legacy: ref}, migration: {
-        version: 1, sourceHash, status: 'running', totalDays: parsed.offsets.size, totalRecords: parsed.count, receipts: {}}});
+        version: 2, sourceHash, status: 'running', totalDays: parsed.offsets.size, totalRecords: parsed.count, receipts: {}}});
     }
     const alreadyComplete = head.migration.status === 'complete';
     if (vpCanonical(await readMetadata(key, 'legacy', head)) !== vpCanonical(parsed.header)) vdFail('旧本文の見出しが一致しません。');
     let processed = 0;
     for (const [day, spans] of [...parsed.offsets].sort(([a], [b]) => a.localeCompare(b))) {
       signal?.throwIfAborted();
-      const rows = spans.map(([start, end]) => JSON.parse(text.slice(start, end)));
-      vdRows(rows, day);
-      // 記録キー・件数・全項目（印・削除時刻を含む）の順序に依存しない照合。
-      const fingerprint = async values => vpClientHash(vpCanonical([...values].sort((a, b) => vdKey(a).localeCompare(vdKey(b)))));
-      const hash = await fingerprint(rows), receipt = head.migration.receipts[day];
+      const {hash, count} = prints.get(day), receipt = head.migration.receipts[day];
       if (receipt) {
+        // 受領済みの日は旧本文を解析し直さず、保存した本文の指紋を確かめる。
         const saved = {records: []};
         for (const ref of receipt.shards) saved.records.push(...(await readBody(key, ref)).records);
-        if (receipt.hash !== hash || receipt.count !== rows.length || await fingerprint(saved.records) !== hash) vdFail('移行済みの日の照合に失敗しました。');
+        if (receipt.hash !== hash || receipt.count !== count || await vdFingerprint(saved.records) !== hash) vdFail('移行済みの日の照合に失敗しました。');
         continue;
       }
       if (processed >= maxDays) return head;
+      const rows = vdDayRows(text, spans);
+      if (rows.length !== count || await vdFingerprint(rows) !== hash) vdFail('旧本文が移行中に変わりました。');
       const next = structuredClone(head);
       next.days[day] = await prepareDay(key, day, {state: 'complete', records: rows});
       next.migration.receipts[day] = {hash, count: rows.length, shards: next.days[day].shards};
@@ -605,7 +683,7 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
   }
   // 未完了の移行領域を捨てて、別の旧本文で始め直せるようにする（2026-10-29 レビュー指摘1）。running の間は
   // 通常更新を拒否しているので、索引にあるのは移行で入れた日と見出しだけ。それを確かめてから空の索引を
-  // 比較確定する。旧本文・旧経路・本文ストアには触れない（捨てた本文の回収は別途）。完了した移行は捨てない。
+  // 比較確定する。旧本文・旧経路には触れない。捨てた本文は released に入り、collect が猶予後に消す。完了した移行は捨てない。
   async function abandonMigration(key) {
     const head = await inspect(key);
     if (!head.migration) throw vdError('no-migration', '捨てる移行がありません。');
@@ -673,14 +751,20 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
     const input = {...m.header, ...vpPublicCurves(m)};
     const inputHash = await vpClientHash(vpCanonical(input));
     if (head.partsSource?.headerHash !== inputHash) {
-      // 本文とは別の小さな補助情報。期間外になった印・イベント・削除情報も保持する。
-      const metadata = mergeMetadata(await readMetadata(key, 'parts', head), input);
-      next.metadata.parts = await stage(key, metadata);
+      // 本文とは別の補助情報。期間外になった印・イベント・削除情報も保持する。見出しと印などを別の本文にし、
+      // 中身が同じなら前の本文をそのまま使う（書き出し時刻だけの変化で印などを書き直さない）。
+      const merged = mergeMetadata(await readMetadata(key, 'parts', head), input);
+      const annotations = Object.fromEntries(VD_ANNOTATION_FIELDS.filter(f => merged[f] !== undefined).map(f => [f, merged[f]]));
+      const summary = Object.fromEntries(Object.entries(merged).filter(([f]) => !VD_ANNOTATION_FIELDS.includes(f)));
+      for (const [source, value] of [['parts', summary], [VD_ANNOTATIONS, annotations]]) {
+        const hash = await vpClientHash(vpCanonical(value));
+        next.metadata[source] = head.metadata[source]?.hash === hash ? head.metadata[source] : await stage(key, value);
+      }
     }
     next.partsSource = {at: stamp, revision: m.revision, headerHash: inputHash};
     return publish(key, head, next);
   }
-  return {inspect, writeDays, readRange, streamRange, readMetadata, migrateLegacy, abandonMigration, syncParts};
+  return {inspect, writeDays, readRange, streamRange, readMetadata, migrateLegacy, abandonMigration, syncParts, collect};
 }
 
 export {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, readViewerHistory, createViewerDayStore};
