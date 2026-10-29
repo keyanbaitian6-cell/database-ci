@@ -4234,3 +4234,23 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - `python tools/push_ci.py --dry-run` の通常Git認証は失敗。作業領域のAPI通信変換を `PATH` に加え、同じ `tools/push_ci.py --dry-run` が両mainの祖先・期間・21ファイル/CI1回を確認して成功。その後 `PATH=/workspace/database/work/api-git:$PATH python tools/push_ci.py` を1回実行。既存gh認証で29個のGitオブジェクトのSHAを照合し、直前のmainを確認してforce:falseで更新した。スクリプト本体・月前半/後半ルール・CI構成は変更していない。通信変換のFETCH_HEAD書込を調整した確認モードの失敗ではmain更新は発生していない。
 - 今回ソースのCIは **40867757181**、対象SHAは上記81a7de2、確認時点は **in_progress**（https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40867757181）。成功済みと扱わず、前回5b7cff8の成功とも混同しない。再実行はしていない。ローカルの全体ゲートALL PASSEDは今回ソースに対する確認。
 - この反映確認の追記だけを文書コミットとして同じ期間内mainへ送る。文書のみのためCIを追加起動しない。公開Web・Googleデプロイ・同期・APKは今回未変更。今回の生成GSの版文字だけを理由に、利用者へ再デプロイを求めない。
+
+## 【独立レビュー：日別保存ストアと旧形式からの移行基盤（Codex 81a7de2）】2026-10-29 Claude
+
+- 依頼：利用者が貼ったレビュー依頼（保存保護・移行の正確性・範囲読み込み・測定の妥当性を確かめ、次の画面切替へ進める基盤か判断。製品コードの修正は別途相談）。対象：実装前 `05405ab1b8ed08f7bae9d292bc216b4b8f30fb09`、実装 `81a7de20efd6fc1381ee34575760f9a1bcb32452`、反映記録 `0bb6a4c744d80f33085082261fc7a1d4c6cc1af2`。両mainを取得（正本 `e8d2fa0`、database-ci `0bb6a4c`、正本を含む）。手元mainを `c006a74` から `0bb6a4c` へ早送り。作業フォルダーのCodexの未コミットの記録（AI_COLLABORATION.md、18行）は一時退避して戻し、内容一致を確認（控え `../review_packages/review-daystore-20261029/`、退避の数は7件のまま）。後続の変更なし。
+- 報告書：`../outputs/viewer-day-store-review-20261029/日別保存ストア独立レビュー報告書.md`。再現スクリプトと結果も同フォルダー（`review_probe.mjs`・`review_probe_result.json`・`review_probe2.mjs`・`review_probe2_result.json`）。読んだ資料：AGENTS.md（2つ）、本記録の該当項、VIEWER_MEMORY_MIGRATION.md、VIEWER_DAY_STORE.md、VIEWER_DAY_STORE_MEASUREMENTS.md、RAINBOW.md、measurements.json、元の `Astra設計検討報告書.md`（このPCにあり全文参照できた）。
+- **判断**：今回の基盤としては**条件付きで受け入れ可**（保存・確定の保護、範囲読み込み、旧本文の検査・照合の中核は主張どおり）。**製品画面・実データの切替へはまだ進めない**。
+- **指摘1【確定した不具合・中】**：`viewer_day_store.js` は移行の `running` を、日ごとの検査（228〜229行の `vdRows`）より前に確定する（217〜221行）。途中の日に重複キーなどがあると `corrupt` で止まり、`running` のまま残る。同じ旧本文の再実行は同じ日で失敗、直した旧本文は `source-changed`（216行）、`writeDays`・`syncParts` は `migration-running`（176・280行）で拒否。移行領域を捨てるAPIが無く、回復できない。合成データで再現（P1：3日目の重複で受領2日・revision 3の running が残る、P1b：1日目の重複でも running・revision 1）。既存試験（`test_viewer_day_store.mjs` 141〜145行）は失敗のコードだけを見て、状態を見ていない。修正案：全日分の重複・行検査を `running` 確定の前に行う、未完了の移行領域の明示的な破棄（通常更新が無い場合だけ）、失敗後の状態を確かめる再発試験。
+- **指摘2【設計上の制約・中、画面切替の前に必須】**：参照されない本文の回収が無い。P2：60日で最終日と書き出し時刻だけを変えた30回の更新で、参照中121本・24.0MiBに対し未参照90本・12.0MiB。P3：印5,000・削除848件の補助情報614KiBを、書き出し時刻の変化ごとに丸ごと書き直す。修正案：読み込み中の版を守る世代つきの回収、補助情報の分割。
+- **指摘3【設計上の制約・中】**：初回移行の山（Codex測定で365日の renderer RSS 440→1291MiB）。213行の `vpClientHash(text)` が全文をUTF-8に複製し、全記録を同期で `JSON.parse` する。修正案：日単位の指紋、事前の段階ではキーと位置だけ集める、読み切れない端末では止める。
+- **指摘4【低】**：補助情報の時刻比較が `Date.parse`（ミリ秒）で、マイクロ秒だけ古い削除時刻・🌈が新しい方を上書きした（P4で再現）。閲覧・共有ページの既存の扱いと同程度だが、PC・Androidの規則とは違いうる。Safariの6桁の小数秒は未確認。
+- **指摘5【仕様の確認・低】**：明示削除（`deleted`）した日が、Googleの「部品なしの完成日」で `empty` に置き換わり、削除時刻が消える（Q5で再現）。どちらを正とするか未定。**軽微**：`vdLegacy` の空白の判定が `/\s/` でJSONより広い。
+- 問題なし：確定前の失敗で前回の確定を保つ、CASによる競合検出・古い一覧の `stale`、読み込み中の版の固定、欠損・破損を空にしない、範囲外の本文を読まない、旧本文の走査（P5：エスケープした項目名・字下げ・コロン前後の改行・文字列中の括弧と引用符・末尾が逆斜線の文字列・絵文字とU+2028で内容一致）、旧経路・旧本文を書き換えない、詳細な線を取得しない、計算規則の不変（Dart・PCの変更は照合版の文字だけ）、製品からの呼び出しが無い、生成物の再現（流し直すと改行だけの違いで中身同一、元に戻した）。
+- 試験・測定の妥当性：
+  - 既存16件はこのPC（Windows Chromium）でも成功（`node --test database_android/tool/test_viewer_day_store.mjs`）。
+  - 「容量不足」は `put` の差し替えによる模擬、「途中終了」は maxDays／AbortController／別インスタンスで、強制終了ではない。
+  - **measurements.json の現行経路の行は、ヒープの読み取りが9〜17回しかない（1.3〜3.4秒）**。同期処理で取り逃しているので、比較には外から読んだ renderer RSS（125〜339回）を使うべき。
+  - 現行の測定は、`rememberViewerHistory`・ストリームでの読み直し・Dartの `prepareMerge` を含まない（文書に明記あり）。
+- CI：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40867757181（対象 `81a7de2`）は、full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の3ジョブとも成功。再実行なし。
+- 次の手順（優先順位）：①指摘1、②指摘2、③指摘5の規則決め、④指摘3、⑤指摘4、⑥独立した🌈の印の引継ぎと、既存の `mergeRainbowMarks`・`mergeDateEvents` との同値性の試験、⑦一画面ずつ新旧の結果を照合して切替・実iPhone確認。
+- 行っていないこと：製品コードの修正、再発試験の通常回帰への追加、全体ゲート・ビルド・公開・Google更新・APK。再発試験は直す前に足すと全体ゲートが失敗するため、再現スクリプトとして置いた。
