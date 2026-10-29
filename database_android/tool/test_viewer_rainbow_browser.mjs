@@ -41,6 +41,7 @@ const shared = {rainbow: {format: 'database-rainbow', version: 1, marks: [
   {store: 'nagamachiminami', day: '2026-10-10', rack: 1086, on: true, updated_at: '2026-10-10T13:00:00.000Z'}]},
 events: {format: 'database-events', version: 1, kind: 'meruhen', events: []}};
 const posts = [];
+let batchSupported=false;
 
 const browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox']});
 try {
@@ -56,6 +57,7 @@ try {
       return route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify({ok: true, marks: 1, changed: 1})});
     }
     const file = url.searchParams.get('file');
+    if(file==='diagnostic') return route.fulfill({status:200,contentType:'application/json',headers,body:JSON.stringify({format:'database-release',capabilities:batchSupported?['rainbow-storage-v2']:[]})});
     if (file && shared[file]) return route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify(shared[file])});
     return route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify({error: 'この試験では閲覧用ファイルを返しません。'})});
   });
@@ -125,6 +127,11 @@ try {
   });
   const largeStart=posts.length;
   await page.getByRole('button',{name:'🌈 付ける',exact:true}).click();
+  await page.getByText(/5,000件を超える🌈の共有にはGoogleスクリプトの更新/).waitFor();
+  assert.equal(posts.length,largeStart,'旧Googleへ大量の分割送信をしない');
+  assert.equal((await stored()).rainbow_marks.length,5003,'端末には全件残る');
+  batchSupported=true;
+  await page.getByRole('button',{name:'🌈 外す',exact:true}).click();
   for(let i=0;i<80 && posts.length<largeStart+2;i++) await page.waitForTimeout(100);
   const batches=posts.slice(largeStart);
   assert.deepEqual(batches.map(p=>p.marks.length),[5000,3]);

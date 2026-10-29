@@ -356,12 +356,20 @@ String sharedRainbowBody(String text) =>
 String sharedRainbowBodyOf(Map<String, RainbowMark> marks) =>
     jsonEncode({'file': 'rainbow', 'marks': _json(marks)});
 
-/// 旧スクリプトでも受け取れる5,000件以下に分けて順に送る。
+/// 共有先が保存総数を保護する版のときだけ、大量の印を分割する。
+/// 旧版へ分割して送ると、保存済み5,001件が空とみなされるため送らない。
 /// 途中で失敗したら止める。端末の印は消さず、次の操作で全件を再送できる。
 Future<({bool ok, String message})> sendSharedRainbowMarks(
   Map<String, RainbowMark> marks,
-  Future<String> Function(String body) post,
-) async {
+  Future<String> Function(String body) post, {
+  Future<bool> Function()? canBatch,
+}) async {
+  if (marks.length > 5000 && (canBatch == null || !await canBatch())) {
+    return (
+      ok: false,
+      message: '5,000件を超える🌈の共有にはGoogleスクリプトの更新が必要です。端末の印は保持しています。',
+    );
+  }
   final keys = marks.keys.toList()..sort();
   for (var start = 0; start < keys.length; start += 5000) {
     final batch = <String, RainbowMark>{
@@ -371,6 +379,19 @@ Future<({bool ok, String message})> sendSharedRainbowMarks(
     if (!result.ok) return result;
   }
   return (ok: true, message: '');
+}
+
+/// 大量送信を受ける共有先の保存保護を確認する。未対応・不正な返事は対応済みとしない。
+bool sharedRainbowCanBatch(String response) {
+  try {
+    final doc = jsonDecode(response);
+    return doc is Map &&
+        doc['format'] == 'database-release' &&
+        doc['capabilities'] is List &&
+        (doc['capabilities'] as List).contains('rainbow-storage-v2');
+  } on FormatException {
+    return false;
+  }
 }
 
 /// スクリプトの返事を、利用者への知らせにする。送れたら ok が true。古いスクリプト（🌈を足す前）は

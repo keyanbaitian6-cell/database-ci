@@ -243,3 +243,13 @@ test('共有イベント：要求上限を超えて保存済みでも消さず�
   assert.equal(d.post({file:'events',events:[{...events[0],store:'next'}]}).events,5001);
   assert.equal(d.post({file:'events',events:[{...events[0],store:'last'}]}).events,5002);
 });
+
+
+test('両Googleスクリプトは保存保護の対応を診断で返す',async()=>{
+  for(const name of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {
+    const code=await fs.readFile(new URL('./'+name,import.meta.url),'utf8');
+    const d=drive({},code);const doc=d.get('diagnostic');
+    assert.equal(doc.format,'database-release');assert.ok(doc.capabilities.includes('rainbow-storage-v2'));
+    assert.deepEqual(d.locks,[]);
+  }
+});

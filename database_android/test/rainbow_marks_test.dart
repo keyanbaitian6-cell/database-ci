@@ -96,28 +96,57 @@ void main() {
         marks[mark.key] = mark;
       }
       final before = rainbowMarksText(marks), sent = <List>[];
+      final blocked = await sendSharedRainbowMarks(marks, (body) async {
+        sent.add((jsonDecode(body) as Map)['marks'] as List);
+        return '{"ok":true}';
+      });
+      expect(blocked.ok, false);
+      expect(sent, isEmpty);
+      expect(rainbowMarksText(marks), before);
+
       final failed = await sendSharedRainbowMarks(marks, (body) async {
         sent.add((jsonDecode(body) as Map)['marks'] as List);
         return sent.length == 2 ? '{"error":"合成の失敗"}' : '{"ok":true}';
-      });
+      }, canBatch: () async => true);
       expect(failed.ok, false);
       expect(sent.map((x) => x.length), [5000, 5000]);
       sent.clear();
       final retry = await sendSharedRainbowMarks(marks, (body) async {
         sent.add((jsonDecode(body) as Map)['marks'] as List);
         return '{"ok":true}';
-      });
+      }, canBatch: () async => true);
       expect(retry.ok, true);
       expect(sent.map((x) => x.length), [5000, 5000, 1]);
       expect(sent.expand((x) => x).map((x) => x['rack']).toSet().length, 10001);
       expect(rainbowMarksText(marks), before);
       await expectLater(
-        sendSharedRainbowMarks(marks, (_) async => throw StateError('通信失敗')),
+        sendSharedRainbowMarks(
+          marks,
+          (_) async => throw StateError('通信失敗'),
+          canBatch: () async => true,
+        ),
         throwsStateError,
       );
     },
   );
 
+  test('large rainbow uploads require a positive storage capability', () {
+    for (final response in [
+      'null',
+      '{}',
+      'broken',
+      '{"format":"database-release","capabilities":[]}',
+      '{"format":"wrong","capabilities":["rainbow-storage-v2"]}',
+    ]) {
+      expect(sharedRainbowCanBatch(response), false);
+    }
+    expect(
+      sharedRainbowCanBatch(
+        '{"format":"database-release","capabilities":["rainbow-storage-v2"]}',
+      ),
+      true,
+    );
+  });
   final now = DateTime.utc(2026, 10, 11, 13);
 
   // 2026-10-29：端末の内容はまるごと読まず、最上位の rainbow_marks だけを差し替える。まるごと読んで

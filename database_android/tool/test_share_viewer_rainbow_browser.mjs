@@ -155,6 +155,7 @@ try {
   // 2026-10-16 利用者「青い枠で囲まれてるところが本日みたいな雰囲気でてしまうので、本日＝開いている日、見ている日に」。
   // 本日（10/11）の数値が未取得でも、🌈の記録は本日を右端・青枠にして開き、幸町は取り込み前の印を付け外しできる。
   {
+    let batchSupported=false;
     const context = await browser.newContext({viewport: {width: 393, height: 860}});
     const posts = [];
     await context.route('https://script.google.com/**', route => {
@@ -165,6 +166,7 @@ try {
         return route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify({ok: true})});
       }
       const file = new URL(request.url()).searchParams.get('file') ?? '';
+      if(file==='diagnostic') return route.fulfill({status:200,contentType:'application/json',headers,body:JSON.stringify({format:'database-release',capabilities:batchSupported?['rainbow-storage-v2']:[]})});
       route.fulfill({status: 200, contentType: 'application/json', headers, body: JSON.stringify(responses[file] ?? {error: 'no'})});
     });
     const page = await context.newPage();
@@ -217,12 +219,17 @@ try {
     });
     const batchStart=posts.length;
     await cell(1202,'10/10','を外す').click();
+    await page.getByText(/5,000件を超える🌈の共有にはGoogleスクリプトの更新/).waitFor();
+    assert.equal(posts.length,batchStart,'旧Googleへは大量の印を分割して送らない');
+    assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('database-share-rainbow')).length),5003);
+    batchSupported=true;
+    await cell(1202,'10/10','を付ける').click();
     for (let i=0;i<80 && posts.length<batchStart+2;i++) await page.waitForTimeout(100);
     assert.deepEqual(posts.slice(batchStart).map(p=>p.marks.length),[5000,3]);
     // 壊れた保存内容は消さず、送信もしない。
     await page.evaluate(()=>localStorage.setItem('database-share-rainbow','[null]'));
     const corruptStart=posts.length;
-    await cell(1202,'10/10','を付ける').click();
+    await cell(1202,'10/10','を外す').click();
     assert.match(await page.locator('.toast').last().innerText(),/元の内容を保持/);
     assert.equal(await page.evaluate(()=>localStorage.getItem('database-share-rainbow')),'[null]');
     assert.equal(posts.length,corruptStart);

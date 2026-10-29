@@ -51,7 +51,7 @@ const RAINBOW_STORED_MAX = 100000;
 const EVENT_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
 
 function doGet(e) {
-  if (e?.parameter?.file === 'diagnostic') return respond(JSON.stringify({format:'database-release', release:SCRIPT_RELEASE, capabilities:['recommendation-results','remote-curves']}));
+  if (e?.parameter?.file === 'diagnostic') return respond(JSON.stringify({format:'database-release', release:SCRIPT_RELEASE, capabilities:['rainbow-storage-v2','recommendation-results','remote-curves']}));
   const key = (e && e.parameter && e.parameter.file) || '';
   if (key === '' && !(e && e.parameter && (e.parameter.parts || e.parameter.check))) logAccess(e && e.parameter && e.parameter.u);
   // 週の構成はPCが作り、共有で編集した記号を重ねて返す。
@@ -546,7 +546,7 @@ function postEventHistory(cells=[],recommendations=[],results=[]) {
 
 // END EVENT_HISTORY_SHARED
 // BEGIN GENERATED VIEWER PARTS
-const SCRIPT_RELEASE = '87b4b6bd4e83';
+const SCRIPT_RELEASE = 'deae592f690c';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

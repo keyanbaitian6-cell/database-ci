@@ -14,7 +14,7 @@ import {
   MERUHEN_STORES, calendarDay, compactSigned, dayNet, daySummaries, daySummary, displayMachineName, eventLabel, indexRecords, lowGamesNote,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel, TOP_RACKS_OPEN, viewerNameFrom, winRateText,
   IDLE_DAY_CHOICES, IDLE_DEFAULT_DAYS, IDLE_DEFAULT_GAMES, IDLE_GAMES_CHOICES, idleVarietyRacks, storeDays,
-  storedRainbowMarks, sendRainbowBatches, RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
+  sharedRainbowCanBatch, storedRainbowMarks, sendRainbowBatches, RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
   RAINBOW_COUNT_DAYS, applyRainbowMarks, markTime, mergeMarks, varietyRecordRows,
   ROTATION_DAYS, byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
   SUFFIX_PERIODS, hasSuffixSummary, suffixesOf, zoromeEndingsOf, suffixLabel, suffixReport,
@@ -923,7 +923,7 @@ async function toggleRainbow(key) {
       });
       if (!response.ok) throw new Error(`共有先の応答：${response.status}`);
       return response.json();
-    });
+    }, async () => sharedRainbowCanBatch(await getJson(`https://script.google.com/macros/s/${state.id}/exec?file=diagnostic`)));
     toast(result.ok ? `${done}共有しました。` : `${done}（この端末には残しました。共有には送れませんでした：${result.error ?? '返事が読めません'}）`);
   } catch (error) {
     toast(`${done}（この端末には残しました。共有には送れませんでした。次に付け外しするときにまた送ります）`);

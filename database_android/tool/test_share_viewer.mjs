@@ -511,12 +511,12 @@ test('🌈の分割送信：5,001件以上を保持し、失敗で停止して�
   const {sendRainbowBatches}=await import('../../share_viewer/data.mjs');
   const marks=Array.from({length:10001},(_,i)=>({rack:i+1,on:i%2===0,updated_at:'2026-10-29T00:00:00Z'}));
   const before=JSON.stringify(marks), sent=[];
-  const failed=await sendRainbowBatches(marks,async body=>{sent.push(body);return sent.length===2?{error:'合成の失敗'}:{ok:true};});
+  const failed=await sendRainbowBatches(marks,async body=>{sent.push(body);return sent.length===2?{error:'合成の失敗'}:{ok:true};},async()=>true);
   assert.equal(failed.error,'合成の失敗');assert.deepEqual(sent.map(b=>b.marks.length),[5000,5000]);
-  const retry=[];assert.equal((await sendRainbowBatches(marks,async body=>{retry.push(body);return {ok:true};})).ok,true);
+  const retry=[];assert.equal((await sendRainbowBatches(marks,async body=>{retry.push(body);return {ok:true};},async()=>true)).ok,true);
   assert.deepEqual(retry.map(b=>b.marks.length),[5000,5000,1]);
   assert.deepEqual(retry.flatMap(b=>b.marks),marks);assert.equal(JSON.stringify(marks),before);
-  await assert.rejects(sendRainbowBatches(marks,async()=>{throw Error('通信失敗');}),/通信失敗/);
+  await assert.rejects(sendRainbowBatches(marks,async()=>{throw Error('通信失敗');},async()=>true),/通信失敗/);
 });
 
 
@@ -527,4 +527,27 @@ test('🌈の独立保存：不正な1件も捨てずに停止し、重複は新
   for(const text of ['null','{}','[null]',JSON.stringify([old,{bad:true}])]) assert.throws(()=>storedRainbowMarks(text));
   assert.deepEqual(storedRainbowMarks(null),[]);
   assert.deepEqual(storedRainbowMarks(JSON.stringify([newer,old])),[newer]);
+});
+
+
+test('大量の🌈は保存保護の対応確認が無ければ送信せず、通常件数は従来どおり',async()=>{
+  const {sendRainbowBatches,sharedRainbowCanBatch}=await import('../../share_viewer/data.mjs');
+  for(const doc of [null,{}, {format:'database-release',capabilities:[]},{format:'wrong',capabilities:['rainbow-storage-v2']}]) assert.equal(sharedRainbowCanBatch(doc),false);
+  assert.equal(sharedRainbowCanBatch({format:'database-release',capabilities:['rainbow-storage-v2']}),true);
+  const marks=Array.from({length:5001},(_,i)=>({rack:i+1}));let posts=0;
+  assert.match((await sendRainbowBatches(marks,async()=>{posts++;return {ok:true};})).error,/Googleスクリプトの更新/);
+  assert.equal(posts,0);assert.equal(marks.length,5001);
+  assert.equal((await sendRainbowBatches(marks.slice(0,5000),async()=>{posts++;return {ok:true};},()=>{throw Error('通常件数で確認不要');})).ok,true);
+  assert.equal(posts,1);
+});
+
+
+test('Googleの保存保護の診断を共有の読み込み経路で取得できる',async()=>{
+  const {fetchShared}=await import('../web/shared_events.mjs');const calls=[];
+  const result=await fetchShared('https://script.google.com/macros/s/TEST_DIAG/exec','diagnostic',async url=>{
+    calls.push(url);return new Response('{"format":"database-release","capabilities":["rainbow-storage-v2"]}',{status:200});
+  });
+  assert.equal(JSON.parse(result).format,'database-release');assert.equal(calls.length,1);
+  assert.match(calls[0],/file=diagnostic$/);
+  await assert.rejects(fetchShared('https://script.google.com/macros/s/TEST_DIAG/exec','arbitrary',()=>{throw Error('呼ばない');}),/不正/);
 });

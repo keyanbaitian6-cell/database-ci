@@ -328,6 +328,8 @@ class _ViewerHomeState extends State<ViewerHome> {
       final result = await sendSharedRainbowMarks(
         marks,
         (body) => postSharedEvents(url, body),
+        canBatch: () async =>
+            sharedRainbowCanBatch(await fetchSharedEvents(url, 'diagnostic')),
       );
       _say(
         result.ok
