@@ -224,7 +224,10 @@ function render() {
     <section class="hero">
       <p class="kicker">${esc(storeLabel(state.store))}</p>
       <h1 class="headline num">${state.year}年${state.month}月</h1>
-      <div class="month-stats">${monthRate.judged ? `<p class="month-rate num" data-month-rate>月間の${winRateText(monthRate.won, monthRate.judged)}<span class="sub">${monthRate.days}日・${count(monthRate.judged)}台中${count(monthRate.won)}台プラス</span></p>` : ''}<p class="month-rate num" data-month-net>月間差枚 ${monthNet == null ? '—' : signed(monthNet) + '枚'}<span class="sub">${monthNet == null ? '差枚データなし' : `差枚が分かる${count(monthNets.length)}台の合計${state.store.startsWith('pscube:') ? '' : '（推定を含む）'}`}</span></p></div>
+      <div class="month-stats" aria-label="月間の集計">
+        <div class="month-stat" data-month-rate><span class="stat-label">月間勝率</span><span class="stat-value num">${monthRate.judged ? winRateText(monthRate.won, monthRate.judged).replace('勝率', '') : '—'}</span><span class="stat-detail">${monthRate.judged ? `${monthRate.days}日分・${count(monthRate.won)} / ${count(monthRate.judged)}台プラス` : '勝率データなし'}</span></div>
+        <div class="month-stat" data-month-net><span class="stat-label">月間差枚${state.store.startsWith('pscube:') ? '' : '（推定含む）'}</span><span class="stat-value num ${monthNet == null ? '' : tone(monthNet)}">${monthNet == null ? '—' : signed(monthNet)}<small>${monthNet == null ? '' : '枚'}</small></span><span class="stat-detail">${monthNet == null ? '差枚データなし' : `取得分 延べ${count(monthNets.length)}台`}</span></div>
+      </div>
       <p class="lede">日付を押すと、その日の差枚TOP50と強かった機種10選が見られます。</p>
     </section>
     <div class="stores">
