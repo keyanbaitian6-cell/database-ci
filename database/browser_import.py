@@ -1845,7 +1845,11 @@ class _Bridge:
             data = json.loads(result)
         except (TypeError, ValueError):
             return result
-        if isinstance(request, dict) and request.get('auto') is True and isinstance(data, dict) and data.get('reason') == 'all_done':
+        if not (isinstance(request, dict) and request.get('auto') is True):
+            # 手動の「次へ」を押したら、利用者は続けて使う。前の自動取り込みの完了で窓を閉じない（2026-10-31）。
+            self._completed = None
+            return result
+        if isinstance(data, dict) and data.get('reason') == 'all_done':
             with self._auto._lock:
                 state = self._auto.state()
                 if state['enabled']:
@@ -2187,6 +2191,9 @@ class _Bridge:
         self._advance_session = self._auto_session if state['enabled'] else None
         self._advance_url = self._window.get_current_url() if state['enabled'] else None
         self._manual_continuation = not state['enabled']
+        if not state['enabled']:
+            # 手動の保存を始めたら、前の自動取り込みの完了で窓を閉じない。保存が終わった時点で閉じていた（2026-10-31）。
+            self._completed = None
         self._children.append(subprocess.Popen(command, env={**os.environ,
             'DATABASE_ADVANCE_SIGNAL': str(self._signal_path),
             'DATABASE_CAPTURE_TABLES_ONLY': '1' if self._tables_only else '0'}))

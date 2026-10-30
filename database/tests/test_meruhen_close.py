@@ -74,6 +74,29 @@ class CloseWhenFinishedTests(unittest.TestCase):
         self.assertFalse(self.close())
         self.assertEqual(self.destroyed, [])
 
+    def test_manual_use_after_auto_finished_keeps_the_window_open(self):
+        """自動の完了時に保存の処理が残っていて、その間に手動で使い始めたら、あとで窓を閉じない（2026-10-31）。"""
+        running = types.SimpleNamespace(poll=lambda: None)
+        self.bridge.set_auto_capture(True, 3.5)
+        self.ask(True)
+        self.bridge._children = [running]
+        self.assertFalse(self.close())
+        self.ask(False)                       # 手動の「次へ」
+        self.bridge._children = []
+        self.assertFalse(self.close(), '手動の「次へ」のあとは閉じない')
+
+        self.bridge.set_auto_capture(True, 3.5)
+        self.ask(True)
+        self.bridge._children = [running]
+        started = []
+        with mock.patch('subprocess.Popen', lambda *args, **kwargs: started.append(args) or running):
+            self.bridge._spawn_unlocked('table', '{}')  # 手動の保存を始める
+        self.assertEqual(len(started), 1)
+        self.bridge._children = []
+        self.assertFalse(self.close(), '手動の保存が終わっても閉じない')
+        self.assertEqual(self.destroyed, [])
+        self.assertFalse((self.folder / FINISHED_NAME).exists())
+
 
 if __name__ == '__main__':
     unittest.main()
