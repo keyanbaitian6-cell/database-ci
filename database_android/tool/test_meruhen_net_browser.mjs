@@ -60,6 +60,17 @@ try {
     await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
     const placeholder = page.locator('flt-semantics-placeholder');
     if (await placeholder.count()) await placeholder.evaluate(e => e.click());
+    // 保存の診断（2026-10-31、web/storage_report.mjs）：件数・大きさ・読み込みが終わった回数を出し、保存先を作らない。
+    await page.getByRole('button',{name:'更新・差枚の取得状況',exact:true}).click({timeout:60000});
+    await page.getByText(/この端末の保存（診断）/).waitFor();
+    const health = (await page.locator('flt-semantics').allTextContents()).join('\n');
+    assert.match(health, /表示中の記録：4件・1日分/);
+    assert.match(health, /本体（前に読み込んだ内容）：約[\d.]+MB（[\d,]+文字/);
+    assert.match(health, /本体の保存先：メルヘンの本体あり・本体と別の🌈の印なし/);
+    assert.match(health, /新しい日別保存：まだ使っていません/);
+    assert.match(health, /起動時の読み込み：最後まで終わった1回.*途中で終わった0回/);
+    assert.equal(await page.evaluate(async () => (await indexedDB.databases()).some(d => d.name === 'database-viewer-days-v1')), false);
+    await page.getByRole('button',{name:'閉じる',exact:true}).click();
     await page.getByRole('button',{name:'日別の差枚（推定）',exact:true}).click({timeout:60000});
     await page.getByText('メルヘンワールド長町南店　2026年10月のデータ',{exact:true}).waitFor();
     await page.getByText('+316',{exact:true}).first().waitFor();

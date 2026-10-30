@@ -107,3 +107,14 @@ await store.migrateLegacy(key, {
 通常回帰配置 `database_android/tool/test_viewer_day_store.mjs`（2026-10-30時点で23件）と、再現可能な測定 `measure_viewer_day_store.mjs` を追加。合成データだけで確認。実行結果・環境差・数値は `VIEWER_DAY_STORE_MEASUREMENTS.md` と `AI_COLLABORATION.md` に記録する。
 
 次は①読取専用の保存診断（実データへの操作は別途依頼範囲を確認）、②一貫した旧本文スナップショットの取得と独立印の引継ぎ、③小さな索引からの日・店舗選択、④一画面ずつ新旧結果比較、⑤採点・候補・入替・週表の必要範囲を満たすリポジトリ層、⑥巨大JSONをDartへ渡さない橋渡し、の順で進める。各段階で保存成功後の画面切替・失敗時の旧表示維持を検証する。実機の容量限界・終了再開・SafariのメモリはクラウドのChromium試験と分けて確認する。
+
+## ①読取専用の保存診断（2026-10-31 Claude、利用者「段階Aから始める」）
+
+対象は自分用の閲覧ページ（メルヘン `web/index.html`・P’s CUBE `web/pscube/`）だけ。共有カレンダー・PC・Androidアプリには出さない。画面は既存の「更新・差枚の取得状況」の末尾に行を足す（`capture_health_ui.dart` の `deviceLines`、Androidアプリでは空）。
+
+- 部品：`database_android/web/storage_report.mjs`。窓口：`databaseViewer.storageReport()`・`databaseViewer.phase(name, done)`（メルヘンは `web/index.html`、P’s CUBEは `web/pscube/viewer_bootstrap.mjs` で同じ部品を使う）。Dart：`viewer_bridge_web.dart` の `viewerStorageLines`・`markViewerPhase`。
+- 出す内容：表示中の記録の件数・日数、保存領域の使用量と上限の目安（`navigator.storage.estimate`、同じ配信元 `keyanbaitian6-cell.github.io` の共有カレンダーの保存を含む）、保存の保護（`persisted`）、本体の大きさ（このページで読み込んだ・保存したときの文字数）、本体の保存先（本体の有無・本体と別の🌈の印の件数）、P’s CUBEの保存先の項目数、日別キャッシュ（`database-viewer-parts-v1`）の日数、新しい日別保存（`database-viewer-days-v1`）の件数、同じ配信元のほかの保存先の名前、localStorageの文字数、読み込みの記録。
+- 読むだけ：本体 `data`・日別の本文・旧形式の `snapshots` は開かず、`count()`・`getAllKeys()` と、小さな `rainbow_marks` だけを読む。保存先は `indexedDB.databases()` の一覧にあるものだけを版の指定なしで開く（無い保存先を開くと空のまま版1で作られ、ページ本体が保存先を作り直せなくなるため）。一覧が使えないブラウザでは開かず「確認できません」。一覧のあとに消えていたら作らない（`onupgradeneeded` で中止）。ページ本体の版上げを待たせない（`onversionchange` で閉じる）。
+- 読み込みの記録：localStorage の `database-viewer-diag` の1項目だけに書く。区切りは `open`（起動時に端末の内容を開いて表示するまで、`viewer_main.dart` の `_start`）と `drive`（Googleドライブの更新：取得・統合・保存・表示、`_refreshFromDrive`）。始める前に「途中」と書き、終わったら（成功・失敗とも）回数・前回と最長の時間を書く。次に始めるとき「途中」が残っていれば、その区切りの「途中で終わった」回数に数える。Safariが落ちた・ページを閉じた・Safariが裏のページを片付けたは区別できない。時間は裏に回っていた間を含む。Safariはメモリの使用量を測る手段を出さない。
+- 試験：`database_android/tool/test_viewer_storage_report.mjs`（4件、実Chromiumの IndexedDB で、本体を読まない・無い保存先を作らない・本体が変わらない・回数）、`test_meruhen_net_browser.mjs`（メルヘンの実ビルドで診断の行と保存先を作らないこと）、`test_capture_health_browser.mjs`（P’s CUBEの実ビルド）。
+- 未確認：実iPhoneのSafariでの値（`estimate` の目安の意味、`databases()`、落ちたときに localStorage の書き込みが残るか）。利用者の確認で分かったことはこの節と `AI_COLLABORATION.md` に足す。

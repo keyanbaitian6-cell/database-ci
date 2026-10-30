@@ -22,6 +22,8 @@ Future<void> showCaptureHealth(
   String? store,
   String? day,
   bool pscube = false,
+  // 閲覧ページだけ：この端末の保存の診断（viewer_main.dart）。Androidアプリでは空。
+  List<String> deviceLines = const [],
 }) async {
   final scope = records
       .where(
@@ -51,6 +53,7 @@ Future<void> showCaptureHealth(
     for (final s in stores.entries) '${s.key}：${s.value}',
     if (day != null) '確認する営業日：$day',
     if (pscube) ...netStatusLines(scope),
+    ...deviceLines,
     'PC・Androidで書き出しただけでは、Driveへのアップロードや他の端末での読み込みは確認できません。',
   ];
   await showDialog<void>(

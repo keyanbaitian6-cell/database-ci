@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:js_interop';
 
 @JS('databaseViewer.pick')
@@ -55,6 +56,35 @@ external JSPromise<JSString?> _loadMarks();
 
 @JS('databaseViewer.saveMarks')
 external JSPromise<JSAny?> _saveMarks(JSString text);
+
+@JS('databaseViewer.storageReport')
+external JSPromise<JSString?> _storageReport();
+
+@JS('databaseViewer.phase')
+external JSPromise<JSAny?> _phase(JSString name, JSBoolean done);
+
+/// この端末の保存の診断（web/storage_report.mjs、2026-10-31）。保存した内容は読み直さない。
+/// 調べられなければ、その理由の1行。
+Future<List<String>> viewerStorageLines() async {
+  try {
+    final text = (await _storageReport().toDart)?.toDart;
+    return text == null
+        ? const []
+        : (jsonDecode(text) as List).map((e) => '$e').toList();
+  } on Object catch (error) {
+    return ['この端末の保存（診断）：確認できませんでした（$error）'];
+  }
+}
+
+/// 重い読み込み（[name]：open・drive）の始まりと終わり。途中でページが終わったら次に開いたときに
+/// 数える。記録できなくても読み込みは続ける。
+Future<void> markViewerPhase(String name, {required bool done}) async {
+  try {
+    await _phase(name.toJS, done.toJS).toDart;
+  } on Object {
+    // 診断の記録だけなので、読み込みは止めない。
+  }
+}
 
 /// 本体と別に置いた🌈の印（JSONの配列）。無ければ null。
 Future<String?> loadRainbowMarks() async => (await _loadMarks().toDart)?.toDart;

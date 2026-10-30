@@ -13,6 +13,10 @@ Future<String?> loadRainbowMarks() async => null;
 
 Future<void> saveRainbowMarks(String text) async {}
 
+Future<List<String>> viewerStorageLines() async => const [];
+
+Future<void> markViewerPhase(String name, {required bool done}) async {}
+
 Future<String?> backupFromRemote(
   String url, {
   String? unlessExportedAt,

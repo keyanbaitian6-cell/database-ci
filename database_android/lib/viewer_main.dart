@@ -130,6 +130,8 @@ class _ViewerHomeState extends State<ViewerHome> {
   Future<void> _start() async {
     _remote = loadRemoteUrl();
     await _readDeviceMarks();
+    // 保存の診断（web/storage_report.mjs）：端末の内容を開く間にページが終わったら、次に開いたときに数える。
+    await markViewerPhase('open', done: false);
     try {
       // 手元での確認用：同じサイト内のファイルを ?load= で読む。
       final url = Uri.base.queryParameters['load'];
@@ -139,6 +141,8 @@ class _ViewerHomeState extends State<ViewerHome> {
       if (text != null) _show(ViewerData.parse(text));
     } catch (error) {
       _error = '前に読み込んだ内容を開けませんでした。もう一度読み込んでください。\n$error';
+    } finally {
+      await markViewerPhase('open', done: true);
     }
     if (mounted) setState(() => _loading = false);
     // 前の内容をすぐ出してから、Driveの最新を読みに行く。
@@ -159,6 +163,8 @@ class _ViewerHomeState extends State<ViewerHome> {
       _syncing = true;
       _error = null;
     });
+    // 保存の診断：Driveの内容を読み・合わせ・保存する間（メモリの山）にページが終わったら数える。
+    await markViewerPhase('drive', done: false);
     try {
       final current = _data;
       final text = await backupFromRemote(
@@ -207,6 +213,8 @@ class _ViewerHomeState extends State<ViewerHome> {
       }
     } catch (error) {
       _error = 'Googleドライブから読めませんでした（前に読み込んだ内容を表示しています）。\n$error';
+    } finally {
+      await markViewerPhase('drive', done: true);
     }
     // 共有カレンダー：Driveの中身が変わっていなくても、ほかの端末で入れたイベントは取り込む。
     await _pullShared(url);
@@ -1018,17 +1026,27 @@ class _ViewerHomeState extends State<ViewerHome> {
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
-            onPressed: () => showCaptureHealth(
-              context,
-              records: data.records.map(healthRecord).toList(),
-              syncStatus: data.syncStatus,
-              exportedAt: data.exportedAtText,
-              loadedAt: data.loadedAt?.toIso8601String(),
-              checkedAt: _checkedAt?.toIso8601String(),
-              store: store,
-              day: day,
-              pscube: data.source == 'pscube',
-            ),
+            onPressed: () async {
+              // 保存の診断（2026-10-31、VIEWER_DAY_STORE.md の次の手順①）。件数・大きさだけを読む。
+              final storage = await viewerStorageLines();
+              if (!mounted) return;
+              await showCaptureHealth(
+                context,
+                records: data.records.map(healthRecord).toList(),
+                syncStatus: data.syncStatus,
+                exportedAt: data.exportedAtText,
+                loadedAt: data.loadedAt?.toIso8601String(),
+                checkedAt: _checkedAt?.toIso8601String(),
+                store: store,
+                day: day,
+                pscube: data.source == 'pscube',
+                deviceLines: [
+                  '表示中の記録：${data.records.length}件・'
+                      '${{for (final r in data.records) r.day}.length}日分',
+                  ...storage,
+                ],
+              );
+            },
             icon: const Icon(Icons.info_outline),
             label: const Text('更新・差枚の取得状況'),
           ),

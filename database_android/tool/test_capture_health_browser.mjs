@@ -54,6 +54,10 @@ try{
       const text=await page.locator('flt-semantics').allTextContents();
       assert.ok(text.join('\n').includes('1番 診断試験機種：差枚の通信失敗'));
       assert.ok(text.join('\n').includes('スマホ補完：反映 1件'));
+      // 保存の診断（2026-10-31）：P’s CUBEのページも本体の大きさと読み込みの回数を出す。
+      assert.match(text.join('\n'),/本体（前に読み込んだ内容・P’s CUBE）：約[\d.]+MB/);
+      assert.match(text.join('\n'),/P’s CUBEの保存先：\d+項目/);
+      assert.match(text.join('\n'),/起動時の読み込み：最後まで終わった1回.*途中で終わった0回/);
       if(width===393)await page.screenshot({path:'/tmp/acb-viewer-health.png'});
     }else{
       await page.goto(`${origin}/share/index.html#s=${id}`);await page.locator('.grid').waitFor();
