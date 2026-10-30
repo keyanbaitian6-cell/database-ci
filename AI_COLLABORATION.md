@@ -4432,3 +4432,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 検証初回はDISPLAY :101の既存ロックに対して画面サーバーへ接続できずPC試験が失敗。その実行を停止し、専用DISPLAY :102で起動確認後に全体ゲートを最初から再実行。製品コードへ環境回避を入れていない。結果は続記。
 - 追加の利用者指示：「真横に置けないなら2段でもいい」「見やすさを重視」。横並び自体が目的ではなく、読みやすさを優先する。今回の通常スマホ幅では余裕を持って2列を表示でき、項目名・数値・補足を整理することで可読性を改善。
 - 専用DISPLAYで全体ゲート **ALL PASSED**。PC492件・直下236件・UTC27件、Flutter750件、analyzeとWeb検証ビルド・全JS試験成功。共有の公開形式の試験は320/393/1280pxで成功。公開先・版は続記する。
+- 公開完了：ソース `e707350694c8f25a0e9e9fc9eef63ec05d48eb8f` をpush_ci.pyでdatabase-ciへ送信。CI https://github.com/keyanbaitian6-cell/database-ci/actions/runs/41046734066 は最終確認時点で実行中。公開database-share `ab255ab48a71a51cb270853985ca447fb0769b73`・版 **6933cf38defd**。Pages https://github.com/keyanbaitian6-cell/database-share/actions/runs/41046756335 成功。配信index.html・app.mjsのバイト一致と公開URLの画面試験1件（320/393/1280px）成功。iPhone実機の見え方は利用者確認待ち。APK・PC・自分用閲覧ページ・Google処理の更新なし。
