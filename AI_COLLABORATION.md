@@ -96,6 +96,7 @@
 - 最終版の関連試験：PC `python -m unittest test_pscube_import test_pscube_auto test_pscube_direction` 73件、Android `flutter test --no-pub test/pscube_store_test.dart test/pscube_list_wait_test.dart test/pscube_auto_test.dart` 56件成功。PCの `test_pscube_scroll.mjs` も模擬ページで成功。再読み込み保護を追加する前に始めた全体チェックもALL PASSEDだったが、途中でコードが変わったため最終版の根拠には使わず、上記の全体チェックを再実行した。差分の空白チェック成功。
 - レビュー後にコードを修正した場合は、その最終版で全体チェックを実施し、利用者がAPK保留を解除した後にのみAPKをビルドする。pushは利用者指定の `python tools/push_ci.py` で1回、送信前に両mainと差分を確認する。
 
+
 ## 【P’s CUBE：機種一覧の読み切り修正（0.5.47）の問題点の洗い出し・Codexへの引き継ぎ】2026-10-27 Claude
 
 - 依頼：利用者「修正と改善だけやろうかな。codexで新しい思考スタイルがでたのでそれに修正をやらせます。opusにはなにか問題点がないかを洗い出して」「プロンプト作ってください」。Claudeは洗い出しだけで、コードは変えていない。修正はCodexが行う。
@@ -3701,6 +3702,14 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 追記の基準はdatabase-ci/main **`001972e202593f961b1ec858b111dce6cd50bb6a`**。これは別AI（Claude）のPC検証記録転送・復元修正で、親は `e93e027`。今回の記録はその最新の作業記録を取得して末尾へ追加し、Claudeの記録・コード・履歴を保持する。Codexの古いローカル先端e93e027をそのままpushして上書きしない。今回の変更はAGENTS.mdと本記録だけ。日本時間10/26なので反映先は `keyanbaitian6-cell/database-ci/main`。正本 `imakurudev-eng/database/main` への取り込みは前半への切替時にまとめる。
 - 上記のCI全成功を、後続のClaude修正001972eの試験結果として扱わない。Claude修正の実DB確認・試験内容は直前のClaude項目を参照し、そのコミット以降の確認は別途記録する。
 - 今回の依頼に残る作業はこの共有記録と記録ルールの反映確認。Google同期の成功確認は済んでいるので、同じログや再実行を利用者に繰り返し求めない。実データの台別・iPhone実機の表示確認と新APK導入は別途未確認。作業記録を読むためだけに対象サイトを開かない。
+## 【PC版：クラウドの信頼性修正を取り込み】2026-10-26 Codex
+
+- 利用者「PC版クラウドで少し更新したから取り込んでください」。月後半のdatabase-ci/mainから取得し、正本作業フォルダのmainを326c972から159e5c3へ4コミットのfast-forwardで更新した。取り込み前の追跡ファイルは未変更で競合なし。主なPC変更は検証記録の転送待ちと本体保存の分離、初回のP’s CUBE日別同期、詳細での版の表示、Windowsの接続解放。仕様はRELIABILITY_HARDENING.mdを参照。
+- 控えは ../review_packages/pc-cloud-update-20261026/。読み取り専用接続からSQLite backupで実DB4本（検証記録含む）を保全し、設定もコピー。取り込み前後で4DBとsettings.jsonのSHA256が一致し、既存stash7件と未追跡14ファイルも保持。originに未反映のコミット一覧はci-only-before.txtに保存。正本originへは送っていない。
+- Windowsの専用Python3.14.6、隔離TEMP、TZ=JST-9で実際のUTCオフセット+09:00を確認し、検証記録・転送待ち・出力ワーカー・出力状態・Tk画面・SQLite解放・Androidファイル同期の関連45件が成功（pc-tests.log）。クラウドとGitHub全体回帰の成功は直前の記録を参照し、今回はPCに関係する実行環境での確認を行った。
+- PCソースへの反映まで完了。起動経路はdatabase/start.cmd。実行中アプリの終了・再起動、実DBへの試験入力、実サイトアクセス、実Google更新、APK/EXE/Webのビルド・公開、新しいcommit/pushは行っていない。稼働中のPC画面へは利用者の再起動後に適用される。
+
+
 
 
 ## 【PC版：CI #42の異常終了の修正（転送スレッドは起動中だけ）・DBの控えの扱い・保存の重さの測定】2026-10-26 Claude
@@ -3974,6 +3983,15 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - **GitHub追加回帰は実行中**： https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40645422433 、対象a9a3318f。2026-10-28の公開直後確認ではUbuntu UTC成功、Windows UTCとfullはin_progress。今回の手元全ゲートALL PASSEDと、GitHub側の未完了を区別する。CI再実行はしていない。次に結果を確認する際は、この同じ実行の完了結果を読むこと。以前の40608276311の成功を今回の成功として扱わない。**（2026-10-29 Claude追記：同じ実行40645422433を `gh run view` で一度確認し、status completed・conclusion success、full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の3ジョブとも成功、対象 `a9a3318f4d5ccc5e09d1cd27ad803359c98fa44c`。再実行はしていない。）**
 - 検証ログ・全体の所要時間・JS集計・画面画像・公開配信照合・送信SHAは製品外 `../outputs/viewer-quick-navigation-20261028/` に保存。引き継ぎの根拠は本記録とGitHubコミット／実行URL。実iPhoneのSafariでの操作は未確認。今回の最後の反映は本記録だけの文書コミットで、追加CIや再公開は行わない。
 - 配信中main.dart.jsのSHA-256：`b37c5bf77dbbe6cad94b78a80e2d0aef2e2ac7addadf8149145f8f6c8b4d6c98`（3172471バイト）。
+
+## 【PC版：database-ci の更新を安全に取り込み】2026-10-29 Codex
+
+- 依頼：両mainとPC作業フォルダーを確認し、未コミット変更・実DB・設定・Googleドライブ同期先を保護してPC版を更新。EXEは作らない。比較用履歴の欠落検出2件はクラウド点検で修正案のみ、未修正として扱う。
+- 両mainを取得。正本 imakurudev-eng/database/main は e8d2fa069f637661b94917c6b4da2df2937c395a、database-ci/main は b0daba99e9f5138294ab64061731404e2b2c044a。両方のmainとPCの更新前HEAD 10bcba8 は database-ci/main の祖先。PC main を競合なしで b0daba9 まで5コミット fast-forward。変更の主体はiPhone閲覧ページの台移動・台選択・最新日・保存中表示で、PC側は照合版 database/release_info.py が c7e3b406a437 に更新された。Webの再公開・Google側スクリプト変更や同期操作はしていない。
+- 既存未コミット AI_COLLABORATION.md は一時ファイルで3者マージが競合しないことを事前確認し、控えを ../review_packages/pc-update-20261029-002419/ に保存。対象文書のみ一時stashして更新後に復元し、そのstashだけ削除。復元後、今回の本節を追加する前に元の未コミットの追加・削除内容と未追跡ファイル一覧が一致し、既存stashは7件のままと確認した。
+- settings.json のSHA-256は更新前後とも 68f977ac10dded87cd83c6814356215ed86019a3e3546d7f19704eb329c2aeaa。実DB・設定・同期先はGit差分の対象外で、手動で書き換えていない。実DBの一部は別プロセスが使用中でハッシュを取れず、更新中にもDBの更新時刻が変化したため、実DBの更新前後の完全一致は確認できていない。使用中アプリを停止していない。
+- 起動経路：database/start.cmd は database フォルダーへ移動し PYTHONUTF8=1 を設定、存在する database/.venv/Scripts/python.exe から app.py を実行。Python 3.14.6・Tk 8.6・app.py 構文・release_infoの読込を確認した。確認は構文と依存の一部までで、実際のcmd実行・アプリ再起動・画面表示は未確認。ソースの反映を動作中のPCに適用するには、進行中の取り込み終了後に再起動が必要。
+- 今回の試験は上記の起動経路確認と git diff --check。実DBへの試験入力、対象サイトへの接続、実Googleへの変更、APK・EXEの作成、pushは行っていない。直前のクラウド点検で提案された比較用履歴の欠落検出2件は修正・試験しておらず、未解決。
 
 ## 【最近の更新の見直し：最終評価の実行時刻・閲覧ページ欠測日の古い内容を修正】2026-10-29 Claude
 
@@ -4356,6 +4374,7 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 未対応：レビューの指摘4（時刻のミリ秒比較）・指摘5（明示削除と空の完成日の優先規則）、確定前の失敗で残る本文の整理、独立した🌈の印の引継ぎ、画面の切替。製品画面は新しいストアをまだ呼ばない。Web公開・Google更新・APKはしていない。
 - 全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-dsfix23`、単独）**ALL PASSED**（84段）：PC tests 489件・PC直下231件・UTC 27件、Flutter 750件、analyze エラー・警告0・info 28件、JS 75ファイル全成功（日別ストア20件を含む）。`c6f9149` は文書だけなので、この結果はそのまま有効。
 - **CI完了・全3ジョブ成功**：https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40911132340 、対象 `8f5121dba0d6a2db8e637fabb1c66f05f8fe24ba`（本修正、`python tools/push_ci.py` で日本時間10/30 01:23にdatabase-ciへ1回push、`c6f9149..8f5121d`）。full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) すべて成功。再実行なし。
+
 
 ## 【日別保存ストア：旧経路が表示できる本文を止めずに取り込み・印を付ける、レビュー指摘4（時刻のマイクロ秒）・指摘5（明示削除と空の日）を修正】2026-10-30 Claude
 
