@@ -195,6 +195,11 @@ function render() {
   const monthRate = periodWinRate(model.byDay, model.summaries, state.store, monthDayList(state.year, state.month));
   const monthNets = monthDayList(state.year, state.month).flatMap(day => model.byDay.get(`${state.store}|${day}`) ?? []).filter(r => r.net != null);
   const monthNet = monthNets.length ? monthNets.reduce((sum, r) => sum + r.net, 0) : null;
+  const exchange = state.store === 'pscube:c740601:20'
+    ? {loan: 50, payout: 58}
+    : Object.hasOwn(MERUHEN_STORES, state.store) ? {loan: 46, payout: 50} : null;
+  const exchangeAmount = monthNet == null || !exchange ? '—'
+    : `約${(monthNet / exchange.payout / 10).toLocaleString('ja-JP', {minimumFractionDigits: 1, maximumFractionDigits: 1})}万円`;
   const cells = weeks.flat().map(day => {
     if (!day) return '<div class="blank" aria-hidden="true"></div>';
     const racks = model.byDay.get(`${state.store}|${day}`) ?? [];
@@ -227,6 +232,7 @@ function render() {
       <div class="month-stats" aria-label="月間の集計">
         <div class="month-stat" data-month-rate><span class="stat-label">月間勝率</span><span class="stat-value num">${monthRate.judged ? winRateText(monthRate.won, monthRate.judged).replace('勝率', '') : '—'}</span><span class="stat-detail">${monthRate.judged ? `${monthRate.days}日分・${count(monthRate.won)} / ${count(monthRate.judged)}台プラス` : '勝率データなし'}</span></div>
         <div class="month-stat" data-month-net><span class="stat-label">月間差枚${state.store.startsWith('pscube:') ? '' : '（推定含む）'}</span><span class="stat-value num ${monthNet == null ? '' : tone(monthNet)}">${monthNet == null ? '—' : signed(monthNet)}<small>${monthNet == null ? '' : '枚'}</small></span><span class="stat-detail">${monthNet == null ? '差枚データなし' : `取得分 延べ${count(monthNets.length)}台`}</span></div>
+        ${exchange ? `<div class="exchange-summary" data-month-exchange><div class="exchange-head"><span>交換額換算（参考）</span><strong class="exchange-value num">${exchangeAmount}</strong></div><p class="exchange-rate">${exchange.loan}枚貸し・${exchange.payout}枚交換 ／ 1枚${exchange.payout === 50 ? '20' : '約17.24'}円で換算</p><p class="exchange-note">差枚を交換単価で換算した参考値です。<br>現金投資時の貸出・交換の差は含まず、実収支ではありません。</p><details class="exchange-info"><summary>換算について</summary><p>貸出・交換の枚数はそれぞれ1,000円相当として計算。現金投資か持ちメダル遊技かによって収支は変わります。${state.store.startsWith('pscube:') ? '' : '元の差枚が推定の場合、換算額にも誤差を含みます。'}差枚が分かる台だけの合計を換算し、差枚データがない月は「—」と表示します。</p></details></div>` : ''}
       </div>
       <p class="lede">日付を押すと、その日の差枚TOP50と強かった機種10選が見られます。</p>
     </section>

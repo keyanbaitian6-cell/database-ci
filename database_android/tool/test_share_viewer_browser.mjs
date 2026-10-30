@@ -194,6 +194,8 @@ try {
     assert.equal(await page.locator('.anchor[aria-pressed="false"]').first().evaluate(e => getComputedStyle(e).backgroundColor), 'rgba(0, 0, 0, 0)');
     await page.getByRole('button', {name: 'P-STATION', exact: true}).click();
     assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚\s*\+3,121枚\s*取得分 延べ2台/);
+    assert.match(await page.locator('[data-month-exchange]').innerText(), /交換額換算（参考）\s*約5\.4万円/);
+    assert.match(await page.locator('[data-month-exchange]').innerText(), /50枚貸し・58枚交換/);
     assert.equal(await pressed.innerText(), 'P-STATION');
     assert.match(await page.locator('.kicker').innerText(), /P-STATION（20スロ）/);
     const p2 = page.locator(`[data-open="${d2}"]`);
@@ -219,6 +221,9 @@ try {
     await page.waitForSelector('.sheet', {state: 'detached'});
     assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚（推定含む）\s*\+1,417枚\s*取得分 延べ1台/);
 
+    assert.match(await page.locator('[data-month-exchange]').innerText(), /約2\.8万円/);
+    assert.match(await page.locator('[data-month-exchange]').innerText(), /46枚貸し・50枚交換/);
+    assert.match(await page.locator('[data-month-exchange]').innerText(), /実収支ではありません/);
     const stats = await page.locator('.month-stats').evaluate(el => {
       const [rate, net] = [...el.children].map(e => e.getBoundingClientRect());
       return {sameRow: Math.abs(rate.top - net.top) < 1, sameWidth: Math.abs(rate.width - net.width) < 1, fits: el.scrollWidth <= el.clientWidth};
@@ -259,6 +264,7 @@ try {
       assert.match(await page.locator('.headline').innerText(), new RegExp(`${prevMonth}月`));
       assert.match(await page.locator('[data-month-rate]').innerText(), /月間勝率\s*38%\s*1日分・201 \/ 534台プラス/);
       assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚（推定含む）\s*—\s*差枚データなし/);
+      assert.match(await page.locator('[data-month-exchange] .exchange-value').innerText(), /^—$/);
       await page.getByRole('button', {name: '今月'}).click();
     } else {
       await page.getByRole('button', {name: '閉じる'}).click();
