@@ -4482,3 +4482,19 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
   7. **日付が過ぎると落ちる試験**が10/30に1件あった（`test_event_calendar`、修正済み）。現在時刻と固定日付を併用する試験は他にもある（grepで約15ファイル）。今回個別に落ちるかは確かめていない。11/1は月の切り替えで、正本へ送る日でもある。
   8. 日別保存ストアは製品画面から呼ばれていないが、閲覧・共有の `viewer_parts.mjs`（各58,687バイト）に含まれて配信されている。共有カレンダーは使わない。残る手順は前の項目（①読取専用の保存診断〜⑥）と同値性レビューの指摘1のまま。
 - しなかったこと：上の修正、試験・ゲートの実行、公開、Codexの未コミット記録のコミット。
+
+## 【前の検討（0d0c9af）への利用者の回答と対応：メルヘンの自動クローズの穴を修正・Codexの記録を保存】2026-10-31 Claude
+
+- 利用者の回答（前の項目の番号）：1「未コミットをコミットでいいのかな？」、2「おまけ機能だから気にしなくていい」、3「店舗が増えることはないからOK」、4「必要であるならclaudeがいいと思うように編集」、5「直してください」、6「実行中」（P’s CUBEの自動取り込みを利用者が実行中。自動終了は引き続き未確認）、7「修正済みならOKか」、8「よくわからないから解説して」。基準：database-ci/main `0d0c9af`（正本 `e8d2fa0` を含む）。
+- 1：Codexの記録2件（10/26・10/29のPC版の取り込み、19行）を内容を変えずに `3636a71` でコミット。記録だけで、コードは含まない。
+- 2・3：対応しない（交換額の「約-0.0万円」・交換条件の直書きはそのまま）。
+- 4：**変えないと判断**。版の文字は「このPCソースの版」「このアプリ・閲覧ページの版」「このページの版」「Google処理の版」として、PC（`database/sync_health.py`）・Android（`capture_health_ui.dart`）・閲覧/共有ページ（`capture_health.mjs`）・Googleの4本に表示され、`test_release_info.mjs` が全ファイルの一致を確かめている。Google専用の版に分けると、4画面の表示の変更（画面ごとの確認・APKの作り直し）と、表示の意味をそろえるためのGoogleの4本の貼り替えが1回要る。得られるのは診断表示の分かりやすさだけで、今の運用（記録に「版の文字だけ、貼り替え不要」と書く）で困った事例は確認できなかった。将来、貼替の要否を誤る事例が出たら、表示を変えずに「指定コミットからGoogleの4本の版の文字以外が変わったか」を出す確認用スクリプトを `tools/` に足すのが、影響が小さい。
+- 5：`database/browser_import.py`（`868b32f`）。
+  - 原因：完了の理由 `_completed` は自動取り込みを再びONにしたときだけ消えた。`all_done` の時点で保存の子プロセスや反映待ちが残り、その間に手動の「次へ」や手動の保存をすると、保存が終わった時点で窓が閉じえた。
+  - 変更：`next_unimported_machine` が自動でない呼び出し（手動の「次へ」）で `_completed` を消す。`_spawn_unlocked` が自動取り込みOFF（＝手動）の保存を始めるときに `_completed` を消す。自動で完了したときの閉じ方は変えていない。
+  - 試験：`database/tests/test_meruhen_close.py` に `test_manual_use_after_auto_finished_keeps_the_window_open` を追加（3件 → 4件）。修正前のコードに戻すとこの1件だけ失敗、修正後は4件成功。`subprocess.Popen` は差し替えて、実際の確認窓は開かない。
+  - 照合版 `09e2c8670954` → **`cb92a3e742c9`**（`build_release_info.py`・`build_viewer_parts.mjs`・`build_event_history_share.mjs`）。閲覧・共有の生成物とGoogleの4本は版の文字だけ、**貼り替え不要**。`build_pscube_capture.mjs` も流したが、Android取り込み用の `database_android/assets/pscube_capture.js`・`pscube_auto_probe.js` は以前から `09e2c8670954` のままで、今回の変更と関係しないので元に戻した（APK作成時に作り直す）。
+  - 手元の試験（`TZ=JST-9`・`PYTHONUTF8=1`、`database/.venv`）：PC `tests` 493件・直下 `test_*.py` 236件・`TZ=UTC` の `test_event_calendar` 27件すべて成功。JS：`test_release_info.mjs` 2件、`test_viewer_parts.mjs` 13件、`test_viewer_day_store.mjs` 23件（`PLAYWRIGHT_MODULE` 指定）すべて成功。全体ゲート（`check_before_build.sh`）・Flutter試験は流していない（ビルドしないため。CIのfullで確認する）。
+  - 実機の窓での確認はしていない。PCは `database/start.cmd` から起動し直すと反映される。EXEは作っていない。
+- 7：10/30に直した1件（`test_event_calendar`）以外に、今の時刻と固定日付を併用する試験は約15ファイルあるが、落ちるかは個別に確かめていない。日付で落ちる試験が出たら、CIの失敗を再実行せずに原因を見る。
+- 8：利用者へ日別保存ストアの解説をした（会話のみ。コード・記録の変更なし）。
