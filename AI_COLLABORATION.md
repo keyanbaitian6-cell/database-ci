@@ -4443,3 +4443,7 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 参考画像のCSSを実装へ反映（見出しの余白・2列集計と下段の換算欄・小さい注記）。ブラウザ試験にP-STATIONの3121枚→約5.4万円、幸町1417枚→約2.8万円、各交換条件・注記・欠測を追加。全体ゲートを専用DISPLAY :103で実行。結果と公開版は続記。
 - 公開前の全体ゲート **ALL PASSED**：PC492件・直下236件・UTC27件、Flutter750件、analyze・検証用Webビルド・全JS試験成功。公開形式の共有画面試験も320/393/1280pxで成功。参考画像と同じ構造の換算欄で両店舗の換算計算と条件、実収支注記、欠測を確認。
 - 公開完了：ソース `d29c6fc43c633449a49373231be89f9caa1f1c20` はpush_ci.pyでdatabase-ciへ送信。CI https://github.com/keyanbaitian6-cell/database-ci/actions/runs/41050947726 は最終確認時点で実行中。公開database-share `c2048b5c36738fdbb5a9b2101d8dc1a81f538221`・版 **4e2dd7e43d3c**。Pages https://github.com/keyanbaitian6-cell/database-share/actions/runs/41050966047 成功。配信index.html・app.mjsのバイト一致と公開URLの画面試験1件（320/393/1280px、換算額・条件・注記・欠測・既存操作）成功。実機・実接続データの確認とは区別。Google処理の貼替・同期、APK、PC、自分用閲覧ページの公開は行っていない。
+- 追記（2026-10-31）：
+  - CI：`add857f` は database-ci の Actions https://github.com/keyanbaitian6-cell/database-ci/actions/runs/40961321883 で full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の3ジョブとも成功（再実行なし）。
+  - 利用者の確認：「取り込み完了後自動終了の確認OK」（PCの実機。P’s CUBE・メルヘンのどちらで確かめたかの指定は無し）。AIはPCの窓・メイン画面のログ欄・サイトの通信を直接は確認していない。
+  - 記録の前に database-ci/main を `add857f` → `781de23`（Codexの共有カレンダーの月間統計、6コミット）へ早送り。作業フォルダーのCodexの未コミットの記録（18行）は控え（`../review_packages/claude-ff-20261031/`）を取ってから戻し、このコミットに含めない。
