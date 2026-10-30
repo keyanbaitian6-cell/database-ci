@@ -4407,3 +4407,13 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 実際のWebView2の窓が閉じること・閉じたあとメイン画面のログ欄に出ること・サイトの通信が止まることは、PCで未確認（利用者の次の自動取り込みで確認してほしい点）。PCは `database/start.cmd` から起動し直すと反映される。EXEは作っていない。
 - 全体ゲート（`TZ=JST-9`・`CHECK_BUILD_WORK=/c/w/cbw-close1`、単独）**ALL PASSED**（84段）：PC tests 492件・PC直下236件・UTC 27件、Flutter 750件、analyze エラー・警告0・info 28件、JSの試験全成功。
 - しなかったこと：Android の変更、APK・EXE・Web公開、Googleスクリプトの貼り替え。
+
+## 【共有カレンダーの月間差枚・認証の確認訂正と公開再開】2026-10-30 Codex
+
+- 依頼：共有カレンダー3店舗の月間勝率の横に月間差枚を表示し公開。PC・Androidアプリ・自分用Flutter閲覧ページは変更対象外。
+- 前ターンは `e8d2fa0` の手元で実装後、private database-ciへのfetchがユーザー名要求で失敗し公開を停止した。「環境に認証がない」は確認不足だった。実際には `gh auth status` で既存のimakurudev-eng認証が有効。Gitのcredential helperが未設定だった。`git -c credential.helper= -c 'credential.helper=!gh auth git-credential' ls-remote` が成功したため、このリポジトリのhelperに同設定を追加（秘密値は保存しない）。ユーザーへの再接続要求は不要。
+- 認証修正後、両方の履歴を保持するdatabase-ci/main `add857f2a84112be93914a57dfe2ad88e8dbe3e6` へfast-forwardし、小差分を移植。旧ローカル作業はstash `monthly-net-before-latest` と `/tmp/month-feature.patch` に退避。前ターンの未公開・認証不足の記録はstashにあり、GitHubへは未反映。
+- 変更：share_viewer/app.mjsの月間勝率横へ、その店舗・月の数値差枚の合計と取得済み延べ台数を表示。欠測は「—」、メルヘンは推定を含む注記。index.htmlは横並びと折返し。アプリ・PCのコード変更なし。最新のrecommendations・capture_health等を保持。
+- ブラウザ試験へ、幸町の月間+1,417枚、P-STATIONの+3,121枚、前月の差枚データなしを追加。旧試験データの+1,422枚は最新推定処理では+1,417枚なので最新の既存期待値へ合わせた。320/393/1280pxの既存試験を維持。
+- 全体検証は起動環境の復元（既存Xvfb・Flutter SDK・Python・Playwright）後、最新ソースで実行。結果・公開版は続記する。Google処理・実データには触れない。
+- 最新での全体ゲート：`source /workspace/.cloud-setup/env.sh` 後 `bash database_android/tool/check_before_build.sh` が **ALL PASSED**。PC 492件・直下236件・UTC27件、Flutter750件、analyze成功、Web検証用ビルドと全JSファイル成功。今回追加の月間差枚も版付きstageで320/393/1280pxの画面試験成功。旧版の失敗は今回の最新ゲートには残っていない。

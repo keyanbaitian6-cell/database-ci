@@ -193,6 +193,8 @@ function render() {
   const weeks = monthWeeks(state.year, state.month);
   // 月間の勝率（2026-10-18 利用者「月ごとに月間の勝率出す」）：その月の日の台数を足して割る。
   const monthRate = periodWinRate(model.byDay, model.summaries, state.store, monthDayList(state.year, state.month));
+  const monthNets = monthDayList(state.year, state.month).flatMap(day => model.byDay.get(`${state.store}|${day}`) ?? []).filter(r => r.net != null);
+  const monthNet = monthNets.length ? monthNets.reduce((sum, r) => sum + r.net, 0) : null;
   const cells = weeks.flat().map(day => {
     if (!day) return '<div class="blank" aria-hidden="true"></div>';
     const racks = model.byDay.get(`${state.store}|${day}`) ?? [];
@@ -222,7 +224,7 @@ function render() {
     <section class="hero">
       <p class="kicker">${esc(storeLabel(state.store))}</p>
       <h1 class="headline num">${state.year}年${state.month}月</h1>
-      ${monthRate.judged ? `<p class="month-rate num" data-month-rate>月間の${winRateText(monthRate.won, monthRate.judged)}<span class="sub">${monthRate.days}日・${count(monthRate.judged)}台中${count(monthRate.won)}台プラス</span></p>` : ''}
+      <div class="month-stats">${monthRate.judged ? `<p class="month-rate num" data-month-rate>月間の${winRateText(monthRate.won, monthRate.judged)}<span class="sub">${monthRate.days}日・${count(monthRate.judged)}台中${count(monthRate.won)}台プラス</span></p>` : ''}<p class="month-rate num" data-month-net>月間差枚 ${monthNet == null ? '—' : signed(monthNet) + '枚'}<span class="sub">${monthNet == null ? '差枚データなし' : `差枚が分かる${count(monthNets.length)}台の合計${state.store.startsWith('pscube:') ? '' : '（推定を含む）'}`}</span></p></div>
       <p class="lede">日付を押すと、その日の差枚TOP50と強かった機種10選が見られます。</p>
     </section>
     <div class="stores">

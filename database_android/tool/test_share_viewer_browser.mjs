@@ -193,6 +193,7 @@ try {
     assert.equal(await pressed.evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(0, 113, 227)');
     assert.equal(await page.locator('.anchor[aria-pressed="false"]').first().evaluate(e => getComputedStyle(e).backgroundColor), 'rgba(0, 0, 0, 0)');
     await page.getByRole('button', {name: 'P-STATION', exact: true}).click();
+    assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚 \+3,121枚\s*差枚が分かる2台の合計/);
     assert.equal(await pressed.innerText(), 'P-STATION');
     assert.match(await page.locator('.kicker').innerText(), /P-STATION（20スロ）/);
     const p2 = page.locator(`[data-open="${d2}"]`);
@@ -216,6 +217,8 @@ try {
     assert.match(await page.locator('.sheet').innerText(), /推定差枚がわかった台 1\/3台（1台が0回転。1台が500回転未満）/);
     await page.keyboard.press('Escape');
     await page.waitForSelector('.sheet', {state: 'detached'});
+    assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚 \+1,417枚\s*差枚が分かる1台の合計（推定を含む）/);
+
     // 台データの無い日：保存したHTMLからの勝率。押すと「何台中何台プラス」。日付送りは集計のある日どうし。
     assert.equal(await page.locator('[data-summary-open]').count(), 1, '台データのある日・形のおかしい日には出さない');
     const sumCell = page.locator(`[data-summary-open="${d3}"]`);
@@ -250,6 +253,7 @@ try {
       await page.waitForSelector('.sheet', {state: 'detached'});
       assert.match(await page.locator('.headline').innerText(), new RegExp(`${prevMonth}月`));
       assert.match(await page.locator('[data-month-rate]').innerText(), /月間の勝率38%\s*1日・534台中201台プラス/);
+      assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚 —\s*差枚データなし/);
       await page.getByRole('button', {name: '今月'}).click();
     } else {
       await page.getByRole('button', {name: '閉じる'}).click();
