@@ -4417,3 +4417,7 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - ブラウザ試験へ、幸町の月間+1,417枚、P-STATIONの+3,121枚、前月の差枚データなしを追加。旧試験データの+1,422枚は最新推定処理では+1,417枚なので最新の既存期待値へ合わせた。320/393/1280pxの既存試験を維持。
 - 全体検証は起動環境の復元（既存Xvfb・Flutter SDK・Python・Playwright）後、最新ソースで実行。結果・公開版は続記する。Google処理・実データには触れない。
 - 最新での全体ゲート：`source /workspace/.cloud-setup/env.sh` 後 `bash database_android/tool/check_before_build.sh` が **ALL PASSED**。PC 492件・直下236件・UTC27件、Flutter750件、analyze成功、Web検証用ビルドと全JSファイル成功。今回追加の月間差枚も版付きstageで320/393/1280pxの画面試験成功。旧版の失敗は今回の最新ゲートには残っていない。
+- ソース反映：`a799c62ab0ba02141af8910d260e219cbf5e40bc` を `tools/push_ci.py` でdatabase-ci/mainへ送信。CI https://github.com/keyanbaitian6-cell/database-ci/actions/runs/41027101216 は最終確認時点で実行中（ローカル全体ゲート成功と区別）。正本へコードpushはしていない。
+- 公開完了：database-share/main `942b5f694e40f8b6b5a9b2f983e2bf69aa43b984`、版 **a4b3837d3970**。Pages https://github.com/keyanbaitian6-cell/database-share/actions/runs/41027136555 は成功。配信先 https://keyanbaitian6-cell.github.io/database-share/ のindex.html・app.mjsがstageとバイト一致し、公開URLで画面試験1件成功（320/393/1280px・店舗/月切替・月間差枚・既存詳細・保存分離）。配信切替前の1回は旧版にdata-month-netが無く失敗し、Pages完了・バイト一致確認後の再試験で成功。実機・実接続データの確認とは別。
+- 公開stageは最新mainの共通処理も含み、以前の公開版からviewer_partsの取得保護等の既存未公開修正が入る。今回、その処理を新規改変はしていない。PC・APK・Flutter閲覧サイトは公開していない。Google貼替・同期実行なし。
+- 認証の追加確認：この環境では末尾`.git`付きのURLは既存認証で成功する一方、末尾なしURLへのGit接続はInvalid username or tokenとなった。push_ci.py実行中のみリポジトリ内URL書換えで`.git`を付けた（実行後に削除）。公開cloneのoriginは`.git`付きへ設定。認証値の読み出し・コピーは不要。
