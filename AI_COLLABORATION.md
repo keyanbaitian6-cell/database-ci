@@ -4498,3 +4498,23 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
   - 実機の窓での確認はしていない。PCは `database/start.cmd` から起動し直すと反映される。EXEは作っていない。
 - 7：10/30に直した1件（`test_event_calendar`）以外に、今の時刻と固定日付を併用する試験は約15ファイルあるが、落ちるかは個別に確かめていない。日付で落ちる試験が出たら、CIの失敗を再実行せずに原因を見る。
 - 8：利用者へ日別保存ストアの解説をした（会話のみ。コード・記録の変更なし）。
+
+## 【閲覧ページ：日別保存の段階A「読取専用の保存診断」を追加・公開】2026-10-31 Claude
+
+- 依頼：前の項目の8（日別保存ストア）について、利用者「8に取り組んだほうがいいのでは？」。Claudeが段階A〜D（A：保存診断、B：裏での移行、C：画面ごとの切替と同値照合、D：巨大JSONをDartへ渡さない）を提案し、利用者「段階Aから始める」。対象画面は、Claudeが「自分用の閲覧ページ（iPhone）から。共有カレンダーはその後。PC・Androidは対象外」と示したうえでの開始。メルヘン版（`web/index.html`）とP’s CUBE版（`web/pscube/`）の両方に入れた。共有カレンダー・PC・Androidアプリの表示は変えていない。基準：database-ci/main `6d4921d`（正本 `e8d2fa0` を含む）。
+- 判断の根拠（読み取りだけ、中身は出さない）：PCの `database/data/database-viewer.json` は 46,875件・60日（2026-09-01〜10-30）・42,949,318バイト、`pscube-viewer.json` は 25,610件・93日（2026-01-01〜10-30）・22,705,153バイト。`VIEWER_DAY_STORE_MEASUREMENTS.md` の合成測定（Linux Chromium）で現行経路の renderer RSS 最大は60日 約352MB・180日 約670MB・365日 約1,131MB（Flutter側の保持は別）。10/29に60日分の時点でSafariが落ちている。実Safariの余裕は未測定なので、まず端末で測る段階Aから。
+- 変更（`fda78db`）：
+  - `database_android/web/storage_report.mjs`（新規）：`collectStorageReport`・`storageReportLines`・`phaseStarted`・`phaseFinished`。詳細は `VIEWER_DAY_STORE.md` の「①読取専用の保存診断」。
+  - 窓口 `databaseViewer.storageReport()`・`databaseViewer.phase()`：メルヘン `web/index.html`（本体の文字数を `load`・`save` のときに控える）、P’s CUBE `web/pscube/viewer_bootstrap.mjs`（橋渡しの `load`・`save` を包む）。`tool/stage_viewer.py --pscube-only` の配布ファイルに `storage_report.mjs` を追加。
+  - Dart：`viewer_bridge_web.dart`／`viewer_bridge_stub.dart` に `viewerStorageLines`・`markViewerPhase`。`viewer_main.dart` の `_start`（`open`）と `_refreshFromDrive`（`drive`）を `finally` で区切り、「更新・差枚の取得状況」を押すと診断を読んで `showCaptureHealth(deviceLines:)` に渡す（「表示中の記録：N件・M日分」を含む）。`capture_health_ui.dart` は `deviceLines` を末尾に足すだけ（Androidアプリは空）。
+  - 読むだけ：本体 `data`・日別の本文・`snapshots` は開かない。`indexedDB.databases()` にある保存先だけを版指定なしで開く（無い保存先を開くと空の版1で作られ、ページ本体が作り直せなくなるため）。書くのは localStorage の `database-viewer-diag` の1項目だけ。
+  - 照合版 `cb92a3e742c9` → **`cc5e38dc99b9`**。Googleの4本は版の文字だけ、**貼り替え不要**。
+- 試験：
+  - 新規 `database_android/tool/test_viewer_storage_report.mjs` 4件（途中で終わった回数・壊れた記録・確認できない項目・実ChromiumのIndexedDBで本体を読まない／無い保存先を作らない／本体が変わらない）。わざと「一覧を確かめずに全保存先を開く」に壊すと4件中1件が失敗することを確認して戻した（このとき保存先は作られず、`onupgradeneeded` の中止が働いた）。
+  - 実ビルドの画面試験に確認を追加：`test_meruhen_net_browser.mjs`（メルヘン、320/393px、診断の行・`database-viewer-days-v1` を作らない）、`test_capture_health_browser.mjs`（P’s CUBE、本体の大きさ・保存先・読み込み回数）。
+  - 全体ゲート（`TZ=JST-9`、`CHECK_BUILD_WORK=/c/w/cbw-diag1`、単独）**ALL PASSED**：9段（PC tests 493件・PC直下236件・UTC 27件、Flutter 750件、analyze エラー・警告0・info 28件、viewer-build・viewer-stage・share-stage）とJS 76ファイル全成功。
+- 公開：閲覧ページ database-viewer **`fb164b3`**（親 `f132484`、source `fda78db`、ゲートの `viewer/` stage をそのまま写した）。差分7ファイル（`storage_report.mjs` 追加、`index.html`・`pscube/viewer_bootstrap.mjs`・`main.dart.js`・`viewer_parts.mjs`・`capture_health.mjs`・`assets/NOTICES`）、削除なし。前回公開（source `012244c`）以降の `viewer_parts.mjs` の日別保存ストア（製品画面からは未使用）も入る。共有カレンダーは公開していない（今回の変更は共有の画面に出ない。共有の `viewer_parts.mjs`・`capture_health.mjs` は版の文字だけ）。Pagesの配備・配信の照合は下の追記。
+- 作業中の誤り：`web/index.html` を編集したとき、このアプリがそのファイルをブラウザ欄に自動で表示し、Claudeは閉じずに作業を続けた。利用者「なんでブラウザでdatabase閲覧ひらいてるの？」で気づき閉じた。開いていたのはPCの中のファイル（`file:///…/web/index.html`）だけで、対象サイト・公開ページには接続していない。今後、編集でブラウザ欄に出たらそのつど閉じる。
+- 利用者に見てほしいこと：iPhoneで閲覧ページ（メルヘン・P’s CUBE）を開き、「更新・差枚の取得状況」の下の「この端末の保存（診断）」の行。特に「保存領域」「本体」「起動時の読み込み」「Googleドライブの更新」の「途中で終わった」回数。回数は今回の公開後から数え始める（それ以前の落ちた回数は分からない）。
+- 未確認：実iPhoneのSafariでの表示と値（`estimate` の目安、`databases()`、落ちたときに localStorage の書き込みが残るか）。しなかったこと：実データの移行、日別保存ストアの製品画面への接続、共有カレンダーの公開、Googleの貼り替え、APK・EXE作成。
+- 追記（公開の確認）：Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/41147213496 成功。配信中の `storage_report.mjs`・`main.dart.js`・`viewer_parts.mjs`・`index.html`・`pscube/viewer_bootstrap.mjs`・`capture_health.mjs` をHTTPで読み戻し、改行を除いてゲートのstageと一致。公開URL（`VIEWER_PUBLIC_ORIGIN=https://keyanbaitian6-cell.github.io`）で `test_meruhen_net_browser.mjs` が成功（320/393px、診断の行・保存先を作らないことを含む）。P’s CUBE版の公開URLでの画面試験は流していない（ゲートの実ビルドでは成功）。
