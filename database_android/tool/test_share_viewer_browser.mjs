@@ -193,8 +193,8 @@ try {
     assert.equal(await pressed.evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(0, 113, 227)');
     assert.equal(await page.locator('.anchor[aria-pressed="false"]').first().evaluate(e => getComputedStyle(e).backgroundColor), 'rgba(0, 0, 0, 0)');
     await page.getByRole('button', {name: 'P-STATION', exact: true}).click();
-    assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚\s*\+3,121枚\s*取得分 延べ2台/);
-    assert.match(await page.locator('[data-month-exchange]').innerText(), /交換額換算（参考）\s*約5\.4万円/);
+    assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚\s*\+3,121枚\s*取得分 1日・延べ2台/);
+    assert.match(await page.locator('[data-month-exchange]').innerText(), /交換額換算（参考）\s*約＋5\.4万円/);
     assert.match(await page.locator('[data-month-exchange]').innerText(), /50枚貸し・58枚交換/);
     assert.equal(await pressed.innerText(), 'P-STATION');
     assert.match(await page.locator('.kicker').innerText(), /P-STATION（20スロ）/);
@@ -219,16 +219,16 @@ try {
     assert.match(await page.locator('.sheet').innerText(), /推定差枚がわかった台 1\/3台（1台が0回転。1台が500回転未満）/);
     await page.keyboard.press('Escape');
     await page.waitForSelector('.sheet', {state: 'detached'});
-    assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚（推定含む）\s*\+1,417枚\s*取得分 延べ1台/);
+    assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚（推定含む）\s*\+1,417枚\s*取得分 1日・延べ1台/);
 
-    assert.match(await page.locator('[data-month-exchange]').innerText(), /約2\.8万円/);
+    assert.match(await page.locator('[data-month-exchange]').innerText(), /約＋2\.8万円/);
     assert.match(await page.locator('[data-month-exchange]').innerText(), /46枚貸し・50枚交換/);
     assert.match(await page.locator('[data-month-exchange]').innerText(), /実収支ではありません/);
     const stats = await page.locator('.month-stats').evaluate(el => {
       const [rate, net] = [...el.children].map(e => e.getBoundingClientRect());
       return {sameRow: Math.abs(rate.top - net.top) < 1, sameWidth: Math.abs(rate.width - net.width) < 1, fits: el.scrollWidth <= el.clientWidth};
     });
-    assert.deepEqual(stats, {sameRow: true, sameWidth: true, fits: true}, '3店舗共通の集計は狭い画面でも同じ幅の2列');
+    assert.deepEqual(stats, {sameRow: width > 600, sameWidth: true, fits: true}, '狭い画面では縦積みで数値を表示');
     // 台データの無い日：保存したHTMLからの勝率。押すと「何台中何台プラス」。日付送りは集計のある日どうし。
     assert.equal(await page.locator('[data-summary-open]').count(), 1, '台データのある日・形のおかしい日には出さない');
     const sumCell = page.locator(`[data-summary-open="${d3}"]`);
@@ -313,12 +313,12 @@ try {
     failing = {pscube: {error: '閲覧用の日別ファイルが見つかりません。同期を再実行してください。'}};
     await page.locator('#reload').click();
     await page.waitForFunction(() => !document.querySelector('#reload').disabled);
-    assert.match(await page.locator('.legend[role="status"]').innerText(),
+    assert.match(await page.locator('.data-warning[role="status"]').innerText(),
       /一部の更新に失敗しました（P-STATION：閲覧用の日別ファイルが見つかりません。同期を再実行してください。）/);
     failing = {'': 500, pscube: {error: '閲覧用が更新されました。もう一度読み込んでください。'}};
     await page.locator('#reload').click();
     await page.waitForFunction(() => !document.querySelector('#reload').disabled, null, {timeout: 30000});
-    assert.match(await page.locator('.legend[role="status"]').innerText(),
+    assert.match(await page.locator('.data-warning[role="status"]').innerText(),
       /更新できませんでした（メルヘン：読み込めませんでした（500）、P-STATION：閲覧用が更新されました。もう一度読み込んでください。）/);
     await context.close();
   }

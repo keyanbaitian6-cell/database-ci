@@ -551,3 +551,26 @@ test('Googleの保存保護の診断を共有の読み込み経路で取得で�
   assert.match(calls[0],/file=diagnostic$/);
   await assert.rejects(fetchShared('https://script.google.com/macros/s/TEST_DIAG/exec','arbitrary',()=>{throw Error('呼ばない');}),/不正/);
 });
+
+
+test('重複は一度だけ・競合は全件保留し、入力を変えず全集計へ共通適用', () => {
+  const r={store:'saiwaichou',day:'2026-10-01',machine:'テスト',rack:1,games:1000,bb:1,rb:1,net:1000};
+  const input=[r,{...r}], before=JSON.stringify(input);
+  const same=indexRecords(input);
+  assert.equal(dayNet(same.get('saiwaichou|2026-10-01')).total,1000);
+  assert.equal(same.issues[0].kind,'duplicate');
+  assert.equal(JSON.stringify(input),before);
+  const conflict=indexRecords([r,{...r,net:-1000}, {...r,rack:2,net:0}]);
+  const day=dayNet(conflict.get('saiwaichou|2026-10-01'));
+  assert.equal(day.total,0); assert.equal(day.racks,1);assert.equal(day.judged,1);
+  assert.equal(conflict.issues[0].kind,'conflict');
+});
+
+test('換算額：0・小額の正負・欠測、丸めない58枚単価',async()=>{
+  const {exchangeValue}=await import('../../share_viewer/data.mjs');
+  assert.equal(exchangeValue(null,50),'—'); assert.equal(exchangeValue(0,50),'0円');
+  assert.equal(exchangeValue(1,50),'約＋20円');assert.equal(exchangeValue(-1,50),'約−20円');
+  assert.equal(exchangeValue(256185,50),'約＋512.4万円');
+  assert.equal(exchangeValue(81073,58),'約＋139.8万円');
+  assert.equal(exchangeValue(58,58),'約＋1,000円');
+});

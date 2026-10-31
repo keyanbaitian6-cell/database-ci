@@ -4560,3 +4560,16 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 合成データと公開済み資材の隔離ブラウザで、同一記録2件が2倍に集計、店舗間のexported_atが混同、通信失敗表示が初期画面の外、day_summariesのみでは読み込み中が残ることを再現。文字44px拡大の模擬では256185枚の表示が列幅を超過。footerと保存・編集実装の説明矛盾も確認。実際の利用者データでこれらが発生しているとは断定しない。
 - 実行は `/tmp/calendar-review.mjs`（初回の小さい数字の拡大条件を実際の画像に近い256185枚へ変えて2回目実行）。補助出力は `../outputs/calendar-review-20261031/`。核心の再現条件・結果はGitHub文書に記載し、一時ファイルに依存させない。
 - 同じ全体試験の再実行・CI再実行は行わず既存成功結果を参照。今回の調査はアプリ全体・実機Safari・実Driveの網羅保証ではない。新しい公開はしていない。
+
+## 【共有カレンダーのレビュー7項目を修正・画像承認待ち】2026-10-31 Codex
+
+- 依頼：SHARED_CALENDAR_REVIEW_20261031.mdの7項目を実装し、まず参考画像を提示。承認後に規定の全体検証・公開・公開URL確認。基準は両mainをfetchして確認したdatabase-ci/main `b2260b1`。正本側の履歴も保持されている。
+- indexRecordsで既存キー（店舗・貸玉を含むstore、日、機種、台番号）ごとにグループ化。正規化済み表示レコードの全内容をキー順に依存せず比較し、同じ内容は一度だけ採用、競合グループは全件を集計から外す。入力は変更しない。issuesに件数と識別情報を持ち、画面で対象を確認可能。全画面がこの共通Mapを使う。競合日ではHTML集計への自動代替も避ける。
+- 店舗の元データ書出日時・最新営業日・読込状態を集計近くに表示。更新失敗・保存済み・オフラインの案内を上部に移動。読込成功で状態を更新。店舗一覧に有効day_summariesも含め、完全空は空状態にする。
+- 月間差枚は取得分の日数と延べ台数を表示。未知の母数から取得率を作らない。正確な交換単価を保持し、純粋関数exchangeValueで0円／欠測／小額の符号付き円／符号付き万円を区別。現在指定条件で過去月も換算する注記を追加。
+- スマホの月間集計は縦に並べ、項目名・説明と数値を整理。大きな文字・長い数値は各項目内も上下にする。小さすぎた注記を14pxへ拡大。実収支の注記は常時表示し、重複説明を短縮。navbar・導入画面とfooterを、閲覧と対応編集・端末保存の実態に合わせて修正。
+- 変更対象はshare_viewer/{app,data}.mjs・index.htmlとJS試験。PC・Flutter・Android・Google処理のコード・実データは変更していない。
+- 新規test_share_calendar_review_browser.mjs：完全重複・競合・店舗日時差・一部失敗からの復旧・保存済み再表示・オフライン復帰・日別集計だけの店舗・完全空・320/393px・44pxの長い数値の縦積みを合成データで確認。既存test_share_viewer_browser.mjsも新しい文言と配置へ更新。unitに重複・競合・入力保護・小額正負・0・欠測・58枚単価を追加。
+- 最終実行 `node --test database_android/tool/test_share_calendar_review_browser.mjs database_android/tool/test_share_viewer_browser.mjs database_android/tool/test_share_viewer.mjs`（SHARE_WEB_ROOTは確認用stage）：**34件成功**（単体32・画面2）。stage版851c671444d4。構文・git diff --checkも成功。旧文言・旧警告セレクターの試験を修正し、新規の集計のみ試験は合成fixtureの有効集計999台+513台に合わせた13%が正しいことを確認。
+- 画像は `../outputs/calendar-improvement-preview/` のcomparison.png（幸町とP-STATION）・conflict.pngほか。実際の修正版に合成データを入れたブラウザ撮影。実機Safariの検証とは区別。ユーザーの実データ・Googleへ通信していない。
+- **未公開、全体ゲート未実行、GitHubへのコードpush未実施**。今回は画像判断までという依頼のためローカルコミットに保持し、pushでCIを先に起動しない。承認後は両mainを再確認して最新履歴を維持し、全体ゲートALL PASSED後にpush_ci.py→stage→公開→公開URL検証、画像・記録も反映する。実機・実接続の確認は未実施。
