@@ -111,6 +111,95 @@ class PushTests(unittest.TestCase):
     def test_nothing_to_send_when_the_target_already_has_it(self):
         self.assertEqual(self.run_push(utc(2026, 11, 2, 0, 0)), 0)
 
+    def test_period_change_during_checks_never_pushes(self):
+        self.commit('app.py', 'B')
+        before = [self.main_of(repo) for repo in (self.canonical, self.copy)]
+        cases = [
+            (utc(2026, 10, 31, 14, 59), utc(2026, 10, 31, 15, 0)),
+            (utc(2026, 11, 15, 14, 59), utc(2026, 11, 15, 15, 0)),
+            (utc(2026, 12, 31, 14, 59), utc(2026, 12, 31, 15, 0)),
+            # 同じ送り先に見えるほど長い中断でも、月が変われば確認し直す。
+            (utc(2026, 11, 2, 1), utc(2026, 12, 2, 1)),
+        ]
+        for start, finish in cases:
+            with self.subTest(start=start), patch('sys.stdout'), patch('sys.stderr'):
+                self.assertEqual(push_ci.main([], clock=iter([start, finish]).__next__), 1)
+                self.assertEqual([self.main_of(repo) for repo in (self.canonical, self.copy)], before)
+
+    def test_final_clock_rechecks_quota_even_if_target_is_unchanged(self):
+        self.commit('app.py', 'B')
+        before = self.main_of(self.canonical)
+        clock = iter([utc(2026, 11, 1, 0, 1), utc(2026, 10, 31, 23, 59)])
+        with patch('sys.stdout'), patch('sys.stderr'):
+            self.assertEqual(push_ci.main([], clock=clock.__next__), 1)
+        self.assertEqual(self.main_of(self.canonical), before)
+
+    def concurrent_change(self, repo, delete=False):
+        """初回fetch後、最終照会までに別cloneから更新する（すべて一時ローカルGit）。"""
+        other = self.work.parent / 'concurrent'
+        git(self.work.parent, 'clone', '-q', str(repo), str(other))
+        concurrent = self.commit('other.py', '別作業', cwd=other)
+        self.commit('app.py', 'B')
+        before_target = self.main_of(self.canonical)
+        original = push_ci.remote_tip
+        calls = 0
+
+        def changing_tip(url):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                if delete:
+                    git(repo, 'update-ref', '-d', 'refs/heads/main')
+                else:
+                    git(other, 'push', '-q', str(repo), 'HEAD:refs/heads/main')
+            return original(url)
+
+        with patch.object(push_ci, 'remote_tip', side_effect=changing_tip):
+            self.assertEqual(self.run_push(utc(2026, 11, 2, 1)), 1)
+        if delete:
+            self.assertEqual(git(self.work, 'ls-remote', str(repo), 'refs/heads/main'), '')
+        else:
+            self.assertEqual(self.main_of(repo), concurrent)
+        if repo != self.canonical:
+            self.assertEqual(self.main_of(self.canonical), before_target)
+
+    def test_other_repository_update_after_fetch_stops(self):
+        self.concurrent_change(self.copy)
+
+    def test_target_repository_update_after_fetch_stops(self):
+        self.concurrent_change(self.canonical)
+
+    def test_other_repository_deleted_after_fetch_stops(self):
+        self.concurrent_change(self.copy, delete=True)
+
+    def test_final_lookup_failure_does_not_push(self):
+        self.commit('app.py', 'B')
+        before = self.main_of(self.canonical)
+        original = push_ci.git
+        calls = 0
+
+        def failing_git(*args, **kwargs):
+            nonlocal calls
+            if args[0] == 'ls-remote':
+                calls += 1
+                if calls == 3:
+                    raise SystemExit('最終照会の通信失敗')
+            return original(*args, **kwargs)
+
+        with patch.object(push_ci, 'git', side_effect=failing_git):
+            with self.assertRaisesRegex(SystemExit, '最終照会'):
+                self.run_push(utc(2026, 11, 2, 1))
+        self.assertEqual(self.main_of(self.canonical), before)
+
+    def test_dry_run_checks_final_period_without_pushing(self):
+        self.commit('app.py', 'B')
+        before = self.main_of(self.canonical)
+        with patch('sys.stdout'), patch('sys.stderr'):
+            self.assertEqual(push_ci.main(['--dry-run'], now=utc(2026, 11, 2, 1)), 0)
+            clock = iter([utc(2026, 11, 15, 14, 59), utc(2026, 11, 15, 15)])
+            self.assertEqual(push_ci.main(['--dry-run'], clock=clock.__next__), 1)
+        self.assertEqual(self.main_of(self.canonical), before)
+
 
 if __name__ == '__main__':
     unittest.main()
