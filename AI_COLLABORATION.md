@@ -4573,3 +4573,12 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 最終実行 `node --test database_android/tool/test_share_calendar_review_browser.mjs database_android/tool/test_share_viewer_browser.mjs database_android/tool/test_share_viewer.mjs`（SHARE_WEB_ROOTは確認用stage）：**34件成功**（単体32・画面2）。stage版851c671444d4。構文・git diff --checkも成功。旧文言・旧警告セレクターの試験を修正し、新規の集計のみ試験は合成fixtureの有効集計999台+513台に合わせた13%が正しいことを確認。
 - 画像は `../outputs/calendar-improvement-preview/` のcomparison.png（幸町とP-STATION）・conflict.pngほか。実際の修正版に合成データを入れたブラウザ撮影。実機Safariの検証とは区別。ユーザーの実データ・Googleへ通信していない。
 - **未公開、全体ゲート未実行、GitHubへのコードpush未実施**。今回は画像判断までという依頼のためローカルコミットに保持し、pushでCIを先に起動しない。承認後は両mainを再確認して最新履歴を維持し、全体ゲートALL PASSED後にpush_ci.py→stage→公開→公開URL検証、画像・記録も反映する。実機・実接続の確認は未実施。
+
+## 【レビュー7項目の修正版を承認後に公開】2026-10-31 Codex
+
+- 利用者「公開までお願いします」により、直前の画像・実装0e973ceの公開を承認。両mainを再fetchし、database-ci/main b2260b1と正本の履歴を含むことを確認。他AIの追加更新はなかった。
+- 全体ゲート：DISPLAY :104の起動確認後、`source /workspace/.cloud-setup/env.sh`、`CHECK_JS_JOBS=2 bash database_android/tool/check_before_build.sh` が **ALL PASSED**。PC tests **493件**・PC直下236件・UTC27件、Flutter750件、analyze・新規検証用Webビルド・全JS **77ファイル**成功。直前の記録にある古いPC492件とは区別。
+- コードは `0e973ce4cb945325a04ca5a5352f233738011768` をpush_ci.pyでdatabase-ci/mainへ送信。CI https://github.com/keyanbaitian6-cell/database-ci/actions/runs/41188954889 は最終確認時点で実行中（ローカル全体ゲートの成功と区別）。同じコードの再実行・再pushはしていない。
+- 共有カレンダー公開コミット `344a5533e42d7bd223ce0cb6e153116203555783`、公開版 **851c671444d4**。承認された確認用stageと同じ版。Pages https://github.com/keyanbaitian6-cell/database-share/actions/runs/41188972873 は成功。
+- https://keyanbaitian6-cell.github.io/database-share/ のindex.html・app.mjs・data.mjsがstageとバイト一致。公開URLに対し `test_share_calendar_review_browser.mjs` と `test_share_viewer_browser.mjs` を実行し、**画面2件成功**。重複・競合・店舗別日時・失敗からの復旧・保存済み復帰・集計のみ・全件空・文字拡大・既存操作、320/393/1280pxを合成データで確認。実データの集計変更・Google側の貼替や同期・実機Safari確認とは区別。
+- 直前の「未公開・全体ゲート未実行・コードpush未実施」は、本項により完了へ更新。製品のPC・APK・Flutter閲覧サイトは変更・公開していない。元データを削除・上書きしていない。公開後のブラウザ再読み込みで反映する。
