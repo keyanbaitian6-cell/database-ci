@@ -4596,3 +4596,10 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 未決：**実装を始める前に（T0）、`nail_gauge/` のコードをpushすると既存の全試験（約23分）が流れるため、`regression.yml` の `paths-ignore` に `nail_gauge/**` を足すか、別リポジトリにするかを利用者に聞く。** 仮の目標（0.1mm・0.2mm・0.3mm）は「何mmの違いを見分けたいか」を利用者と決めて見直す。店舗の撮影ルールに従う前提を画面に出す。
 - 試験・ビルド：設計だけなので流していない。flutter create・実装・APK作成はしていない。
 - push：日本時間 2026-11-01 00:05 で、送り先は正本 `imakurudev-eng/database`。正本の main（`e8d2fa0`）はこのコミットより196コミット遅れていて、その中にコード（.md 以外）がある。`tools/push_ci.py` の決まりで、日本時間の1日9時ごろまでは正本へコードを送れないため、**このコミットは手元だけで、9時以降に `py -3 tools/push_ci.py` で送る**（その送信で正本のCIが1回動くのは正しい）。
+
+## 【nail_gauge を別リポジトリ keyanbaitian6-cell/nail-gauge へ移した】2026-11-01 Claude
+
+- 利用者「別リポジトリに分ける」（前項の未決T0への回答）。非公開リポジトリ `keyanbaitian6-cell/nail-gauge` を作り（2026-11-01、`gh repo create --private`。表示は PRIVATE を確認）、設計書3つを `docs/` に移して push した（`73071d1`）。手元は `C:\Users\keyan\Documents\Codex\2026-09-24\a\work\nail-gauge`。
+- 移すときに、置き場所の説明（design.md §0、implementation-plan.md §2・T0・§7、measurement-validation.md の1か所）を別リポジトリ前提に直した。中身の設計は前項から変えていない。新しいリポジトリには、このAGENTS.md から日本語・共有記録・試験とpush・撮影のルールを引き継いだ `AGENTS.md` と、`README.md`・`AI_COLLABORATION.md` を置いた。CI（GitHub Actions）は置いていない。
+- このリポジトリからは `nail_gauge/` を消した。前項の `8a52ca1` には設計書の初版が入ったまま残る（未pushの手元の履歴で、書き換えはしない）。以後、このアプリの記録は nail-gauge の `AI_COLLABORATION.md` に書く。
+- push：このコミットも `8a52ca1` と同じく、正本へは日本時間 11/1 9時以降に `py -3 tools/push_ci.py` で送る（正本が196コミット遅れていてコードを含むため）。
