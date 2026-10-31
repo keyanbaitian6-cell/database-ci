@@ -4518,3 +4518,19 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 利用者に見てほしいこと：iPhoneで閲覧ページ（メルヘン・P’s CUBE）を開き、「更新・差枚の取得状況」の下の「この端末の保存（診断）」の行。特に「保存領域」「本体」「起動時の読み込み」「Googleドライブの更新」の「途中で終わった」回数。回数は今回の公開後から数え始める（それ以前の落ちた回数は分からない）。
 - 未確認：実iPhoneのSafariでの表示と値（`estimate` の目安、`databases()`、落ちたときに localStorage の書き込みが残るか）。しなかったこと：実データの移行、日別保存ストアの製品画面への接続、共有カレンダーの公開、Googleの貼り替え、APK・EXE作成。
 - 追記（公開の確認）：Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/41147213496 成功。配信中の `storage_report.mjs`・`main.dart.js`・`viewer_parts.mjs`・`index.html`・`pscube/viewer_bootstrap.mjs`・`capture_health.mjs` をHTTPで読み戻し、改行を除いてゲートのstageと一致。公開URL（`VIEWER_PUBLIC_ORIGIN=https://keyanbaitian6-cell.github.io`）で `test_meruhen_net_browser.mjs` が成功（320/393px、診断の行・保存先を作らないことを含む）。P’s CUBE版の公開URLでの画面試験は流していない（ゲートの実ビルドでは成功）。
+
+## 【保存診断：利用者のiPhoneでの最初の値（メルヘンの閲覧ページ）】2026-10-31 Claude
+
+- 利用者がiPhoneの閲覧ページ（メルヘン、公開 `fb164b3`）の「更新・差枚の取得状況」の画面写真を2枚送付（端末の時刻 8:58・8:59）。以下は**利用者の画面の値**で、AIが端末を直接確かめたものではない。P’s CUBE版の値は未報告。
+  - 表示中の記録 62,835件・90日分（PCの `database-viewer.json` は60日分。iPhoneはDriveに無い古い日も残すため多い）。
+  - 保存領域 約210.6MBを使用／上限の目安 約39,321.6MB（同じ配信元の共有カレンダーを含む）。保存の保護（`persisted`）なし。
+  - 本体 約26.9MB（28,221,131文字。軽くした形なのでPCの約43MBより小さい）。🌈の印（本体と別）116件（12,141文字）。
+  - 日別キャッシュ 90日分（接続先1件・旧形式 `snapshots` 1件）。新しい日別保存は未使用。localStorage 373,328文字。
+  - 起動時の読み込み：最後まで終わった2回・前回0.7秒・最長0.7秒・途中で終わった0回。Googleドライブの更新：2回・前回2.8秒・最長3.2秒・途中で終わった0回。
+- 読み取り（Claudeの判断）：
+  - 容量は問題ない（上限の目安の約0.5%）。210MBのうち本体は文字数で約27MB（IndexedDBの中での大きさはブラウザ次第）。残りは日別キャッシュ90日分・旧形式の `snapshots` 1件・共有カレンダーの保存など。旧形式は既知の「旧キャッシュを自動回収しない」残課題（`VIEWER_DAY_STORE.md`）で、今回は消していない。
+  - 公開後の2回では落ちていない。回数が少ないので、新しい日のデータが届いたときのGoogleドライブの更新（統合と保存の山）を含め、しばらく回数を見る。
+  - 保存の保護「なし」は、Safariが長く使われないサイトの保存を消しうる状態を表す。毎日開いていれば消されにくいが、保証ではない。今回は変更していない。
+  - localStorage 約37万文字は、ページを開くたびに全部読まれる。量の内訳（共有カレンダー分を含む）はまだ調べていない。
+- 次の手順：利用者が数日〜1週間使ったあとの「途中で終わった」回数と時間を見て、段階B（裏での引っ越し）の時期を決める。回数が増えたら、どちらの区切りかで原因の場所（起動時か、Driveの統合か）を絞る。
+- 追記（CI）：`d5fb892`（`fda78db` を含む）は database-ci https://github.com/keyanbaitian6-cell/database-ci/actions/runs/41147372838 で、この記録の時点では pc (ubuntu) 成功・full と pc (windows) 実行中。
