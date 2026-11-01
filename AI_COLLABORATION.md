@@ -255,4 +255,4 @@
 - 公開（2026-11-02 0時台、利用者「送って公開して」）：`04179aa`・`86c562f` を `tools/push_ci.py` で正本へ1回で送信（`7be9f19..86c562f`、日本時間11/2＝前半）。CI [41321124535](https://github.com/imakurudev-eng/database/actions/runs/41321124535) は記録時点で pc (ubuntu) success、pc (windows)・full は実行中（結果未確認）。
 - 共有カレンダー：`database-share` へ `1a3d77c`（照合版 `fdd9db07aee1`、source `86c562f`）。3回目のゲートの `share/` stage を `outputs/all-machines-20261101/public-share` に写した。実際の差は9ファイル（app.mjs・data.mjs と版の文字列）。Pages 41321230183 成功。配信中の app.mjs・data.mjs・index.html・sw.js は改行をそろえると stage と一致。公開URLに対して `test_share_viewer_all_racks_browser.mjs` を実行し成功（320/393px。Googleは試験内の偽物）。
 - iPhone閲覧ページ：`database-viewer` へ `444d8ae`（照合版 `fdd9db07aee1`、版 0.5.49+2026110102 のまま、source `86c562f`）。3回目のゲートの `viewer/` stage（`stage_viewer.py` で実データ除去・検査済み）を `outputs/all-machines-20261101/public-viewer` に写した。実際の差は6ファイル（main.dart.js・アイコンのフォント・版の文字列）。Pages 41321235615 成功。配信中の main.dart.js・version.json・viewer_parts.mjs が stage と一致（改行をそろえて比較）。実機Safariでの表示は未確認。
-- Android APK：未作成（利用者に確認中）。PC版は `start.cmd` から起動し直すと機種一覧のタブが出る（利用者の確認は未）。
+- Android APK：未作成（利用者「今はいい」、同日）。Androidアプリには並べ方・全機種の台一覧はまだ届いていない。PC版は `start.cmd` から起動し直すと機種一覧のタブが出る（利用者の確認は未）。
