@@ -4678,3 +4678,4 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 変更：閲覧ページを開いたあと、「Googleドライブの最新を確認しています…」が消え、「〜に最新か確認」が出るまで待ってから「長町南のイベント履歴」を押す（`driveSettled`、最初に開くときとリロード後に開くときの2か所）。
 - 手元の確認：ゲートの閲覧ページ（`/c/w/cbw-diag1/viewer`、`fda78db` と同じ閲覧ページのコード）と今の `share_viewer/` で、この試験を2回流し、2回とも6件すべて成功（閲覧ページ1件9.6〜12.1秒）。元の競合をわざと再現しての確認（CPUを遅くするなど）はしていない。全体ゲートは流していない（試験1ファイルだけの変更で、ビルドもしないため。CIの full で確かめる）。
 - 送信：`tools/push_ci.py` で正本へ1回（このコミットと前項の記録 `81181cc` を含む）。CIの結果は次の追記。
+- 追記（CI）：`618a325`（試験の修正 `00ef938` を含む）は正本 https://github.com/imakurudev-eng/database/actions/runs/41259394567 で full・pc (windows)・pc (ubuntu) の3ジョブとも成功。full は86段すべて OK（ALL PASSED）、`test_recommendations_browser` も成功。再実行なし。前回 41257657501 の full 失敗は、この修正後の実行で解消した。
