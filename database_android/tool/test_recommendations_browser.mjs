@@ -45,6 +45,11 @@ try {
         }else body=file==='event-history'?history:!file?backup:file==='pscube'?{format:'pscube-viewer',version:1,records:[]}:{format:'database-events',version:1,events:[],marks:[]};
         return route.fulfill({contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(body)});
       });
+      // 閲覧ページは開いた直後にGoogleドライブの更新が走り、「最新を確認しています…」の表示の出入りで配置がずれる。
+      // その間に押すとボタンの外に当たり、画面が切り替わらないことがあった（2026-11-01 正本CIで393pxだけ時間切れ）。
+      // 更新が終わってから押す。
+      const driveSettled=()=>page.waitForFunction(()=>{const t=document.body.textContent;
+        return t.includes('最新か確認')&&!t.includes('Googleドライブの最新を確認しています');},null,{timeout:60000});
       async function open() {
         await page.goto(origin+'/setup');
         if(kind==='share') {
@@ -53,6 +58,7 @@ try {
         }else {
           await page.goto(origin+'/database-viewer/');await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
           const placeholder=page.locator('flt-semantics-placeholder');if(await placeholder.count())await placeholder.evaluate(e=>e.click());
+          await driveSettled();
           await page.getByRole('button',{name:'長町南のイベント履歴',exact:true}).click({timeout:60000});
           await page.getByRole('button',{name:/4台構成/}).click();await page.getByRole('menuitem',{name:'4大オススメ',exact:true}).click();
         }
@@ -123,6 +129,7 @@ try {
           await page.goto(origin+'/setup');await page.goto(origin+'/database-viewer/');
           await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
           const placeholder=page.locator('flt-semantics-placeholder');if(await placeholder.count())await placeholder.evaluate(e=>e.click());
+          await driveSettled();
           await page.getByRole('button',{name:'長町南のイベント履歴',exact:true}).click({timeout:60000});
           await page.getByRole('button',{name:/2026-10-19 旧週の機種の顔文字/}).click();
           await page.getByRole('menuitem',{name:'😍',exact:true}).click();
