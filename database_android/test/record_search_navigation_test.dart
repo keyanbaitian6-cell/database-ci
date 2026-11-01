@@ -71,12 +71,14 @@ void main() {
       await tester.enterText(find.byType(TextField), '#123');
       await tester.pumpAndSettle();
       // 実際の一覧タップから、検索語が次の画面へ渡ることを確認する。
-      await tester.tap(
-        find.descendant(
-          of: find.byType(MachineSummaryList),
-          matching: find.text('北斗'),
-        ),
+      // （一覧の上に「全機種の台一覧」のボタンが入り、P’s CUBE版では画面の外になるので送ってから押す。2026-11-01）
+      final hokuto = find.descendant(
+        of: find.byType(MachineSummaryList),
+        matching: find.text('北斗'),
       );
+      await tester.ensureVisible(hokuto);
+      await tester.pumpAndSettle();
+      await tester.tap(hokuto);
       await tester.pumpAndSettle();
       expect(shownRacks(tester), [123]);
       await tester.tap(find.text('グラフ表示'));

@@ -15,10 +15,67 @@ import 'scoring.dart';
 import 'setting_estimate.dart';
 import 'setting_estimate_presentation.dart';
 import 'theme.dart';
+import 'viewer_bridge.dart';
 
 // 結果タブ・過去の記録で使う、機種ごとの表示。
 // アナスロの機種別データ（データ表示／グラフ表示のタブ、台番号の表、平均の行）
 // の見せ方に、このアプリの点数・推定設定・翌日候補（仮）を加えている。
+
+/// 全機種の台を1つの表に並べる画面の機種名（2026-11-01 利用者「バラエティ以外の他の機種を一覧でだしつつ、
+/// 機種だけみたいときは（プルダウン）で切り替えられるように」「媒体は全て」）。その日その店のバラエティ
+/// （[varietyMachines]）の機種は入れない（バラエティは別の画面）。
+const allMachinesName = '全機種';
+
+/// 台の並べ方（2026-11-01 利用者「回転数とかでもソートできるようにしておいてほしい」、同日「そのほかの機種一覧
+/// として同じように」）。PC版の機種一覧・バラエティ🌈と同じく、数値の無い台（異常・差枚の分からない台・保留）は
+/// 多い順・少ない順のどちらでも最後、同じ値は台番号順。機種順は機種が混ざる画面（バラエティ・全機種）だけ。
+/// 選んだ並べ方は端末に覚える（閲覧ページはブラウザ、Androidアプリは開いている間だけ）。
+const machineSorts = {
+  'rack': '台番号順',
+  'games-desc': '回転数の多い順',
+  'games-asc': '回転数の少ない順',
+  'net-desc': '差枚の多い順',
+  'net-asc': '差枚の少ない順',
+  'score-desc': '点数の高い順',
+  'score-asc': '点数の低い順',
+  'machine': '機種順',
+};
+
+/// 並べ方を覚える名前。バラエティの 'variety-sort' は、先に閲覧ページのバラエティだけで使っていた名前のまま。
+String machineSortSetting(String machine) => machine == allMachinesName
+    ? 'all-machines-sort'
+    : machine == varietyGroupName
+    ? 'variety-sort'
+    : 'machine-sort';
+
+List<(SlotRecord, ScoreResult)> sortMachineEntries(
+  List<(SlotRecord, ScoreResult)> entries,
+  String sort,
+) {
+  num? value((SlotRecord, ScoreResult) e) => switch (sort) {
+    'games-desc' ||
+    'games-asc' => hasImplausibleNumbers(e.$1) ? null : e.$1.games,
+    'net-desc' ||
+    'net-asc' => hasImplausibleNumbers(e.$1) ? null : e.$1.netValue,
+    'score-desc' || 'score-asc' => e.$2.total,
+    _ => null,
+  };
+  final descending = sort.endsWith('-desc');
+  return [...entries]..sort((a, b) {
+    var order = 0;
+    if (sort == 'machine') {
+      order = a.$1.machine.compareTo(b.$1.machine);
+    } else if (sort != 'rack') {
+      final x = value(a), y = value(b);
+      if (x == null || y == null) {
+        order = (x == null ? 1 : 0) - (y == null ? 1 : 0);
+      } else {
+        order = descending ? y.compareTo(x) : x.compareTo(y);
+      }
+    }
+    return order != 0 ? order : a.$1.rack.compareTo(b.$1.rack);
+  });
+}
 
 /// 機種の見出しと「データ表示／グラフ表示」のタブ、その中身。[machine] が
 /// [varietyGroupName] なら、1〜3台の機種をまとめたバラエティ（台ごとに機種名を出す）。
@@ -42,7 +99,7 @@ class MachineSection extends StatefulWidget {
   /// 複数機種を一緒に出すときに、台ごとの機種名を表示する。
   final bool showMachine;
 
-  /// 台番号順の台と点数。
+  /// 台番号順の台と点数。表とグラフでは、選んだ並べ方（[machineSorts]）で並べ直す。
   final List<(SlotRecord, ScoreResult)> entries;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
@@ -63,7 +120,7 @@ class MachineSection extends StatefulWidget {
   /// 画面に出す前の高さの見積もり。結果タブで、まだ作っていない機種へ飛ぶときの
   /// 目安に使う（実際の位置は飛んだ後で合わせ直す）。
   static double estimateHeight(int racks, {required bool graph}) {
-    const header = 48.0 + 10 + 40; // 見出し2行・間・タブ
+    const header = 48.0 + 10 + 40 + 56; // 見出し2行・間・タブ・並べ方
     const footer = 32.0 + 48; // 注記・戻るボタンの行
     final body = graph
         ? ((racks + 1) ~/ 2) * 190.0 + 8 + 36
@@ -78,6 +135,25 @@ class MachineSection extends StatefulWidget {
 class _MachineSectionState extends State<MachineSection> {
   var _ownGraph = false;
 
+  /// 全機種の画面で絞っている機種（null＝すべて）。
+  String? _only;
+
+  bool get _mixed =>
+      widget.machine == allMachinesName ||
+      widget.machine == varietyGroupName ||
+      widget.showMachine;
+
+  Map<String, String> _sorts(String netLabel) => {
+    for (final e in machineSorts.entries)
+      if (e.key != 'machine' || _mixed)
+        e.key: e.value.replaceFirst('差枚', netLabel),
+  };
+
+  String get _sort {
+    final saved = loadViewerSetting(machineSortSetting(widget.machine));
+    return saved != null && _sorts('').containsKey(saved) ? saved : 'rack';
+  }
+
   bool get _graph => widget.graph ?? _ownGraph;
 
   void _setGraph(bool value) {
@@ -90,9 +166,22 @@ class _MachineSectionState extends State<MachineSection> {
 
   @override
   Widget build(BuildContext context) {
-    final average = rackAverages(widget.entries).score;
     final variety = widget.machine == varietyGroupName;
-    final machines = {for (final e in widget.entries) e.$1.machine};
+    final all = widget.machine == allMachinesName;
+    final names = [
+      ...{for (final e in widget.entries) e.$1.machine},
+    ]..sort();
+    final only = all && names.contains(_only) ? _only : null;
+    final entries = sortMachineEntries([
+      for (final e in widget.entries)
+        if (only == null || e.$1.machine == only) e,
+    ], _sort);
+    final shownRacks = {for (final e in entries) e.$1.rack};
+    final candidateRacks = widget.candidateRacks.intersection(shownRacks);
+    final longTrendRacks = widget.longTrendRacks.intersection(shownRacks);
+    final average = rackAverages(entries).score;
+    final machines = {for (final e in entries) e.$1.machine};
+    final netLabel = widget.entries.firstOrNull?.$1.netLabel ?? '差枚';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -105,7 +194,9 @@ class _MachineSectionState extends State<MachineSection> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    variety
+                    all
+                        ? '全機種の台一覧（${names.length}機種）'
+                        : variety
                         ? '$varietyGroupName（${machines.length}機種）'
                         : displayMachineName(widget.machine),
                     maxLines: 2,
@@ -116,10 +207,11 @@ class _MachineSectionState extends State<MachineSection> {
                     ),
                   ),
                   Text(
-                    '${widget.entries.length}台・平均 '
+                    '${only == null ? '' : '${displayMachineName(only)}・'}'
+                    '${entries.length}台・平均 '
                     '${average?.toStringAsFixed(1) ?? '—'}点'
-                    '${widget.candidateRacks.isEmpty ? '' : '・★${variety ? '参考候補' : '注目'}${widget.candidateRacks.length}台'}'
-                    '${widget.longTrendRacks.isEmpty ? '' : '・☆長期傾向${widget.longTrendRacks.length}台'}',
+                    '${candidateRacks.isEmpty ? '' : '・★${variety ? '参考候補' : '注目'}${candidateRacks.length}台'}'
+                    '${longTrendRacks.isEmpty ? '' : '・☆長期傾向${longTrendRacks.length}台'}',
                     style: const TextStyle(fontSize: 12, color: AppColors.ash),
                   ),
                 ],
@@ -136,8 +228,16 @@ class _MachineSectionState extends State<MachineSection> {
               style: const TextStyle(fontSize: 12, color: AppColors.ash),
             ),
           ),
-        if (widget.candidateRacks.isNotEmpty ||
-            widget.longTrendRacks.isNotEmpty)
+        if (all)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'バラエティ（${widget.entries.isEmpty ? '少台数' : varietyRangeFor(widget.entries.first.$1.store)}の機種）以外の台です。'
+              '点数・推定設定は台ごとに、その台の機種の過去と比べたものです。',
+              style: const TextStyle(fontSize: 12, color: AppColors.ash),
+            ),
+          ),
+        if (candidateRacks.isNotEmpty || longTrendRacks.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
@@ -146,9 +246,7 @@ class _MachineSectionState extends State<MachineSection> {
               style: const TextStyle(fontSize: 12, color: AppColors.ash),
             ),
           ),
-        if (!variety &&
-            widget.longTrendRacks.isNotEmpty &&
-            widget.candidateRacks.isEmpty)
+        if (!variety && longTrendRacks.isNotEmpty && candidateRacks.isEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 4),
             child: Text(
@@ -156,6 +254,61 @@ class _MachineSectionState extends State<MachineSection> {
               style: TextStyle(fontSize: 12, color: AppColors.ash),
             ),
           ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            if (all) ...[
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  key: const ValueKey('machine-only'),
+                  initialValue: only,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: '機種',
+                    isDense: true,
+                  ),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('すべての機種')),
+                    for (final name in names)
+                      DropdownMenuItem(
+                        value: name,
+                        child: Text(
+                          displayMachineName(name),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) => setState(() => _only = value),
+                ),
+              ),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                key: const ValueKey('machine-sort'),
+                initialValue: _sort,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: '並べ方',
+                  isDense: true,
+                ),
+                items: [
+                  for (final e in _sorts(netLabel).entries)
+                    DropdownMenuItem(value: e.key, child: Text(e.value)),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(
+                    () => saveViewerSetting(
+                      machineSortSetting(widget.machine),
+                      value,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 10),
         Row(
           children: [
@@ -185,22 +338,22 @@ class _MachineSectionState extends State<MachineSection> {
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: GraphGrid(
-              entries: widget.entries,
-              candidateRacks: widget.candidateRacks,
-              longTrendRacks: widget.longTrendRacks,
+              entries: entries,
+              candidateRacks: candidateRacks,
+              longTrendRacks: longTrendRacks,
               onTap: widget.onTap,
               onLongPress: widget.onLongPress,
-              showMachine: variety || widget.showMachine,
+              showMachine: _mixed,
             ),
           )
         else
           MachineDataTable(
-            entries: widget.entries,
-            candidateRacks: widget.candidateRacks,
-            longTrendRacks: widget.longTrendRacks,
+            entries: entries,
+            candidateRacks: candidateRacks,
+            longTrendRacks: longTrendRacks,
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
-            showMachine: variety || widget.showMachine,
+            showMachine: _mixed,
           ),
         ?widget.footer,
       ],

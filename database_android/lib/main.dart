@@ -1476,6 +1476,26 @@ class _ResultsPageState extends State<ResultsPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
+                      // バラエティ以外の全機種の台を1つの表で（2026-11-01、機種はプルダウンで絞る）。
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: FilledButton.tonalIcon(
+                          key: const ValueKey('open-all-machines'),
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => HistoryGroupPage(
+                                controller: widget.controller,
+                                day: day!,
+                                store: store!,
+                                machine: allMachinesName,
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.table_rows_outlined),
+                          label: const Text('全機種の台一覧'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       MachineSearchField(
                         controller: _query,
                         onChanged: () => setState(() {}),
@@ -2152,7 +2172,11 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
     builder: (context, _) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(displayMachineName(widget.machine)),
+          title: Text(
+            widget.machine == allMachinesName
+                ? '全機種の台一覧'
+                : displayMachineName(widget.machine),
+          ),
           bottom: ViewerDateBar(
             days: viewerDays(widget.controller.records, widget.store),
             day: _day,
@@ -2174,15 +2198,18 @@ class _HistoryGroupPageState extends State<HistoryGroupPage> {
               return Center(child: Text('採点できませんでした：${snapshot.error}'));
             }
             final variety = widget.machine == varietyGroupName;
-            // バラエティかどうかは、その日その店の全台で数える。
-            final varietyNames = variety
+            final all = widget.machine == allMachinesName;
+            // バラエティかどうかは、その日その店の全台で数える。全機種はバラエティ以外の台。
+            final varietyNames = variety || all
                 ? varietyMachines(snapshot.data!.scored.values.map((e) => e.$1))
                 : const <String>{};
             final search = RecordQuery(widget.query);
             final scored =
                 snapshot.data!.scored.values
                     .where(
-                      (r) => variety
+                      (r) => all
+                          ? !varietyNames.contains(r.$1.machine)
+                          : variety
                           ? varietyNames.contains(r.$1.machine) &&
                                 (widget.only?.contains(r.$1.machine) ?? true)
                           : r.$1.machine == widget.machine,

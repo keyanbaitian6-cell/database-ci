@@ -246,7 +246,7 @@ void main() {
         e.$1.rack,
     ];
     Future<void> choose(String label) async {
-      await tester.tap(find.byKey(const ValueKey('variety-sort')));
+      await tester.tap(find.byKey(const ValueKey('machine-sort')));
       await tester.pumpAndSettle();
       await tester.tap(find.text(label).last);
       await tester.pumpAndSettle();
@@ -268,10 +268,137 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('回転数の多い順'), findsOneWidget);
     expect(racks(), [8, 5, 7]);
+    await choose('台番号順'); // ほかの試験に残さない
     expect(tester.takeException(), isNull);
   });
 
-  test('バラエティの並べ方：回転数・機種で並べ、同じなら台番号順', () {
+  testWidgets('全機種の台一覧：バラエティ以外の台を1つの表に出し、機種のプルダウンで絞る・並べ方を覚える', (tester) async {
+    // 2026-11-01 利用者「バラエティ以外の他の機種を一覧でだしつつ、機種だけみたいときは（プルダウン）で
+    // 切り替えられるように」「媒体は全て」。
+    await phone(tester);
+    final records = [
+      for (final (rack, games) in [
+        (20, 900),
+        (21, 5000),
+        (22, 2000),
+        (23, 2000),
+      ])
+        rec('2026-09-28', machine: '主力', rack: rack, games: games),
+      for (final (rack, games) in [
+        (30, 7000),
+        (31, 100),
+        (32, 3000),
+        (33, 1500),
+      ])
+        rec('2026-09-28', machine: 'あ機種', rack: rack, games: games),
+      rec('2026-09-28', machine: 'ハナハナ', rack: 5, games: 9000),
+    ];
+    Future<void> open() => tester.pumpWidget(
+      app(
+        ViewerMachinePage(
+          key: UniqueKey(),
+          data: ViewerData(records: records),
+          store: 'nagamachiminami',
+          machine: allMachinesName,
+          day: '2026-09-28',
+        ),
+      ),
+    );
+    List<int> racks() => [
+      for (final e
+          in tester
+              .widget<MachineDataTable>(find.byType(MachineDataTable))
+              .entries)
+        e.$1.rack,
+    ];
+    Future<void> choose(String key, String label) async {
+      await tester.tap(find.byKey(ValueKey(key)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+    }
+
+    await open();
+    await tester.pumpAndSettle();
+    expect(find.text('全機種の台一覧（2機種）'), findsOneWidget);
+    expect(racks(), [
+      20,
+      21,
+      22,
+      23,
+      30,
+      31,
+      32,
+      33,
+    ], reason: 'バラエティ（ハナハナ1台）は入れない');
+    expect(
+      tester
+          .widget<MachineDataTable>(find.byType(MachineDataTable))
+          .showMachine,
+      isTrue,
+      reason: '機種が混ざるので機種名の列を出す',
+    );
+    await choose('machine-sort', '回転数の多い順');
+    expect(racks(), [30, 21, 32, 22, 23, 33, 20, 31]);
+    await choose('machine-only', '主力');
+    expect(racks(), [21, 22, 23, 20], reason: '絞っても並べ方はそのまま');
+    expect(find.textContaining('主力・4台'), findsOneWidget);
+    await choose('machine-only', 'すべての機種');
+    expect(racks().length, 8);
+    await open();
+    await tester.pumpAndSettle();
+    expect(find.text('回転数の多い順'), findsOneWidget, reason: '開き直しても覚えている');
+    expect(racks().first, 30);
+    await choose('machine-sort', '台番号順');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('1機種の台一覧にも並べ方がある（機種順は出さない）', (tester) async {
+    await phone(tester);
+    final records = [
+      for (final (rack, games) in [
+        (20, 900),
+        (21, 5000),
+        (22, 2000),
+        (23, 2000),
+      ])
+        rec('2026-09-28', machine: '主力', rack: rack, games: games),
+    ];
+    await tester.pumpWidget(
+      app(
+        ViewerMachinePage(
+          data: ViewerData(records: records),
+          store: 'nagamachiminami',
+          machine: '主力',
+          day: '2026-09-28',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('machine-sort')));
+    await tester.pumpAndSettle();
+    expect(find.text('機種順'), findsNothing);
+    expect(find.text('推定差枚の多い順'), findsWidgets);
+    await tester.tap(find.text('回転数の少ない順').last);
+    await tester.pumpAndSettle();
+    expect(
+      [
+        for (final e
+            in tester
+                .widget<MachineDataTable>(find.byType(MachineDataTable))
+                .entries)
+          e.$1.rack,
+      ],
+      [20, 22, 23, 21],
+    );
+    await tester.tap(find.byKey(const ValueKey('machine-sort')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('台番号順').last);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  test('台の並べ方：回転数・機種で並べ、同じなら台番号順', () {
     final entries = [
       for (final r in [
         rec('2026-09-28', machine: 'B', rack: 3, games: 100),
@@ -281,12 +408,26 @@ void main() {
         (r, scoreRecord(r, [r])),
     ];
     List<int> order(String sort) => [
-      for (final e in sortVarietyEntries(entries, sort)) e.$1.rack,
+      for (final e in sortMachineEntries(entries, sort)) e.$1.rack,
     ];
     expect(order('rack'), [1, 3, 9]);
     expect(order('games-desc'), [1, 3, 9]);
     expect(order('games-asc'), [3, 9, 1]);
     expect(order('machine'), [1, 9, 3]);
+  });
+
+  test('台の並べ方：差枚・点数の分からない台は多い順・少ない順のどちらでも最後', () {
+    final scored = rec('2026-09-28', rack: 2, games: 3000);
+    final low = rec('2026-09-28', rack: 3, games: 300); // 500G以下は採点しない（保留）
+    final entries = [
+      for (final r in [low, scored]) (r, scoreRecord(r, [r, scored, low])),
+    ];
+    expect(entries.first.$2.total, isNull);
+    List<int> order(String sort) => [
+      for (final e in sortMachineEntries(entries, sort)) e.$1.rack,
+    ];
+    expect(order('score-desc'), [2, 3]);
+    expect(order('score-asc'), [2, 3]);
   });
 
   testWidgets('機種ページで3台の日へ切り替えても全店バラエティと同じ★になる', (tester) async {

@@ -1294,6 +1294,27 @@ class _ViewerHomeState extends State<ViewerHome> {
             style: TextStyle(fontSize: 12, color: AppColors.ash),
           ),
           const SizedBox(height: 8),
+          // バラエティ以外の全機種の台を1つの表で（2026-11-01、機種はプルダウンで絞る）。
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              key: const ValueKey('open-all-machines'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ViewerMachinePage(
+                    data: _data!,
+                    store: _store!,
+                    machine: allMachinesName,
+                    day: _day!,
+                    onDayChanged: (day) => setState(() => _day = day),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.table_rows_outlined),
+              label: const Text('全機種の台一覧'),
+            ),
+          ),
+          const SizedBox(height: 8),
           // 1機種だけでも台番号から探せる。
           MachineSearchField(
             controller: _query,

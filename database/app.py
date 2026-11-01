@@ -15,6 +15,7 @@ import input_versions
 import pscube_import
 from event_calendar import PscubeEvents, open_event_calendar
 from event_history import open_event_history as show_event_history
+from machine_list import build_machine_list_tab
 from variety_rainbow import build_variety_tab
 from output_worker import OutputWorker, refresh_outputs
 from backup_status_ui import BackupStatusPanel
@@ -359,10 +360,14 @@ def main():
     sync_page.bind('<Leave>', lambda _e: sync_canvas.unbind_all('<MouseWheel>'))
     # バラエティの🌈（確定が出た台の印、RAINBOW.md「バラエティのタブ」、2026-10-11）。
     tab_variety = ttk.Frame(notebook, padding=22)
+    # 機種一覧（machine_list.py、2026-11-01 利用者「今バラエティを表示しているような作りで見たい」）。
+    # 「結果を見る」（ブラウザで開くHTML）は「ブラウザでHTML開くことはないから端っこにおいておいて」で右端へ。
+    tab_machines = ttk.Frame(notebook, padding=22)
     notebook.add(tab_home, text='  取り込み  ')
-    notebook.add(tab_results, text='  結果を見る  ')
+    notebook.add(tab_machines, text='  機種一覧  ')
     notebook.add(tab_variety, text='  バラエティ🌈  ')
     notebook.add(sync_page, text='  バックアップ・同期  ')
+    notebook.add(tab_results, text='  結果を見る  ')
 
     # 🌈：押したときは記録への保存だけ（速い）。閲覧・共有ページ用のファイルとバックアップの作り直し（5秒ほど）は、
     # まとめて1回（2026-10-12 利用者「一個押すたびに保存処理をしているようで数秒かかってしまう。…まとめてつけてから
@@ -432,13 +437,15 @@ def main():
             show_pending()
         schedule_outputs(backup=True, done=complete)
     refresh_variety = None
+    refresh_machine_list = None
     # タブを開いたときに読み直す（取り込みで新しい日・入れ替えが入っていれば一覧が変わる）。離れるときは🌈をまとめて反映。
     current_tab = [None]
 
     def open_variety(_event=None):
-        nonlocal refresh_variety
+        nonlocal refresh_variety, refresh_machine_list
         selected = notebook.select()
-        if current_tab[0] == str(tab_variety) and selected != str(tab_variety):
+        rainbow_tabs = (str(tab_variety), str(tab_machines))
+        if current_tab[0] in rainbow_tabs and selected != current_tab[0]:
             flush_rainbow()
         current_tab[0] = selected
         if selected == str(tab_variety):
@@ -447,6 +454,13 @@ def main():
                 refresh_variety = build_variety_tab(tab_variety, DATA_DIR / 'database.sqlite3', mark_rainbow,
                                                     on_flush=flush_rainbow, pending=pending_text, defer_load=True)
             refresh_variety()
+        if selected == str(tab_machines):
+            pull_shared_rainbow_now()
+            if refresh_machine_list is None:
+                refresh_machine_list = build_machine_list_tab(
+                    tab_machines, DATA_DIR / 'database.sqlite3', mark_rainbow, on_flush=flush_rainbow,
+                    pending=pending_text, defer_load=True)
+            refresh_machine_list()
     notebook.bind('<<NotebookTabChanged>>', open_variety, add='+')
 
     ttk.Label(tab_results, text='見たい台を選ぶ', style='H2.TLabel').pack(anchor='w')

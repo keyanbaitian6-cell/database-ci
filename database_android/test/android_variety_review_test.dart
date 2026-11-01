@@ -195,4 +195,45 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('結果：全機種の台一覧はバラエティ以外の台を1つの表に出し、機種で絞れる', (tester) async {
+    // 2026-11-01 利用者「バラエティ以外の他の機種を一覧でだしつつ、機種だけみたいときは（プルダウン）で
+    // 切り替えられるように」「媒体は全て」。
+    final controller = ReviewController()
+      ..records = [
+        for (var rack = 1; rack <= 4; rack++)
+          rec('北斗', rack, games: 1000 * rack),
+        for (var rack = 11; rack <= 14; rack++) rec('ジャグラー', rack),
+        rec('ハナハナ', 20),
+      ];
+    await prepare(tester, controller);
+    await tester.pumpWidget(app(ResultsPage(controller: controller)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-all-machines')));
+    await tester.pumpAndSettle();
+    expect(find.text('全機種の台一覧'), findsOneWidget);
+    List<int> racks() => [
+      for (final e
+          in tester
+              .widget<MachineDataTable>(find.byType(MachineDataTable))
+              .entries)
+        e.$1.rack,
+    ];
+    expect(racks(), [1, 2, 3, 4, 11, 12, 13, 14], reason: 'バラエティ（ハナハナ）は入れない');
+    await tester.tap(find.byKey(const ValueKey('machine-only')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('北斗').last);
+    await tester.pumpAndSettle();
+    expect(racks(), [1, 2, 3, 4]);
+    await tester.tap(find.byKey(const ValueKey('machine-sort')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('回転数の多い順').last);
+    await tester.pumpAndSettle();
+    expect(racks(), [4, 3, 2, 1]);
+    await tester.tap(find.byKey(const ValueKey('machine-sort')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('台番号順').last);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -43,6 +43,9 @@ class AppStartupTests(unittest.TestCase):
                     builder.assert_not_called()
                     notebook = next(w for frame in root.winfo_children() for w in frame.winfo_children()
                                     if isinstance(w, ttk.Notebook))
+                    # 2026-11-01：機種一覧を足し、「結果を見る」（HTML）は利用者「端っこにおいておいて」で右端。
+                    self.assertEqual([notebook.tab(t, 'text').strip() for t in notebook.tabs()],
+                                     ['取り込み', '機種一覧', 'バラエティ🌈', 'バックアップ・同期', '結果を見る'])
                     tab = next(t for t in notebook.tabs() if 'バラエティ' in notebook.tab(t, 'text'))
                     notebook.select(tab)
                     root.update()

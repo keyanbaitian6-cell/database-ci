@@ -7,7 +7,6 @@ import 'models.dart';
 import 'scoring.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
-import 'viewer_bridge.dart';
 import 'viewer_data.dart';
 
 /// 店舗の記録日（新しい順）。機種・台に記録がない日も選べる。
@@ -153,33 +152,9 @@ class _DayItem extends StatelessWidget {
   );
 }
 
-/// バラエティの画面の台の並べ方（2026-11-01 利用者「回転数とかでもソートできるようにしておいてほしい」）。
-/// 端末に覚える（[varietySortKey]）。PCのバラエティ🌈・共有カレンダーの回転数の多い順・少ない順と同じ（同じ回転数は台番号順）。
-const varietySortKey = 'variety-sort';
-const varietySorts = {
-  'rack': '台番号順',
-  'games-desc': '回転数の多い順',
-  'games-asc': '回転数の少ない順',
-  'machine': '機種順',
-};
-
-List<(SlotRecord, ScoreResult)> sortVarietyEntries(
-  List<(SlotRecord, ScoreResult)> entries,
-  String sort,
-) {
-  return [...entries]..sort((a, b) {
-    final order = switch (sort) {
-      'games-desc' => b.$1.games.compareTo(a.$1.games),
-      'games-asc' => a.$1.games.compareTo(b.$1.games),
-      'machine' => a.$1.machine.compareTo(b.$1.machine),
-      _ => 0,
-    };
-    return order != 0 ? order : a.$1.rack.compareTo(b.$1.rack);
-  });
-}
-
 /// 1機種の台（[machine] が [varietyGroupName] なら、その日その店で1〜3台の
-/// 機種をまとめたバラエティ）を、日付を切り替えながら見る画面。
+/// 機種をまとめたバラエティ。[allMachinesName] なら、バラエティ以外の全機種の台）を、日付を切り替えながら見る画面。
+/// 台の並べ方・全機種の機種の絞り込みは [MachineSection] の中。
 class ViewerMachinePage extends StatefulWidget {
   const ViewerMachinePage({
     super.key,
@@ -207,9 +182,6 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
   bool _hasDayRecords = false;
   String? _calculatedDay;
   List<(SlotRecord, ScoreResult)> _entries = [];
-  String _sort = varietySorts.containsKey(loadViewerSetting(varietySortKey))
-      ? loadViewerSetting(varietySortKey)!
-      : 'rack';
   Set<int> _candidateRacks = {};
   Set<int> _longTrendRacks = {};
 
@@ -232,17 +204,20 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
   Widget build(BuildContext context) {
     final data = widget.data;
     final variety = widget.machine == varietyGroupName;
+    final all = widget.machine == allMachinesName;
     if (_calculatedDay != _day) {
       final dayRows = [
         for (final r in data.records)
           if (r.store == widget.store && r.day == _day) r,
       ];
-      final varietyNames = variety
+      final varietyNames = variety || all
           ? varietyMachines(dayRows)
           : const <String>{};
       final rows = [
         for (final r in dayRows)
-          if (variety
+          if (all
+              ? !varietyNames.contains(r.machine)
+              : variety
               ? varietyNames.contains(r.machine)
               : r.machine == widget.machine)
             r,
@@ -278,7 +253,11 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          variety ? varietyGroupName : displayMachineName(widget.machine),
+          variety
+              ? varietyGroupName
+              : all
+              ? '全機種の台一覧'
+              : displayMachineName(widget.machine),
         ),
         bottom: ViewerDateBar(
           days: viewerDays(data.records, widget.store),
@@ -323,33 +302,9 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
                   child: const Text('この機種の全台を表示'),
                 ),
             ] else ...[
-              if (variety)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: DropdownButtonFormField<String>(
-                    key: const ValueKey('variety-sort'),
-                    initialValue: _sort,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: '並べ方',
-                      isDense: true,
-                    ),
-                    items: [
-                      for (final e in varietySorts.entries)
-                        DropdownMenuItem(value: e.key, child: Text(e.value)),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      saveViewerSetting(varietySortKey, value);
-                      setState(() => _sort = value);
-                    },
-                  ),
-                ),
               MachineSection(
                 machine: widget.machine,
-                entries: variety
-                    ? sortVarietyEntries(_entries, _sort)
-                    : _entries,
+                entries: _entries,
                 candidateRacks: _candidateRacks,
                 longTrendRacks: _longTrendRacks,
                 graph: _graph,

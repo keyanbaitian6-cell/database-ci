@@ -22,6 +22,7 @@ import {
   SAIWAICHOU_GAP_NET, saiwaichouMachineNet, saiwaichouGrade, saiwaichouGapEnd, saiwaichouGap,
   monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureText,
   characterBirthdayCellLabel, characterBirthdaysOn, parseCharacterBirthdays,
+  ALL_RACKS_SORTS, allRacksOrder, nonVarietyRacks,
 } from './data.mjs';
 
 const ID_KEY = 'database-share-script-id';
@@ -33,6 +34,8 @@ const NAME = /^[A-Za-z0-9_-]{1,40}$/;
 const MARKS_KEY = 'database-share-rainbow';
 const VARIETY_MODE_KEY = 'database-share-variety-mode-v2';
 const VARIETY_SORT_KEY = 'database-share-variety-sort';
+// 全機種の台一覧の並べ方（端末に覚える）。
+const ALL_RACKS_SORT_KEY = 'database-share-all-racks-sort';
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 const RETRY_MS = [1500, 4000];
 const TIMEOUT_MS = 30000;
@@ -441,6 +444,7 @@ function rackNeighbor(view, dir) {
 function titleOfView(view) {
   if (view.kind === 'rack') return `${view.rack.rack}番台${view.rack.rainbow ? ` ${RAINBOW}` : ''}`;
   if (view.kind === 'machine' || view.kind === 'historyMachine') return displayMachineName(view.machine);
+  if (view.kind === 'allRacks') return '全機種の台一覧';
   if (view.kind === 'idle') return 'バラエティの回っていない台';
   if (view.kind === 'variety' && view.mode === 'today') return 'バラエティ🌈 本日';
   if (view.kind === 'variety') return view.mode === 'week' ? 'バラエティの候補' : `バラエティ${RAINBOW}一覧`;
@@ -786,6 +790,13 @@ function openDay(first) {
         main: `<span class="machine" style="display:block">${esc(displayMachineName(x.machine))}</span>`,
         right: `<span class="value num" style="display:block">${count(x.average)}G</span><span class="small num">${x.racks}台</span>`,
       }))) : '<p class="note">2台以上ある機種がありません。</p>'}
+      ${(() => {
+        const others = nonVarietyRacks(racks, state.store);
+        return others.length ? `<h3>全機種の台一覧</h3>
+      <p class="caption">バラエティ以外の台を1つの一覧で。機種で絞り込み、回転数・${netName}で並べ替えられます。</p>
+      ${tapList([{lead: '', attrs: 'data-all-racks', main: '<span class="machine" style="display:block">全機種の台一覧を見る</span>',
+        right: `<span class="small num">${new Set(others.map(r => r.machine)).size}機種・${others.length}台</span>`}])}` : '';
+      })()}
       ${estimated ? '<p class="note">推定差枚はグラフと最大持玉からの計算で、確定値ではありません（※は要確認）。</p>' : ''}`;
   };
 
@@ -815,17 +826,61 @@ function openDay(first) {
       })))}`;
   };
 
+  // 全機種の台一覧（点数は出さない。2026-11-01 利用者「共有カレンダーには採点はいらないよ」）。
+  const allRacksView = (view) => {
+    const racks = racksOf(view.day);
+    view.items = racks;
+    const index = new Map(racks.map((r, i) => [r, i]));
+    const netName = netNameOf(racks);
+    const others = nonVarietyRacks(racks, state.store);
+    const names = [...new Set(others.map(r => r.machine))].sort((a, b) => a.localeCompare(b, 'ja'));
+    const only = names.includes(view.only) ? view.only : '';
+    const list = allRacksOrder(others.filter(r => !only || r.machine === only), view.sort);
+    view.rackList = list;
+    const nets = list.filter(r => r.net != null);
+    const total = nets.length ? nets.reduce((sum, r) => sum + r.net, 0) : null;
+    return `
+      <p class="store">${esc(storeLabel(state.store))}　${dateLabel(view.day)}</p>
+      <h2 id="sheet-title">全機種の台一覧</h2>
+      <p class="event-line num">${only ? `${esc(displayMachineName(only))}・` : `${names.length}機種・`}${list.length}台</p>
+      ${total != null ? `<p class="total"><span class="label">総${netName}</span>
+        <span class="value num ${tone(total)}">${signed(total)}</span>
+        <span class="sub num">${netName}がわかった台 ${nets.length}/${list.length}台</span></p>` : ''}
+      <label class="variety-sort">機種 <select data-all-machine aria-label="機種">
+        <option value=""${only ? '' : ' selected'}>すべての機種</option>
+        ${names.map(name => `<option value="${esc(name)}"${name === only ? ' selected' : ''}>${esc(displayMachineName(name))}</option>`).join('')}</select></label>
+      <label class="variety-sort">並べ方 <select data-all-sort aria-label="並べ方">
+        ${Object.entries(ALL_RACKS_SORTS).map(([key, label]) => `<option value="${key}"${view.sort === key ? ' selected' : ''}>${label.replace('差枚', netName)}</option>`).join('')}</select></label>
+      <p class="caption">バラエティ（${rainbowVarietyMax(state.store) === 1 ? '1台だけ' : `1〜${rainbowVarietyMax(state.store)}台`}の機種）はバラエティ${RAINBOW}にあります。台を押すと、その台のデータが見られます。</p>
+      ${list.length ? tapList(list.map(r => ({
+        lead: '', attrs: `data-rack="${index.get(r)}"`,
+        main: `<span class="machine num" style="display:block">${r.rack}番${rackMark(r)}</span><span class="rack">${esc(displayMachineName(r.machine))}</span><span class="rack num" style="display:block">BB ${r.bb}・RB ${r.rb}</span>`,
+        right: `${netCell(r)}<span class="small num">${count(r.games)}G</span>`,
+      }))) : '<p class="note">この日はバラエティ以外の台の記録がありません。</p>'}`;
+  };
+
   openSheet({
     first: {kind: 'day', day: first},
-    body: (view) => (view.kind === 'day' ? dayView(view) : view.kind === 'machine' ? machineView(view) : rackView(view)),
+    body: (view) => (view.kind === 'day' ? dayView(view) : view.kind === 'machine' ? machineView(view)
+      : view.kind === 'allRacks' ? allRacksView(view) : rackView(view)),
     // 押した行は、いま出している画面の日の台（描いたときの items）から選ぶ。
     onRow: (row, push, view) => {
       const racks = view.items ?? [];
-      if (row.dataset.rack != null) push(rackPage(racks[Number(row.dataset.rack)], view.rackList));
+      if (row.dataset.allRacks != null) {
+        const saved = store.get(ALL_RACKS_SORT_KEY);
+        push({kind: 'allRacks', day: view.day, only: '', sort: Object.hasOwn(ALL_RACKS_SORTS, saved) ? saved : 'rack'});
+      } else if (row.dataset.rack != null) push(rackPage(racks[Number(row.dataset.rack)], view.rackList));
       else if (row.dataset.machineOf != null) {
         const picked = racks[Number(row.dataset.machineOf)];
         push({kind: 'machine', machine: picked.machine, picked, day: view.day});
       } else push({kind: 'machine', machine: row.dataset.machine, day: view.day});
+    },
+    onChange: (select, view) => {
+      if (select.matches('[data-all-machine]')) view.only = select.value;
+      if (select.matches('[data-all-sort]')) {
+        view.sort = select.value;
+        store.set(ALL_RACKS_SORT_KEY, view.sort);
+      }
     },
   });
 }

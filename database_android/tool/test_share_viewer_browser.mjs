@@ -134,7 +134,7 @@ try {
     // 3日：はじめの10位までが見え、11〜15位は折りたたみ。台を押す→その機種の台一覧→台のデータ→戻る。
     await page.locator(`[data-open="${d3}"]`).click();
     const rows = page.locator('.sheet .list .row');
-    assert.equal(await rows.count(), 15 + 1, '差枚15台と強かった機種1つ（ハナハナは1台なので入らない）');
+    assert.equal(await rows.count(), 15 + 1 + 1, '差枚15台と強かった機種1つ（ハナハナは1台なので入らない）と全機種の台一覧（2026-11-01）');
     assert.equal(await page.locator('.sheet > .list').first().locator('.row').count(), 10);
     const more = page.locator('.sheet details.more');
     assert.match(await more.locator('summary').innerText(), /11〜15位を見る（5台）/);
@@ -175,7 +175,7 @@ try {
     await page.keyboard.press('Escape');
     assert.ok(await page.locator('.sheet details.more').evaluate(e => e.open), '戻ると折りたたみは開いたまま');
     // 強かった機種を押しても、その機種の台一覧。
-    await page.locator('.sheet > .list').last().locator('.row').click();
+    await page.locator('.sheet .row[data-machine]').click();
     assert.equal(await page.locator('#sheet-title').innerText(), 'ネオアイム');
     assert.equal(await page.locator('.sheet li.current').count(), 0);
     // 下へ送っても、ボタンの帯の後ろに表が透けない。
