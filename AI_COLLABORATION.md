@@ -4652,3 +4652,13 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 送信には10月後半の履歴・nail_gaugeの文書・保存診断記録6af9a29・今回の送信保護187b74d/3f5e3b0を含む。確認時点の追跡済みファイルに未コミット/ステージ済み差分はなく、既存の未追跡ファイル5件はそのまま保持。別環境やその後のClaude作業まで存在しないとは判断しない。reset/clean/stash・Claudeの変更のコミットは行っていない。
 - 正本CI **41257657501** は対象 **3f5e3b06b78d7ef43f27e49d699288ad9030817a** で開始、初回確認はin_progress： https://github.com/imakurudev-eng/database/actions/runs/41257657501 。成功と未確定の状態を混同しない。試験15件はローカル成功済み、CI再実行なし。
 - Claudeへの引き継ぎプロンプトは `../outputs/push-switch-review-20261101/Claudeへの指示プロンプト.md`。未コミット変更の保護、両mainの確認、送信済み範囲、残る同時更新の制約、同じCI実行の結果確認、次のpush承認範囲を明記した。Claudeへメッセージを直接送信していない。Web公開・Google更新・APK作成/導入なし。
+
+## 【11/1 9:34の取得結果の取り違え：書き込み元はClaudeのfetchとみられる】2026-11-01 Claude
+
+- 前項のCodex記録「9時以降の確認と取得結果の取り違え対策」で「今回実際に割り込んだ書き込み元は特定できず」とした件。Claudeのこのセッションの操作と時刻・値が一致するので記録する。
+- Claudeが同じ作業コピー（database-main）で実行したもの：日本時間09:33に `python tools/push_ci.py --dry-run`（P’s CUBE版の保存診断の記録を送れるか確かめるため。表示「日本時間 2026-11-01 09:33 → 送り先 正本」、送信なし）。続けて09:34ごろ、手元の新しいコミットの出どころを調べるため `git fetch -q https://github.com/keyanbaitian6-cell/database-ci main`（共有の `FETCH_HEAD` を database-ci/main `7a9df13` で上書き）。同じころ記録コミット `6af9a29` を作成。
+- Codexの09:34の確認モードは「正本の初期取得値が `7a9df13`」で停止しており、正本をfetchしてから `FETCH_HEAD` を読むまでの間に、Claudeのfetchが `7a9df13` を書いたと考えると値と時刻が合う。Claudeはこのとき、Codexが同じ作業コピーで送信の準備をしていることを知らなかった。実害はなし（Codexの追加した直前の再照会で停止し、何も送られていない）。
+- Codexの修正 `3f5e3b0`（`ls-remote` のSHAを `fetch --no-write-fetch-head <url> <SHA>` で取得し、共有の `FETCH_HEAD` を読まない）は原因に合っている。このPCのGit 2.55.0.windows.2 が `--[no-]write-fetch-head` に対応することを確認（`git fetch -h`）。
+- 残る問題と運用の提案：2つのAIが同じ作業コピーで同時にGitを触ること自体（確認中のコミットの割り込み、`index.lock` の衝突、相手の作業中ファイルの巻き込み）は `push_ci.py` の中では防げない。**一方のAIが送信の準備（取得・確認・送信）をしている間、もう一方は fetch・commit・push（確認モードも含む）をしない**。Claudeは今後、別のAIが作業中と分かっているときはGitの状態を変える操作をしない。利用者からCodexの作業中と聞いた後の確認は `git ls-remote`・`git log`・`gh` など、作業コピーに書かない操作だけで行った。
+- 正本CI https://github.com/imakurudev-eng/database/actions/runs/41257657501 （対象 `3f5e3b0`）：この記録の時点で pc (ubuntu) 成功、full と pc (windows) は実行中。再実行はしていない。
+- GitHubへの反映：このコミットは手元のみ。手元のmainには、Codexの引き継ぎ記録 `8c7d94a`（未送信、Codexは無断送信しないよう依頼）が先にあり、このコミットを送るとそれも正本へ入るため、利用者の承認を得てから `tools/push_ci.py` で送る（どちらも .md だけでCIは動かない）。
