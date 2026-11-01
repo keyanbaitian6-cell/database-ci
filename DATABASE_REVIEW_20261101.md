@@ -93,3 +93,59 @@ finally:
 - 照合版は生成スクリプト3本で `5d3f5598f3d9` に更新。12個の照合用ファイルの差は版の文字列だけ。`node --test database_android/tool/test_release_info.mjs database_android/tool/test_viewer_parts.mjs` は15件成功。Googleの貼替・Web公開は不要。実機WebView2での確認と全体ゲートは未実行。PC修正・模擬試験の範囲で、APK・Webビルドの依頼はない。
 
 修正の一次資料：`database/pscube_import.py` と `database/test_pscube_auto.py` の今回のローカル差分。利用者の2・3への回答の一次資料は本チャット。外部URLはない。
+
+## 全体の見直し（2026-11-01 12時、Claude）
+
+- 依頼：利用者「database全体をみて改善点がないかどうか検討を」。上のCodexの4件（最近の不具合・運用）と重ならない、構造・試験・文書・作業環境の改善点を探した。調査と提案のみ。
+- 基準：手元main `0787314`（正本mainより1コミット先。そのコミットはCodexのP’s CUBE修正で、未push）。製品コード・試験・DB・設定は変更していない。試験・ビルド・CIは実行していない（読むだけの調査のため）。対象サイトへのアクセスなし。
+- 見た範囲：コードの量と大きいファイル、PC・Android・閲覧ページ・共有ページの計算の重複、試験の置き場所と `check_before_build.sh`・CIの対象、README・文書の量、作業フォルダーの残り物、秘密情報の混入（追跡中のファイルに鍵・トークン・デプロイIDの形は見つからなかった）。全行の精読・実機確認はしていない。
+
+### 優先度：高
+
+**A. 採点・翌日候補の「PCとAndroidで同じ結果か」を、毎回の試験で確かめていない**
+- メルヘンの採点はPC `database/core.py`（`VERSION = '2026-09-29-v12'`、`score`・`day_candidates`）と Android `database_android/lib/scoring.dart`（`scoringVersion = '2026-09-29-v12'`）の2つの実装。P’s CUBEはさらにJS `database_android/web/pscube/scoring.mjs` がある。
+- それぞれ単体の試験はある（`database/tests/test_database.py` など、`database_android/test/scoring_test.dart` など）が、**両者を同じ入力で比べる照合**は `check_candidate_parity.py`・`tool/check_scoring_parity.dart`・`tool/check_focus_parity.dart` だけで、どれも実バックアップや `database/reports/` の出力を引数に取る手動ツール。`check_before_build.sh` にもCIにも入っていない（grepで確認）。
+- 片方だけ係数や条件を直すと、表示する点数・候補がPCと閲覧ページで食い違い、気づきにくい。
+- 提案：メルヘンの純益照合（`database_android/test/fixtures/meruhen_net_parity.json` をPC・Androidの両試験が読む方式）と同じく、**合成データの照合用fixture** を1つ作り、PC（unittest）とAndroid（flutter test）の両方で同じ期待値を確かめる。実データは使わない。採点の仕様は変えない。
+- 費用：コード変更なのでpush時にCIが1回動く（約23分）。
+
+### 優先度：中
+
+**B. メルヘンの読み取りスクリプトがPCとAndroidで別々に書かれている**
+- P’s CUBEは `tool/build_pscube_capture.mjs` が1つの元から `assets/pscube_capture.js` を作り、PC（`pscube_import.py` の `CAPTURE`）とAndroidが同じファイルを使う。
+- メルヘンは、PCが `database/browser_import.py` 内の文字列、Androidが `database_android/lib/web_import_page.dart` 内の文字列（`_extractGraphScript`・`_extractTableScript`・`_pageIdentityScript` など約400行）で、別々に保守している。AGENTS.mdの「同じページか」の件のように、片方だけ直す事故が起きやすい形。
+- 提案：次にメルヘンの読み取りを直す機会に、P’s CUBEと同じく1つのJSファイルから両方が読む形へ寄せる。大きな作り替えなので単独では急がない。
+
+**C. 試験の置き場所が2か所あり、READMEの手順では一部しか流れない**
+- PC試験は `database/tests/`（約60ファイル）と `database/test_*.py`（15ファイル、P’s CUBE・あにすろ関係）に分かれている。CIと `check_before_build.sh` は両方を流すが、`README.md` の手順は `unittest discover -s tests` だけで、15ファイルが抜ける。11/1にもCodexがモジュール指定を誤っている（上の記録）。
+- 提案（すぐできる）：READMEに両方を流すコマンドを書く（.mdだけなのでCIは動かない）。ファイルを `tests/` へ移すのは、CIの手順も変わるので急がない。
+
+**D. READMEの記述が現状と合わない**
+- `README.md`「実サイトの自動巡回や自動保存は行いません」とあるが、現在はP’s CUBE・メルヘンの自動取得（`auto_capture.py`、`pscube_import.py` の `AutoPilot`、`PSCUBE_AUTO_CAPTURE.md`）がある。
+- 提案：現在の動き（利用者が開いた取り込み窓での自動取得、間隔、対象サイトへのアクセスを増やさない方針）に合わせて書き直す。
+
+**E. 共有記録と文書が大きくなりすぎている**
+- `AI_COLLABORATION.md` は約1.35MB・4,699行（見出しは10月だけで164件）。ルートの `.md` は43個、`database/`・`database_android/` にさらに29個。日付入りの見直し文書（`*_REVIEW_2026xxxx.md` など）がルートに並ぶ。
+- AIが毎回全体を読むことはできず、古い記録や取り消した方針を読み落とす原因になる。
+- 提案：AGENTS.mdの「細かく書く」は保ったまま、`AI_COLLABORATION.md` を月ごとの保管ファイル（例：`notes/2026-10.md`）へ分け、本体には今月分と「今も効いている決定」の索引を残す。日付入りの見直し文書も同じ保管先へ移す。.mdだけの移動なのでCIは動かない。ただし他の文書からの相対リンクを直す必要があり、Codexと同時に動かすと競合するので、利用者の了承とCodexとの段取りが要る。
+
+### 優先度：低（片付け・ついで）
+
+**F. 作業フォルダーの残り物**
+- `database/` に試験用の一時フォルダー7個（`tmp16je9s5y` など。10/20〜22作成、`test.db` 入り）。`.gitignore` 対象なので誤ってコミットはされない。後片付けの試験 `tests/test_sqlite_fixture_cleanup.py` は10/26にWindows向けに直されており、それ以前の残りの可能性が高い（未確認）。
+- ルートに未追跡の `rows.json`（10/18、キャラ名の一覧）、`screen-now.png`、`debug.log`（WebView2のログ）、`review_packages/`、`CLAUDE_HISTORY_VIEW_HANDOFF_20261022.md`。`git add .` で混ざる恐れがある。
+- 使い終わった作業ツリー：`.claude/worktrees/charming-carson-f7762b`（リポジトリ内、約92MB）、`../ci-bash-fix-20261021`、`../event-history-next-rack` はmainに取り込み済み。`../database-viewer-efficient`（`codex/viewer-drive-efficient-20261004`）は未取り込みのコミットが1つ残っている。
+- 提案：利用者の了承を得てから、取り込み済みの作業ツリーと一時フォルダーを片付ける。未取り込みの1件と、未追跡ファイルを残すか消すかは利用者が決める。今回は何も消していない。
+
+**G. エラーを黙って捨てる箇所**
+- Androidの `lib/` に `catch (_) {}` が23か所（多くは埋め込みJS内のURL解析・localStorageで妥当）、PCに `except ...: pass` が9か所。Codexの2番（停止理由が後から分からない）と同じ種類の問題。
+- 提案：一括では直さない。取り込み・保存・同期の経路にあるものだけ、次に触るときに記録を残す形に変える。
+
+**H. 大きいファイル**
+- `database/core.py` 3,573行（関数178）、`web_import_page.dart` 2,591行、`main.dart` 2,560行（クラス20）。作り替えの危険が大きいので、まとめて分割はしない。触るときに、関係する部分だけ別ファイルへ出す。
+
+### 今回確かめていないこと
+
+- 試験・ゲート・CIは流していない。上の指摘はコードと文書を読んだ結果で、不具合の再現ではない。
+- Aの「PCとAndroidの採点が今食い違っているか」は確かめていない（照合の仕組みが毎回ない、という指摘）。
+- 実機・公開ページ・Googleスクリプトの動作は見ていない。
