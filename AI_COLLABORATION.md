@@ -181,3 +181,4 @@
 - 0.5.49のAPKには前の照合版 `e65ab3afdebc` が入っている。Androidのコードは今回変えていないので、動作の差は無い（版の表示だけ違う）。
 - PC版はこのフォルダーのソースから起動するので、取り込み窓を次に開いたときから記録される。入れ替えの日（11/2）の取り込み後に `database/data/errors.log` を読めば、どの台・どのページで何が出たかが分かる。
 - 気づいたこと（未対応）：`tests/test_meruhen_no_racks.py` は一時フォルダーを `database/` 直下に作る（`dir=parents[1]`）。Windowsで後片付けに失敗すると `database/tmp*` が残る原因になりうる（Fで片づけた7個の出どころの候補、未確認）。
+- 送信（同日）：利用者「pushして」。`python tools/push_ci.py` で正本 `imakurudev-eng/database` の main を `4d02b91..4258f1b` へ1回送った（日本時間12:58、月前半の送り先。Codexの `0787314` と今日のClaudeの分をまとめて含む）。CI [41271243233](https://github.com/imakurudev-eng/database/actions/runs/41271243233) が `4258f1b` で開始（送信直後は queued）。結果は未確認で、次の記録で確定させる。`database-ci` へは送っていない（月前半）。
