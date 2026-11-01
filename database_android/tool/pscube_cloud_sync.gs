@@ -315,10 +315,13 @@ function pscubeCloudListInputs(folders) {
     seen.add(folder.getId());
     // Drive側で名前とごみ箱を絞る。マイドライブにある無関係のファイルは列挙・読取しない。
     // Folder.searchFiles はDrive API v2形式の title を使う。
-    const files = folder.searchFiles("trashed = false and title contains 'pscube-backup-'");
+    // スマホが自動取り込みの終わりに送る当日分 pscube-day-android-YYYY-MM-DD.json（自分用スクリプトの postPscubeDay が
+    // 書く。中身はその日だけの普通の backup）も読む（2026-11-02 利用者「スクリプト追記をお願いします」。以前はPC版だけが
+    // 読み、PCを開くまで閲覧ページ・共有カレンダーに出なかった）。
+    const files = folder.searchFiles("trashed = false and (title contains 'pscube-backup-' or title contains 'pscube-day-android-')");
     while (files.hasNext()) {
       const file = files.next(), name = file.getName();
-      if (!/^pscube-backup-(?:auto|(?:android|pc|browser)-\d{8}-\d{6})\.json$/.test(name)) continue;
+      if (!/^(?:pscube-backup-(?:auto|(?:android|pc|browser)-\d{8}-\d{6})|pscube-day-android-\d{4}-\d{2}-\d{2})\.json$/.test(name)) continue;
       const id = file.getId();
       if (byId.has(id)) continue;
       const updated = file.getLastUpdated().getTime(), size = file.getSize();
@@ -326,6 +329,7 @@ function pscubeCloudListInputs(folders) {
         browser:name.startsWith('pscube-backup-browser-')});
     }
   }
+  // 当日分も今までどおり古い順（機種タイプは後で処理した入力の指定を優先するため、順番は変えない）。
   return [...byId.values()].sort((a, b) => Number(a.browser)-Number(b.browser) || a.updated - b.updated || a.id.localeCompare(b.id));
 }
 
@@ -482,7 +486,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
-const APPLICATION_RELEASE = 'fdd9db07aee1';
+const APPLICATION_RELEASE = '3d9b9cf3ad30';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -917,7 +921,7 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
-const SCRIPT_RELEASE = 'fdd9db07aee1';
+const SCRIPT_RELEASE = '3d9b9cf3ad30';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

@@ -311,10 +311,13 @@ function pscubeCloudListInputs(folders) {
     seen.add(folder.getId());
     // Drive側で名前とごみ箱を絞る。マイドライブにある無関係のファイルは列挙・読取しない。
     // Folder.searchFiles はDrive API v2形式の title を使う。
-    const files = folder.searchFiles("trashed = false and title contains 'pscube-backup-'");
+    // スマホが自動取り込みの終わりに送る当日分 pscube-day-android-YYYY-MM-DD.json（自分用スクリプトの postPscubeDay が
+    // 書く。中身はその日だけの普通の backup）も読む（2026-11-02 利用者「スクリプト追記をお願いします」。以前はPC版だけが
+    // 読み、PCを開くまで閲覧ページ・共有カレンダーに出なかった）。
+    const files = folder.searchFiles("trashed = false and (title contains 'pscube-backup-' or title contains 'pscube-day-android-')");
     while (files.hasNext()) {
       const file = files.next(), name = file.getName();
-      if (!/^pscube-backup-(?:auto|(?:android|pc|browser)-\d{8}-\d{6})\.json$/.test(name)) continue;
+      if (!/^(?:pscube-backup-(?:auto|(?:android|pc|browser)-\d{8}-\d{6})|pscube-day-android-\d{4}-\d{2}-\d{2})\.json$/.test(name)) continue;
       const id = file.getId();
       if (byId.has(id)) continue;
       const updated = file.getLastUpdated().getTime(), size = file.getSize();
@@ -322,6 +325,7 @@ function pscubeCloudListInputs(folders) {
         browser:name.startsWith('pscube-backup-browser-')});
     }
   }
+  // 当日分も今までどおり古い順（機種タイプは後で処理した入力の指定を優先するため、順番は変えない）。
   return [...byId.values()].sort((a, b) => Number(a.browser)-Number(b.browser) || a.updated - b.updated || a.id.localeCompare(b.id));
 }
 

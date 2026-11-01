@@ -140,8 +140,9 @@ function drive({seed = true, incremental = false, history = false} = {}) {
   const flaky = {status: 0, name: null, times: 0, throws: 0, sleeps: [], attempts: 0};
   const iterator = list => { let i = 0; return {hasNext: () => i < list.length, next: () => list[i++]}; };
   const searchIn = (parent, query) => {
-    assert.equal(query, "trashed = false and title contains 'pscube-backup-'");
-    return iterator(files.filter(f => f.parent === parent && !f.trashed && f.name.includes('pscube-backup-')));
+    assert.equal(query, "trashed = false and (title contains 'pscube-backup-' or title contains 'pscube-day-android-')");
+    return iterator(files.filter(f => f.parent === parent && !f.trashed &&
+      (f.name.includes('pscube-backup-') || f.name.includes('pscube-day-android-'))));
   };
   const root = {id: 'root', getId: () => 'root', isTrashed: () => false, searchFiles: query => searchIn(root, query)};
   const folder = {
@@ -392,6 +393,29 @@ const readPublished = d => {
   const baseFile=d.files.find(f=>f.name==='pscube-viewer-drive.json');
   return plain(d.context.vpGet(baseFile,'pscube',{}) || d.doc(baseFile.name));
 };
+
+// スマホの自動取り込みの当日分（自分用スクリプトが pscube-day-android-YYYY-MM-DD.json に書く）も読む
+// （2026-11-02 利用者「スクリプト追記をお願いします」。以前はPC版だけが読み、PCを開くまで閲覧・共有に出なかった）。
+for (const history of [false,true]) test(`スマホの当日分（pscube-day-android-日付）だけで閲覧用に出る。似た名前は読まない（履歴=${history}）`,()=>{
+  const d=drive({history});
+  d.setup();
+  const before=readPublished(d).records.length;
+  const day=d.add('pscube-day-android-2026-11-01.json',backup([record(31,'2026-11-01'),record(32,'2026-11-01')],
+    {exported_at:'2026-11-02T01:15:00+09:00'})),original=day.text;
+  d.add('pscube-day-android-2026-11-01-copy.json',backup([record(33,'2026-11-01')]));
+  d.add('pscube-day-android-2026-11-01.json',backup([record(34,'2026-11-01')]),{id:'another-folder'});
+  d.sync();
+  const view=readPublished(d),racks=view.records.filter(r=>r.day==='2026-11-01').map(r=>r.rack).sort((a,b)=>a-b);
+  assert.deepEqual(racks,[31,32],'当日分の台が出る。名前の違うファイル・別フォルダは読まない');
+  assert.equal(view.records.length,before+2);
+  assert.equal(day.text,original,'元のファイルは書き換えない');
+  // 同じ日の送り直し（自分用スクリプトは同じファイルを上書き）も、版が変われば読み直す。
+  const reads=day.reads;d.sync();assert.equal(day.reads,reads,'変わらなければ読み直さない');
+  d.replace(day,backup([record(31,'2026-11-01',{games:4200,observed_at:'2026-11-02T02:00:00+09:00'}),record(32,'2026-11-01')],
+    {exported_at:'2026-11-02T02:00:00+09:00'}));
+  d.sync();
+  assert.equal(readPublished(d).records.find(r=>r.day==='2026-11-01'&&r.rack===31).games,4200);
+});
 for (const history of [false,true]) test(`スマホ補完：欠測だけを埋め、正常値・別の数値・機種タイプ・イベントを変えない（履歴=${history}）`,()=>{
   const d=drive({history}),native=d.files.find(f=>f.name==='pscube-backup-auto.json');
   const initial=backup([record(1,undefined,{net_medals:null}),record(2,undefined,{net_medals:0}),record(3,undefined,{games:4000,net_medals:null})]);
