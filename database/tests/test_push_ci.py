@@ -111,6 +111,23 @@ class PushTests(unittest.TestCase):
     def test_nothing_to_send_when_the_target_already_has_it(self):
         self.assertEqual(self.run_push(utc(2026, 11, 2, 0, 0)), 0)
 
+    def test_remote_main_ignores_another_fetch_overwriting_fetch_head(self):
+        expected = self.main_of(self.canonical)
+        newer = self.commit('app.py', 'B')
+        git(self.work, 'push', '-q', str(self.copy), 'HEAD:refs/heads/main')
+        original = push_ci.git
+
+        def concurrent_fetch(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if args[0] == 'fetch':
+                # 別プロセスの取得が共有FETCH_HEADを書き換えた状況を実Gitで再現。
+                git(self.work, 'fetch', '-q', str(self.copy), 'refs/heads/main')
+            return result
+
+        with patch.object(push_ci, 'git', side_effect=concurrent_fetch):
+            self.assertEqual(push_ci.remote_main(str(self.canonical)), expected)
+        self.assertEqual(git(self.work, 'rev-parse', 'FETCH_HEAD'), newer)
+
     def test_period_change_during_checks_never_pushes(self):
         self.commit('app.py', 'B')
         before = [self.main_of(repo) for repo in (self.canonical, self.copy)]

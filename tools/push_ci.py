@@ -60,10 +60,13 @@ def remote_tip(url: str) -> str | None:
 
 def remote_main(url: str) -> str | None:
     """その GitHub の main を手元に取得してコミットを返す（空のリポジトリなら None）。"""
-    if remote_tip(url) is None:
+    tip = remote_tip(url)
+    if tip is None:
         return None
-    git('fetch', '--quiet', '--no-tags', url, 'refs/heads/main')
-    return git('rev-parse', 'FETCH_HEAD')
+    # FETCH_HEADは同じ作業コピーの別fetchに上書きされる。照会したSHA自体を取得し、
+    # 共有ファイルを読まずに返す。途中でmainが変われば最終照会で止める。
+    git('fetch', '--quiet', '--no-tags', '--no-write-fetch-head', url, tip)
+    return tip
 
 
 def is_ancestor(older: str, newer: str) -> bool:
