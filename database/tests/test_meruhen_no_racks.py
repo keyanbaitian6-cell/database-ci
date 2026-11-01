@@ -68,6 +68,15 @@ class NoRacksTests(unittest.TestCase):
         payload = dict(store='nagamachiminami', day=DAY, machines=self.machines)
         self.assertEqual(json.loads(fresh.next_unimported_machine(json.dumps(payload)))['machine'], 'SﾊｲﾊﾟｰﾗｯｼｭSLC8')
 
+    def test_skipped_machine_is_kept_in_errors_log(self):
+        # 2026-11-01：入れ替えの日に後から確かめられるよう、飛ばした機種を data/errors.log に残す。
+        import error_log
+        error_log.forget()
+        self.addCleanup(error_log.forget)
+        self.skip()
+        [line] = (self.folder / 'errors.log').read_text(encoding='utf-8').splitlines()
+        self.assertEqual(line.split('\t')[1:3], ['meruhen.no_racks', 'メルヘンワールド長町南店：' + no_racks_notice(DAY, 'SﾊｲﾊﾟｰﾗｯｼｭSLC8')])
+
     def test_spacing_and_width_do_not_matter(self):
         self.skip(machine='Sﾊｲﾊﾟｰﾗｯｼｭ SLC8')
         self.machines = [m for m in self.machines if m['name'] == 'SﾊｲﾊﾟｰﾗｯｼｭSLC8']

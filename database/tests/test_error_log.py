@@ -64,6 +64,25 @@ class ErrorLogTests(unittest.TestCase):
         blocker.write_text('', encoding='utf-8')
         self.assertFalse(error_log.record(blocker / 'data', 'meruhen.overlay', raised(), clock=lambda: 0.0))
 
+    def test_detail_follows_the_error_and_note_keeps_screen_text(self):
+        self.assertTrue(error_log.record(self.folder.name, 'pscube.save', raised(), detail='https://example.test/a',
+                                         clock=lambda: 0.0, now=NOW))
+        self.assertTrue(error_log.note(self.folder.name, 'meruhen.save.table', '取り込みできません：表の見出しが違います',
+                                       clock=lambda: 0.0, now=NOW))
+        first, second = [line.split('\t') for line in self.lines()]
+        self.assertEqual(first[2], 'ValueError: 読めません（https://example.test/a）')
+        self.assertEqual(second[1:], ['meruhen.save.table', '取り込みできません：表の見出しが違います', ''])
+
+    def test_meruhen_confirm_window_error_is_shown_and_kept(self):
+        import browser_import
+        shown = []
+        messagebox = type('Box', (), {'showerror': staticmethod(lambda *a, **k: shown.append((a, k)))})
+        root = type('Root', (), {'get': lambda self: 'root'})()
+        browser_import._show_error(messagebox, root, '取り込みできません', '台番号が重複しています',
+                                   Path(self.folder.name) / 'database.sqlite3', 'meruhen.save.table')
+        self.assertEqual(shown, [(('取り込みできません', '台番号が重複しています'), {'parent': 'root'})])
+        self.assertEqual(self.lines()[0].split('\t')[1:3], ['meruhen.save.table', '取り込みできません：台番号が重複しています'])
+
     def test_long_message_is_cut(self):
         self.record(error=raised('あ' * 2000))
         error = self.lines()[0].split('\t')[2]

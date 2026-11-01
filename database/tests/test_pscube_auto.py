@@ -602,6 +602,68 @@ class SessionStartTests(unittest.TestCase):
                     db = Path(tmp) / 'data' / 'pscube.sqlite3'
                     pscube_import.run_session(db, Path(tmp) / 'data' / 'viewer.json')
 
+    def test_replacement_day_failures_and_warnings_are_kept_in_errors_log(self):
+        # 2026-11-01：入れ替えの日に出た失敗・警告は画面の表示が次のページで消えるので、data/errors.log に残す。
+        import error_log
+        import pscube_import
+        error_log.forget()
+        self.addCleanup(error_log.forget)
+        page = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c1/cgi-bin/nc-v06-001.php?cd_dai=1085#20261102'
+        with tempfile.TemporaryDirectory() as tmp:
+            captured = {}
+            window = types.SimpleNamespace(
+                events=types.SimpleNamespace(before_load=Handlers(), loaded=Handlers(), closed=Handlers()),
+                evaluate_js=lambda script: None, get_current_url=lambda: page)
+
+            def create_window(*args, **kwargs):
+                captured['bridge'] = kwargs['js_api']
+                return window
+
+            results = iter([
+                ValueError('数値が未表示か不正です。'),
+                {'day': '2026-11-02', 'next_url': page, 'remaining': 3, 'kind': '台別履歴（1日分）',
+                 'net_warning': 'グラフの元数値が不正'},
+                {'day': '2026-11-02', 'next_url': page, 'remaining': 2, 'kind': '全台一覧',
+                 'skipped': '新台は11/2の日付タブがサイトにありません（新台・入れ替えの可能性）。保存せずに飛ばしました'},
+                {'retry_index': True, 'next_url': page},
+                {'day': '2026-11-02', 'next_url': page, 'remaining': 1, 'kind': '全台一覧（1505番台はこの日の数値なし）'},
+                {'day': '2026-11-02', 'next_url': page, 'remaining': 0, 'kind': '台別7日分'},
+            ])
+
+            def save(*args):
+                result = next(results)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+
+            def start(**kwargs):
+                bridge = captured['bridge']
+                with self.assertRaises(ValueError):
+                    bridge.submit_page('{}')
+                for _ in range(5):
+                    bridge.submit_page('{}')
+                bridge.capture_failed('全台一覧の読み込みが終わりません')
+                for handler in window.events.closed.items:
+                    handler()
+
+            fake = types.SimpleNamespace(create_window=create_window, start=start)
+            with mock.patch.dict(sys.modules, {'webview': fake}), \
+                    mock.patch.object(pscube_import, 'submit_capture', side_effect=save), \
+                    mock.patch.object(pscube_import.threading, 'Thread'):
+                pscube_import.run_session(Path(tmp) / 'data' / 'pscube.sqlite3', Path(tmp) / 'data' / 'viewer.json')
+            lines = [line.split('\t') for line in
+                     (Path(tmp) / 'data' / 'errors.log').read_text(encoding='utf-8').splitlines()]
+        places = [line[1] for line in lines]
+        self.assertEqual(places, ['pscube.save', 'pscube.net_missing', 'pscube.skipped', 'pscube.index_retry',
+                                  'pscube.missing_racks', 'pscube.read'], '問題のない保存（台別7日分）は書かない')
+        save_line = lines[0]
+        self.assertEqual(save_line[2], f'ValueError: 数値が未表示か不正です。（{page}）')
+        self.assertRegex(save_line[3], r'^test_pscube_auto\.py:\d+ save$')
+        self.assertIn('グラフの元数値が不正（2026-11-02・' + page, lines[1][2])
+        self.assertIn('新台・入れ替えの可能性', lines[2][2])
+        self.assertIn('1505番台はこの日の数値なし', lines[4][2])
+        self.assertEqual(lines[5][2], '全台一覧の読み込みが終わりません')
+
     def test_window_keeps_cookies_in_the_data_folder_instead_of_private_mode(self):
         import pscube_import
         started = {}

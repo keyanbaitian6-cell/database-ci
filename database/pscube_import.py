@@ -1592,6 +1592,26 @@ class AutoPilot:
 DIRECTION_LABELS = {'top': '上から', 'bottom': '下から'}
 
 
+def capture_notes(result, url):
+    """保存できたが、入れ替えの日に後から確かめたい結果を、errors.log 用の（場所, 文）にする（2026-11-01）。
+
+    これまでの入れ替えで起きたこと：新台の空の過去系列で差枚が未取得になった（10/21・10/23）、
+    新台の全台一覧に取り込み日のタブが無く飛ばした（10/19〜22）、機種一覧が前回より少なく読めた（10/27）、
+    増台した台がその日の全台一覧に数値なしで並んだ。どれも画面の表示は次のページで消える。
+    """
+    page = f'（{result.get("day") or "日付不明"}・{url or "URL不明"}）'
+    notes = []
+    if result.get('net_warning'):
+        notes.append(('pscube.net_missing', f'差枚は未取得：{result["net_warning"]}{page}'))
+    if result.get('skipped'):
+        notes.append(('pscube.skipped', f'{result["skipped"]}{page}'))
+    if result.get('retry_index'):
+        notes.append(('pscube.index_retry', f'機種一覧が前回より少ないため開き直して確認{page}'))
+    if 'この日の数値なし' in str(result.get('kind') or ''):
+        notes.append(('pscube.missing_racks', f'{result["kind"]}{page}'))
+    return notes
+
+
 def submit_capture(db_path, export_path, pilot, raw, current_url):
     """取り込み画面で読み取った1ページを保存し、次に開くページを返す（`run_session` の保存の中身）。
 
@@ -1904,12 +1924,17 @@ def run_session(db_path, export_path):
         def submit_page(self, raw):
             with self._capture_lock:
                 self.pilot.capture_started()
+                self._page_url = None
                 try:
                     result = self._submit_page(raw)
                 except Exception as error:
+                    # 入れ替えの日に出やすい保存の失敗。画面の表示は一度で消えるので、場所とページを残す。
+                    error_log.record(data_dir, 'pscube.save', error, detail=self._page_url or 'URL不明')
                     self._notify('window.pscubeCaptureFailed?.(' + json.dumps(str(error), ensure_ascii=True) + ')')
                     self.pilot.finished(error=str(error))
                     raise
+                for where, message in capture_notes(result, self._page_url):
+                    error_log.note(data_dir, where, message)
                 # The site's scrolling changes location.hash. WebView2 may
                 # recreate pywebview's promise callbacks on that navigation,
                 # so deliver completion to our own stable DOM handler too.
@@ -1923,6 +1948,7 @@ def run_session(db_path, export_path):
 
         def capture_failed(self, message):
             # 読み取りの途中（保存の前）で失敗したとき。保存中の失敗は submit_page が数える。
+            error_log.note(data_dir, 'pscube.read', str(message)[:300])
             if not self._capture_lock.locked():
                 self.pilot.finished(error=str(message)[:300])
             return True
@@ -1944,7 +1970,8 @@ def run_session(db_path, export_path):
         def _submit_page(self, raw):
             if connection.failure:
                 raise ValueError(connection.failure['message'])
-            return submit_capture(db_path, export_path, self.pilot, raw, self._window.get_current_url())
+            self._page_url = self._window.get_current_url()
+            return submit_capture(db_path, export_path, self.pilot, raw, self._page_url)
 
         def retry_page(self):
             if not self._capture_lock.acquire(blocking=False):

@@ -171,3 +171,13 @@
 - 確認した範囲（コードを読んだだけ）：60fdb6bの `errors.log` は、見張り処理で以前黙って捨てていた例外だけを残す。入れ替えのときに画面に出るエラーは残らない。P’s CUBEは保存の入口 `Bridge.submit_page` の例外と読み取り途中の `capture_failed` が画面表示と `AutoPilot.finished(error=...)` だけ、メルヘンは保存の子プロセス（`--confirm-*`）の例外が `traceback.print_exc()` とエラー窓だけ。これらも `errors.log` に残すかは利用者に確認中。
 - PC版はこのフォルダーのソースを `start.cmd` から起動し、取り込み窓は開くたびに新しいプロセスなので、60fdb6b（errors.log）とCodexの0787314は、次に取り込み窓を開いたときから使われる（どちらも全体ゲートALL PASSEDの内容）。
 - A（回答のみ）：当日の実績点（v12、9/29決定）は、その日の結果を同じ機種の過去30日と比べた記録の物差しで、予測ではない。実際の設定という正解が無いので的中率で検証する対象ではなく、今すぐ見直す根拠は今回見当たらない。ただし翌日候補の★注目（`next_day_focus`）は当日の実績点を材料に使う。翌日候補を見直すときは点の使い方が検討対象になりうる（採点そのものを変えるかは別の判断）。P’s CUBEの採点（`web/pscube/scoring.mjs`）は別の実装で、今回は見ていない。
+
+## 【入れ替えの日に出る失敗・警告もPCの errors.log に残す（11/2の入れ替え前）】2026-11-01 Claude
+
+- 依頼：前項の質問に利用者「今日のうちに足す」。途中で利用者「新台入れ替え後に何回か出た前回までの失敗をちゃんと把握できているんだよね？」→ その時点では把握していなかった（コードの出どころだけ調べていた）と回答し、共有記録から過去の入れ替え後の失敗を洗い出してから範囲を決め直した。
+- 過去の入れ替え後の失敗（どれも修正済み）：10/5 P’s CUBE 新台の空の過去列で「数値が未表示か不正です」で停止／10/11 メルヘン「該当する台情報が見つかりませんでした」で停止／10/19〜22 P’s CUBE 新台の全台一覧に取り込み日のタブが無く自動が待ったまま／10/21・10/23 P’s CUBE 新台の空のグラフ系列で差枚が未取得（全日・巻き添え）／10/27 P’s CUBE 機種一覧が前回より少なく読めた。
+- 変更（PCのみ・動作は変えない）：`error_log.note()`（画面に出した文だけを残す）と `record(..., detail=)`（例外の後ろにページURLを添える）を追加。P’s CUBE：保存の入口 `Bridge.submit_page` の例外を `pscube.save`（URL付き・発生行付き）、読み取り途中の `capture_failed` を `pscube.read`、保存できた結果のうち差枚未取得 `pscube.net_missing`・タブなしで飛ばした `pscube.skipped`・機種一覧の開き直し `pscube.index_retry`・その日の数値なしの台 `pscube.missing_racks` を残す（`capture_notes`、日付とURL付き）。問題のない保存は書かない。メルヘン：保存の確認画面の「取り込みできません」5か所（パチンコ2か所を含む）を `_show_error` 経由で `meruhen.save.table/graph`・`pachinko.save.*`、「予期しないエラー」2か所を `meruhen.save.unexpected`（発生行付き）、台情報なしで飛ばした機種を `meruhen.no_racks` に残す。書き先はいずれも `database/data/errors.log`（同じ内容は60秒に1回、256KiB超で1世代）。
+- 試験：`tests/test_pscube_auto.py` に実際の保存入口（`run_session` の Bridge、模擬webview）を通して6種類の行が順に残り、問題のない保存は書かないことを確かめる試験、`tests/test_meruhen_no_racks.py` に飛ばした機種の行、`tests/test_error_log.py` に detail・note・確認画面の表示と記録の試験を追加。PC全体 752件成功（TZ=JST-9）。照合版を `bf06b391c37f` に再生成（生成スクリプト4本）、`test_release_info`・`test_viewer_parts` 15件成功。全体ゲートは未実行（PCのソースと試験だけの変更。CIで流れる）。
+- 0.5.49のAPKには前の照合版 `e65ab3afdebc` が入っている。Androidのコードは今回変えていないので、動作の差は無い（版の表示だけ違う）。
+- PC版はこのフォルダーのソースから起動するので、取り込み窓を次に開いたときから記録される。入れ替えの日（11/2）の取り込み後に `database/data/errors.log` を読めば、どの台・どのページで何が出たかが分かる。
+- 気づいたこと（未対応）：`tests/test_meruhen_no_racks.py` は一時フォルダーを `database/` 直下に作る（`dir=parents[1]`）。Windowsで後片付けに失敗すると `database/tmp*` が残る原因になりうる（Fで片づけた7個の出どころの候補、未確認）。

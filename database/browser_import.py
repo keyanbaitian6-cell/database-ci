@@ -1833,6 +1833,8 @@ class _Bridge:
         self._no_racks.add((store_path, day, machine_key(machine)))
         # 手動のときは、戻った一覧で次の機種を探す（表を保存したあとと同じ）。
         self._manual_continuation = not self._auto.state()['enabled']
+        # 入れ替えの日に後から確かめられるよう、飛ばした機種を残す（2026-10-11の「台情報なし」）。
+        error_log.note(self._layout_folder, 'meruhen.no_racks', f'{STORE_NAMES[store_path]}：{no_racks_notice(day, machine)}')
         return json.dumps({'url': machine_list_url(store_path, day, after=machine),
                            'message': no_racks_notice(day, machine)}, ensure_ascii=False)
 
@@ -2250,6 +2252,12 @@ def _stub_root(tk):
     return root
 
 
+def _show_error(messagebox, root, title, text, db_path, where):
+    """保存の確認画面のエラー。表示は閉じると消えるので、data/errors.log にも残す（2026-11-01、入れ替えの日の調査用）。"""
+    error_log.note(Path(db_path).parent, where, f'{title}：{text}')
+    messagebox.showerror(title, text, parent=root.get())
+
+
 def _confirm_table(payload_path, db_path, reports_folder):
     """Standalone process: save one table submission, then exit.
 
@@ -2267,7 +2275,7 @@ def _confirm_table(payload_path, db_path, reports_folder):
     payload, error = _load_payload(payload_path)
     root = _OnDemandRoot(tk)
     if error:
-        messagebox.showerror('取り込みできません', error, parent=root.get())
+        _show_error(messagebox, root, '取り込みできません', error, db_path, 'meruhen.save.table')
         return
     if pachinko.is_pachinko_table(payload.get('matrix')):
         # 4円パチンコの台一覧（pachinko.py）。スロットとは別のファイルに保存し、次の台へは移らない。
@@ -2275,12 +2283,12 @@ def _confirm_table(payload_path, db_path, reports_folder):
             message, next_url = pachinko.save_table(payload, db_path)
             _write_advance_signal(message, next_url=next_url)
         except (pachinko.PachinkoError, ValueError) as exc:
-            messagebox.showerror('取り込みできません', str(exc), parent=root.get())
+            _show_error(messagebox, root, '取り込みできません', str(exc), db_path, 'pachinko.save.table')
         return
     try:
         rows, day, machine = build_table_rows(payload)
     except (TableExtractionError, ValueError) as exc:
-        messagebox.showerror('取り込みできません', str(exc), parent=root.get())
+        _show_error(messagebox, root, '取り込みできません', str(exc), db_path, 'meruhen.save.table')
         return
     if is_excluded_machine(payload.get('store'), machine):
         _write_advance_signal(f'{machine}は取り込みの対象外です。保存しませんでした。')
@@ -2337,6 +2345,7 @@ def _confirm_table(payload_path, db_path, reports_folder):
     except Exception as exc:  # noqa: BLE001
         import traceback
         traceback.print_exc()
+        error_log.record(Path(db_path).parent, 'meruhen.save.unexpected', exc)
         messagebox.showerror('予期しないエラー', f'{exc.__class__.__name__}: {exc}', parent=root.get())
     finally:
         store.close()
@@ -2352,7 +2361,7 @@ def _confirm_graph(payload_path, db_path, reports_folder):
     payload, error = _load_payload(payload_path)
     root = _OnDemandRoot(tk)
     if error:
-        messagebox.showerror('取り込みできません', error, parent=root.get())
+        _show_error(messagebox, root, '取り込みできません', error, db_path, 'meruhen.save.graph')
         return
     store = Store(db_path)
     try:
@@ -2363,7 +2372,7 @@ def _confirm_graph(payload_path, db_path, reports_folder):
             if pachinko.graph_target(payload, db_path) is not None:
                 _save_pachinko_graph(payload, db_path, root, messagebox)
                 return
-            messagebox.showerror('取り込みできません', str(exc), parent=root.get())
+            _show_error(messagebox, root, '取り込みできません', str(exc), db_path, 'meruhen.save.graph')
             return
         if is_excluded_machine(context['store'], context['machine']):
             _write_advance_signal(f"{context['machine']}は取り込みの対象外です。保存しませんでした。")
@@ -2410,6 +2419,7 @@ def _confirm_graph(payload_path, db_path, reports_folder):
     except Exception as exc:  # noqa: BLE001
         import traceback
         traceback.print_exc()
+        error_log.record(Path(db_path).parent, 'meruhen.save.unexpected', exc)
         messagebox.showerror('予期しないエラー', f'{exc.__class__.__name__}: {exc}', parent=root.get())
     finally:
         store.close()
@@ -2430,7 +2440,7 @@ def _save_pachinko_graph(payload, db_path, root, messagebox):
         message, next_url = pachinko.save_graph(payload, db_path, measurement)
         _write_advance_signal(message, next_url=next_url)
     except (GraphExtractionError, pachinko.PachinkoError, ValueError) as exc:
-        messagebox.showerror('取り込みできません', str(exc), parent=root.get())
+        _show_error(messagebox, root, '取り込みできません', str(exc), db_path, 'pachinko.save.graph')
 
 
 FINISHED_NAME = 'meruhen-capture-finished.json'
