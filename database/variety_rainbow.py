@@ -33,7 +33,19 @@ SORTS = {
     '機種順': lambda r: (r['machine'], r['rack']),
     '差枚の多い順': lambda r: (r['net'] is None, -r['net'] if r['net'] is not None else 0, r['rack']),
     '差枚の少ない順': lambda r: (r['net'] is None, r['net'] if r['net'] is not None else 0, r['rack']),
+    # 2026-11-01 利用者「回転数とかでもソートできるようにしておいてほしい」。数値の無い台（本日の未取得）は最後。
+    '回転数の多い順': lambda r: (r['games'] is None, -(r['games'] or 0), r['rack']),
+    '回転数の少ない順': lambda r: (r['games'] is None, r['games'] or 0, r['rack']),
 }
+# 一覧の見出しを押したときの並べ方（2つあるものは押すたびに切り替え）と、選んでいる見出しに付ける印。
+HEADING_SORTS = {
+    'rack': ('台番順',),
+    'machine': ('機種順',),
+    'games': ('回転数の多い順', '回転数の少ない順'),
+    'net': ('差枚の多い順', '差枚の少ない順'),
+    'last': (f'最終{RAINBOW_MARK}の古い順',),
+}
+SORT_ARROWS = {'差枚の多い順': ' ▼', '回転数の多い順': ' ▼'}  # ほかは小さい順・古い順なので ▲
 
 
 def variety_lineup(rows, max_racks=VARIETY_MAX_RACKS):
@@ -177,8 +189,10 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
     day_var = tk.StringVar()
     sort_var = tk.StringVar(value='台番順')
 
-    def toggle_net_sort():
-        sort_var.set('差枚の少ない順' if sort_var.get() == '差枚の多い順' else '差枚の多い順')
+    def heading_sort(key):
+        options = HEADING_SORTS[key]
+        current = sort_var.get()
+        sort_var.set(options[(options.index(current) + 1) % len(options)] if current in options else options[0])
 
     for column, (text, var, values, width) in enumerate((('店舗', store_var, labels, 28), ('日付', day_var, [], 16),
                                                          ('並べ方', sort_var, list(SORTS), 18))):
@@ -227,8 +241,8 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
                                       ('last', f'最終{RAINBOW_MARK}', 120, 'e'),
                                       ('count', f'{RAINBOW_COUNT_DAYS}日{RAINBOW_MARK}', 70, 'e')):
         table.heading(key, text=label)
-        if key == 'net':
-            table.heading(key, command=toggle_net_sort)
+        if key in HEADING_SORTS:
+            table.heading(key, command=lambda key=key: heading_sort(key))
         table.column(key, width=width, anchor=anchor, stretch=key == 'machine')
     table.tag_configure('plus', foreground=PLUS_COLOR)
     table.tag_configure('minus', foreground=MINUS_COLOR)
@@ -268,8 +282,10 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
     def show():
         rows = sorted(state['rows'], key=SORTS[sort_var.get()])
         state['shown'] = rows
-        arrow = {'差枚の多い順': ' ▼', '差枚の少ない順': ' ▲'}.get(sort_var.get(), '')
-        table.heading('net', text='推定差枚' + arrow)
+        for key, label in (('rack', '台番'), ('machine', '機種'), ('games', '回転数'), ('net', '推定差枚'),
+                           ('last', f'最終{RAINBOW_MARK}')):
+            chosen = sort_var.get() in HEADING_SORTS[key]
+            table.heading(key, text=label + (SORT_ARROWS.get(sort_var.get(), ' ▲') if chosen else ''))
         set_summary()
         if mode_var.get() == 'grid':
             frame.pack_forget()
@@ -281,7 +297,8 @@ def build_variety_tab(parent, db_path, on_marked, default_location=None, on_flus
             return
         grid_frame.pack_forget()
         frame.pack(fill='both', expand=True)
-        hint.set(f'{RAINBOW_MARK}の列を押すと付け外し。推定差枚の見出しを押すと多い順・少ない順を切り替えます。'
+        hint.set(f'{RAINBOW_MARK}の列を押すと付け外し。台番・機種・回転数・推定差枚・最終{RAINBOW_MARK}の見出しを押すと並べ替え'
+                 '（回転数・推定差枚はもう一度押すと多い順・少ない順を切り替え）。'
                  '本日の数値「—」は未取得です。印だけ保存し、あとから取り込んでも残します。')
         table.delete(*table.get_children())
         for i, r in enumerate(rows):

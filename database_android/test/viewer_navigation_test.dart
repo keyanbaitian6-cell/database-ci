@@ -5,6 +5,7 @@ import 'package:database_android/data_checks.dart';
 import 'package:database_android/date_events.dart';
 import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
+import 'package:database_android/scoring.dart';
 import 'package:database_android/shared_widgets.dart';
 import 'package:database_android/theme.dart';
 import 'package:database_android/viewer_data.dart';
@@ -215,6 +216,77 @@ void main() {
       {7, 8},
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('バラエティ：台の並べ方（台番号順・回転数の多い順・少ない順・機種順）を切り替え、覚える', (tester) async {
+    // 2026-11-01 利用者「回転数とかでもソートできるようにしておいてほしい」。
+    await phone(tester);
+    final records = [
+      rec('2026-09-28', machine: 'ハナハナ', rack: 5, games: 1200),
+      rec('2026-09-28', machine: '北斗', rack: 8, games: 6000),
+      rec('2026-09-28', machine: '北斗', rack: 7, games: 1200),
+      for (var rack = 20; rack < 24; rack++) rec('2026-09-28', rack: rack),
+    ];
+    Future<void> open() => tester.pumpWidget(
+      app(
+        ViewerMachinePage(
+          key: UniqueKey(),
+          data: ViewerData(records: records),
+          store: 'nagamachiminami',
+          machine: varietyGroupName,
+          day: '2026-09-28',
+        ),
+      ),
+    );
+    List<int> racks() => [
+      for (final e
+          in tester
+              .widget<MachineDataTable>(find.byType(MachineDataTable))
+              .entries)
+        e.$1.rack,
+    ];
+    Future<void> choose(String label) async {
+      await tester.tap(find.byKey(const ValueKey('variety-sort')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+    }
+
+    await open();
+    await tester.pumpAndSettle();
+    expect(find.text('台番号順'), findsOneWidget);
+    expect(racks(), [5, 7, 8]);
+    await choose('回転数の多い順');
+    expect(racks(), [8, 5, 7], reason: '同じ回転数は台番号順');
+    await choose('回転数の少ない順');
+    expect(racks(), [5, 7, 8]);
+    await choose('機種順');
+    expect(racks(), [5, 7, 8], reason: 'ハナハナ→北斗');
+    await choose('回転数の多い順');
+    // 開き直しても覚えている。
+    await open();
+    await tester.pumpAndSettle();
+    expect(find.text('回転数の多い順'), findsOneWidget);
+    expect(racks(), [8, 5, 7]);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('バラエティの並べ方：回転数・機種で並べ、同じなら台番号順', () {
+    final entries = [
+      for (final r in [
+        rec('2026-09-28', machine: 'B', rack: 3, games: 100),
+        rec('2026-09-28', machine: 'A', rack: 9, games: 100),
+        rec('2026-09-28', machine: 'A', rack: 1, games: 500),
+      ])
+        (r, scoreRecord(r, [r])),
+    ];
+    List<int> order(String sort) => [
+      for (final e in sortVarietyEntries(entries, sort)) e.$1.rack,
+    ];
+    expect(order('rack'), [1, 3, 9]);
+    expect(order('games-desc'), [1, 3, 9]);
+    expect(order('games-asc'), [3, 9, 1]);
+    expect(order('machine'), [1, 9, 3]);
   });
 
   testWidgets('機種ページで3台の日へ切り替えても全店バラエティと同じ★になる', (tester) async {

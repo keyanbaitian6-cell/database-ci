@@ -16,7 +16,7 @@ import {
   IDLE_DAY_CHOICES, IDLE_DEFAULT_DAYS, IDLE_DEFAULT_GAMES, IDLE_GAMES_CHOICES, idleVarietyRacks, storeDays,
   sharedRainbowCanBatch, storedRainbowMarks, sendRainbowBatches, RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
   RAINBOW_COUNT_DAYS, applyRainbowMarks, markTime, mergeMarks, varietyRecordRows,
-  ROTATION_DAYS, byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, windowDays,
+  ROTATION_DAYS, ROTATION_SORTS, byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, rotationOrder, windowDays,
   SUFFIX_PERIODS, hasSuffixSummary, suffixesOf, zoromeEndingsOf, suffixLabel, suffixReport,
   varietyWeek, varietyMaxRacksFor, rainbowTodayRows,
   SAIWAICHOU_GAP_NET, saiwaichouMachineNet, saiwaichouGrade, saiwaichouGapEnd, saiwaichouGap,
@@ -995,7 +995,9 @@ function openVariety() {
   const today = todayJst().day;
   const mode = Object.hasOwn(modes, savedMode) ? savedMode : state.store === 'saiwaichou' ? 'week' : 'grid';
   // 候補は記録のある最新の日のまま。
-  const first = {kind: 'variety', day: mode === 'grid' ? today : days[0], todayDay: today, mode, sort: store.get(VARIETY_SORT_KEY) === 'gap' ? 'gap' : 'grid'};
+  const savedSort = store.get(VARIETY_SORT_KEY);
+  const first = {kind: 'variety', day: mode === 'grid' ? today : days[0], todayDay: today, mode,
+    sort: savedSort === 'gap' || Object.hasOwn(ROTATION_SORTS, savedSort) ? savedSort : 'grid'};
   const gapText = (x, day) => {
     const n = daysSinceRainbow(x.last, day);
     return n == null ? 'なし' : n === 0 ? '当日' : `${n}日`;
@@ -1014,12 +1016,15 @@ function openVariety() {
   };
   const gridView = (view, rows) => {
     const window = windowDays(view.day);
+    // 回転数で並べたときだけ、台名の下に表示中の日の回転数を出す（行の番号は元の rows の位置。押したときの台を取り違えない）。
+    const byGames = view.sort !== 'grid' && Object.hasOwn(ROTATION_SORTS, view.sort);
+    const gamesText = x => (Number.isFinite(x.record?.games) ? `${x.record.games.toLocaleString('ja-JP')}G` : '回転数なし');
     const head = window.map(d => `<span class="d num${d === view.day ? ' today' : ''}">${Number(d.slice(8))}</span>`).join('');
     return `<p class="caption">マスを押すとその日の${RAINBOW}を付け外し（記録の無い日は押せません）。右端＝最後の${RAINBOW}から何日。台番号を押すとその台のデータ。</p>
       <div class="rotation" role="table" aria-label="ローテーション表">
         <div class="r head" role="row"><span class="who">台</span>${head}<span class="gap">日数</span></div>
-        ${rows.map((x, i) => `<div class="r" role="row">
-          <button type="button" class="who row-link" data-variety-rack="${i}"${x.open ? '' : ' disabled'}><span class="num">${x.rack}</span><span class="m">${esc(displayMachineName(x.machine))}</span></button>
+        ${rotationOrder(rows, view.sort).map(x => `<div class="r" role="row">
+          <button type="button" class="who row-link" data-variety-rack="${rows.indexOf(x)}"${x.open ? '' : ' disabled'}><span class="num">${x.rack}</span><span class="m">${esc(displayMachineName(x.machine))}</span>${byGames ? `<span class="g">${gamesText(x)}</span>` : ''}</button>
           ${rackDays(state.model.byDay, state.store, x.rack, window).map((r, k) => (window[k] === view.day ? x.mark : r)).map((r, k) => (r
             ? `<button type="button" class="c${r.rainbow ? ' on' : ''}${window[k] === view.day ? ' today' : ''}" data-rainbow="${esc(`${r.store}|${r.day}|${r.rack}`)}" aria-pressed="${r.rainbow}" aria-label="${x.rack}番台 ${shortDate(window[k])}の${RAINBOW}${r.rainbow ? 'を外す' : 'を付ける'}">${r.rainbow ? RAINBOW : ''}</button>`
             : `<span class="c none" aria-label="${x.rack}番台 ${shortDate(window[k])} 記録なし">·</span>`)).join('')}
@@ -1035,7 +1040,7 @@ function openVariety() {
           ${x.open ? '<span class="chev" aria-hidden="true">›</span></button>' : '</div>'}${r ? rainbowButton(r) : ''}</li>`;
       }).join('')}</ol>`;
   const recordsView = (view, rows) => `<label class="variety-sort">並べ方 <select data-variety-sort aria-label="並べ方">
-      <option value="grid"${view.sort !== 'gap' ? ' selected' : ''}>台番号順（7日表）</option>
+      ${Object.entries(ROTATION_SORTS).map(([key, label]) => `<option value="${key}"${view.sort === key ? ' selected' : ''}>${label}</option>`).join('')}
       <option value="gap"${view.sort === 'gap' ? ' selected' : ''}>最後の🌈が古い順</option></select></label>`
     + (view.sort === 'gap' ? gapView(view, rows) : gridView(view, rows));
   const weekView = (view, rows) => {

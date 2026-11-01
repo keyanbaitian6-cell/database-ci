@@ -57,6 +57,62 @@ class VarietyRainbowTests(unittest.TestCase):
         cell = frame.variety_cells[(50, '2026-10-10')]
         self.assertIn('🌈', cell.cget('text'))
 
+    def test_games_and_other_headings_sort_the_list(self):
+        # 2026-11-01 利用者「回転数とかでもソートできるようにしておいてほしい」。台番・機種・最終🌈も見出しで。
+        db = Store(self.path)
+        try:
+            db.save([row(60, '新バラエティ', '2026-10-10', games=7000), row(62, 'あ機種', '2026-10-10', games=0)])
+            before = db.db.execute('SELECT store,day,machine,rack,payload FROM days ORDER BY store,day,machine,rack').fetchall()
+        finally:
+            db.close()
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1100x700+-3000+0')
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        build_variety_tab(frame, self.path, lambda: None, STORE)
+        frame.variety_mode.set('list')
+        root.update()
+        table = next(w for child in frame.winfo_children() for w in child.winfo_children() if isinstance(w, ttk.Treeview))
+
+        def racks():
+            return [int(table.item(iid, 'values')[1]) for iid in table.get_children()]
+
+        def click(column):
+            x, y, width, _height = table.bbox(table.get_children()[0], column)
+            x, y = x + width // 2, y // 2
+            self.assertEqual(table.identify_region(x, y), 'heading')
+            table.event_generate('<ButtonPress-1>', x=x, y=y)
+            table.event_generate('<ButtonRelease-1>', x=x, y=y)
+            root.update()
+
+        click('games')  # 50=5000・51=800・60=7000・61=3000・62=0
+        self.assertEqual(racks(), [60, 50, 61, 51, 62])
+        self.assertEqual(table.heading('games', 'text'), '回転数 ▼')
+        self.assertEqual(table.heading('net', 'text'), '推定差枚', '選んでいない見出しに印を付けない')
+        click('games')
+        self.assertEqual(racks(), [62, 51, 61, 50, 60])
+        self.assertEqual(table.heading('games', 'text'), '回転数 ▲')
+        # 本日の未取得（回転数なし）は、多い順・少ない順のどちらでも最後。
+        unknown = [dict(rack=1, games=None), dict(rack=2, games=100), dict(rack=3, games=0)]
+        self.assertEqual([r['rack'] for r in sorted(unknown, key=SORTS['回転数の多い順'])], [2, 3, 1])
+        self.assertEqual([r['rack'] for r in sorted(unknown, key=SORTS['回転数の少ない順'])], [3, 2, 1])
+        click('machine')
+        self.assertEqual(table.heading('machine', 'text'), '機種 ▲')
+        self.assertEqual(racks()[0], 62, 'あ機種が先頭')
+        click('rack')
+        self.assertEqual(racks(), [50, 51, 60, 61, 62])
+        self.assertEqual(table.heading('rack', 'text'), '台番 ▲')
+        self.assertEqual(table.heading('games', 'text'), '回転数')
+        click('last')
+        self.assertEqual(table.heading('last', 'text'), '最終🌈 ▲')
+        db = Store(self.path)
+        try:
+            after = db.db.execute('SELECT store,day,machine,rack,payload FROM days ORDER BY store,day,machine,rack').fetchall()
+            self.assertEqual(after, before, '並べ替えで保存済みの数値・印を変えない')
+        finally:
+            db.close()
+
     def test_net_heading_toggles_numeric_order_with_unknown_last(self):
         db = Store(self.path)
         try:

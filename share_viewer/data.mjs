@@ -578,6 +578,20 @@ export function varietyRainbowRows(byDay, store, day) {
     .sort((a, b) => a.rack - b.rack);
 }
 
+/**
+ * 7日表の並べ方（2026-11-01 利用者「回転数とかでもソートできるようにしておいてほしい」）。値は端末に覚える。
+ * 回転数は表示中の日の記録の値。記録の無い台（本日の未取得など）は多い順・少ない順のどちらでも最後（PC版の
+ * variety_rainbow の「回転数の多い順・少ない順」と同じ）。同じ回転数は台番号順。
+ */
+export const ROTATION_SORTS = {grid: '台番号順（7日表）', 'games-desc': '回転数の多い順（7日表）', 'games-asc': '回転数の少ない順（7日表）'};
+export function rotationOrder(rows, sort) {
+  if (sort !== 'games-desc' && sort !== 'games-asc') return rows;
+  const sign = sort === 'games-desc' ? -1 : 1;
+  const games = x => (Number.isFinite(x.record?.games) ? x.record.games : null);
+  return [...rows].sort((a, b) => Number(games(a) == null) - Number(games(b) == null)
+    || sign * ((games(a) ?? 0) - (games(b) ?? 0)) || a.rack - b.rack);
+}
+
 /** 本日用の印一覧。未取得の数値行を byDay へ足さず、印だけを別に扱う。 */
 export function rainbowTodayRows(byDay, marks, store, day) {
   if (store !== 'saiwaichou') return {lineupDay: null, rows: []};

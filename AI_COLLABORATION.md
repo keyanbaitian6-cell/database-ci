@@ -227,3 +227,12 @@
 - **[CI 41274330798](https://github.com/imakurudev-eng/database/actions/runs/41274330798) の結果をGitHub接続ツールで直接確認：full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の全3ジョブが completed/success**。fullの `Complete pre-build gate` 段も成功。対象は前項で送信した `6936b9d`。これにより、前の「実行中・結果未確認」を更新する。ローカルPC759件・新規7件の実行根拠はClaudeの記録で、Codexが実行したものではない。
 - 変更は本項と `DATABASE_REVIEW_20261101.md` 末尾の現在状況の追記だけ。ローカル試験・CI・ビルドは再実行せず、製品コード・DB・設定・Cookie・Google・公開物・端末を変更しない。実機での修正確認、11/2の入れ替え後のログは今回未確認。Android 0.5.49の導入や11/2の監視を始める依頼とは扱わない。
 - 許可済みの文書2ファイルの範囲で記録を正本へ送る。既存のMarkdown除外を維持し、新たな回帰CIは起動しない。実際の送信結果・コミットは完了報告に示す。
+
+## 【バラエティを回転数でも並べ替える（PC・共有カレンダー・iPhone閲覧ページ）】2026-11-01 Claude
+
+- 依頼：利用者「幸町のバラエティとかPC上で開く際に、差枚でソートはできるけど、回転数とかでもソートできるようにしておいてほしい」。AGENTS.mdの「表示に関わる機能は、出す画面を着手前に確かめる」に従い質問：対象＝「PCだけ」「共有カレンダーにも」「iPhone閲覧ページにも」、並べる列＝「回転数」「台番・機種・最終🌈も見出しで」。調べたところ共有カレンダーは回転数を表示しておらず、iPhone閲覧ページにはPCのような一覧表が無かったため、その場で再質問：共有＝「並べ方に回転数を足す」、iPhone＝「台の並べ方を切替に」。Androidアプリは変えていない。
+- PC（`database/variety_rainbow.py`）：並べ方に「回転数の多い順・少ない順」を追加（回転数の無い台＝本日の未取得は両方とも最後、同じ回転数は台番号順）。一覧の見出し 台番・機種・回転数・推定差枚・最終🌈 を押すと並べ替え（回転数・推定差枚は押すたびに多い順⇔少ない順、選んでいる見出しに ▼／▲）。7日表（ローテーション表）でも同じ並べ方が使える。試験 `tests/test_variety_rainbow.py` に見出しを実際に押す試験を追加。
+- 共有カレンダー（`share_viewer/`）：🌈の記録の「並べ方」に「回転数の多い順（7日表）」「回転数の少ない順（7日表）」を追加（`data.mjs` の `ROTATION_SORTS`・`rotationOrder`、表示中の日の回転数、記録の無い台は最後）。回転数で並べたときだけ台名の下に「5,000G」のように回転数を出す。台番号を押したときは元の並びの位置で台を引く（並べ替えで台を取り違えない）。並べ方は端末に覚える（既存の `database-share-variety-sort`）。試験 `tool/test_share_viewer_rainbow_browser.mjs` に並べ替え・回転数の表示・320/393pxではみ出さない・押した台が正しい・覚えるを追加。
+- iPhone閲覧ページ（`database_android/lib/viewer_pages.dart` の `ViewerMachinePage`、バラエティのときだけ）：台のカードの上に「並べ方：台番号順／回転数の多い順／回転数の少ない順／機種順」（`sortVarietyEntries`、端末に覚える `variety-sort`）。Androidアプリからこの画面に来る経路（イベント履歴）は具体的な機種名なので切替は出ない。試験 `test/viewer_navigation_test.dart` に2件。
+- 照合版 `b68edbfca0f0`（生成スクリプト4本）。全体ゲート **ALL PASSED**（PC 760件・UTC 27件・Flutter 755件・analyze 情報28件・JS 77本、`TZ=JST-9`、`/c/w/gate-sort1101.log`・`/c/w/cbw-sort1101/`）。
+- 公開：未公開（利用者に画像を見せて承認をもらってから、ゲートの `viewer/`・`share/` stage を公開する予定）。

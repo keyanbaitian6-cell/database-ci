@@ -110,6 +110,21 @@ try {
     await page.getByRole('button', {name: '次の日'}).click();
     assert.equal(await page.locator('select[data-sheet-day]').inputValue(), '2026-10-10');
 
+    // 回転数の多い順・少ない順（2026-11-01 利用者「回転数とかでもソートできるようにしておいてほしい」）。
+    // 表示中の日（10/10）の回転数で並べ、台名の下に回転数を出す。押した台を取り違えない。
+    assert.equal(await sheet.locator('.rotation .who .g').count(), 0, '台番号順では回転数を出さない');
+    await sheet.getByLabel('並べ方', {exact: true}).selectOption('games-desc');
+    assert.deepEqual(await sheet.locator('.rotation .who .num').allInnerTexts(), ['1201', '1203', '1202']);
+    assert.deepEqual(await sheet.locator('.rotation .who .g').allInnerTexts(), ['5,000G', '1,200G', '800G']);
+    assert.ok(await sheet.evaluate(e => e.scrollWidth - e.clientWidth) <= 0, `回転数を出しても横にはみ出さない（${width}px）`);
+    await shot('games');
+    await sheet.getByLabel('並べ方', {exact: true}).selectOption('games-asc');
+    assert.deepEqual(await sheet.locator('.rotation .who .num').allInnerTexts(), ['1202', '1203', '1201']);
+    await sheet.locator('.rotation .who', {hasText: '1203'}).click();
+    assert.equal(await page.locator('#sheet-title').innerText(), '1203番台');
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
+    assert.equal(await sheet.getByLabel('並べ方', {exact: true}).inputValue(), 'games-asc');
+
     // 空き順：一度も無い 1203 が上。覚える。
     await sheet.getByLabel('並べ方', {exact: true}).selectOption('gap');
     assert.equal(await page.getByRole('button', {name: '空き順', exact: true}).count(), 0);
