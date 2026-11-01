@@ -4704,3 +4704,10 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 詳細は `DATABASE_REVIEW_20261101.md` 末尾「全体の見直し（Claude）」。要点：A 採点・翌日候補のPC（`core.py`）とAndroid（`scoring.dart`）の照合が毎回の試験に無い（照合ツールは実データを使う手動のみ）→ 合成fixtureで両側を確かめる案、B メルヘンの読み取りJSがPCとAndroidで二重、C PC試験の置き場所が2か所でREADMEの手順では15ファイル抜ける、D READMEの「自動巡回・自動保存はしない」が現状と不一致、E `AI_COLLABORATION.md`（約1.35MB）と日付入り文書の肥大→月別保管の案、F 一時フォルダー・未追跡ファイル・取り込み済み作業ツリーの残り、G 例外の握りつぶし、H 大きいファイル。
 - 変更は上の2つの.mdだけ。製品コード・試験・DB・設定は変更なし。試験・ゲート・CI・ビルド・公開・対象サイトへのアクセスなし。ファイル・作業ツリーの削除もしていない（利用者の了承待ち）。
 - 秘密情報：追跡中のファイルで鍵・トークン・デプロイIDの形を検索し、該当なし。
+
+## 【READMEの試験手順と自動取り込みの説明を直す（全体見直しのC・D）】2026-11-01 Claude
+
+- 依頼：前項の全体見直しのうち、利用者「C・DのREADMEを直す」。変更は `README.md` だけ（.mdなのでCIは動かない）。
+- C：PC試験の手順に `database/` 直下の `test_*.py` を足した（`.venv\Scripts\python.exe -m unittest discover -s . -p "test_*.py"`）。ビルド前は `check_before_build.sh` の「ALL PASSED」が条件であることも書いた。確認：`database/.venv/Scripts/python.exe` で `TestLoader().discover` を使い、試験を実行せず読み込みだけで数えた。`-s . -p "test_*.py"` は直下の15モジュール・239件（`tests/` に `__init__.py` が無いため `tests/` は含まない）、`-s tests` は501件。読み込みエラーなし。試験そのものは流していない。
+- D：「実サイトの自動巡回や自動保存は行いません」を削除し、「自動取り込み」の節を追加。内容は `database/PSCUBE_AUTO_CAPTURE.md` から：起動時OFF・利用者がONにしたときだけ・ON状態は保存しない、開いた取り込み画面で読んで保存し次の未取得へ、間隔（メルヘン0.1〜4.5秒・初期3.5秒、P’s CUBE15〜25秒ランダム）、人間確認・同意・読み込み中は押さずに待つ、P’s CUBEの自動OFF条件、Android版P’s CUBEの0時予約。仕様は変えていない。
+- 製品コード・試験・DB・設定は変更なし。対象サイトへのアクセスなし。
