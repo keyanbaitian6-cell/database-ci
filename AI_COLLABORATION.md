@@ -4662,3 +4662,12 @@ APK：今回の変更を含むrelease APKは、Flutterの古い`C:\\Users\\keyan
 - 残る問題と運用の提案：2つのAIが同じ作業コピーで同時にGitを触ること自体（確認中のコミットの割り込み、`index.lock` の衝突、相手の作業中ファイルの巻き込み）は `push_ci.py` の中では防げない。**一方のAIが送信の準備（取得・確認・送信）をしている間、もう一方は fetch・commit・push（確認モードも含む）をしない**。Claudeは今後、別のAIが作業中と分かっているときはGitの状態を変える操作をしない。利用者からCodexの作業中と聞いた後の確認は `git ls-remote`・`git log`・`gh` など、作業コピーに書かない操作だけで行った。
 - 正本CI https://github.com/imakurudev-eng/database/actions/runs/41257657501 （対象 `3f5e3b0`）：この記録の時点で pc (ubuntu) 成功、full と pc (windows) は実行中。再実行はしていない。
 - GitHubへの反映：このコミットは手元のみ。手元のmainには、Codexの引き継ぎ記録 `8c7d94a`（未送信、Codexは無断送信しないよう依頼）が先にあり、このコミットを送るとそれも正本へ入るため、利用者の承認を得てから `tools/push_ci.py` で送る（どちらも .md だけでCIは動かない）。
+
+## 【正本CI 41257657501（3f5e3b0）の full 失敗の調査：試験の時間切れ・再実行なし】2026-11-01 Claude
+
+- 結果：https://github.com/imakurudev-eng/database/actions/runs/41257657501 は pc (windows) 成功・pc (ubuntu) 成功・**full 失敗**。再実行していない。
+- 落ちたのは `test_recommendations_browser` の「viewer・393px」1件だけ（同じ試験の share 3幅・viewer 320px/1280px は成功）。`tool/test_recommendations_browser.mjs:57` で「長町南のイベント履歴」を押したあと、`getByRole('button', {name: /4台構成/})` が30秒以内に出ず `TimeoutError`。失敗時の画面の文字は元の画面（「Googleドライブから自動で読み込み：82台・09:50に最新か確認」を含む）のままで、イベント履歴の画面に切り替わっていなかった。
+- 日付（11/1）が原因ではないと判断した根拠：①閲覧ページのコード（`database_android/lib`・`web`）は、ゲートが通った `fda78db` から `3f5e3b0` まで変わっていない（変わったのは `share_viewer/` だけ）。②日本時間11/1 10時ごろ、手元でゲートの閲覧ページ（`/c/w/cbw-diag1/viewer`）と今の `share_viewer/` を使って同じ試験を流し、6件すべて成功（閲覧ページは1件9〜12秒。CIでは29〜37秒）。③同じ日付で、viewer の320px・1280px は CI でも成功。
+- 原因の見当（未確定）：「長町南のイベント履歴」は `_openEventHistory` で必ず画面を積む（押せない状態は無い）。押したのに切り替わっていないので、押した瞬間にGoogleドライブの更新（`_refreshFromDrive`。試験はDriveの応答を模擬しており、開いた直後に更新が走る）の「更新中」表示の出入りで配置がずれ、ボタンの外を押した競合とみられる。CIの実行がふだんより遅く、393pxだけで当たった。直近 database-ci・正本の約40回のCIでこの試験が落ちたのは今回が初めて。10/31の保存診断（`fda78db`）で `_start`・`_refreshFromDrive` に記録の区切りの待ち（`markViewerPhase`）を足しており、更新が終わる時刻がわずかに遅れて競合が起きやすくなった可能性は否定できない（同じ変更を含む database-ci の `d5fb892` では full 成功）。
+- 対処の案：試験側で、開いた直後のDriveの更新が終わる（「最新か確認」の表示が出る）のを待ってから「長町南のイベント履歴」を押す。製品の動作は変えない。コードの変更なのでCIが1回動く（正本、約23分）。利用者の判断待ち。full のログでは86段のうち85段が OK、失敗はこの1件だけ（集計「失敗 1 件：test_recommendations_browser」）。full 全体としては失敗のまま扱う。
+- このコミットは手元のみ（.md）。次に送るときに一緒に送る。
