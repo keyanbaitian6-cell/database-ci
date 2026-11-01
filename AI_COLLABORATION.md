@@ -267,3 +267,12 @@
 - 貼り替え用：`outputs/pscube-day-sync-20261102/gs/`（`pscube_cloud_sync.gs`＝配布元の `PSCUBE_HISTORY_VIEWER` だけ true・改行LF、SHA-256 `f03b5b96…8e45`、`スクリプトをコピー.html`（中身がファイルと一致することを確認）、`手順.md`）。P-STATIONの同期プロジェクトに1本だけ貼り、`syncPscubeCloud` を実行。デプロイ不要。
 - 未確認：実際の「database共有」にある当日分のファイル（このPCの G: の一覧が2回とも返らず読めなかった。Googleドライブの接続は別アカウントでP’s CUBEのファイルが見えない）、Googleの実環境での動作、4:00の回が315秒（上限360秒）かかった理由。
 - 全体ゲート **ALL PASSED**（PC 766件・UTC 27件・Flutter 759件・analyze 情報28件・JS 78本、`TZ=JST-9`、`/c/w/gate-dayup1102.log`・`/c/w/cbw-dayup1102/`）。貼り替え・Googleでの実行は利用者の作業（未）。
+
+## 【PCの機種一覧にP’s CUBE（P-STATION）を足す（点数なし）】2026-11-02 Claude
+
+- 依頼：利用者「PC版で今昨日追加した機種一覧開こうとしたけどP-STATIONの分がないのはなぜ？」。11/1の実装で、店舗の選択肢をバラエティ🌈と同じメルヘン2店舗だけにし、P’s CUBEを入れるかを確かめていなかった（AGENTS.md「表示に関わる機能は、出す画面を着手前に確かめる」の趣旨に反する。AIの判断の誤り）。PC版にはP’s CUBEの採点が無い（`pscube_report.py`「No scoring」、点数・推定設定・翌日候補はスマホ・閲覧ページだけ）と説明し、選択肢「点数なしで足す／点数も出したい」→ 利用者「点数なしで足す」。基準 `bd0a95e`。
+- 変更（`database/machine_list.py`・`database/app.py`）：店舗の選択肢に `P’s CUBE（スロット）`（app.py の `PSCUBE_LABEL`、「結果を見る」と同じ名前）。選ぶと `data/pscube.sqlite3` を読む（`pscube_list_rows`。`PscubeStore(recording=False)`、日付は `days()`）。沖ドキ（`is_excluded_machine`）は除く。数値異常はカレンダー（`PscubeEvents.day_records`）と同じ基準で「異常」。貸玉が複数ある日は機種名の前に「20スロ」など。PC版にP’s CUBEのバラエティ🌈は無いので全機種を入れる。列：差枚＝元グラフの確定差枚（見出し「差枚」）、MYの列（P’s CUBEのときだけ表示）、🌈・設定候補・合計点は「—」（🌈の列を押しても何もしない）。並べ替え・機種のプルダウンはメルヘンと同じ。
+- 試験：`tests/test_machine_list.py` に1件（最新の日・沖ドキ除外・台数の少ない機種も入る・差枚とMY・—の列・差枚の無い台は最後・🌈を押しても変わらない・メルヘンへ戻すとMYが隠れる）。PC 9件（機種一覧7＋起動2）成功。写しのDB（`data/pscube.sqlite3`、読むだけ）で表示：最新の日 10/31・59機種・295台を差枚の多い順（`outputs/all-machines-20261101/pc-pscube.png`）。
+- 気づいたこと（未調査）：このPCの `data/pscube.sqlite3` の最新の日は10/31（6:53更新）。スマホの11/1の当日分はPCがまだ読んでいない。PCの当日分の自動読み込み（`app.poll_pscube_from_sync`）はPC版が起動している間だけ動く。
+- 照合版 `6dea1a0a6a15`（生成スクリプト4本）。
+- 全体ゲート **ALL PASSED**（PC 767件・UTC 27件・Flutter 759件・analyze 情報28件・JS 78本、`TZ=JST-9`、`/c/w/gate-mlps1102.log`・`/c/w/cbw-mlps1102/`）。閲覧ページ・共有カレンダーは変えていないので公開なし。PC版は起動し直すと反映。

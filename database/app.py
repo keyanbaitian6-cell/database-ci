@@ -459,7 +459,7 @@ def main():
             if refresh_machine_list is None:
                 refresh_machine_list = build_machine_list_tab(
                     tab_machines, DATA_DIR / 'database.sqlite3', mark_rainbow, on_flush=flush_rainbow,
-                    pending=pending_text, defer_load=True)
+                    pending=pending_text, defer_load=True, pscube=(DATA_DIR / 'pscube.sqlite3', PSCUBE_LABEL))
             refresh_machine_list()
     notebook.bind('<<NotebookTabChanged>>', open_variety, add='+')
 

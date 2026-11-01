@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import ttk
 from unittest.mock import patch
 
-from core import Store
+from core import STORE_NAMES, Store
 from machine_list import ALL_MACHINES, SORTS, _now, build_machine_list_tab, machine_list_rows
 
 STORE = 'nagamachiminami'
@@ -146,6 +146,58 @@ class MachineListTests(unittest.TestCase):
         refresh()
         self.assertEqual(len(frame.machine_list_table.get_children()), 8)
 
+
+    def test_pscube_store_lists_all_machines_without_scores(self):
+        # 2026-11-02 利用者「P-STATIONの分がないのはなぜ？」→「点数なしで足す」。
+        import pscube_import
+        pscube_path = Path(self.tmp.name) / 'pscube.sqlite3'
+        store = pscube_import.PscubeStore(pscube_path, recording=False)
+        records = [dict(store='c740601', rate='20', machine='ジャグラー', rack=rack, day='2026-11-01', games=games,
+                        bb=10, rb=5, at_art=0, my=800, net_medals=net)
+                   for rack, games, net in ((101, 4000, 500), (102, 7000, None), (103, 900, -300))]
+        records += [dict(store='c740601', rate='20', machine='北斗', rack=201, day='2026-11-01', games=3000, bb=1, rb=0,
+                         at_art=3, my=1500, net_medals=1200),
+                    dict(store='c740601', rate='20', machine='沖ドキ！', rack=301, day='2026-11-01', games=5000, bb=1, rb=0,
+                         at_art=0, my=100, net_medals=0),
+                    dict(store='c740601', rate='20', machine='ジャグラー', rack=101, day='2026-10-31', games=1, bb=0, rb=0,
+                         at_art=0, my=0, net_medals=0)]
+        with store.db:
+            for i, r in enumerate(records):
+                store.db.execute('INSERT INTO records VALUES (?,?)', (str(i), json.dumps(r, ensure_ascii=False)))
+        store.close()
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1200x700+-3000+0')
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        build_machine_list_tab(frame, self.path, lambda: None, STORE, run=_now, pscube=(pscube_path, 'P’s CUBE（スロット）'))
+        frame.machine_list_vars['store'].set('P’s CUBE（スロット）')
+        root.update()
+        table = frame.machine_list_table
+        self.assertEqual(frame.machine_list_vars['day'].get(), '2026-11-01', '最新の日')
+        rows = [table.item(iid, 'values') for iid in table.get_children()]
+        self.assertEqual([r[1] for r in rows], ['101', '102', '103', '201'], '沖ドキは除く。台数の少ない機種も入れる')
+        self.assertEqual(rows[0][2], 'ジャグラー')
+        self.assertEqual(rows[0][6], '+500')
+        self.assertEqual(rows[0][7], '800', 'MYの列')
+        self.assertEqual((rows[0][0], rows[0][8], rows[0][9]), ('—', '—', '—'), '🌈・設定候補・合計点は出さない')
+        self.assertIn('my', table['displaycolumns'])
+        self.assertEqual(table.heading('net', 'text'), '差枚')
+        frame.machine_list_vars['sort'].set('差枚の多い順')
+        root.update()
+        self.assertEqual([table.item(i, 'values')[1] for i in table.get_children()], ['201', '101', '103', '102'],
+                         '差枚の無い台は最後')
+        # 🌈の列を押しても何もしない（P’s CUBEには付けない）。
+        first = table.get_children()[0]
+        x, y, w, h = table.bbox(first, '#1')
+        table.event_generate('<Button-1>', x=x + w // 2, y=y + h // 2)
+        root.update()
+        self.assertEqual(table.item(first, 'values')[0], '—')
+        # メルヘンの店へ戻すと、MYの列は隠れ、見出しは推定差枚。
+        frame.machine_list_vars['store'].set(STORE_NAMES[STORE])
+        root.update()
+        self.assertNotIn('my', table['displaycolumns'])
+        self.assertTrue(table.heading('net', 'text').startswith('推定差枚'))
 
 if __name__ == '__main__':
     unittest.main()

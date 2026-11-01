@@ -7,7 +7,12 @@
 設定候補・合計点（「結果を見る」のHTMLと同じ計算：core.scored_rows・provisional_next_day_candidates）。
 
 バラエティ🌈のタブに出る機種（その日に rainbow_variety_max 台以下の機種）は入れない。
+
+P’s CUBE（P-STATION、2026-11-02 利用者「P-STATIONの分がないのはなぜ？」→「点数なしで足す」）：PC版にはP’s CUBEの
+採点が無いので、合計点・設定候補・★☆は「—」。差枚は元グラフの確定差枚、MY（最大持玉の代わり）の列を出す。PC版に
+P’s CUBEのバラエティ🌈のタブは無いので、全機種を入れる。🌈の印は付けられない（メルヘンだけ）。
 """
+import json
 import threading
 import tkinter as tk
 from collections import Counter
@@ -45,6 +50,8 @@ HEADING_SORTS = {
     'total': ('合計点の高い順', '合計点の低い順'),
 }
 HEADING_LABELS = {'rack': '台番', 'machine': '機種', 'games': '回転数', 'net': '推定差枚', 'total': '合計点'}
+# P’s CUBEの店舗の選択肢の値（PC本体の「結果を見る」と同じ名前を app.py から渡す）。
+PSCUBE_KEY = 'pscube'
 SORT_ARROWS = {'回転数の多い順': ' ▼', '差枚の多い順': ' ▼', '合計点の高い順': ' ▼'}  # ほかは小さい順なので ▲
 
 
@@ -84,6 +91,28 @@ def machine_list_rows(db_path, location, day):
     return sorted(rows, key=SORTS['台番順'])
 
 
+def pscube_list_rows(db_path, day):
+    """P’s CUBEのその日の台（台番順）。沖ドキなど表示しない機種は除く。数値異常（カレンダーと同じ基準）は「異常」。
+    貸玉が複数ある日は、機種名の前に貸玉を付けて分ける（カレンダーの PscubeEvents.day_records と同じ）。"""
+    import pscube_import
+    store = pscube_import.PscubeStore(db_path, recording=False)
+    try:
+        records = [r for r in (json.loads(row[0]) for row in store.db.execute('SELECT payload FROM records'))
+                   if r.get('day') == day and not pscube_import.is_excluded_machine(r['machine'])]
+    finally:
+        store.close()
+    rates = {r['rate'] for r in records}
+    rows = []
+    for r in records:
+        bad = ((r.get('games') or 0) > 20000 or (r.get('bb') or 0) > 500 or (r.get('rb') or 0) > 500
+               or (r.get('my') or 0) > 100000)
+        rows.append({'rack': int(r['rack']), 'machine': (f"{r['rate']}スロ " if len(rates) > 1 else '') + r['machine'],
+                     'bad': bad, 'games': None if bad else r.get('games'), 'bb': r.get('bb'), 'rb': r.get('rb'),
+                     'net': None if bad else r.get('net_medals'), 'needs_check': False, 'my': r.get('my'),
+                     'setting': '—', 'total': None, 'mark': '', 'rainbow': False, 'pscube': True})
+    return sorted(rows, key=SORTS['台番順'])
+
+
 def _in_thread(work, done, widget):
     """重い読み込み（幸町は500台ほどで数秒）を別の糸で行い、終わったら画面の糸で done(結果) を呼ぶ。"""
     box = {}
@@ -114,17 +143,17 @@ def _now(work, done, _widget):
 
 
 def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on_flush=None, pending=None,
-                           defer_load=False, run=_in_thread):
+                           defer_load=False, run=_in_thread, pscube=None):
     """「機種一覧」のタブの中身。🌈を押したときは記録への保存だけで on_marked() を呼ぶ（作り直しはバラエティ🌈と同じく
-    まとめて on_flush。pending はボタンの文字）。表示を描き直す関数を返す（タブを開いたとき用）。"""
+    まとめて on_flush。pending はボタンの文字）。pscube＝(P’s CUBEのDBのパス, 店舗の選択肢の名前)。表示を描き直す関数を返す（タブを開いたとき用）。"""
     ttk.Label(parent, text='機種一覧', style='H2.TLabel').pack(anchor='w')
     ttk.Label(parent, text='選んだ日の、バラエティ以外の機種の台です（バラエティはバラエティ🌈のタブ）。'
                            '機種を選ぶとその機種だけ。★注目・☆長期傾向＝翌日候補（仮）。点数・設定候補の意味は「結果を見る」と同じで、'
-                           '出率・差枚・設定を表すものではありません。',
+                           '出率・差枚・設定を表すものではありません。P’s CUBEは全機種で、PC版では採点しないため点数・設定候補・★☆は出ません。',
               style='Sub.TLabel', wraplength=900).pack(anchor='w', pady=(0, 10))
     bar = ttk.Frame(parent)
     bar.pack(fill='x')
-    labels = list(STORE_NAMES.values())
+    labels = list(STORE_NAMES.values()) + ([pscube[1]] if pscube else [])
     store_var = tk.StringVar(value=STORE_NAMES.get(default_location) or labels[0])
     day_var = tk.StringVar()
     machine_var = tk.StringVar(value=ALL_MACHINES)
@@ -147,12 +176,12 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
               style='Sub.TLabel').pack(anchor='w', pady=(0, 6))
     frame = ttk.Frame(parent)
     frame.pack(fill='both', expand=True)
-    columns = ('mark', 'rack', 'machine', 'games', 'bb', 'rb', 'net', 'setting', 'total')
+    columns = ('mark', 'rack', 'machine', 'games', 'bb', 'rb', 'net', 'my', 'setting', 'total')
     table = ttk.Treeview(frame, columns=columns, show='headings', selectmode='browse')
     for key, label, width, anchor in (('mark', RAINBOW_MARK, 40, 'center'), ('rack', '台番', 70, 'e'),
                                       ('machine', '機種', 280, 'w'), ('games', '回転数', 76, 'e'),
                                       ('bb', 'BB', 44, 'e'), ('rb', 'RB', 44, 'e'), ('net', '推定差枚', 90, 'e'),
-                                      ('setting', '設定候補（BB/RB）', 130, 'center'), ('total', '合計点', 70, 'e')):
+                                      ('my', 'MY', 70, 'e'), ('setting', '設定候補（BB/RB）', 130, 'center'), ('total', '合計点', 70, 'e')):
         table.heading(key, text=label)
         if key in HEADING_SORTS:
             table.heading(key, command=lambda key=key: heading_sort(key))
@@ -174,17 +203,20 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
         sort_var.set(options[(options.index(current) + 1) % len(options)] if current in options else options[0])
 
     def location():
+        if pscube and store_var.get() == pscube[1]:
+            return PSCUBE_KEY
         return next((key for key, label in STORE_NAMES.items() if label == store_var.get()), None)
 
     def values(r):
         if r['bad']:
-            numbers = ('異常', '—', '—', '—')
+            numbers = ('異常', '—', '—', '—', '—')
         else:
             dash = lambda value: '—' if value is None else value
             net = '—' if r['net'] is None else signed_medals(r['net']) + ('※' if r['needs_check'] else '')
-            numbers = (f"{r['games']:,}", dash(r['bb']), dash(r['rb']), net)
-        return (rainbow_cell(r), f"{r['rack']}{' ' + r['mark'] if r['mark'] else ''}", r['machine'], *numbers,
-                r['setting'], '—' if r['total'] is None else f"{r['total']:.1f}")
+            my = '—' if r.get('my') is None else f"{r['my']:,}"
+            numbers = (f"{r['games']:,}", dash(r['bb']), dash(r['rb']), net, my)
+        return ('—' if r.get('pscube') else rainbow_cell(r), f"{r['rack']}{' ' + r['mark'] if r['mark'] else ''}",
+                r['machine'], *numbers, r['setting'], '—' if r['total'] is None else f"{r['total']:.1f}")
 
     def tags(r):
         net = r['net'] or 0
@@ -195,7 +227,12 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
         rows = [r for r in state['rows'] if chosen == ALL_MACHINES or r['machine'] == chosen]
         rows.sort(key=SORTS[sort_var.get()])
         state['shown'] = rows
+        is_pscube = location() == PSCUBE_KEY
+        # MYはP’s CUBEだけ（メルヘンの一覧はバラエティ🌈と同じ列のまま）。
+        table['displaycolumns'] = [c for c in columns if c != 'my' or is_pscube]
         for key, label in HEADING_LABELS.items():
+            if key == 'net' and is_pscube:
+                label = '差枚'   # 元グラフの確定差枚
             picked = sort_var.get() in HEADING_SORTS[key]
             table.heading(key, text=label + (SORT_ARROWS.get(sort_var.get(), ' ▲') if picked else ''))
         totals = [r['total'] for r in rows if r['total'] is not None]
@@ -235,15 +272,26 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
             if machine_var.get() not in names and machine_var.get() != ALL_MACHINES:
                 machine_var.set(ALL_MACHINES)   # 選んでいた機種がこの日に無い（machine_var の変更で show も呼ばれる）
             show()
-        run(lambda: machine_list_rows(db_path, where, day), done, parent)
+        if where == PSCUBE_KEY:
+            run(lambda: pscube_list_rows(pscube[0], day), done, parent)
+        else:
+            run(lambda: machine_list_rows(db_path, where, day), done, parent)
 
     def refresh_days(*_args):
         where = location()
-        db = Store(db_path)
-        try:
-            days = db.days_for(where) if where else []
-        finally:
-            db.close()
+        if where == PSCUBE_KEY:
+            import pscube_import
+            store = pscube_import.PscubeStore(pscube[0], recording=False)
+            try:
+                days = store.days()
+            finally:
+                store.close()
+        else:
+            db = Store(db_path)
+            try:
+                days = db.days_for(where) if where else []
+            finally:
+                db.close()
         combos['日付']['values'] = days
         chosen = day_var.get() if day_var.get() in days else (days[0] if days else '')
         if chosen != day_var.get():
@@ -259,6 +307,8 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
         if not iid:
             return None
         row = state['shown'][int(iid)]
+        if row.get('pscube'):
+            return 'break'   # P’s CUBEには🌈の印を付けない
         on = not row['rainbow']
         db = Store(db_path)
         try:
