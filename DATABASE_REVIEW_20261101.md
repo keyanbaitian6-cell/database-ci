@@ -149,3 +149,174 @@ finally:
 - 試験・ゲート・CIは流していない。上の指摘はコードと文書を読んだ結果で、不具合の再現ではない。
 - Aの「PCとAndroidの採点が今食い違っているか」は確かめていない（照合の仕組みが毎回ない、という指摘）。
 - 実機・公開ページ・Googleスクリプトの動作は見ていない。
+
+## 追加の洗い出し（Codex 2回目）
+
+### 基準・今回の結論
+
+- 調査日：2026-11-01（日本時間）。正本 `imakurudev-eng/database/main` と手元mainは **`1b0943b3011778cfca5458ebd45029fe1ee1597a`**、`keyanbaitian6-cell/database-ci/main` は **`7a9df132001c1e80fdbd1d6d964ca695cd3b5a1c`**。両方を実際にfetchし、`git merge-base --is-ancestor 7a9df132001c1e80fdbd1d6d964ca695cd3b5a1c HEAD` が終了0。正本と手元のSHA一致も確認した。以下のソースリンク・行番号はこの基準版。
+- **追加候補は4件**。1・3は今回参照した既存記録に同じ指摘を見つけなかった。2・4は近い対策が既出なので、その対策が届いていない別経路と今回の再現に限定した。「誰も検討したことがない」とまでは確認できず、記録外の検討の有無はわかりません。
+- 製品コード・既存試験・実DB・設定・Cookie・Google・公開物は変更しない。対象サイトへの接続、同期実行、実機操作、CI起動、ビルドはしない。変更は本報告と `AI_COLLABORATION.md` への追記のみ。試験は下記の一時DB・合成入力・模擬Driveだけ。
+- 重要度・手間・提案はCodexの判断。手間は実装と関係する回帰確認の概算で、公開・Google貼替・利用者による実機確認の待ち時間を含めない。実運用の発生頻度・被害は4件とも未確認。
+
+### 1. 自分用と共有用から同時に保存すると、成功した🌈を後の書き込みが消せる
+
+- **種類／優先度**：不具合の候補／高。
+- **対象の画面**：iPhone閲覧ページ・共有カレンダー・Google。PCは共有ファイルを読む側として影響を受けうる。
+- **確認済みの根拠**：自分用と共有用は別のApps Scriptプロジェクトとして設置する指示がある（[viewer_drive_script_readonly.gs:1–20](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database_android/tool/viewer_drive_script_readonly.gs#L1)）。それでも同じ `database-rainbow-shared.json` を読み、統合し、全文を書き戻す。排他はどちらも `getScriptLock()`（[自分用:148–185](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database_android/tool/viewer_drive_script.gs#L148)、[共有用:109–146](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database_android/tool/viewer_drive_script_readonly.gs#L109)）。Google公式ではこのロックの範囲は当該スクリプトであり、別プロジェクトをまとめて排他しない（[LockService公式資料](https://developers.google.com/apps-script/reference/lock/lock-service#getScriptLock())）。
+- **今回の再現**：実際の2本の `.gs` を別々のJavaScript実行環境で読み、同じ模擬Driveファイルとプロジェクト別ロックを与えた。自分用が旧内容を読んだ直後、共有用が538番の🌈を保存し、その後に自分用が537番を保存。**両方の返答は `ok:true` だが、最終ファイルは537番だけ**になった（1件、終了0）。同じ台の新旧判定では防げない、別の台同士の消失。
+- **影響／未確認**：保存成功と表示された印が共有側から失われる。同じ読み込み→全文保存の形は履歴記号にもある（[event_history_drive.js:34–66](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database_android/tool/event_history_drive.js#L34)）が、今回の動的再現は🌈だけ。実Googleでの競合発生・頻度、消えた印が端末の保持分から再送されるかは未確認。台データ本体の消失を確認したものではない。
+- **直す手間の目安**：中〜大、2〜4日。権限・接続先を維持する設計とGoogle側の移行確認が必要。
+- **提案**：自分用・共有用の権限を区別したまま、共有編集の保存を1つの書き込み担当へ集約する案を先に設計する。別プロジェクトのまま `getUserLock()` へ変更するだけでは解決しない。単に読んだ版を保存直前に再確認するだけでも、確認と保存の間の競合が残る。既存の模擬試験へ「2プロジェクトで別々の台を同時保存して両方残る」を加える案。Google貼替・URL変更の要否は設計後に確認する。
+
+### 2. PCの「この日に戻す」が、途中で失敗しても一部だけ反映済みになる
+
+- **種類／優先度**：不具合の候補／高。
+- **対象の画面**：PC（メルヘンのバックアップ・同期画面）。
+- **既出との区別**：**既出：通常のバックアップ取り込みを一括確定する対策**。9/27「妥協点の見直しと修正」、10/2「バックアップ読み込みの完全性・欠測・時刻比較を修正」で通常取り込みを修正済み。今回の新しい根拠は、それを呼んだ後に上書きする **`restore_backup` の復元操作全体** が別々に確定する点。
+- **確認済みの根拠**：[core.py:1735–1753](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/core.py#L1735) はまず `import_backup()` を呼ぶ。同関数は[2536–2587付近](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/core.py#L2536)で新規台・イベント等をトランザクション確定し、その後で `restore_backup` が競合台を `store.save(forced)` で上書きする。後半の例外は画面で「戻せません」となる（[app.py:1287–1304](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/app.py#L1287)）。
+- **今回の再現**：一時DBに537番＝3000G、復元ファイルに537番＝4000Gと新規538番＝3000Gを用意。後半の `store.save` に保存失敗を注入したところ、復元は例外になったが、**新規538番は追加済み、537番は3000Gのまま**だった（PC模擬確認1）。通常取り込みの一括保存試験や、復元成功時の試験だけではこの境界を確かめられない（[既存試験:1386](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/tests/test_database.py#L1386)、[1858](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/tests/test_database.py#L1858)）。
+- **影響／未確認**：失敗時に「何も変わらなかった」と判断できず、新規台・イベント等と競合台の復旧状態が混在しうる。強制終了・容量不足・DBロックそれぞれの実機再現はしていない。今回確認した混在は合成した保存失敗時のみ。
+- **直す手間の目安**：中、1〜2日。
+- **提案**：読み込み・分類・競合上書き・削除印からの明示復元までを、復元用の1トランザクションで確定する。既存の `import_backup` を外から `with db` で囲むだけで済むと決めつけず、内部の確定境界を整理する。後半の保存失敗で復元前と同じ状態に戻ることを一時DBで試験する。現在の「その後に追加した台を消さない」仕様は維持する。
+
+### 3. PCの設定JSONが読めないと、次の選択操作で原文が上書きされる
+
+- **種類／優先度**：不具合の候補／中。
+- **対象の画面**：PC（店舗・日付選択、バックアップ・同期設定）。
+- **確認済みの根拠**：[core.py:1673–1688](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/core.py#L1673) の `load_settings` はファイル不存在・読込失敗・不正JSON・辞書以外をすべて空の辞書にする。`save_settings` はその戻り値へ今回の項目だけを足し、同じファイルへ保存する。[app.py:729–745](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/app.py#L729)では店舗・日付・機種の選択変更がその保存を呼ぶ。
+- **今回の再現**：一時フォルダーの `settings.json` を閉じ括弧が欠けた合成JSONにし、`load_settings` → `save_settings(last_day=...)` を実行。エラーにならず、**原文が日付だけの正常JSONで置き換わる**ことを確認（PC模擬確認2）。既存の原子的なファイル書換えは、書く途中の破損対策であり、読めない旧原文の保護とは別。
+- **影響／未確認**：同期先 `sync_dir`、読込済みの目印、保存した選択などが失われ、同期の設定し直しや調査が必要になる。台のDBそのものを消す動作ではない。利用者の実設定が壊れているとは確認しておらず、破損原因・発生頻度はわかりません。これは既出Gの取り込み例外のログ追加とは異なる、設定原文の保持の問題。
+- **直す手間の目安**：小〜中、半日〜1日。
+- **提案**：「初回でファイルが無い」と「存在するが読めない」を区別する。後者では旧原文を保持して上書きせず、復旧・再設定を利用者が選べるようにする。設定値や合言葉をログへ丸ごと出さない。不正JSON・読込失敗・正常な初回作成を合成ファイルで確認する。
+
+### 4. PCの手動バックアップには、同じ時点のDBを読む保護が届いていない
+
+- **種類／優先度**：不具合の候補／中。
+- **対象の画面**：PC。出来上がったファイルを取り込むAndroid等にも内容の不整合が伝わりうる。
+- **既出との区別**：**既出：自動出力のスナップショット利用**。10/17「PC版を閉じるのに10〜15秒かかる」等に記録があり、[output_worker.py:20–25、65–74](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/output_worker.py#L20) はSQLiteの写しから出力する。この保護を未実装と再提案しない。新しい根拠は、手動経路がその処理を通らないこと。
+- **確認済みの根拠**：[app.py:1020–1024](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/app.py#L1020) の手動保存は本体DBを開き、そのまま `export_backup` を呼ぶ。[core.py:1425–1432、1451–1468](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/core.py#L1425) はイベント・削除印等を先に読み、後から台をSELECTする。関数内で全読み取りを同一時点に固定しない。取り込み窓を閉じた後の別プロセスにも本体を直接読む呼び出しが残る（[browser_import.py:2574–2590](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/database/browser_import.py#L2574)）。
+- **今回の再現**：一時DBの削除印を読んだ後、台を読む前に、別の実SQLite接続から537番を削除。**バックアップは台0件・削除印0件**となった。削除前の正しい状態（台1件）でも削除後の正しい状態（削除印1件）でもない。このファイルを同じ台がある別の一時DBへ通常取り込みすると、その台は消えず残った（PC模擬確認3）。
+- **影響／未確認**：処理が成功して読めるJSONでも、その時点の変更を再現できない。通常の背景出力全体が危険という指摘ではない。手動保存中などに別接続が更新することが条件で、実運用の頻度・実Androidでの読込結果は未確認。PCの同時操作をファイル更新時刻から推定していない。
+- **直す手間の目安**：中、1〜2日。
+- **提案**：手動保存も既存のSQLiteの写しを使う方式へそろえるか、読み取り全体を1つのスナップショットにする。取り込み窓の直接呼び出しも対象にする。書き込みを長時間止めないことを確認し、バックアップには削除前か削除後の完全な組だけが入る試験を追加する。
+
+### 除外・確認の限界・試験の扱い
+
+- 依頼の除外1〜15を再提案していない。初回4件、Claude A〜H、11/1の利用者の決定、10/31の共有カレンダー7項目を先に照合した。採点・翌日候補の方式や成績評価、カメラアプリは扱わない。
+- 追加で、過去記録の0時予約の開始位置・再試行上限、PC同期で壊れた入力が後続を妨げる件、Google処理版の表示のずれ、Googleの破損原本停止・時間枠による日別再開などを既出として外した。版表示だけの差をGoogle貼替の必要性と混同しない。
+- Androidは `backup_service.dart`・`backup_destination.dart`・`database_service.dart`・`app_controller.dart` のバックアップ周辺、`pscube_store.dart` の書出し周辺、`pscube_day_upload.dart`、`pscube_import_page.dart` の0時予約周辺、`AutoCaptureService.kt`・`MainActivity.kt` のサービス接続を確認。通常版の書き込み順番待ちや一時ファイル清掃は既存実装があり、それを「無い」とは扱わない。実機の容量・WebView状態・常駐サービスの停止は未検証。
+- Googleは閲覧用2本、メルヘン統合GS、P’s CUBE統合の生成元、日別履歴の共通処理を確認。公開物への実データ除外は `stage_viewer.py` と資産定義を点検したが、今回ステージ・ビルド・公開物の走査はしていない。PCの起動入口・出力ワーカー・固定依存・ゲート・CI定義も点検したが、依存の最新性・脆弱性監査はしていない。「安全」「最新」とは断定しない。
+- **新規の調査用模擬確認は計4件、すべて終了0**（Python 3件、Node 1件）。これは問題状態が起きることをassertした結果であり、修正後の成功試験ではない。製品・既存試験ファイルに追加していない。Pythonは起動前 `TZ=JST-9`・`PYTHONUTF8=1`、プロセス内のUTCオフセット+09:00を確認。既存の全体試験を再実行していない。
+- 文書2ファイルを実行・試験・ビルド・公開処理が読み込む箇所は今回の検索で見つからなかった（コメント・試験中の名前の例は除く）。既存 [.github/workflows/regression.yml:5–12](https://github.com/imakurudev-eng/database/blob/1b0943b3011778cfca5458ebd45029fe1ee1597a/.github/workflows/regression.yml#L5) のMarkdown除外を使い、CI定義・ジョブ・マトリクスは変更しない。無料枠や料金の削減額を算出していない。今後修正する場合の再現試験は既存の発見範囲へ入れ、別ジョブの追加は提案しない。
+- 自己点検：別プロジェクト間の競合と同じ台の時刻比較、通常取り込みと日付復元、原子的な書換えと破損原文の保護、自動出力と手動出力を分けた。実Google・実機での発生を模擬確認から断定していない。上記の優先順位を第三者が推奨した出典はない（Codexの提案）。
+
+### 模擬確認の再現方法（基準版のコードを使用）
+
+以下は今回実行したコード。ネットワーク接続を行わず、実DB・実設定を開かない。Pythonは `database/` でコードを標準入力へ渡し、`$env:TZ='JST-9'; $env:PYTHONUTF8='1'; ... | ./.venv/Scripts/python.exe -B -` として実行した（3件、終了0）。`recording=False` は一時DBの検証履歴の作成を無効にする既存の引数。
+
+```python
+import json, tempfile
+from pathlib import Path
+from contextlib import closing
+from unittest.mock import patch
+from datetime import datetime, timedelta
+from core import Store, restore_backup, export_backup, import_backup, save_settings, load_settings
+assert datetime.now().astimezone().utcoffset() == timedelta(hours=9)
+print("UTCオフセット確認: +09:00")
+row = dict(store='saiwaichou',kind_code=21,day='2026-10-14',machine='合成試験',rack=537,games=3000,bb=10,rb=5)
+with tempfile.TemporaryDirectory(prefix='database-review2-') as tmp:
+    root=Path(tmp)
+    with closing(Store(root/'restore.sqlite3',recording=False)) as db:
+        db.save([row],log_candidates=False)
+        incoming=dict(row,games=4000)
+        added=dict(row,rack=538)
+        source=root/'restore.json'
+        source.write_text(json.dumps(dict(format='database-backup',version=1,records=[incoming,added])),encoding='utf-8')
+        with patch.object(db,'save',side_effect=OSError('合成した保存失敗')):
+            try: restore_backup(db,source)
+            except OSError: pass
+            else: raise AssertionError('保存失敗が起きていない')
+        got={r['rack']:r['games'] for r in db.rows()}
+        assert got == {537:3000,538:3000},got
+        print('確認1 復元途中失敗: 新規538番だけ確定、537番の修復は未反映',got)
+    settings=root/'settings-case'
+    settings.mkdir()
+    target=settings/'settings.json'
+    broken='{"sync_dir":"合成の同期先",'
+    target.write_text(broken,encoding='utf-8')
+    assert load_settings(settings)=={}
+    save_settings(settings,last_day='2026-10-14')
+    assert load_settings(settings)=={'last_day':'2026-10-14'}
+    assert target.read_text(encoding='utf-8')!=broken
+    print('確認2 不正設定の次回保存: 原文が失われ、last_dayだけになった')
+    with closing(Store(root/'export.sqlite3',recording=False)) as reader:
+        reader.save([row],log_candidates=False)
+        with closing(Store(root/'export.sqlite3',recording=False)) as writer:
+            original=reader.history_edits_raw
+            def concurrent_delete():
+                writer.delete(row['store'],row['day'],row['machine'],row['rack'])
+                return original()
+            target=root/'mixed.json'
+            with patch.object(reader,'history_edits_raw',side_effect=concurrent_delete):
+                export_backup(reader,target)
+            doc=json.loads(target.read_text(encoding='utf-8'))
+            assert doc['records']==[] and doc['record_deletions']==[],doc
+            assert len(writer.record_deletions())==1
+            with closing(Store(root/'peer.sqlite3',recording=False)) as peer:
+                peer.save([row],log_candidates=False)
+                import_backup(peer,target)
+                assert len(peer.rows())==1
+            print('確認3 書出し中の別接続による削除: 台0件・削除印0件、読込先の台は残った')
+print('模擬確認3件終了、すべて想定した問題状態を確認（修正後の成功ではない）')
+```
+
+Nodeはリポジトリ直下で次のコードを `node --input-type=module -` の標準入力へ渡した（1件、終了0）。ロックとDriveだけを模擬し、保存処理は2本の実GSを使用する。
+
+```javascript
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+let text=JSON.stringify({format:'database-rainbow',version:1,marks:[]});
+let interleave=null, secondReply;
+const mark=rack=>({store:'saiwaichou',day:'2026-10-14',rack,on:true,updated_at:'2026-10-14T23:00:00+09:00'});
+const file={
+  isTrashed:()=>false,getLastUpdated:()=>new Date(1),
+  getBlob:()=>({getDataAsString(){
+    const snapshot=text;
+    if(interleave){const run=interleave;interleave=null;run();}
+    return snapshot;
+  }}),
+  setContent:value=>{text=value;}
+};
+const locks=[];
+function context(filename){
+  const state={held:false}; locks.push(state);
+  const ctx=vm.createContext({
+    DriveApp:{getFilesByName(name){
+      const list=name==='database-rainbow-shared.json'?[file]:[];let i=0;
+      return {hasNext:()=>i<list.length,next:()=>list[i++]};
+    }},
+    LockService:{getScriptLock:()=>({
+      waitLock(){assert.equal(state.held,false);state.held=true;},
+      releaseLock(){state.held=false;}
+    })},
+    ContentService:{MimeType:{JSON:'json'},createTextOutput:body=>({body,setMimeType(){return this;}})}
+  });
+  vm.runInContext(fs.readFileSync(filename,'utf8'),ctx);
+  return ctx;
+}
+const mine=context('database_android/tool/viewer_drive_script.gs');
+const shared=context('database_android/tool/viewer_drive_script_readonly.gs');
+interleave=()=>{
+  assert.equal(locks[0].held,true);
+  secondReply=JSON.parse(shared.postRainbow([mark(538)]).body);
+  assert.equal(secondReply.ok,true);
+  assert.deepEqual(JSON.parse(text).marks.map(m=>m.rack),[538]);
+};
+const firstReply=JSON.parse(mine.postRainbow([mark(537)]).body);
+assert.equal(firstReply.ok,true);
+assert.deepEqual(JSON.parse(text).marks.map(m=>m.rack),[537]);
+assert.ok(locks.every(s=>!s.held));
+console.log('模擬確認1件: 両方ok:trueなのに先に保存された538番の印が失われ、537番だけ残った');
+```
