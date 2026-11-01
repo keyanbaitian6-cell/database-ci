@@ -13,7 +13,7 @@ from unittest.mock import patch
 from test_anaslo_download import client, html, link
 from anaslo_download import Result
 
-CONVERTER = Path(__file__).resolve().parents[1] / 'html_converter'
+CONVERTER = Path(__file__).resolve().parents[2] / 'html_converter'
 if str(CONVERTER) not in sys.path:
     sys.path.append(str(CONVERTER))
 from download_dialog import DownloadDialog

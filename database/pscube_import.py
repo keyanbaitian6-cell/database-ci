@@ -26,6 +26,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from auto_capture import AutoCapture
+import error_log
 from pscube_health import validate_net_capture, trim_net_probes, merge_net_capture, viewer_net_capture
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, retry_page, stop_navigation
 
@@ -1987,8 +1988,8 @@ def run_session(db_path, export_path):
         try:
             site_url(window.get_current_url())
             window.evaluate_js(overlay)
-        except Exception:
-            pass
+        except Exception as error:  # noqa: BLE001 - 表示の失敗で取り込みは止めない。理由は残す
+            error_log.record(data_dir, 'pscube.overlay', error)
         if not connection.failure and not connection.showing_error:
             bridge.pilot.connection_started()
         bridge.pilot.loaded()
@@ -1998,8 +1999,8 @@ def run_session(db_path, export_path):
         while not stop.wait(0.1):
             try:
                 bridge.pilot.tick()
-            except Exception:
-                pass
+            except Exception as error:  # noqa: BLE001 - 次の回でやり直す。止まった理由は残す
+                error_log.record(data_dir, 'pscube.auto.tick', error)
             try:
                 # 保存開始と終了判定を同じロックで直列化する。保存中かを調べた直後に
                 # 手動保存が始まり、古い完了を使って窓を閉じる競合も防ぐ。
@@ -2009,8 +2010,8 @@ def run_session(db_path, export_path):
                             return
                     finally:
                         bridge._capture_lock.release()
-            except Exception:
-                pass
+            except Exception as error:  # noqa: BLE001 - 閉じられなくても見張りは続ける
+                error_log.record(data_dir, 'pscube.auto.close', error)
 
     def closed():
         stop.set()

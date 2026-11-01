@@ -46,10 +46,8 @@ jobs:
           set -euo pipefail
           display=()
           if [ "$RUNNER_OS" = Linux ]; then display=(xvfb-run -a); fi
+          # PCの試験はすべて tests/ にある（2026-11-01に database/ 直下の test_*.py を移した）。
           "${display[@]}" python -m unittest discover -s tests
-          modules=()
-          for file in test_*.py; do modules+=("${file%.py}"); done
-          "${display[@]}" python -m unittest "${modules[@]}"
       # 実行制御はWindowsのローカル確認にも使うため、追加の7件だけをこちらでも確認する。
       # Ubuntu側ではfullが同じ制御を確認するので重複させない。Windowsは分数が2倍。
       - uses: actions/setup-node@v4

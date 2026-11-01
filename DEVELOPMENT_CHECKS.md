@@ -52,7 +52,7 @@ Flutterのない環境でも `bash database_android/tool/check_before_build.sh -
 - 手動読み込み・Drive更新・自動読み込み設定の切り替えは重ねない。手動読み込み時の旧イベントは、保存済みJSONから台の値を組み立てずに取り出し、別タブの入力も引き継ぐ。`skipRecordValues` はこの保存済みメタデータの読み出し専用であり、未検査ファイルの受け入れには使わない。
 - `ViewerData.preparePicked` / `prepareMerge` は解析済みの内容から表示モデルを作り、同じ全文の再解析を避ける。保存成功後に表示を切り替え、解析・保存の失敗では旧データを保持する。`test_viewer_import_browser.mjs` はメルヘン・P’s CUBEで競合、別タブのイベント、破損JSON、IndexedDBの明示中断を実際の生成物で確認する。iPhone Safari実機の容量限界は別途確認が必要。
 
-回帰試験は `database/tests`・`database/test_*.py`・`database_android/test`・`database_android/tool/test_*.mjs` に置く。GitHub ActionsはLinux/Windows、JST/UTCのPC試験と、Linuxの全体ゲートを実行する。実機・実Googleの動作確認とは区別する。
+回帰試験は `database/tests`（PCの試験はすべてここ。2026-11-01に直下の `test_*.py` を移した）・`database_android/test`・`database_android/tool/test_*.mjs` に置く。GitHub ActionsはLinux/Windows、JST/UTCのPC試験と、Linuxの全体ゲートを実行する。実機・実Googleの動作確認とは区別する。
 
 コードを含むmainへのpushでCIが動き、GitHubの通知設定に応じて結果メールが届く。**push前に日本時間の日付を確認し、1〜15日は `imakurudev-eng/database`、16日〜月末は `keyanbaitian6-cell/database-ci` だけへ送る。** 正本の指定は変えず、両リポジトリの履歴を1本に保つ。送り先にだけある変更を取得・統合してから送る。期間外へのpush、CI失敗の原因を調べない再実行、強制pushは行わない。詳しくは `AGENTS.md` の10/20の規則を参照する。
 

@@ -3,7 +3,7 @@
 // 判定と読み取りの出力は、生成済みの assets/pscube_auto_probe.js・pscube_capture.js を模擬ページで動かした結果
 // （test/fixtures/pscube_absent_tab_auto.json。tool/test_pscube_absent_tab_auto.mjs が今の生成JSと一致するか確かめる）。
 // 取り込み画面の _autoTick → _capture と同じ順に、判定（PscubeAutoGuard.decide）→ 読み取り開始 → 保存（PscubeStore.importPage、
-// 一時DB）→ 次のページ、を通す。PC（database/test_pscube_auto_absent_tab.py）も同じ出力で確かめる。実サイトには接続しない。
+// 一時DB）→ 次のページ、を通す。PC（database/tests/test_pscube_auto_absent_tab.py）も同じ出力で確かめる。実サイトには接続しない。
 import 'dart:convert';
 import 'dart:io';
 

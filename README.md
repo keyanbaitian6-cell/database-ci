@@ -28,15 +28,14 @@ PC版:
 
 Windowsでは初回に `database/setup_python.cmd` を実行して専用Pythonを用意します。通常の起動は `database/start.cmd` のままです。
 
-PC版の試験は2か所にあります。`database/tests/` と、`database/` 直下の `test_*.py`（P’s CUBE・あにすろなど）です。両方を流してください。
+PC版の試験はすべて `database/tests/` にあります。
 
 ```powershell
 cd database
 .venv\Scripts\python.exe -m unittest discover -s tests
-.venv\Scripts\python.exe -m unittest discover -s . -p "test_*.py"
 ```
 
-2行目は `database/` 直下のファイルだけを拾います（`tests/` は含みません）。APK・PC・Web公開のビルド前には、PC・Android・閲覧ページの全試験をまとめて流す `bash database_android/tool/check_before_build.sh` を使います。最後に「ALL PASSED」と出たときだけビルドします。
+APK・PC・Web公開のビルド前には、PC・Android・閲覧ページの全試験をまとめて流す `bash database_android/tool/check_before_build.sh` を使います。最後に「ALL PASSED」と出たときだけビルドします。
 
 Android版:
 

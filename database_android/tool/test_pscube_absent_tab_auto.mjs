@@ -1,6 +1,6 @@
 // 取り込み日のタブが無い機種（新台・入れ替え）を自動取り込みで飛ばす（2026-10-22）。生成済みの判定（assets/pscube_auto_probe.js）と
 // 読み取り（assets/pscube_capture.js）を模擬ページで動かし、その出力が test/fixtures/pscube_absent_tab_auto.json と同じかを確かめる。
-// PC（database/test_pscube_auto_absent_tab.py）とAndroid（test/pscube_auto_absent_tab_test.dart）は、この同じ出力を
+// PC（database/tests/test_pscube_auto_absent_tab.py）とAndroid（test/pscube_auto_absent_tab_test.dart）は、この同じ出力を
 // 「判定→自動の決定→読み取り開始→保存（Store）→次のページ」へ流して確かめる。実サイトには接続しない。
 // 共通JSを変えて出力が変わったら：UPDATE_FIXTURE=1 node tool/test_pscube_absent_tab_auto.mjs で作り直し、差分を確かめる。
 import assert from 'node:assert/strict';

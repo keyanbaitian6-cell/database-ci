@@ -17,7 +17,7 @@ from auto_capture import AutoCapture
 from pscube_import import ABSENT_DAYS_KEY, AutoPilot, PscubeStore, _machine_key, submit_capture
 from test_pscube_auto import PROBE, Clock, FakeWindow
 
-FIXTURE = Path(__file__).resolve().parent.parent / 'database_android' / 'test' / 'fixtures' / 'pscube_absent_tab_auto.json'
+FIXTURE = Path(__file__).resolve().parents[2] / 'database_android' / 'test' / 'fixtures' / 'pscube_absent_tab_auto.json'
 SCENES = {s['name']: s for s in json.loads(FIXTURE.read_text(encoding='utf-8'))['scenes']}
 # 取り込み日に選べる直近7日を、模擬ページの日付（10/19が今の営業日）に固定する（試験を流す日に左右されない）。
 RECENT = [(date(2026, 10, 19) - timedelta(days=i)).isoformat() for i in range(7)]

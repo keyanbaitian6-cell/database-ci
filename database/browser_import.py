@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from PIL import Image, ImageDraw
 from auto_capture import AUTO_CAPTURE_JS, AutoCapture
+import error_log
 from file_io import take_notice, write_notice
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page, retry_target
 
@@ -1660,8 +1661,8 @@ class _Bridge:
                 self._window.evaluate_js('window.__databaseRenderAuto && window.__databaseRenderAuto(' +
                                          json.dumps(state, ensure_ascii=False) + ')')
                 self._auto_display = state
-            except Exception:
-                pass
+            except Exception as error:  # noqa: BLE001 - 表示だけの失敗。次の回でまた描く
+                error_log.record(self._layout_folder, 'meruhen.auto.render', error)
 
     def save_overlay_layout(self, raw):
         """Remember where the overlay card is and how big (called on drag / －＋)."""
@@ -2480,7 +2481,8 @@ def run_session(db_path, reports_folder):
     def install_overlay():
         try:
             current = window.get_current_url() or ''
-        except Exception:
+        except Exception as error:  # noqa: BLE001 - URLが読めないときは何も足さない
+            error_log.record(Path(db_path).parent, 'meruhen.overlay.url', error)
             return
         if bridge._connection.showing_error:
             return
@@ -2491,8 +2493,8 @@ def run_session(db_path, reports_folder):
             window.evaluate_js('window.__databaseLayout = ' + json.dumps(bridge._layout['overlay'])
                                + ';\n' + OVERLAY_JS)
             bridge._loaded()
-        except Exception:
-            pass
+        except Exception as error:  # noqa: BLE001 - 表示の失敗で取り込みは止めない。理由は残す
+            error_log.record(Path(db_path).parent, 'meruhen.overlay', error)
 
     stop = threading.Event()
     window.events.closed += stop.set
@@ -2506,14 +2508,15 @@ def run_session(db_path, reports_folder):
                 if not bridge._poll_advance():
                     bridge._auto_tick()
             except Exception as exc:
+                error_log.record(Path(db_path).parent, 'meruhen.auto.tick', exc)
                 state = bridge.get_auto_capture()
                 if state['enabled']:
                     bridge._auto.pause('ON・待機：' + str(exc), state['revision'])
             try:
                 if close_when_finished(bridge, window, Path(db_path).parent):
                     return
-            except Exception:
-                pass
+            except Exception as error:  # noqa: BLE001 - 閉じられなくても見張りは続ける
+                error_log.record(Path(db_path).parent, 'meruhen.auto.close', error)
 
     native_handlers = []
 

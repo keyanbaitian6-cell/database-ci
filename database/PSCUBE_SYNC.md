@@ -89,7 +89,7 @@ P’s CUBE用に移したもの。**メルヘンの記録・設定・ファイ�
 - 利用者の作業（1回）：スクリプトを貼り直して「新バージョン」でデプロイし、スクリプト プロパティに
   `PSCUBE_UPLOAD_KEY` を足す。アプリの雲のボタンで、同じURL・合言葉を入れる。
 - 試験：`tool/test_viewer_drive_script.mjs`（合言葉・形式・上書き）、`test/pscube_day_upload_test.dart`
-  （当日分の中身・送る内容・失敗・合言葉をバックアップに出さない）、`database/test_pscube_android_sync.py`
+  （当日分の中身・送る内容・失敗・合言葉をバックアップに出さない）、`database/tests/test_pscube_android_sync.py`
   （読むファイルの選び方・初回・書きかけ待ち・当日分の統合）。実Driveへの送信・実機での確認は利用者の環境で行う。
 
 ## Apps Script（利用者の作業が1回必要）

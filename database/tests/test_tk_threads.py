@@ -7,6 +7,7 @@ GCがいつ走るかはメモリの使われ方しだいで、作業フォルダ
 ここでは「各試験の本体が始まる瞬間に、別スレッドでGCを走らせる」最悪の場合を毎回わざと起こして確かめる。
 """
 import gc
+import os
 import subprocess
 import sys
 import threading
@@ -15,7 +16,8 @@ import unittest
 import weakref
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1]
+TESTS = Path(__file__).resolve().parent
 
 # 別プロセスで試験を流し、各試験の本体の直前に別スレッドでGCを走らせる。
 # Tkが別スレッドで片付けられたら、その試験名を書き出す（Tclが先にプロセスを落とすこともある）。
@@ -57,7 +59,10 @@ MODULES = ['test_anaslo_browser', 'test_anaslo_download_ui', 'test_anaslo_saiwai
 
 class TkThreadTests(unittest.TestCase):
     def test_tk_tests_leave_nothing_for_another_thread_to_collect(self):
-        run = subprocess.run([sys.executable, '-c', PROBE, *MODULES], cwd=HERE,
+        # 試験は tests/ にあり、試験から読む本体（core など）は database/ にある。両方を読めるようにする。
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join(
+            [str(TESTS)] + [p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]))
+        run = subprocess.run([sys.executable, '-c', PROBE, *MODULES], cwd=HERE, env=env,
                              capture_output=True, text=True, encoding='utf-8', errors='replace',
                              stdin=subprocess.DEVNULL, timeout=600)
         tail = (run.stdout + run.stderr)[-3000:]

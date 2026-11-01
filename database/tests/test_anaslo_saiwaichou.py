@@ -341,7 +341,7 @@ class ConverterScreenTests(unittest.TestCase):
         # Tcl_AsyncDelete でプロセスごと落ちる（2026-10-18）。後片付けは逆順に動く。
         self.addCleanup(gc.collect)
         self.addCleanup(root.destroy)
-        converter_dir = Path(__file__).resolve().parents[1] / 'html_converter'
+        converter_dir = Path(__file__).resolve().parents[2] / 'html_converter'
         if str(converter_dir) not in sys.path:
             sys.path.append(str(converter_dir))
         spec = importlib.util.spec_from_file_location('converter_saiwai_test', converter_dir / 'app.py')
@@ -420,7 +420,7 @@ class NormalAnalysisTests(unittest.TestCase):
         # Tcl_AsyncDelete でプロセスごと落ちる（2026-10-18）。後片付けは逆順に動く。
         self.addCleanup(gc.collect)
         self.addCleanup(root.destroy)
-        converter_dir = Path(__file__).resolve().parents[1] / 'html_converter'
+        converter_dir = Path(__file__).resolve().parents[2] / 'html_converter'
         if str(converter_dir) not in sys.path:
             sys.path.append(str(converter_dir))
         spec = importlib.util.spec_from_file_location('converter_normal_test', converter_dir / 'app.py')

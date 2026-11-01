@@ -591,7 +591,10 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     if (Platform.isAndroid) {
       try {
         await _autoService.invokeMethod<void>('stop');
-      } catch (_) {}
+      } catch (error) {
+        // 常駐（通知）が残る原因を後から調べられるよう、端末のログに残す。
+        debugPrint('自動取り込みの常駐を止められませんでした：$error');
+      }
     }
     // 常駐を止めると画面も普段どおりに戻る。予約中は次の0時まで画面を消さずに暗くしておく。
     // 常駐を止めると画面も普段どおりに戻る。0時に始めた分が終わったら、次に操作されるまで画面を手放す。

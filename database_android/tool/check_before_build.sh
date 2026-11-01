@@ -63,8 +63,8 @@ if ! $LOCAL_ONLY; then
 fi
 
 cd "$ROOT/database"
+# PCの試験はすべて tests/ にある（P’s CUBE・あにすろの試験も2026-11-01に直下から移した）。
 run pc-tests "$PYTHON" -m unittest discover -s tests
-run pc-pscube-tests bash -c '"$0" -m unittest $(ls test_*.py | sed "s/\.py$//")' "$PYTHON"
 
 # Timestamp serialization must also work when the host uses UTC.
 run pc-event-timezone-utc bash -c 'TZ=UTC "$0" -m unittest discover -s tests -p test_event_calendar.py' "$PYTHON"

@@ -115,7 +115,7 @@ This directory is a local mirror of the ChatGPT project “LINE”.
 
 - **APK・`database/bin`・Web公開のビルドの前に、`bash database_android/tool/check_before_build.sh` を流し、最後に「ALL PASSED」と出たときだけビルドする。** 今回の変更に関係する試験だけで済ませない。PC全試験・Flutter全試験とanalyze・閲覧ページをその場でビルドしての画面試験を含むJS全試験を流す。
 - 1つでも失敗したらビルドしない。「今回の変更とは関係ない」と判断する前に、その失敗が過去の修正の再発でないかを調べる（例：古い `build/web` のまま画面試験を流すと誤った結果になる。スクリプトは毎回作り直す）。
-- 不具合を直したら、その再発を捕まえる試験を必ず足す。足した試験はこのスクリプトで毎回流れる場所（`database/tests`・`database/test_*.py`・`database_android/test`・`database_android/tool/test_*.mjs`）に置く。
+- 不具合を直したら、その再発を捕まえる試験を必ず足す。足した試験はこのスクリプトで毎回流れる場所（`database/tests`・`database_android/test`・`database_android/tool/test_*.mjs`）に置く。
 - 報告には、流した試験と件数を書く。流せなかったものがあれば「未確認」と書き、確認済みと言わない。
 
 ## 「同じページか」の判定（再発防止、2026-10-06 利用者指示「同じような過ち繰り返してるから今後間違えないようにして」）

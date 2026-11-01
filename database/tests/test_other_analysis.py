@@ -112,7 +112,7 @@ class OtherAnalysisTests(unittest.TestCase):
         root = tk.Tk()
         root.withdraw()
         self.addCleanup(root.destroy)
-        converter_dir = Path(__file__).resolve().parents[1] / 'html_converter'
+        converter_dir = Path(__file__).resolve().parents[2] / 'html_converter'
         if str(converter_dir) not in sys.path:
             sys.path.append(str(converter_dir))
         spec = importlib.util.spec_from_file_location('converter_other_test', converter_dir / 'app.py')

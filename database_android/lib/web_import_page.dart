@@ -319,7 +319,9 @@ class _WebImportPageState extends State<WebImportPage> {
       if (Platform.isAndroid) {
         try {
           await _autoService.invokeMethod<void>('stop');
-        } catch (_) {}
+        } catch (error) {
+          debugPrint('自動取り込みの常駐を止められませんでした：$error');
+        }
       }
       return;
     }
@@ -620,7 +622,10 @@ class _WebImportPageState extends State<WebImportPage> {
     if (Platform.isAndroid) {
       try {
         await _autoService.invokeMethod<void>('stop');
-      } catch (_) {}
+      } catch (error) {
+        // 常駐（通知）が残る原因を後から調べられるよう、端末のログに残す。
+        debugPrint('自動取り込みの常駐を止められませんでした：$error');
+      }
     }
   }
 
