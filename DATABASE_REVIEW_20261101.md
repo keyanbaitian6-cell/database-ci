@@ -320,3 +320,12 @@ assert.deepEqual(JSON.parse(text).marks.map(m=>m.rack),[537]);
 assert.ok(locks.every(s=>!s.held));
 console.log('模擬確認1件: 両方ok:trueなのに先に保存された538番の印が失われ、537番だけ残った');
 ```
+
+### 追記：利用者の決定・Claudeの対応とCI確定（2026-11-01）
+
+- 上の4件は調査時点（`1b0943b`）の記録。以後の扱いは本項を優先する。
+- **1は仕様として維持、修正・再提案しない**。利用者の決定を `RAINBOW.md`「共有ページから付ける」に記載済み。**2も対応しない**（利用者がほとんど使わないため）。
+- **3・4はClaudeが `6936b9d` で修正済み**。3は不正な設定の原文を `settings.json.broken-日時` に保管してから保存し直し、開けないときは保存を見送る。4は手動保存と取り込み窓を閉じたときのバックアップをSQLiteの写しから出す。`delete_records`・`undo_last_save` の即時バックアップ、P’s CUBEの書き出しは今回の変更範囲に含めない。
+- Codexが再開時に両mainを取得。正本と手元は `4fb1ee1232549e52aedb48a4b20e2f9c76e89278`、database-ciは `7a9df132001c1e80fdbd1d6d964ca695cd3b5a1c` で、後者の包含を確認。Claudeの変更差分・共有記録・仕様の追記を確認した。
+- **CI [41274330798](https://github.com/imakurudev-eng/database/actions/runs/41274330798) は full・pc (windows-latest, UTC)・pc (ubuntu-latest, UTC) の全3ジョブ成功**。CodexがGitHub接続ツールのジョブ一覧で直接確認し、fullの `Complete pre-build gate` 段も成功。ClaudeのローカルPC759件成功の記録と、このCIの直接確認を区別する。Codexはローカル試験・CIを再実行していない。
+- 旧模擬コードは調査時点の問題を説明する履歴であり、現在の修正後コードで同じ結果になるとは扱わない。追加の製品修正・Google変更・実機操作・ビルド・公開は行っていない。根拠：[修正コミット](https://github.com/imakurudev-eng/database/commit/6936b9d)、`AI_COLLABORATION.md`「Codex 2回目の4件への利用者の決定と、3・4の修正（PC）」。
