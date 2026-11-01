@@ -1537,6 +1537,12 @@ class AutoPilot:
         return (probe.get('kind') == '全台一覧' and isinstance(days, list) and probe.get('day') in days and
                 day_tab_absent(self.target_day, days))
 
+    def capture_started(self):
+        """保存の開始時に呼ぶ。自動完了後に手動で使い始めたら、古い完了を解除する。"""
+        with self._lock:
+            if not self.auto.state()['enabled']:
+                self.completed = None
+
     def finished(self, result=None, error=None):
         """保存の結果（手動の取り込みでも呼ばれる）。自動で始めた取り込みだけを数える。"""
         with self._lock:
@@ -1896,6 +1902,7 @@ def run_session(db_path, export_path):
 
         def submit_page(self, raw):
             with self._capture_lock:
+                self.pilot.capture_started()
                 try:
                     result = self._submit_page(raw)
                 except Exception as error:
@@ -1994,8 +2001,14 @@ def run_session(db_path, export_path):
             except Exception:
                 pass
             try:
-                if close_when_finished(bridge.pilot, bridge._capture_lock.locked, window, data_dir):
-                    return
+                # 保存開始と終了判定を同じロックで直列化する。保存中かを調べた直後に
+                # 手動保存が始まり、古い完了を使って窓を閉じる競合も防ぐ。
+                if bridge._capture_lock.acquire(blocking=False):
+                    try:
+                        if close_when_finished(bridge.pilot, lambda: False, window, data_dir):
+                            return
+                    finally:
+                        bridge._capture_lock.release()
             except Exception:
                 pass
 

@@ -521,6 +521,87 @@ class Handlers:
 
 
 class SessionStartTests(unittest.TestCase):
+    def test_close_check_serializes_with_saving_and_releases_lock_on_error(self):
+        import pscube_import
+        for fails in (False, True):
+            with self.subTest(fails=fails), tempfile.TemporaryDirectory() as tmp:
+                captured = {}
+                window = types.SimpleNamespace(
+                    events=types.SimpleNamespace(before_load=Handlers(), loaded=Handlers(), closed=Handlers()),
+                    evaluate_js=lambda script: None, get_current_url=lambda: pscube_import.ROOT_URL)
+
+                def create_window(*args, **kwargs):
+                    captured['bridge'] = kwargs['js_api']
+                    return window
+
+                def close_check(pilot, saving, *args):
+                    self.assertTrue(captured['bridge']._capture_lock.locked())
+                    self.assertFalse(saving())
+                    if fails:
+                        raise OSError('模擬終了失敗')
+                    return False
+
+                def start(**kwargs):
+                    bridge = captured['bridge']
+                    loop = next(call.kwargs['target'] for call in threads.call_args_list
+                                if call.kwargs.get('name') == 'pscube-auto')
+                    transitions = iter([bridge._capture_lock.acquire, bridge._capture_lock.release])
+                    with mock.patch.object(bridge.pilot, 'tick', side_effect=lambda: next(transitions)()):
+                        # 実通信やスレッドを使わず、保存中→保存終了の順で2周する。
+                        loop()
+                    self.assertEqual(close.call_count, 1, '保存中の周回では終了判定しない')
+                    self.assertFalse(bridge._capture_lock.locked(), '例外でもロックを戻す')
+
+                fake = types.SimpleNamespace(create_window=create_window, start=start)
+                stop = mock.Mock()
+                stop.wait.side_effect = [False, False, True]
+                with mock.patch.dict(sys.modules, {'webview': fake}), \
+                        mock.patch.object(pscube_import.threading, 'Thread') as threads, \
+                        mock.patch.object(pscube_import.threading, 'Event', return_value=stop), \
+                        mock.patch.object(pscube_import, 'close_when_finished', side_effect=close_check) as close:
+                    pscube_import.run_session(Path(tmp) / 'data' / 'pscube.sqlite3', Path(tmp) / 'viewer.json')
+
+    def test_manual_save_clears_auto_completion_before_parsing_even_on_failure(self):
+        import pscube_import
+        for fails in (False, True):
+            with self.subTest(fails=fails), tempfile.TemporaryDirectory() as tmp:
+                captured = {}
+                window = types.SimpleNamespace(
+                    events=types.SimpleNamespace(before_load=Handlers(), loaded=Handlers(), closed=Handlers()),
+                    evaluate_js=lambda script: None, get_current_url=lambda: pscube_import.ROOT_URL)
+
+                def create_window(*args, **kwargs):
+                    captured['bridge'] = kwargs['js_api']
+                    return window
+
+                def save(*args):
+                    bridge = captured['bridge']
+                    self.assertTrue(bridge._capture_lock.locked())
+                    self.assertIsNone(bridge.pilot.completed, '解析・保存前に古い完了を解除する')
+                    if fails:
+                        raise ValueError('模擬保存失敗')
+                    return {'next_url': 'https://www.pscube.jp/next', 'remaining': 3}
+
+                def start(**kwargs):
+                    bridge = captured['bridge']
+                    bridge.pilot.completed = '前の自動取り込みが完了'
+                    if fails:
+                        with self.assertRaisesRegex(ValueError, '模擬保存失敗'):
+                            bridge.submit_page('{}')
+                    else:
+                        bridge.submit_page('{}')
+                    self.assertIsNone(bridge.pilot.completed)
+                    self.assertFalse(bridge._capture_lock.locked())
+                    for handler in window.events.closed.items:
+                        handler()
+
+                fake = types.SimpleNamespace(create_window=create_window, start=start)
+                with mock.patch.dict(sys.modules, {'webview': fake}), \
+                        mock.patch.object(pscube_import, 'submit_capture', side_effect=save), \
+                        mock.patch.object(pscube_import.threading, 'Thread'):
+                    db = Path(tmp) / 'data' / 'pscube.sqlite3'
+                    pscube_import.run_session(db, Path(tmp) / 'data' / 'viewer.json')
+
     def test_window_keeps_cookies_in_the_data_folder_instead_of_private_mode(self):
         import pscube_import
         started = {}
@@ -593,6 +674,20 @@ class CloseWhenFinishedTests(unittest.TestCase):
         self.assertIsNone(self.pilot.completed)
         self.assertFalse(self.close())
         self.assertEqual(self.destroyed, [])
+
+    def test_manual_use_after_auto_finished_keeps_window_open(self):
+        for error in (None, '模擬保存失敗'):
+            with self.subTest(error=error):
+                self.capture('completed-before-manual', None)
+                self.saving = True
+                self.assertFalse(self.close())
+                self.pilot.capture_started()
+                self.assertIsNone(self.pilot.completed)
+                self.pilot.finished(
+                    result={'next_url': 'https://www.pscube.jp/next', 'remaining': 3}, error=error)
+                self.saving = False
+                self.assertFalse(self.close(), '手動取得が成功・失敗どちらでも古い完了で閉じない')
+                self.assertEqual(self.destroyed, [])
 
     def test_closes_even_if_the_notice_cannot_be_written(self):
         self.capture('E', None)
