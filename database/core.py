@@ -1409,6 +1409,46 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     return count
 
 
+def snapshot_store(path):
+    """本体DBを1つの時点で写し、その写しを開いた Store を渡す（with で使う）。
+
+    export_backup はイベント・削除印を読んでから台を読む。その間に別の接続が台を消すと、
+    台も削除印も入っていないバックアップになっていた（2026-11-01、Codexの洗い出し4）。
+    写しはSQLiteのバックアップ機能で一度に取るので、書き込み側を待たせるのは写す間だけ。
+    """
+    import tempfile
+    from contextlib import closing, contextmanager
+
+    @contextmanager
+    def opened():
+        with tempfile.TemporaryDirectory(prefix='database-snapshot-') as directory:
+            copy = Path(directory) / 'snapshot.sqlite3'
+            with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, \
+                    closing(sqlite3.connect(copy)) as target:
+                source.backup(target)
+            store = Store(copy, recording=False)
+            try:
+                yield store
+            finally:
+                store.close()
+    return opened()
+
+
+def backup_from_snapshot(db_path, data_dir, *, notices=None):
+    """共有編集は本体へ取り込み、バックアップは同じ時点の写しから書く（自動出力 output_worker と同じ順番）。"""
+    from contextlib import closing
+    try:
+        with closing(Store(db_path)) as source:
+            sync_shared_history(source, data_dir, notices)
+    except (OSError, sqlite3.Error) as error:
+        import error_log
+        error_log.record(data_dir, 'backup.shared_import', error)
+        if notices is not None:
+            notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
+    with snapshot_store(db_path) as store:
+        return auto_backup(store, data_dir, notices=notices, import_shared=False)
+
+
 def export_backup(store, path, location=None, day=None, since=None):
     """Write saved records as a portable JSON file (share via Drive, USB, etc.).
 
@@ -1670,18 +1710,55 @@ RECENT_BACKUP_NAME = 'database-backup-recent.json'
 RECENT_BACKUP_DAYS = 7
 
 
-def load_settings(data_dir):
+def _read_settings(data_dir):
+    """(設定, 状態)。状態は 'ok'（読めた）・'missing'（まだ無い）・'locked'（あるが開けない）・'broken'（中身が壊れている）。"""
+    path = Path(data_dir) / SETTINGS_NAME
     try:
-        loaded = json.loads((Path(data_dir) / SETTINGS_NAME).read_text(encoding='utf-8'))
-        return loaded if isinstance(loaded, dict) else {}
-    except (OSError, ValueError):
-        return {}
+        text = path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return {}, 'missing'
+    except UnicodeDecodeError:
+        return {}, 'broken'
+    except OSError:
+        return {}, 'locked'
+    try:
+        loaded = json.loads(text)
+    except ValueError:
+        return {}, 'broken'
+    return (loaded, 'ok') if isinstance(loaded, dict) else ({}, 'broken')
+
+
+def load_settings(data_dir):
+    return _read_settings(data_dir)[0]
 
 
 def save_settings(data_dir, **updates):
-    settings = load_settings(data_dir)
-    settings.update(updates)
+    """設定へ updates を足して保存する。
+
+    2026-11-01：読めない設定を空として扱い、次の保存で原文（同期先など）を上書きしていた。
+    中身が壊れていたら、上書きの前に原文を `settings.json.broken-日時` として残し、errors.log に書く。
+    ファイルはあるのに開けない（同期ソフト等の一時的なロック）ときは、正しい原文を消さないよう保存しない。
+    """
+    import error_log
+    settings, state = _read_settings(data_dir)
     path = Path(data_dir) / SETTINGS_NAME
+    if state == 'locked':
+        error_log.note(data_dir, 'settings.locked', f'{SETTINGS_NAME} を開けないため、設定の保存を見送りました（原文は変更していません）')
+        settings.update(updates)
+        return settings
+    if state == 'broken':
+        keep = path.with_name(f'{SETTINGS_NAME}.broken-{datetime.now().strftime("%Y%m%d-%H%M%S")}')
+        try:
+            if not keep.exists():
+                shutil.copy2(path, keep)
+            error_log.note(data_dir, 'settings.broken',
+                           f'{SETTINGS_NAME} が読めない形だったため、原文を {keep.name} に残してから保存し直しました')
+        except OSError as error:
+            # 原文を残せないなら上書きしない（同期先などを失わない）。
+            error_log.record(data_dir, 'settings.broken', error, detail='原文を残せないため保存を見送りました')
+            settings.update(updates)
+            return settings
+    settings.update(updates)
     path.parent.mkdir(parents=True, exist_ok=True)
     with atomic_writer(path) as out:
         json.dump(settings, out, ensure_ascii=False, indent=2)

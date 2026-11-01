@@ -19,7 +19,7 @@ from variety_rainbow import build_variety_tab
 from output_worker import OutputWorker, refresh_outputs
 from backup_status_ui import BackupStatusPanel
 
-from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, import_backup, normalize_machine_name,
+from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, snapshot_store, import_backup, normalize_machine_name,
                   latest_backup_file, list_snapshots, load_settings, new_backup_files, report, restore_backup, save_settings,
                   summary_report, undo_last_save, pull_shared_events, pull_shared_rainbow, pull_shared_history)
 
@@ -1017,11 +1017,9 @@ def main():
                 filetypes=[('JSON', '*.json'), ('すべて', '*.*')])
         if not path:
             return
-        db = Store(ROOT / 'data' / 'database.sqlite3')
-        try:
+        # 同じ時点の写しから書く。書き出し中に取り込み窓などが台を消しても、台も削除印も無いファイルにしない（2026-11-01）。
+        with snapshot_store(ROOT / 'data' / 'database.sqlite3') as db:
             count = export_backup(db, path, location=location, day=day)
-        finally:
-            db.close()
         scope_bits = [STORE_NAMES[location] if location else '全店舗', day if day else '全期間']
         target_text = '・'.join(scope_bits)
         logbox.insert('end', f'バックアップを書き出しました（{target_text}）：{count}件 → {path}\n')

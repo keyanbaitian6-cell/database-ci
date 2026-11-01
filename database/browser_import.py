@@ -31,7 +31,7 @@ from pscube_connection import BrowserConnection, install_webview2_handlers, pres
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
 import pachinko
 from core import (EXCLUDED_MACHINE_NOTES, EXCLUDED_MACHINE_WORDS, STORE_NAMES, Store, is_excluded_machine,
-                  normalize_machine_name, auto_backup, day_fully_graphed, duplicate_warning,
+                  normalize_machine_name, backup_from_snapshot, day_fully_graphed, duplicate_warning,
                   graph_done, machine_last_capture, machine_progress, no_hits, stale_capture_cutoff, progress_text, remember_for_undo, undo_last_save)
 
 BROWSER_URLS = {
@@ -2583,11 +2583,8 @@ def backup_after_session(children, db_path):
             child.wait()
         except Exception:  # noqa: BLE001 - a vanished child has nothing to wait for
             pass
-    store = Store(db_path)
-    try:
-        return auto_backup(store, Path(db_path).parent)
-    finally:
-        store.close()
+    # 同じ時点の写しから書く（書き出し中に別の処理が台を消しても、台も削除印も無いファイルにしない。2026-11-01）。
+    return backup_from_snapshot(db_path, Path(db_path).parent)
 
 
 if __name__ == '__main__':

@@ -531,7 +531,7 @@ function meruhenWrite(folder, file, name, text) {
   throw new MeruhenCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 // BEGIN GENERATED VIEWER PARTS
-const SCRIPT_RELEASE = 'bf06b391c37f';
+const SCRIPT_RELEASE = '52f50a24d3c6';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -775,7 +775,7 @@ function vpMaintain(folder, site, props) {
   catch (error) { console.log('古い閲覧用キャッシュの整理は次回再試行します：' + String(error.message || error)); }
 }
 
-const APPLICATION_RELEASE = 'bf06b391c37f';
+const APPLICATION_RELEASE = '52f50a24d3c6';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
