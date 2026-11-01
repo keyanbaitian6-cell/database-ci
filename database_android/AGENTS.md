@@ -17,4 +17,4 @@
 - **閲覧ページ（database-viewer）を公開・更新するときは、必ず `tool/stage_viewer.py` を通す**。`build/web` には実際の記録（`assets/database_seed.json`）が同梱されるため、そのまま公開しない。
 - 作業が終わったらコミットし、ルートの `AGENTS.md` の「CI を動かす GitHub を月の前半・後半で使い分ける」に従う。push前に日本時間の日付を確認し、1〜15日は正本の `main`、16日〜月末は `keyanbaitian6-cell/database-ci` の `main` へ送る。履歴は1本に保ち、期間外の側にはpushしない。採点は `2026-09-29-v12`（当日500G以下と、サイトの数値が異常な台は採点しない。大当たり0回でグラフの無い台は終点・維持0点）が現行。
 
-詳細はリポジトリ直下の `AI_COLLABORATION.md` を参照。
+詳細はリポジトリ直下の `AI_COLLABORATION.md`（今月分）と `ai_collaboration/`（過去の月別の記録）を参照。
