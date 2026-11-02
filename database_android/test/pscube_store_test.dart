@@ -527,6 +527,63 @@ void main() {
     expect((await store.nextTarget(day, 'bottom')).remaining, 2);
   });
 
+  test('いつもの機種数の8割に満たない一覧は、開き直して同じでも自動では受け付けない（2026-11-03）', () async {
+    // 11/1は19機種・11/2は38機種（いつもは59機種）で「すべて取り込みました」になった。サイトが20件ずつ届ける一覧の
+    // 途中で止まった一覧が、開き直しても同じに返ったため受け付けていた。
+    Map<String, dynamic> named(String name) => {
+      ...machine,
+      'machine': name,
+      'url': '${PscubeStore.root}cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&k=$name',
+    };
+    final all = [for (var n = 0; n < 10; n++) named('機種$n')];
+    // 10機種そろった日の記録（いつもの機種数＝10）。途中までの日（3機種）があっても下がらない。
+    for (final (i, m) in all.indexed) {
+      for (final date in ['2026-09-29', if (i < 3) '2026-09-30']) {
+        final r = {...record(date), 'machine': m['machine']};
+        await store.db.insert('records', {
+          'key': jsonEncode([
+            r['store'],
+            r['rate'],
+            r['machine'],
+            r['rack'],
+            r['day'],
+          ]),
+          'payload': jsonEncode(r),
+        });
+      }
+    }
+    await store.importPage(page(PscubeStore.index, all), PscubeStore.index);
+    final cut = all.sublist(0, 7);
+    for (var attempt = 0; attempt < 3; attempt++) {
+      await expectLater(
+        store.importPage(page(PscubeStore.index, cut), PscubeStore.index),
+        throwsA(
+          isA<PscubeIndexRetry>()
+              .having((e) => e.short, 'short', isTrue)
+              .having((e) => e.shown, 'shown', 7)
+              .having((e) => e.usual, 'usual', 10),
+        ),
+        reason: '同じ途中の一覧が何度返っても受け付けない',
+      );
+    }
+    expect((await store.nextTarget(day, 'bottom')).remaining, 10);
+    // 8割（8機種）なら今までどおり：1回目は確かめ、開き直して同じなら受け付ける（撤去の日）。
+    final eight = all.sublist(0, 8);
+    await expectLater(
+      store.importPage(page(PscubeStore.index, eight), PscubeStore.index),
+      throwsA(isA<PscubeIndexRetry>().having((e) => e.short, 'short', isFalse)),
+    );
+    await store.importPage(page(PscubeStore.index, eight), PscubeStore.index);
+    expect((await store.nextTarget(day, 'bottom')).remaining, 8);
+    // 手で一覧を開いて取り込んだときは受け付ける。
+    await store.importPage(
+      page(PscubeStore.index, cut),
+      PscubeStore.index,
+      manual: true,
+    );
+    expect((await store.nextTarget(day, 'bottom')).remaining, 7);
+  });
+
   test('手動のときは、飛ばした上の機種へ戻らず、保存したページの次へ進む（最後まで来たら最初へ回る）', () async {
     Map<String, dynamic> named(String name) => {
       ...machine,

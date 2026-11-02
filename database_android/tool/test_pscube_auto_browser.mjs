@@ -107,7 +107,7 @@ async function install(url, api, script = overlay) {
   await page.evaluate(script);
 }
 // 一覧待機の期限に達した場合は、途中のページを保存APIへ渡さない。
-await install(mUrl, {result: {}}, overlay.replace('90000 * scale', '1'));
+await install(mUrl, {result: {}}, overlay.replace('limit * scale', '1'));   // 上限（機種一覧120秒・全台一覧90秒）を1ミリ秒に
 await page.evaluate(() => window.__pscubeStartCapture());
 await page.waitForFunction(() => window.__calls.some(c => c[0] === 'failed'));
 assert.equal(await page.evaluate(() => window.__calls.some(c => c[0] === 'submit')), false);

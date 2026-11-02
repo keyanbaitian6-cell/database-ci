@@ -121,11 +121,24 @@ const pscubeAbsentRacksKey = 'absent_table_racks';
 /// 0時に自動取り込みを始める予約（[PscubeStore.midnightAutoEnabled]）。
 const pscubeMidnightAutoKey = 'midnight_auto';
 
-/// 減った機種一覧を、開き直してもう一度確かめる必要がある。
+/// 自動取り込みで、いつもの機種数（直近 [pscubeUsualIndexDays] 日の記録で1日にそろった機種のいちばん多い数）の
+/// この割合に満たない機種一覧は、開き直して同じ一覧でも受け付けない（2026-11-03 利用者「pscubeまた完了したとかいってる
+/// のに全機種読み込めてないな。今回はipで蹴られたりもしてない」。11/1は19機種・11/2は38機種で「すべて取り込みました」。
+/// サイトが20件ずつ届ける一覧の1回目・2回目で止まった一覧が、開き直しても同じだったため受け付けていた。PC版と同じ）。
+const pscubeIndexShortRatio = 0.8;
+const pscubeUsualIndexDays = 14;
+
+/// 減った機種一覧を、開き直してもう一度確かめる必要がある。[usual] があれば、いつもの機種数より大幅に少ない
+/// （途中までしか読めていない）一覧で、開き直して同じでも受け付けない。
 class PscubeIndexRetry implements Exception {
-  const PscubeIndexRetry();
+  const PscubeIndexRetry({this.shown, this.usual});
+  final int? shown;
+  final int? usual;
+  bool get short => usual != null;
   @override
-  String toString() => '機種一覧が減ったため、開き直してもう一度確認します。';
+  String toString() => short
+      ? '機種一覧が途中までしか読めていません（いつもの$usual機種に対して$shown機種）。開き直してもう一度確認します。'
+      : '機種一覧が減ったため、開き直してもう一度確認します。';
 }
 
 /// P's CUBE records live apart from the Meruhen database and its store codes.
@@ -919,8 +932,14 @@ class PscubeStore {
     };
   }
 
-  /// 減った一覧は、開き直した後も同じ集合なら受け付ける。
+  /// 減った一覧は、開き直した後も同じ集合なら受け付ける。ただし、いつもの機種数の [pscubeIndexShortRatio] に
+  /// 満たない一覧は受け付けない（途中で止まった一覧が毎回同じに返ることがある）。
   Future<void> _checkIndexComplete(List<Map<String, dynamic>> machines) async {
+    final usual = await _usualMachineCount();
+    if (usual != null && machines.length < usual * pscubeIndexShortRatio) {
+      _indexConfirmation = null;
+      throw PscubeIndexRetry(shown: machines.length, usual: usual);
+    }
     final rows = await db.query(
       'state',
       columns: ['value'],
@@ -944,6 +963,24 @@ class PscubeStore {
       throw const PscubeIndexRetry();
     }
     _indexConfirmation = null;
+  }
+
+  /// いつもの機種数：記録のある直近 [pscubeUsualIndexDays] 日で、1日にそろった機種（取り込み対象外を除く）の
+  /// いちばん多い数。記録が無ければ null（初めての取り込みは確かめない）。途中までの日があっても下がらない。
+  Future<int?> _usualMachineCount() async {
+    final byDay = <String, Set<String>>{};
+    for (final row in await db.query('records', columns: ['key'])) {
+      final key = jsonDecode(row['key'] as String);
+      if (key is! List || key.length < 5 || key[4] is! String) continue;
+      if (isExcludedMachine(key[2] as String?)) continue;
+      (byDay[key[4] as String] ??= {}).add('${key[0]}|${key[1]}|${key[2]}');
+    }
+    if (byDay.isEmpty) return null;
+    final days = byDay.keys.toList()..sort();
+    return days.reversed
+        .take(pscubeUsualIndexDays)
+        .map((d) => byDay[d]!.length)
+        .reduce((a, b) => a > b ? a : b);
   }
 
   Future<({String? url, int remaining})> nextTarget([

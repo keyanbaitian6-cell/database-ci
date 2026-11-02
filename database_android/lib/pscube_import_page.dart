@@ -403,6 +403,8 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         isCurrent: () => mounted && (page == null || _page == page),
         scroll: (action) async {
           // 1回の問い合わせで、決められた動きを1つだけ行い、台数と位置を返す。
+          // 動かしたら scroll の通知を出す。サイトの続きの読み込み（jquery.inview）は、その通知が来たときだけ
+          // 位置を取り直す（PC版 `SCROLL_SCRIPT` の 2026-10-28 の修正。Androidには入っていなかった。2026-11-03）。
           final move = switch (action) {
             PscubeScroll.none => '',
             PscubeScroll.step => 'window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));',
@@ -419,6 +421,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           const list = document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
           if (!list) return '-1|0';
           $move
+          ${move.isEmpty ? '' : "window.dispatchEvent(new Event('scroll'));"}
           const count = $countJs;
           const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
           return count + '|' + (bottom ? 1 : 0);
@@ -930,8 +933,11 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           // 3回目は開き直さない（この後は待機）。
           store.resetIndexConfirmation();
           _autoMessage(
-            'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
-            '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）',
+            error.short
+                ? 'ON・機種一覧が途中までしか読めていません（いつもの${error.usual}機種に対して${error.shown}機種）。'
+                      '3回開き直しても同じでした。待機中（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）'
+                : 'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
+                      '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）',
           );
         } else {
           _autoMessage('ON・機種一覧を開き直し、もう一度確認します（$count回目）');

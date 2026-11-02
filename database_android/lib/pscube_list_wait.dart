@@ -42,8 +42,14 @@ Future<void> waitForPscubeList({
   final pause = delay ?? (duration) => Future<void>.delayed(duration);
   FormatException timeout() =>
       const FormatException('一覧の読み込みが時間切れになりました。保存せずに再試行します。');
+  final limit = expectedCount == null
+      ? pscubeIndexListTimeout
+      : pscubeListTimeout;
+  final maxTicks = expectedCount == null
+      ? pscubeIndexListMaxTicks
+      : pscubeListMaxTicks;
   Duration remaining() {
-    final left = pscubeListTimeout - (now() - started);
+    final left = limit - (now() - started);
     if (left <= Duration.zero) throw timeout();
     return left;
   }
@@ -69,7 +75,7 @@ Future<void> waitForPscubeList({
   var idleNudges = 0;
   var armed = true;
   var action = PscubeScroll.none;
-  for (var tick = 0; tick < pscubeListMaxTicks; tick++) {
+  for (var tick = 0; tick < maxTicks; tick++) {
     if (!isCurrent()) return;
     final view = await bounded(() => scroll(action));
     action = PscubeScroll.none;
@@ -85,8 +91,13 @@ Future<void> waitForPscubeList({
     } else if (view.atBottom) {
       quiet++;
     }
+    // 件数がちょうど20の倍数で止まったときは、続きがある見込みが高いので、着き直す回数を増やす
+    // （2026-11-03、11/1は20件・11/2は40件の区切りで止まった一覧を読み取った）。
+    final needed = last > 0 && last % pscubeListChunk == 0
+        ? pscubeUnknownListChunkNudges
+        : pscubeUnknownListNudges;
     final done = expectedCount == null
-        ? quiet >= 16 && idleNudges >= pscubeUnknownListNudges
+        ? quiet >= 16 && idleNudges >= needed
         : view.count >= expectedCount && quiet >= 1;
     if (done) {
       await wait(const Duration(milliseconds: 300));
@@ -119,5 +130,15 @@ const pscubeListTimeout = Duration(seconds: 90);
 /// ループ回数の安全上限。実時間の上限は [pscubeListTimeout]。
 const pscubeListMaxTicks = 360;
 
+/// 台数が不明の一覧（機種一覧）の時間とループ回数の上限。20件の区切りで止まったときに着き直しを増やした分
+/// （2026-11-03）、長い一覧でも読み切れるよう長くする。同じページの中で下へ送るだけで、サイトへのアクセスは増えない。
+/// PC版 `SCROLL_SCRIPT` と同じ。
+const pscubeIndexListTimeout = Duration(seconds: 120);
+const pscubeIndexListMaxTicks = 480;
+
 /// 台数が不明の一覧で、終わる前に少し戻って下へ着き直す回数（PC版 `SCROLL_SCRIPT` と同じ）。
 const pscubeUnknownListNudges = 2;
+
+/// サイトが機種一覧を届ける件数と、件数がちょうどその倍数で止まったときに着き直す回数（PC版と同じ）。
+const pscubeListChunk = 20;
+const pscubeUnknownListChunkNudges = 3;

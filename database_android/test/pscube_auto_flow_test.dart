@@ -447,6 +447,45 @@ void main() {
       expect(await active(tester), keys);
       await finish(tester);
     });
+
+    testWidgets('いつもの機種数より大幅に少ない一覧は、同じでも受け付けず3回で止めて知らせる（2026-11-03）', (
+      tester,
+    ) async {
+      // 11/1は19機種・11/2は38機種（いつもは59機種）で「すべて取り込みました」になった件。
+      final keys = await seedActive(tester, 1);
+      await tester.runAsync(() async {
+        for (final key in keys) {
+          final [store_, rate, name] = jsonDecode(key) as List;
+          await store.db.insert('records', {
+            'key': jsonEncode([store_, rate, name, 1, '2026-10-30']),
+            'payload': jsonEncode({
+              'store': store_,
+              'rate': rate,
+              'machine': name,
+              'rack': 1,
+              'day': '2026-10-30',
+            }),
+          });
+        }
+      });
+      await mount(tester);
+      for (var i = 1; i <= 3; i++) {
+        await tick(tester);
+        expect(platform.web.captures, hasLength(i));
+      }
+      expect(
+        platform.web.pageReloads,
+        2,
+        reason: '同じ2機種の一覧が返り続けても受け付けず、3回目は開き直さない',
+      );
+      expect(
+        find.textContaining('途中までしか読めていません（いつもの3機種に対して2機種）'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('すべて取り込みました'), findsNothing);
+      expect(await active(tester), keys, reason: '途中の一覧で機種の並びを上書きしない');
+      await finish(tester);
+    });
   });
 
   // 0時の予約（2026-10-26）：画面を開いたまま0時をまたぐと、前日を指定して自動取り込みを始める。

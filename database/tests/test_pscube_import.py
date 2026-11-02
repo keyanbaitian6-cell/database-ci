@@ -180,6 +180,53 @@ class PscubeImportTests(unittest.TestCase):
         self.assertEqual(self.store._state('active_machine_keys'), before)
         backup.assert_not_called()
 
+    def test_auto_never_accepts_an_index_far_below_the_usual_machine_count(self):
+        # 2026-11-03 利用者「pscubeまた完了したとかいってるのに全機種読み込めてないな」：11/1は19機種・11/2は38機種
+        # （いつもは59機種）。途中で止まった一覧が開き直しても同じに返り、「同じなら受け付ける」で保存されていた。
+        from auto_capture import AutoCapture
+        from pscube_import import AutoPilot, submit_capture
+        from test_pscube_auto import Clock, FakeWindow, PROBE
+        machines = [{**self.machines[0], 'machine': f'L機種{n}',
+                     'url': ROOT_URL + f'cgi-bin/nc-v05-011.php?cd_ps=2&bai=20&nmk_kisyu=L機種{n}'}
+                    for n in range(10)]
+        # 10機種そろった日の記録（いつもの機種数＝10）と、途中までの日（3機種）。
+        with self.store.db:
+            for i, m in enumerate(machines):
+                for day in ('2026-10-02',) + (('2026-10-03',) if i < 3 else ()):
+                    r = dict(store=m['store'], rate=m['rate'], machine=m['machine'], rack=100 + i, day=day)
+                    self.store.db.execute('INSERT INTO records VALUES (?,?)',
+                                          (json.dumps([m['store'], m['rate'], m['machine'], 100 + i, day]),
+                                           json.dumps(r, ensure_ascii=False)))
+        self.assertEqual(self.store._usual_machine_count(), 10)
+        pilot = AutoPilot(FakeWindow(), PROBE, auto=AutoCapture(clock=Clock(), minimum=5, maximum=60, default=10))
+        pilot.configure(True, 10)
+        self.store.import_page(self.page(self.index_url, machines), self.index_url)
+        before = self.store._state('active_machine_keys')
+        results = []
+        with patch('pscube_import.auto_backup', return_value='backup') as backup:
+            for _ in range(3):   # 同じ7機種の一覧が3回返る
+                pilot.pending = 'index'
+                result = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
+                                        pilot, self.page(self.index_url, machines[:7]), self.index_url)
+                pilot.finished(result=result)
+                pilot.loaded()
+                results.append(result)
+        self.assertTrue(all(r['retry_index'] and r['short'] == [7, 10] for r in results))
+        self.assertEqual([r.get('reload', True) for r in results], [True, True, False])
+        self.assertEqual(self.store._state('active_machine_keys'), before, '途中の一覧で機種の並びを上書きしない')
+        self.assertIn('途中までしか読めていません（いつもの10機種に対して7機種）', pilot.auto.state()['message'])
+        self.assertIsNone(pilot.completed, '「すべて取り込みました」にしない')
+        backup.assert_not_called()
+        # 8割（8機種）なら今までどおり、開き直して同じなら受け付ける。手動は受け付ける。
+        with self.assertRaises(PscubeIndexRetry) as retry:
+            self.store.import_page(self.page(self.index_url, machines[:8]), self.index_url)
+        self.assertIsNone(retry.exception.usual)
+        self.store.index_confirmation = retry.exception.keys
+        self.store.import_page(self.page(self.index_url, machines[:8]), self.index_url)
+        self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 8)
+        self.store.import_page(self.page(self.index_url, machines[:7]), self.index_url, manual=True)
+        self.assertEqual(len(json.loads(self.store._state('active_machine_keys'))), 7)
+
     def test_direction_picks_the_machine_from_the_top_or_the_bottom_of_the_list(self):
         self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
         first, last = self.machines[0]['url'], self.machines[-1]['url']

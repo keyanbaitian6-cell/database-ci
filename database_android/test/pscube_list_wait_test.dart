@@ -156,6 +156,33 @@ void main() {
     }
   });
 
+  // 2026-11-03：11/1は20件・11/2は40件の区切りで止まった一覧を読み取った。件数がちょうど20の倍数で止まったときは
+  // 続きがある見込みが高いので、着き直す回数を増やす（2回→3回）。
+  test('件数が20の倍数で止まったら、着き直しを増やして続きを待つ', () async {
+    final list = FakeList(total: 61, first: 20, ignoredArrivals: 3);
+    await waitForPscubeList(
+      isCurrent: () => true,
+      scroll: list.scroll,
+      delay: list.delay,
+      elapsed: () => list.elapsed,
+    );
+    expect(list.count, 61, reason: '着き直しが2回のままだと20件で終わっていた');
+    // 本当にちょうど40件の一覧も、着き直しを4回確かめてから終わる（時間の上限内）。
+    final exact = FakeList(total: 40, first: 20);
+    await waitForPscubeList(
+      isCurrent: () => true,
+      scroll: exact.scroll,
+      delay: exact.delay,
+      elapsed: () => exact.elapsed,
+    );
+    expect(exact.count, 40);
+    expect(
+      exact.actions.where((a) => a == PscubeScroll.nudge).length,
+      pscubeUnknownListChunkNudges,
+    );
+    expect(exact.elapsed, lessThan(pscubeListTimeout));
+  });
+
   test('多数の機種で増えるたびに戻り回数を数え直し最後まで待つ', () async {
     var count = 20;
     var bottom = false;
@@ -232,7 +259,7 @@ void main() {
     expect(elapsed, pscubeListTimeout);
   });
 
-  test('増加・戻り・問い合わせの時間も含めて90秒で打ち切る', () async {
+  test('増加・戻り・問い合わせの時間も含めて、台数不明の一覧は120秒で打ち切る', () async {
     var elapsed = const Duration(hours: 1);
     var count = 20;
     var bottom = true;
@@ -258,7 +285,8 @@ void main() {
       ),
       throwsFormatException,
     );
-    expect(elapsed, const Duration(hours: 1, seconds: 90));
+    // 機種一覧（台数不明）は120秒（2026-11-03、20件の区切りで着き直しを増やした分。以前は90秒）。
+    expect(elapsed, const Duration(hours: 1) + pscubeIndexListTimeout);
     expect(count, greaterThan(140));
   });
 
@@ -286,8 +314,9 @@ void main() {
     await expectLater(
       waitForPscubeList(
         isCurrent: () => true,
-        elapsed: () =>
-            reads++ == 0 ? Duration.zero : const Duration(milliseconds: 89990),
+        elapsed: () => reads++ == 0
+            ? Duration.zero
+            : pscubeIndexListTimeout - const Duration(milliseconds: 10),
         scroll: (_) => never.future,
       ),
       throwsFormatException,

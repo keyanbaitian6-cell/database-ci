@@ -65,7 +65,10 @@ SCROLL_SCRIPT = r'''(async () => {
   const findList = () => document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
   const target = typeof expectedCount === 'number' ? expectedCount : null;
   const scale = typeof scrollDelayScale === 'number' ? scrollDelayScale : 1;   // 試験用：待ち時間の倍率
-  const deadline = performance.now() + 90000 * scale;
+  // 台数が不明の一覧（機種一覧）は120秒・480回（20件の区切りで着き直しを増やした分。Android
+  // `pscubeIndexListTimeout` と同じ。2026-11-03）。設置台数が分かる全台一覧は90秒・360回のまま。
+  const limit = target === null ? 120000 : 90000, maxTicks = target === null ? 480 : 360;
+  const deadline = performance.now() + limit * scale;
   const timeout = () => new Error('一覧の読み込みが時間切れになりました。保存せずに再試行します。');
   const checkTime = () => { if (performance.now() >= deadline) throw timeout(); };
   const sleep = async ms => {
@@ -81,7 +84,7 @@ SCROLL_SCRIPT = r'''(async () => {
   // 位置が古いまま続きが出ず、途中で止まった（2026-10-28、利用者の報告）。動かすたびに通知を出す。
   const moved = () => window.dispatchEvent(new Event('scroll'));
   let last = -1, quiet = 0, nudges = 0, idleNudges = 0, armed = true;
-  for (let tick = 0; tick < 360; tick++) {          // 追加待機も含め、実際の経過時間で最長90秒
+  for (let tick = 0; tick < maxTicks; tick++) {     // 追加待機も含め、実際の経過時間で最長90秒（機種一覧は120秒）
     checkTime();
     const list = findList();
     if (!list) return;
@@ -93,7 +96,10 @@ SCROLL_SCRIPT = r'''(async () => {
     // 設置台数が分かっていれば届いたら終わり。不明（機種一覧）なら、一番下で4秒増えないことを、少し戻って
     // 着き直しながら3回確かめてから終わる（Android `waitForPscubeList` と同じ）。以前は3秒で終わり、
     // 20件ずつ届く機種一覧を途中で読み取ることがあった（2026-10-24〜26、Android）。
-    if (target === null ? (quiet >= 16 && idleNudges >= 2) : (count >= target && quiet >= 1)) { await sleep(300); return; }
+    // 件数がちょうど20の倍数で止まったときは、続きがある見込みが高いので着き直す回数を増やす（2026-11-03、
+    // 20件・40件の区切りで止まった一覧を読み取った。Android `pscubeUnknownListChunkNudges` と同じ）。
+    const needed = last > 0 && last % 20 === 0 ? 3 : 2;
+    if (target === null ? (quiet >= 16 && idleNudges >= needed) : (count >= target && quiet >= 1)) { await sleep(300); return; }
     if (atBottom()) {
       if (armed) {                                   // 着いたときに1回だけ：最後の台を見せて、一番下まで
         list.lastElementChild?.scrollIntoView({block:'end'});
@@ -695,10 +701,19 @@ def installation_count(db_path, current_url):
         return counts.pop() if len(counts) == 1 else None
 
 
+# 自動取り込みで、いつもの機種数（直近 USUAL_INDEX_DAYS 日の記録で1日にそろった機種のいちばん多い数）の
+# この割合に満たない機種一覧は、開き直して同じ一覧でも受け付けない（2026-11-03 利用者「pscubeまた完了したとかいってる
+# のに全機種読み込めてないな」。11/1は19機種・11/2は38機種で「すべて取り込みました」。サイトが20件ずつ届ける一覧の
+# 途中で止まった一覧が、開き直しても同じだったため受け付けていた。Android `pscubeIndexShortRatio` と同じ）。
+INDEX_SHORT_RATIO = 0.8
+USUAL_INDEX_DAYS = 14
+
+
 class PscubeIndexRetry(ValueError):
-    def __init__(self, keys):
-        super().__init__('機種一覧が減ったため、開き直してもう一度確認します。')
-        self.keys = keys
+    def __init__(self, keys, shown=None, usual=None):
+        super().__init__(f'機種一覧が途中までしか読めていません（いつもの{usual}機種に対して{shown}機種）。'
+                         '開き直してもう一度確認します。' if usual else '機種一覧が減ったため、開き直してもう一度確認します。')
+        self.keys, self.shown, self.usual = keys, shown, usual
 
 
 class PscubeStore:
@@ -735,13 +750,33 @@ class PscubeStore:
         row = self.db.execute('SELECT value FROM state WHERE key=?', (key,)).fetchone()
         return row[0] if row else None
 
+    def _usual_machine_count(self):
+        """いつもの機種数：記録のある直近 USUAL_INDEX_DAYS 日で、1日にそろった機種（取り込み対象外を除く）の
+        いちばん多い数。記録が無ければ None。途中までの日があっても下がらない。Android `_usualMachineCount` と同じ。"""
+        by_day = {}
+        for (payload,) in self.db.execute('SELECT payload FROM records'):
+            try:
+                r = json.loads(payload)
+                if is_excluded_machine(r['machine']):
+                    continue
+                by_day.setdefault(r['day'], set()).add((r['store'], r['rate'], r['machine']))
+            except (ValueError, KeyError, TypeError):
+                continue
+        if not by_day:
+            return None
+        return max(len(by_day[d]) for d in sorted(by_day, reverse=True)[:USUAL_INDEX_DAYS])
+
     def _check_index_complete(self, machines):
-        """減った一覧は、開き直した後も同じ集合なら受け付ける。"""
+        """減った一覧は、開き直した後も同じ集合なら受け付ける。ただし、いつもの機種数の INDEX_SHORT_RATIO に
+        満たない一覧は受け付けない（途中で止まった一覧が毎回同じに返ることがある）。"""
+        shown = {_machine_key(m) for m in machines}
+        usual = self._usual_machine_count()
+        if usual and len(shown) < usual * INDEX_SHORT_RATIO:
+            raise PscubeIndexRetry(shown, shown=len(shown), usual=usual)
         stored = self._state('active_machine_keys')
         if stored is None:
             return
         previous = set(json.loads(stored))
-        shown = {_machine_key(m) for m in machines}
         if len(shown) < len(previous) and shown != self.index_confirmation:
             raise PscubeIndexRetry(shown)
 
@@ -1569,9 +1604,13 @@ class AutoPilot:
                 if count is not None and count >= self.MAX_FAILURES:
                     result['reload'] = False                 # 3回目は開き直さない（この後は待機）
                     self.index_confirmation = self.index_confirmation_page = None
+                short = result.get('short')
                 if enabled:
                     self.auto.pause('ON・機種一覧を開き直し、もう一度確認します' + (f'（{count}回目）' if count else '')
                                     if result.get('reload', True) else
+                                    f'ON・機種一覧が途中までしか読めていません（いつもの{short[1]}機種に対して{short[0]}機種）。'
+                                    '3回開き直しても同じでした。待機中（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）'
+                                    if short else
                                     'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
                                     '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）')
             elif result is not None:
@@ -1635,9 +1674,11 @@ def submit_capture(db_path, export_path, pilot, raw, current_url):
                                     manual=manual, fresh_since=fresh_since)
         except PscubeIndexRetry as retry:
             with pilot._lock:
-                pilot.index_confirmation = retry.keys
+                # 途中までの一覧（retry.usual あり）は覚えない（同じ一覧が返っても受け付けない）。
+                pilot.index_confirmation = None if retry.usual else retry.keys
                 pilot.index_confirmation_page = pilot.loaded_pages
-            return {'retry_index': True, 'next_url': current_url.split('#')[0]}
+            return {'retry_index': True, 'next_url': current_url.split('#')[0],
+                    'short': [retry.shown, retry.usual] if retry.usual else None}
         pilot.index_confirmation = None
         pilot.index_confirmation_page = None
         pilot.fresh_since = result.pop('fresh_since')
@@ -1748,7 +1789,11 @@ def overlay_script(capture_script, index_url):
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
         if (result.retry_index) {
           capturedUrl = null;
-          if (!autoEnabled || result.reload === false) { idle('機種一覧が前回より少なく、保存していません'); return; }
+          if (!autoEnabled || result.reload === false) {
+            idle(result.short ? `機種一覧が途中までしか読めていません（いつもの${result.short[1]}機種に対して${result.short[0]}機種）。保存していません`
+              : '機種一覧が前回より少なく、保存していません');
+            return;
+          }
           idle('機種一覧を開き直して確認します');
           location.reload();
           return;

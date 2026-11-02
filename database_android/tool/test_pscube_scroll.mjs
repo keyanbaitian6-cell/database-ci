@@ -21,7 +21,7 @@ await assert.rejects(runInNewContext(scroll, {
   Event: class {},
   setTimeout(callback, ms) { elapsed += ms; callback(); },
 }), /時間切れ/);
-assert.equal(elapsed, 90000, '増加・着き直しの待機も含めて90秒で打ち切る');
+assert.equal(elapsed, 120000, '増加・着き直しの待機も含めて、台数不明の機種一覧は120秒で打ち切る（2026-11-03、以前は90秒）');
 const SCALE = 0.1;
 // SCROLL_SCRIPT は、取り込み画面の中で expectedCount（設置台数。不明なら未定義）を参照する。
 const run = (page, count) => page.evaluate(({script, count, scale}) => {
@@ -79,6 +79,28 @@ try {
     assert.equal(await slowIndex.locator('#ulKI li').count(), 61, `遅い続きでも機種一覧を最後まで読む（最初の到着を無視：${ignoreFirst}）`);
     await slowIndex.close();
   }
+
+  // 1c. 件数がちょうど20の倍数で止まったら、着き直しを増やして続きを待つ（2026-11-03、11/1は20件・11/2は40件の
+  //     区切りで止まった一覧を読み取った）。最初の3回の到着では続きが始まらないサイトでも61件まで読む。
+  const stubborn = await browser.newPage({viewport: {width: 1050, height: 780}});
+  await stubborn.setContent(tallIndex(20));
+  await stubborn.evaluate(() => {
+    let wasBottom = false, skip = 3;
+    window.addEventListener('scroll', () => {
+      const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 5;
+      const arrived = bottom && !wasBottom;
+      wasBottom = bottom;
+      const list = document.querySelector('#ulKI');
+      if (!arrived || list.children.length >= 61) return;
+      if (skip > 0) { skip--; return; }
+      for (let k = 0; k < 20 && list.children.length < 61; k++) {
+        const card = document.createElement('li'); card.style.height = '150px'; list.append(card);
+      }
+    });
+  });
+  await run(stubborn, null);
+  assert.equal(await stubborn.locator('#ulKI li').count(), 61, '20件で止まった一覧も、着き直しを増やして最後まで読む');
+  await stubborn.close();
 
   // 増えるたびに着き直しが必要な長い機種一覧（全体で5回を超える）。
   const longIndex = await browser.newPage({viewport: {width: 1050, height: 780}});
