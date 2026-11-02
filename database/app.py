@@ -11,6 +11,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
+import error_log
 import input_versions
 import pscube_import
 from event_calendar import PscubeEvents, open_event_calendar
@@ -21,7 +22,7 @@ from output_worker import OutputWorker, refresh_outputs
 from backup_status_ui import BackupStatusPanel
 
 from core import (CONFIRMED_SETTING_OPTIONS, DATE_EVENT_OPTIONS, STORE_NAMES, Store, auto_backup, delete_records, export_backup, history_report, snapshot_store, import_backup, normalize_machine_name,
-                  latest_backup_file, list_snapshots, load_settings, new_backup_files, report, restore_backup, save_settings,
+                  latest_backup_file, list_snapshots, load_settings, new_backup_files, report, resolve_sync_dir, restore_backup, save_settings, write_sync_mark,
                   summary_report, undo_last_save, pull_shared_events, pull_shared_rainbow, pull_shared_history)
 
 def runtime_root():
@@ -43,6 +44,8 @@ ALL_STORES_LABEL = 'すべての店舗'
 # P’s CUBE（専用の記録）を、メルヘンの2店舗と並べて選べるようにする（利用者の指示、2026-10-02）。
 PSCUBE_KEY = 'pscube'
 PSCUBE_LABEL = 'P’s CUBE（スロット）'
+# 同期フォルダの知らせ（画面上の帯）を出し直す間隔。
+SYNC_BANNER_INTERVAL_MS = 30000
 PSCUBE_VIEWER_URL = 'https://keyanbaitian6-cell.github.io/database-viewer/pscube/'
 # 起動中に同期フォルダのAndroidのP’s CUBEを確かめる間隔（poll_pscube_from_sync）。最初は起動の15秒後。
 PSCUBE_SYNC_FIRST_MS = 15_000
@@ -334,6 +337,14 @@ def main():
     # 記録欄は先に下端へ確保しておく（後から詰め込むと、タブに押されて見えなくなるため）
     log_frame = ttk.Frame(frame)
     log_frame.pack(side='bottom', fill='x', pady=(10, 0))
+    # 同期フォルダの知らせ（2026-11-03 利用者「ドライブレター変わってるのに気づかず取り込み終えてしまった」）。
+    # 書き出せていない間は赤、別のドライブ文字へ切り替えたときは黄色。中身は下の refresh_sync_banner。
+    sync_banner = tk.Frame(frame, padx=12, pady=8)
+    sync_banner_text = tk.StringVar()
+    tk.Label(sync_banner, textvariable=sync_banner_text, justify='left', anchor='w', wraplength=640,
+             font=('Yu Gothic UI', 10, 'bold')).pack(side='left', fill='x', expand=True)
+    sync_banner_button = ttk.Button(sync_banner)
+    sync_banner_button.pack(side='right')
     notebook = ttk.Notebook(frame)
     notebook.pack(fill='both', expand=True)
     tab_home = ttk.Frame(notebook, padding=22)
@@ -569,7 +580,7 @@ def main():
 
     def pull_shared_events_now():
         """閲覧ページで入れたイベント（共有カレンダー、同期フォルダの共有ファイル）を取り込む。"""
-        folder = load_settings(DATA_DIR).get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if not folder:
             return
         location = current_location()
@@ -597,7 +608,7 @@ def main():
     def pull_shared_rainbow_now():
         """iPhoneの閲覧ページで付け外しした🌈（同期フォルダの共有ファイル、RAINBOW.md）を取り込む。
         変わったら閲覧用ファイル・バックアップ・結果を作り直す（共有ページにも届くように）。"""
-        folder = load_settings(DATA_DIR).get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if not folder:
             return 0
         db = Store(ROOT / 'data' / 'database.sqlite3')
@@ -809,7 +820,7 @@ def main():
     def reexport_shared():
         if closing[0]:
             return
-        folder = load_settings(DATA_DIR).get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if not folder or not Path(folder).is_dir():
             shared_status.refresh()
             messagebox.showinfo('書き出し先を確認してください',
@@ -832,8 +843,67 @@ def main():
             raise
 
     shared_status = BackupStatusPanel(sync_box, DATA_DIR,
-                                     lambda: load_settings(DATA_DIR).get('sync_dir'), reexport_shared)
+                                     lambda: resolve_sync_dir(DATA_DIR), reexport_shared)
     shared_status.pack(fill='x', pady=(6, 0))
+
+    banner_state = {'warned': set(), 'retried': set()}
+
+    def refresh_sync_banner():
+        """同期フォルダの知らせを出し直す（30秒おき）。書き出せていない間は赤い帯と、1回だけ知らせの窓。
+        ドライブが戻った・別のドライブ文字で見つかったら（core.resolve_sync_dir）、止まっていた書き出しを1回やり直す。"""
+        if closing[0]:
+            return
+        try:
+            from backup_status import read_status
+            failed = [s for s in (read_status(DATA_DIR, name) for name in ('meruhen', 'pscube'))
+                      if s.get('state') == 'unavailable' and s.get('folder')]
+            folder = resolve_sync_dir(DATA_DIR) if failed else None
+            moved = load_settings(DATA_DIR).get('sync_moved')
+            if moved:
+                sync_dir.set(moved.get('new') or sync_dir.get())
+            if failed and folder and Path(folder).is_dir():
+                key = tuple(s.get('at') for s in failed)
+                if key not in banner_state['retried']:
+                    banner_state['retried'].add(key)
+                    tell(f'同期フォルダ（{folder}）が見つかったので、止まっていた共有用ファイルの書き出しをやり直します。\n')
+                    reexport_shared()
+            if failed:
+                when = max(str(s.get('at', ''))[:16].replace('T', ' ') for s in failed)
+                sync_banner.configure(background='#FDE2E1')
+                sync_banner_text.set(f'Googleドライブの同期フォルダ（{failed[0]["folder"]}）が見つからず、{when} の書き出しが'
+                                     'ドライブへ届いていません。取り込んだ記録はPCに残っています。ドライブの接続を確かめて'
+                                     '「共有用ファイルを更新」を押してください（ドライブが戻れば自動でもやり直します）。')
+                sync_banner_button.configure(text='共有用ファイルを更新', command=reexport_shared)
+                key = tuple(s.get('at') for s in failed)
+                if key not in banner_state['warned']:
+                    banner_state['warned'].add(key)
+                    root.after(100, lambda: messagebox.showwarning(
+                        '同期フォルダが見つかりません', sync_banner_text.get(), parent=root))
+            elif moved:
+                sync_banner.configure(background='#FFF4DC')
+                sync_banner_text.set(f'同期フォルダが {moved.get("old")} に無かったので、目印の一致する {moved.get("new")} に'
+                                     '切り替えて書き出しています（Googleドライブのドライブ文字が変わったため）。')
+
+                def dismiss():
+                    save_settings(DATA_DIR, sync_moved=None)
+                    refresh_sync_banner()
+                sync_banner_button.configure(text='わかった', command=dismiss)
+            if failed or moved:
+                for child in sync_banner.winfo_children():
+                    if isinstance(child, tk.Label):
+                        child.configure(background=sync_banner.cget('background'))
+                if not sync_banner.winfo_ismapped():
+                    sync_banner.pack(fill='x', pady=(0, 10), before=notebook)
+            else:
+                sync_banner.pack_forget()
+        except Exception as error:   # 知らせの不具合で本体を止めない
+            error_log.record(DATA_DIR, 'sync_banner', error)
+
+    def sync_banner_loop():
+        refresh_sync_banner()
+        if not closing[0]:
+            root.after(SYNC_BANNER_INTERVAL_MS, sync_banner_loop)
+    root.after(3000, sync_banner_loop)
     sync_buttons = ttk.Frame(sync_box)
     sync_buttons.pack(fill='x', pady=(8, 0))
 
@@ -991,7 +1061,7 @@ def main():
 
     def export_pscube_file():
         name = pscube_import.backup_file_name()
-        folder = load_settings(DATA_DIR).get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if folder and Path(folder).is_dir():
             path = str(Path(folder) / name)
         else:
@@ -1021,7 +1091,7 @@ def main():
         store_suffix = f'-{location}' if location else ''
         day_suffix = f'-{day}' if day else ''
         default_name = f'database-backup{store_suffix}{day_suffix}-{datetime.now():%Y%m%d-%H%M%S}.json'
-        folder = load_settings(DATA_DIR).get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if folder and Path(folder).is_dir():
             path = str(Path(folder) / default_name)
         else:
@@ -1100,14 +1170,15 @@ def main():
         folder = filedialog.askdirectory(title='同期フォルダ（Google Driveの同期フォルダなど）を選択', parent=root)
         if not folder:
             return
-        save_settings(DATA_DIR, sync_dir=folder)
+        save_settings(DATA_DIR, sync_dir=folder, sync_moved=None)
+        write_sync_mark(DATA_DIR, folder)
         sync_dir.set(folder)
         logbox.insert('end', f'同期フォルダを設定しました：{folder}\n')
         logbox.see('end')
         reexport_shared()
 
     def import_latest_from_sync():
-        folder = load_settings(DATA_DIR).get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if not folder or not Path(folder).is_dir():
             messagebox.showinfo('同期フォルダ未設定', '先に「同期フォルダを指定」してください。', parent=root)
             return
@@ -1122,7 +1193,7 @@ def main():
 
     def import_pscube_from_sync():
         """P’s CUBEの最新バックアップ（Android・ブラウザの書き出しなど）を専用の記録へ統合する。"""
-        folder = load_settings(DATA_DIR).get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if not folder or not Path(folder).is_dir():
             messagebox.showinfo('同期フォルダ未設定', '先に「同期フォルダを指定」してください。', parent=root)
             return
@@ -1180,7 +1251,7 @@ def main():
         anything that conflicts still goes through the confirmation dialog.
         """
         current = load_settings(DATA_DIR)
-        folder = current.get('sync_dir')
+        folder = resolve_sync_dir(DATA_DIR)
         if not current.get('auto_sync_on_start', True) or not folder or not Path(folder).is_dir():
             return
         seen = current.get('last_synced') or {}
@@ -1207,7 +1278,7 @@ def main():
         """
         try:
             current = load_settings(DATA_DIR)
-            folder = current.get('sync_dir')
+            folder = resolve_sync_dir(DATA_DIR)
             if closing[0] or not folder or not Path(folder).is_dir():
                 return
             files = pscube_import.android_sync_files(folder)
@@ -1366,7 +1437,7 @@ def main():
                 return
         db = Store(DATA_DIR / 'database.sqlite3')
         try:
-            changed, _conflicts, rejected, _skipped = pull_shared_history(db, load_settings(DATA_DIR).get('sync_dir'))
+            changed, _conflicts, rejected, _skipped = pull_shared_history(db, resolve_sync_dir(DATA_DIR))
             if changed:
                 schedule_outputs(backup=True)
                 tell(f'共有のイベント履歴を{changed}件取り込みました。\n')

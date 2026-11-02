@@ -212,7 +212,8 @@ def export_records(store, data_dir):
         temporary = local.with_suffix('.tmp')
         temporary.write_text(json.dumps(document, ensure_ascii=False), encoding='utf-8')
         temporary.replace(local)
-        folder = load_settings(data_dir).get('sync_dir')
+        from core import resolve_sync_dir
+        folder = resolve_sync_dir(data_dir)
         if folder and Path(folder).is_dir():
             shutil.copyfile(local, Path(folder) / EXPORT_NAME)
         return local

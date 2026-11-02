@@ -68,6 +68,67 @@ class AppStartupTests(unittest.TestCase):
                 for root in roots:
                     root.destroy()
 
+    def test_sync_banner_warns_once_when_the_drive_is_missing_and_shows_a_switch(self):
+        # 2026-11-03 利用者「ドライブレター変わってるのに気づかず取り込み終えてしまった」→「自動で探して知らせる」。
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            root_path = Path(folder)
+            data = root_path / 'data'
+            Store(data / 'database.sqlite3').close()
+            missing = root_path / 'G' / 'database共有'
+            save_settings(data, sync_dir=str(missing), sync_mark='mine', auto_sync_on_start=False)
+            (data / 'backup-output-meruhen.json').write_text(json.dumps(dict(
+                version=1, source='meruhen', folder=str(missing), state='unavailable', at='2026-11-03T06:39:26+09:00',
+                message='同期フォルダが見つかりません。', stores=[], products={})), encoding='utf-8')
+            original_tk = tk.Tk
+            roots, warned = [], []
+
+            def wait(root, ms):
+                passed = []
+                root.after(ms, lambda: passed.append(True))
+                while not passed:
+                    root.update()
+                    time.sleep(0.01)
+
+            def make_root():
+                root = original_tk()
+                roots.append(root)
+                root.geometry('920x620+-3000+0')
+                def mainloop():
+                    wait(root, 3300)   # 知らせは起動の3秒後から
+                    frame = root.winfo_children()[0]
+                    banner = next(w for w in frame.winfo_children() if isinstance(w, tk.Frame) and not isinstance(w, ttk.Frame)
+                                  and any(isinstance(c, tk.Label) for c in w.winfo_children()))
+                    text = next(c for c in banner.winfo_children() if isinstance(c, tk.Label)).cget('text')
+                    self.assertTrue(banner.winfo_ismapped())
+                    self.assertIn('見つからず', text)
+                    self.assertIn('2026-11-03 06:39', text)
+                    self.assertEqual(len(warned), 1, '知らせの窓は1回')
+                    # 別のドライブ文字へ切り替えた知らせ（黄色）と「わかった」。
+                    (data / 'backup-output-meruhen.json').unlink()
+                    save_settings(data, sync_moved=dict(old='G:/x', new='E:/x', at='2026-11-03T07:00:00+09:00'))
+                    wait(root, 800)
+                    text = next(c for c in banner.winfo_children() if isinstance(c, tk.Label)).cget('text')
+                    self.assertIn('E:/x', text)
+                    button = next(c for c in banner.winfo_children() if isinstance(c, ttk.Button))
+                    self.assertEqual(button.cget('text'), 'わかった')
+                    button.invoke()
+                    root.update()
+                    self.assertFalse(banner.winfo_ismapped())
+                    self.assertIsNone(load_settings(data).get('sync_moved'))
+                    self.assertEqual(len(warned), 1)
+                root.mainloop = mainloop
+                return root
+
+            try:
+                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), \
+                     patch.object(app.tk, 'Tk', make_root), patch.object(app, 'SYNC_BANNER_INTERVAL_MS', 500), \
+                     patch.object(app.messagebox, 'showwarning', side_effect=lambda *a, **k: warned.append(a)):
+                    app.main()
+            finally:
+                for root in roots:
+                    root.destroy()
+
     def test_startup_imports_each_new_store_backup_and_sync_tab_scrolls_to_the_import_button(self):
         # 2026-10-25 利用者報告：店舗ごとに書き出した2本のうち新しい1本しか読まれず、
         # 手で読み込む「バックアップを読み込む」も窓の下に隠れて押せなかった。

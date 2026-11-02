@@ -345,7 +345,7 @@ def pull_shared_history(store, folder):
 def sync_shared_history(store, data_dir, notices=None):
     """本体DBに共有編集を取り込む。失敗時も既存のバックアップ出力は続ける。"""
     try:
-        folder = load_settings(data_dir).get('sync_dir')
+        folder = resolve_sync_dir(data_dir)
         _changed, _conflicts, rejected, _skipped = pull_shared_history(store, folder)
         if rejected and notices is not None:
             notices.append(f'共有のイベント履歴は形式が合わない編集{rejected}件を除外しました。')
@@ -1765,6 +1765,87 @@ def save_settings(data_dir, **updates):
     return settings
 
 
+# 同期フォルダの目印（2026-11-03 利用者「何度目かわからないけどまたグーグルドライブのドライブレター変わってるのに
+# 気づかず取り込み終えてしまった」「別のアカウントで文字つかってるときはこっちはEになるね」→「自動で探して知らせる」）。
+# Windowsのもう一方のアカウントのGoogleドライブが G: を使うと、こちらは E: などになり、設定の G:/マイドライブ/database共有
+# が見つからず書き出しが止まっていた（10/26・11/3）。同期フォルダに番号入りの目印を置き、設定の場所に無いときは
+# ほかのドライブ文字の同じ場所を探して、番号が一致したときだけそちらへ切り替える（別アカウントのドライブには書かない）。
+SYNC_MARK_NAME = 'database-sync-folder.json'
+
+
+def _sync_mark(folder):
+    try:
+        value = json.loads((Path(folder) / SYNC_MARK_NAME).read_text(encoding='utf-8'))
+        return value.get('id') if isinstance(value, dict) and isinstance(value.get('id'), str) else None
+    except (OSError, ValueError):
+        return None
+
+
+def write_sync_mark(data_dir, folder):
+    """[folder] を同期フォルダとして目印を付け、設定に番号を覚える（フォルダに目印があればその番号を使う）。
+    「同期フォルダを指定」で選び直したときにも呼ぶ。書けなくても（ドライブの一時的な不調など）止めない。"""
+    import uuid
+    mark = _sync_mark(folder) or load_settings(data_dir).get('sync_mark') or uuid.uuid4().hex
+    try:
+        if _sync_mark(folder) != mark:
+            with atomic_writer(Path(folder) / SYNC_MARK_NAME) as out:
+                json.dump({'id': mark, 'note': 'database（PC版）の同期フォルダの目印。消さないでください。'}, out,
+                          ensure_ascii=False)
+    except OSError:
+        pass
+    if load_settings(data_dir).get('sync_mark') != mark:
+        save_settings(data_dir, sync_mark=mark)
+    return mark
+
+
+def _other_drive_folders(folder):
+    """[folder] と同じ場所の、ほかのドライブ文字のフォルダ（Windowsのドライブ文字つきのパスだけ）。"""
+    from pathlib import PureWindowsPath
+    path = PureWindowsPath(str(folder))   # 試験・CI（Linux）でも同じく読む
+    if len(path.drive) != 2 or path.drive[1] != ':':
+        return []
+    rest = path.relative_to(path.anchor).as_posix()
+    return [Path(f'{letter}:/{rest}') for letter in 'CDEFGHIJKLMNOPQRSTUVWXYZ' if letter != path.drive[0].upper()]
+
+
+def resolve_sync_dir(data_dir):
+    """書き出し・読み込みに使う同期フォルダ（文字列）。未設定・見つからないときは None。
+
+    設定の場所にあり、目印が無いか番号が一致すればそこ（目印が無ければ付ける）。別の番号の目印があるフォルダ
+    （もう一方のアカウントのドライブなど）は使わない。設定の場所に使えるフォルダが無ければ、ほかのドライブ文字の
+    同じ場所で番号が一致するものを探し、見つかれば設定をそちらへ書き換えて、移ったことを `sync_moved` に残す
+    （PC版の画面の上に知らせる）。"""
+    settings = load_settings(data_dir)
+    folder, mark = settings.get('sync_dir'), settings.get('sync_mark')
+    if not folder:
+        return None
+    here = Path(folder)
+    try:
+        usable = here.is_dir()
+    except OSError:   # もう一方のアカウントのドライブはアクセス拒否になることがある
+        usable = False
+    if usable:
+        found = _sync_mark(here)
+        if found is None or mark is None or found == mark:
+            if found is None or mark is None:
+                write_sync_mark(data_dir, here)
+            return folder
+    if not mark:
+        return None
+    for candidate in _other_drive_folders(here):
+        try:
+            if candidate.is_dir() and _sync_mark(candidate) == mark:
+                moved = candidate.as_posix()
+                save_settings(data_dir, sync_dir=moved, sync_moved=dict(
+                    old=folder, new=moved, at=datetime.now().astimezone().isoformat(timespec='seconds')))
+                import error_log
+                error_log.note(data_dir, 'sync_dir.moved', f'同期フォルダが {folder} に無く、目印の一致する {moved} へ切り替えました')
+                return moved
+        except OSError:
+            continue
+    return None
+
+
 SNAPSHOT_KEEP_DAYS = 7
 SNAPSHOT_PATTERN = 'database-backup-????-??-??.json'
 
@@ -1772,7 +1853,7 @@ SNAPSHOT_PATTERN = 'database-backup-????-??-??.json'
 def snapshot_dir(data_dir):
     """Where the dated backups live: ``backups/`` inside the sync folder when one
     is set (so they reach Drive too), otherwise inside the local data folder."""
-    folder = load_settings(data_dir).get('sync_dir')
+    folder = resolve_sync_dir(data_dir)
     root = Path(folder) if folder and Path(folder).is_dir() else Path(data_dir)
     return root / 'backups'
 
@@ -1876,9 +1957,13 @@ def _auto_backup(store, data_dir, *, strict, notices, import_shared, status):
         status.problems.append(f'日別バックアップ：{error}')
         if strict:
             raise
-    folder = load_settings(data_dir).get('sync_dir')
-    status.folder = str(folder) if folder else None
+    folder = resolve_sync_dir(data_dir)
+    configured = load_settings(data_dir).get('sync_dir')
+    status.folder = str(folder) if folder else configured
     if not folder or not Path(folder).is_dir():
+        if configured and not folder and Path(configured).is_dir():
+            status.problems.append(f'{configured} には別の同期フォルダの目印があるため書き出しませんでした'
+                                   '（もう一方のアカウントのドライブの可能性）。「同期フォルダを指定」で選び直してください。')
         return None
     try:
         status.step = '全期間バックアップの共有フォルダへの書き出し'

@@ -438,8 +438,10 @@ def _load_settings(data_dir) -> dict:
 
 
 def sync_folder(data_dir) -> Path | None:
-    """メルヘンと同じ同期フォルダ（settings.json の sync_dir）。未設定・存在しなければ None。"""
-    folder = _load_settings(data_dir).get('sync_dir')
+    """メルヘンと同じ同期フォルダ（settings.json の sync_dir。ドライブ文字が変わっていれば目印で探す。
+    core.resolve_sync_dir）。未設定・見つからなければ None。"""
+    from core import resolve_sync_dir
+    folder = resolve_sync_dir(data_dir)
     return Path(folder) if folder and Path(folder).is_dir() else None
 
 

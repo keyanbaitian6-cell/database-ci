@@ -68,7 +68,9 @@ class SyncTests(unittest.TestCase):
         status = auto_backup(self.store, self.export, today=TODAY)
         self.assertEqual(status, 'バックアップ済み')
         names = {p.name for p in self.sync.iterdir()}
-        self.assertEqual(names, {'database-backup-auto.json', AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME, 'backups'})
+        # 同期フォルダの目印（2026-11-03、core.SYNC_MARK_NAME）も置く。
+        self.assertEqual(names, {'database-backup-auto.json', AUTO_BACKUP_NAME, VIEWER_DRIVE_NAME, 'backups',
+                                 'database-sync-folder.json'})
         self.assertEqual((self.sync / 'database-backup-auto.json').read_text(encoding='utf-8'), '{"keep":1}')
         self.assertEqual([p.name for p in (self.sync / 'backups').iterdir()], ['pscube-backup-2026-10-01.json'])
         full = json.loads((self.sync / AUTO_BACKUP_NAME).read_text(encoding='utf-8'))
