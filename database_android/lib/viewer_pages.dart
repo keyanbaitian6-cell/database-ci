@@ -223,7 +223,10 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
             r,
       ]..sort((a, b) => a.rack.compareTo(b.rack));
       _hasDayRecords = rows.isNotEmpty;
-      final grouped = [for (final r in rows) (r, scoreRecord(r, data.records))];
+      final grouped = [
+        for (final r in rows)
+          (r, scoreRecord(r, data.records, sameDayForNew: true)),
+      ];
       final search = RecordQuery(_query);
       _entries = !search.matchesMachine(widget.machine)
           ? [
@@ -622,7 +625,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
     return SavedGraphPage(
       key: ValueKey(record.key),
       record: record,
-      score: scoreRecord(record, data.records),
+      score: scoreRecord(record, data.records, sameDayForNew: true),
       allRecords: data.records,
       dateNavigation: bar,
       scrollTopButton: true,

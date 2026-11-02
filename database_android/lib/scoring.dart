@@ -4,6 +4,12 @@ import 'models.dart';
 
 // Policy, not a fitted setting/win probability model. See SCORING_POLICY.md.
 const scoringVersion = '2026-09-29-v12';
+
+/// 画面に出す点数で、新台（その店でその機種の記録が評価日の30日前〜前日に1件も無い）を同じ日の同じ機種の
+/// ほかの台と比べたときの版（2026-11-03 利用者「新台については比較せず出しても良いのでは？」→「同じ日の他の台と
+/// 比べる」）。翌日候補・固定済みの検証は [scoringVersion]（v12）のまま（[scoreRecord] の sameDayForNew を使わない）。
+/// PC版 core.py の NEW_MACHINE_SCORING_VERSION と同じ。
+const newMachineScoringVersion = '2026-11-03-v13';
 const minimumReferenceRows = 20;
 const shrinkGames = 1500.0;
 const shrinkDays = 3.0;
@@ -86,6 +92,52 @@ List<SlotRecord> comparisonPool(SlotRecord row, List<SlotRecord> all) {
       .toList();
 }
 
+/// 新台のときだけ、同じ日の同じ機種のほかの台（回転数の幅・数値異常の除外は [comparisonPool] と同じ）。
+/// 新台＝同じ店・同じ機種の、評価日の30日前〜前日の回転数のある記録が1件も無い。過去の記録があるのに回転数の幅で
+/// 比較相手が0件になった台は新台ではない（v12のまま中立で補う）。PC版 core.py の new_machine_peers と同じ。
+List<SlotRecord> newMachinePeers(SlotRecord row, List<SlotRecord> all) {
+  final first = DateTime.parse(row.day)
+      .subtract(const Duration(days: 30))
+      .toIso8601String()
+      .substring(0, 10);
+  final sameMachine = _byMachine(all)['${row.store}|${row.machine}'];
+  if (sameMachine == null) return const [];
+  if (sameMachine.any(
+    (r) =>
+        r.day.compareTo(first) >= 0 &&
+        r.day.compareTo(row.day) < 0 &&
+        r.games > 0,
+  )) {
+    return const [];
+  }
+  final target = max(500, row.games);
+  final lowest = max(500, target / 2);
+  final highest = target * 2;
+  return sameMachine
+      .where(
+        (r) =>
+            r.day == row.day &&
+            r.rack != row.rack &&
+            r.games >= lowest &&
+            r.games <= highest &&
+            !hasImplausibleNumbers(r) &&
+            !isExcludedSupplement(r),
+      )
+      .toList();
+}
+
+/// [scoreRecord] で使う比較相手と、新台の扱いにしたときの台数（0＝今までどおり）。
+(List<SlotRecord>, int) _scoringPool(
+  SlotRecord row,
+  List<SlotRecord> all,
+  bool sameDayForNew,
+) {
+  final refs = comparisonPool(row, all);
+  if (!sameDayForNew || refs.isNotEmpty) return (refs, 0);
+  final peers = newMachinePeers(row, all);
+  return peers.isEmpty ? (refs, 0) : (peers, peers.length);
+}
+
 double? adjustedRank(
   double? value,
   List<SlotRecord> refs,
@@ -119,8 +171,13 @@ double? adjustedRank(
 double? absoluteHoldScore(int? maxHold) =>
     maxHold == null ? null : maxHoldScore * min(1.0, maxHold / completeHold);
 
-ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
-  if (row.isPscube) return _scorePscube(row, all);
+/// [sameDayForNew]：画面に出す点数だけ true。新台は同じ日の同じ機種のほかの台と比べる（[newMachineScoringVersion]）。
+ScoreResult scoreRecord(
+  SlotRecord row,
+  List<SlotRecord> all, {
+  bool sameDayForNew = false,
+}) {
+  if (row.isPscube) return _scorePscube(row, all, sameDayForNew);
   if (row.games <= 0 || row.bb < 0 || row.rb < 0 || (row.maxHold ?? 0) < 0) {
     return ScoreResult(
       provisional: true,
@@ -145,7 +202,7 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
       reasons: ['${minScoredGames}G以下のため採点なし'],
     );
   }
-  final refs = comparisonPool(row, all);
+  final (refs, peers) = _scoringPool(row, all, sameDayForNew);
   final hitRefs = refs.where((r) => r.bb >= 0 && r.rb >= 0).toList();
   final holdRefs = refs
       .where((r) => r.maxHold != null && r.maxHold! >= 0)
@@ -172,7 +229,9 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
       : max(rankedHold, absoluteHoldScore(row.maxHold)!);
   final days = hitRefs.map((r) => r.day).toSet().length;
   final holdDays = holdRefs.map((r) => r.day).toSet().length;
-  final reasons = <String>[];
+  final reasons = <String>[
+    if (peers > 0) '新台（過去30日の記録なし）：同じ日の同じ機種$peers台と比べた点',
+  ];
   if (hit == null) reasons.add('当たり頻度の比較データ不足：中立30点で補完');
   if (hold == null) reasons.add('最大持玉の比較データ不足：中立10点で補完');
   double? positive, retention;
@@ -242,7 +301,11 @@ ScoreResult scoreRecord(SlotRecord row, List<SlotRecord> all) {
 
 /// The already published P's CUBE policy, presented by the shared viewer.
 /// The normal profile uses BIG/REG; other machines use MY and the curve.
-ScoreResult _scorePscube(SlotRecord row, List<SlotRecord> all) {
+ScoreResult _scorePscube(
+  SlotRecord row,
+  List<SlotRecord> all,
+  bool sameDayForNew,
+) {
   if (row.extra['source_site'] == 'anaslo') {
     return ScoreResult(
       games: null,
@@ -272,7 +335,7 @@ ScoreResult _scorePscube(SlotRecord row, List<SlotRecord> all) {
   final holdMax = outputOnly ? 50 : 20;
   final endMax = outputOnly ? 25 : 10;
   final retentionMax = outputOnly ? 25 : 10;
-  final refs = comparisonPool(row, all);
+  final (refs, peers) = _scoringPool(row, all, sameDayForNew);
   final days = refs.map((r) => r.day).toSet().length;
   double rateOf(SlotRecord r) => (r.bb + r.rb) / r.games;
   final hit = hitMax == 0
@@ -289,7 +352,9 @@ ScoreResult _scorePscube(SlotRecord row, List<SlotRecord> all) {
       ? holdMax * min(1.0, (row.my ?? 0) / completeHold)
       : 0.0;
   final hold = ranked == null ? null : max(ranked, absolute).toDouble();
-  final reasons = <String>[];
+  final reasons = <String>[
+    if (peers > 0) '新台（過去30日の記録なし）：同じ日の同じ機種$peers台と比べた点',
+  ];
   if (hitMax > 0 && hit == null)
     reasons.add('当たり頻度の比較データ不足：中立${hitMax ~/ 2}点で補完');
   if (hold == null) reasons.add('MYの比較データ不足：中立${holdMax ~/ 2}点で補完');

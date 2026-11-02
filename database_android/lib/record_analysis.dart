@@ -25,7 +25,11 @@ DayView calculateDay((List<SlotRecord>, String, String) input) {
       if (r.store == store && r.day == day) r,
   ];
   return (
-    scored: {for (final r in rows) r.key: (r, scoreRecord(r, all))},
+    // 画面に出す点数（新台は同じ日の同じ機種のほかの台と比べる）。候補は dayCandidates が今までどおり計算する。
+    scored: {
+      for (final r in rows)
+        r.key: (r, scoreRecord(r, all, sameDayForNew: true)),
+    },
     candidates: dayCandidates(rows, all, excludeNormal: true),
   );
 }

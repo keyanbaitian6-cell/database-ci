@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backtest_candidates import Rows  # noqa: E402
-from core import VERSION, day_candidates, score  # noqa: E402
+from core import NEW_MACHINE_SCORING_VERSION, VERSION, day_candidates, score  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parents[2] / 'database_android' / 'test' / 'fixtures' / 'scoring_parity.json'
 SCORE_FIELDS = ('games', 'max_hold', 'hits', 'positive', 'retention', 'total',
@@ -68,20 +68,27 @@ def synthetic_rows(seed=20261101):
 
 def expected(rows):
     scores = [{k: s[k] for k in SCORE_FIELDS} for s in (score(r, rows) for r in rows)]
+    # 画面に出す点数（2026-11-03、新台は同じ日の同じ機種のほかの台と比べる。合成データの初日は全機種が新台）。
+    by_day = {}
+    for r in rows:
+        by_day.setdefault((r['store'], r['day']), []).append(r)
+    display = [{k: s[k] for k in SCORE_FIELDS} for s in
+               (score(r, rows, same_day=by_day[(r['store'], r['day'])]) for r in rows)]
     data = Rows(rows)
     candidates = []
     for store, day in sorted({(r['store'], r['day']) for r in rows}):
         for c in day_candidates(data, day, store):
             candidates.append(dict(store=store, day=day, machine=c['row']['machine'], rack=int(c['row']['rack']),
                                    index=c['index'], days=c['days']))
-    return scores, candidates
+    return scores, candidates, display
 
 
 def write():
     rows = synthetic_rows()
-    scores, candidates = expected(rows)
+    scores, candidates, display = expected(rows)
     fixture = dict(note='合成データ（実データではない）。database/tests/test_scoring_parity.py --write で作る。',
-                   version=VERSION, rows=rows, scores=scores, candidates=candidates)
+                   version=VERSION, new_machine_version=NEW_MACHINE_SCORING_VERSION, rows=rows, scores=scores,
+                   candidates=candidates, display_scores=display)
     FIXTURE.write_text(json.dumps(fixture, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
     print(f'{FIXTURE.name}: {len(rows)}台×日, 採点あり {sum(s["total"] is not None for s in scores)}, 候補 {len(candidates)}')
 
@@ -107,11 +114,17 @@ class ScoringParityTests(unittest.TestCase):
         machines = {c['machine'] for c in self.fixture['candidates']}
         self.assertTrue({'少数機種C', '少数機種D'} & machines, 'バラエティの候補が無い')
         self.assertTrue({'マイジャグラーV', '試験機種A', '試験機種B'} & machines, '機種ごとの候補が無い')
+        # 新台の扱い：初日は画面の点数だけ同じ日のほかの台と比べ、候補・検証用の点数（scores）は今までどおり。
+        changed = [i for i, (a, b) in enumerate(zip(scores, self.fixture['display_scores'])) if a != b]
+        self.assertTrue(changed)
+        self.assertTrue(all(rows[i]['day'] == '2026-10-01' for i in changed), '新台（過去の記録なし）の日だけ変わる')
 
     def test_pc_matches_saved_scores_and_candidates(self):
-        scores, candidates = expected(self.fixture['rows'])
+        scores, candidates, display = expected(self.fixture['rows'])
         self.assertEqual(len(scores), len(self.fixture['scores']))
-        for row, actual, wanted in zip(self.fixture['rows'], scores, self.fixture['scores']):
+        self.assertEqual(self.fixture['new_machine_version'], NEW_MACHINE_SCORING_VERSION)
+        for row, actual, wanted in [*zip(self.fixture['rows'], scores, self.fixture['scores']),
+                                    *zip(self.fixture['rows'], display, self.fixture['display_scores'])]:
             for key in SCORE_FIELDS:
                 if isinstance(wanted[key], float) or isinstance(actual[key], float):
                     self.assertAlmostEqual(actual[key], wanted[key], places=8, msg=(row['store'], row['day'], row['rack'], key))

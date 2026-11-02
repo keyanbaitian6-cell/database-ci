@@ -287,3 +287,14 @@
 - 照合版 `902d927d1185`（生成スクリプト4本）。
 - 利用者のPCへの反映：PC版を起動し直すと、G: に目印が付き、起動の約3秒後に赤い帯が出て、G: が見つかるので止まっていた11/3 6:39の書き出しを自動でやり直す（見込み。実PCでは未確認）。Googleドライブのアプリの設定でアカウントごとにドライブ文字を固定するのが根本的な予防（利用者側の設定）。
 - 全体ゲート **ALL PASSED**（PC 774件・UTC 27件・Flutter 759件・analyze 情報28件・JS 78本、`TZ=JST-9`、`/c/w/gate-syncmark.log`・`/c/w/cbw-syncmark/`）。閲覧ページ・共有カレンダーは変えていないので公開なし。
+
+## 【新台の点数：画面の表示だけ、同じ日の同じ機種のほかの台と比べる（v13）】2026-11-03 Claude
+
+- 依頼：利用者がiPhone閲覧ページの長町南 11/2 の210番台（L聖闘士星矢黄金十二宮TG、BIG45・REG6・2107G・1/41.3・推定差枚+4,017）の合計点59.7の理由を質問。PCのDB（読むだけ）でこの機種の長町南の記録は11/2の7台（205〜211）だけ＝新台で、比較0件のため当たり（60）・持玉（20）が中立30・10、実際に評価できたのは終点10.0・維持9.7だけ（評価可能配点20/100）と説明。利用者「新台については比較せず出しても良いのでは？」→ 機種ごとに当たりの重さが違うので比べずに良し悪しは決められないと説明し、案「1 同じ日の同じ機種のほかの台と比べる（おすすめ）／2 表示だけ変える」→ 利用者「1」。途中で「Androidアプリは今はビルドしなくていいからね」。基準 `7735024`。
+- 注意して決めたこと：採点版 v12 は、事前に固定した検証（`focus_validation.dart`・`reference_candidate_comparison.dart`・`low_activity_candidate_comparison.dart` の `referenceScoringVersion`）が一致を確かめて動く。バラエティは入れ替えで翌日の同じ台番号が新台になることがあり、翌日の点（結果）が変わると固定済みの検証の結果も変わる。そのため新しい扱いは**画面に出す点数だけ**にし、翌日候補・固定済みの検証・監査・CSVは v12 のまま（版の定数 `VERSION`／`scoringVersion` は変えず、新しい扱いの点だけ `NEW_MACHINE_SCORING_VERSION`／`newMachineScoringVersion` = `2026-11-03-v13`）。同じ日の台と比べる仕組みは最初のコミット（`d04d9b9`）で「deliberately gone」とされていたが、理由の記録は見つからなかった。
+- 規則：新台＝同じ店・同じ機種の、評価日の30日前〜前日の回転数のある記録が1件も無い（過去の記録があって回転数の幅で0件になった台は新台ではない）。新台のときだけ、同じ日の同じ機種のほかの台（自分を除く、回転数の幅・数値異常の除外は今までと同じ）を比較相手にする。式は同じで、比較が1日分なので強く中立へ寄り、必ず暫定。理由の先頭に「新台（過去30日の記録なし）：同じ日の同じ機種N台と比べた点」。
+- 変更：PC `database/core.py`（`new_machine_peers`、`score(..., same_day=)`、`scored_rows`（結果のHTML・機種一覧・まとめ）と台の過去の点（`rack_trend` 相当）で same_day を渡す）。Dart `lib/scoring.dart`（`newMachinePeers`・`_scoringPool`、`scoreRecord(..., sameDayForNew:)`、P’s CUBEの `_scorePscube` も同じ）と、画面の呼び出し（`viewer_pages.dart` の機種・台の画面、`viewer_main.dart` のホームの点数、`record_analysis.dart` のAndroidの結果の点数（候補は `dayCandidates` が今までどおり）、`shared_widgets.dart` の台の過去の点）。文書 `SCORING_POLICY.md`「新台の比較相手」、`database/PSCUBE_SCORING.md`。
+- 実データの写し（読むだけ）での効果：長町南 11/2 の聖闘士星矢7台（v12→v13）：210番台 59.7→72.6、208番台 55.9→65.2、207番台 40.0→42.3、205番台 40.0→34.2、206番台 40.0→29.6、209番台 40.0→34.3、211番台 40.0→36.5。
+- 試験：新規 `tests/test_new_machine_scoring.py` 3件（初日は画面だけ同じ日の台と比べる・過去の記録があれば新台でない・30日より前と回転数0の記録は数えない・`scored_rows`）。一致の試験 `tests/test_scoring_parity.py`／`test/scoring_parity_test.dart` に `display_scores`（合成データの初日22台だけ変わる）と版を追加。期待値ファイルの今までの `scores`・`candidates`・`rows` は作り直し前と完全に一致（比較済み）。
+- 照合版 `59bb757bf66d`（生成スクリプト4本）。Android APK は作らない（利用者指定）。閲覧ページは公開が必要（未）。PC版は起動し直すと反映。
+- 全体ゲート **ALL PASSED**（PC 777件・UTC 27件・Flutter 761件・JS 78本、`TZ=JST-9`、`/c/w/gate-newm.log`・`/c/w/cbw-newm/`）。analyze が情報29件（前回28件）で、増えた1件は追加した試験の `for` に波かっこが無い指摘 → 直して `flutter analyze` 28件・`scoring_parity_test.dart` 5件成功を確認（試験ファイルだけの変更のため全体ゲートは流し直していない。公開する閲覧ページの `viewer/` stage はこのゲートのもの）。

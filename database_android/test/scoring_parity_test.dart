@@ -10,16 +10,15 @@ import 'package:flutter_test/flutter_test.dart';
 /// 合成データ（実データではない）と期待値は database/tests/test_scoring_parity.py が作り、
 /// PCの試験も同じファイルで自分の計算を確かめる。片方だけ直すと、どちらかの試験が落ちる。
 void main() {
-  final fixture =
-      jsonDecode(File('test/fixtures/scoring_parity.json').readAsStringSync())
-          as Map<String, dynamic>;
+  final fixture = jsonDecode(
+    File('test/fixtures/scoring_parity.json').readAsStringSync(),
+  ) as Map<String, dynamic>;
   final rows = [
     for (final raw in fixture['rows'] as List)
       SlotRecord.fromJson(Map<String, dynamic>.from(raw as Map)),
   ];
 
-  bool same(Object? wanted, Object? actual) =>
-      wanted is num && actual is num
+  bool same(Object? wanted, Object? actual) => wanted is num && actual is num
       ? (wanted - actual).abs() < 1e-8
       : wanted == actual;
 
@@ -27,39 +26,47 @@ void main() {
     expect(fixture['version'], scoringVersion);
   });
 
-  test('各台の採点がPCと同じ', () {
-    final expected = fixture['scores'] as List;
-    expect(expected, hasLength(rows.length));
-    final differ = <String>[];
-    for (var i = 0; i < rows.length; i++) {
-      final s = scoreRecord(rows[i], rows);
-      final actual = <String, Object?>{
-        'games': s.games,
-        'max_hold': s.maxHold,
-        'hits': s.hits,
-        'positive': s.positive,
-        'retention': s.retention,
-        'total': s.total,
-        'reference_count': s.referenceCount,
-        'reference_days': s.referenceDays,
-        'hold_reference_count': s.holdReferenceCount,
-        'coverage': s.coverage,
-        'missing_low': s.missingLow,
-        'missing_high': s.missingHigh,
-        'provisional': s.provisional,
-      };
-      final wanted = expected[i] as Map;
-      for (final entry in actual.entries) {
-        if (!same(wanted[entry.key], entry.value)) {
-          differ.add(
-            '${rows[i].store} ${rows[i].day} ${rows[i].rack} ${entry.key}: '
-            'PC=${wanted[entry.key]} Android=${entry.value}',
-          );
+  test('新台の扱いの版がPCと同じ', () {
+    expect(fixture['new_machine_version'], newMachineScoringVersion);
+  });
+
+  // scores＝翌日候補・検証用（今までどおり）、display_scores＝画面に出す点数（2026-11-03、新台は同じ日の
+  // 同じ機種のほかの台と比べる。合成データの初日は全機種が新台）。
+  for (final (key, display) in [('scores', false), ('display_scores', true)]) {
+    test(display ? '画面に出す点数（新台の扱い）がPCと同じ' : '各台の採点がPCと同じ', () {
+      final expected = fixture[key] as List;
+      expect(expected, hasLength(rows.length));
+      final differ = <String>[];
+      for (var i = 0; i < rows.length; i++) {
+        final s = scoreRecord(rows[i], rows, sameDayForNew: display);
+        final actual = <String, Object?>{
+          'games': s.games,
+          'max_hold': s.maxHold,
+          'hits': s.hits,
+          'positive': s.positive,
+          'retention': s.retention,
+          'total': s.total,
+          'reference_count': s.referenceCount,
+          'reference_days': s.referenceDays,
+          'hold_reference_count': s.holdReferenceCount,
+          'coverage': s.coverage,
+          'missing_low': s.missingLow,
+          'missing_high': s.missingHigh,
+          'provisional': s.provisional,
+        };
+        final wanted = expected[i] as Map;
+        for (final entry in actual.entries) {
+          if (!same(wanted[entry.key], entry.value)) {
+            differ.add(
+              '${rows[i].store} ${rows[i].day} ${rows[i].rack} ${entry.key}: '
+              'PC=${wanted[entry.key]} Android=${entry.value}',
+            );
+          }
         }
       }
-    }
-    expect(differ, isEmpty, reason: differ.take(10).join('\n'));
-  });
+      expect(differ, isEmpty, reason: differ.take(10).join('\n'));
+    });
+  }
 
   test('翌日候補（並び・平均より・日数）がPCと同じ', () {
     final actual = <Map<String, Object?>>[];

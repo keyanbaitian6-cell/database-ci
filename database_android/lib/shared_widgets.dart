@@ -1008,7 +1008,11 @@ class SlumpStrip extends StatelessWidget {
                               ),
                               Text(
                                 () {
-                                  final total = scoreRecord(r, all).total;
+                                  final total = scoreRecord(
+                                    r,
+                                    all,
+                                    sameDayForNew: true,
+                                  ).total;
                                   return total == null
                                       ? '—'
                                       : '${total.toStringAsFixed(1)}点';

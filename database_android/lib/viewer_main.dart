@@ -1003,7 +1003,9 @@ class _ViewerHomeState extends State<ViewerHome> {
     ];
     final key = (_dataVersion, store, day);
     if (_scoredFor != key) {
-      _digest = [for (final r in dayRows) (r, scoreRecord(r, all))];
+      _digest = [
+        for (final r in dayRows) (r, scoreRecord(r, all, sameDayForNew: true)),
+      ];
       _candidates = dayCandidates(dayRows, all, excludeNormal: true);
       _scoredFor = key;
     }

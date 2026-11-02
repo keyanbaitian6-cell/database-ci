@@ -18,6 +18,10 @@ from setting_estimate import candidate_label, estimate_setting
 from normal_day_context import normal_day_context_html
 
 VERSION = '2026-09-29-v12'
+# 画面に出す点数で、新台（その店でその機種の記録が評価日の30日前〜前日に1件も無い）を同じ日の同じ機種のほかの台と
+# 比べたときの版（2026-11-03 利用者「新台については比較せず出しても良いのでは？」→「同じ日の他の台と比べる」）。
+# 翌日候補・固定済みの検証・監査は VERSION（v12）のまま（same_day を渡さない）。
+NEW_MACHINE_SCORING_VERSION = '2026-11-03-v13'
 MIN_REFERENCE_ROWS = 20  # Initial operational default, not statistical confidence.
 OBSERVATION_KEEP_DAYS = 30  # How long the write log keeps its lines (it is never read by the app).
 HISTORY_REPORT_DAYS = 14    # How many of the most recent dates the history page draws.
@@ -2182,7 +2186,8 @@ def rack_trend(store, row, limit=7):
     rows.sort(key=lambda r: r['day'], reverse=True)
     trend = []
     for r in rows[:limit]:
-        result = score(r, store.references(r))
+        result = score(r, store.references(r), same_day=[
+            x for x in store._machine_rows(row['machine'], row['store']) if x['day'] == r['day']])
         hits = r['bb'] + r['rb']
         trend.append(dict(day=r['day'], games=r['games'], hits=hits,
                           rate=(r['games'] / hits if hits else None),
@@ -2769,6 +2774,22 @@ def comparison_pool(row, reference):
             and not implausible_numbers(r)]
 
 
+def new_machine_peers(row, reference, same_day):
+    """新台のときだけ、同じ日の同じ機種のほかの台（回転数の幅・数値異常の除外は comparison_pool と同じ）。
+
+    新台＝[reference] に、同じ店・同じ機種の評価日の30日前〜前日の回転数のある記録が1件も無い。過去の記録があるのに回転数の幅で
+    比較相手が0件になった台は新台ではない（v12のまま中立で補う）。Android `newMachinePeers` と同じ。"""
+    first = (date.fromisoformat(row['day']) - timedelta(days=30)).isoformat()
+    same = lambda r: r.get('store') == row.get('store') and r.get('machine') == row.get('machine')
+    if any(same(r) and first <= r['day'] < row['day'] and (r.get('games') or 0) > 0 for r in reference):
+        return []
+    target = max(500, row['games'])
+    return [r for r in same_day
+            if same(r) and r['day'] == row['day'] and int(r['rack']) != int(row['rack'])
+            and max(500, target / 2) <= r.get('games', 0) <= target * 2
+            and not implausible_numbers(r)]
+
+
 def adjusted_rank(value, rows, field, maximum, games):
     """Continuous conservative rank shrinkage; NOT Bayesian setting inference.
 
@@ -2801,8 +2822,9 @@ def absolute_hold_score(max_hold):
     return MAX_HOLD_SCORE * min(1.0, max_hold / COMPLETE_HOLD)
 
 
-def score(row, reference, provisional_reference=None):
-    # Kept as a compatibility argument; same-day fallback is deliberately gone.
+def score(row, reference, provisional_reference=None, same_day=None):
+    # provisional_reference is kept as a compatibility argument; the old same-day fallback is gone.
+    # same_day（画面の表示だけ）：新台なら同じ日の同じ機種のほかの台と比べる（new_machine_peers、v13）。
     s = dict(version=VERSION, games=spin_score(row.get('games')), max_hold=None,
              hits=None, positive=None, retention=None, total=None,
              reference_count=0, reference_days=0, hold_reference_count=0,
@@ -2821,6 +2843,11 @@ def score(row, reference, provisional_reference=None):
         s['reasons'].append('負の数値を確認してください')
         return s
     refs = comparison_pool(row, reference)
+    peers = new_machine_peers(row, reference, same_day) if same_day is not None and not refs else []
+    if peers:
+        refs = peers
+        s['version'] = NEW_MACHINE_SCORING_VERSION
+        s['reasons'].append(f'新台（過去30日の記録なし）：同じ日の同じ機種{len(peers)}台と比べた点')
     hits_refs = [r for r in refs if r.get('bb') is not None and r.get('rb') is not None
                  and r['bb'] >= 0 and r['rb'] >= 0]
     holds_refs = [r for r in refs if r.get('max_hold') is not None and r['max_hold'] >= 0]
@@ -3056,8 +3083,10 @@ def measurement_preview_html(row):
 
 
 def scored_rows(store, day, machine, location='nagamachiminami'):
-    return [dict(**r, score=score(r, store.references(r)), setting_estimate=estimate_setting(r))
-            for r in store.rows(day, machine, location)]
+    rows = store.rows(day, machine, location)
+    # 画面の表示なので、新台は同じ日の同じ機種のほかの台と比べる（v13）。
+    return [dict(**r, score=score(r, store.references(r), same_day=rows), setting_estimate=estimate_setting(r))
+            for r in rows]
 
 
 # PC版「結果を見る」で開くHTML（機種の結果・この日のまとめ・過去の記録）の見た目。
