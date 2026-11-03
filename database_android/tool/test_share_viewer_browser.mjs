@@ -221,6 +221,12 @@ try {
     await page.waitForSelector('.sheet', {state: 'detached'});
     assert.match(await page.locator('[data-month-net]').innerText(), /月間差枚（推定含む）\s*\+1,417枚\s*取得分 1日・延べ1台/);
 
+    // お店のひとこと（2026-11-04）：台データのある最新の日（幸町は2日の1台）について、月の集計の下に1段。
+    const comment = page.locator('[data-day-comment]');
+    const commentText = await comment.innerText();
+    assert.ok(commentText.startsWith('ひとこと'), commentText);
+    assert.ok(commentText.endsWith(`${Number(d2.slice(5, 7))}/${Number(d2.slice(8))}（${'日月火水木金土'[new Date(`${d2}T00:00:00Z`).getUTCDay()]}）は、総差枚+1,417枚（推定）で、1台中1台がプラスでした。`), commentText);
+    assert.ok(await comment.evaluate(e => e.scrollWidth <= e.clientWidth), `ひとことが横にはみ出す（${width}px）`);
     assert.match(await page.locator('[data-month-exchange]').innerText(), /約＋2\.8万円/);
     assert.match(await page.locator('[data-month-exchange]').innerText(), /46枚貸し・50枚交換/);
     assert.match(await page.locator('[data-month-exchange]').innerText(), /実収支ではありません/);

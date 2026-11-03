@@ -5,6 +5,7 @@ import 'capture_health_ui.dart';
 import 'package:flutter/material.dart';
 
 import 'answer_check.dart';
+import 'day_comment.dart';
 import 'data_checks.dart';
 import 'exploratory_page.dart';
 import 'list_views.dart';
@@ -95,6 +96,10 @@ class _ViewerHomeState extends State<ViewerHome> {
   // 表示中の日の採点（読み込んだ内容・店舗・日付が変わったときだけ計算し直す）。
   // 読み込んだ内容は、読み込むたびに1つ進む番号で見分ける。
   Object? _scoredFor;
+
+  /// 選んでいる日のお店のひとこと（day_comment.dart、2026-11-04）。採点と同じく、データ・店・日が
+  /// 変わったときだけ作り直す。
+  String _comment = '';
   var _dataVersion = 0;
   List<(SlotRecord, ScoreResult)> _digest = const [];
   ({List<ProvisionalCandidate> candidates, int machines, int judged})?
@@ -1007,6 +1012,14 @@ class _ViewerHomeState extends State<ViewerHome> {
         for (final r in dayRows) (r, scoreRecord(r, all, sameDayForNew: true)),
       ];
       _candidates = dayCandidates(dayRows, all, excludeNormal: true);
+      _comment = day == null
+          ? ''
+          : storeDayComment(
+              all,
+              store,
+              day,
+              event: data.dateEventFor(store, day)?.name,
+            );
       _scoredFor = key;
     }
     // 1〜3台の機種は「バラエティ」1つにまとめる。
@@ -1081,6 +1094,29 @@ class _ViewerHomeState extends State<ViewerHome> {
           stores: viewerStoreNames(all),
         ),
         const SizedBox(height: 10),
+        if (_comment.isNotEmpty) ...[
+          Card(
+            key: const ValueKey('day-comment'),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'ひとこと',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _comment,
+                    style: const TextStyle(fontSize: 14, height: 1.45),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
         if (isPscubeStore(store)) ...[
           OutlinedButton.icon(
             onPressed: () => _openPscubeCalendar(store),

@@ -22,7 +22,7 @@ import {
   SAIWAICHOU_GAP_NET, saiwaichouMachineNet, saiwaichouGrade, saiwaichouGapEnd, saiwaichouGap,
   monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureText,
   characterBirthdayCellLabel, characterBirthdaysOn, parseCharacterBirthdays,
-  ALL_RACKS_SORTS, allRacksOrder, nonVarietyRacks,
+  ALL_RACKS_SORTS, allRacksOrder, nonVarietyRacks, storeDayComment,
 } from './data.mjs';
 
 const ID_KEY = 'database-share-script-id';
@@ -214,6 +214,9 @@ function render() {
   const netDays = new Set(monthDayList(state.year, state.month).filter(day => (model.byDay.get(`${state.store}|${day}`) ?? []).some(r => r.net != null))).size;
   const issues = (model.byDay.issues ?? []).filter(i => i.store === state.store && i.day.startsWith(`${state.year}-${String(state.month).padStart(2,'0')}`));
   const conflicts = issues.filter(i => i.kind === 'conflict');
+  // お店のひとこと（2026-11-04）：この店の台データのある最新の日について（data.mjs storeDayComment）。
+  const latestRackDay = [...model.byDay.keys()].filter(k => k.startsWith(state.store + '|')).map(k => k.split('|')[1]).sort().at(-1);
+  const comment = latestRackDay ? storeDayComment(model.byDay, state.store, latestRackDay, model.events.get(`${state.store}|${latestRackDay}`)?.name ?? null) : '';
   const cells = weeks.flat().map(day => {
     if (!day) return '<div class="blank" aria-hidden="true"></div>';
     const racks = model.byDay.get(`${state.store}|${day}`) ?? [];
@@ -251,6 +254,7 @@ function render() {
         <div class="month-stat" data-month-net><span class="stat-label">月間差枚${state.store.startsWith('pscube:') ? '' : '（推定含む）'}</span><span class="stat-value num ${monthNet == null ? '' : tone(monthNet)}">${monthNet == null ? '—' : signed(monthNet)}<small>${monthNet == null ? '' : '枚'}</small></span><span class="stat-detail">${monthNet == null ? '差枚データなし' : `取得分 ${netDays}日・延べ${count(monthNets.length)}台`}</span></div>
         ${exchange ? `<div class="exchange-summary" data-month-exchange><div class="exchange-head"><span>交換額換算（参考）</span><strong class="exchange-value num">${exchangeAmount}</strong></div><p class="exchange-rate">${exchange.loan}枚貸し・${exchange.payout}枚交換 ／ 1枚${exchange.payout === 50 ? '20' : '約17.24'}円で換算</p><p class="exchange-note">取得できた差枚だけの参考額です。<br>実収支ではありません。</p><details class="exchange-info"><summary>換算について</summary><p>過去月も現在指定の交換条件で換算しています。貸出・交換の枚数はそれぞれ1,000円相当として計算。現金投資時の貸出・交換の差は含みません。現金投資か持ちメダル遊技かによって収支は変わります。${state.store.startsWith('pscube:') ? '' : '元の差枚が推定の場合、換算額にも誤差を含みます。'}差枚が分かる台だけの合計を換算し、差枚データがない月は「—」と表示します。</p></details></div>` : ''}
       </div>
+      ${comment ? `<div class="day-comment" data-day-comment><span class="stat-label">ひとこと</span><p>${esc(comment)}</p></div>` : ''}
       <p class="lede">日付を押すと、その日の差枚TOP50と強かった機種10選が見られます。</p>
     </section>
     <div class="stores">

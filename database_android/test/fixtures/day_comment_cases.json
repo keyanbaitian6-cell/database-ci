@@ -1,0 +1,1762 @@
+{
+ "note": "お店のひとこと（2026-11-04）。共有カレンダー（share_viewer/data.mjs dayComment）と閲覧ページ（lib/day_comment.dart）で同じ文になることを確かめる。期待する文は、文面を読んで確かめてから固定した。",
+ "cases": [
+  {
+   "name": "基本：総差枚・30日の比較（高い方）・機種・台番号の続き",
+   "input": {
+    "day": "2026-11-03",
+    "event": null,
+    "racks": [
+     {
+      "rack": 101,
+      "machine": "北斗",
+      "net": 800,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 102,
+      "machine": "北斗",
+      "net": 900,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 103,
+      "machine": "北斗",
+      "net": 1000,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 104,
+      "machine": "北斗",
+      "net": 1100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 105,
+      "machine": "北斗",
+      "net": 1200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 106,
+      "machine": "北斗",
+      "net": 1300,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 201,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": -400,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 202,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": 300,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 203,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": -400,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 204,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": 300,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 205,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": -400,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 206,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": 300,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 207,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": -400,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 208,
+      "machine": "ﾏｲｼﾞｬｸﾞﾗｰV",
+      "net": 300,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 301,
+      "machine": "番長",
+      "net": -200,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 302,
+      "machine": "番長",
+      "net": -190,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 303,
+      "machine": "番長",
+      "net": -180,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 304,
+      "machine": "番長",
+      "net": -170,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 305,
+      "machine": "番長",
+      "net": -160,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 306,
+      "machine": "番長",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 307,
+      "machine": "番長",
+      "net": -140,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 308,
+      "machine": "番長",
+      "net": -130,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 309,
+      "machine": "番長",
+      "net": -120,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 310,
+      "machine": "番長",
+      "net": -110,
+      "won": false,
+      "estimated": true
+     }
+    ],
+    "recent": [
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     },
+     {
+      "judged": 24,
+      "won": 6
+     }
+    ]
+   },
+   "expected": "11/3（火）は、総差枚+4,350枚（推定）で、24台中10台がプラスでした。この30日で記録のある20日の中では、プラスの台の割合が高い方でした。機種別では、北斗（6台）が1台あたり+1,050枚（推定）でいちばんでした。101〜106番は6台続けてプラスでした。"
+  },
+  {
+   "name": "イベントの日・低い方・どの機種もマイナス・末尾",
+   "input": {
+    "day": "2026-11-01",
+    "event": "シャッフル",
+    "racks": [
+     {
+      "rack": 10,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 11,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 12,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 13,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 14,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 15,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 16,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 17,
+      "machine": "A",
+      "net": 500,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 18,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 19,
+      "machine": "A",
+      "net": -300,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 20,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 21,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 22,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 23,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 24,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 25,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 26,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 27,
+      "machine": "B",
+      "net": 400,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 28,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 29,
+      "machine": "B",
+      "net": -500,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 30,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 31,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 32,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 33,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 34,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 35,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 36,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 37,
+      "machine": "C",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 38,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 39,
+      "machine": "C",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     }
+    ],
+    "recent": [
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     },
+     {
+      "judged": 30,
+      "won": 20
+     }
+    ]
+   },
+   "expected": "11/1（日）はイベント「シャッフル」の日。総差枚-7,100枚（推定）で、30台中3台がプラスでした。この30日で記録のある12日の中では、プラスの台の割合が低い方でした。3台以上ある機種は、どれも1台あたりではマイナスでした。"
+  },
+  {
+   "name": "真ん中くらい・比べる日が少ないと比べない（9日）",
+   "input": {
+    "day": "2026-10-30",
+    "event": null,
+    "racks": [
+     {
+      "rack": 1,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 2,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 3,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 4,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 5,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 6,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 7,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 8,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 9,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 10,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 11,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 12,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 13,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 14,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 15,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 16,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 17,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 18,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 19,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 20,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 21,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 22,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 23,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 24,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     }
+    ],
+    "recent": [
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 4
+     }
+    ]
+   },
+   "expected": "10/30（金）は、総差枚-800枚（推定）で、24台中8台がプラスでした。"
+  },
+  {
+   "name": "真ん中くらい",
+   "input": {
+    "day": "2026-10-30",
+    "event": null,
+    "racks": [
+     {
+      "rack": 1,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 2,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 3,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 4,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 5,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 6,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 7,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 8,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 9,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 10,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 11,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 12,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 13,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 14,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 15,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 16,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 17,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 18,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 19,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 20,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 21,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 22,
+      "machine": "D",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 23,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 24,
+      "machine": "D",
+      "net": -100,
+      "won": false,
+      "estimated": true
+     }
+    ],
+    "recent": [
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 12
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 4
+     },
+     {
+      "judged": 24,
+      "won": 8
+     },
+     {
+      "judged": 24,
+      "won": 8
+     },
+     {
+      "judged": 24,
+      "won": 8
+     }
+    ]
+   },
+   "expected": "10/30（金）は、総差枚-800枚（推定）で、24台中8台がプラスでした。この30日で記録のある13日の中では、プラスの台の割合が真ん中くらいでした。"
+  },
+  {
+   "name": "差枚の分からない台が多い日：総差枚と機種は書かない",
+   "input": {
+    "day": "2026-10-29",
+    "event": null,
+    "racks": [
+     {
+      "rack": 1,
+      "machine": "E",
+      "net": null,
+      "won": true,
+      "estimated": false
+     },
+     {
+      "rack": 2,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 3,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 4,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 5,
+      "machine": "E",
+      "net": null,
+      "won": true,
+      "estimated": false
+     },
+     {
+      "rack": 6,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 7,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 8,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 9,
+      "machine": "E",
+      "net": null,
+      "won": true,
+      "estimated": false
+     },
+     {
+      "rack": 10,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 11,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 12,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 13,
+      "machine": "E",
+      "net": null,
+      "won": true,
+      "estimated": false
+     },
+     {
+      "rack": 14,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 15,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 16,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 17,
+      "machine": "E",
+      "net": null,
+      "won": true,
+      "estimated": false
+     },
+     {
+      "rack": 18,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 19,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 20,
+      "machine": "E",
+      "net": null,
+      "won": false,
+      "estimated": false
+     },
+     {
+      "rack": 50,
+      "machine": "E",
+      "net": 300,
+      "won": true,
+      "estimated": true
+     }
+    ],
+    "recent": []
+   },
+   "expected": "10/29（木）は、21台中6台がプラスでした。"
+  },
+  {
+   "name": "勝ち負けの分かる台が無い日は空",
+   "input": {
+    "day": "2026-10-28",
+    "event": null,
+    "racks": [
+     {
+      "rack": 1,
+      "machine": "F",
+      "net": null,
+      "won": null,
+      "estimated": true
+     }
+    ],
+    "recent": []
+   },
+   "expected": ""
+  },
+  {
+   "name": "確定差枚（推定でない）",
+   "input": {
+    "day": "2026-10-27",
+    "event": null,
+    "racks": [
+     {
+      "rack": 1,
+      "machine": "G",
+      "net": 1000,
+      "won": true,
+      "estimated": false
+     },
+     {
+      "rack": 2,
+      "machine": "G",
+      "net": 750,
+      "won": true,
+      "estimated": false
+     },
+     {
+      "rack": 3,
+      "machine": "G",
+      "net": 500,
+      "won": true,
+      "estimated": false
+     }
+    ],
+    "recent": []
+   },
+   "expected": "10/27（火）は、総差枚+2,250枚で、3台中3台がプラスでした。機種別では、G（3台）が1台あたり+750枚でいちばんでした。"
+  },
+  {
+   "name": "末尾：全体より2割以上高い末尾（8台以上）",
+   "input": {
+    "day": "2026-10-26",
+    "event": null,
+    "racks": [
+     {
+      "rack": 1,
+      "machine": "H0",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 4,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 7,
+      "machine": "H2",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 10,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 13,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 16,
+      "machine": "H1",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 19,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 22,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 25,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 28,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 31,
+      "machine": "H2",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 34,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 37,
+      "machine": "H0",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 40,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 43,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 46,
+      "machine": "H3",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 49,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 52,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 55,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 58,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 61,
+      "machine": "H0",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 64,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 67,
+      "machine": "H2",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 70,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 73,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 76,
+      "machine": "H1",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 79,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 82,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 85,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 88,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 91,
+      "machine": "H2",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 94,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 97,
+      "machine": "H0",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 100,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 103,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 106,
+      "machine": "H3",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 109,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 112,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 115,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 118,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 121,
+      "machine": "H0",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 124,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 127,
+      "machine": "H2",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 130,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 133,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 136,
+      "machine": "H1",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 139,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 142,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 145,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 148,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 151,
+      "machine": "H2",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 154,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 157,
+      "machine": "H0",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 160,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 163,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 166,
+      "machine": "H3",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 169,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 172,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 175,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 178,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 181,
+      "machine": "H0",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 184,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 187,
+      "machine": "H2",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 190,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 193,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 196,
+      "machine": "H1",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 199,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 202,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 205,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 208,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 211,
+      "machine": "H2",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 214,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 217,
+      "machine": "H0",
+      "net": 200,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 220,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 223,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 226,
+      "machine": "H3",
+      "net": 100,
+      "won": true,
+      "estimated": true
+     },
+     {
+      "rack": 229,
+      "machine": "H0",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 232,
+      "machine": "H1",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 235,
+      "machine": "H2",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     },
+     {
+      "rack": 238,
+      "machine": "H3",
+      "net": -150,
+      "won": false,
+      "estimated": true
+     }
+    ],
+    "recent": []
+   },
+   "expected": "10/26（月）は、総差枚-5,200枚（推定）で、80台中24台がプラスでした。3台以上ある機種は、どれも1台あたりではマイナスでした。末尾1は8台中8台がプラスでした。"
+  }
+ ]
+}
