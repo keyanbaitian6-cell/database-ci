@@ -1,6 +1,12 @@
 package com.keyan.database_android
 
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.content.ComponentName
 import android.os.Build
@@ -38,6 +44,52 @@ class MainActivity : FlutterActivity() {
             if (on && dim) 0.05f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = attributes
     }
+    /** 通知の許可（Android 13以降）。自動取り込み・0時の予約をONにしたとき（利用者の操作のとき）だけ聞く。 */
+    private fun requestResultNotices() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2103)
+        }
+    }
+
+    /**
+     * 自動取り込みの結果（完了・止まった理由）を通知で知らせる（2026-11-04、利用者が選んだ「朝の取り込み結果通知」）。
+     * 常駐の通知（AutoCaptureService）とは別の通知で、常駐を止めた後も残る。同じ番号で出すので、最新の結果だけが残る。
+     * 許可が無ければ出さずに false を返す（取り込みは止めない）。
+     */
+    private fun postResultNotice(title: String, text: String): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        val manager = getSystemService(NotificationManager::class.java)
+        val channelId = "database_capture_result"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "取り込みの結果", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val open = PendingIntent.getActivity(
+            this, 1, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, channelId)
+        } else {
+            Notification.Builder(this)
+        }.setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(2102, notification)
+        return true
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         // 取り込み画面の内部ブラウザで YouTube への要求を外へ出さない（YouTubeRequestBlocker.kt）。
@@ -114,6 +166,16 @@ class MainActivity : FlutterActivity() {
                             keepScreenOnDimmed(false)
                             result.success(null)
                         }
+                        "requestNotices" -> {
+                            requestResultNotices()
+                            result.success(null)
+                        }
+                        "notify" -> result.success(
+                            postResultNotice(
+                                call.argument<String>("title") ?: "database",
+                                call.argument<String>("text") ?: "",
+                            )
+                        )
                         // 0時の自動取り込みの予約を待つ間（P’s CUBE、2026-10-26）。常駐サービスは起こさず、
                         // 画面を消さないだけ（23時以降は暗くする）。Android 15以降の常駐の1日6時間を待ち時間で使わない。
                         "keepScreen" -> {

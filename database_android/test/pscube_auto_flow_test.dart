@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:database_android/capture_notice.dart';
 import 'package:database_android/error_log.dart';
 import 'package:database_android/pscube_auto.dart';
 import 'package:database_android/pscube_import_page.dart';
@@ -149,6 +150,7 @@ void main() {
   }
 
   final logged = <String>[];
+  final notices = <String>[];
 
   setUp(() async {
     oldPlatform = WebViewPlatform.instance;
@@ -169,6 +171,9 @@ void main() {
     forgetErrorLog();
     errorLogDirectory = () async => null;
     errorLogObserver = (where, text) => logged.add('$where	$text');
+    notices.clear();
+    captureNoticeSender = (title, text) async => notices.add('$title｜$text');
+    captureNoticePermission = () async {};
   });
 
   tearDown(() async {
@@ -399,6 +404,13 @@ void main() {
     expect(platform.web.captures, hasLength(3));
     expect(find.textContaining('同じページで3回失敗したため待機中（3回目：'), findsOneWidget);
     expect(
+      notices.where(
+        (n) => n.startsWith('P’s CUBE：取り込みが止まっています｜同じページで3回失敗しました'),
+      ),
+      hasLength(1),
+      reason: '止まったことを通知で知らせる（2026-11-04）',
+    );
+    expect(
       logged.where((line) => line.startsWith('pscube.save	')),
       hasLength(3),
       reason: '失敗を毎回、記録のファイルにも残す（2026-11-04）',
@@ -564,6 +576,10 @@ void main() {
           'pscube.index\t$i回目：機種一覧が少ない（いつもの3機種に対して2機種）',
       ]);
       expect(find.textContaining('すべて取り込みました'), findsNothing);
+      expect(notices, [
+        'P’s CUBE：取り込みが止まっています｜機種一覧が途中までしか読めていません（いつもの3機種に対して2機種）。'
+            '$pscubeListMaxRetries回読み直しても進みませんでした。',
+      ]);
       expect(await active(tester), keys, reason: '途中の一覧で機種の並びを上書きしない');
       await finish(tester);
     });
@@ -702,6 +718,109 @@ void main() {
       expect(find.text('自動取り込み：OFF'), findsOneWidget);
       expect(find.textContaining('3回試しても始められませんでした'), findsOneWidget);
       expect(find.textContaining('0時の予約：10/20'), findsOneWidget);
+      expect(notices.single, startsWith('P’s CUBE：0時の予約｜3回試しても始められませんでした'));
+      await finish(tester);
+    });
+
+    // 2026-11-04：利用者が選んだ「抜けた日を自動で取り戻す」「朝の取り込み結果通知」。
+    Future<void> seedDay(
+      WidgetTester tester,
+      String day, {
+      required bool complete,
+    }) async {
+      final machines =
+          ((_scenes['index']!['capture'] as Map)['machines'] as List)
+              .cast<Map>();
+      final racks = <(Map, int)>[
+        (machines[0], 1),
+        if (complete) (machines[0], 2),
+        (machines[1], 2001),
+      ];
+      await tester.runAsync(() async {
+        for (final (machine, rack) in racks) {
+          await store.db.insert('records', {
+            'key': jsonEncode([
+              machine['store'],
+              machine['rate'],
+              machine['machine'],
+              rack,
+              day,
+            ]),
+            'payload': jsonEncode({
+              'store': machine['store'],
+              'rate': machine['rate'],
+              'machine': machine['machine'],
+              'rack': rack,
+              'day': day,
+              // 全台一覧の場面（next_machine）と同じ数値（違うと台別ページ済みの印が消える）。
+              'bb': 3,
+              'rb': 2,
+              'at_art': 0,
+              'games': 1200,
+              'my': 150,
+              'detail_url': null,
+            }),
+          });
+        }
+        // 台別ページも済み（最後に全台一覧を取り込んだら、その日は残りなし）。
+        if (complete) {
+          await store.db.insert('rack_captures', {
+            'key': jsonEncode([
+              machines[1]['store'],
+              machines[1]['rate'],
+              machines[1]['machine'],
+              2001,
+              day,
+            ]),
+          });
+        }
+      });
+    }
+
+    // 機種一覧を保存した後は最初の機種を開くので、最後の機種の全台一覧を保存したところで「その日は済み」になる。
+    Future<void> finishDay(WidgetTester tester) async {
+      await tick(tester);
+      expect(platform.web.captures, ['index']);
+      platform.web.show('next_machine');
+      await tick(tester);
+      expect(platform.web.captures, ['index', 'next_machine']);
+    }
+
+    testWidgets('取り込み日が済んだら、抜けていた前の日を止めずに取り戻す', (tester) async {
+      await seedDay(tester, '2026-10-18', complete: true);
+      await seedDay(tester, '2026-10-17', complete: false);
+      clock = DateTime(2026, 10, 18, 23, 59, 59);
+      await open(tester, reserved: true);
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 1));
+      await finishDay(tester);
+      expect(
+        platform.web.navigations.last,
+        allOf(
+          contains('nmk_kisyu=NEW'),
+          endsWith('#0;0;20261017;0;cd_dai;1;0;0'),
+        ),
+        reason: '10/18は済んでいる。10/17の足りない機種の全台一覧を10/17のタブで開く',
+      );
+      expect(find.text('自動取り込み：ON'), findsOneWidget, reason: '止めずに続ける');
+      expect(notices, isEmpty, reason: '取り戻しが終わるまで完了の通知は出さない');
+      expect(logged, contains(startsWith('pscube.gap	2026-10-17を取り戻す')));
+      await finish(tester);
+    });
+
+    testWidgets('抜けた日が無ければ、止めて結果を通知で知らせる', (tester) async {
+      await seedDay(tester, '2026-10-18', complete: true);
+      clock = DateTime(2026, 10, 18, 23, 59, 59);
+      await open(tester, reserved: true);
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 1));
+      await finishDay(tester);
+      expect(
+        platform.web.navigations,
+        hasLength(1),
+        reason: '記録より前の日は抜けとみなさない（最初の機種を開いた1回だけ）',
+      );
+      expect(find.text('自動取り込み：OFF'), findsOneWidget);
+      expect(find.textContaining('10/18の分をすべて取り込みました'), findsOneWidget);
+      expect(notices, ['P’s CUBE：取り込み完了｜10/18（日）：2機種・3台']);
       await finish(tester);
     });
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'capture_health_ui.dart';
+import 'capture_notice.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -86,6 +87,10 @@ class _PscubeImportPageState extends State<PscubeImportPage>
 
   /// 一覧が進まなかった回数（ページごと）。[_autoFailures] と分けて数え、3回で止めない（[_retryList]）。
   final _listRetries = <String, int>{};
+
+  /// 今回の自動取り込みで取り込み終わった日（取り込み日、取り戻した日の順）と、取り戻そうとした日（2026-11-04）。
+  final _finishedDays = <String>[];
+  final _gapTried = <String>{};
   // 0時に自動取り込みを始める予約（2026-10-26 利用者指定、案A）。ONは端末に保存し、この画面を
   // 開いている間、毎日0時に前日（3時までの営業日）を指定して自動取り込みをONにする。待つ間は画面を
   // 消さずに暗くするだけで、常駐サービスは使わない（Android 15以降の1日6時間の上限を待ち時間で使わない）。
@@ -218,9 +223,13 @@ class _PscubeImportPageState extends State<PscubeImportPage>
 
   void _connectionFailed() {
     final message = _connection.failure!.message;
+    final wasAuto = _auto.enabled;
     // Invalidate a capture already reading the DOM, before any awaited work.
     _page++;
     _auto.turnOff();
+    if (wasAuto) {
+      unawaited(notifyCaptureResult('P’s CUBE：取り込みが止まりました', '通信エラー：$message'));
+    }
     setState(() {
       _loading = false;
       _status = message;
@@ -597,6 +606,8 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       return;
     }
     setState(() => _autoChanging = true);
+    // 利用者がONにしたときだけ通知の許可を聞く（0時の予約で始めるときに聞くと、確認の画面で止まるおそれがある）。
+    if (!_midnightStarting) unawaited(requestCaptureNotices());
     try {
       if (Platform.isAndroid) await _autoService.invokeMethod<void>('start');
       if (!mounted || _connection.failure != null || _opening) {
@@ -607,6 +618,8 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       _autoFailures.clear();
       _autoHeld.clear();
       _listRetries.clear();
+      _finishedDays.clear();
+      _gapTried.clear();
       _store?.resetIndexConfirmation();
       _freshSince.clear();
       _auto.turnOn();
@@ -672,6 +685,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   Future<void> _setMidnight(bool enabled) async {
     final store = _store;
     if (store == null) return;
+    if (enabled) unawaited(requestCaptureNotices());
     try {
       await store.setMidnightAutoEnabled(enabled);
     } catch (error) {
@@ -700,6 +714,9 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     if (due == null) return;
     if (due == PscubeMidnight.missed) {
       _rearmMidnight(now, '0時の予約：3時までに始められませんでした。次の0時に始めます。');
+      unawaited(
+        notifyCaptureResult('P’s CUBE：0時の予約', '3時までに始められませんでした。次の0時に始めます。'),
+      );
       return;
     }
     if (_auto.enabled) {
@@ -712,6 +729,12 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     if (!_browserReady || _connection.failure != null) {
       if (_midnightReopens >= 3) {
         _rearmMidnight(now, '0時の予約：ページを開き直せず、今夜は始めませんでした。次の0時に始めます。');
+        unawaited(
+          notifyCaptureResult(
+            'P’s CUBE：0時の予約',
+            'ページを開き直せず、今夜は始めませんでした。次の0時に始めます。',
+          ),
+        );
         return;
       }
       _midnightReopens++;
@@ -767,6 +790,12 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     _midnightReopens++;
     if (_midnightReopens >= 3) {
       _rearmMidnight(_now(), '0時の予約：3回試しても始められませんでした。次の0時を待ちます：$reason');
+      unawaited(
+        notifyCaptureResult(
+          'P’s CUBE：0時の予約',
+          '3回試しても始められませんでした。次の0時を待ちます：$reason',
+        ),
+      );
       return;
     }
     _midnightRetryAt = _now().add(const Duration(minutes: 1));
@@ -823,6 +852,9 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       );
       if (decision.stop) {
         await _stopAuto(decision.message);
+        unawaited(
+          notifyCaptureResult('P’s CUBE：取り込みが止まりました', decision.message),
+        );
         return;
       }
       final probed = probe is Map ? probe['signature'] : null;
@@ -944,19 +976,40 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         _autoHeld.remove(autoSignature);
         _listRetries.remove(autoSignature);
         if (_auto.enabled && result.nextUrl == null) {
-          final day = _targetDay;
-          setState(() => _targetDay = null);
-          await _stopAuto(
-            day == null
-                ? 'すべて取り込みました（自動取り込みを停止しました）'
-                : '${int.parse(day.substring(5, 7))}/${int.parse(day.substring(8))}の分をすべて取り込みました（自動取り込みを停止しました）',
-          );
-          // 取り込み終わった日の分だけをDriveへ送る（設定があるときだけ。失敗しても取り込みは済んでいる）。
-          final upload = _upload;
-          if (upload != null && upload.enabled) {
-            final sent = day ?? await store.lastDay();
-            if (sent != null) unawaited(_sendDay(store, sent, upload));
+          final day = _targetDay ?? await store.lastDay();
+          if (day != null && !_finishedDays.contains(day))
+            _finishedDays.add(day);
+          // 抜けた日（その日の未取得が残っている直近の日）があれば、止めずにその日を取り戻す（2026-11-04）。
+          final gap = day == null ? null : await _gapDay(store, day);
+          if (gap != null && _auto.enabled && _page == page) {
+            _gapTried.add(gap.day);
+            setState(() => _targetDay = gap.day);
+            _autoMessage(
+              'ON・${_md(day!)}の分を取り込みました。抜けていた${_md(gap.day)}の分を取り戻します（残り${gap.remaining}件）',
+            );
+            unawaited(
+              noteErrorLog(
+                'pscube.gap',
+                '${gap.day}を取り戻す（残り${gap.remaining}件、$dayの後）',
+              ),
+            );
+            setState(() => _busy = false);
+            await _open(pscubeTableUrlForDay(gap.url, gap.day));
+            return;
           }
+          setState(() => _targetDay = null);
+          final days = [..._finishedDays];
+          _finishedDays.clear();
+          _gapTried.clear();
+          final label = days.isEmpty ? null : days.map(_md).join('・');
+          await _stopAuto(
+            label == null
+                ? 'すべて取り込みました（自動取り込みを停止しました）'
+                : '$labelの分をすべて取り込みました（自動取り込みを停止しました）',
+          );
+          // 取り込み終わった日の分だけをDriveへ送り（設定があるときだけ。失敗しても取り込みは済んでいる）、
+          // 結果を通知で知らせる。
+          unawaited(_finishNight(store, days));
         } else if (_auto.enabled) {
           _autoMessage(
             'ON・${result.skipped ?? '${result.kind}を保存'}・残り${result.remaining}件・次のページへ'
@@ -1016,6 +1069,12 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         if (count >= pscubeAutoMaxFailures) {
           _autoHeld[autoSignature] =
               'ON・同じページで3回失敗したため待機中（3回目：$error）。内容を確かめて手動で取り込むか、OFF→ONで再開';
+          unawaited(
+            notifyCaptureResult(
+              'P’s CUBE：取り込みが止まっています',
+              '同じページで3回失敗しました：$error',
+            ),
+          );
         }
         _autoMessage('ON・保存できませんでした（$count回目）：$error');
       }
@@ -1045,6 +1104,12 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）';
       _autoHeld[signature] = message;
       _autoMessage(message);
+      unawaited(
+        notifyCaptureResult(
+          'P’s CUBE：取り込みが止まっています',
+          '$detail。$count回読み直しても進みませんでした。',
+        ),
+      );
       return;
     }
     if (count % pscubeListReloadEvery != 0) {
@@ -1203,7 +1268,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     }
   }
 
-  Future<void> _sendDay(
+  Future<({bool ok, String message})> _sendDay(
     PscubeStore store,
     String day,
     PscubeDayUploadSetting setting,
@@ -1217,6 +1282,64 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         if (!result.ok) _status = result.message;
       });
     }
+    return result;
+  }
+
+  /// 状態の文に使う短い日付（例 10/18。これまでの「◯/◯の分をすべて取り込みました」と同じ形）。
+  static String _md(String day) =>
+      '${int.parse(day.substring(5, 7))}/${int.parse(day.substring(8))}';
+
+  /// 抜けた日を探す（2026-11-04、利用者が選んだ「抜けた日を自動で取り戻す」）。[day] の前の6日（サイトの
+  /// 台別ページが持つ7日の範囲）のうち、記録のある最初の日より後で、その日の未取得が残る日を新しい順に1つ。
+  /// 今回すでに取り込んだ日・取り戻そうとした日は除く（同じ日をくり返さない）。抜けが無ければ何もしない
+  /// （サイトへの通信も増えない）。
+  Future<({String day, String url, int remaining})?> _gapDay(
+    PscubeStore store,
+    String day,
+  ) async {
+    final first = await store.firstDay();
+    if (first == null) return null;
+    final base = DateTime.parse(day);
+    for (var back = 1; back < pscubeGapDays; back++) {
+      final d = base.subtract(Duration(days: back));
+      final iso =
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      if (iso.compareTo(first) < 0) break;
+      if (_gapTried.contains(iso) || _finishedDays.contains(iso)) continue;
+      final next = await store.nextTarget(iso, _direction);
+      if (next.url != null && next.remaining > 0) {
+        return (day: iso, url: next.url!, remaining: next.remaining);
+      }
+    }
+    return null;
+  }
+
+  /// 取り込み終わった日をDriveへ送り（設定があるときだけ）、結果を通知で知らせる。
+  Future<void> _finishNight(PscubeStore store, List<String> days) async {
+    final lines = <String>[];
+    var ok = true;
+    for (final day in days) {
+      final rows = await store.healthRecords(day);
+      final machines = {
+        for (final r in rows) '${r['store']}|${r['rate']}|${r['machine']}',
+      };
+      var line = '${shortDayLabel(day)}：${machines.length}機種・${rows.length}台';
+      final upload = _upload;
+      if (upload != null && upload.enabled) {
+        final sent = await _sendDay(store, day, upload);
+        ok = ok && sent.ok;
+        line += sent.ok ? '・Driveへ送信済み' : '・Driveへ送れませんでした（${sent.message}）';
+      }
+      lines.add(line);
+    }
+    await notifyCaptureResult(
+      ok ? 'P’s CUBE：取り込み完了' : 'P’s CUBE：取り込み完了（Driveへの送信に失敗あり）',
+      [
+        ...lines,
+        if (days.length > 1)
+          '抜けていた${days.skip(1).map(shortDayLabel).join('・')}の分も取り戻しました。',
+      ].join('\n'),
+    );
   }
 
   /// 当日分の自動送信の設定（スクリプトのURL・合言葉）と、今の日の分を手で送る。

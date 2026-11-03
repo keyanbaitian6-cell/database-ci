@@ -1426,6 +1426,18 @@ class PscubeStore {
   /// 最後に全台一覧を保存した日（取り込み中の日）。
   Future<String?> lastDay() => _serial(() => _dayIn(db));
 
+  /// 記録のある最初の日（抜けた日を探すとき、使い始める前の日を抜けとみなさない。2026-11-04）。
+  Future<String?> firstDay() => _serial(() async {
+    String? first;
+    for (final row in await db.query('records', columns: ['key'])) {
+      final key = jsonDecode(row['key'] as String);
+      if (key is! List || key.length < 5 || key[4] is! String) continue;
+      final day = key[4] as String;
+      if (first == null || day.compareTo(first) < 0) first = day;
+    }
+    return first;
+  });
+
   /// その日の記録だけのバックアップ（Apps Scriptへ送る当日分、2026-10-26、database/PSCUBE_SYNC.md）。
   /// 形は [exportViewer] の書き出しと同じで、記録・取り込み済みの印はその日の分、機種はその記録の機種だけ。
   /// PC版は普通のバックアップとして読む。その日の記録が無ければ null。

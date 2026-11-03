@@ -16,6 +16,9 @@ const pscubeAutoMaxFailures = 3;
 const pscubeListMaxRetries = 60;
 const pscubeListReloadEvery = 3;
 
+/// 抜けた日を探す範囲（取り込み日を含めて7日。サイトの台別ページが持つ7日、日付指定取り込みの選択肢と同じ）。
+const pscubeGapDays = 7;
+
 /// 営業日（yyyy-mm-dd）。日本時間の午前3時まではまだ前日（利用者の指定、2026-10-04は2時、2026-10-26に3時へ）。
 /// PC版 `business_day`・`recent_business_days`（database/pscube_import.py）と同じ規則。
 const pscubeBusinessDayCutoffHour = 3;
