@@ -1717,6 +1717,8 @@ class ImportPage extends StatelessWidget {
           onUndo: controller.undoLastSave,
           onProgress: controller.progressText,
           onMachineStatus: controller.machineStatuses,
+          onGapDay: controller.gapDay,
+          onDayCounts: controller.dayCounts,
           skipTableReview: () => controller.skipTableReview,
           onGraph: (browserContext, captured) async {
             final analysis = controller.resolveWebGraph(captured);

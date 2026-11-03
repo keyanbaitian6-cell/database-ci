@@ -1489,6 +1489,27 @@ class AppController extends ChangeNotifier {
     return message!;
   }, unlimited: true);
 
+  /// メルヘンの抜けた日（[meruhenGapDay]）。自動取り込みが、ある日の分を済ませたところで使う。
+  String? gapDay({
+    required String store,
+    required String day,
+    Set<String> skip = const {},
+  }) => meruhenGapDay(records, store: store, day: day, skip: skip);
+
+  /// その日・その店の台数とグラフの済んだ台数（取り込みの対象外の機種は数えない）。結果の通知に使う。
+  ({int racks, int graphs}) dayCounts({
+    required String store,
+    required String day,
+  }) {
+    final rows = records.where(
+      (r) =>
+          r.store == store &&
+          r.day == day &&
+          !isExcludedMachine(r.store, r.machine),
+    );
+    return (racks: rows.length, graphs: rows.where((r) => r.graphDone).length);
+  }
+
   /// For each machine name on the site's machine-list page: graphed/listed
   /// counts for that store and day, or null when nothing was imported yet.
   List<Map<String, int>?> machineStatuses({
@@ -1560,32 +1581,31 @@ class AppController extends ChangeNotifier {
         ? allRows
         : allRows.where((r) => scope.contains(r.rack)).toList();
     if (rows.isEmpty) return const NextGraphTarget(reason: 'no_rows');
-    final outOfScope = scope == null
-        ? <int>[]
-        : allRows
-              .where((r) => !scope.contains(r.rack) && !r.graphDone)
-              .map((r) => r.rack)
-              .toList()
+    final outOfScope =
+        scope == null
+              ? <int>[]
+              : allRows
+                    .where((r) => !scope.contains(r.rack) && !r.graphDone)
+                    .map((r) => r.rack)
+                    .toList()
           ..sort();
     final duplicate = duplicateWarning(rows, rack: rack);
-    final unlinked = rows
-        .where((r) => !r.graphDone && r.detailUrl == null)
-        .map((r) => r.rack)
-        .toList()
-      ..sort();
+    final unlinked =
+        rows
+            .where((r) => !r.graphDone && r.detailUrl == null)
+            .map((r) => r.rack)
+            .toList()
+          ..sort();
     final notices = <String>[
       if (duplicate != null && duplicate.isNotEmpty) duplicate,
-      if (unlinked.isNotEmpty)
-        '個別リンクがない${unlinked.join('・')}番台はグラフ未取得のまま残します。',
-      if (outOfScope.isNotEmpty)
-        '現在の一覧にない${outOfScope.join('・')}番台は対象外にしました。',
+      if (unlinked.isNotEmpty) '個別リンクがない${unlinked.join('・')}番台はグラフ未取得のまま残します。',
+      if (outOfScope.isNotEmpty) '現在の一覧にない${outOfScope.join('・')}番台は対象外にしました。',
     ];
     final warning = notices.isEmpty ? null : notices.join(' ');
     // 大当たり0回の台はグラフを取らないので、次の台にしない。
-    final pending = rows
-        .where((r) => !r.graphDone && r.detailUrl != null)
-        .toList()
-      ..sort((a, b) => a.rack.compareTo(b.rack));
+    final pending =
+        rows.where((r) => !r.graphDone && r.detailUrl != null).toList()
+          ..sort((a, b) => a.rack.compareTo(b.rack));
     if (pending.isEmpty) {
       return NextGraphTarget(
         url: meruhenMachineListUrl(store, day),
@@ -1648,4 +1668,48 @@ String startupFailureText(List<String> done, Object error) {
     'ほかの記録は変更していません。',
     '$error',
   ].join('\n');
+}
+
+/// メルヘンの抜けた日を探す（2026-11-04、利用者が選んだ「抜けた日を自動で取り戻す」）。
+///
+/// [day] の前の6日（日付指定取り込みの選択肢と同じ7日の範囲）のうち、この店の記録のある最初の日より後で、
+/// 次のどれかに当たる日を新しい順に1つ返す。[skip]（今回すでに済ませた・取り戻そうとした日）は除く。
+/// - その日の記録が1台も無い（自動取り込みを動かさなかった日）。
+/// - 個別リンクがあるのにグラフが無い台が残る（途中で止まった日）。
+/// - 前の日と次の日の両方にある機種が、その日だけ無い（機種一覧の途中で止まった日）。
+/// 取り込みの対象外の機種（沖ドキなど）は見ない。抜けが無ければ null（サイトへの通信も増えない）。
+String? meruhenGapDay(
+  Iterable<SlotRecord> records, {
+  required String store,
+  required String day,
+  Set<String> skip = const {},
+}) {
+  final byDay = <String, List<SlotRecord>>{};
+  for (final r in records) {
+    if (r.store != store || isExcludedMachine(r.store, r.machine)) continue;
+    byDay.putIfAbsent(r.day, () => []).add(r);
+  }
+  if (byDay.isEmpty) return null;
+  final first = byDay.keys.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+  String iso(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  final base = DateTime.parse(day);
+  Set<String>? machinesOn(DateTime d) =>
+      byDay[iso(d)]?.map((r) => r.machine).toSet();
+  for (var back = 1; back < 7; back++) {
+    final date = base.subtract(Duration(days: back));
+    final target = iso(date);
+    if (target.compareTo(first) < 0) break;
+    if (skip.contains(target)) continue;
+    final rows = byDay[target];
+    if (rows == null) return target;
+    if (rows.any((r) => !r.graphDone && r.detailUrl != null)) return target;
+    final before = machinesOn(date.subtract(const Duration(days: 1)));
+    final after = machinesOn(date.add(const Duration(days: 1)));
+    if (before != null && after != null) {
+      final here = rows.map((r) => r.machine).toSet();
+      if (before.intersection(after).difference(here).isNotEmpty) return target;
+    }
+  }
+  return null;
 }

@@ -13,12 +13,14 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'capture_flow.dart';
+import 'capture_notice.dart';
+import 'error_log.dart';
 import 'excluded_machines.dart';
 import 'browser_session.dart';
 import 'auto_capture_state.dart';
 import 'page_readiness.dart';
 import 'import_service.dart';
-import 'models.dart' show isValidRecordDay, storeNames;
+import 'models.dart' show isValidRecordDay, storeDisplayName, storeNames;
 import 'theme.dart';
 import 'web_extraction_channel.dart';
 import 'youtube_request_block.dart';
@@ -215,6 +217,8 @@ class WebImportPage extends StatefulWidget {
     required this.onMachineStatus,
     required this.skipTableReview,
     this.graphsAtRisk,
+    this.onGapDay,
+    this.onDayCounts,
   });
 
   final Future<void> Function(WebTableExtraction extraction) onSave;
@@ -244,6 +248,22 @@ class WebImportPage extends StatefulWidget {
   /// 「表の確認画面を省く」設定。店舗・日付・機種名がそろっている表だけ、
   /// 確認画面を出さずに保存する（PC版は元から確認画面なし）。
   final bool Function() skipTableReview;
+
+  /// 抜けた日を探す（`meruhenGapDay`）。自動取り込みがある日の分を済ませたら、止めずにその日を取り戻す
+  /// （2026-11-04）。null なら取り戻さない。
+  final String? Function({
+    required String store,
+    required String day,
+    Set<String> skip,
+  })?
+  onGapDay;
+
+  /// その日・その店の台数とグラフの済んだ台数（結果の通知に使う）。
+  final ({int racks, int graphs}) Function({
+    required String store,
+    required String day,
+  })?
+  onDayCounts;
 
   @override
   State<WebImportPage> createState() => _WebImportPageState();
@@ -287,6 +307,13 @@ class _WebImportPageState extends State<WebImportPage> {
   // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
   // （top＝一覧の上から、bottom＝下から）。起動のたびに戻る。日本時間の午前3時で営業日が変わる。
   String? _targetDay;
+
+  /// 今回の自動取り込みで済ませた日（店舗|日付）と、取り戻そうとした日、取り戻す前に選んでいた取り込み日
+  /// （2026-11-04）。OFF→ONで数え直す。
+  final _finishedDays = <String>{};
+  final _gapTried = <String>{};
+  String? _gapBase;
+  String? _targetBeforeGap;
   String _direction = 'top';
   // 手動で取り込んでいるとき、いま済ませた機種。機種一覧へ戻ったあと、一覧の上から探し直さず
   // この機種の次から探すために一度だけ使う（自動取り込みは使わない）。
@@ -330,6 +357,10 @@ class _WebImportPageState extends State<WebImportPage> {
       return;
     }
     setState(() => _autoChanging = true);
+    unawaited(requestCaptureNotices());
+    _finishedDays.clear();
+    _gapTried.clear();
+    _gapBase = null;
     try {
       if (Platform.isAndroid) await _autoService.invokeMethod<void>('start');
       if (!mounted ||
@@ -412,6 +443,9 @@ class _WebImportPageState extends State<WebImportPage> {
     }
     _failedPage = _flow.page;
     _extractions.navigationStarted();
+    if (_auto.enabled) {
+      unawaited(notifyCaptureResult('メルヘン：取り込みが止まりました', '通信エラー：$message'));
+    }
     unawaited(_stopAuto('停止中（通信エラー・Cookieと記録は保持しています）'));
     _loadTimer?.cancel();
     _flow.fail(_flow.page);
@@ -614,6 +648,53 @@ class _WebImportPageState extends State<WebImportPage> {
         uri?.host == 'meruhenworld.pt.teramoba2.com' &&
         (uri?.path.startsWith('/nagamachiminami/') == true ||
             uri?.path.startsWith('/saiwaichou/') == true);
+  }
+
+  /// 自動取り込みが、ある店のある日の分を済ませたとき（2026-11-04）。結果を通知で1回だけ知らせ、抜けた日
+  /// （`meruhenGapDay`）があれば、止めずにその日の機種一覧を日付つきで開いて取り戻す。開いたら true。
+  Future<bool> _dayFinished(String store, String day, int autoToken) async {
+    final name = storeDisplayName(store);
+    if (_finishedDays.add('$store|$day')) {
+      final counts = widget.onDayCounts?.call(store: store, day: day);
+      unawaited(
+        notifyCaptureResult(
+          'メルヘン：取り込み完了',
+          '$name ${shortDayLabel(day)}：'
+              '${counts == null ? 'すべて取り込み済み' : '${counts.racks}台（グラフ${counts.graphs}台）'}',
+        ),
+      );
+    }
+    final base = _gapBase ??= day;
+    final gap = widget.onGapDay?.call(
+      store: store,
+      day: base,
+      skip: {
+        ..._gapTried,
+        for (final key in _finishedDays)
+          if (key.startsWith('$store|')) key.substring(store.length + 1),
+      },
+    );
+    if (gap == null || !_autoCurrent(autoToken, _flow.page)) {
+      if (_gapBase != null &&
+          _targetDay != _targetBeforeGap &&
+          _gapTried.isNotEmpty) {
+        setState(() => _targetDay = _targetBeforeGap);
+      }
+      return false;
+    }
+    final url = meruhenMachineListUrl(store, gap);
+    if (!_allowed(url)) return false;
+    if (_gapTried.isEmpty) _targetBeforeGap = _targetDay;
+    _gapTried.add(gap);
+    setState(() => _targetDay = gap);
+    unawaited(noteErrorLog('meruhen.gap', '$store $gapを取り戻す（$dayの後）'));
+    final notice =
+        '${shortDayLabel(day)}の分は済みました。抜けていた${shortDayLabel(gap)}の分を取り戻します。';
+    _autoMessage('ON・$notice');
+    _flow.expectPage(notice: notice, advance: true);
+    _flow.startLoading();
+    await _web.loadRequest(Uri.parse(url));
+    return true;
   }
 
   Future<void> _stopAuto(String message) async {
@@ -1319,6 +1400,10 @@ class _WebImportPageState extends State<WebImportPage> {
               return;
             }
           }
+        }
+        if (automatic && autoToken != null) {
+          moved = await _dayFinished(store, day, autoToken);
+          if (moved) return;
         }
         _showNotice(
           automatic ? 'この日の機種とグラフはすべて取り込み済みです。' : '未取り込みの機種・グラフはありません。',
