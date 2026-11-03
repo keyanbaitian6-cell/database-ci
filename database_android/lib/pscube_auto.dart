@@ -9,6 +9,13 @@ import 'pscube_store.dart' show pscubeDayTabAbsent;
 /// 仕様：database/PSCUBE_AUTO_CAPTURE.md。
 const pscubeAutoMaxFailures = 3;
 
+/// 一覧が進まない（機種一覧が足りない・一覧の読み込みが時間切れ）ときは、3回で止めずに続ける回数（2026-11-04、
+/// 利用者「進まない場合は停止じゃなくて読み込み直ししてスクロール作業するようにしてね」）。見張りの間隔（15〜25秒）
+/// ごとに1回、[pscubeListReloadEvery] 回に1回だけページを読み込み直し、ほかは同じページで下まで送り直す。
+/// 60回で約20分・読み込み直しは約1分に1回（ふだんの取り込みの1分に約3ページより少ない）。それでも進まなければ待機。
+const pscubeListMaxRetries = 60;
+const pscubeListReloadEvery = 3;
+
 /// 営業日（yyyy-mm-dd）。日本時間の午前3時まではまだ前日（利用者の指定、2026-10-04は2時、2026-10-26に3時へ）。
 /// PC版 `business_day`・`recent_business_days`（database/pscube_import.py）と同じ規則。
 const pscubeBusinessDayCutoffHour = 3;

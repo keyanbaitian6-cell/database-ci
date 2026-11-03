@@ -40,8 +40,7 @@ Future<void> waitForPscubeList({
   final now = elapsed ?? () => clock.elapsed;
   final started = now();
   final pause = delay ?? (duration) => Future<void>.delayed(duration);
-  FormatException timeout() =>
-      const FormatException('一覧の読み込みが時間切れになりました。保存せずに再試行します。');
+  FormatException timeout() => const FormatException(pscubeListTimeoutMessage);
   final limit = expectedCount == null
       ? pscubeIndexListTimeout
       : pscubeListTimeout;
@@ -126,6 +125,9 @@ Future<void> waitForPscubeList({
 
 /// 追加待機・WebViewの問い合わせも含む時間上限。
 const pscubeListTimeout = Duration(seconds: 90);
+
+/// 一覧の読み込みの時間切れの文（自動取り込みは、この失敗を3回で止めずに読み直す。2026-11-04）。
+const pscubeListTimeoutMessage = '一覧の読み込みが時間切れになりました。保存せずに再試行します。';
 
 /// ループ回数の安全上限。実時間の上限は [pscubeListTimeout]。
 const pscubeListMaxTicks = 360;

@@ -83,6 +83,9 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   /// 3回失敗して待つページの、3回目の失敗の知らせ。次の確認で「同じページで3回失敗」の一般の文に
   /// 上書きしないために覚えておく（2026-11-04、何機種だったかが画面から消えて原因を追えなかった）。
   final _autoHeld = <String, String>{};
+
+  /// 一覧が進まなかった回数（ページごと）。[_autoFailures] と分けて数え、3回で止めない（[_retryList]）。
+  final _listRetries = <String, int>{};
   // 0時に自動取り込みを始める予約（2026-10-26 利用者指定、案A）。ONは端末に保存し、この画面を
   // 開いている間、毎日0時に前日（3時までの営業日）を指定して自動取り込みをONにする。待つ間は画面を
   // 消さずに暗くするだけで、常駐サービスは使わない（Android 15以降の1日6時間の上限を待ち時間で使わない）。
@@ -603,6 +606,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       _autoDone.clear();
       _autoFailures.clear();
       _autoHeld.clear();
+      _listRetries.clear();
       _store?.resetIndexConfirmation();
       _freshSince.clear();
       _auto.turnOn();
@@ -938,6 +942,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         _autoDone.add(autoSignature);
         _autoFailures.remove(autoSignature);
         _autoHeld.remove(autoSignature);
+        _listRetries.remove(autoSignature);
         if (_auto.enabled && result.nextUrl == null) {
           final day = _targetDay;
           setState(() => _targetDay = null);
@@ -966,37 +971,20 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       }
     } on PscubeIndexRetry catch (error) {
       if (mounted && autoSignature != null && _auto.enabled && _page == page) {
-        // 再確認も同じページの失敗に数える。読むたびに違う一覧が返り続けても、開き直しは3回まで
-        // （数えないと、一晩じゅう機種一覧を開き直し続ける。PC `AutoPilot.finished` と同じ）。
-        final count = (_autoFailures[autoSignature] ?? 0) + 1;
-        _autoFailures[autoSignature] = count;
         final counts = error.short
             ? 'いつもの${error.usual}機種に対して${error.shown}機種'
             : '前回の${error.previous}機種に対して${error.shown}機種';
-        unawaited(noteErrorLog('pscube.index', '$count回目：機種一覧が少ない（$counts）'));
-        if (count >= pscubeAutoMaxFailures) {
-          // 3回目は開き直さない（この後は待機）。
-          store.resetIndexConfirmation();
-          final message = error.short
-              ? 'ON・機種一覧が途中までしか読めていません（$counts）。'
-                    '3回開き直しても同じでした。待機中（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）'
-              : 'ON・機種一覧が前回より少なく（$counts）、開き直すたびに違う一覧でした。3回で止めて待機中'
-                    '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）';
-          _autoHeld[autoSignature] = message;
-          _autoMessage(message);
-        } else if (count == 1) {
-          // 1回目は開き直さず、次の回に同じページのまま下まで送り直して読み直す（2026-11-04、利用者「ちょっと
-          // スクロールするだけで出てくるなら自動読み込みも頑張ってもらいたい」。0時の回で止まった一覧が、手で
-          // 下まで送ると最後の機種まで出ていた）。ページを読み込み直さないので、サイトへの通信は増えない
-          // （続きの機種はサイトが最初に受け取ったデータから足す。`database/PSCUBE_AUTO_CAPTURE.md` の 2026-10-28）。
-          _autoMessage('ON・機種一覧が足りないため、同じページで下まで送り直してもう一度確認します（$counts）');
-        } else {
-          _autoMessage('ON・機種一覧を開き直し、もう一度確認します（$count回目・$counts）');
-          setState(() => _busy = false);
-          if (!await _open(PscubeStore.index, reload: true)) {
-            store.resetIndexConfirmation();
-          }
-        }
+        unawaited(
+          noteErrorLog(
+            'pscube.index',
+            '${(_listRetries[autoSignature] ?? 0) + 1}回目：機種一覧が少ない（$counts）',
+          ),
+        );
+        await _retryList(
+          autoSignature,
+          store,
+          error.short ? '機種一覧が途中までしか読めていません（$counts）' : '機種一覧が前回より少ない（$counts）',
+        );
       } else {
         // 保存中に自動取り込みを止めた・ページが替わったとき：開き直さず、保存しなかったことだけ示す。
         store.resetIndexConfirmation();
@@ -1008,7 +996,20 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           () => _status = _connection.failure?.message ?? '保存できませんでした：$error',
         );
       }
-      if (autoSignature != null && _auto.enabled) {
+      if (autoSignature != null &&
+          _auto.enabled &&
+          _page == page &&
+          error is FormatException &&
+          error.message == pscubeListTimeoutMessage) {
+        // 一覧のスクロールが120秒で終わらなかったときも、止めずに読み直す（2026-11-04）。
+        unawaited(
+          noteErrorLog(
+            'pscube.list',
+            '${(_listRetries[autoSignature] ?? 0) + 1}回目：一覧の読み込みが時間切れ',
+          ),
+        );
+        await _retryList(autoSignature, store, '一覧の読み込みが時間切れ');
+      } else if (autoSignature != null && _auto.enabled) {
         final count = (_autoFailures[autoSignature] ?? 0) + 1;
         _autoFailures[autoSignature] = count;
         unawaited(noteErrorLog('pscube.save', '$count回目：$error'));
@@ -1020,6 +1021,42 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 一覧が進まない（機種一覧が足りない・一覧の読み込みが時間切れ）ときは、3回で止めずに読み直す（2026-11-04、
+  /// 利用者「進まない場合は停止じゃなくて読み込み直ししてスクロール作業するようにしてね」）。
+  /// 次の見張りの回に同じページのまま下まで送り直して読み直し、[pscubeListReloadEvery] 回に1回だけページを
+  /// 読み込み直す。同じページの読み直しはサイトへの通信を増やさない（続きの機種はサイトが最初に受け取った
+  /// データから足す。`database/PSCUBE_AUTO_CAPTURE.md` の 2026-10-28）。0時の回で止まった一覧が、手で下まで
+  /// 送ると最後の機種まで出ていた。[pscubeListMaxRetries] 回（約20分）で待機し、一晩じゅう読み込み直さない。
+  Future<void> _retryList(
+    String signature,
+    PscubeStore store,
+    String detail,
+  ) async {
+    final count = (_listRetries[signature] ?? 0) + 1;
+    _listRetries[signature] = count;
+    if (count >= pscubeListMaxRetries) {
+      store.resetIndexConfirmation();
+      _autoFailures[signature] = pscubeAutoMaxFailures; // 見張りは、このページをもう読まずに待つ
+      final message =
+          'ON・$detail。$count回読み直しても進みませんでした。待機中'
+          '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）';
+      _autoHeld[signature] = message;
+      _autoMessage(message);
+      return;
+    }
+    if (count % pscubeListReloadEvery != 0) {
+      _autoMessage('ON・$detail。同じページで下まで送り直します（$count回目）');
+      return;
+    }
+    _autoMessage('ON・$detail。ページを読み込み直してスクロールし直します（$count回目）');
+    final url = await _web.currentUrl();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (url == null || !await _open(url, reload: true)) {
+      store.resetIndexConfirmation();
     }
   }
 
@@ -1096,6 +1133,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       _autoDone.clear();
       _autoFailures.clear();
       _autoHeld.clear();
+      _listRetries.clear();
       _guard.reset();
       if (!mounted) return;
       _connection.start(PscubeStore.root);

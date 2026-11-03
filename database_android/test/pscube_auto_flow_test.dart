@@ -6,7 +6,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:database_android/error_log.dart';
+import 'package:database_android/pscube_auto.dart';
 import 'package:database_android/pscube_import_page.dart';
+import 'package:database_android/pscube_list_wait.dart';
 import 'package:database_android/pscube_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -43,6 +45,9 @@ class _Controller extends BrowserController {
   Completer<Object>? reading;
   Completer<String?>? locating;
   bool failSave = false;
+
+  /// 機種一覧の表示待ちを、この回数だけ時間切れにする（2026-11-04）。
+  int listTimeouts = 0;
   int failOpens = 0, failedOpens = 0, pageReloads = 0;
 
   /// 機種一覧を読むたびに返す機種（読み取りの機種の番号）。空なら読み取りのまま。
@@ -119,6 +124,10 @@ class _Controller extends BrowserController {
     }
     // 全台表示の待機も実処理を通し、WidgetTesterの仮想時間で進める。
     if (script.contains("document.querySelector('#ulKI')")) {
+      if (scene == 'index' && listTimeouts > 0) {
+        listTimeouts--;
+        throw const FormatException(pscubeListTimeoutMessage);
+      }
       return scene == 'index' ? '-1|0' : '${scene == 'next_machine' ? 1 : 2}|1';
     }
     throw StateError('未対応の問い合わせ: $script');
@@ -457,7 +466,7 @@ void main() {
       await tick(tester);
       expect(platform.web.captures, ['index']);
       expect(
-        find.textContaining('同じページで下まで送り直してもう一度確認します（前回の2機種に対して1機種）'),
+        find.textContaining('機種一覧が前回より少ない（前回の2機種に対して1機種）。同じページで下まで送り直します（1回目）'),
         findsOneWidget,
       );
       await tick(tester);
@@ -468,41 +477,50 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('開き直すたびに違う減った一覧なら、3回で止めて開き直さない', (tester) async {
+    // 2026-11-04：利用者「進まない場合は停止じゃなくて読み込み直ししてスクロール作業するようにしてね」。
+    testWidgets('読むたびに違う減った一覧でも3回で止めず、3回に1回だけ読み込み直して、上限で待つ', (tester) async {
       final keys = await seedActive(tester, 3);
       await mount(tester);
       platform.web.indexPicks.addAll([
-        [0],
-        [1],
-        [0, 1],
+        for (var i = 0; i < pscubeListMaxRetries; i++) [i % 2],
       ]);
-      for (var i = 1; i <= 3; i++) {
+      for (var i = 1; i <= pscubeListMaxRetries; i++) {
         await tick(tester);
-        expect(platform.web.captures, hasLength(i));
+        expect(platform.web.captures, hasLength(i), reason: '$i回目も読み直す');
+        expect(
+          platform.web.pageReloads,
+          (i < pscubeListMaxRetries ? i : i - 1) ~/ pscubeListReloadEvery,
+          reason: '3回に1回だけ読み込み直す。上限の回は読み込み直さずに待つ',
+        );
       }
       expect(
         platform.web.pageReloads,
-        1,
-        reason: '1回目は同じページで読み直し、2回目だけ開き直す。3回目は開き直さない',
+        (pscubeListMaxRetries - 1) ~/ pscubeListReloadEvery,
       );
       await tick(tester);
-      expect(platform.web.captures, hasLength(3));
-      // 次の確認でも、3回目の知らせ（件数つき）を一般の文で上書きしない（2026-11-04）。
       expect(
-        find.textContaining('機種一覧が前回より少なく（前回の5機種に対して2機種）、開き直すたびに違う一覧でした'),
+        platform.web.captures,
+        hasLength(pscubeListMaxRetries),
+        reason: '上限の後は読まずに待つ（一晩じゅう読み込み直さない）',
+      );
+      // 次の確認でも、最後の知らせ（件数つき）を一般の文で上書きしない（2026-11-04）。
+      expect(
+        find.textContaining(
+          '機種一覧が前回より少ない（前回の5機種に対して1機種）。$pscubeListMaxRetries回読み直しても進みませんでした',
+        ),
         findsOneWidget,
       );
       expect(find.textContaining('同じページで3回失敗したため待機中'), findsNothing);
-      expect(logged.where((line) => line.startsWith('pscube.index	')), [
-        'pscube.index	1回目：機種一覧が少ない（前回の5機種に対して1機種）',
-        'pscube.index	2回目：機種一覧が少ない（前回の5機種に対して1機種）',
-        'pscube.index	3回目：機種一覧が少ない（前回の5機種に対して2機種）',
-      ]);
+      final lines = logged
+          .where((line) => line.startsWith('pscube.index\t'))
+          .toList();
+      expect(lines, hasLength(pscubeListMaxRetries));
+      expect(lines.first, 'pscube.index\t1回目：機種一覧が少ない（前回の5機種に対して1機種）');
       expect(await active(tester), keys);
       await finish(tester);
     });
 
-    testWidgets('いつもの機種数より大幅に少ない一覧は、同じでも受け付けず3回で止めて知らせる（2026-11-03）', (
+    testWidgets('いつもの機種数より大幅に少ない一覧は、同じでも受け付けず、読み直しを続けて上限で知らせる（2026-11-03）', (
       tester,
     ) async {
       // 11/1は19機種・11/2は38機種（いつもは59機種）で「すべて取り込みました」になった件。
@@ -523,34 +541,49 @@ void main() {
         }
       });
       await mount(tester);
-      for (var i = 1; i <= 3; i++) {
+      for (var i = 1; i <= pscubeListMaxRetries; i++) {
         await tick(tester);
         expect(platform.web.captures, hasLength(i));
       }
       expect(
         platform.web.pageReloads,
-        1,
-        reason: '同じ2機種の一覧が返り続けても受け付けない。1回目は同じページで読み直し、2回目は開き直し、3回目は開き直さない',
+        (pscubeListMaxRetries - 1) ~/ pscubeListReloadEvery,
+        reason: '同じ2機種の一覧が返り続けても受け付けない。3回に1回だけ読み込み直す',
       );
-      expect(
-        find.textContaining('途中までしか読めていません（いつもの3機種に対して2機種）'),
-        findsOneWidget,
-      );
+      const shortNote =
+          '途中までしか読めていません（いつもの3機種に対して2機種）。$pscubeListMaxRetries回読み直しても進みませんでした';
+      expect(find.textContaining(shortNote), findsOneWidget);
       // 2026-11-04：0時の取り込みで、この知らせが次の確認で「同じページで3回失敗」に上書きされ、
       // 何機種だったかが分からなくなった。次の確認の後も残す。
       await tick(tester);
-      expect(platform.web.captures, hasLength(3));
-      expect(
-        find.textContaining('途中までしか読めていません（いつもの3機種に対して2機種）'),
-        findsOneWidget,
-      );
+      expect(platform.web.captures, hasLength(pscubeListMaxRetries));
+      expect(find.textContaining(shortNote), findsOneWidget);
       expect(find.textContaining('同じページで3回失敗したため待機中'), findsNothing);
-      expect(logged.where((line) => line.startsWith('pscube.index	')), [
-        for (var i = 1; i <= 3; i++)
-          'pscube.index	$i回目：機種一覧が少ない（いつもの3機種に対して2機種）',
+      expect(logged.where((line) => line.startsWith('pscube.index\t')), [
+        for (var i = 1; i <= pscubeListMaxRetries; i++)
+          'pscube.index\t$i回目：機種一覧が少ない（いつもの3機種に対して2機種）',
       ]);
       expect(find.textContaining('すべて取り込みました'), findsNothing);
       expect(await active(tester), keys, reason: '途中の一覧で機種の並びを上書きしない');
+      await finish(tester);
+    });
+
+    testWidgets('一覧の読み込みの時間切れも3回で止めず、読み直して、続きが出たら保存する', (tester) async {
+      await mount(tester);
+      platform.web.listTimeouts = 4;
+      for (var i = 1; i <= 4; i++) {
+        await tick(tester);
+        expect(platform.web.captures, isEmpty, reason: '時間切れの一覧は読み取らない');
+      }
+      expect(platform.web.pageReloads, 1, reason: '3回目だけ読み込み直す');
+      expect(find.textContaining('同じページで3回失敗したため待機中'), findsNothing);
+      expect(
+        logged.where((line) => line.startsWith('pscube.list\t')).first,
+        'pscube.list\t1回目：一覧の読み込みが時間切れ',
+      );
+      await tick(tester);
+      expect(platform.web.captures, ['index'], reason: '5回目で一覧が出たので保存へ進む');
+      expect(find.textContaining('機種一覧を保存しました'), findsOneWidget);
       await finish(tester);
     });
   });
