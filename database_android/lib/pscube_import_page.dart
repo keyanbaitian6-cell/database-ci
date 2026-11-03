@@ -980,8 +980,9 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         _listRetries.remove(autoSignature);
         if (_auto.enabled && result.nextUrl == null) {
           final day = _targetDay ?? await store.lastDay();
-          if (day != null && !_finishedDays.contains(day))
+          if (day != null && !_finishedDays.contains(day)) {
             _finishedDays.add(day);
+          }
           // 抜けた日（その日の未取得が残っている直近の日）があれば、止めずにその日を取り戻す（2026-11-04）。
           final gap = day == null ? null : await _gapDay(store, day);
           if (gap != null && _auto.enabled && _page == page) {

@@ -183,8 +183,7 @@ String storeDayComment(
         .toIso8601String()
         .substring(0, 10);
     final results = [
-      for (final r in byDay[other] ?? const <SlotRecord>[])
-        if (r.won case final won?) won,
+      for (final r in byDay[other] ?? const <SlotRecord>[]) ?r.won,
     ];
     if (results.isNotEmpty) {
       recent.add((judged: results.length, won: results.where((w) => w).length));
