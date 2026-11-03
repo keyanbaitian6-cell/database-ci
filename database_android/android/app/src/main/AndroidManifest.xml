@@ -27,6 +27,18 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/juggler_capture_service" />
         </service>
+        <!-- ホーム画面のウィジェット（2026-11-04）：前回の取り込みの結果と翌日候補。 -->
+        <receiver
+            android:name="com.keyan.database_android.CaptureWidgetProvider"
+            android:exported="false"
+            android:label="@string/capture_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/capture_widget_info" />
+        </receiver>
         <activity
             android:name="com.keyan.database_android.MainActivity"
             android:exported="true"

@@ -2,4 +2,6 @@
 <resources>
     <string name="juggler_capture_label">database ジャグラーオンライン取込</string>
     <string name="juggler_capture_description">ジャグラーオンラインを表示している間だけ「取込」ボタンを出し、押したときに「データ一覧」の表を自動でスクロールしながら撮ってdatabaseアプリの中に置きます。読み取りと保存はdatabaseアプリの画面で行います。ほかのアプリの画面は撮りません。</string>
+    <string name="capture_widget_label">取り込みと翌日候補</string>
+    <string name="capture_widget_description">前回の取り込みの結果と翌日候補を出します。押すとアプリを開きます。</string>
 </resources>

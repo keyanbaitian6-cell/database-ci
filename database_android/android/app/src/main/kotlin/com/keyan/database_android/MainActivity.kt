@@ -147,6 +147,21 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        // ホーム画面のウィジェットへ、前回の取り込みの結果と翌日候補を渡す（2026-11-04）。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "database/widget").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "update" -> {
+                    val values = (call.arguments as? Map<*, *>)
+                        ?.entries
+                        ?.mapNotNull { (k, v) -> if (k is String && v is String) k to v else null }
+                        ?.toMap()
+                        ?: emptyMap()
+                    CaptureWidgetProvider.save(this, values)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "database/auto_capture")
             .setMethodCallHandler { call, result ->
                 try {

@@ -6,6 +6,7 @@ import 'capture_health_ui.dart';
 import 'capture_notice.dart';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -17,6 +18,7 @@ import 'backup_destination.dart';
 import 'daily_net_page.dart' show dailyNetLookup, dailyNetNote;
 import 'date_events.dart' show DateEvent;
 import 'error_log.dart';
+import 'home_widget.dart';
 import 'event_calendar_page.dart';
 import 'event_name_dialog.dart';
 import 'list_views.dart' show shortDayLabel;
@@ -278,6 +280,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         _lastUpload = lastUpload;
         _midnightEnabled = midnight;
         _midnightArmedFor = midnight ? pscubeNextMidnight(_now()) : null;
+        unawaited(_refreshWidget(store));
       });
     } catch (error) {
       if (mounted) setState(() => _status = '取り込みの準備ができません：$error');
@@ -1314,8 +1317,23 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     return null;
   }
 
+  /// ホーム画面のウィジェットの翌日候補（2026-11-04）。P’s CUBEの記録の最新の日の候補を、結果画面と同じ
+  /// 計算で出す。画面を開いたときと、自動取り込みが終わったときに書き換える。
+  Future<void> _refreshWidget(PscubeStore store) async {
+    try {
+      final records = pscubeViewerRecords(await store.calendarData());
+      if (records.isEmpty) return;
+      await updateHomeWidgetCandidates(
+        await compute(homeWidgetCandidates, records),
+      );
+    } catch (error) {
+      unawaited(noteErrorLog('widget', error));
+    }
+  }
+
   /// 取り込み終わった日をDriveへ送り（設定があるときだけ）、結果を通知で知らせる。
   Future<void> _finishNight(PscubeStore store, List<String> days) async {
+    unawaited(_refreshWidget(store));
     final lines = <String>[];
     var ok = true;
     for (final day in days) {

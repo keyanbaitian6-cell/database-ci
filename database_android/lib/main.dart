@@ -4,6 +4,7 @@ import 'dart:io';
 import 'capture_health_ui.dart';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
     show RenderAbstractViewport, ScrollCacheExtent;
@@ -37,6 +38,7 @@ import 'picked_file.dart';
 import 'storage_usage_page.dart';
 import 'viewer_pages.dart' show ViewerDateBar, viewerDays;
 import 'pscube_suffix.dart' show meruhenSuffixStores;
+import 'home_widget.dart';
 import 'pscube_suffix_page.dart';
 import 'viewer_data.dart' show ViewerData;
 
@@ -70,6 +72,34 @@ Future<void> main() async {
     );
   runApp(DatabaseApp(controller: controller));
   _setUpLauncherShortcuts(controller);
+  _setUpHomeWidget(controller);
+}
+
+/// ホーム画面のウィジェットの翌日候補（2026-11-04）。記録が変わったら、少し待ってから計算し直す
+/// （取り込み中は何度も変わるので、まとめて1回）。この端末にメルヘンの記録が無ければ書き換えない
+/// （P’s CUBE版は、P’s CUBEの取り込み画面が書く）。
+void _setUpHomeWidget(AppController controller) {
+  Timer? timer;
+  var last = '';
+  Future<void> refresh() async {
+    final records = controller.records;
+    if (records.isEmpty) return;
+    final stores = await compute(homeWidgetCandidates, records);
+    final line = homeWidgetCandidateLine(stores);
+    if (line == last) return;
+    last = line;
+    await updateHomeWidgetCandidates(stores);
+  }
+
+  void schedule() {
+    timer?.cancel();
+    timer = Timer(const Duration(seconds: 3), () {
+      unawaited(refresh().catchError((Object _) {}));
+    });
+  }
+
+  controller.addListener(schedule);
+  schedule();
 }
 
 /// 起動できないときに理由を出す画面。記録は書き換えない。

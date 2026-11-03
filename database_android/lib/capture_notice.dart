@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import 'error_log.dart';
+import 'home_widget.dart';
 
 /// 自動取り込みの結果（完了・止まった理由）をスマホの通知で知らせる（2026-11-04、利用者が選んだ
 /// 「朝の取り込み結果通知」。P’s CUBE・メルヘンの両方）。画面を見に行かなくても、朝の時点で成否が分かる。
@@ -31,6 +32,8 @@ Future<void> _requestPermission() async {
 /// 取り込みの結果を通知する。
 Future<void> notifyCaptureResult(String title, String text) async {
   unawaited(noteErrorLog('notice', '$title：$text'));
+  // ホーム画面のウィジェットにも、同じ文を「前回の取り込みの結果」として出す。
+  unawaited(updateHomeWidgetStatus(title, text));
   try {
     await captureNoticeSender(title, text);
   } catch (error) {
