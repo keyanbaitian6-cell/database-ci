@@ -1362,6 +1362,43 @@ def read_backup_events(path):
     return _read_backup_document(path).get('date_events', [])
 
 
+ANSWER_CUTOFF_HOUR = 3
+
+
+def saved_answer_candidates(store, first_day):
+    """当時の翌日候補（2026-11-04、閲覧ページの答え合わせ用。利用者が選んだ「翌日候補の答え合わせ」）。
+
+    店・日ごとに、その翌日の午前3時（日本時間。営業日の切り替え・候補の締切 NEXT_DAY_SHADOW_PLAN と同じ）までに
+    記録した各機種とバラエティの最新の候補（candidate_snapshots）を合わせ、{"店|日": [[台番号, 平均より（指数）,
+    バラエティなら1]]} にする。後から計算し直した候補とは混ぜない（10/23の再検討で、保存候補と後日の再現候補は
+    一致しないことが多かった）。締切より後の記録・時差の無い時刻は使わない。
+    """
+    latest = {}
+    for location, day, machine, taken_at, payload in store.db.execute(
+            'SELECT store, day, machine, taken_at, payload FROM candidate_snapshots WHERE day>=?', (first_day,)):
+        try:
+            taken = datetime.fromisoformat(taken_at)
+            deadline = datetime.fromisoformat(f'{day}T{ANSWER_CUTOFF_HOUR:02d}:00:00+09:00') + timedelta(days=1)
+        except (TypeError, ValueError):
+            continue
+        if taken.tzinfo is None or taken > deadline:
+            continue
+        key = (location, day, machine)
+        if key not in latest or taken > latest[key][0]:
+            latest[key] = (taken, payload)
+    saved = {}
+    for (location, day, machine), (_taken, payload) in sorted(latest.items()):
+        try:
+            candidates = json.loads(payload).get('candidates') or []
+        except (TypeError, ValueError, AttributeError):
+            continue
+        rows = saved.setdefault(f'{location}|{day}', [])
+        for c in candidates:
+            if isinstance(c, dict) and isinstance(c.get('rack'), int) and isinstance(c.get('index'), (int, float)):
+                rows.append([c['rack'], round(float(c['index']), 2), 1 if machine == VARIETY_GROUP_NAME else 0])
+    return saved
+
+
 def export_viewer(store, path, days=VIEWER_DAYS):
     """Write the light file the iPhone viewer reads: the latest ``days`` days
     (counted from the newest saved day), without graph images. The graph
@@ -1383,11 +1420,14 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     # 台データの無い日にだけ使う。2026-10-18、html_day_summary.py）。DBの隣のファイルが無ければ載せない。
     import html_day_summary
     summaries = html_day_summary.load_days(Path(store.path).parent / html_day_summary.SUMMARY_NAME)
+    # 当時の翌日候補（答え合わせ用、saved_answer_candidates）。前の日の候補で照らすので1日前から。
+    answers = saved_answer_candidates(store, (date.fromisoformat(cutoff) - timedelta(days=1)).isoformat()) if cutoff else {}
     header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
                              exported_at=datetime.now().astimezone().isoformat(),
                              source='pc-viewer', days=days, date_events=date_events,
                              record_deletions=store.record_deletions(),
-                             **({'day_summaries': summaries} if summaries else {})), ensure_ascii=False)[:-1]
+                             **({'day_summaries': summaries} if summaries else {}),
+                             **({'answer_candidates': answers} if answers else {})), ensure_ascii=False)[:-1]
     # 未取り込み日の🌈（pending_rainbow_marks）は入れない。閲覧ページは rainbow_marks を端末の印として表示・送信し、
     # 旧形式の同期GSは見出しをそのまま渡すため、取り込み前にWebへ出てしまう。Webへは数値の取り込み後（RAINBOW.md）。
     count = 0

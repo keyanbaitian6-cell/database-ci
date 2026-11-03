@@ -61,9 +61,10 @@ void main() {
     ];
     expect(
       dayCandidates(rows, all).candidates.map((c) => (c.record.rack, c.index)),
-      dayCandidates(rows, onlyBefore)
-          .candidates
-          .map((c) => (c.record.rack, c.index)),
+      dayCandidates(
+        rows,
+        onlyBefore,
+      ).candidates.map((c) => (c.record.rack, c.index)),
     );
   });
 
@@ -92,5 +93,55 @@ void main() {
       '2026-09-21',
     ]);
     expect(answerCheckDays(gap, 'saiwaichou'), isEmpty);
+  });
+
+  // 2026-11-04：当時保存した候補で照らし、全台の目安を並べる（利用者が選んだ「翌日候補の答え合わせ」）。
+  test('当時の候補があれば、計算し直した候補の代わりにそれで照らす', () {
+    final recomputed = answerCheckFor(all, 'nagamachiminami', '2026-09-24')!;
+    expect(recomputed.saved, isFalse);
+    final saved = answerCheckFor(
+      all,
+      'nagamachiminami',
+      '2026-09-24',
+      saved: {
+        'nagamachiminami|2026-09-23': [
+          (rack: 2, index: 61.5, variety: false),
+          (rack: 3, index: 58.0, variety: false),
+          (rack: 99, index: 70.0, variety: false), // 前の日に記録の無い台は数えない
+        ],
+      },
+    )!;
+    expect(saved.saved, isTrue);
+    expect(saved.candidates, 2);
+    expect(saved.scored, 2);
+    expect(saved.hits, isEmpty, reason: '当時の候補（2・3番台）は外れ。計算し直すと当たる1番台は入れない');
+    expect(
+      answerCheckFor(
+        all,
+        'nagamachiminami',
+        '2026-09-24',
+        saved: {
+          'saiwaichou|2026-09-23': [(rack: 1, index: 60.0, variety: false)],
+        },
+      )!.saved,
+      isFalse,
+      reason: 'ほかの店・ほかの日の保存は使わない',
+    );
+  });
+
+  test('くらべる目安は、前の日にも同じ機種で記録がある全台', () {
+    final withNew = [...all, rec('2026-09-24', 9, bb: 40, machine: 'B')];
+    final result = answerCheckFor(withNew, 'nagamachiminami', '2026-09-24')!;
+    final scores = [
+      for (final r in withNew)
+        if (r.day == '2026-09-24' && r.machine == 'A')
+          scoreRecord(r, withNew).total,
+    ].whereType<double>().toList();
+    expect(result.baseScored, scores.length, reason: '前の日に無い台（新台の9番台）は数えない');
+    expect(
+      result.baseHits,
+      scores.where((t) => t >= answerCheckThreshold).length,
+    );
+    expect(result.baseHits, greaterThanOrEqualTo(result.hits.length));
   });
 }

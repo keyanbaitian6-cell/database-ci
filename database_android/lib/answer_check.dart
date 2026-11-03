@@ -8,6 +8,7 @@ import 'models.dart';
 import 'scoring.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
+import 'viewer_data.dart' show SavedCandidate;
 
 /// 答え合わせで「当たり」とする合計点。
 const answerCheckThreshold = 60.0;
@@ -34,6 +35,14 @@ typedef AnswerCheckDay = ({
 
   /// 合計点の高い順。
   List<AnswerCheckHit> hits,
+
+  /// 当時保存した候補で照らしたか（false なら、今の計算式で計算し直した候補）。
+  bool saved,
+
+  /// くらべる目安：この日の全台のうち、前の日にも同じ機種で記録がある台で、点数が出た数と
+  /// [answerCheckThreshold] 点以上の数（2026-11-04）。
+  int baseScored,
+  int baseHits,
 });
 
 String _dayBefore(String day) =>
@@ -56,10 +65,17 @@ List<String> answerCheckDays(List<SlotRecord> all, String store) {
 
 /// [store] の [day] の答え合わせ。前の日の記録が無ければ null。
 ///
-/// 翌日候補（[dayCandidates]）はその日までの記録しか使わないので、いま計算
-/// し直しても、前の日の結果画面に出ていた候補と同じになる（記録をあとから
-/// 直した場合を除く）。点数も結果画面と同じ [scoreRecord]。
-AnswerCheckDay? answerCheckFor(List<SlotRecord> all, String store, String day) {
+/// [saved]（{"店|日": 当時の候補}、PCが閲覧用ファイルに載せる）に前の日の分があれば、それを使う
+/// （2026-11-04。10/23の再検討で、当時保存した候補と後から計算し直した候補は一致しないことが
+/// 多かった）。無ければ、今の計算式で前の日までの記録から計算し直す（[dayCandidates]。前の日の分を
+/// 翌日以降に取り込んだ記録や、あとから直した記録も使うので、当時画面に出ていた候補と違うことがある）。
+/// 点数は結果画面と同じ [scoreRecord]。
+AnswerCheckDay? answerCheckFor(
+  List<SlotRecord> all,
+  String store,
+  String day, {
+  Map<String, List<SavedCandidate>> saved = const {},
+}) {
   final before = _dayBefore(day);
   final previousRows = <SlotRecord>[];
   final results = <(String, int), SlotRecord>{};
@@ -69,7 +85,35 @@ AnswerCheckDay? answerCheckFor(List<SlotRecord> all, String store, String day) {
     if (r.day == day) results[(r.machine, r.rack)] = r;
   }
   if (previousRows.isEmpty) return null;
-  final candidates = dayCandidates(previousRows, all).candidates;
+  final kept = saved['$store|$before'];
+  final List<ProvisionalCandidate> candidates;
+  if (kept == null) {
+    candidates = dayCandidates(previousRows, all).candidates;
+  } else {
+    final byRack = {for (final r in previousRows) r.rack: r};
+    candidates = [
+      for (final c in kept)
+        if (byRack[c.rack] case final record?)
+          (
+            record: record,
+            index: c.index,
+            days: 0,
+            confidence: '',
+            variety: c.variety,
+          ),
+    ];
+  }
+  // くらべる目安：前の日にも同じ機種で記録がある台（候補を選ぶ元になった台）すべて。
+  final previousKeys = {for (final r in previousRows) (r.machine, r.rack)};
+  var baseScored = 0;
+  var baseHits = 0;
+  for (final entry in results.entries) {
+    if (!previousKeys.contains(entry.key)) continue;
+    final total = scoreRecord(entry.value, all).total;
+    if (total == null) continue;
+    baseScored++;
+    if (total >= answerCheckThreshold) baseHits++;
+  }
   var scored = 0;
   final hits = <AnswerCheckHit>[];
   for (final c in candidates) {
@@ -93,6 +137,9 @@ AnswerCheckDay? answerCheckFor(List<SlotRecord> all, String store, String day) {
     candidates: candidates.length,
     scored: scored,
     hits: hits,
+    saved: kept != null,
+    baseScored: baseScored,
+    baseHits: baseHits,
   );
 }
 
@@ -105,9 +152,13 @@ class AnswerCheckPage extends StatefulWidget {
     required this.store,
     required this.onOpen,
     this.eventFor,
+    this.saved = const {},
   });
 
   final List<SlotRecord> records;
+
+  /// 当時の翌日候補（[answerCheckFor] の saved）。
+  final Map<String, List<SavedCandidate>> saved;
   final String store;
   final void Function(SlotRecord record, ScoreResult score) onOpen;
 
@@ -153,7 +204,7 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
     for (final day in _days) {
       await Future<void>.delayed(Duration.zero);
       if (!mounted || run != _run) return;
-      final result = answerCheckFor(all, _store, day);
+      final result = answerCheckFor(all, _store, day, saved: widget.saved);
       if (result != null) setState(() => _results.add(result));
     }
   }
@@ -166,6 +217,9 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
     final candidates = _results.fold(0, (n, d) => n + d.candidates);
     final scored = _results.fold(0, (n, d) => n + d.scored);
     final hits = _results.fold(0, (n, d) => n + d.hits.length);
+    final baseScored = _results.fold(0, (n, d) => n + d.baseScored);
+    final baseHits = _results.fold(0, (n, d) => n + d.baseHits);
+    final savedDays = _results.where((d) => d.saved).length;
     return Scaffold(
       appBar: AppBar(
         title: const Text('答え合わせ'),
@@ -204,12 +258,11 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
               const SizedBox(height: 12),
             ],
             const Text(
-              '前の日の「参考候補（翌日向け）」の★注目・☆長期傾向・バラエティを合わせて答え合わせします。'
-              '現在の方式で再計算した候補で、当時保存された予想の検証ではありません。候補のうち、その日に合計点'
-              '${answerCheckThreshold ~/ 1}点以上だった台です。候補は、今の計算式で'
-              '前の日までの記録から計算し直したものです。前の日の分を翌日以降に取り込んだ'
-              '記録も使うので、当時画面に出ていた候補と違うことがあります。'
-              '点数は結果画面と同じです。',
+              '前の日の「参考候補（翌日向け）」（★注目・☆長期傾向・バラエティ）が、その日に合計点'
+              '${answerCheckThreshold ~/ 1}点以上だったかを照らし合わせます。点数は結果画面と同じです。'
+              '候補は、PCが当時（その翌日の午前3時まで）に保存したものを使います。保存の無い日は、'
+              '今の計算式で記録から計算し直した候補を使い、日ごとのカードにそう書きます。'
+              '計算し直した候補は、あとから取り込んだ記録も使うので、当時画面に出ていた候補と違うことがあります。',
               style: TextStyle(
                 color: AppColors.ash,
                 fontSize: 13,
@@ -230,7 +283,15 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
                 body: '前の日とその日の両方の記録がそろうと、答え合わせできます。',
               )
             else ...[
-              _totals(candidates, scored, hits, loading),
+              _totals(
+                candidates,
+                scored,
+                hits,
+                loading,
+                baseScored: baseScored,
+                baseHits: baseHits,
+                savedDays: savedDays,
+              ),
               const SizedBox(height: 14),
               if (_selectedDay != null &&
                   !_results.any((d) => d.day == _selectedDay))
@@ -251,10 +312,19 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
     );
   }
 
-  Widget _totals(int candidates, int scored, int hits, bool loading) {
-    final rate = scored == 0
-        ? '—'
-        : '${(hits * 100 / scored).toStringAsFixed(0)}%';
+  Widget _totals(
+    int candidates,
+    int scored,
+    int hits,
+    bool loading, {
+    required int baseScored,
+    required int baseHits,
+    required int savedDays,
+  }) {
+    String percent(int part, int whole) =>
+        whole == 0 ? '—' : '${(part * 100 / whole).toStringAsFixed(0)}%';
+    final rate = percent(hits, scored);
+    final recomputed = _results.length - savedDays;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -272,7 +342,17 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
               style: const TextStyle(fontSize: 14, height: 1.45),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
+              'くらべる目安：同じ日の全台（前の日にも同じ機種で記録がある台）では、点数が出た'
+              '$baseScored台のうち${answerCheckThreshold ~/ 1}点以上は$baseHits台'
+              '（${percent(baseHits, baseScored)}）。',
+              style: const TextStyle(fontSize: 14, height: 1.45),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '当時の候補で照らした日$savedDays日・計算し直した候補の日$recomputed日。'
+              '候補の割合が目安より高くても、設定や勝ちを約束するものではありません。'
+              '日数が少ないうちは、たまたまの差が大きく出ます。'
               '取り込んでいない台・機種が入れ替わった台・採点しなかった台（500G以下など）は、'
               '点数が出た台に数えていません。',
               style: TextStyle(
@@ -309,6 +389,7 @@ class _DayCard extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               '${dayWithWeekday(result.predictedOn)}の参考候補${result.candidates}台'
+              '（${result.saved ? '当時の候補' : '計算し直した候補'}）'
               '・点数が出た${result.scored}台・'
               '${answerCheckThreshold ~/ 1}点以上${hits.length}台',
               style: const TextStyle(color: AppColors.ash, fontSize: 13),

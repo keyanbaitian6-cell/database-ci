@@ -125,6 +125,23 @@ test('メルヘン履歴：PCの日ごとの集計（day_summaries）を一覧�
   assert.deepEqual(get().day_summaries, next, 'PCの最新の出力に置き換える');
 });
 
+test('メルヘン履歴：PCの当時の翌日候補（answer_candidates）を一覧の見出しへ引き継ぎ、Android入力では消さない', () => {
+  // 2026-11-04：閲覧ページの答え合わせ（core.py saved_answer_candidates）。day_summaries と同じ引き継ぎ方。
+  const d = drive({history: true}), base = d.files[0];
+  d.setup();
+  const get = () => plain(d.context.vpGet(base, 'meruhen', {}));
+  const first = {'saiwaichou|2026-10-13': [[12, 61.5, 0], [31, 55, 1]]};
+  d.replace(base, {...viewer([record(600, '2026-10-14')]), answer_candidates: first}); d.sync();
+  assert.deepEqual(get().answer_candidates, first);
+  d.add('database-backup-android-20261018-120000.json', backup([record(601, '2026-10-14')])); d.sync();
+  assert.deepEqual(get().answer_candidates, first, 'Androidのバックアップでは消さない');
+  const next = {...first, 'saiwaichou|2026-10-14': [[7, 60, 0]]};
+  d.replace(base, {...viewer([record(600, '2026-10-14')]), answer_candidates: next}); d.sync();
+  assert.deepEqual(get().answer_candidates, next, 'PCの最新の出力に置き換える');
+  d.replace(base, {...viewer([record(600, '2026-10-14')]), answer_candidates: ['broken']}); d.sync();
+  assert.deepEqual(get().answer_candidates, next, '形の違うものでは置き換えない');
+});
+
 test('メルヘン履歴：24日ずつ再開・一覧書込失敗は旧世代保持・破損原本は停止・閲覧パーツ復旧', () => {
   const d = drive({history: true}), base = d.files[0];
   const rows = Array.from({length: 55}, (_, i) => record(500, new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10)));

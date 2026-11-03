@@ -93,7 +93,11 @@ function vhMeruhen(folder, base, props, startedAt) {
       // PCの閲覧用の日ごとの「何台中何台プラス」（day_summaries、2026-10-18 html_day_summary.py）は、
       // PCの最新の出力のものに置き換える。Androidのバックアップには無いので前のまま。
       const summaries = Array.isArray(fresh.day_summaries) ? {day_summaries: fresh.day_summaries} : {};
-      return {...old, ...summaries, date_events: [...events.values()],sync_status:vhSourceStatus(old,fresh,input)};
+      // 当時の翌日候補（answer_candidates、2026-11-04 閲覧ページの答え合わせ用、core.py saved_answer_candidates）も
+      // PCの最新の出力のものに置き換える。Androidのバックアップには無いので前のまま。
+      const answers = fresh.answer_candidates && typeof fresh.answer_candidates === 'object' && !Array.isArray(fresh.answer_candidates)
+        ? {answer_candidates: fresh.answer_candidates} : {};
+      return {...old, ...summaries, ...answers, date_events: [...events.values()],sync_status:vhSourceStatus(old,fresh,input)};
     },
     failures: () => ({reasons: meruhenParse(props.getProperty(MERUHEN_CLOUD_ERRORS)) || {},
       versions: meruhenParse(props.getProperty(MERUHEN_CLOUD_FAILED)) || {}}),

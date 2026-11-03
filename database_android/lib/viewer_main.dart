@@ -1196,6 +1196,7 @@ class _ViewerHomeState extends State<ViewerHome> {
                 store: store,
                 onOpen: _openRecord,
                 eventFor: (store, day) => data.dateEventFor(store, day)?.name,
+                saved: data.answerCandidates,
               ),
             ),
           ),

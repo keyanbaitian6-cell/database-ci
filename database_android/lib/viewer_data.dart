@@ -13,6 +13,9 @@ import 'rainbow_marks.dart';
 /// ページ内のJavaScript（web/index.html）が1行ずつ読んで作ったJSONを受け取り、
 /// Android版と同じ規則（機種名の表記ゆれをそろえ、同じ台は1件にまとめる）で
 /// 台の一覧にする。採点・翌日候補は、Android版と同じ関数でその場で計算する。
+/// 当時の翌日候補の1台（[ViewerData.answerCandidates]）。
+typedef SavedCandidate = ({int rack, double index, bool variety});
+
 class ViewerData {
   const ViewerData({
     required this.records,
@@ -28,7 +31,12 @@ class ViewerData {
     this.keptOlder = 0,
     this.syncStatus,
     this.curveParts = const [],
+    this.answerCandidates = const {},
   });
+
+  /// 当時の翌日候補（{"店|日": [(台番号, 平均より, バラエティか)]}）。PCが閲覧用ファイルに載せる
+  /// （core.py `saved_answer_candidates`、2026-11-04）。答え合わせで、計算し直した候補の代わりに使う。
+  final Map<String, List<SavedCandidate>> answerCandidates;
 
   /// メルヘンのグラフの線パーツの参照（日付・ハッシュ・件数・大きさ）。台の画面を開いたときに
   /// その日の分だけ読む（remote_curve.dart、2026-10-25）。
@@ -78,6 +86,7 @@ class ViewerData {
     keptOlder: keptOlder,
     syncStatus: syncStatus,
     curveParts: curveParts,
+    answerCandidates: answerCandidates,
   );
 
   static ViewerData _parseDocument(Object? decoded) {
@@ -160,8 +169,33 @@ class ViewerData {
         decoded['sync_status'] ?? header['sync_status'],
       ),
       curveParts: pscube ? const [] : _curveParts(header['curve_parts']),
+      answerCandidates: pscube
+          ? const {}
+          : _answerCandidates(
+              decoded['answer_candidates'] ?? header['answer_candidates'],
+            ),
     );
   }
+
+  /// 形の合わない店・日・台は読み飛ばす（その日は計算し直した候補で答え合わせする）。
+  static Map<String, List<SavedCandidate>> _answerCandidates(Object? raw) => {
+    if (raw is Map)
+      for (final entry in raw.entries)
+        if (entry.key is String && entry.value is List)
+          entry.key as String: [
+            for (final c in entry.value as List)
+              if (c is List &&
+                  c.length == 3 &&
+                  c[0] is int &&
+                  c[1] is num &&
+                  (c[2] == 0 || c[2] == 1))
+                (
+                  rack: c[0] as int,
+                  index: (c[1] as num).toDouble(),
+                  variety: c[2] == 1,
+                ),
+          ],
+  };
 
   static List<Map<String, Object?>> _curveParts(Object? raw) => [
     if (raw is List)
