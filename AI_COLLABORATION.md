@@ -313,3 +313,16 @@
 - 試験：Android `pscube_store_test.dart` 1件（10機種そろった日の記録で、7機種の一覧は3回同じでも受け付けない・8機種は2回目で受け付ける・手動は受け付ける）、`pscube_auto_flow_test.dart` 1件（模擬WebViewで、同じ途中の一覧に3回で止まり「途中までしか読めていません（いつもの3機種に対して2機種）」、「すべて取り込みました」は出ない、機種の並びは上書きしない）、`pscube_list_wait_test.dart` 1件（20件で止まって3回目の到着まで続きが始まらない一覧も61件まで読む・ちょうど40件の一覧も上限内で終わる）と、上限を変えた2件の期待値。PC `tests/test_pscube_import.py` 1件（AutoPilot を通して同じ7機種が3回→待機、短い一覧の知らせ、`completed` が無い、バックアップしない、8機種・手動の扱い）、`tool/test_pscube_scroll.mjs` 1件（3回目の到着まで続きが始まらない61件）と上限の期待値。新しい20件区切りの試験は、着き直しを2回に戻すと「61件のはずが20件」で落ちることを確認した。Android P’s CUBE 関連 81件・PC P’s CUBE 関連 140件成功。
 - 照合版 `dd271700ea5c`（生成スクリプト4本）。Android APK は作らない（利用者指定）＝スマホでは未反映。11/1・11/2の抜けた機種を後から取り直せるかは未確認。
 - 全体ゲート（`/c/w/gate-pslist.log`・`/c/w/cbw-pslist/`、`TZ=JST-9`）：PC 778件・UTC 27件・Flutter 764件・analyze 情報28件・JS 77本は成功、**`test_pscube_auto_browser` の1件だけ失敗**。原因はこの試験が `SCROLL_SCRIPT` の文字 `90000 * scale` を `1` に置き換えて時間切れを作っていたこと（今回 `limit * scale` に変えたため置き換えが効かず、30秒待って時間切れ）。試験の置き換え先を `limit * scale` に直し、単独で成功を確認（試験ファイルだけの変更のため全体ゲートは流し直していない）。ほかに同じ置き換えをする試験は無い（grep で確認）。
+
+## 【Android 0.5.50 のAPK作成（P’s CUBEの途中の機種一覧を受け付けない修正などを含む）】2026-11-03 Claude
+
+- 依頼：利用者「APKビルドお願いします」。基準 `fae1565`（正本 main と同じ）。0.5.49（11/1）以降のAndroidの変更（全機種の一覧・並べ方、新台の点数 v13、P’s CUBEの途中の機種一覧を受け付けない・scrollの通知・20件区切りの着き直し）がスマホに入る。
+- 版：`pubspec.yaml` を `0.5.50+2026110302` に上げた。照合版は `dd271700ea5c` のまま（生成スクリプト4本と最後の `build_release_info.py` で変わらないことを確認。版番号は照合版の計算に入らない）。
+- ゲート：版を上げた状態で `bash database_android/tool/check_before_build.sh` を実行し **ALL PASSED**（`TZ=JST-9`、ログ `/c/w/gate-apk1103.log`・`/c/w/cbw-apk1103/`）。PC 778件、UTC条件27件、Flutter 764件、analyze 情報28件（エラー・警告0）、JS 78本。前回（fae1565）だけ失敗していた `test_pscube_auto_browser` も今回の全体で成功。
+- APK：`flutter build apk --release --no-pub --build-name 0.5.50` で、`DATABASE_ANDROID_CLONE=original`（`--build-number 2026110301`）と `pscube`（`2026110302`）。`database_android/build/releases/0.5.50/` に
+  - `database-0.5.50-2026110301.apk`（96,669,769バイト、`com.keyan.database_android`、表示名 database、SHA-256 `decb096160729700f1b3f679bb899a2a6cf5bc747ad1bd4b443d508b44897f73`）
+  - `database-pscube-0.5.50-2026110302.apk`（96,669,793バイト、`com.keyan.database_android.pscube`、表示名 database P’s CUBE、SHA-256 `fdb1fc03f77659055e16ba83cda73d3bee17d51bd5971132ef8d1a841d11b101`）
+  - aapt2で版・ID・表示名、apksigner（`JAVA_HOME` は Android Studio の `jbr`）で署名を確認（証明書SHA-256 `4332fcb9…a047`、0.5.49と同じ）。`SHA256SUMS.txt`・ビルドログ2本を同じフォルダーに保存。
+- 端末：`adb devices` に端末が無く（USB未接続）、入っている版は読めていない。インストールはしていない（利用者が行う）。
+- 0.5.49のAPK2本と `build/app/outputs/apk/release/app-release.apk` をごみ箱へ移した。
+- 未確認：スマホでの動作（今夜の0時予約で機種一覧を全部読めるか、途中で止まったときに待機の知らせが出るか）。11/1・11/2の抜けた機種の取り直し。
