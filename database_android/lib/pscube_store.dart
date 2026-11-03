@@ -131,9 +131,12 @@ const pscubeUsualIndexDays = 14;
 /// 減った機種一覧を、開き直してもう一度確かめる必要がある。[usual] があれば、いつもの機種数より大幅に少ない
 /// （途中までしか読めていない）一覧で、開き直して同じでも受け付けない。
 class PscubeIndexRetry implements Exception {
-  const PscubeIndexRetry({this.shown, this.usual});
+  const PscubeIndexRetry({this.shown, this.usual, this.previous});
   final int? shown;
   final int? usual;
+
+  /// 前回覚えた機種一覧の機種数（減った一覧のとき。知らせと記録に出す。2026-11-04）。
+  final int? previous;
   bool get short => usual != null;
   @override
   String toString() => short
@@ -960,7 +963,7 @@ class PscubeStore {
             shown.length != confirmed.length ||
             !confirmed.containsAll(shown))) {
       _indexConfirmation = shown;
-      throw const PscubeIndexRetry();
+      throw PscubeIndexRetry(shown: shown.length, previous: previous.length);
     }
     _indexConfirmation = null;
   }

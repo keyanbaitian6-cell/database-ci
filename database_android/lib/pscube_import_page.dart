@@ -15,6 +15,7 @@ import 'browser_session.dart';
 import 'backup_destination.dart';
 import 'daily_net_page.dart' show dailyNetLookup, dailyNetNote;
 import 'date_events.dart' show DateEvent;
+import 'error_log.dart';
 import 'event_calendar_page.dart';
 import 'event_name_dialog.dart';
 import 'list_views.dart' show shortDayLabel;
@@ -78,6 +79,10 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   final _clock = Stopwatch()..start();
   Duration _elapsed() => widget.elapsed?.call() ?? _clock.elapsed;
   final _autoFailures = <String, int>{};
+
+  /// 3回失敗して待つページの、3回目の失敗の知らせ。次の確認で「同じページで3回失敗」の一般の文に
+  /// 上書きしないために覚えておく（2026-11-04、何機種だったかが画面から消えて原因を追えなかった）。
+  final _autoHeld = <String, String>{};
   // 0時に自動取り込みを始める予約（2026-10-26 利用者指定、案A）。ONは端末に保存し、この画面を
   // 開いている間、毎日0時に前日（3時までの営業日）を指定して自動取り込みをONにする。待つ間は画面を
   // 消さずに暗くするだけで、常駐サービスは使わない（Android 15以降の1日6時間の上限を待ち時間で使わない）。
@@ -397,26 +402,48 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     super.dispose();
   }
 
-  Future<void> _showFullList({int? expectedCount, int? page}) =>
-      waitForPscubeList(
-        expectedCount: expectedCount,
-        isCurrent: () => mounted && (page == null || _page == page),
-        scroll: (action) async {
-          // 1回の問い合わせで、決められた動きを1つだけ行い、台数と位置を返す。
-          // 動かしたら scroll の通知を出す。サイトの続きの読み込み（jquery.inview）は、その通知が来たときだけ
-          // 位置を取り直す（PC版 `SCROLL_SCRIPT` の 2026-10-28 の修正。Androidには入っていなかった。2026-11-03）。
-          final move = switch (action) {
-            PscubeScroll.none => '',
-            PscubeScroll.step => 'window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));',
-            PscubeScroll.arrive => "list.lastElementChild?.scrollIntoView({block:'end'}); window.scrollTo(0, document.documentElement.scrollHeight);",
-            PscubeScroll.nudge =>
-              'window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));',
-          };
-          // 設置台数が分かっているときは、リストごと入れ替わっても数えられるよう全体から数える。
-          final countJs = expectedCount == null
-              ? 'list.children.length'
-              : r'''document.querySelectorAll('li[id^="li-"]').length''';
-          final result = await _web.runJavaScriptReturningResult('''
+  Future<void> _showFullList({int? expectedCount, int? page}) async {
+    var shown = -1;
+    final watch = Stopwatch()..start();
+    try {
+      await _waitFullList(expectedCount, page, (count) => shown = count);
+    } finally {
+      // 機種一覧（台数不明）を何件まで表示できたか・何秒かかったかを残す（2026-11-04、0時の取り込みだけ
+      // 機種一覧が途中で止まる原因を調べるため。時間切れのときも残す）。
+      if (expectedCount == null && shown >= 0) {
+        unawaited(
+          noteErrorLog(
+            'pscube.list',
+            '機種一覧を$shown件まで表示（${watch.elapsed.inSeconds}秒）',
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _waitFullList(
+    int? expectedCount,
+    int? page,
+    void Function(int) seen,
+  ) => waitForPscubeList(
+    expectedCount: expectedCount,
+    isCurrent: () => mounted && (page == null || _page == page),
+    scroll: (action) async {
+      // 1回の問い合わせで、決められた動きを1つだけ行い、台数と位置を返す。
+      // 動かしたら scroll の通知を出す。サイトの続きの読み込み（jquery.inview）は、その通知が来たときだけ
+      // 位置を取り直す（PC版 `SCROLL_SCRIPT` の 2026-10-28 の修正。Androidには入っていなかった。2026-11-03）。
+      final move = switch (action) {
+        PscubeScroll.none => '',
+        PscubeScroll.step => 'window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));',
+        PscubeScroll.arrive => "list.lastElementChild?.scrollIntoView({block:'end'}); window.scrollTo(0, document.documentElement.scrollHeight);",
+        PscubeScroll.nudge =>
+          'window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));',
+      };
+      // 設置台数が分かっているときは、リストごと入れ替わっても数えられるよう全体から数える。
+      final countJs = expectedCount == null
+          ? 'list.children.length'
+          : r'''document.querySelectorAll('li[id^="li-"]').length''';
+      final result = await _web.runJavaScriptReturningResult('''
         (() => {
           const list = document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
           if (!list) return '-1|0';
@@ -427,13 +454,12 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           return count + '|' + (bottom ? 1 : 0);
         })()
       ''');
-          final parts = result.toString().replaceAll('"', '').split('|');
-          return (
-            count: int.tryParse(parts.first) ?? -1,
-            atBottom: parts.length > 1 && parts[1] == '1',
-          );
-        },
-      );
+      final parts = result.toString().replaceAll('"', '').split('|');
+      final count = int.tryParse(parts.first) ?? -1;
+      seen(count);
+      return (count: count, atBottom: parts.length > 1 && parts[1] == '1');
+    },
+  );
 
   /// サイトの中のページから次のページへは、リンクをたどるのと同じ形（ページ内で移動）で
   /// 開く。アドレスを直接開くと「どのページから来たか」が付かず、普通のブラウザと
@@ -576,6 +602,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       }
       _autoDone.clear();
       _autoFailures.clear();
+      _autoHeld.clear();
       _store?.resetIndexConfirmation();
       _freshSince.clear();
       _auto.turnOn();
@@ -590,6 +617,8 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   Future<void> _stopAuto(String message) async {
     _auto.turnOff();
     _store?.resetIndexConfirmation();
+    // 「すべて取り込みました」などで止まった時刻を、一覧の件数と並べて読めるよう残す（2026-11-04）。
+    unawaited(noteErrorLog('pscube.auto.stop', message));
     if (mounted) setState(() => _autoStatus = message);
     if (Platform.isAndroid) {
       try {
@@ -792,13 +821,24 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         await _stopAuto(decision.message);
         return;
       }
-      _autoMessage(decision.message);
+      final probed = probe is Map ? probe['signature'] : null;
+      final held = _autoHeld[probed];
+      _autoMessage(
+        decision.capture == null &&
+                held != null &&
+                (_autoFailures[probed] ?? 0) >= pscubeAutoMaxFailures
+            ? held
+            : decision.message,
+      );
       final signature = decision.capture;
       if (signature != null) {
         await _capture(autoSignature: signature, autoToken: token);
       }
     } catch (error) {
-      if (_auto.current(token, page)) _autoMessage('ON・待機：$error');
+      if (_auto.current(token, page)) {
+        unawaited(noteErrorLog('pscube.auto.tick', error));
+        _autoMessage('ON・待機：$error');
+      }
     } finally {
       _autoProbing = false;
     }
@@ -897,6 +937,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       if (autoSignature != null) {
         _autoDone.add(autoSignature);
         _autoFailures.remove(autoSignature);
+        _autoHeld.remove(autoSignature);
         if (_auto.enabled && result.nextUrl == null) {
           final day = _targetDay;
           setState(() => _targetDay = null);
@@ -929,18 +970,28 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         // （数えないと、一晩じゅう機種一覧を開き直し続ける。PC `AutoPilot.finished` と同じ）。
         final count = (_autoFailures[autoSignature] ?? 0) + 1;
         _autoFailures[autoSignature] = count;
+        final counts = error.short
+            ? 'いつもの${error.usual}機種に対して${error.shown}機種'
+            : '前回の${error.previous}機種に対して${error.shown}機種';
+        unawaited(noteErrorLog('pscube.index', '$count回目：機種一覧が少ない（$counts）'));
         if (count >= pscubeAutoMaxFailures) {
           // 3回目は開き直さない（この後は待機）。
           store.resetIndexConfirmation();
-          _autoMessage(
-            error.short
-                ? 'ON・機種一覧が途中までしか読めていません（いつもの${error.usual}機種に対して${error.shown}機種）。'
-                      '3回開き直しても同じでした。待機中（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）'
-                : 'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
-                      '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）',
-          );
+          final message = error.short
+              ? 'ON・機種一覧が途中までしか読めていません（$counts）。'
+                    '3回開き直しても同じでした。待機中（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）'
+              : 'ON・機種一覧が前回より少なく（$counts）、開き直すたびに違う一覧でした。3回で止めて待機中'
+                    '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）';
+          _autoHeld[autoSignature] = message;
+          _autoMessage(message);
+        } else if (count == 1) {
+          // 1回目は開き直さず、次の回に同じページのまま下まで送り直して読み直す（2026-11-04、利用者「ちょっと
+          // スクロールするだけで出てくるなら自動読み込みも頑張ってもらいたい」。0時の回で止まった一覧が、手で
+          // 下まで送ると最後の機種まで出ていた）。ページを読み込み直さないので、サイトへの通信は増えない
+          // （続きの機種はサイトが最初に受け取ったデータから足す。`database/PSCUBE_AUTO_CAPTURE.md` の 2026-10-28）。
+          _autoMessage('ON・機種一覧が足りないため、同じページで下まで送り直してもう一度確認します（$counts）');
         } else {
-          _autoMessage('ON・機種一覧を開き直し、もう一度確認します（$count回目）');
+          _autoMessage('ON・機種一覧を開き直し、もう一度確認します（$count回目・$counts）');
           setState(() => _busy = false);
           if (!await _open(PscubeStore.index, reload: true)) {
             store.resetIndexConfirmation();
@@ -960,6 +1011,11 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       if (autoSignature != null && _auto.enabled) {
         final count = (_autoFailures[autoSignature] ?? 0) + 1;
         _autoFailures[autoSignature] = count;
+        unawaited(noteErrorLog('pscube.save', '$count回目：$error'));
+        if (count >= pscubeAutoMaxFailures) {
+          _autoHeld[autoSignature] =
+              'ON・同じページで3回失敗したため待機中（3回目：$error）。内容を確かめて手動で取り込むか、OFF→ONで再開';
+        }
         _autoMessage('ON・保存できませんでした（$count回目）：$error');
       }
     } finally {
@@ -1039,6 +1095,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       await _web.clearCache();
       _autoDone.clear();
       _autoFailures.clear();
+      _autoHeld.clear();
       _guard.reset();
       if (!mounted) return;
       _connection.start(PscubeStore.root);

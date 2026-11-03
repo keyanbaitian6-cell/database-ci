@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:database_android/error_log.dart';
 import 'package:database_android/pscube_import_page.dart';
 import 'package:database_android/pscube_store.dart';
 import 'package:flutter/material.dart';
@@ -138,6 +139,8 @@ void main() {
     await tester.pump();
   }
 
+  final logged = <String>[];
+
   setUp(() async {
     oldPlatform = WebViewPlatform.instance;
     sqfliteFfiInit();
@@ -152,9 +155,15 @@ void main() {
     await rootBundle.loadString('assets/pscube_auto_probe.js');
     elapsed = Duration.zero;
     WebViewPlatform.instance = platform = _Platform();
+    // 画面の試験ではファイルに書かず、残した行だけを見る。
+    logged.clear();
+    forgetErrorLog();
+    errorLogDirectory = () async => null;
+    errorLogObserver = (where, text) => logged.add('$where	$text');
   });
 
   tearDown(() async {
+    errorLogObserver = null;
     if (oldPlatform != null) WebViewPlatform.instance = oldPlatform;
     // 画面のdisposeがStoreの直列キューを閉じる。後始末はDBハンドルを直接確認する。
     await store.db.close();
@@ -379,7 +388,12 @@ void main() {
     }
     await tick(tester);
     expect(platform.web.captures, hasLength(3));
-    expect(find.textContaining('同じページで3回失敗したため待機中'), findsOneWidget);
+    expect(find.textContaining('同じページで3回失敗したため待機中（3回目：'), findsOneWidget);
+    expect(
+      logged.where((line) => line.startsWith('pscube.save	')),
+      hasLength(3),
+      reason: '失敗を毎回、記録のファイルにも残す（2026-11-04）',
+    );
     expect(await rows(), isEmpty);
     expect(await absent(), isEmpty);
     await finish(tester);
@@ -420,11 +434,37 @@ void main() {
       await mount(tester);
       await tick(tester);
       expect(platform.web.captures, ['index']);
-      expect(platform.web.pageReloads, 1, reason: '1回目は保存せず開き直す');
+      expect(
+        platform.web.pageReloads,
+        0,
+        reason: '1回目は保存せず、開き直さずに同じページで読み直す（2026-11-04）',
+      );
       expect(await active(tester), keys);
       await tick(tester);
       expect(platform.web.captures, ['index', 'index']);
       expect(await active(tester), keys.take(2).toList());
+      await finish(tester);
+    });
+
+    // 2026-11-04：0時の回で途中まで出ていた一覧が、手で下まで送ると最後の機種まで出ていた。
+    testWidgets('足りなかった一覧も、開き直さずに同じページで読み直してそろえば保存する', (tester) async {
+      final keys = await seedActive(tester, 0);
+      await mount(tester);
+      platform.web.indexPicks.addAll([
+        [0],
+        [0, 1],
+      ]);
+      await tick(tester);
+      expect(platform.web.captures, ['index']);
+      expect(
+        find.textContaining('同じページで下まで送り直してもう一度確認します（前回の2機種に対して1機種）'),
+        findsOneWidget,
+      );
+      await tick(tester);
+      expect(platform.web.captures, ['index', 'index']);
+      expect(platform.web.pageReloads, 0, reason: 'ページを読み込み直さない');
+      expect(await active(tester), keys);
+      expect(find.textContaining('機種一覧を保存しました'), findsOneWidget);
       await finish(tester);
     });
 
@@ -440,10 +480,24 @@ void main() {
         await tick(tester);
         expect(platform.web.captures, hasLength(i));
       }
-      expect(platform.web.pageReloads, 2, reason: '3回目は開き直さない');
+      expect(
+        platform.web.pageReloads,
+        1,
+        reason: '1回目は同じページで読み直し、2回目だけ開き直す。3回目は開き直さない',
+      );
       await tick(tester);
       expect(platform.web.captures, hasLength(3));
-      expect(find.textContaining('同じページで3回失敗したため待機中'), findsOneWidget);
+      // 次の確認でも、3回目の知らせ（件数つき）を一般の文で上書きしない（2026-11-04）。
+      expect(
+        find.textContaining('機種一覧が前回より少なく（前回の5機種に対して2機種）、開き直すたびに違う一覧でした'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('同じページで3回失敗したため待機中'), findsNothing);
+      expect(logged.where((line) => line.startsWith('pscube.index	')), [
+        'pscube.index	1回目：機種一覧が少ない（前回の5機種に対して1機種）',
+        'pscube.index	2回目：機種一覧が少ない（前回の5機種に対して1機種）',
+        'pscube.index	3回目：機種一覧が少ない（前回の5機種に対して2機種）',
+      ]);
       expect(await active(tester), keys);
       await finish(tester);
     });
@@ -475,13 +529,26 @@ void main() {
       }
       expect(
         platform.web.pageReloads,
-        2,
-        reason: '同じ2機種の一覧が返り続けても受け付けず、3回目は開き直さない',
+        1,
+        reason: '同じ2機種の一覧が返り続けても受け付けない。1回目は同じページで読み直し、2回目は開き直し、3回目は開き直さない',
       );
       expect(
         find.textContaining('途中までしか読めていません（いつもの3機種に対して2機種）'),
         findsOneWidget,
       );
+      // 2026-11-04：0時の取り込みで、この知らせが次の確認で「同じページで3回失敗」に上書きされ、
+      // 何機種だったかが分からなくなった。次の確認の後も残す。
+      await tick(tester);
+      expect(platform.web.captures, hasLength(3));
+      expect(
+        find.textContaining('途中までしか読めていません（いつもの3機種に対して2機種）'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('同じページで3回失敗したため待機中'), findsNothing);
+      expect(logged.where((line) => line.startsWith('pscube.index	')), [
+        for (var i = 1; i <= 3; i++)
+          'pscube.index	$i回目：機種一覧が少ない（いつもの3機種に対して2機種）',
+      ]);
       expect(find.textContaining('すべて取り込みました'), findsNothing);
       expect(await active(tester), keys, reason: '途中の一覧で機種の並びを上書きしない');
       await finish(tester);

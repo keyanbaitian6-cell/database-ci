@@ -326,3 +326,19 @@
 - 端末：`adb devices` に端末が無く（USB未接続）、入っている版は読めていない。インストールはしていない（利用者が行う）。
 - 0.5.49のAPK2本と `build/app/outputs/apk/release/app-release.apk` をごみ箱へ移した。
 - 未確認：スマホでの動作（今夜の0時予約で機種一覧を全部読めるか、途中で止まったときに待機の知らせが出るか）。11/1・11/2の抜けた機種の取り直し。
+
+## 【P’s CUBE Android：0時に機種一覧で3回止まった件の記録・知らせの保持・同じページでの読み直し】2026-11-04 Claude
+
+- 経緯：0.5.50（11/3 23:46に利用者が導入。adbの `dumpsys package` で確認）で、11/4 0時の予約（11/3の分）が機種一覧で3回止まり、「ON・同じページで3回失敗したため待機中」になった（AIがadbの画面読み取りで確認。「完了」とは出ず、途中の一覧は受け付けていない）。利用者「止まったみたいな表記出てない？」「なぜこうなるの？」「直接操作していいよ」。
+- AIが確かめたこと（利用者の許可でスマホをadbで操作。サイトのページを新しく開いたのはOFF→ONの1回だけ）：
+  - 止まった後の画面の機種一覧を手で下まで送ると「Lうみねこのなく頃に2」で終わった。PCの `pscube.sqlite3` の `active_machine_keys`（60機種）でも最後の機種。止まった時点で48番目あたりは表示されていた。どちらの理由（いつもの8割未満／前回より少なく毎回違う）で止まったかは、知らせが上書きされて分からない。
+  - 0:41にOFF→ONすると、機種一覧は1回目（16秒）で60機種そろって保存され（「残り60件」）、11/3の分の取り込みが進んだ（01:06時点で残り57件、1ページ約25秒）。完了は未確認。
+  - 0.5.48→0.5.49でP’s CUBEの読み込み方の変更は無い（`git diff cbf109c 45bead3`：常駐を止める失敗の `debugPrint` だけ）。
+  - Androidには失敗を残す仕組みが無かった（logcatは常駐を止める失敗の3か所だけ。端末のlogcatも起動の1行のみ）。
+- 利用者「次のビルドでそれをいれよう」「ちょっとスクロールするだけで出てくるなら自動読み込みも頑張ってもらいたいものだね」→ 実装（APKは作っていない。次のビルドで入る）：
+  - `database_android/lib/error_log.dart`（新規）：PC `error_log.py` と同じ形の `errors.log`。書き先 `/sdcard/Android/data/com.keyan.database_android.pscube/files/errors.log`（`getExternalStorageDirectory`、PCから `adb pull` で読める。Android 16の端末で `/sdcard/Android/data/` を読めることを確認。フォルダーは初めて書いたときに作られる）。60秒間引き・256KiBで1世代。
+  - `pscube_import_page.dart`：記録する所＝機種一覧の表示件数と秒数（`pscube.list`）、少なかった回ごとの件数（`pscube.index`）、保存の失敗（`pscube.save`）、見張りの失敗（`pscube.auto.tick`）、止まった知らせ（`pscube.auto.stop`）。3回目の失敗の知らせを `_autoHeld` に覚え、次の確認でも一般の文で上書きしない。開き直しの知らせに件数を出す。機種一覧が足りないときの1回目は開き直さず、次の回に同じページのまま下まで送り直して読み直す（2回目は開き直し、3回目で待機。続きの機種はサイトが最初に受け取ったデータから足すため通信は増えない＝10/28の調査）。
+  - `pscube_store.dart`：`PscubeIndexRetry` に `previous`（前回の機種数）を足し、減った一覧でも件数を渡す。
+  - PC版は変えていない（PCでは起きていない）。文書 `database/PSCUBE_AUTO_CAPTURE.md` に 2026-11-04 の節。
+- 試験：`test/error_log_test.dart` 4件（新規）。`test/pscube_auto_flow_test.dart`：上書きしないこと・件数・記録の行、同じページの読み直しでそろえば開き直さず保存（新規1件）、開き直し回数の期待値を変更（1→0、2→1）。上書きに戻すと3件、読み直しを外すと4件落ちることを確認。Flutter全769件成功、analyze 情報28件（エラー・警告0、前からの指摘だけ）、照合版 `a60fd18e46df`（生成スクリプト4本）で `test_release_info`・`test_pscube_capture`・`test_pscube_auto_browser`・`test_pscube_net_capture`・`test_pscube_absent_tab_auto`・PCの `test_pscube_auto*`・`test_release*` 成功。全体ゲートはAPKを作るときに流す（今回は未）。
+- 未確認：0時に機種一覧が止まる原因そのもの。次のビルドを入れた後の0時の `errors.log` で調べる（`adb pull /sdcard/Android/data/com.keyan.database_android.pscube/files/errors.log`）。
