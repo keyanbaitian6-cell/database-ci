@@ -361,3 +361,9 @@
   - `database_android/build/releases/0.5.51/`：`database-0.5.51-2026110401.apk`（96,869,325バイト、`com.keyan.database_android`、表示名 database、SHA-256 `64bfb32afa86f22a2708052229110f14b020756fe28cf98d85fc3b0692c7d0de`）、`database-pscube-0.5.51-2026110402.apk`（96,869,341バイト、`com.keyan.database_android.pscube`、表示名 database P’s CUBE、SHA-256 `4d6f26cbb4a558d382c62b5fee981177e26a7f8e85bbf0ae721b81b4e44f56fb`）。aapt2で版・ID・表示名、apksignerで署名（証明書 `4332fcb9…a047`、前と同じ）を確認。`SHA256SUMS.txt`・ビルドログ2本を同じフォルダーに保存。0.5.50のAPK2本と `build/app/outputs/apk/release/app-release.apk` をごみ箱へ。インストールはしていない（利用者が行う）。
 - 利用者の報告（同日）：「通知ONにしました」。AIが `adb shell dumpsys package` で確認：2本とも 0.5.51 が入っている（通常版 2026110401、P’s CUBE版 2026110402）。通知の許可は **P’s CUBE版が許可済み**（`POST_NOTIFICATIONS: granted=true, USER_SET`）、**通常版はまだ**（`granted=false`。通常版で自動取り込みをONにしたときに聞かれる）。ウィジェットの見え方・通知の実際の表示・今夜0時の取り戻しと `errors.log` は未確認。
   - 続き：利用者「メルヘンもＯＮにしてある」。AIが確認し直すと、通常版も `POST_NOTIFICATIONS: granted=true, USER_SET` になっていた（先の確認は許可する前だったと思われる）。2本とも通知は許可済み。
+
+## 2026-11-04 改善点の検討用プロンプトの作成（Claude）
+
+- 依頼：「databaseについての改善点を検討させるプロンプト」。基準 `1c994bb`（手元main＝origin/main）。
+- 作ったもの：会話で渡したプロンプトのみ（ファイルには保存していない）。読ませる資料は AGENTS.md・AI_COLLABORATION.md・DATABASE_REVIEW_20261101.md（既出の課題）・ADDITIONS_20261104.md（11/4の追加）・SCORING_POLICY.md など。調査は読むだけ（コード・DB・公開物は変えない、対象サイトへ接続しない、ビルド・同期・公開しない）とし、4画面（PC・Android 通常／P’s CUBE・閲覧ページ・共有カレンダー）ごとに、根拠・再現・影響・手間・優先度と「確認済み／推測」を分けて書かせる形。カメラアプリ（nail-gauge）は対象外。
+- 確かめていないこと：プロンプトを実際に流した結果はまだ無い。コード・試験・CIには触れていない。
