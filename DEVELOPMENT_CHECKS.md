@@ -40,6 +40,24 @@ Flutterのない環境でも `bash database_android/tool/check_before_build.sh -
 
 通常実行は閲覧ページをその場で生成・ステージしてから試験する。生成に失敗した場合は古い成果物を試験しない。試験用成果物から公開はしない。
 
+### 利用者のこのPC（Windows）で全体ゲートを流すとき（2026-11-05、Claudeの覚え書きから移した）
+
+Git Bash では `python`（ストアの入口だけ）・`node` が使えないので、次を指定して流す。
+
+```bash
+export TZ=JST-9 \
+  PYTHON=/c/Users/keyan/Documents/Codex/2026-09-24/a/work/database-main/database/.venv/Scripts/python.exe \
+  NODE=/c/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe \
+  PLAYWRIGHT_MODULE=file:///C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs \
+  PATH=/c/Users/keyan/flutter/bin:$PATH \
+  CHECK_BUILD_WORK=/c/w/cbw-<作業名>
+bash database_android/tool/check_before_build.sh </dev/null
+```
+
+- `PYTHON` はこのプロジェクトの `.venv`（rapidocr・onnxruntime・selenium・pywebview が入っているのはこれだけ）。
+- `CHECK_BUILD_WORK` は `C:\w\` の下のような短い場所にする。長い場所（AIの一時フォルダーなど）だと閲覧ページのファイルの場所が260文字を超え、閲覧ページのステージで失敗する（このPCは長い場所の設定が無効）。
+- 約10分かかる。新しい作業ツリーでは、Gitに入れていない `database_android/assets/database_seed.json` を先に写す。
+
 ## 更新の仕様と障害時の確認
 
 - P’s CUBEの差枚は日ごとに検査する。空・1点だけ・片側欠損・不正座標の日は差枚不明のままにし、正常日の正負・0枚を残す。日付・系列の重複や不正な単位など対応を確定できない応答は全体を拒否する。選択日が欠測でもPC/Androidの取り込みは正常な過去日を保存する。手動貼り付けの選択日確認は維持する。`test_pscube_net_days.mjs` と生成済み取得スクリプトの実ブラウザ試験で確認する。自動再試行や追加のサイト通信は行わない。
