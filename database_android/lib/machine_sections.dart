@@ -10,6 +10,7 @@ import 'models.dart';
 import 'normal_day_context.dart';
 import 'normal_next_day_model.dart';
 import 'normal_day_context_note.dart';
+import 'rack_suffix.dart';
 import 'remote_curve.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
@@ -92,9 +93,13 @@ class MachineSection extends StatefulWidget {
     this.graph,
     this.onGraphChanged,
     this.showMachine = false,
+    this.suffixDigit,
   });
 
   final String machine;
+
+  /// 差枚の一覧で選んだ台番の末尾（rack_suffix.dart）。その末尾の台番の横に小さな印を付ける。
+  final int? suffixDigit;
 
   /// 複数機種を一緒に出すときに、台ごとの機種名を表示する。
   final bool showMachine;
@@ -344,6 +349,7 @@ class _MachineSectionState extends State<MachineSection> {
               onTap: widget.onTap,
               onLongPress: widget.onLongPress,
               showMachine: _mixed,
+              suffixDigit: widget.suffixDigit,
             ),
           )
         else
@@ -354,6 +360,7 @@ class _MachineSectionState extends State<MachineSection> {
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
             showMachine: _mixed,
+            suffixDigit: widget.suffixDigit,
           ),
         ?widget.footer,
       ],
@@ -408,12 +415,16 @@ class MachineDataTable extends StatelessWidget {
     this.candidateRacks = const {},
     this.longTrendRacks = const {},
     this.showMachine = false,
+    this.suffixDigit,
   });
   final List<(SlotRecord, ScoreResult)> entries;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
   final Set<int> candidateRacks;
   final Set<int> longTrendRacks;
+
+  /// 選んだ台番の末尾（印を付ける。rack_suffix.dart）。
+  final int? suffixDigit;
 
   /// 台番号の右に機種名の列を出す（バラエティ：別の機種の台が並ぶ）。
   /// 平均の行は、機種によって意味が変わる数字（BB・RB・確率・最大持玉）を
@@ -578,6 +589,9 @@ class MachineDataTable extends StatelessWidget {
                       candidateRacks.contains(entries[i].$1.rack) ? ' ★' : ' ☆',
                       style: TextStyle(color: AppColors.linkBlue, fontSize: 13),
                     ),
+                  if (suffixDigit != null &&
+                      rackSuffix(entries[i].$1.rack) == suffixDigit)
+                    SuffixMark(suffixDigit!),
                 ],
               ),
               width: _rackWidth,
@@ -758,12 +772,16 @@ class GraphGrid extends StatelessWidget {
     this.candidateRacks = const {},
     this.longTrendRacks = const {},
     this.showMachine = false,
+    this.suffixDigit,
   });
   final List<(SlotRecord, ScoreResult)> entries;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
   final Set<int> candidateRacks;
   final Set<int> longTrendRacks;
+
+  /// 選んだ台番の末尾（印を付ける。rack_suffix.dart）。
+  final int? suffixDigit;
 
   /// 台番号の横に機種名を出す（バラエティ）。
   final bool showMachine;
@@ -789,6 +807,9 @@ class GraphGrid extends StatelessWidget {
                     showMachine: showMachine,
                     candidate: candidateRacks.contains(record.rack),
                     longTrend: longTrendRacks.contains(record.rack),
+                    suffix:
+                        suffixDigit != null &&
+                        rackSuffix(record.rack) == suffixDigit,
                     onTap: () => onTap(record, score),
                     onLongPress: onLongPress == null
                         ? null
@@ -817,11 +838,15 @@ class _GraphCard extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.showMachine = false,
+    this.suffix = false,
   });
   final SlotRecord record;
   final ScoreResult score;
   final bool candidate;
   final bool longTrend;
+
+  /// 選んだ末尾の台（印を付ける）。
+  final bool suffix;
   final bool showMachine;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -889,6 +914,7 @@ class _GraphCard extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                  if (suffix) SuffixMark(rackSuffix(record.rack)),
                   if (showMachine) ...[
                     const SizedBox(width: 6),
                     Expanded(

@@ -39,6 +39,7 @@ import 'storage_usage_page.dart';
 import 'viewer_pages.dart' show ViewerDateBar, viewerDays;
 import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'home_widget.dart';
+import 'error_log.dart' show noteErrorLog;
 import 'pscube_suffix_page.dart';
 import 'viewer_data.dart' show ViewerData;
 
@@ -76,8 +77,9 @@ Future<void> main() async {
 }
 
 /// ホーム画面のウィジェットの翌日候補（2026-11-04）。記録が変わったら、少し待ってから計算し直す
-/// （取り込み中は何度も変わるので、まとめて1回）。この端末にメルヘンの記録が無ければ書き換えない
-/// （P’s CUBE版は、P’s CUBEの取り込み画面が書く）。
+/// （取り込み中は何度も変わるので、まとめて1回）。メルヘンの自動取り込みの間は計算せず、止めたときに1回
+/// （`homeWidgetCapturing`、2026-11-05）。この端末にメルヘンの記録が無ければ書き換えない
+/// （P’s CUBE版は、P’s CUBEの取り込み画面が書く）。計算の失敗は errors.log の `widget` に残す。
 void _setUpHomeWidget(AppController controller) {
   Timer? timer;
   var last = '';
@@ -93,12 +95,18 @@ void _setUpHomeWidget(AppController controller) {
 
   void schedule() {
     timer?.cancel();
+    if (homeWidgetCapturing.value) return;
     timer = Timer(const Duration(seconds: 3), () {
-      unawaited(refresh().catchError((Object _) {}));
+      unawaited(
+        refresh().catchError((Object error) {
+          unawaited(noteErrorLog('widget', error));
+        }),
+      );
     });
   }
 
   controller.addListener(schedule);
+  homeWidgetCapturing.addListener(schedule);
   schedule();
 }
 

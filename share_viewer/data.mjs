@@ -307,6 +307,9 @@ export function winRateYears(byDay, summaries, store) {
   return [...years].sort((a, b) => b - a);
 }
 
+/** 台番の末尾（0〜9）。差枚の一覧で選んだ末尾の台に印を付ける（2026-11-05）。 */
+export const rackSuffix = (rack) => Math.abs(Math.trunc(rack)) % 10;
+
 /** その日の差枚TOP50（差枚の多い順）と強かった機種10選（1台あたりの平均回転数、2台以上の機種）。 */
 export function daySummary(racks) {
   const top = racks.filter(r => r.net != null).sort((a, b) =>

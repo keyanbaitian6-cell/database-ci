@@ -128,6 +128,12 @@ function showPscubeCloudStatus() {
 }
 
 /** 日別ファイルが消えた・壊れた場合だけ実行。元バックアップは変更しない。 */
+/** 履歴方式（PSCUBE_HISTORY_VIEWER）を本当に切り替えるときだけ実行（2026-11-05）。次の同期で今の値を覚える。 */
+function changePscubeCloudMode() {
+  PropertiesService.getScriptProperties().deleteProperty('pscubeCloudMode');
+  return '次の同期で、今の PSCUBE_HISTORY_VIEWER の値を覚えます。';
+}
+
 function rebuildPscubeViewerParts() {
   if (PSCUBE_HISTORY_VIEWER) PropertiesService.getScriptProperties().setProperty('pscubeHistoryRebuild', '1');
   PropertiesService.getScriptProperties().deleteProperty('pscubeCloudInputs');
@@ -152,6 +158,8 @@ function pscubeCloudRun() {
     if (folder.isTrashed()) throw new PscubeCloudStop('config', '共有フォルダがごみ箱にあります。');
     const backupFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_BACKUP);
     const viewerFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_VIEWER);
+    const modeProblem = vhModeProblem(folder, 'pscube', props, PSCUBE_HISTORY_VIEWER, 'PSCUBE_HISTORY_VIEWER', 'changePscubeCloudMode');
+    if (modeProblem) throw new PscubeCloudStop('config', modeProblem);
     if (PSCUBE_HISTORY_VIEWER) return vhPscube(folder, viewerFile, props, startedAt);
     const inputs = pscubeCloudListInputs([folder, DriveApp.getRootFolder()]);
     const liveIds = new Set(inputs.map(i => i.id));
@@ -486,7 +494,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
-const APPLICATION_RELEASE = '5a38593d6fa4';
+const APPLICATION_RELEASE = '0ab1c21a4ec7';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -921,7 +929,7 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
-const SCRIPT_RELEASE = '5a38593d6fa4';
+const SCRIPT_RELEASE = '0ab1c21a4ec7';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -1402,6 +1410,26 @@ function vhMaintain(folder, site, props) {
     }
     props.setProperty(key, String(Date.now()));
   } catch (error) { console.log('古い日別原本の整理は次回再試行します：' + String(error.message || error)); }
+}
+
+// 前回までの方式（履歴方式か）と、貼り替えたスクリプトの設定の値が違えば、何も書かずに止める（2026-11-05）。
+// 11/4、リポジトリのまま（履歴方式 false）の全文を貼り、履歴方式だった閲覧用ファイルを古い方式で書き直した。
+// 方式を覚えていない（この版を初めて貼った）ときは、閲覧用の一覧が履歴方式（v2）なのに false なら止め、
+// それ以外は今の方式を覚える。止める理由の文を返す（続けてよければ null）。
+function vhModeProblem(folder, site, props, history, setting, change) {
+  const key = site + 'CloudMode', mode = history ? 'history' : 'legacy';
+  let last = props.getProperty(key);
+  if (!last && !history) {
+    try {
+      const files = folder.getFilesByName(vpManifestName(site));
+      if (files.hasNext() && JSON.parse(files.next().getBlob().getDataAsString('UTF-8')).version === 2) last = 'history';
+    } catch (e) { /* 一覧が読めなければ判断しない */ }
+  }
+  if (!last) { props.setProperty(key, mode); return null; }
+  if (last === mode) return null;
+  return '前回までは' + (last === 'history' ? '履歴方式（' + setting + ' = true）' : '従来の方式（' + setting + ' = false）') +
+    'で動いていましたが、貼ったスクリプトは ' + setting + ' = ' + history + ' です。閲覧用ファイルを書き換えずに止めました。' +
+    '前回と同じ値にして貼り直してください（方式を本当に変えるときだけ、' + change + ' を実行してから同期します）。';
 }
 
 function vhInput(file, kind) {

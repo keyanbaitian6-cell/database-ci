@@ -15,6 +15,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'capture_flow.dart';
 import 'capture_notice.dart';
 import 'error_log.dart';
+import 'home_widget.dart' show homeWidgetCapturing;
 import 'excluded_machines.dart';
 import 'browser_session.dart';
 import 'auto_capture_state.dart';
@@ -290,7 +291,16 @@ class _WebImportPageState extends State<WebImportPage> {
       if (mounted) setState(() {});
     },
   );
-  String? _error;
+  String? _errorText;
+
+  /// 画面に出す失敗の文。出した文は `errors.log` の `meruhen.error` にも残す（2026-11-05。PC版は11/1から
+  /// 残していたが、Androidはメルヘンの失敗を残していなかった。入れ替えの日の失敗を後から追うため）。
+  String? get _error => _errorText;
+  set _error(String? value) {
+    _errorText = value;
+    if (value != null) unawaited(noteErrorLog('meruhen.error', value));
+  }
+
   String? _notice;
   String _progress = '';
   Timer? _noticeTimer;
@@ -342,6 +352,7 @@ class _WebImportPageState extends State<WebImportPage> {
     if (!_auto.enabled && direction != null) _direction = direction;
     if (_auto.enabled) {
       _auto.turnOff();
+      homeWidgetCapturing.value = false;
       setState(() => _autoStatus = '停止中（開始済みの保存は完了まで待ちます）');
       if (Platform.isAndroid) {
         try {
@@ -372,8 +383,11 @@ class _WebImportPageState extends State<WebImportPage> {
       }
       _freshSince = DateTime.now();
       _auto.turnOn();
+      // 取り込み中はウィジェットの翌日候補を計算し直さない（home_widget.dart）。
+      homeWidgetCapturing.value = true;
       setState(() => _autoStatus = 'ON・次の取り込みを待っています');
     } catch (error) {
+      unawaited(noteErrorLog('meruhen.auto.start', error));
       _autoMessage('自動取り込みを開始できませんでした：$error');
     } finally {
       if (mounted) setState(() => _autoChanging = false);
@@ -413,6 +427,7 @@ class _WebImportPageState extends State<WebImportPage> {
       _autoMessage('ON・取り込み中');
       await _captureCurrentPage(autoToken: token);
     } catch (error) {
+      unawaited(noteErrorLog('meruhen.auto.tick', error));
       if (_auto.current(token, page)) _autoMessage('ON・待機：$error');
     } finally {
       _autoProbing = false;
@@ -464,6 +479,7 @@ class _WebImportPageState extends State<WebImportPage> {
   @override
   void dispose() {
     _auto.turnOff();
+    homeWidgetCapturing.value = false;
     _autoTimer?.cancel();
     if (Platform.isAndroid) {
       unawaited(_autoService.invokeMethod<void>('stop').catchError((_) {}));
@@ -699,6 +715,7 @@ class _WebImportPageState extends State<WebImportPage> {
 
   Future<void> _stopAuto(String message) async {
     _auto.turnOff();
+    homeWidgetCapturing.value = false;
     if (mounted) setState(() => _autoStatus = message);
     if (Platform.isAndroid) {
       try {

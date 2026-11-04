@@ -1674,7 +1674,10 @@ String startupFailureText(List<String> done, Object error) {
 ///
 /// [day] の前の6日（日付指定取り込みの選択肢と同じ7日の範囲）のうち、この店の記録のある最初の日より後で、
 /// 次のどれかに当たる日を新しい順に1つ返す。[skip]（今回すでに済ませた・取り戻そうとした日）は除く。
-/// - その日の記録が1台も無い（自動取り込みを動かさなかった日）。
+/// - 前の日と次の日はこの端末で取り込んでいるのに、その日の記録が1台も無い（自動取り込みを動かさなかった日）。
+///   前後の日も無い日は抜けとみなさない（2026-11-05）。この端末はPCの記録を自動では読まないので、PCで
+///   取り込んだ日をサイトから読み直してしまう（AGENTS.md「対象サイトへのアクセスを増やさない」）。
+///   2日続けて抜けた日は、次の回に片方ずつ見つかる。
 /// - 個別リンクがあるのにグラフが無い台が残る（途中で止まった日）。
 /// - 前の日と次の日の両方にある機種が、その日だけ無い（機種一覧の途中で止まった日）。
 /// 取り込みの対象外の機種（沖ドキなど）は見ない。抜けが無ければ null（サイトへの通信も増えない）。
@@ -1702,10 +1705,13 @@ String? meruhenGapDay(
     if (target.compareTo(first) < 0) break;
     if (skip.contains(target)) continue;
     final rows = byDay[target];
-    if (rows == null) return target;
-    if (rows.any((r) => !r.graphDone && r.detailUrl != null)) return target;
     final before = machinesOn(date.subtract(const Duration(days: 1)));
     final after = machinesOn(date.add(const Duration(days: 1)));
+    if (rows == null) {
+      if (before != null && after != null) return target;
+      continue;
+    }
+    if (rows.any((r) => !r.graphDone && r.detailUrl != null)) return target;
     if (before != null && after != null) {
       final here = rows.map((r) => r.machine).toSet();
       if (before.intersection(after).difference(here).isNotEmpty) return target;

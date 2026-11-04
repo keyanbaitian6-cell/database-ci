@@ -19,6 +19,29 @@ const pscubeListReloadEvery = 3;
 /// 抜けた日を探す範囲（取り込み日を含めて7日。サイトの台別ページが持つ7日、日付指定取り込みの選択肢と同じ）。
 const pscubeGapDays = 7;
 
+/// 抜けた日として調べる日（新しい順）。[finished] は今回の自動取り込みで済ませた日（済ませた順）。
+/// - 起点は最初に済ませた日だけ（2026-11-05）。取り戻した日を起点にすると、入れ替えの新台（それより前の日の
+///   記録が無い）のせいで過去の日が毎回「未取得あり」に見え、記録の最初の日まで1日ずつさかのぼっていた。
+///   メルヘンの `_gapBase` と同じ。
+/// - サイトの台別ページが持つ7日（[now] の営業日を含む）より古い日は見ない。開いてもその日のタブが無く、
+///   1ページずつサイトへのアクセスが増えるだけ（AGENTS.md「対象サイトへのアクセスを増やさない」）。
+/// 済ませた日は除く。
+List<String> pscubeGapCandidateDays(List<String> finished, DateTime now) {
+  if (finished.isEmpty) return const [];
+  DateTime utc(String day) => DateTime.parse('${day}T00:00:00Z');
+  final base = utc(finished.first);
+  final oldest = utc(pscubeBusinessDay(now))
+      .subtract(const Duration(days: pscubeGapDays - 1));
+  return [
+    for (var back = 1; back < pscubeGapDays; back++)
+      if (base.subtract(Duration(days: back)) case final d
+          when !d.isBefore(oldest))
+        if (d.toIso8601String().substring(0, 10) case final iso
+            when !finished.contains(iso))
+          iso,
+  ];
+}
+
 /// 営業日（yyyy-mm-dd）。日本時間の午前3時まではまだ前日（利用者の指定、2026-10-04は2時、2026-10-26に3時へ）。
 /// PC版 `business_day`・`recent_business_days`（database/pscube_import.py）と同じ規則。
 const pscubeBusinessDayCutoffHour = 3;

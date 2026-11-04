@@ -1,3 +1,23 @@
+// 前回までの方式（履歴方式か）と、貼り替えたスクリプトの設定の値が違えば、何も書かずに止める（2026-11-05）。
+// 11/4、リポジトリのまま（履歴方式 false）の全文を貼り、履歴方式だった閲覧用ファイルを古い方式で書き直した。
+// 方式を覚えていない（この版を初めて貼った）ときは、閲覧用の一覧が履歴方式（v2）なのに false なら止め、
+// それ以外は今の方式を覚える。止める理由の文を返す（続けてよければ null）。
+function vhModeProblem(folder, site, props, history, setting, change) {
+  const key = site + 'CloudMode', mode = history ? 'history' : 'legacy';
+  let last = props.getProperty(key);
+  if (!last && !history) {
+    try {
+      const files = folder.getFilesByName(vpManifestName(site));
+      if (files.hasNext() && JSON.parse(files.next().getBlob().getDataAsString('UTF-8')).version === 2) last = 'history';
+    } catch (e) { /* 一覧が読めなければ判断しない */ }
+  }
+  if (!last) { props.setProperty(key, mode); return null; }
+  if (last === mode) return null;
+  return '前回までは' + (last === 'history' ? '履歴方式（' + setting + ' = true）' : '従来の方式（' + setting + ' = false）') +
+    'で動いていましたが、貼ったスクリプトは ' + setting + ' = ' + history + ' です。閲覧用ファイルを書き換えずに止めました。' +
+    '前回と同じ値にして貼り直してください（方式を本当に変えるときだけ、' + change + ' を実行してから同期します）。';
+}
+
 function vhInput(file, kind) {
   return {file, kind, id: kind + ':' + file.getId(), name: file.getName(), size: file.getSize(), version: vpVersion(file)};
 }

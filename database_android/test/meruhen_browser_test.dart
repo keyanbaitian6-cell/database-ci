@@ -1,6 +1,8 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'dart:async';
 
+import 'package:database_android/error_log.dart';
+import 'package:database_android/home_widget.dart' show homeWidgetCapturing;
 import 'package:database_android/web_import_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -106,9 +108,15 @@ void main() {
         'cookies',
         'load',
       ]);
+      expect(homeWidgetCapturing.value, isFalse);
       await tester.tap(find.text('自動取り込み：OFF'));
       await tester.pump();
       expect(find.text('自動取り込み：ON'), findsOneWidget);
+      expect(
+        homeWidgetCapturing.value,
+        isTrue,
+        reason: '自動取り込みの間はウィジェットの翌日候補を計算し直さない（2026-11-05）',
+      );
       platform.controller.delegate.network!(
         WebResourceError(
           errorCode: -2,
@@ -121,6 +129,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('DNSエラー'), findsOneWidget);
       expect(find.text('自動取り込み：OFF'), findsOneWidget);
+      expect(homeWidgetCapturing.value, isFalse, reason: '止まったら計算を再開する');
       await tester.tap(find.byTooltip('再読み込み'));
       await tester.pumpAndSettle();
       expect(platform.controller.loads, [root, root]);
@@ -139,10 +148,19 @@ void main() {
     (tester) async {
       final platform = MeruhenPlatform()..failSettings = true;
       WebViewPlatform.instance = platform;
+      // 画面に出した失敗の文は errors.log にも残す（2026-11-05、PC版と同じ）。
+      final logged = <String>[];
+      forgetErrorLog();
+      errorLogDirectory = () async => null;
+      errorLogObserver = (where, text) => logged.add('$where\t$text');
+      addTearDown(() => errorLogObserver = null);
       await tester.pumpWidget(page());
       await tester.pumpAndSettle();
       expect(platform.controller.loads, isEmpty);
       expect(find.textContaining('Cookie・ブラウザ設定'), findsOneWidget);
+      expect(logged, [
+        'meruhen.error\tCookie・ブラウザ設定を準備できませんでした。再読み込みで再試行してください。',
+      ]);
       platform.failSettings = false;
       await tester.tap(find.byTooltip('再読み込み'));
       await tester.pumpAndSettle();

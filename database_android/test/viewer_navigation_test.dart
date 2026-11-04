@@ -5,6 +5,7 @@ import 'package:database_android/data_checks.dart';
 import 'package:database_android/date_events.dart';
 import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
+import 'package:database_android/rack_suffix.dart';
 import 'package:database_android/scoring.dart';
 import 'package:database_android/shared_widgets.dart';
 import 'package:database_android/theme.dart';
@@ -687,6 +688,81 @@ void main() {
       tester.widget<ViewerDateBar>(find.byType(ViewerDateBar)).day,
       '2026-09-26',
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  // 2026-11-05 利用者「差枚一覧で選んだ末尾を、機種一覧でも追えるようにする」。
+  testWidgets('全機種の台一覧で選んだ末尾を機種の表へ引き継ぎ、「末尾3 ×」・日付の切り替えで解除', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(393, 3000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final records = [
+      for (final day in ['2026-09-27', '2026-09-28'])
+        for (final rack in [11, 12, 13, 23])
+          rec(day, machine: '主力', rack: rack),
+      for (final day in ['2026-09-27', '2026-09-28'])
+        for (final rack in [30, 33, 34, 35])
+          rec(day, machine: 'あ機種', rack: rack),
+    ];
+    await tester.pumpWidget(
+      app(ViewerHome(initialData: ViewerData(records: records))),
+    );
+    await tester.pumpAndSettle();
+    int? digit() => tester
+        .widget<MachineDataTable>(find.byType(MachineDataTable))
+        .suffixDigit;
+
+    // 差枚の一覧（全機種の台一覧）で末尾3を選ぶ。
+    await tester.tap(find.byKey(const ValueKey('open-all-machines')));
+    await tester.pumpAndSettle();
+    expect(digit(), isNull);
+    await tester.tap(find.byKey(const ValueKey('suffix-3')));
+    await tester.pumpAndSettle();
+    expect(digit(), 3);
+    expect(find.byType(SuffixMark), findsNWidgets(3), reason: '13番・23番・33番');
+    expect(find.text('末尾3 ×'), findsOneWidget);
+    // 同じ店・同じ日の機種の表へ（台は全部出したまま）。
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(MachineSummaryList),
+        matching: find.text('主力'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(digit(), 3);
+    expect(
+      tester
+          .widget<MachineDataTable>(find.byType(MachineDataTable))
+          .entries
+          .map((e) => e.$1.rack),
+      [11, 12, 13, 23],
+    );
+    expect(find.byType(SuffixMark), findsNWidgets(2), reason: '主力の13番・23番');
+    expect(
+      find.byKey(const ValueKey('suffix-5')),
+      findsNothing,
+      reason: '選ぶ欄は差枚の一覧だけ',
+    );
+    // 「末尾3 ×」で解除。
+    await tester.tap(find.text('末尾3 ×'));
+    await tester.pumpAndSettle();
+    expect(digit(), isNull);
+    expect(find.byType(SuffixMark), findsNothing);
+    // もう一度選んで、日付を変えると解除。元の日に戻しても解除のまま。
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-all-machines')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('suffix-3')));
+    await tester.pumpAndSettle();
+    expect(digit(), 3);
+    await tester.tap(find.byTooltip('前の記録日'));
+    await tester.pumpAndSettle();
+    expect(digit(), isNull);
+    await tester.tap(find.byTooltip('次の記録日'));
+    await tester.pumpAndSettle();
+    expect(digit(), isNull);
     expect(tester.takeException(), isNull);
   });
 }

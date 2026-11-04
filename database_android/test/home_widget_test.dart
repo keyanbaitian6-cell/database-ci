@@ -1,4 +1,5 @@
 import 'package:database_android/capture_notice.dart';
+import 'package:database_android/error_log.dart';
 import 'package:database_android/home_widget.dart';
 import 'package:database_android/list_views.dart' show dayCandidates;
 import 'package:database_android/models.dart';
@@ -88,5 +89,19 @@ void main() {
     await updateHomeWidgetCandidates([
       (label: '長町南', day: '2026-11-04', racks: [1]),
     ]);
+  });
+
+  // 2026-11-05：許可が無くて通知を出せなかったときは、errors.log で分かるようにする。
+  test('通知を出せなかったときだけ notice.blocked を残す', () async {
+    final logged = <String>[];
+    forgetErrorLog();
+    errorLogDirectory = () async => null;
+    errorLogObserver = (where, text) => logged.add('$where\t$text');
+    addTearDown(() => errorLogObserver = null);
+    noteCaptureNoticeShown(true, 'P’s CUBE：取り込み完了');
+    noteCaptureNoticeShown(null, 'P’s CUBE：取り込み完了');
+    expect(logged, isEmpty);
+    noteCaptureNoticeShown(false, 'P’s CUBE：取り込み完了');
+    expect(logged, ['notice.blocked\t通知の許可が無いため出せませんでした：P’s CUBE：取り込み完了']);
   });
 }

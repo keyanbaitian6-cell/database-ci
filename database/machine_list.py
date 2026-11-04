@@ -11,6 +11,10 @@
 P’s CUBE（P-STATION、2026-11-02 利用者「P-STATIONの分がないのはなぜ？」→「点数なしで足す」）：PC版にはP’s CUBEの
 採点が無いので、合計点・設定候補・★☆は「—」。差枚は元グラフの確定差枚、MY（最大持玉の代わり）の列を出す。PC版に
 P’s CUBEのバラエティ🌈のタブは無いので、全機種を入れる。🌈の印は付けられない（メルヘンだけ）。
+
+台番の末尾（2026-11-05 利用者「差枚一覧で選んだ末尾を、機種一覧でも追えるようにする」）：上の「末尾」で 0〜9 を
+選ぶと、その末尾の台番の横に「末7」。機種のプルダウンで1機種にしても残し（台は全部出したまま）、「末尾7 ×」で解除、
+店舗・日付を変えると解除。共有カレンダー・閲覧ページも同じ。
 """
 import json
 import threading
@@ -53,6 +57,13 @@ HEADING_LABELS = {'rack': '台番', 'machine': '機種', 'games': '回転数', '
 # P’s CUBEの店舗の選択肢の値（PC本体の「結果を見る」と同じ名前を app.py から渡す）。
 PSCUBE_KEY = 'pscube'
 SORT_ARROWS = {'回転数の多い順': ' ▼', '差枚の多い順': ' ▼', '合計点の高い順': ' ▼'}  # ほかは小さい順なので ▲
+NO_SUFFIX = 'なし'
+SUFFIXES = [NO_SUFFIX, *map(str, range(10))]
+
+
+def rack_suffix(rack):
+    """台番の末尾（0〜9）。"""
+    return abs(int(rack)) % 10
 
 
 def setting_text(row):
@@ -158,17 +169,21 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
     day_var = tk.StringVar()
     machine_var = tk.StringVar(value=ALL_MACHINES)
     sort_var = tk.StringVar(value='台番順')
+    suffix_var = tk.StringVar(value=NO_SUFFIX)
     combos = {}
     for column, (text, var, values, width) in enumerate((('店舗', store_var, labels, 28), ('日付', day_var, [], 16),
                                                          ('機種', machine_var, [ALL_MACHINES], 34),
-                                                         ('並べ方', sort_var, list(SORTS), 18))):
+                                                         ('並べ方', sort_var, list(SORTS), 18),
+                                                         ('末尾', suffix_var, SUFFIXES, 5))):
         ttk.Label(bar, text=text).grid(row=0, column=column, sticky='w')
         combo = ttk.Combobox(bar, textvariable=var, values=values, state='readonly', width=width)
-        combo.grid(row=1, column=column, sticky='w', padx=(0, 16))
+        combo.grid(row=1, column=column, sticky='w', padx=(0, 6 if text == '末尾' else 16))
         combos[text] = combo
+    clear_text = tk.StringVar()
+    clear_button = ttk.Button(bar, textvariable=clear_text, command=lambda: suffix_var.set(NO_SUFFIX))
     if on_flush is not None:
-        ttk.Label(bar, text='閲覧・共有ページ').grid(row=0, column=4, sticky='w')
-        ttk.Button(bar, textvariable=pending, command=on_flush).grid(row=1, column=4, sticky='w')
+        ttk.Label(bar, text='閲覧・共有ページ').grid(row=0, column=6, sticky='w')
+        ttk.Button(bar, textvariable=pending, command=on_flush).grid(row=1, column=6, sticky='w')
     summary = tk.StringVar()
     ttk.Label(parent, textvariable=summary).pack(anchor='w', pady=(10, 0))
     ttk.Label(parent, text=f'{RAINBOW_MARK}の列を押すと付け外し。台番・機種・回転数・推定差枚・合計点の見出しを押すと並べ替え'
@@ -195,7 +210,9 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
     scroll.pack(side='left', fill='y')
     state = {'rows': [], 'shown': [], 'token': 0}
     parent.machine_list_table = table   # 試験用
-    parent.machine_list_vars = {'store': store_var, 'day': day_var, 'machine': machine_var, 'sort': sort_var}
+    parent.machine_list_vars = {'store': store_var, 'day': day_var, 'machine': machine_var, 'sort': sort_var,
+                                'suffix': suffix_var}
+    parent.machine_list_clear = clear_button   # 試験用
 
     def heading_sort(key):
         options = HEADING_SORTS[key]
@@ -207,7 +224,12 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
             return PSCUBE_KEY
         return next((key for key, label in STORE_NAMES.items() if label == store_var.get()), None)
 
+    def suffix():
+        return None if suffix_var.get() == NO_SUFFIX else int(suffix_var.get())
+
     def values(r):
+        digit = suffix()
+        mark = f' 末{digit}' if digit is not None and rack_suffix(r['rack']) == digit else ''
         if r['bad']:
             numbers = ('異常', '—', '—', '—', '—')
         else:
@@ -215,7 +237,7 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
             net = '—' if r['net'] is None else signed_medals(r['net']) + ('※' if r['needs_check'] else '')
             my = '—' if r.get('my') is None else f"{r['my']:,}"
             numbers = (f"{r['games']:,}", dash(r['bb']), dash(r['rb']), net, my)
-        return ('—' if r.get('pscube') else rainbow_cell(r), f"{r['rack']}{' ' + r['mark'] if r['mark'] else ''}",
+        return ('—' if r.get('pscube') else rainbow_cell(r), f"{r['rack']}{' ' + r['mark'] if r['mark'] else ''}{mark}",
                 r['machine'], *numbers, r['setting'], '—' if r['total'] is None else f"{r['total']:.1f}")
 
     def tags(r):
@@ -223,6 +245,12 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
         return ('plus' if net > 0 else 'minus' if net < 0 else 'zero',) + (('rainbow',) if r['rainbow'] else ())
 
     def show():
+        digit = suffix()
+        if digit is None:
+            clear_button.grid_remove()
+        else:
+            clear_text.set(f'末尾{digit} ×')
+            clear_button.grid(row=1, column=5, sticky='w', padx=(0, 16))
         chosen = machine_var.get()
         rows = [r for r in state['rows'] if chosen == ALL_MACHINES or r['machine'] == chosen]
         rows.sort(key=SORTS[sort_var.get()])
@@ -256,6 +284,8 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
 
     def load(*_args):
         where, day = location(), day_var.get()
+        if suffix_var.get() != NO_SUFFIX:
+            suffix_var.set(NO_SUFFIX)   # 店舗・日付を変えたら末尾は解除（suffix_var の変更で show も呼ばれる）
         state['token'] += 1
         token = state['token']
         state.update(rows=[], error=None, loading=bool(where and day))
@@ -328,6 +358,7 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
     day_var.trace_add('write', load)
     machine_var.trace_add('write', lambda *_a: show())
     sort_var.trace_add('write', lambda *_a: show())
+    suffix_var.trace_add('write', lambda *_a: show())
     if not defer_load:
         refresh_days()
     return refresh_days

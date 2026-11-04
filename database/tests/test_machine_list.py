@@ -9,7 +9,7 @@ from tkinter import ttk
 from unittest.mock import patch
 
 from core import STORE_NAMES, Store
-from machine_list import ALL_MACHINES, SORTS, _now, build_machine_list_tab, machine_list_rows
+from machine_list import ALL_MACHINES, SORTS, _now, build_machine_list_tab, machine_list_rows, rack_suffix
 
 STORE = 'nagamachiminami'
 DAY = '2026-10-10'
@@ -198,6 +198,71 @@ class MachineListTests(unittest.TestCase):
         root.update()
         self.assertNotIn('my', table['displaycolumns'])
         self.assertTrue(table.heading('net', 'text').startswith('推定差枚'))
+
+
+class SuffixMarkTests(unittest.TestCase):
+    """台番の末尾の印（2026-11-05 利用者「差枚一覧で選んだ末尾を、機種一覧でも追えるようにする」）。"""
+
+    def test_rack_suffix(self):
+        self.assertEqual([rack_suffix(r) for r in (7, 17, 120, 1203)], [7, 7, 0, 3])
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'database.sqlite3'
+        db = Store(self.path)
+        # 長町南は3台以下の機種がバラエティ（この一覧に入らない）ので、どちらも4台以上。
+        db.save([row(1, '主力'), row(3, '主力'), row(5, '主力'), row(13, '主力'), row(23, '主力'),
+                 row(10, 'あ機種'), row(12, 'あ機種'), row(14, 'あ機種'), row(33, 'あ機種'),
+                 *(row(rack, '主力', day='2026-10-09') for rack in (1, 2, 4, 13))])
+        db.close()
+
+    def open_tab(self):
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry('1200x800+-3000+0')   # 画面の外に出す（試験中に利用者の画面に出さない）
+        frame = ttk.Frame(root)
+        frame.pack(fill='both', expand=True)
+        build_machine_list_tab(frame, self.path, lambda: None, STORE, run=_now)
+        root.update()
+        return root, frame, frame.machine_list_table
+
+    def test_suffix_marks_follow_machine_choice_and_clear_on_day_change(self):
+        root, frame, table = self.open_tab()
+        variables = frame.machine_list_vars
+
+        def marked():
+            return [table.item(i, 'values')[1] for i in table.get_children() if '末' in table.item(i, 'values')[1]]
+
+        self.assertEqual(marked(), [])
+        self.assertFalse(frame.machine_list_clear.winfo_ismapped())
+        variables['suffix'].set('3')
+        root.update()
+        self.assertEqual(marked(), ['3 末3', '13 末3', '23 末3', '33 末3'])
+        self.assertEqual(frame.machine_list_clear.cget('text'), '末尾3 ×')
+        self.assertTrue(frame.machine_list_clear.winfo_ismapped())
+        # 機種を1つにしても残す（台は全部出したまま）。
+        variables['machine'].set('主力')
+        root.update()
+        self.assertEqual([table.item(i, 'values')[1].split()[0] for i in table.get_children()], ['1', '3', '5', '13', '23'])
+        self.assertEqual(marked(), ['3 末3', '13 末3', '23 末3'])
+        # 「末尾3 ×」で解除。
+        frame.machine_list_clear.invoke()
+        root.update()
+        self.assertEqual(variables['suffix'].get(), 'なし')
+        self.assertEqual(marked(), [])
+        self.assertFalse(frame.machine_list_clear.winfo_ismapped())
+        # 日付を変えると解除。元の日に戻しても解除のまま。
+        variables['suffix'].set('3')
+        root.update()
+        variables['day'].set('2026-10-09')
+        root.update()
+        self.assertEqual(variables['suffix'].get(), 'なし')
+        self.assertEqual(marked(), [])
+        variables['day'].set(DAY)
+        root.update()
+        self.assertEqual(marked(), [])
+
 
 if __name__ == '__main__':
     unittest.main()

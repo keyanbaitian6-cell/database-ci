@@ -18,6 +18,7 @@ import 'event_history.dart';
 import 'event_name_dialog.dart';
 import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'pscube_suffix_page.dart';
+import 'rack_suffix.dart';
 import 'rainbow_marks.dart';
 import 'remote_curve.dart';
 import 'scoring.dart';
@@ -110,12 +111,15 @@ class _ViewerHomeState extends State<ViewerHome> {
   /// 付け外しした時刻の新しい方）。読めなかったら [_deviceMarksError] に残し、上書きしない。
   Map<String, RainbowMark> _deviceMarks = const {};
   Object? _deviceMarksError;
+  final _suffixPick = ValueNotifier<RackSuffixPick?>(null);
 
   @override
   void initState() {
     super.initState();
     // 台の画面の🌈のボタン（RAINBOW.md「iPhoneから付ける」）。
     viewerRainbowEditor = _editRainbow;
+    // 差枚の一覧で選んだ台番の末尾（rack_suffix.dart。閲覧ページだけ）。
+    viewerSuffixPick = _suffixPick;
     if (widget.initialData case final data?) {
       _show(data);
       _loading = false;
@@ -127,6 +131,8 @@ class _ViewerHomeState extends State<ViewerHome> {
   @override
   void dispose() {
     if (viewerRainbowEditor == _editRainbow) viewerRainbowEditor = null;
+    if (viewerSuffixPick == _suffixPick) viewerSuffixPick = null;
+    _suffixPick.dispose();
     _query.dispose();
     _scroll.dispose();
     super.dispose();
@@ -1021,6 +1027,13 @@ class _ViewerHomeState extends State<ViewerHome> {
               event: data.dateEventFor(store, day)?.name,
             );
       _scoredFor = key;
+    }
+    // 店や日付を変えたら、選んだ末尾は解除（描き終えてから。開いている機種の表も聞いている）。
+    final pick = _suffixPick.value;
+    if (pick != null && (pick.store != store || pick.day != day)) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => clearSuffixPickUnless(_store, _day),
+      );
     }
     // 1〜3台の機種は「バラエティ」1つにまとめる。
     final summaries = summarizeMachines(_digest);

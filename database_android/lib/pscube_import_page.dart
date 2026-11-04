@@ -984,7 +984,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
             _finishedDays.add(day);
           }
           // 抜けた日（その日の未取得が残っている直近の日）があれば、止めずにその日を取り戻す（2026-11-04）。
-          final gap = day == null ? null : await _gapDay(store, day);
+          final gap = day == null ? null : await _gapDay(store);
           if (gap != null && _auto.enabled && _page == page) {
             _gapTried.add(gap.day);
             setState(() => _targetDay = gap.day);
@@ -1293,23 +1293,18 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   static String _md(String day) =>
       '${int.parse(day.substring(5, 7))}/${int.parse(day.substring(8))}';
 
-  /// 抜けた日を探す（2026-11-04、利用者が選んだ「抜けた日を自動で取り戻す」）。[day] の前の6日（サイトの
-  /// 台別ページが持つ7日の範囲）のうち、記録のある最初の日より後で、その日の未取得が残る日を新しい順に1つ。
-  /// 今回すでに取り込んだ日・取り戻そうとした日は除く（同じ日をくり返さない）。抜けが無ければ何もしない
-  /// （サイトへの通信も増えない）。
+  /// 抜けた日を探す（2026-11-04、利用者が選んだ「抜けた日を自動で取り戻す」）。今回最初に済ませた日の前の6日
+  /// のうち、サイトの台別ページが持つ7日の範囲で（`pscubeGapCandidateDays`）、記録のある最初の日より後で、
+  /// その日の未取得が残る日を新しい順に1つ。今回すでに取り込んだ日・取り戻そうとした日は除く（同じ日を
+  /// くり返さない）。抜けが無ければ何もしない（サイトへの通信も増えない）。
   Future<({String day, String url, int remaining})?> _gapDay(
     PscubeStore store,
-    String day,
   ) async {
     final first = await store.firstDay();
     if (first == null) return null;
-    final base = DateTime.parse(day);
-    for (var back = 1; back < pscubeGapDays; back++) {
-      final d = base.subtract(Duration(days: back));
-      final iso =
-          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    for (final iso in pscubeGapCandidateDays(_finishedDays, _now())) {
       if (iso.compareTo(first) < 0) break;
-      if (_gapTried.contains(iso) || _finishedDays.contains(iso)) continue;
+      if (_gapTried.contains(iso)) continue;
       final next = await store.nextTarget(iso, _direction);
       if (next.url != null && next.remaining > 0) {
         return (day: iso, url: next.url!, remaining: next.remaining);

@@ -103,32 +103,54 @@ void main() {
       meruhenGapDay(records, store: 'nagamachiminami', day: '2026-11-04'),
       isNull,
     );
+    // 10/28だけ無いが、11/4の前の6日（10/29〜11/3）の外。
     final old = [
+      for (final day in [
+        '2026-10-27',
+        '2026-10-29',
+        '2026-10-30',
+        '2026-10-31',
+        '2026-11-01',
+        '2026-11-02',
+        '2026-11-03',
+        '2026-11-04',
+      ])
+        row(day),
+    ];
+    expect(
+      meruhenGapDay(old, store: 'nagamachiminami', day: '2026-11-04'),
+      isNull,
+      reason: '10/28は前の6日の外',
+    );
+    expect(
+      meruhenGapDay(
+        old.where((r) => r.day != '2026-10-30').toList(),
+        store: 'nagamachiminami',
+        day: '2026-11-04',
+      ),
+      '2026-10-30',
+    );
+  });
+
+  // 2026-11-05：この端末はPCの記録を自動では読まない。PCで取り込んだ日をサイトから読み直さない。
+  test('前後の日も端末に無い日（PCで取り込んだ日など）は、記録が無くても抜けとみなさない', () {
+    final sparse = [
       row('2026-10-20'),
       row('2026-10-27'),
       row('2026-11-03'),
       row('2026-11-04'),
     ];
     expect(
-      meruhenGapDay(old, store: 'nagamachiminami', day: '2026-11-04'),
-      '2026-11-02',
-      reason: '11/2・11/1・10/31…と新しい順。10/28より前（7日の外）は見ない',
-    );
-    expect(
-      meruhenGapDay(
-        old,
-        store: 'nagamachiminami',
-        day: '2026-11-04',
-        skip: {
-          '2026-11-02',
-          '2026-11-01',
-          '2026-10-31',
-          '2026-10-30',
-          '2026-10-29',
-        },
-      ),
+      meruhenGapDay(sparse, store: 'nagamachiminami', day: '2026-11-04'),
       isNull,
-      reason: '10/28は前の6日の外',
+      reason: '11/2は次の日（11/3）はあるが前の日（11/1）が無い。11/1〜10/29は前後とも無い',
+    );
+    final twoMissing = days().where((r) => r.day != '2026-11-02').toList()
+      ..removeWhere((r) => r.day == '2026-11-03');
+    expect(
+      meruhenGapDay(twoMissing, store: 'nagamachiminami', day: '2026-11-04'),
+      isNull,
+      reason: '2日続けて無い日は、その回には見つけない（片方を取り込むと次の回に見つかる）',
     );
   });
 

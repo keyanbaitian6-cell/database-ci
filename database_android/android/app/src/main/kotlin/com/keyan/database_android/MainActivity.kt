@@ -65,10 +65,14 @@ class MainActivity : FlutterActivity() {
             return false
         }
         val manager = getSystemService(NotificationManager::class.java)
-        val channelId = "database_capture_result"
+        // 音・振動なし（IMPORTANCE_LOW、2026-11-05）。0時の取り込みは夜中に終わるので、そのときに鳴らさず、
+        // 朝に通知の一覧で見られればよい。作った後のチャンネルの重要度はアプリから下げられないため、
+        // 11/4の「音あり」のチャンネル（database_capture_result）は消して、別の番号で作り直す。
+        val channelId = "database_capture_result_quiet"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.deleteNotificationChannel("database_capture_result")
             manager.createNotificationChannel(
-                NotificationChannel(channelId, "取り込みの結果", NotificationManager.IMPORTANCE_DEFAULT)
+                NotificationChannel(channelId, "取り込みの結果", NotificationManager.IMPORTANCE_LOW)
             )
         }
         val open = PendingIntent.getActivity(

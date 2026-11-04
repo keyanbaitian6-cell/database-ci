@@ -21,7 +21,18 @@ Future<void> Function() captureNoticePermission = _requestPermission;
 
 Future<void> _send(String title, String text) async {
   if (!Platform.isAndroid) return;
-  await _channel.invokeMethod<bool>('notify', {'title': title, 'text': text});
+  noteCaptureNoticeShown(
+    await _channel.invokeMethod<bool>('notify', {'title': title, 'text': text}),
+    title,
+  );
+}
+
+/// 通知を出せなかった（通知の許可が無い。MainActivity `postResultNotice` が false を返す）ことを残す
+/// （2026-11-05）。`notice` の行だけでは、通知が実際に出たように読めるため。
+void noteCaptureNoticeShown(bool? shown, String title) {
+  if (shown == false) {
+    unawaited(noteErrorLog('notice.blocked', '通知の許可が無いため出せませんでした：$title'));
+  }
 }
 
 Future<void> _requestPermission() async {

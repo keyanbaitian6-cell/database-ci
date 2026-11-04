@@ -109,6 +109,35 @@ test('メルヘン履歴：60日以前も蓄積・変更日だけ原本更新・
   assert.equal(d.doc('database-viewer-parts-meruhen.json').version, 2);
 });
 
+// 2026-11-05：11/4、履歴方式で動いていたところへリポジトリのまま（false）の全文を貼り、古い方式で閲覧用を書き直した。
+test('履歴方式で動いていたあと false の版を貼って実行すると、閲覧用を書き換えずに止まる', () => {
+  const h = drive({history: true});
+  h.setup();
+  assert.equal(h.properties.get('meruhenCloudMode'), 'history', '初めて実行したときの方式を覚える');
+  const manifest = h.files.find(f => f.name === 'database-viewer-parts-meruhen.json').text;
+  // 方式を覚えている場合。
+  const d = drive();
+  d.properties.set('meruhenCloudFolder', 'shared');
+  d.properties.set('meruhenCloudMode', 'history');
+  const writes = d.writes.length;
+  assert.throws(() => d.sync(), /前回までは履歴方式（MERUHEN_HISTORY_VIEWER = true）/);
+  assert.equal(d.writes.length, writes, '何も書かない');
+  assert.equal(d.properties.get('meruhenCloudMode'), 'history', '覚えた方式は変えない');
+  // 方式を覚えていない（この版を初めて貼った）が、閲覧用の一覧が履歴方式（v2）の場合。
+  const fresh = drive();
+  fresh.properties.set('meruhenCloudFolder', 'shared');
+  fresh.add('database-viewer-parts-meruhen.json', manifest);
+  const before = fresh.writes.length;
+  assert.throws(() => fresh.sync(), /前回までは履歴方式/);
+  assert.equal(fresh.writes.length, before);
+  assert.equal(fresh.properties.get('meruhenCloudMode'), undefined);
+  // 本当に切り替えるときは changeMeruhenCloudMode のあとで同期できる。
+  d.context.changeMeruhenCloudMode();
+  d.sync();
+  assert.equal(d.properties.get('meruhenCloudMode'), 'legacy');
+  assert.ok(d.writes.length > writes, '切り替えたあとは書き出す');
+});
+
 test('メルヘン履歴：PCの日ごとの集計（day_summaries）を一覧の見出しへ引き継ぎ、Android入力では消さない', () => {
   // 2026-10-18：共有カレンダーの「台データの無い日の勝率」。日別の一覧は見出しのイベントしか引き継がず、集計が落ちていた。
   const d = drive({history: true}), base = d.files[0];

@@ -4,6 +4,7 @@ import 'data_checks.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
+import 'rack_suffix.dart';
 import 'scoring.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
@@ -189,13 +190,26 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
   final _scroll = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    viewerSuffixPick?.addListener(_suffixChanged);
+  }
+
+  void _suffixChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    viewerSuffixPick?.removeListener(_suffixChanged);
     _scroll.dispose();
     super.dispose();
   }
 
   void _changeDay(String? day) {
     if (day == null || day == _day) return;
+    // 日付を変えたら、選んだ末尾は解除（rack_suffix.dart）。
+    clearSuffixPickUnless(widget.store, day);
     setState(() => _day = day);
     widget.onDayChanged?.call(day);
   }
@@ -305,11 +319,14 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
                   child: const Text('この機種の全台を表示'),
                 ),
             ] else ...[
+              // 全機種の台一覧（差枚で並べ替えられる一覧）で末尾を選び、機種の表では「末尾7 ×」だけ（2026-11-05）。
+              SuffixPickBar(store: widget.store, day: _day, picker: all),
               MachineSection(
                 machine: widget.machine,
                 entries: _entries,
                 candidateRacks: _candidateRacks,
                 longTrendRacks: _longTrendRacks,
+                suffixDigit: suffixDigitFor(widget.store, _day),
                 graph: _graph,
                 onGraphChanged: (v) => setState(() => _graph = v),
                 onTap: (record, score) => Navigator.of(context).push(

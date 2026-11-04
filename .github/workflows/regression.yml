@@ -15,6 +15,9 @@ permissions:
 jobs:
   pc:
     runs-on: ${{ matrix.os }}
+    # A hung test would otherwise run to GitHub's 360-minute default (Windows counts double) and use
+    # most of the month's free minutes. Recent runs: pc 1-5 minutes, full about 16 minutes (2026-11-05).
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       # Asia/Tokyo is covered on Linux by the full job (same Python 3.12, requirements, xvfb, TZ and
@@ -61,6 +64,7 @@ jobs:
 
   full:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       TZ: Asia/Tokyo
       DASH__SUPPRESS_ANALYTICS: 'true'

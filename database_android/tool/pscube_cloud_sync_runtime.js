@@ -124,6 +124,12 @@ function showPscubeCloudStatus() {
 }
 
 /** 日別ファイルが消えた・壊れた場合だけ実行。元バックアップは変更しない。 */
+/** 履歴方式（PSCUBE_HISTORY_VIEWER）を本当に切り替えるときだけ実行（2026-11-05）。次の同期で今の値を覚える。 */
+function changePscubeCloudMode() {
+  PropertiesService.getScriptProperties().deleteProperty('pscubeCloudMode');
+  return '次の同期で、今の PSCUBE_HISTORY_VIEWER の値を覚えます。';
+}
+
 function rebuildPscubeViewerParts() {
   if (PSCUBE_HISTORY_VIEWER) PropertiesService.getScriptProperties().setProperty('pscubeHistoryRebuild', '1');
   PropertiesService.getScriptProperties().deleteProperty('pscubeCloudInputs');
@@ -148,6 +154,8 @@ function pscubeCloudRun() {
     if (folder.isTrashed()) throw new PscubeCloudStop('config', '共有フォルダがごみ箱にあります。');
     const backupFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_BACKUP);
     const viewerFile = pscubeCloudUniqueFile(folder, PSCUBE_CLOUD_VIEWER);
+    const modeProblem = vhModeProblem(folder, 'pscube', props, PSCUBE_HISTORY_VIEWER, 'PSCUBE_HISTORY_VIEWER', 'changePscubeCloudMode');
+    if (modeProblem) throw new PscubeCloudStop('config', modeProblem);
     if (PSCUBE_HISTORY_VIEWER) return vhPscube(folder, viewerFile, props, startedAt);
     const inputs = pscubeCloudListInputs([folder, DriveApp.getRootFolder()]);
     const liveIds = new Set(inputs.map(i => i.id));

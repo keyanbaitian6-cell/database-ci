@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'list_views.dart' show dayCandidates, nextDayLabel;
@@ -24,6 +25,10 @@ Future<void> _send(Map<String, String> values) async {
   if (!Platform.isAndroid) return;
   await _channel.invokeMethod<void>('update', values);
 }
+
+/// メルヘンの自動取り込みの間は true（2026-11-05）。数秒ごとに保存するので、その都度全記録を写して翌日候補を
+/// 計算し直すと電池・メモリを余計に使う。取り込みを止めたとき（false に戻ったとき）に1回だけ計算する。
+final homeWidgetCapturing = ValueNotifier<bool>(false);
 
 /// 1店の翌日候補（[day] はもとの日。候補はその翌日のもの）。
 typedef WidgetCandidates = ({String label, String day, List<int> racks});

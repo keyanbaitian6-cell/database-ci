@@ -15,7 +15,7 @@ import {
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel, TOP_RACKS_OPEN, viewerNameFrom, winRateText,
   IDLE_DAY_CHOICES, IDLE_DEFAULT_DAYS, IDLE_DEFAULT_GAMES, IDLE_GAMES_CHOICES, idleVarietyRacks, storeDays,
   sharedRainbowCanBatch, storedRainbowMarks, sendRainbowBatches, RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
-  RAINBOW_COUNT_DAYS, applyRainbowMarks, markTime, mergeMarks, varietyRecordRows,
+  RAINBOW_COUNT_DAYS, applyRainbowMarks, markTime, mergeMarks, varietyRecordRows, rackSuffix,
   ROTATION_DAYS, ROTATION_SORTS, byLongestGap, daysSinceRainbow, rackDays, rainbowVarietyMax, rotationOrder, windowDays,
   SUFFIX_PERIODS, hasSuffixSummary, suffixesOf, zoromeEndingsOf, suffixLabel, suffixReport,
   varietyWeek, varietyMaxRacksFor, rainbowTodayRows,
@@ -344,6 +344,19 @@ function tapList(rows, start = 1) {
           <span class="chev" aria-hidden="true">›</span></button></li>`).join('')}</ol>`;
 }
 
+/*
+ * 差枚の一覧で選んだ台番の末尾（2026-11-05 利用者「差枚一覧で選んだ末尾を、機種一覧でも追えるようにする」）。
+ * 日の画面（TOP50）で 0〜9 を1つ選ぶと、その末尾の台番の横に小さな印。同じ店・同じ日の機種の台一覧・全機種の台一覧にも
+ * 引き継ぐ（台は全部出したまま）。「末尾7 ×」で解除。日付を変える・シートを閉じる（店を変える）と解除。
+ */
+const suffixMark = (r, digit) => (digit != null && rackSuffix(r.rack) === digit
+  ? `<span class="suffix-mark" title="末尾${digit}">末${digit}</span>` : '');
+const suffixClear = (digit) => (digit == null ? ''
+  : `<p class="suffix-pick"><button type="button" class="pill pill-outline suffix-clear" data-suffix-clear aria-label="末尾${digit}の印を消す">末尾${digit} ×</button></p>`);
+const suffixPicker = (digit) => `<div class="suffix-pick" role="group" aria-label="台番の末尾で印を付ける"><span class="suffix-label">末尾</span>${
+  Array.from({length: 10}, (_, d) => `<button type="button" class="pill ${d === digit ? 'pill-blue' : 'pill-outline'} suffix-digit" data-suffix-digit="${d}" aria-pressed="${d === digit}">${d}</button>`).join('')}</div>
+      ${suffixClear(digit)}`;
+
 /** `2026-10-09` → `10月9日（金）`。 */
 function dateLabel(day) {
   const [y, m, d] = day.split('-').map(Number);
@@ -468,7 +481,7 @@ function titleOfView(view) {
  * 重ねた画面では「閉じる」を隠し、戻るだけにする（閉じると一覧ごと消えて「戻る」との違いが分かりにくいため、2026-10-22 利用者指摘）。
  * 台のデータの画面 {kind: 'rack', rack, list} は、開いた一覧の並び（list）で「前の台・次の台」へ送る（rackNeighbor）。
  */
-function openSheet({first, body, onRow, onChange, onAction}) {
+function openSheet({first, body, onRow, onChange, onAction, onSuffix}) {
   const views = [first];
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -608,6 +621,14 @@ function openSheet({first, body, onRow, onChange, onAction}) {
       }
       view.scroll = sheet.scrollTop;
       toggleRainbow(mark.dataset.rainbow);
+      render();
+      return;
+    }
+    // 台番の末尾の印（日の画面）。スクロール位置はそのまま描き直す。
+    const suffix = e.target.closest('[data-suffix-digit], [data-suffix-clear]');
+    if (suffix && onSuffix) {
+      view.scroll = sheet.scrollTop;
+      onSuffix(suffix, view);
       render();
       return;
     }
@@ -754,9 +775,15 @@ async function flushHistoryEdits() {
 function openDay(first) {
   const racksOf = (day) => state.model.byDay.get(`${state.store}|${day}`) ?? [];
   if (!racksOf(first).length) return;
-  const rankRows = (list, from, index) => list.map((r, i) => ({
+  // 選んだ末尾（{day, digit}）。このシートの中だけ（閉じる・店を変えると消える）。日付を変えたら消す（suffixOf）。
+  let suffix = null;
+  const suffixOf = (view) => {
+    if (suffix && suffix.day !== view.day) suffix = null;
+    return suffix?.digit ?? null;
+  };
+  const rankRows = (list, from, index, digit) => list.map((r, i) => ({
     lead: from + i + 1, attrs: `data-machine-of="${index.get(r)}"`,
-    main: `<span class="rack num">${r.rack}番${rackMark(r)}</span><span class="machine" style="display:block">${esc(displayMachineName(r.machine))}</span>`,
+    main: `<span class="rack num">${r.rack}番${rackMark(r)}${suffixMark(r, digit)}</span><span class="machine" style="display:block">${esc(displayMachineName(r.machine))}</span>`,
     right: `${netCell(r)}<span class="small num">${count(r.games)}G</span>`,
   }));
   const netNameOf = (racks) => (racks.some(r => r.estimated) ? '推定差枚' : '差枚');
@@ -770,6 +797,7 @@ function openDay(first) {
     const estimated = racks.some(r => r.estimated);
     const netName = netNameOf(racks);
     const event = eventLabel(state.model.events.get(`${state.store}|${view.day}`));
+    const digit = suffixOf(view);
     return `
       <p class="store">${esc(storeLabel(state.store))}</p>
       <h2 id="sheet-title">${dateLabel(view.day)}</h2>
@@ -782,11 +810,12 @@ function openDay(first) {
         <span class="value num zero">${winRateText(net.won, net.judged)}</span>
         <span class="sub num">${net.judged}台中${net.won}台プラス（${netName}の分からない台が多い日）</span></p>` : ''}
       <h3>TOP50</h3>
-      <p class="caption">${netName}の多い順。台を押すと、その機種の台一覧が見られます。</p>
-      ${top.length ? tapList(rankRows(top.slice(0, TOP_RACKS_OPEN), 0, index))
+      <p class="caption">${netName}の多い順。台を押すと、その機種の台一覧が見られます。末尾を選ぶと、その末尾の台番に印が付きます（機種の台一覧にも引き継ぎます）。</p>
+      ${top.length ? suffixPicker(digit) : ''}
+      ${top.length ? tapList(rankRows(top.slice(0, TOP_RACKS_OPEN), 0, index, digit))
         : '<p class="note">この日は差枚がわかる台がありません。</p>'}
       ${top.length > TOP_RACKS_OPEN ? `<details class="more"><summary>${TOP_RACKS_OPEN + 1}〜${top.length}位を見る（${top.length - TOP_RACKS_OPEN}台）</summary>
-        ${tapList(rankRows(top.slice(TOP_RACKS_OPEN), TOP_RACKS_OPEN, index), TOP_RACKS_OPEN + 1)}</details>` : ''}
+        ${tapList(rankRows(top.slice(TOP_RACKS_OPEN), TOP_RACKS_OPEN, index, digit), TOP_RACKS_OPEN + 1)}</details>` : ''}
       <h3>強かった機種10選</h3>
       <p class="caption">1台あたりの平均回転数（2台以上ある機種）</p>
       ${machines.length ? tapList(machines.map((x, i) => ({
@@ -818,6 +847,7 @@ function openDay(first) {
       <p class="store">${esc(storeLabel(state.store))}　${dateLabel(view.day)}</p>
       <h2 id="sheet-title" class="long">${esc(displayMachineName(view.machine))}</h2>
       <p class="event-line num">${list.length}台・平均${count(average)}G</p>
+      ${suffixClear(suffixOf(view))}
       ${total != null ? `<p class="total"><span class="label">この機種の総${netName}</span>
         <span class="value num ${tone(total)}">${signed(total)}</span>
         <span class="sub num">${netName}がわかった台 ${nets.length}/${list.length}台</span></p>` : ''}
@@ -825,7 +855,7 @@ function openDay(first) {
       <p class="caption">台番号の順。台を押すと、その台のデータが見られます。</p>
       ${tapList(list.map(r => ({
         lead: '', attrs: `data-rack="${index.get(r)}"`, current: !!view.picked && r.rack === view.picked.rack,
-        main: `<span class="machine num" style="display:block">${r.rack}番${rackMark(r)}</span><span class="rack num">BB ${r.bb}・RB ${r.rb}</span>`,
+        main: `<span class="machine num" style="display:block">${r.rack}番${rackMark(r)}${suffixMark(r, suffixOf(view))}</span><span class="rack num">BB ${r.bb}・RB ${r.rb}</span>`,
         right: `${netCell(r)}<span class="small num">${count(r.games)}G</span>`,
       })))}`;
   };
@@ -856,9 +886,10 @@ function openDay(first) {
       <label class="variety-sort">並べ方 <select data-all-sort aria-label="並べ方">
         ${Object.entries(ALL_RACKS_SORTS).map(([key, label]) => `<option value="${key}"${view.sort === key ? ' selected' : ''}>${label.replace('差枚', netName)}</option>`).join('')}</select></label>
       <p class="caption">バラエティ（${rainbowVarietyMax(state.store) === 1 ? '1台だけ' : `1〜${rainbowVarietyMax(state.store)}台`}の機種）はバラエティ${RAINBOW}にあります。台を押すと、その台のデータが見られます。</p>
+      ${suffixClear(suffixOf(view))}
       ${list.length ? tapList(list.map(r => ({
         lead: '', attrs: `data-rack="${index.get(r)}"`,
-        main: `<span class="machine num" style="display:block">${r.rack}番${rackMark(r)}</span><span class="rack">${esc(displayMachineName(r.machine))}</span><span class="rack num" style="display:block">BB ${r.bb}・RB ${r.rb}</span>`,
+        main: `<span class="machine num" style="display:block">${r.rack}番${rackMark(r)}${suffixMark(r, suffixOf(view))}</span><span class="rack">${esc(displayMachineName(r.machine))}</span><span class="rack num" style="display:block">BB ${r.bb}・RB ${r.rb}</span>`,
         right: `${netCell(r)}<span class="small num">${count(r.games)}G</span>`,
       }))) : '<p class="note">この日はバラエティ以外の台の記録がありません。</p>'}`;
   };
@@ -878,6 +909,9 @@ function openDay(first) {
         const picked = racks[Number(row.dataset.machineOf)];
         push({kind: 'machine', machine: picked.machine, picked, day: view.day});
       } else push({kind: 'machine', machine: row.dataset.machine, day: view.day});
+    },
+    onSuffix: (button, view) => {
+      suffix = button.matches('[data-suffix-clear]') ? null : {day: view.day, digit: Number(button.dataset.suffixDigit)};
     },
     onChange: (select, view) => {
       if (select.matches('[data-all-machine]')) view.only = select.value;
