@@ -1419,11 +1419,13 @@ class AutoPilot:
     LIST_MAX_RETRIES, LIST_RELOAD_EVERY, LIST_MAX_RELOADS = 60, 3, 3
     # P’s CUBEの間隔（秒）。サイトに止められないよう、メルヘン（0.1〜4.5秒）より長くする。
     MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 30, 45, 37.5
-    # 休憩と、拒否されたときの自動の再開（2026-11-06 利用者「減らす＋休む＋自動再開」）。どちらもサイトのページを
-    # 「休憩中」の画面（サイトに接続しない、PARKED_PAGE）に替えて待ち、時間が来たら続きのページを開く。
-    # 拒否（HTTP 403・429、データが出ない、差枚の通信の拒否）で待って再開するのは、1つの取り込み窓で3回まで。
-    REST_EVERY_PAGES, REST_SECONDS = 20, 600
-    BLOCK_WAIT_SECONDS, BLOCK_MAX_RESUMES = 3600, 3
+    # 休憩（2026-11-06 利用者「減らす＋休む」）：サイトのページを「休憩中」の画面（サイトに接続しない、PARKED_PAGE）に
+    # 替えて待ち、時間が来たら続きのページを開く。数えるのは、自動取り込みがONの間に開いたサイトのページの数
+    # （読み込み直し・保存できなかったページも数える）。1つの取り込み窓の中では、OFF→ONにしても数え直さない。
+    # 最近は10〜14ページで拒否されていたので10ページごと（Codexの調査 2026-11-06）。
+    # 拒否されたとき（HTTP 403・429、データが出ない、差枚の通信の拒否）は、待って再開せず、その回は終えて窓を閉じる
+    # （2026-11-06 利用者「その回は終える」。60分で解ける根拠が無く、拒否のあとに試し直すことになるため）。
+    REST_EVERY_PAGES, REST_SECONDS = 10, 600
     # 対象のページなのにデータが出ない（人間確認の画面でもない）状態が、この回数・秒数続いたら
     # 止められたとみなして自動取り込みをOFFにする（放置しても叩き続けない。利用者の選択、2026-10-01）。
     BLOCK_CHECKS, BLOCK_SECONDS = 5, 60
@@ -1462,11 +1464,10 @@ class AutoPilot:
         # 2026-11-05 から通信エラー（403のアクセス拒否など）・止められた・同じページで3回失敗して待つときも（_stop_and_close）。
         self.completed = None
         self.list_retries = {}   # 機種一覧が足りなかった回数（ページごと、2026-11-05）
-        # 休憩・拒否のあとの待機（2026-11-06）。{'kind': 'rest'|'blocked', 'url': 再開するページ（None＝止まったページ）,
-        # 'until': 再開する時刻（clock）, 'shown': 休憩中の画面に替えたか}。None なら待機していない。
+        # 休憩（2026-11-06）。{'kind': 'rest', 'url': 再開するページ（None＝止まったページ）, 'until': 再開する時刻（clock）,
+        # 'shown': 休憩中の画面に替えたか, 'checked': 替わったことを確かめたか}。None なら休憩していない。
         self.parked = None
         self.pages_since_rest = 0
-        self.resumes = 0
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
 
@@ -1523,8 +1524,6 @@ class AutoPilot:
             if enabled and not self.auto.state()['enabled']:
                 self.fresh_since = {}
                 self.completed = None
-                self.pages_since_rest = 0
-                self.resumes = 0
             if not enabled:
                 self.parked = None   # 待機をやめる。休憩中の画面はそのまま（サイトへは接続しない）
             if not enabled or not self.auto.state()['enabled']:
@@ -1544,11 +1543,6 @@ class AutoPilot:
             was_auto = self.auto.state()['enabled']
             self.connection_error = message
             self.index_confirmation = self.index_confirmation_page = None
-            if was_auto and re.search(r'HTTP (?:403|429)', str(message)):
-                # アクセス拒否：サイトのページを閉じて待ち、自動で再開する（3回まで。超えたら止めて窓を閉じる）。
-                self._blocked('サイトにアクセスを拒否されました' + ('（HTTP 429）' if 'HTTP 429' in str(message) else '（HTTP 403）'),
-                              f'自動取り込みを止めました（通信エラー：{message}）')
-                return
             self.auto.configure(False, self.auto.state()['seconds'])
             self.auto.pause(message)
             if was_auto:
@@ -1574,19 +1568,12 @@ class AutoPilot:
         self.index_confirmation = self.index_confirmation_page = None
         self.auto.pause(message)
 
-    def _blocked(self, reason, final_message, url=None):
-        """拒否された：3回までは60分待って自動で再開し、超えたら止めて窓を閉じる。鍵を持って呼ぶ。"""
-        if self.resumes >= self.BLOCK_MAX_RESUMES:
-            self._stop_and_close(f'{final_message}（拒否のあとの自動の再開は{self.BLOCK_MAX_RESUMES}回までです）')
-            return
-        self.resumes += 1
-        at = (datetime.now() + timedelta(seconds=self.BLOCK_WAIT_SECONDS)).strftime('%H:%M')
-        self._park('blocked', url, self.BLOCK_WAIT_SECONDS,
-                   f'ON・{reason}。サイトのページを閉じて{self.BLOCK_WAIT_SECONDS // 60}分待ち、{at}ごろに自動で再開します'
-                   f'（{self.resumes}/{self.BLOCK_MAX_RESUMES}回目。止めるときはこの窓を閉じてください）')
+    # 休憩中の画面に替えてから、替わったか（サイトのページが残っていないか）を確かめるまでの秒数。
+    PARK_CHECK_SECONDS = 5
 
     def park_step(self):
-        """auto_loop から呼ぶ。('park', url) 休憩中の画面に替える、('open', url) 待機が終わったので開き直す、None 何もしない。
+        """auto_loop から呼ぶ。('park', url) 休憩中の画面に替える、('check', None) 替わったかを確かめる、
+        ('open', url) 休憩が終わったので開き直す、None 何もしない。
         url が None のときは、止まったページを開き直す（呼んだ側が remember_url で先に覚える）。"""
         with self._lock:
             parked = self.parked
@@ -1594,7 +1581,13 @@ class AutoPilot:
                 return None
             if not parked['shown']:
                 parked['shown'] = True
+                parked['shown_at'] = self.clock()
                 return ('park', parked['url'])
+            if not parked.get('checked'):
+                if self.clock() - parked['shown_at'] < self.PARK_CHECK_SECONDS:
+                    return None
+                parked['checked'] = True
+                return ('check', None)
             if self.clock() < parked['until']:
                 return None
             self.parked = None
@@ -1610,6 +1603,15 @@ class AutoPilot:
     def is_parked(self):
         with self._lock:
             return self.parked is not None and self.parked['shown']
+
+    def park_failed(self, reason):
+        """休憩中の画面に替えられなかった（替えたはずなのにサイトのページが残っている）：その回は終えて窓を閉じる
+        （2026-11-06、Codexの調査の指摘④。サイトのページを開いたまま休憩と数えない）。"""
+        with self._lock:
+            if self.parked is None:
+                return
+            self._stop_and_close(f'休憩中の画面に替えられなかったため、自動取り込みを止めました（{reason}）')
+        self.render()
 
     def connection_started(self):
         with self._lock:
@@ -1628,6 +1630,8 @@ class AutoPilot:
             if self.parked is not None:
                 return   # 休憩中の画面（サイトのページではない）。数えず、表示の文も変えない
             self.loaded_pages += 1
+            if self.auto.state()['enabled']:
+                self.pages_since_rest += 1   # 休憩までの数（読み込み直し・保存できなかったページも数える）
             if self.pending is not None and not self.saving():
                 self.pending = None
                 self.pending_since = None
@@ -1667,7 +1671,7 @@ class AutoPilot:
                 self.missing.append(now)
                 if len(self.missing) >= self.BLOCK_CHECKS and now - self.missing[0] >= self.BLOCK_SECONDS:
                     self.missing.clear()
-                    self._blocked('サイトがデータを表示しなくなりました（止められた可能性）', BLOCKED_MESSAGE)
+                    self._stop_and_close(BLOCKED_MESSAGE)
                     self.render()
                     return
             else:
@@ -1745,8 +1749,14 @@ class AutoPilot:
                                          f'{count}回読み直しても同じだったため、自動取り込みを止めました' if short else
                                          f'機種一覧が前回より少なく、{count}回読み直しても進まなかったため、自動取り込みを止めました')
                 elif count % self.LIST_RELOAD_EVERY == 0 and count // self.LIST_RELOAD_EVERY <= self.LIST_MAX_RELOADS:
-                    result['reload'] = True
-                    self.auto.pause(f'ON・機種一覧を開き直し、もう一度確認します（{count}回目）')
+                    if self.pages_since_rest >= self.REST_EVERY_PAGES:
+                        # 開き直す前に休憩する。休憩のあとに同じ一覧を開き直す（url=None）。
+                        result['reload'] = False
+                        result['parked'] = True
+                        self._rest(None, result)
+                    else:
+                        result['reload'] = True
+                        self.auto.pause(f'ON・機種一覧を開き直し、もう一度確認します（{count}回目）')
                 else:
                     result['reload'] = False
                     result['reread'] = True
@@ -1756,11 +1766,8 @@ class AutoPilot:
                     self.done.add(signature)
                     self.failures.pop(signature, None)
                 if enabled and result.get('net_denied'):
-                    # 台の数値は保存できたが、差枚の通信がサイトに拒否された。次の台へ進まずに待って再開する（3回まで）。
-                    self._blocked(f'差枚のデータの通信をサイトに拒否されました（HTTP {result["net_denied"]}）',
-                                  f'差枚のデータの通信をサイトに拒否されました（HTTP {result["net_denied"]}）。自動取り込みを止めました',
-                                  url=result.get('next_url'))
-                    result['parked'] = True
+                    # 台の数値は保存できたが、差枚の通信がサイトに拒否された。次の台へ進まずに止めて窓を閉じる。
+                    self._stop_and_close(f'差枚のデータの通信をサイトに拒否されました（HTTP {result["net_denied"]}）。自動取り込みを止めました')
                 elif enabled and not result.get('next_url'):
                     self.auto.configure(False, self.auto.state()['seconds'])
                     day, self.target_day = self.target_day, None
@@ -1771,14 +1778,17 @@ class AutoPilot:
                     self.auto.pause(f'ON・{result.get("skipped") or result.get("kind", "") + "を保存"}・残り{result.get("remaining", "?")}件・'
                                     f'次のページへ（{DIRECTION_LABELS[self.direction]}）'
                                     + ('（差枚は未取得）' if result.get('net_warning') else ''))
-                    self.pages_since_rest += 1
                     if self.pages_since_rest >= self.REST_EVERY_PAGES:
-                        at = (datetime.now() + timedelta(seconds=self.REST_SECONDS)).strftime('%H:%M')
-                        self._park('rest', result['next_url'], self.REST_SECONDS,
-                                   f'ON・{self.REST_EVERY_PAGES}ページ取り込んだので、サイトのページを閉じて{self.REST_SECONDS // 60}分休みます'
-                                   f'（{at}ごろ再開・残り{result.get("remaining", "?")}件）')
                         result['parked'] = True
+                        self._rest(result['next_url'], result)
         self.render()
+
+    def _rest(self, url, result):
+        """サイトのページを10ページ開いたので休む。鍵を持って呼ぶ。"""
+        at = (datetime.now() + timedelta(seconds=self.REST_SECONDS)).strftime('%H:%M')
+        self._park('rest', url, self.REST_SECONDS,
+                   f'ON・サイトのページを{self.pages_since_rest}回開いたので、ページを閉じて{self.REST_SECONDS // 60}分休みます'
+                   f'（{at}ごろ再開・残り{result.get("remaining", "?")}件）')
 
 
 DIRECTION_LABELS = {'top': '上から', 'bottom': '下から'}
@@ -1958,7 +1968,7 @@ def overlay_script(capture_script, index_url):
         idle(`${result.skipped || result.kind + 'を保存'} · 残り${result.remaining}${way ? '（' + way + '）' : ''}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
         capturedUrl = null;
         // 差枚の通信がサイトに拒否されたときは自動取り込みを止めた（窓を閉じる）。次のページへ移らない（2026-11-05）。
-        // 休憩・拒否のあとの待機（result.parked）のときは、アプリが休憩中の画面に替える。次のページへ移らない（2026-11-06）。
+        // 休憩（result.parked）のときは、アプリが休憩中の画面に替える。次のページへ移らない（2026-11-06）。
         if (result.next_url && !result.net_denied && !result.parked) location.href = result.next_url;
       };
       const run = async () => {
@@ -2004,7 +2014,7 @@ def overlay_script(capture_script, index_url):
         auto.disabled = autoChanging;
         seconds.disabled = true;
         seconds.value = String(state.seconds);
-        value.textContent = '30〜45秒ランダム・20ページごとに10分休憩（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
+        value.textContent = '30〜45秒ランダム・10ページごとに10分休憩（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
         status.textContent = state.message;
         // 取り込み日の選択肢は、午前3時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
         const days = Array.isArray(state.days) ? state.days : [];
@@ -2111,6 +2121,15 @@ PARKED_PAGE = '''<!doctype html><html lang="ja"><meta charset="utf-8">
 <h2>P’s CUBE 取り込み：待機中</h2><p>MESSAGE</p>
 <p>サイトのページは閉じています（この画面はサイトに接続しません）。時間が来たら自動で続きを開きます。</p>
 <p>取り込みをやめるときは、この窓を閉じてください。</p></html>'''
+
+
+def still_on_site(url) -> bool:
+    """休憩中の画面に替えたはずなのに、P’s CUBEのページが表示されたままか（2026-11-06）。"""
+    try:
+        host = urlparse(str(url or '')).hostname or ''
+    except ValueError:
+        return False
+    return host == HOST or host.endswith('.pscube.jp') or host == 'pscube.jp'
 
 
 def html_escape(text):
@@ -2300,8 +2319,9 @@ def run_session(db_path, export_path):
         bridge.pilot.loaded()
 
     def park_or_resume():
-        # 休憩・拒否のあとの待機（2026-11-06）。サイトのページは開いているだけで定期的に通信するので、待つ間は
-        # サイトに接続しない休憩中の画面に替える。時間が来たら、続きのページ（または止まったページ）を開き直す。
+        # 休憩（2026-11-06）。サイトのページは開いているだけで定期的に通信するので、休む間はサイトに接続しない
+        # 休憩中の画面に替える。替えられなかったら（失敗・サイトのページが残った）その回は終えて窓を閉じる。
+        # 時間が来たら、続きのページ（または止まったページ）を開き直す。
         if bridge._capture_lock.locked():
             return   # 保存中。終わってから替える
         action = bridge.pilot.park_step()
@@ -2309,11 +2329,26 @@ def run_session(db_path, export_path):
             return
         kind, url = action
         if kind == 'park':
-            if url is None:
-                bridge.pilot.remember_url(retry_target(window, connection, ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'))
-            error_log.note(data_dir, 'pscube.auto.rest', bridge.pilot.state().get('message') or '')
-            stop_navigation(window)
-            window.load_html(PARKED_PAGE.replace('MESSAGE', html_escape(bridge.pilot.state().get('message') or '')))
+            try:
+                if url is None:
+                    bridge.pilot.remember_url(retry_target(window, connection, ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'))
+                error_log.note(data_dir, 'pscube.auto.rest', bridge.pilot.state().get('message') or '')
+                stop_navigation(window)
+                window.load_html(PARKED_PAGE.replace('MESSAGE', html_escape(bridge.pilot.state().get('message') or '')))
+            except Exception as error:  # noqa: BLE001 - 替えられなければ、サイトのページを残さないよう窓を閉じる
+                error_log.record(data_dir, 'pscube.auto.park', error)
+                bridge.pilot.park_failed(f'{type(error).__name__}: {error}')
+            return
+        if kind == 'check':
+            try:
+                current = window.get_current_url()
+            except Exception as error:  # noqa: BLE001 - 確かめられないときも、残っているとみなして閉じる
+                error_log.record(data_dir, 'pscube.auto.park', error)
+                bridge.pilot.park_failed(f'表示中のページを確かめられませんでした：{type(error).__name__}')
+                return
+            if still_on_site(current):
+                error_log.note(data_dir, 'pscube.auto.park', f'休憩中の画面に替わっていません：{current}')
+                bridge.pilot.park_failed('サイトのページが表示されたままでした')
             return
         url = url or ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'
         error_log.note(data_dir, 'pscube.auto.resume', url)

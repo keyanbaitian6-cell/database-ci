@@ -9,7 +9,7 @@ from unittest import mock
 
 from auto_capture import AutoCapture
 from pscube_import import (AutoPilot, FINISHED_NAME, PscubeRandomCapture, close_when_finished, recent_business_days,
-                           take_finished_message)
+                           still_on_site, take_finished_message)
 
 PROBE = 'PROBE'
 START = 'window.__pscubeStartCapture ? window.__pscubeStartCapture() : false'
@@ -76,29 +76,13 @@ class AutoPilotTests(unittest.TestCase):
         self.pilot.connection_started()
         self.pilot.configure(True, 10)
         self.assertTrue(self.pilot.state()['enabled'])
-        # 2026-11-06：アクセス拒否（403）は、3回まではページを休憩中の画面に替えて60分待ち、止まったページから再開する。
-        denied = 'サイトがページ・データへのアクセスを拒否しました（HTTP 403）'
-        for n in (1, 2, 3):
-            self.pilot.connection_failed(denied)
-            self.assertTrue(self.pilot.state()['enabled'], f'{n}回目は止めずに待つ')
-            self.assertIsNone(self.pilot.completed)
-            self.assertIn(f'{n}/3回目', self.message())
-            self.assertEqual(self.pilot.park_step(), ('park', None), 'まずサイトのページを替える')
-            self.pilot.remember_url('https://www.pscube.jp/failed')
-            self.assertTrue(self.pilot.is_parked())
-            self.pilot.loaded()   # 休憩中の画面の読み込みは数えない
-            self.wait(self.pilot.BLOCK_WAIT_SECONDS - 1)
-            self.assertIsNone(self.pilot.park_step(), '60分たつまでは開かない')
-            self.wait(1)
-            self.assertEqual(self.pilot.park_step(), ('open', 'https://www.pscube.jp/failed'))
-            self.assertIsNone(self.pilot.parked)
-            self.pilot.connection_started()
-        self.pilot.connection_failed(denied)
-        self.assertFalse(self.pilot.state()['enabled'], '4回目は止める')
+        # 2026-11-06 利用者「その回は終える」：アクセス拒否（403）は待って再開せず、1回目で止めて窓を閉じる。
+        self.pilot.connection_failed('サイトがページ・データへのアクセスを拒否しました（HTTP 403）')
+        self.assertFalse(self.pilot.state()['enabled'])
         self.assertIn('HTTP 403', self.pilot.completed)
-        self.assertIn('3回まで', self.pilot.completed)
         self.assertIn('サイトのページは閉じました', self.pilot.completed)
         self.assertIn('Cookieを消さずに', self.pilot.completed)
+        self.assertIsNone(self.pilot.parked)
         self.assertIsNone(self.pilot.park_step())
 
     def test_other_connection_errors_still_stop_at_once(self):
@@ -108,58 +92,107 @@ class AutoPilotTests(unittest.TestCase):
         self.assertIn('DNSエラー', self.pilot.completed)
         self.assertIsNone(self.pilot.parked)
 
-    def test_rest_every_twenty_pages_then_resume_at_the_next_page(self):
-        # 2026-11-06 利用者「減らす＋休む＋自動再開」：20ページ保存するごとに、ページを替えて10分休む。
+    def test_rest_every_ten_site_pages_then_resume_at_the_next_page(self):
+        # 2026-11-06 利用者「減らす＋休む」：サイトのページを10回開くごとに、ページを替えて10分休む。
+        self.assertEqual(self.pilot.REST_EVERY_PAGES, 10)
         self.pilot.configure(True, 10)
         for n in range(1, self.pilot.REST_EVERY_PAGES):
+            self.pilot.loaded()
             result = {'next_url': f'https://www.pscube.jp/p{n}', 'remaining': 50, 'kind': '台別7日分'}
             self.pilot.finished(result=result)
             self.assertNotIn('parked', result)
-        result = {'next_url': 'https://www.pscube.jp/p20', 'remaining': 30, 'kind': '台別7日分'}
+        self.pilot.loaded()
+        result = {'next_url': 'https://www.pscube.jp/p10', 'remaining': 30, 'kind': '台別7日分'}
         self.pilot.finished(result=result)
         self.assertTrue(result['parked'], '画面は次のページへ移らない')
+        self.assertIn('10回開いたので', self.message())
         self.assertIn('10分休みます', self.message())
-        self.assertEqual(self.pilot.park_step(), ('park', 'https://www.pscube.jp/p20'))
+        self.assertEqual(self.pilot.park_step(), ('park', 'https://www.pscube.jp/p10'))
+        self.assertTrue(self.pilot.is_parked())
+        self.pilot.loaded()   # 休憩中の画面の読み込みは数えない
+        self.assertEqual(self.pilot.pages_since_rest, self.pilot.REST_EVERY_PAGES)
+        self.wait(self.pilot.PARK_CHECK_SECONDS)
+        self.assertEqual(self.pilot.park_step(), ('check', None), '替わったかを1回確かめる')
         self.window.calls.clear()
-        self.wait(self.pilot.REST_SECONDS - 1)
+        self.wait(self.pilot.REST_SECONDS - self.pilot.PARK_CHECK_SECONDS - 1)
         self.pilot.tick()
         self.assertEqual(self.window.calls, [], '休憩中はページに問い合わせない')
         self.assertIsNone(self.pilot.park_step())
         self.wait(1)
-        self.assertEqual(self.pilot.park_step(), ('open', 'https://www.pscube.jp/p20'))
+        self.assertEqual(self.pilot.park_step(), ('open', 'https://www.pscube.jp/p10'))
         self.assertEqual(self.pilot.pages_since_rest, 0)
         self.assertTrue(self.pilot.state()['enabled'])
         self.assertIsNone(self.pilot.completed)
 
-    def test_off_during_a_rest_cancels_the_resume(self):
+    def test_failed_and_reloaded_pages_count_toward_the_rest(self):
+        # Codexの調査（2026-11-06）の指摘③：保存できなかったページ・読み込み直しも、開いたページとして数える。
         self.pilot.configure(True, 10)
-        self.pilot.pages_since_rest = self.pilot.REST_EVERY_PAGES - 1
+        for _ in range(self.pilot.REST_EVERY_PAGES - 1):
+            self.pilot.loaded()   # 保存できずに読み込み直したページ
+        self.pilot.pending = 'P'
+        self.pilot.finished(error='読み取れませんでした')
+        self.assertIsNone(self.pilot.parked)
+        self.pilot.loaded()
+        result = {'next_url': 'https://www.pscube.jp/n', 'remaining': 3, 'kind': '全台一覧'}
+        self.pilot.finished(result=result)
+        self.assertTrue(result['parked'])
+        self.assertEqual(self.pilot.park_step(), ('park', 'https://www.pscube.jp/n'))
+
+    def test_a_list_reload_rests_first_when_ten_pages_were_opened(self):
+        self.pilot.configure(True, 10)
+        self.pilot.pending = 'L'
+        self.pilot.list_retries['L'] = self.pilot.LIST_RELOAD_EVERY - 1
+        self.pilot.pages_since_rest = self.pilot.REST_EVERY_PAGES
+        result = {'retry_index': True, 'next_url': 'https://www.pscube.jp/list'}
+        self.pilot.finished(result=result)
+        self.assertFalse(result['reload'], '開き直さずに休む')
+        self.assertTrue(result['parked'])
+        self.assertEqual(self.pilot.park_step(), ('park', None), '休憩のあとに同じ一覧を開き直す')
+
+    def test_off_and_on_during_a_rest_cancels_the_resume_but_keeps_the_count(self):
+        # Codexの調査（2026-11-06）の指摘②：OFF→ONで数を戻すと、休憩も上限も効かなくなる。
+        self.pilot.configure(True, 10)
+        self.pilot.pages_since_rest = self.pilot.REST_EVERY_PAGES
         self.pilot.finished(result={'next_url': 'https://www.pscube.jp/n', 'remaining': 3, 'kind': '全台一覧'})
         self.assertEqual(self.pilot.park_step()[0], 'park')
         self.pilot.configure(False, 10)
         self.wait(self.pilot.REST_SECONDS)
         self.assertIsNone(self.pilot.park_step(), 'OFFにしたら開き直さない')
         self.pilot.configure(True, 10)
-        self.assertEqual(self.pilot.pages_since_rest, 0, 'ONにし直したら数え直す')
+        self.assertEqual(self.pilot.pages_since_rest, self.pilot.REST_EVERY_PAGES, 'ONにし直しても数え直さない')
+        self.pilot.loaded()
+        result = {'next_url': 'https://www.pscube.jp/m', 'remaining': 2, 'kind': '全台一覧'}
+        self.pilot.finished(result=result)
+        self.assertTrue(result['parked'], '次のページで休む')
+
+    def test_a_rest_that_did_not_take_the_site_page_away_stops_and_closes(self):
+        # Codexの調査（2026-11-06）の指摘④：休憩中の画面に替えられなかったら、その回は終えて窓を閉じる。
+        self.pilot.configure(True, 10)
+        self.pilot.pages_since_rest = self.pilot.REST_EVERY_PAGES
+        self.pilot.finished(result={'next_url': 'https://www.pscube.jp/n', 'remaining': 3, 'kind': '全台一覧'})
+        self.assertEqual(self.pilot.park_step()[0], 'park')
+        self.pilot.park_failed('サイトのページが表示されたままでした')
+        self.assertFalse(self.pilot.state()['enabled'])
+        self.assertIsNone(self.pilot.parked)
+        self.assertIn('休憩中の画面に替えられなかった', self.pilot.completed)
+        self.assertIn('サイトのページは閉じました', self.pilot.completed)
+        self.assertIsNone(self.pilot.park_step())
+
+    def test_still_on_site_tells_the_parked_page_from_the_site(self):
+        self.assertTrue(still_on_site('https://www.pscube.jp/dedamajyoho-P-townDMMpachi/x/cgi-bin/nc-v03-001.php'))
+        for url in ('about:blank', None, '', 'data:text/html,abc', 'https://example.com/pscube.jp'):
+            self.assertFalse(still_on_site(url), url)
 
     def test_net_data_denied_by_the_site_stops_auto_capture(self):
         # 2026-11-05 利用者「その修正も入れよう」：20:03に差枚の通信だけ403になり、前のコードは次の台へ進み続けた。
         self.pilot.configure(True, 10)
         self.pilot.pending = 'A'
-        result = {'next_url': 'https://www.pscube.jp/next', 'remaining': 3, 'kind': '台別7日分',
-                  'net_warning': '通信に失敗しました（HTTP 403）', 'net_denied': 403}
-        self.pilot.finished(result=result)
-        # 2026-11-06：次の台へは進まず、60分待って次の台から再開する（3回まで）。
-        self.assertTrue(self.pilot.state()['enabled'])
-        self.assertTrue(result['parked'])
-        self.assertIn('差枚のデータの通信をサイトに拒否されました（HTTP 403）', self.message())
-        self.assertEqual(self.pilot.park_step(), ('park', 'https://www.pscube.jp/next'))
-        self.assertIn('A', self.pilot.done, '台の数値は保存できているので、同じページは取り直さない')
-        self.pilot.resumes = self.pilot.BLOCK_MAX_RESUMES
-        self.pilot.parked = None
-        self.pilot.finished(result=dict(result))
-        self.assertFalse(self.pilot.state()['enabled'], '再開を使い切ったら止める')
+        self.pilot.finished(result={'next_url': 'https://www.pscube.jp/next', 'remaining': 3, 'kind': '台別7日分',
+                                    'net_warning': '通信に失敗しました（HTTP 403）', 'net_denied': 403})
+        self.assertFalse(self.pilot.state()['enabled'], '待って再開せず、その回は終える（2026-11-06）')
         self.assertIn('差枚のデータの通信をサイトに拒否されました（HTTP 403）', self.pilot.completed)
+        self.assertIsNone(self.pilot.parked)
+        self.assertIn('A', self.pilot.done, '台の数値は保存できているので、同じページは取り直さない')
 
     def test_three_failures_on_one_page_stop_and_leave_a_close_message(self):
         self.pilot.configure(True, 10)
@@ -451,21 +484,8 @@ class AutoPilotTests(unittest.TestCase):
             self.assertTrue(self.pilot.state()['enabled'], '1分たつまでは待つ')
         self.wait(10)
         self.pilot.tick()
-        # 2026-11-06：止めずに、ページを替えて60分待つ（3回まで）。
-        self.assertTrue(self.pilot.state()['enabled'])
-        self.assertIn('止められた可能性', self.message())
-        self.assertIn('60分待ち', self.message())
-        self.assertEqual(self.pilot.park_step(), ('park', None))
-        self.window.calls.clear()
-        self.wait(10)
-        self.pilot.tick()
-        self.assertEqual(self.window.calls, [], '待っている間はページに問い合わせない')
-        self.pilot.parked = None
-        self.pilot.resumes = self.pilot.BLOCK_MAX_RESUMES
-        for _ in range(7):
-            self.wait(10)
-            self.pilot.tick()
-        self.assertFalse(self.pilot.state()['enabled'], '再開を使い切ったら止める')
+        self.assertFalse(self.pilot.state()['enabled'], '待って再開せず、その回は終える（2026-11-06）')
+        self.assertIsNone(self.pilot.parked)
         self.assertIn('止められた可能性', self.message())
         self.assertIn('Cookieを消さずに', self.message(), '止まったときに記録を消さない復旧を案内する')
         self.assertFalse(self.window.rendered[-1]['enabled'])

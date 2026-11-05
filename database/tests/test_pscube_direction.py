@@ -94,6 +94,8 @@ class DirectionAcrossPagesTests(unittest.TestCase):
         self.clock = Clock()
         self.window = FakeWindow()
         self.pilot = AutoPilot(self.window, PROBE, auto=AutoCapture(clock=self.clock, minimum=5, maximum=60, default=10))
+        # 取り込む順を確かめる試験なので、10ページごとの休憩（2026-11-06、test_pscube_auto で確かめる）は入れない。
+        self.pilot.REST_EVERY_PAGES = 10 ** 6
 
     def seed_index(self):
         """前回の取り込みで機種一覧だけ保存済み。"""
