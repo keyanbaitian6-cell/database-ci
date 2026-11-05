@@ -553,6 +553,47 @@ class Handlers:
 
 
 class SessionStartTests(unittest.TestCase):
+    def test_manual_off_is_not_logged_twice_and_later_automatic_off_is_logged(self):
+        import pscube_import
+        with tempfile.TemporaryDirectory() as tmp:
+            captured = {}
+            window = types.SimpleNamespace(
+                events=types.SimpleNamespace(before_load=Handlers(), loaded=Handlers(), closed=Handlers()),
+                evaluate_js=lambda script: None, get_current_url=lambda: pscube_import.ROOT_URL)
+
+            def create_window(*args, **kwargs):
+                captured['bridge'] = kwargs['js_api']
+                return window
+
+            def start(**kwargs):
+                bridge = captured['bridge']
+                loop = next(call.kwargs['target'] for call in threads.call_args_list
+                            if call.kwargs.get('name') == 'pscube-auto')
+                transitions = iter([
+                    lambda: bridge.set_auto_capture(True, 20),
+                    lambda: bridge.set_auto_capture(False, 20),
+                    lambda: bridge.set_auto_capture(True, 20),
+                    lambda: bridge.pilot.configure(False, 20),
+                ])
+                with mock.patch.object(bridge.pilot, 'tick', side_effect=lambda: next(transitions)()):
+                    loop()
+
+            fake = types.SimpleNamespace(create_window=create_window, start=start)
+            stop = mock.Mock()
+            stop.wait.side_effect = [False, False, False, False, True]
+            with mock.patch.dict(sys.modules, {'webview': fake}), \
+                    mock.patch.object(pscube_import.threading, 'Thread') as threads, \
+                    mock.patch.object(pscube_import.threading, 'Event', return_value=stop), \
+                    mock.patch.object(pscube_import, 'close_when_finished', return_value=False), \
+                    mock.patch.object(pscube_import.error_log, 'note') as note, \
+                    mock.patch.object(pscube_import.error_log, 'record') as record:
+                pscube_import.run_session(Path(tmp) / 'data' / 'pscube.sqlite3', Path(tmp) / 'viewer.json')
+            record.assert_not_called()
+            events = [(call.args[1], call.args[2]) for call in note.call_args_list]
+            self.assertEqual([where for where, _ in events], [
+                'pscube.auto.switch', 'pscube.auto.switch', 'pscube.auto.switch', 'pscube.auto.off'])
+            self.assertTrue(events[1][1].startswith('OFF'), '手動OFFはボタンの記録だけにする')
+
     def test_close_check_serializes_with_saving_and_releases_lock_on_error(self):
         import pscube_import
         for fails in (False, True):

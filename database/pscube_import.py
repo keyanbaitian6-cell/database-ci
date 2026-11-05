@@ -84,8 +84,9 @@ SCROLL_SCRIPT = r'''(async () => {
   // 位置が古いまま続きが出ず、途中で止まった（2026-10-28、利用者の報告）。動かすたびに通知を出す。
   const moved = () => window.dispatchEvent(new Event('scroll'));
   // 機種一覧は、前回の一覧の最後の機種（expectedLast）が出るまで送る（2026-11-05 利用者「機種一覧表示→いったん下まで
-  // 行く→機種読み込まれたのを確認→また下まで行く。いまならうみねこを確認するまでやる。で終わり」）。出たら終わり。
-  // 出ないうちは、一番下で4秒増えないときの着き直しを6回まで続ける（撤去でその機種が無い日は、それで終わる）。
+  // 行く→機種読み込まれたのを確認→また下まで行く。いまならうみねこを確認するまでやる。で終わり」）。出たら、入れ替えで
+  // その後ろに新台が増えた日のために、一番下で4秒増えないことを着き直し1回で確かめてから終わる。出ないうちは着き直しを
+  // 6回まで続ける（撤去でその機種が無い日は、それで終わる）。
   // Android `waitForPscubeList` の lastShown と同じ。名前は全角・半角と空白の違いを無視して比べる。
   const plain = text => String(text || '').normalize('NFKC').replace(/\s+/g, '');
   const lastName = target === null && typeof expectedLast === 'string' && expectedLast ? plain(expectedLast) : null;
@@ -105,9 +106,8 @@ SCROLL_SCRIPT = r'''(async () => {
     // 20件ずつ届く機種一覧を途中で読み取ることがあった（2026-10-24〜26、Android）。
     // 件数がちょうど20の倍数で止まったときは、続きがある見込みが高いので着き直す回数を増やす（2026-11-03、
     // 20件・40件の区切りで止まった一覧を読み取った。Android `pscubeUnknownListChunkNudges` と同じ）。
-    const needed = lastName ? 6 : last > 0 && last % 20 === 0 ? 3 : 2;
-    const shownLast = lastShown();
-    if (target === null ? (shownLast ? quiet >= 1 : quiet >= 16 && idleNudges >= needed)
+    const needed = lastName ? (lastShown() ? 1 : 6) : last > 0 && last % 20 === 0 ? 3 : 2;
+    if (target === null ? (quiet >= 16 && idleNudges >= needed)
         : (count >= target && quiet >= 1)) { await sleep(300); return; }
     if (atBottom()) {
       if (armed) {                                   // 着いたときに1回だけ：最後の台を見せて、一番下まで
@@ -1874,7 +1874,8 @@ def overlay_script(capture_script, index_url):
         const way = result.direction === 'bottom' ? '下から' : result.direction === 'top' ? '上から' : '';
         idle(`${result.skipped || result.kind + 'を保存'} · 残り${result.remaining}${way ? '（' + way + '）' : ''}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
         capturedUrl = null;
-        if (result.next_url) location.href = result.next_url;
+        // 差枚の通信がサイトに拒否されたときは自動取り込みを止めた（窓を閉じる）。次のページへ移らない（2026-11-05）。
+        if (result.next_url && !result.net_denied) location.href = result.next_url;
       };
       const run = async () => {
         window.__pscubeBusy = true;
@@ -2057,6 +2058,7 @@ def run_session(db_path, export_path):
             self._window = None
             self._capture_lock = threading.Lock()
             self.pilot = None
+            self.switched_off = False
 
         def get_installation_count(self):
             return installation_count(db_path, self._window.get_current_url())
@@ -2099,6 +2101,7 @@ def run_session(db_path, export_path):
         def set_auto_capture(self, enabled, seconds, day=None, direction=None):
             # 画面のボタンでON/OFFした時刻も残す（2026-11-05、勝手にOFFになったのかボタンかを後で分けるため）。
             error_log.note(data_dir, 'pscube.auto.switch', ('ON' if enabled else 'OFF') + f'（画面のボタン、取り込み日 {day or "指定なし"}）')
+            self.switched_off = not enabled   # 見張り（auto_loop）は、このOFFを「OFFになった」と重ねて残さない
             return self.pilot.configure(enabled, seconds, day, direction)
 
         def set_target_day(self, day=None, direction=None):
@@ -2178,8 +2181,10 @@ def run_session(db_path, export_path):
                 # 窓を閉じる止まり方（close_when_finished が残す）・画面のボタン（set_auto_capture が残す）以外でOFFになった
                 # ときも、その時の表示の文を残す（2026-11-05、利用者「ちょこちょこ自動取り込みがoffになる」「何も出てなかった気がする」）。
                 state = bridge.pilot.state()
-                if was_on and not state['enabled'] and not bridge.pilot.completed:
+                if was_on and not state['enabled'] and not bridge.pilot.completed and not bridge.switched_off:
                     error_log.note(data_dir, 'pscube.auto.off', state.get('message') or '表示の文なし')
+                if state['enabled']:
+                    bridge.switched_off = False
                 was_on = state['enabled']
             except Exception as error:  # noqa: BLE001 - 記録の失敗で見張りを止めない
                 error_log.record(data_dir, 'pscube.auto.watch', error)

@@ -502,3 +502,21 @@
 - 確認：PC全試験 789件 OK（`TZ=JST-9`、`database/.venv`）。Android P’s CUBE（pscube_auto_flow・pscube_store・pscube_auto・pscube_list_wait・pscube_auto_absent_tab・pscube_browser）98件成功、`flutter analyze` 情報28件（前と同じ）。JS `test_pscube*.mjs` 15本・`test_release_info`・`test_viewer_parts` 成功。照合版 `8feaf32f8996`（.gs は版の文字だけ、貼り替え不要）。全体ゲートは流していない（PCが重くなるため。関係する試験は上のとおり。残りはCIのfull）。
 - 途中の誤り：自作のAndroidの試験の模型（一番下に3回着いても始まらない一覧）では、以前の動きでも読み切れてしまい「以前の動きでは終わる」の確認が落ちた。5回に直して、以前の動きは途中で終わり、新しい動きは最後まで読むことを確かめた。
 - 反映：PCは次に取り込み窓を開いたときから。Androidは次のAPKから（未作成）。実サイトでの動きは未確認（AIはサイトを開いていない）。
+
+### 2026-11-05（夜2）PC P’s CUBEの修正（88bcd7a）の見直し（Claude）
+
+- 依頼：利用者「pcほんとにその修正で大丈夫か再検討しておいて。起動し直す」。基準 `88bcd7a`（CI 42025273959 は3ジョブとも成功。d433d70 の CI 41922741354 も成功）。
+- 見つけて直したこと（未コミット・未push）：①機種一覧で、前回の最後の機種名が出た時点ですぐ終わっていた。入れ替えでその後ろに新台が増えた日は40件で止まる。名前が出たあとも、一番下で4秒増えないことを着き直し1回で確かめてから終わるようにした（PC `SCROLL_SCRIPT`、Android `waitForPscubeList`）。②差枚の通信が拒否されて止めたあとも、取り込みカードが次の台へ移動していた。`net_denied` のときは移動しない。③画面のボタンでOFFにしたとき、見張りが `pscube.auto.off` も重ねて残していた。`switched_off` で抑えた。
+- 問題なしと見たこと：自動がOFFのときは net_denied で止めない。`_stop_and_close` は ON を切り、取り込み日を外し、窓を閉じる文を出す。
+- 残る注意：撤去で一覧が減った日は、同じページで読み直しても `loaded_pages` が進まないので、縮んだ一覧を認めるのは3回目の読み込み直しの後になる。害はないが1回分遅い。
+- 試験：JS `test_pscube_scroll.mjs` 成功。足した試験は、直す前の版では40件で落ちることを確かめた。PC `test_pscube*.py` 146件 OK（`TZ=JST-9`）。Flutter pscube_list_wait・pscube_auto・pscube_store 70件成功。`test_release_info` 成功。全体ゲートは流していない。③の重ね書きの抑えは試験していない。
+- 反映：PCは利用者が次に取り込み窓を開いたときから。push は利用者の承認待ち。
+
+### 2026-11-05 ClaudeのPC P’s CUBE見直しを確認・コミット／送信（Codex）
+
+- 依頼：利用者が前項の3点の修正について「記録を参照しコミットpushをお願いします」と承認。基準 `88bcd7a`。Claudeの変更5ファイル（本記録、PC取り込み、Android一覧待機とその試験、PCスクロールのブラウザ試験）と共有記録の対応を確認した。
+- 未試験と記録されていたOFFログの重ね書きについて、`database/tests/test_pscube_auto.py` に再発試験を1件追加。実際の `run_session` のボタン操作と監視ループを、WebView・スレッド・待機だけを置き換えて動かし、手動ON→手動OFF→再ON→ボタン以外のOFFの順で、手動OFFは `pscube.auto.switch` だけ、その後のOFFは `pscube.auto.off` に残ることを確認。対象サイト・実DBへのアクセスは無い。
+- Codexの確認：`database/` で `TZ=JST-9 PYTHONUTF8=1 .venv/Scripts/python.exe -m unittest discover -s tests -p test_pscube_auto.py`、44件成功。試験プロセスのUTCオフセットは `+0900`。メモリー内で監視条件を修正前に戻すと、追加試験は手動OFFの二重書きを検出して失敗することも確認した。試験作成中に間隔を誤って10秒にしたため初回は失敗し、既存仕様内の20秒に直して成功。製品コードへの追加修正は無い。
+- Claudeによる同じ製品差分の直近成功結果（前項のPC146件、Flutter70件、JSスクロール、release_info）はその記録を根拠として引き継ぎ、重複実行していない。全体ゲート・実サイトでの動作は今回も未確認。`git diff --check` 成功。
+- 履歴・送信先：`database/.venv/Scripts/python.exe tools/push_ci.py --dry-run` で、両リポジトリのmainが基準HEADに含まれることと、日本時間11/5の送り先 `imakurudev-eng/database` を確認。今回の6ファイルを明示指定してコミットし、同スクリプトでmainへ通常pushする。CI成功は送信成功とは分けて確認する。
+- 反映範囲：PCは次に取り込み窓を開いたときから。Androidは次のAPKから。本作業でのAPK・EXE作成、Web公開、Googleスクリプト貼り替えは無し。

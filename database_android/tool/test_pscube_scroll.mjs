@@ -219,10 +219,12 @@ try {
   //    のを確認→また下まで行く。いまならうみねこを確認するまでやる」）。続きが一番下に4回着いてやっと始まるサイトでも
   //    60件・最後の機種まで読む。最後の機種の名前を渡さない（以前の動き）と、着き直し2〜3回で40件のまま終わる。
   //    最後の機種が撤去された日（名前が出ない）でも、時間切れにせず終わる。
-  const lazyIndex = async (last, arrivalsBefore) => {
+  //    入れ替えで最後の機種の後ろに新台が増えた日（名前が40件目に出て、その後ろに20件）も、名前が出たところで終わらず
+  //    一番下で増えないことを確かめてから終わる（2026-11-05 見直し。以前は名前が出たらすぐ終わり、40件のままだった）。
+  const lazyIndex = async (last, arrivalsBefore, lastAt = 60) => {
     const p = await browser.newPage({viewport: {width: 1050, height: 780}});
     await p.setContent(`<div style="height:300px">header</div><ul id="ulKI">${Array.from({length: 20}, (_, i) => `<li style="height:150px">L機種${i + 1}</li>`).join('')}</ul><footer style="height:1500px">Footer</footer>`);
-    await p.evaluate(({scale, arrivalsBefore}) => {
+    await p.evaluate(({scale, arrivalsBefore, lastAt}) => {
       let pending = false, wasBottom = false, arrivals = 0;
       window.addEventListener('scroll', () => {
         const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 5;
@@ -236,13 +238,13 @@ try {
         setTimeout(() => {
           for (let k = 0; k < 20 && list.children.length < 60; k++) {
             const card = document.createElement('li'); card.style.height = '150px';
-            card.textContent = list.children.length === 59 ? 'Lうみねこのなく頃に2' : `L機種${list.children.length + 1}`;
+            card.textContent = list.children.length === lastAt - 1 ? 'Lうみねこのなく頃に2' : `L機種${list.children.length + 1}`;
             list.append(card);
           }
           pending = false;
         }, 3500 * scale);
       });
-    }, {scale: SCALE, arrivalsBefore});
+    }, {scale: SCALE, arrivalsBefore, lastAt});
     await run(p, null, last);
     const n = await p.locator('#ulKI li').count();
     await p.close();
@@ -251,6 +253,7 @@ try {
   assert.equal(await lazyIndex('Lｳﾐﾈｺのなく頃に2', 4), 60, '最後の機種（半角でも同じ機種）が出るまで送り続ける');
   assert.equal(await lazyIndex(null, 4), 40, '最後の機種を知らないと、着き直し2〜3回で40件のまま終わる（以前の動き）');
   assert.equal(await lazyIndex('撤去された機種', 1), 60, '最後の機種が無い日でも、時間切れにせず読み終える');
+  assert.equal(await lazyIndex('Lうみねこのなく頃に2', 1, 40), 60, '最後の機種の後ろに新台が増えた日も、出たところで終わらない');
 
   // 6. 台別など一覧がないページは、そのまま返る。
   await page.setContent('<h2>台別7日履歴</h2>');

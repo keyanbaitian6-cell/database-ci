@@ -358,5 +358,24 @@ void main() {
       expect(list.count, 60);
       expect(list.elapsed, lessThan(pscubeIndexListTimeout));
     });
+
+    // 2026-11-05 見直し：入れ替えで、前回の最後の機種の後ろに新台が増えた日。名前が40件目に出ても、そこで終わらず
+    // 一番下で増えないことを着き直し1回で確かめる（以前は名前が出たらすぐ終わり、40件のままだった）。
+    test('最後の機種の後ろに新台が増えた日も、出たところで終わらない', () async {
+      final list = FakeList(
+        total: 60,
+        first: 20,
+        batch: 20,
+        latency: const Duration(milliseconds: 3500),
+      );
+      await waitForPscubeList(
+        isCurrent: () => true,
+        scroll: list.scroll,
+        delay: list.delay,
+        elapsed: () => list.elapsed,
+        lastShown: () => list.count >= 40,
+      );
+      expect(list.count, 60);
+    });
   });
 }
