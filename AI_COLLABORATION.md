@@ -532,3 +532,4 @@
 - 変更：`database/pscube_import.py`・`database/tests/test_pscube_import.py`・`database/tests/test_pscube_auto.py`・`database_android/tool/test_pscube_scroll.mjs` を `fae1565`（11/3）の版に戻し、`498c952`（errors.log の記録）と `1c07209` のうちボタンのOFFを二重に残さない抑え（とその試験）だけ入れ直した。`fae1565` との違いは記録の行だけ（`git diff fae1565 -- database/pscube_import.py` で確認）。Androidのソース・APK、照合版 `8feaf32f8996` は変えていない。仕様は `database/PSCUBE_AUTO_CAPTURE.md` 末尾「2026-11-06」。
 - 試験：PC全試験 784件 OK（`TZ=JST-9`、`database/.venv`）。`test_pscube_scroll.mjs`・`test_pscube_auto_browser.mjs` 成功（後者は `python` が venv を指すようPATHを通して実行）。全体ゲートは流していない。
 - 反映：PCアプリは閉じたまま。次に start.cmd で起動したときから11/3の動き。push は利用者の承認待ち（.py を含むのでCIが1回動く）。
+- 送信（11/6 06:00）：利用者「送って」→ `d3567b6` を `tools/push_ci.py` で正本mainへpush。[CI 42108713140](https://github.com/imakurudev-eng/database/actions/runs/42108713140) は実行中（結果は未確認）。
