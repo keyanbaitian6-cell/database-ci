@@ -522,3 +522,4 @@
 - 反映範囲：PCは次に取り込み窓を開いたときから。Androidは次のAPKから。本作業でのAPK・EXE作成、Web公開、Googleスクリプト貼り替えは無し。
 - 送信結果：修正と上の確認記録を `1c07209`（6ファイル）にまとめ、日本時間21:44に `tools/push_ci.py` で正本mainへpush成功。送信後の `git fetch origin main` で手元HEADと正本mainの一致・作業コピーに未コミット変更が無いことを確認。[CI 42029663536](https://github.com/imakurudev-eng/database/actions/runs/42029663536) は対象 `1c0720926e9648e3c633c7e0d57db1f280d27548` で実行中（成功は未確認）。本行は完了記録だけの追記として別コミットにし、同じ送り先へ反映する（既存のMarkdown除外により追加のCIは動かない）。
 - CI結果（Claude、11/6確認）：[CI 42029663536](https://github.com/imakurudev-eng/database/actions/runs/42029663536)（対象 `1c07209`）は、pc（windows・ubuntu、UTC）・full の3ジョブとも成功。上の「成功は未確認」はこれで確定。
+- 利用者の報告（11/6 0時すぎ）：`1c07209` のpushはCodexに頼んで行った。修正後のPCで取り込み中で「大丈夫そう」（途中の様子。取り込みの完了・件数はまだ報告なし。AIは画面を見ていない）。
