@@ -29,10 +29,16 @@ typedef PscubeListView = ({int count, bool atBottom});
 /// 少し戻ってもう一度下へ着き直しながら3回続けて確かめてから終わる（およそ12秒以上）。
 /// 以前は一番下で3秒増えなければ終わり、20件ずつ届く機種一覧を20件・40件で読み取って、残りの機種を
 /// 取り込まずに「すべて取り込みました」で止まった（2026-10-24〜26、Android）。
+///
+/// 機種一覧では [lastShown]（前回の一覧の最後の機種が出たか。スクロールの問い合わせごとに読み直す）を渡す。出たら
+/// 終わり、出ないうちは一番下で4秒増えないときの着き直しを [pscubeIndexMissingLastNudges] 回まで続ける（2026-11-05
+/// 利用者「いったん下まで行く→機種読み込まれたのを確認→また下まで行く。いまならうみねこを確認するまでやる」。PC版
+/// `SCROLL_SCRIPT` の expectedLast と同じ）。撤去でその機種が無い日は、着き直しを使い切って終わる。
 Future<void> waitForPscubeList({
   required Future<PscubeListView> Function(PscubeScroll action) scroll,
   required bool Function() isCurrent,
   int? expectedCount,
+  bool Function()? lastShown,
   Future<void> Function(Duration)? delay,
   Duration Function()? elapsed,
 }) async {
@@ -92,11 +98,15 @@ Future<void> waitForPscubeList({
     }
     // 件数がちょうど20の倍数で止まったときは、続きがある見込みが高いので、着き直す回数を増やす
     // （2026-11-03、11/1は20件・11/2は40件の区切りで止まった一覧を読み取った）。
-    final needed = last > 0 && last % pscubeListChunk == 0
+    final needed = lastShown != null
+        ? pscubeIndexMissingLastNudges
+        : last > 0 && last % pscubeListChunk == 0
         ? pscubeUnknownListChunkNudges
         : pscubeUnknownListNudges;
     final done = expectedCount == null
-        ? quiet >= 16 && idleNudges >= needed
+        ? (lastShown?.call() ?? false)
+              ? quiet >= 1
+              : quiet >= 16 && idleNudges >= needed
         : view.count >= expectedCount && quiet >= 1;
     if (done) {
       await wait(const Duration(milliseconds: 300));
@@ -107,7 +117,7 @@ Future<void> waitForPscubeList({
         action = PscubeScroll.arrive;
         armed = false;
       } else if (quiet >= 16) {
-        if (++nudges > 5) return;
+        if (++nudges > (needed > 5 ? needed : 5)) return;
         idleNudges++;
         action = PscubeScroll.nudge;
         armed = true;
@@ -144,3 +154,6 @@ const pscubeUnknownListNudges = 2;
 /// サイトが機種一覧を届ける件数と、件数がちょうどその倍数で止まったときに着き直す回数（PC版と同じ）。
 const pscubeListChunk = 20;
 const pscubeUnknownListChunkNudges = 3;
+
+/// 機種一覧で、前回の一覧の最後の機種がまだ出ないときに着き直す回数（約30秒。PC版と同じ、2026-11-05）。
+const pscubeIndexMissingLastNudges = 6;

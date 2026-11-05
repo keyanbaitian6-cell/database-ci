@@ -82,6 +82,16 @@ class AutoPilotTests(unittest.TestCase):
         self.assertIn('サイトのページは閉じました', self.pilot.completed)
         self.assertIn('Cookieを消さずに', self.pilot.completed)
 
+    def test_net_data_denied_by_the_site_stops_auto_capture(self):
+        # 2026-11-05 利用者「その修正も入れよう」：20:03に差枚の通信だけ403になり、前のコードは次の台へ進み続けた。
+        self.pilot.configure(True, 10)
+        self.pilot.pending = 'A'
+        self.pilot.finished(result={'next_url': 'https://www.pscube.jp/next', 'remaining': 3, 'kind': '台別7日分',
+                                    'net_warning': '通信に失敗しました（HTTP 403）', 'net_denied': 403})
+        self.assertFalse(self.pilot.state()['enabled'])
+        self.assertIn('差枚のデータの通信をサイトに拒否されました（HTTP 403）', self.pilot.completed)
+        self.assertIn('A', self.pilot.done, '台の数値は保存できているので、同じページは取り直さない')
+
     def test_three_failures_on_one_page_stop_and_leave_a_close_message(self):
         self.pilot.configure(True, 10)
         self.window.probe = page('A')

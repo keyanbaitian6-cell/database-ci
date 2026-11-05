@@ -935,6 +935,12 @@ void main() {
       }
     });
 
+    test('前回の機種一覧の最後の機種名（機種一覧を送る目印、2026-11-05）', () async {
+      expect(await store.lastIndexMachine(), isNull, reason: 'まだ機種一覧を保存していない');
+      await seedRack();
+      expect(await store.lastIndexMachine(), '試験機種');
+    });
+
     test('500G以下の台は台別ページを読まない（当たりがあっても）。回転数の分からない台は読む', () {
       Map<String, dynamic> row(int? games, {int bb = 1}) => {
         'bb': bb,

@@ -322,4 +322,41 @@ void main() {
       throwsFormatException,
     );
   });
+
+  // 2026-11-05 利用者「いったん下まで行く→機種読み込まれたのを確認→また下まで行く。いまならうみねこを確認するまでやる」。
+  group('機種一覧：前回の一覧の最後の機種が出るまで送る', () {
+    // 最初は一番下に5回着いても続きが始まらない（6回目で始まる）、20件ずつ・3.5秒後に届く60件の機種一覧。
+    FakeList slowIndex() => FakeList(
+      total: 60,
+      first: 20,
+      batch: 20,
+      latency: const Duration(milliseconds: 3500),
+      ignoredArrivals: 5,
+    );
+    Future<FakeList> read({required bool knowsLast, int lastAt = 60}) async {
+      final list = slowIndex();
+      await waitForPscubeList(
+        isCurrent: () => true,
+        scroll: list.scroll,
+        delay: list.delay,
+        elapsed: () => list.elapsed,
+        lastShown: knowsLast ? () => list.count >= lastAt : null,
+      );
+      return list;
+    }
+
+    test('最後の機種を知っていれば、出るまで着き直して60件まで読む', () async {
+      expect((await read(knowsLast: true)).count, 60);
+    });
+
+    test('最後の機種を知らないと、着き直し2〜3回で20件のまま終わる（以前の動き）', () async {
+      expect((await read(knowsLast: false)).count, lessThan(60));
+    });
+
+    test('最後の機種が撤去された日（出ない）も、時間切れにせず読み終える', () async {
+      final list = await read(knowsLast: true, lastAt: 999);
+      expect(list.count, 60);
+      expect(list.elapsed, lessThan(pscubeIndexListTimeout));
+    });
+  });
 }

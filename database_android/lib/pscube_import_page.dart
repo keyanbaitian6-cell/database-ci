@@ -451,25 +451,32 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     int? expectedCount,
     int? page,
     void Function(int) seen,
-  ) => waitForPscubeList(
-    expectedCount: expectedCount,
-    isCurrent: () => mounted && (page == null || _page == page),
-    scroll: (action) async {
-      // 1回の問い合わせで、決められた動きを1つだけ行い、台数と位置を返す。
-      // 動かしたら scroll の通知を出す。サイトの続きの読み込み（jquery.inview）は、その通知が来たときだけ
-      // 位置を取り直す（PC版 `SCROLL_SCRIPT` の 2026-10-28 の修正。Androidには入っていなかった。2026-11-03）。
-      final move = switch (action) {
-        PscubeScroll.none => '',
-        PscubeScroll.step => 'window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));',
-        PscubeScroll.arrive => "list.lastElementChild?.scrollIntoView({block:'end'}); window.scrollTo(0, document.documentElement.scrollHeight);",
-        PscubeScroll.nudge =>
-          'window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));',
-      };
-      // 設置台数が分かっているときは、リストごと入れ替わっても数えられるよう全体から数える。
-      final countJs = expectedCount == null
-          ? 'list.children.length'
-          : r'''document.querySelectorAll('li[id^="li-"]').length''';
-      final result = await _web.runJavaScriptReturningResult('''
+  ) async {
+    // 機種一覧は、前回の一覧の最後の機種が出るまで送る（2026-11-05、`waitForPscubeList` の lastShown）。
+    final lastName = expectedCount == null
+        ? await _store?.lastIndexMachine()
+        : null;
+    var lastSeen = false;
+    return waitForPscubeList(
+      expectedCount: expectedCount,
+      isCurrent: () => mounted && (page == null || _page == page),
+      lastShown: lastName == null ? null : () => lastSeen,
+      scroll: (action) async {
+        // 1回の問い合わせで、決められた動きを1つだけ行い、台数と位置を返す。
+        // 動かしたら scroll の通知を出す。サイトの続きの読み込み（jquery.inview）は、その通知が来たときだけ
+        // 位置を取り直す（PC版 `SCROLL_SCRIPT` の 2026-10-28 の修正。Androidには入っていなかった。2026-11-03）。
+        final move = switch (action) {
+          PscubeScroll.none => '',
+          PscubeScroll.step => 'window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.8)));',
+          PscubeScroll.arrive => "list.lastElementChild?.scrollIntoView({block:'end'}); window.scrollTo(0, document.documentElement.scrollHeight);",
+          PscubeScroll.nudge =>
+            'window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));',
+        };
+        // 設置台数が分かっているときは、リストごと入れ替わっても数えられるよう全体から数える。
+        final countJs = expectedCount == null
+            ? 'list.children.length'
+            : r'''document.querySelectorAll('li[id^="li-"]').length''';
+        final result = await _web.runJavaScriptReturningResult('''
         (() => {
           const list = document.querySelector('#ulKI') || document.querySelector('li[id^="li-"]')?.parentElement;
           if (!list) return '-1|0';
@@ -477,15 +484,20 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           ${move.isEmpty ? '' : "window.dispatchEvent(new Event('scroll'));"}
           const count = $countJs;
           const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
-          return count + '|' + (bottom ? 1 : 0);
+          const plain = text => String(text || '').normalize('NFKC').replace(/\\s+/g, '');
+          const want = ${jsonEncode(lastName ?? '')};
+          const last = want && plain(list.textContent).includes(plain(want)) ? 1 : 0;
+          return count + '|' + (bottom ? 1 : 0) + '|' + last;
         })()
       ''');
-      final parts = result.toString().replaceAll('"', '').split('|');
-      final count = int.tryParse(parts.first) ?? -1;
-      seen(count);
-      return (count: count, atBottom: parts.length > 1 && parts[1] == '1');
-    },
-  );
+        final parts = result.toString().replaceAll('"', '').split('|');
+        final count = int.tryParse(parts.first) ?? -1;
+        lastSeen = parts.length > 2 && parts[2] == '1';
+        seen(count);
+        return (count: count, atBottom: parts.length > 1 && parts[1] == '1');
+      },
+    );
+  }
 
   /// サイトの中のページから次のページへは、リンクをたどるのと同じ形（ページ内で移動）で
   /// 開く。アドレスを直接開くと「どのページから来たか」が付かず、普通のブラウザと
@@ -1024,6 +1036,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       );
       // 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
       final netWarning = pscubeNetWarning(raw);
+      final netDenied = pscubeNetDenied(raw);
       if (!mounted) return;
       setState(() {
         _remaining = result.remaining;
@@ -1037,6 +1050,18 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         _autoFailures.remove(autoSignature);
         _autoHeld.remove(autoSignature);
         _listRetries.remove(autoSignature);
+        if (_auto.enabled && netDenied != null) {
+          // 台の数値は保存できたが、差枚の通信がサイトに拒否された。次の台へ進まずに止める（2026-11-05）。
+          final message = '停止中（差枚のデータの通信をサイトに拒否されました（HTTP $netDenied））';
+          unawaited(
+            notifyCaptureResult(
+              'P’s CUBE：取り込みが止まりました',
+              '差枚のデータの通信をサイトに拒否されました（HTTP $netDenied）。時間を空けてから試してください。',
+            ),
+          );
+          await _stopAuto(message);
+          return;
+        }
         if (_auto.enabled && result.nextUrl == null) {
           final day = _targetDay ?? await store.lastDay();
           if (day != null && !_finishedDays.contains(day)) {

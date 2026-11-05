@@ -190,6 +190,29 @@ String? pscubeNetWarning(String raw) {
   }
 }
 
+/// 台別ページの差枚の元データの通信が、サイトに拒否された（403＝拒否、429＝アクセスが多すぎる）なら、その状態番号
+/// （2026-11-05 利用者「その修正も入れよう」。PCで20:03に差枚の通信だけ403になり、次の台へ進み続けた）。数値は保存
+/// するが、自動取り込みは止める。PC版 `net_denied_status` と同じ。
+int? pscubeNetDenied(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    final records = decoded is Map ? decoded['records'] : null;
+    if (records is! List) return null;
+    for (final r in records) {
+      final capture = r is Map ? r['net_capture'] : null;
+      final status = capture is Map ? capture['http_status'] : null;
+      if (capture is Map &&
+          capture['reason'] == 'network' &&
+          (status == 403 || status == 429)) {
+        return status as int;
+      }
+    }
+  } on FormatException {
+    return null;
+  }
+  return null;
+}
+
 /// 止められた気配の見張り（PC版 `AutoPilot` と同じ規則）。対象のページなのにデータが出ない
 /// （人間確認の画面でもない）状態が [blockChecks] 回・[blockSpan] 以上続いたら止める（2026-10-01）。
 class PscubeAutoGuard {

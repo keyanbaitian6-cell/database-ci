@@ -108,9 +108,11 @@ class PscubeImportTests(unittest.TestCase):
             self.assertTrue(retry['retry_index'])
             self.assertEqual(retry['next_url'], self.index_url)
             self.assertEqual(self.store._state('active_machine_keys'), before)
-            # 再確認も同じページの失敗に数える（開き直しは3回まで）。保存できたら数えをやめる。
-            self.assertEqual(pilot.failures.get('index', 0), 1)
-            self.assertNotEqual(retry.get('reload'), False)
+            # 機種一覧が足りない回数はページごとに数える（2026-11-05）。1回目はページを読み込み直さず、同じページで
+            # 下まで送り直して読み直す。
+            self.assertEqual(pilot.list_retries.get('index'), 1)
+            self.assertIs(retry.get('reread'), True)
+            self.assertIs(retry.get('reload'), False)
             backup.assert_not_called()
             # 読み込み完了の通知が無ければ、同じ内容でも再確認とは扱わない。
             retry_again = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
@@ -153,7 +155,8 @@ class PscubeImportTests(unittest.TestCase):
                 self.assertIsNone(pilot.index_confirmation_page)
 
     def test_auto_stops_reopening_an_index_that_differs_every_time(self):
-        # 開き直すたびに違う減った一覧が返り続けても、一晩じゅう開き直さない（3回で止めて待機）。
+        # 開き直すたびに違う減った一覧が返り続けても、一晩じゅう読み直さない。2026-11-05 からはAndroidと同じく、まず同じ
+        # ページで読み直し、ページの読み込み直しは3回に1回・3回まで、60回で止めて窓を閉じる。
         from auto_capture import AutoCapture
         from pscube_import import AutoPilot, submit_capture
         from test_pscube_auto import Clock, FakeWindow, PROBE
@@ -167,16 +170,20 @@ class PscubeImportTests(unittest.TestCase):
         before = self.store._state('active_machine_keys')
         results = []
         with patch('pscube_import.auto_backup', return_value='backup') as backup:
-            for size in (2, 3, 4):
+            for i in range(AutoPilot.LIST_MAX_RETRIES):
                 pilot.pending = 'index'
                 result = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
-                                        pilot, self.page(self.index_url, machines[:size]), self.index_url)
+                                        pilot, self.page(self.index_url, machines[:2 + i % 3]), self.index_url)
                 pilot.finished(result=result)
                 pilot.loaded()
                 results.append(result)
         self.assertTrue(all(r['retry_index'] for r in results))
-        self.assertEqual([r.get('reload', True) for r in results], [True, True, False])
-        self.assertEqual(pilot.failures['index'], AutoPilot.MAX_FAILURES)
+        reloads = [i + 1 for i, r in enumerate(results) if r.get('reload')]
+        self.assertEqual(reloads, [3, 6, 9], 'ページの読み込み直しは3回に1回・3回まで')
+        self.assertTrue(all(r.get('reread') for i, r in enumerate(results[:-1]) if i + 1 not in reloads),
+                        'ほかは同じページで下まで送り直す')
+        self.assertFalse(pilot.auto.state()['enabled'])
+        self.assertIn('60回読み直しても進まなかったため、自動取り込みを止めました', pilot.completed)
         self.assertEqual(self.store._state('active_machine_keys'), before)
         backup.assert_not_called()
 
@@ -204,7 +211,7 @@ class PscubeImportTests(unittest.TestCase):
         before = self.store._state('active_machine_keys')
         results = []
         with patch('pscube_import.auto_backup', return_value='backup') as backup:
-            for _ in range(3):   # 同じ7機種の一覧が3回返る
+            for _ in range(AutoPilot.LIST_MAX_RETRIES):   # 同じ7機種の一覧が返り続ける
                 pilot.pending = 'index'
                 result = submit_capture(self.store.path, Path(self.tmp.name) / 'viewer.json',
                                         pilot, self.page(self.index_url, machines[:7]), self.index_url)
@@ -212,7 +219,7 @@ class PscubeImportTests(unittest.TestCase):
                 pilot.loaded()
                 results.append(result)
         self.assertTrue(all(r['retry_index'] and r['short'] == [7, 10] for r in results))
-        self.assertEqual([r.get('reload', True) for r in results], [True, True, False])
+        self.assertEqual([i + 1 for i, r in enumerate(results) if r.get('reload')], [3, 6, 9])
         self.assertEqual(self.store._state('active_machine_keys'), before, '途中の一覧で機種の並びを上書きしない')
         self.assertIn('途中までしか読めていません（いつもの10機種に対して7機種）', pilot.auto.state()['message'])
         self.assertNotIn('すべて取り込みました', pilot.completed, '「すべて取り込みました」にしない')
@@ -772,6 +779,17 @@ class PscubeImportTests(unittest.TestCase):
         self.assertTrue(skips_rack_page(low))
         self.assertFalse(skips_rack_page(just))
         self.assertFalse(skips_rack_page(dict(just, games=None)), '回転数が分からない台は読む')
+
+    # 2026-11-05：差枚の通信の拒否（403・429）と、機種一覧を送る目印の最後の機種。
+    def test_net_denied_status_and_last_index_machine(self):
+        from pscube_import import last_index_machine, net_denied_status
+        cap = lambda status: {'net_capture': {'reason': 'network', 'http_status': status}}
+        self.assertEqual(net_denied_status([{}, cap(403)]), 403)
+        self.assertEqual(net_denied_status([cap(429)]), 429)
+        self.assertIsNone(net_denied_status([cap(500), {'net_capture': {'reason': 'empty'}}]))
+        self.assertIsNone(last_index_machine(self.store.path), '機種一覧をまだ保存していない')
+        self.store.import_page(self.page(self.index_url, self.machines), self.index_url)
+        self.assertEqual(last_index_machine(self.store.path), self.machines[-1]['machine'])
 
     # 2026-11-05 利用者「ABCD実装」のB。
     def test_a_rack_page_marks_all_seven_days_so_past_days_are_not_revisited(self):

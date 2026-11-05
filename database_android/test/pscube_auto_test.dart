@@ -23,6 +23,18 @@ void main() {
     expect(pscubeNetWarning('[1]'), isNull);
   });
 
+  // 2026-11-05：差枚の通信がサイトに拒否された（403・429）ら、自動取り込みを止める。PC版 `net_denied_status` と同じ。
+  test('差枚の通信の拒否（403・429）を取り込み結果から読む', () {
+    String page(Object? status, [String reason = 'network']) =>
+        '{"records":[{},{"net_capture":{"reason":"$reason","http_status":$status}}]}';
+    expect(pscubeNetDenied(page(403)), 403);
+    expect(pscubeNetDenied(page(429)), 429);
+    expect(pscubeNetDenied(page(500)), isNull);
+    expect(pscubeNetDenied(page(403, 'empty')), isNull);
+    expect(pscubeNetDenied('{"records":[]}'), isNull);
+    expect(pscubeNetDenied('not json'), isNull);
+  });
+
   test('確認画面・読み込み中・対象外は理由を出して待つ（押さない）', () {
     final d = pscubeAutoDecision(
       {'ready': false, 'reason': '台別7日分の表示待ち（人間確認・同意の画面なら手動で操作してください）'},

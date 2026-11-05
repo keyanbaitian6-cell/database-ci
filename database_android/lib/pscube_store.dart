@@ -1440,6 +1440,26 @@ class PscubeStore {
   Future<String?> lastDay() => _serial(() => _dayIn(db));
 
   /// 記録のある最初の日（抜けた日を探すとき、使い始める前の日を抜けとみなさない。2026-11-04）。
+  /// 前回の機種一覧の最後の機種名（無ければ null）。機種一覧をこの機種が出るまで送る（2026-11-05、
+  /// `waitForPscubeList` の lastShown）。PC版 `last_index_machine` と同じ。
+  Future<String?> lastIndexMachine() => _serial(() async {
+    final rows = await db.query(
+      'state',
+      columns: ['value'],
+      where: 'key=?',
+      whereArgs: ['active_machine_keys'],
+    );
+    if (rows.isEmpty) return null;
+    try {
+      final keys = jsonDecode(rows.first['value'] as String) as List;
+      if (keys.isEmpty) return null;
+      final name = (jsonDecode(keys.last as String) as List)[2];
+      return name is String && name.isNotEmpty ? name : null;
+    } catch (_) {
+      return null; // 読めなければ目印なしで、以前と同じ終わり方にする
+    }
+  });
+
   Future<String?> firstDay() => _serial(() async {
     String? first;
     for (final row in await db.query('records', columns: ['key'])) {
