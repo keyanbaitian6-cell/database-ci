@@ -741,6 +741,8 @@ class CloseWhenFinishedTests(unittest.TestCase):
         self.saving = False
         self.assertTrue(self.close())
         self.assertEqual(self.destroyed, [True])
+        # 止まった理由と時刻は errors.log にも残る（2026-11-05）。
+        self.assertIn('pscube.auto.stop\tすべて取り込みました', (self.data / 'errors.log').read_text(encoding='utf-8'))
         self.assertEqual(take_finished_message(self.data), 'すべて取り込みました（自動取り込みを停止しました）')
         self.assertIsNone(take_finished_message(self.data), '知らせは1回で消える')
 

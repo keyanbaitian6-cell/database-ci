@@ -1967,6 +1967,8 @@ def close_when_finished(pilot, saving, window, data_dir) -> bool:
     message = pilot.completed
     if not message or saving():
         return False
+    # 止まった理由と時刻を errors.log にも残す（2026-11-05 利用者「いれる」。画面の文は窓と一緒に消えるため）。
+    error_log.note(data_dir, 'pscube.auto.stop', message)
     write_notice(Path(data_dir) / FINISHED_NAME, message)
     window.destroy()
     return True
@@ -2030,6 +2032,8 @@ def run_session(db_path, export_path):
             return True
 
         def set_auto_capture(self, enabled, seconds, day=None, direction=None):
+            # 画面のボタンでON/OFFした時刻も残す（2026-11-05、勝手にOFFになったのかボタンかを後で分けるため）。
+            error_log.note(data_dir, 'pscube.auto.switch', ('ON' if enabled else 'OFF') + f'（画面のボタン、取り込み日 {day or "指定なし"}）')
             return self.pilot.configure(enabled, seconds, day, direction)
 
         def set_target_day(self, day=None, direction=None):
@@ -2099,11 +2103,21 @@ def run_session(db_path, export_path):
 
     def auto_loop():
         # 窓を最小化してもJavaScriptのタイマーのように遅れないよう、Python側で数える。
+        was_on = False
         while not stop.wait(0.1):
             try:
                 bridge.pilot.tick()
             except Exception as error:  # noqa: BLE001 - 次の回でやり直す。止まった理由は残す
                 error_log.record(data_dir, 'pscube.auto.tick', error)
+            try:
+                # 窓を閉じる止まり方（close_when_finished が残す）・画面のボタン（set_auto_capture が残す）以外でOFFになった
+                # ときも、その時の表示の文を残す（2026-11-05、利用者「ちょこちょこ自動取り込みがoffになる」「何も出てなかった気がする」）。
+                state = bridge.pilot.state()
+                if was_on and not state['enabled'] and not bridge.pilot.completed:
+                    error_log.note(data_dir, 'pscube.auto.off', state.get('message') or '表示の文なし')
+                was_on = state['enabled']
+            except Exception as error:  # noqa: BLE001 - 記録の失敗で見張りを止めない
+                error_log.record(data_dir, 'pscube.auto.watch', error)
             try:
                 # 保存開始と終了判定を同じロックで直列化する。保存中かを調べた直後に
                 # 手動保存が始まり、古い完了を使って窓を閉じる競合も防ぐ。

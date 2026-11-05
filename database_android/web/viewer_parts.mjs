@@ -1,5 +1,5 @@
 // 生成元: tool/build_viewer_parts.mjs
-const SCRIPT_RELEASE = 'c70b463093b1';
+const SCRIPT_RELEASE = '547648247513';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
