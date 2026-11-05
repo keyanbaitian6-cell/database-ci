@@ -134,7 +134,7 @@
 
 - 依頼：前項の全体見直しのうち、利用者「C・DのREADMEを直す」。変更は `README.md` だけ（.mdなのでCIは動かない）。
 - C：PC試験の手順に `database/` 直下の `test_*.py` を足した（`.venv\Scripts\python.exe -m unittest discover -s . -p "test_*.py"`）。ビルド前は `check_before_build.sh` の「ALL PASSED」が条件であることも書いた。確認：`database/.venv/Scripts/python.exe` で `TestLoader().discover` を使い、試験を実行せず読み込みだけで数えた。`-s . -p "test_*.py"` は直下の15モジュール・239件（`tests/` に `__init__.py` が無いため `tests/` は含まない）、`-s tests` は501件。読み込みエラーなし。試験そのものは流していない。
-- D：「実サイトの自動巡回や自動保存は行いません」を削除し、「自動取り込み」の節を追加。内容は `database/PSCUBE_AUTO_CAPTURE.md` から：起動時OFF・利用者がONにしたときだけ・ON状態は保存しない、開いた取り込み画面で読んで保存し次の未取得へ、間隔（メルヘン0.1〜4.5秒・初期3.5秒、P’s CUBE15〜25秒ランダム）、人間確認・同意・読み込み中は押さずに待つ、P’s CUBEの自動OFF条件、Android版P’s CUBEの0時予約。仕様は変えていない。
+- D：「実サイトの自動巡回や自動保存は行いません」を削除し、「自動取り込み」の節を追加。内容は `database/PSCUBE_AUTO_CAPTURE.md` から：起動時OFF・利用者がONにしたときだけ・ON状態は保存しない、開いた取り込み画面で読んで保存し次の未取得へ、間隔（メルヘン0.1〜4.5秒・初期3.5秒、P’s CUBE15〜25秒ランダム）、P’s CUBEの自動OFF条件、Android版P’s CUBEの0時予約。仕様は変えていない。
 - 製品コード・試験・DB・設定は変更なし。対象サイトへのアクセスなし。
 
 ## 【共有記録を月別に分割（全体見直しのE）】2026-11-01 Claude
@@ -534,3 +534,21 @@
 - 反映：PCアプリは閉じたまま。次に start.cmd で起動したときから11/3の動き。push は利用者の承認待ち（.py を含むのでCIが1回動く）。
 - 送信（11/6 06:00）：利用者「送って」→ `d3567b6` を `tools/push_ci.py` で正本mainへpush。[CI 42108713140](https://github.com/imakurudev-eng/database/actions/runs/42108713140) は実行中（結果は未確認）。
 - 11/6 06:15 の様子（Claude、errors.log・pscube.sqlite3・プロセス一覧を読んだだけ）：利用者が06:00に11/3の版のPCアプリと取り込み窓を起動。06:01:03 ON → 06:01:16 OFF（ボタン）→ 06:09:53 `pscube.auto.off`「サイトがデータを表示しなくなりました（止められた可能性）」。11/5の台別は11台→20台（9台増えた）。11/3の版は止まっても窓を閉じないので、06:15時点で取り込み窓「P’s CUBE 取り込み」が開いたまま（サイトのページが残っている可能性）。利用者に閉じるよう案内。CI 42108713140 は実行中。
+
+### 2026-11-06 P’s CUBEの取り込みがすぐ止まる件の検討をAstra（Codex）に頼むプロンプトを作成（Claude）
+
+- 利用者「最近取り込みがすぐエラーになることについてastraに検討させたいのでプロンプトお願いします。今別セクで修正中」。会話の中で渡しただけ（コード・設定は変えていない）。内容：読むだけ・サイトに接続しない・コードを直さない（別の作業が `pscube_import.py`・`app.py`・`power.py` などを未コミットで変更中）、errors.log・pscube.sqlite3（読み取り専用）・この記録の11/5〜11/6・コミット履歴から、10/29〜11/3（403なし）と11/5以降（ON後8〜17分で403）の違いを比べ、仮説を確からしさの順に、すり抜けにならない対策と待ち方を出す。報告は `../outputs/pscube-403-review-20261106/報告.md`。
+
+### 2026-11-06（朝）PC P’s CUBE：11/5の版に戻し、間隔30〜45秒・20ページごとの10分休憩・拒否のあと60分待って自動で再開（3回まで）・取り込み中のスリープ禁止と終了後の確認→5分後スリープ（Claude）
+
+- 依頼：06:09に11/3の版でも止められたことを報告 → 利用者「一旦閉じてどうにかなるように修正して」→ 案から「減らす＋休む＋自動再開」を選択。続けて「取り込み中はスリーブ禁止」「取り込み後問題なかったか確認し、5分後にスリーブ」。「そのあたりをなんとかして考えるのがAIです」。
+- 取り込み窓：06:2x にAIが通常の閉じ方（CloseMainWindow）で閉じた。PCアプリ本体は開いたまま。
+- 利用者「自動取り込み中機械っぽいうごきを避けたらいけるかな？」→ AIは、人の操作に見せかける変更（マウス・スクロールの模倣など）はサイトの見張りのすり抜けになるので入れない、と回答（AGENTS.md の回線を変えないのと同じ考え）。量と速さを減らす変更だけにした。
+- 変更（仕様は `database/PSCUBE_AUTO_CAPTURE.md` 末尾「2026-11-06（朝）」）：
+  - `database/pscube_import.py`・`database/tests/test_pscube_import.py`・`test_pscube_auto.py`・`database_android/tool/test_pscube_scroll.mjs` を `1c07209` の版に戻した（11/5のABCD・最後の機種まで・差枚の403）。
+  - `pscube_import.py`：`PscubeRandomCapture` 30〜45秒、`AutoPilot` の `REST_EVERY_PAGES=20`・`REST_SECONDS=600`・`BLOCK_WAIT_SECONDS=3600`・`BLOCK_MAX_RESUMES=3`、`_park`・`_blocked`・`park_step`・`remember_url`・`is_parked`、`PARKED_PAGE`（`load_html`）、`run_session` の `park_or_resume`（保存中は替えない）、カードの `result.parked` で次のページへ移らない、間隔の表示。
+  - 新しい `database/power.py`（`keep_awake`・`sleep_now`）、`pscube_import.capture_problems`、`app.py` の `sleep_after_pscube`（5分の数え下げと取り消し）。
+  - 試験：`test_pscube_auto.py`（403の3回待機と4回目の停止、DNSはすぐ止まる、20ページごとの休憩、休憩中のOFF、データが出ない・差枚の拒否の待機、間隔30〜45秒）、新しい `database/tests/test_power.py`、`test_pscube_auto_browser.mjs`（間隔の値と表示）。
+- Android・照合版（`8feaf32f8996`）は変えていない。
+- 試験：PC全試験 796件 OK（`TZ=JST-9`、`database/.venv`）。`test_pscube_auto_browser.mjs`・`test_pscube_scroll.mjs` 成功（前者は `python` が venv を指すようPATHを通して実行）。`app.py` は構文の確認だけ（画面を開いての確認・5分後のスリープの実機の確認はしていない）。全体ゲートは流していない。カードの `result.parked` で次のページへ移らないことの画面試験は無い（Python側の `parked` の印は試験あり）。
+- 反映：PCは次に start.cmd でアプリを開き直したときから（今開いているPCアプリ本体は古いコードのまま。取り込み窓は閉じてある）。実サイトでの動き（休憩中の画面への替え・60分後の再開・スリープ）は未確認。push は利用者の承認待ち（.py を含むのでCIが1回動く）。

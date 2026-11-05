@@ -24,11 +24,13 @@ await assert.rejects(runInNewContext(scroll, {
 assert.equal(elapsed, 120000, '増加・着き直しの待機も含めて、台数不明の機種一覧は120秒で打ち切る（2026-11-03、以前は90秒）');
 const SCALE = 0.1;
 // SCROLL_SCRIPT は、取り込み画面の中で expectedCount（設置台数。不明なら未定義）を参照する。
-const run = (page, count) => page.evaluate(({script, count, scale}) => {
+// 機種一覧では、取り込み画面が前回の一覧の最後の機種名（expectedLast）も渡す（2026-11-05）。
+const run = (page, count, last = null) => page.evaluate(({script, count, scale, last}) => {
   const scrollDelayScale = scale;
   const expectedCount = count;   // 未定義(null)のときは台数不明として扱う
+  const expectedLast = last;
   return eval(count === null ? script.replace(/typeof expectedCount === 'number'/, 'false') : script);
-}, {script: scroll, count, scale: SCALE});
+}, {script: scroll, count, scale: SCALE, last});
 const browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined});
 try {
   // 1. 最後の台が見えると20台ずつ続きが来る（リストごと入れ替わる）。台数不明でも61台まで読む。
@@ -212,6 +214,46 @@ try {
   }, SCALE);
   await run(hidden, 24);
   assert.equal(await hidden.locator('li').count(), 24, '本物の scroll 通知が届かない窓でも、続きを最後まで読む');
+
+  // 7. 機種一覧：前回の一覧の最後の機種（うみねこ）が出るまで送る（2026-11-05 利用者「いったん下まで行く→機種読み込まれた
+  //    のを確認→また下まで行く。いまならうみねこを確認するまでやる」）。続きが一番下に4回着いてやっと始まるサイトでも
+  //    60件・最後の機種まで読む。最後の機種の名前を渡さない（以前の動き）と、着き直し2〜3回で40件のまま終わる。
+  //    最後の機種が撤去された日（名前が出ない）でも、時間切れにせず終わる。
+  //    入れ替えで最後の機種の後ろに新台が増えた日（名前が40件目に出て、その後ろに20件）も、名前が出たところで終わらず
+  //    一番下で増えないことを確かめてから終わる（2026-11-05 見直し。以前は名前が出たらすぐ終わり、40件のままだった）。
+  const lazyIndex = async (last, arrivalsBefore, lastAt = 60) => {
+    const p = await browser.newPage({viewport: {width: 1050, height: 780}});
+    await p.setContent(`<div style="height:300px">header</div><ul id="ulKI">${Array.from({length: 20}, (_, i) => `<li style="height:150px">L機種${i + 1}</li>`).join('')}</ul><footer style="height:1500px">Footer</footer>`);
+    await p.evaluate(({scale, arrivalsBefore, lastAt}) => {
+      let pending = false, wasBottom = false, arrivals = 0;
+      window.addEventListener('scroll', () => {
+        const bottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 5;
+        const arrived = bottom && !wasBottom;
+        wasBottom = bottom;
+        const list = document.querySelector('#ulKI');
+        if (!arrived || pending || list.children.length >= 60) return;
+        if (++arrivals < arrivalsBefore) return;   // 一番下にこの回数着いて、やっと続きが始まる
+        arrivals = 0;
+        pending = true;
+        setTimeout(() => {
+          for (let k = 0; k < 20 && list.children.length < 60; k++) {
+            const card = document.createElement('li'); card.style.height = '150px';
+            card.textContent = list.children.length === lastAt - 1 ? 'Lうみねこのなく頃に2' : `L機種${list.children.length + 1}`;
+            list.append(card);
+          }
+          pending = false;
+        }, 3500 * scale);
+      });
+    }, {scale: SCALE, arrivalsBefore, lastAt});
+    await run(p, null, last);
+    const n = await p.locator('#ulKI li').count();
+    await p.close();
+    return n;
+  };
+  assert.equal(await lazyIndex('Lｳﾐﾈｺのなく頃に2', 4), 60, '最後の機種（半角でも同じ機種）が出るまで送り続ける');
+  assert.equal(await lazyIndex(null, 4), 40, '最後の機種を知らないと、着き直し2〜3回で40件のまま終わる（以前の動き）');
+  assert.equal(await lazyIndex('撤去された機種', 1), 60, '最後の機種が無い日でも、時間切れにせず読み終える');
+  assert.equal(await lazyIndex('Lうみねこのなく頃に2', 1, 40), 60, '最後の機種の後ろに新台が増えた日も、出たところで終わらない');
 
   // 6. 台別など一覧がないページは、そのまま返る。
   await page.setContent('<h2>台別7日履歴</h2>');
