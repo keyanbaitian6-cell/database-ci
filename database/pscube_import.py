@@ -83,14 +83,6 @@ SCROLL_SCRIPT = r'''(async () => {
   // scroll の通知が来たときだけ取り直す。窓を最小化・裏に回すと描画が止まり、scroll の通知が出ないため、
   // 位置が古いまま続きが出ず、途中で止まった（2026-10-28、利用者の報告）。動かすたびに通知を出す。
   const moved = () => window.dispatchEvent(new Event('scroll'));
-  // 機種一覧は、前回の一覧の最後の機種（expectedLast）が出るまで送る（2026-11-05 利用者「機種一覧表示→いったん下まで
-  // 行く→機種読み込まれたのを確認→また下まで行く。いまならうみねこを確認するまでやる。で終わり」）。出たら、入れ替えで
-  // その後ろに新台が増えた日のために、一番下で4秒増えないことを着き直し1回で確かめてから終わる。出ないうちは着き直しを
-  // 6回まで続ける（撤去でその機種が無い日は、それで終わる）。
-  // Android `waitForPscubeList` の lastShown と同じ。名前は全角・半角と空白の違いを無視して比べる。
-  const plain = text => String(text || '').normalize('NFKC').replace(/\s+/g, '');
-  const lastName = target === null && typeof expectedLast === 'string' && expectedLast ? plain(expectedLast) : null;
-  const lastShown = () => !!lastName && plain(findList()?.textContent).includes(lastName);
   let last = -1, quiet = 0, nudges = 0, idleNudges = 0, armed = true;
   for (let tick = 0; tick < maxTicks; tick++) {     // 追加待機も含め、実際の経過時間で最長90秒（機種一覧は120秒）
     checkTime();
@@ -106,9 +98,8 @@ SCROLL_SCRIPT = r'''(async () => {
     // 20件ずつ届く機種一覧を途中で読み取ることがあった（2026-10-24〜26、Android）。
     // 件数がちょうど20の倍数で止まったときは、続きがある見込みが高いので着き直す回数を増やす（2026-11-03、
     // 20件・40件の区切りで止まった一覧を読み取った。Android `pscubeUnknownListChunkNudges` と同じ）。
-    const needed = lastName ? (lastShown() ? 1 : 6) : last > 0 && last % 20 === 0 ? 3 : 2;
-    if (target === null ? (quiet >= 16 && idleNudges >= needed)
-        : (count >= target && quiet >= 1)) { await sleep(300); return; }
+    const needed = last > 0 && last % 20 === 0 ? 3 : 2;
+    if (target === null ? (quiet >= 16 && idleNudges >= needed) : (count >= target && quiet >= 1)) { await sleep(300); return; }
     if (atBottom()) {
       if (armed) {                                   // 着いたときに1回だけ：最後の台を見せて、一番下まで
         list.lastElementChild?.scrollIntoView({block:'end'});
@@ -117,7 +108,7 @@ SCROLL_SCRIPT = r'''(async () => {
         armed = false;
       }
       else if (quiet >= 16) {                        // 4秒増えない：少し戻って、もう一度下へ
-        if (++nudges > Math.max(5, needed)) return;
+        if (++nudges > 5) return;
         idleNudges++;                                  // 最後に増えてから戻った回数（台数不明の終わりの判定）
         window.scrollBy(0, -Math.max(300, window.innerHeight * 1.5));
         moved();
@@ -144,7 +135,8 @@ RESET_SITE_SCRIPT = r'''(async () => {
   try { for (const key of await caches.keys()) await caches.delete(key); } catch (_) {}
   return true;
 })()'''
-BLOCKED_MESSAGE = 'サイトがデータを表示しなくなったため（止められた可能性）、自動取り込みを止めました'
+BLOCKED_MESSAGE = ('サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。'
+                   '時間を空けてから、Cookieを消さずに「もう一度開く」を試してください。')
 RESET_DONE_MESSAGE = ('サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。最初のページを開き直します。'
                       '人間確認・同意が出たら手で操作してください。')
 
@@ -277,40 +269,11 @@ def is_excluded_machine(name) -> bool:
     return any(word in text for word in EXCLUDED_MACHINE_WORDS)
 
 
-# 差枚の元データの通信でサイトが返したら、アクセスを拒否されたとみなす状態（403＝拒否、429＝アクセスが多すぎる）。
-NET_DENIED_STATUSES = (403, 429)
-
-
-def net_denied_status(records) -> int | None:
-    """台別ページの差枚の元データの通信が、サイトに拒否された（NET_DENIED_STATUSES）なら、その状態番号。
-    差枚は空欄のまま数値は保存するが、自動取り込みは止める（2026-11-05、利用者「その修正も入れよう」。20:03に差枚の
-    通信だけ403になり、前のコードは次の台へ進み続けた）。Android `pscubeNetDenied` と同じ。"""
-    for r in records or []:
-        capture = r.get('net_capture') if isinstance(r, dict) else None
-        status = capture.get('http_status') if isinstance(capture, dict) else None
-        if capture and capture.get('reason') == 'network' and status in NET_DENIED_STATUSES:
-            return status
-    return None
-
-
 def no_hits(r: dict) -> bool:
     """当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。全台一覧の数値は保存するが、
     台別7日分（グラフ）は取りに行かない（メルヘンv12の「大当たり0回はグラフを取らない」を、AT/ARTも
     含めて引き継ぐ。利用者の指定、2026-10-01）。一覧を取り直して当たりが付けば、また取る対象に戻る。"""
     return r['bb'] + r['rb'] + r['at_art'] == 0
-
-
-# 台別ページを読まない回転数の上限。採点の下限（core.MIN_SCORED_GAMES、Android `minScoredGames`）と同じ500G。
-RACK_PAGE_MIN_GAMES = 500
-
-
-def skips_rack_page(r: dict) -> bool:
-    """台別7日分を取りに行かない台（2026-11-05 利用者「ABCD実装」のD）：当たりが1回もない台と、回転数が
-    RACK_PAGE_MIN_GAMES（500G）以下の台。どちらも採点しない台で、1晩に約20ページ、サイトへのアクセスが減る
-    （11/5、サイトにアクセスを拒否された）。その台のグラフと差枚は無いまま。回転数が分からない台は読む。
-    Android `PscubeStore.skipsRackPage` と同じ。"""
-    games = r.get('games')
-    return no_hits(r) or (games is not None and games <= RACK_PAGE_MIN_GAMES)
 
 
 def _machine_key(m: dict) -> str:
@@ -941,11 +904,7 @@ class PscubeStore:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('active_machine_keys', json.dumps([_machine_key(m) for m in data['machines']], ensure_ascii=False)))
             if is_rack:
-                # 台別ページには、その台の7日分（選んだ日とそれより前の日）の数値・グラフ・差枚が入る。前の日の分も
-                # 取り込み済みにして、同じ日の取り直しで同じ台別ページを読み直さない（2026-11-05 利用者「ABCD実装」のB。
-                # 前の日の値は確定している。数値が変わった日は上で印を外す決まりのまま）。Androidと同じ。
-                for r in data['records']:
-                    self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (_record_key(r),))
+                self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (_record_key(current),))
         if any(r.get('net_capture') for r in data['records']):
             self._trim_net_probes()
         if (is_table or is_rack) and day and day not in fresh_since:
@@ -975,9 +934,6 @@ class PscubeStore:
         if is_rack and isinstance(data.get('net_warning'), str):
             # 差枚の元データだけ取れなかった（数値・グラフは保存済み、差枚は空欄のまま）。
             result['net_warning'] = data['net_warning'][:200]
-        denied = net_denied_status(data['records']) if is_rack else None
-        if denied:
-            result['net_denied'] = denied
         return result
 
     def _absent_racks(self):
@@ -1089,7 +1045,7 @@ class PscubeStore:
             if len(rows) + len(missing) != machine.get('expected_count') or (cutoff is not None and oldest is not None and oldest < cutoff):
                 pending.append((index, -1, machine['url']))
             else:
-                pending += [(index, r['rack'], r['detail_url']) for r in rows if r.get('detail_url') and _record_key(r) not in captured and not skips_rack_page(r)]
+                pending += [(index, r['rack'], r['detail_url']) for r in rows if r.get('detail_url') and _record_key(r) not in captured and not no_hits(r)]
         if after is not None and pending:
             keys = [_machine_key(m) for m in machines]
             if after[0] in keys:
@@ -1408,9 +1364,6 @@ class AutoPilot:
     ready のときだけ、手動の「未取得を取り込む」と同じ処理を始める。
     """
     MAX_FAILURES = 3
-    # 機種一覧が足りないとき（2026-11-05、Android `pscubeListMaxRetries` などと同じ）：60回まで読み直し、ページを読み込み
-    # 直すのは3回に1回・3回まで（ほかは同じページで下まで送り直すだけで、サイトへの通信は増えない）。
-    LIST_MAX_RETRIES, LIST_RELOAD_EVERY, LIST_MAX_RELOADS = 60, 3, 3
     # P’s CUBEの間隔（秒）。サイトに止められないよう、メルヘン（0.1〜4.5秒）より長くする。
     MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 15, 25, 20
     # 対象のページなのにデータが出ない（人間確認の画面でもない）状態が、この回数・秒数続いたら
@@ -1447,10 +1400,8 @@ class AutoPilot:
         self.index_confirmation = None
         self.index_confirmation_page = None
         self.loaded_pages = 0
-        # 自動取り込みが止まったときの文。窓はこれを見て閉じる（close_when_finished）。「すべて取り込みました」のほか、
-        # 2026-11-05 から通信エラー（403のアクセス拒否など）・止められた・同じページで3回失敗して待つときも（_stop_and_close）。
+        # 自動取り込みが「すべて取り込みました」で止まったときの文。窓はこれを見て閉じる（close_when_finished）。
         self.completed = None
-        self.list_retries = {}   # 機種一覧が足りなかった回数（ページごと、2026-11-05）
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
 
@@ -1513,7 +1464,6 @@ class AutoPilot:
             self.auto.configure(enabled, seconds)
             if enabled:
                 self.failures.clear()
-                self.list_retries.clear()
                 self.done.clear()
         self.render()
         return self.state()
@@ -1521,24 +1471,10 @@ class AutoPilot:
     def connection_failed(self, message):
         """Native WebView2 callback: no JS/UI wait here."""
         with self._lock:
-            was_auto = self.auto.state()['enabled']
             self.connection_error = message
             self.index_confirmation = self.index_confirmation_page = None
             self.auto.configure(False, self.auto.state()['seconds'])
             self.auto.pause(message)
-            if was_auto:
-                # 自動取り込み中の通信エラー（403のアクセス拒否など）は、窓を閉じてサイトのページを開いたままにしない。
-                # 手で開いていたときは閉じない（「もう一度開く」などで続けられる）。
-                self._stop_and_close(f'自動取り込みを止めました（通信エラー：{message}）')
-
-    def _stop_and_close(self, message):
-        """自動取り込みを止め、取り込み窓を閉じる文を残す（2026-11-05 利用者「ABCD実装」のA）。サイトのページは開いて
-        いるだけで定期的に通信する（jquery.netcube.alive.js、AGENTS.md 2026-10-06）ので、自動取り込みが止まった後は
-        窓を開いたままにしない（完了のときは 2026-10-30 から閉じていた）。鍵を持って呼ぶ。"""
-        self.auto.configure(False, self.auto.state()['seconds'])
-        self.target_day = None
-        self.completed = message + '。サイトのページは閉じました。時間を空けてから、Cookieを消さずに取り込み窓を開き直してください'
-        self.auto.pause(self.completed)
 
     def connection_started(self):
         with self._lock:
@@ -1594,7 +1530,8 @@ class AutoPilot:
                 self.missing.append(now)
                 if len(self.missing) >= self.BLOCK_CHECKS and now - self.missing[0] >= self.BLOCK_SECONDS:
                     self.missing.clear()
-                    self._stop_and_close(BLOCKED_MESSAGE)
+                    self.auto.configure(False, self.auto.state()['seconds'])
+                    self.auto.pause(BLOCKED_MESSAGE)
                     self.render()
                     return
             else:
@@ -1613,7 +1550,7 @@ class AutoPilot:
             elif probe.get('signature') in self.done:
                 self.auto.pause('ON・次のページ待ち（同じページは重複保存しません）', token)
             elif self.failures.get(probe.get('signature'), 0) >= self.MAX_FAILURES:
-                self._stop_and_close('同じページで3回失敗したため、自動取り込みを止めました（内容を確かめて手動で取り込むか、ONで再開）')
+                self.auto.pause('ON・同じページで3回失敗したため待機中（内容を確かめて手動で取り込むか、OFF→ONで再開）', token)
             else:
                 signature = probe['signature']
 
@@ -1659,33 +1596,28 @@ class AutoPilot:
                     result['reload'] = False
                     self.index_confirmation = self.index_confirmation_page = None
                     return
-                # 機種一覧が足りない：まず同じページのまま、次の回に下まで送り直して読み直す（2026-11-05 利用者「手作業だと
-                # こんなことにならないよ」。Android は11/4から。以前のPCは毎回ページを読み込み直し、一覧がまた20件からになった）。
-                # ページを読み込み直すのは3回に1回・3回まで。60回で止めて窓を閉じる（一晩じゅう読み直さない）。
-                count = self.list_retries.get(signature, 0) + 1
-                self.list_retries[signature] = count
-                short = result.get('short')
-                if count >= self.LIST_MAX_RETRIES:
-                    result['reload'] = False
+                # 再確認も同じページの失敗に数える。読むたびに違う一覧が返り続けても、開き直しは3回まで
+                # （数えないと、一晩じゅう機種一覧を開き直し続ける。Android `_capture` と同じ）。
+                count = None
+                if signature is not None:
+                    count = self.failures[signature] = self.failures.get(signature, 0) + 1
+                if count is not None and count >= self.MAX_FAILURES:
+                    result['reload'] = False                 # 3回目は開き直さない（この後は待機）
                     self.index_confirmation = self.index_confirmation_page = None
-                    self._stop_and_close(f'機種一覧が途中までしか読めていません（いつもの{short[1]}機種に対して{short[0]}機種）。'
-                                         f'{count}回読み直しても同じだったため、自動取り込みを止めました' if short else
-                                         f'機種一覧が前回より少なく、{count}回読み直しても進まなかったため、自動取り込みを止めました')
-                elif count % self.LIST_RELOAD_EVERY == 0 and count // self.LIST_RELOAD_EVERY <= self.LIST_MAX_RELOADS:
-                    result['reload'] = True
-                    self.auto.pause(f'ON・機種一覧を開き直し、もう一度確認します（{count}回目）')
-                else:
-                    result['reload'] = False
-                    result['reread'] = True
-                    self.auto.pause(f'ON・機種一覧が足りないため、同じページで下まで送り直します（{count}回目）')
+                short = result.get('short')
+                if enabled:
+                    self.auto.pause('ON・機種一覧を開き直し、もう一度確認します' + (f'（{count}回目）' if count else '')
+                                    if result.get('reload', True) else
+                                    f'ON・機種一覧が途中までしか読めていません（いつもの{short[1]}機種に対して{short[0]}機種）。'
+                                    '3回開き直しても同じでした。待機中（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）'
+                                    if short else
+                                    'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
+                                    '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）')
             elif result is not None:
                 if signature is not None:
                     self.done.add(signature)
                     self.failures.pop(signature, None)
-                if enabled and result.get('net_denied'):
-                    # 台の数値は保存できたが、差枚の通信がサイトに拒否された。次の台へ進まずに止めて窓を閉じる。
-                    self._stop_and_close(f'差枚のデータの通信をサイトに拒否されました（HTTP {result["net_denied"]}）。自動取り込みを止めました')
-                elif enabled and not result.get('next_url'):
+                if enabled and not result.get('next_url'):
                     self.auto.configure(False, self.auto.state()['seconds'])
                     day, self.target_day = self.target_day, None
                     self.completed = ('すべて取り込みました（自動取り込みを停止しました）' if not day else
@@ -1857,11 +1789,6 @@ def overlay_script(capture_script, index_url):
         if (!capturedUrl || identity(location.href) !== identity(capturedUrl)) return;
         if (result.retry_index) {
           capturedUrl = null;
-          if (autoEnabled && result.reread) {
-            // まず同じページのまま、次の見張りの回に下まで送り直して読み直す（ページは読み込み直さない）。
-            idle('機種一覧が足りないため、同じページで下まで送り直します');
-            return;
-          }
           if (!autoEnabled || result.reload === false) {
             idle(result.short ? `機種一覧が途中までしか読めていません（いつもの${result.short[1]}機種に対して${result.short[0]}機種）。保存していません`
               : '機種一覧が前回より少なく、保存していません');
@@ -1874,8 +1801,7 @@ def overlay_script(capture_script, index_url):
         const way = result.direction === 'bottom' ? '下から' : result.direction === 'top' ? '上から' : '';
         idle(`${result.skipped || result.kind + 'を保存'} · 残り${result.remaining}${way ? '（' + way + '）' : ''}${result.net_warning ? ' · ' + result.net_warning : ''} · ${result.backup || ''}`);
         capturedUrl = null;
-        // 差枚の通信がサイトに拒否されたときは自動取り込みを止めた（窓を閉じる）。次のページへ移らない（2026-11-05）。
-        if (result.next_url && !result.net_denied) location.href = result.next_url;
+        if (result.next_url) location.href = result.next_url;
       };
       const run = async () => {
         window.__pscubeBusy = true;
@@ -1884,8 +1810,6 @@ def overlay_script(capture_script, index_url):
           const before = location.href;
           const expectedCount = location.pathname.endsWith('nc-v05-011.php')
             ? await window.pywebview.api.get_installation_count() : null;
-          const expectedLast = location.pathname.endsWith('nc-v03-001.php')
-            ? await window.pywebview.api.get_last_machine() : null;
           if (identity(location.href) !== identity(before)) throw new Error('読み取り中にページが切り替わりました。');
           await SCROLL_SCRIPT;
           if (identity(location.href) !== identity(before)) throw new Error('読み取り中にページが切り替わりました。');
@@ -2005,24 +1929,8 @@ def keep_page_timers(environ=os.environ):
 FINISHED_NAME = 'pscube-capture-finished.json'
 
 
-def last_index_machine(db_path) -> str | None:
-    """前回の機種一覧の最後の機種名（無ければ None）。機種一覧をこの機種が出るまで送る（SCROLL_SCRIPT の expectedLast、
-    2026-11-05）。Android `PscubeStore.lastIndexMachine` と同じ。"""
-    store = PscubeStore(db_path, recording=False)
-    try:
-        keys = json.loads(store._state('active_machine_keys') or '[]')
-    finally:
-        store.close()
-    try:
-        name = json.loads(keys[-1])[2] if keys else None
-    except (TypeError, ValueError, IndexError):
-        return None
-    return name if isinstance(name, str) and name else None
-
-
 def close_when_finished(pilot, saving, window, data_dir) -> bool:
     """自動取り込みが「すべて取り込みました」で止まり、保存も終わっていれば、結果の文を親画面への知らせに残して窓を閉じる。
-    2026-11-05 から、通信エラー（403など）・止められた・同じページで3回失敗したときも同じく閉じる（AutoPilot._stop_and_close）。
 
     取り込み窓はタイマーを間引かない設定（keep_page_timers）なので、サイトのページを開いたままにすると、取り込みの
     あともサイトの定期通信が続く（2026-10-30 利用者「各取り込み終わったら停止してほしい」、PCのP’s CUBEだけ）。
@@ -2062,9 +1970,6 @@ def run_session(db_path, export_path):
 
         def get_installation_count(self):
             return installation_count(db_path, self._window.get_current_url())
-
-        def get_last_machine(self):
-            return last_index_machine(db_path)
 
         def submit_page(self, raw):
             with self._capture_lock:

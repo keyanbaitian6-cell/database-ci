@@ -139,3 +139,12 @@ Android：`auto_capture_state.dart`・`web_import_page.dart`・`AutoCaptureServi
 - **PCも、機種一覧が足りないときはまず同じページで読み直す**（Androidは11/4から）。`AutoPilot.finished` の `retry_index`：60回まで読み直し（`LIST_MAX_RETRIES`）、ページを読み込み直すのは3回に1回・3回まで（`LIST_RELOAD_EVERY`・`LIST_MAX_RELOADS`）、ほかは結果に `reread` を付け、取り込みカードは読み込み直さずに次の見張りの回にもう一度下まで送って読み直す。60回で止めて窓を閉じる。以前は足りないたびにページを読み込み直し（一覧がまた20件から）、3回で止まった。
 - **差枚の元データの通信がサイトに拒否されたら（HTTP 403・429）、自動取り込みを止める**（PC `net_denied_status`・結果の `net_denied` → `_stop_and_close`、Android `pscubeNetDenied` → `_stopAuto`・通知）。台の数値は保存し、差枚は空欄のまま。11/5 20:03、PCで差枚の通信だけ403になり、前のコードは次の台へ進み続けていた。
 - 確認：PC `tests/test_pscube_import.py`（読み直しは3回に1回・3回まで・60回で止める、差枚の拒否の判定、最後の機種名）、`tests/test_pscube_auto.py`（差枚の拒否で止める）、`tool/test_pscube_scroll.mjs`（一番下に4回着いてやっと続きが始まる一覧でも最後の機種まで読む。最後の機種を知らないと40件で終わる＝以前の動き。最後の機種が無い日も時間切れにしない）。Android `test/pscube_list_wait_test.dart`（同じ3つ。一番下に5回着いてやっと始まる一覧）、`test/pscube_auto_test.dart`（差枚の拒否の判定）、`test/pscube_store_test.dart`（最後の機種名）。
+
+## 2026-11-06：PCは11/3の仕様に戻した（利用者「じゃあ11/3までの仕様に一旦戻そう」「PCだけ」）
+
+- 11/5夜〜11/6 0時のPCの取り込みが、ONから8〜12分でHTTP 403で止まり続けたため。
+- **PCの `database/pscube_import.py` は `fae1565`（11/3）の版に戻した。** 上の2つの節（ABCD、最後の機種まで送る・同じページで読み直す・差枚の403で止める）は、**PCでは今は動かない**。試験（`database/tests/test_pscube_import.py`・`test_pscube_auto.py`・`database_android/tool/test_pscube_scroll.mjs`）も11/3の版に戻した。
+- 残したのは、errors.log への記録だけ（`pscube.auto.stop` 止まった理由、`pscube.auto.switch` ボタンのON/OFF、`pscube.auto.off` それ以外でOFFになったとき。ボタンのOFFを二重に残さない抑えも含む）。サイトへのアクセスは変えない。
+- **Android は戻していない**（スマホは緊急用。入っているのは0.5.52で、11/4の同じページでの読み直し・取り戻しを含む。11/5のABCD等のAndroid分はソースにはあるがAPK未作成）。上の2つの節のAndroid分はソースに残っている。
+- 照合版（`release_info.py`）は作り直していない（`8feaf32f8996` のまま。`1c07209` と同じ扱い）。
+- 戻した版で403が続くか・止まるかで、11/5の変更が原因かを見分ける。11/5の変更をPCに入れ直すときは、`git show 7e445b9 88bcd7a 1c07209 -- database/pscube_import.py` が元になる。
