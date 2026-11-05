@@ -484,3 +484,11 @@
   - それ以外でOFFになったら、見張り（`auto_loop`）が `pscube.auto.off` にその時の表示の文を残す（今日の「何も出ずにOFFになった」を追うため）。
 - 試験：`tests/test_pscube_auto.py` の窓を閉じる試験で `pscube.auto.stop` の行を確かめる。PCのP’s CUBE 144件・`test_error_log`・`test_release*` 成功。照合版 `547648247513`（生成スクリプト5本。.gs は版の文字だけ、貼り替え不要）、`test_release_info`・`test_viewer_parts`・`test_pscube_capture` 成功。全体ゲートは流していない（PCの1ファイルと試験だけ。CIのfullで流れる）。
 - 送信：未（コードの変更。次に送るときに一緒に）。
+
+## 【7e445b9 のCI full 失敗の原因と試験の直し・PC版の起動し直し】2026-11-05 Claude
+
+- CI [42014916445](https://github.com/imakurudev-eng/database/actions/runs/42014916445)（`7e445b9`）：pc (ubuntu)・pc (windows) は成功、**full が失敗**（利用者がエラーメールの画面を共有）。`gh run view --log-failed` で、落ちたのは `test_viewer_event_calendar_browser` の1件だけ（`saved name is shown with no late mark`、試験の150行目、日本時間20:14ごろ）。ほかの段は成功。再実行はしていない。
+- 原因（試験の書き方）：イベント名を保存したあと `waitForTimeout(500)` で0.5秒だけ待ち、表示・保存を1回だけ確かめていた（3か所）。CIの機械が重いと間に合わない。試験の時計は 2026-10-17 に固定なので日付は関係ない。`7e445b9` の変更（P’s CUBE）はこの画面に関係しない。同じ試験は手元のゲート（19:28〜19:42）とそれまでのCIでは成功していた。
+- 直し（試験だけ）：`database_android/tool/test_viewer_event_calendar_browser.mjs` の3か所を、ファイルにある `waitSeen`（表示が出るまで最大15秒）・`waitFor`（保存されたイベントが期待どおりになるまで最大20秒）に置き換えた。手元で、ゲートの閲覧ページ（`/c/w/cbw-abcd1105/viewer`）に対して2回流し、2回とも成功。
+- PC版：利用者「start.cmdから起動し直して、pscubeの自動取り込みまでonにして」。AIがPC版本体に通常の閉じる操作を送って閉じ、`start.cmd` から起動し直した（20:42起動を確認）。取り込み窓を開いて自動取り込みをONにする画面の操作は、操作の許可がスマホのRemote Controlからは出せず（許可の画面はPCにだけ出る）、利用者が戻ってきて「もういいや」。取り込み窓は利用者が開く。新しい取り込み窓は `498c952` までのコード（止まったら窓を閉じて理由を知らせる・errors.log に残す）で動く。
+- 送信：`498c952`（errors.log）とこの試験の直しは手元のみ。送るとCIが1回動く。

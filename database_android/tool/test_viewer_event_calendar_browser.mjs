@@ -146,8 +146,8 @@ try {
   // 先の日に入れる：自由記入で保存すると、その時刻（前日まで）で端末に残る。
   await clickDay(25);
   await enterName('周年');
-  await page.waitForTimeout(500);
-  assert.ok(await seen(/^25\s*周年$/),'saved name is shown with no late mark');
+  // 保存と表示が済むまで待つ（2026-11-05、0.5秒だけ待って1回確かめる形はCIの重い時に間に合わず落ちた）。
+  await waitSeen(/^25\s*周年$/); // saved name is shown with no late mark
   const saved=(await storedEvents()).find(e=>e.day==='2026-10-25');
   assert.equal(saved.name,'周年');
   assert.ok(Date.parse(saved.updated_at)<Date.parse('2026-10-25T02:00:00+09:00'));
@@ -157,7 +157,7 @@ try {
   await clickDay(21);
   await clickDay(22);
   await enterName('半列');
-  await page.waitForTimeout(500);
+  await waitFor(async()=>(await storedEvents()).filter(e=>(e.day==='2026-10-21'||e.day==='2026-10-22')&&e.name==='半列').length===2,'range saved');
   const ranged=(await storedEvents()).filter(e=>e.day==='2026-10-21'||e.day==='2026-10-22');
   assert.deepEqual(ranged.map(e=>e.name),['半列','半列']);
 
@@ -169,7 +169,7 @@ try {
   await page.getByRole('button',{name:'イベントを編集',exact:true}).click();
   await page.getByRole('button',{name:'イベントなしにする',exact:true}).click();
   await page.getByRole('button',{name:'Back'}).or(page.getByRole('button',{name:'戻る'})).first().click();
-  await page.waitForTimeout(500);
+  await waitFor(async()=>(await storedEvents()).find(e=>e.day==='2026-10-03')?.name===null,'removal saved');
   const removed=(await storedEvents()).find(e=>e.day==='2026-10-03');
   assert.equal(removed.name,null);
   assert.ok(removed.updated_at);
