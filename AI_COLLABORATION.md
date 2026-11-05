@@ -520,3 +520,4 @@
 - Claudeによる同じ製品差分の直近成功結果（前項のPC146件、Flutter70件、JSスクロール、release_info）はその記録を根拠として引き継ぎ、重複実行していない。全体ゲート・実サイトでの動作は今回も未確認。`git diff --check` 成功。
 - 履歴・送信先：`database/.venv/Scripts/python.exe tools/push_ci.py --dry-run` で、両リポジトリのmainが基準HEADに含まれることと、日本時間11/5の送り先 `imakurudev-eng/database` を確認。今回の6ファイルを明示指定してコミットし、同スクリプトでmainへ通常pushする。CI成功は送信成功とは分けて確認する。
 - 反映範囲：PCは次に取り込み窓を開いたときから。Androidは次のAPKから。本作業でのAPK・EXE作成、Web公開、Googleスクリプト貼り替えは無し。
+- 送信結果：修正と上の確認記録を `1c07209`（6ファイル）にまとめ、日本時間21:44に `tools/push_ci.py` で正本mainへpush成功。送信後の `git fetch origin main` で手元HEADと正本mainの一致・作業コピーに未コミット変更が無いことを確認。[CI 42029663536](https://github.com/imakurudev-eng/database/actions/runs/42029663536) は対象 `1c0720926e9648e3c633c7e0d57db1f280d27548` で実行中（成功は未確認）。本行は完了記録だけの追記として別コミットにし、同じ送り先へ反映する（既存のMarkdown除外により追加のCIは動かない）。
