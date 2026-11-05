@@ -8,7 +8,7 @@ from pathlib import Path
 
 from datetime import datetime
 
-from pscube_import import BROWSER_ARGUMENTS, PscubeIndexRetry, PscubeStore, ROOT_URL, business_day, keep_page_timers, installation_count, recent_business_days, same_page, table_url_for_day
+from pscube_import import BROWSER_ARGUMENTS, PscubeIndexRetry, PscubeStore, RACK_PAGE_MIN_GAMES, ROOT_URL, business_day, keep_page_timers, installation_count, recent_business_days, same_page, skips_rack_page, table_url_for_day
 
 
 class PscubeImportTests(unittest.TestCase):
@@ -215,7 +215,10 @@ class PscubeImportTests(unittest.TestCase):
         self.assertEqual([r.get('reload', True) for r in results], [True, True, False])
         self.assertEqual(self.store._state('active_machine_keys'), before, '途中の一覧で機種の並びを上書きしない')
         self.assertIn('途中までしか読めていません（いつもの10機種に対して7機種）', pilot.auto.state()['message'])
-        self.assertIsNone(pilot.completed, '「すべて取り込みました」にしない')
+        self.assertNotIn('すべて取り込みました', pilot.completed, '「すべて取り込みました」にしない')
+        # 2026-11-05 利用者「ABCD実装」のA：待機せずに自動取り込みを止め、窓を閉じる（サイトのページを開いたままにしない）。
+        self.assertIn('自動取り込みを止めました。サイトのページは閉じました', pilot.completed)
+        self.assertFalse(pilot.auto.state()['enabled'])
         backup.assert_not_called()
         # 8割（8機種）なら今までどおり、開き直して同じなら受け付ける。手動は受け付ける。
         with self.assertRaises(PscubeIndexRetry) as retry:
@@ -752,6 +755,31 @@ class PscubeImportTests(unittest.TestCase):
         at_only = dict(idle, at_art=1)
         self.store.import_page(self.page(self.machines[0]['url'], [dict(self.machines[0], expected_count=None)], [hit, zero, dict(at_only, observed_at='2026-10-01T13:00:00+09:00')]), self.machines[0]['url'])
         self.assertEqual(self.store.next_target(self.day)[1], 2, 'AT/ARTが付いたらまた取る対象に戻る')
+
+    # 2026-11-05 利用者「ABCD実装」のD。
+    def test_racks_at_or_below_500_games_skip_the_seven_day_page(self):
+        import core
+        self.assertEqual(RACK_PAGE_MIN_GAMES, core.MIN_SCORED_GAMES, '採点の下限と同じ（Android minScoredGames も500）')
+        self.machines[0]['expected_count'] = 3
+        self.store.import_page(self.page(self.index_url, self.machines[:1]), self.index_url)
+        hit = self.record(self.machines[0], 1526)
+        low = dict(self.record(self.machines[0], 1527), games=500)
+        just = dict(self.record(self.machines[0], 1528), games=501)
+        table = self.page(self.machines[0]['url'], [dict(self.machines[0], expected_count=None)], [hit, low, just])
+        result = self.store.import_page(table, self.machines[0]['url'])
+        self.assertEqual(result['remaining'], 2, '500G以下の台（当たりあり）は台別ページを読まない。501Gは読む')
+        self.assertEqual(len(self.store.export_payload()['records']), 3, '数値は3台とも保存する')
+        self.assertTrue(skips_rack_page(low))
+        self.assertFalse(skips_rack_page(just))
+        self.assertFalse(skips_rack_page(dict(just, games=None)), '回転数が分からない台は読む')
+
+    # 2026-11-05 利用者「ABCD実装」のB。
+    def test_a_rack_page_marks_all_seven_days_so_past_days_are_not_revisited(self):
+        self.seed_rack()
+        for ago in range(7):
+            day = (date.fromisoformat(self.day) - timedelta(days=ago)).isoformat()
+            self.assertEqual(self.store.next_target(day)[1], 0, f'{day} は台別ページの履歴で済んでいる')
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM rack_captures').fetchone()[0], 7)
 
     def test_okidoki_machines_are_never_visited_or_saved(self):
         # メルヘンと同じ約束：沖ドキ（半角の「沖ﾄﾞｷ」、「オキドキ」も）は対象外。

@@ -107,6 +107,9 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   // スマホを操作してアプリに戻ったときから、また次の0時を待つ（取り込み後に朝まで点けっぱなしにしない）。
   String? _waitingScreen;
   bool _releasedAfterRun = false;
+  // サイトのページを空白にしているか（[_park]）と、最後にサイトのページを開いた・取り込んだ時刻（2026-11-05）。
+  bool _parked = false;
+  DateTime? _lastSiteActivity;
   bool _firedTonight = false;
   DateTime _now() => widget.now?.call() ?? DateTime.now();
   // 日付指定取り込み：取り込む営業日（null＝サイトの表示どおり）と、機種を数える向き
@@ -137,6 +140,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       }
       _midnightTick();
       _updateWaitingScreen();
+      _parkWhenIdle();
       unawaited(_autoTick());
     });
     unawaited(_initialize());
@@ -152,6 +156,11 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         configureNavigation: () => _web.setNavigationDelegate(
           NavigationDelegate(
             onPageStarted: (url) {
+              // 空白のページ（[_park]・サイトの記録を消すとき）は、開いたページとして数えない。止まった理由と
+              // 「もう一度開く」の開き先（前のページ）をそのまま残す。
+              if (url == 'about:blank') return;
+              _parked = false;
+              _lastSiteActivity = _now();
               if (_navigationUrl != null &&
                   _navigationUrl != url &&
                   _samePage(_navigationUrl!, url)) {
@@ -237,7 +246,9 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       _status = message;
       _autoStatus = '停止中（通信エラー）';
     });
-    unawaited(_stopAuto('停止中（通信エラー）'));
+    // 自動取り込み中の通信エラー（403のアクセス拒否など）は、止めてサイトのページを空白にする。手で開いていたときは
+    // 「もう一度開く」で同じページを開き直せるよう、そのままにする。
+    unawaited(_stopAuto('停止中（通信エラー）', park: wasAuto));
   }
 
   // This site writes scroll position to the hash on its overview pages.
@@ -520,13 +531,16 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     if (_busy || _opening || _preparing) return;
     setState(() => _opening = true);
     try {
-      await _stopAuto('停止中（手動で再読み込み）');
+      final parked = _parked;
+      await _stopAuto('停止中（手動で再読み込み）', park: false);
       if (!mounted) return;
       if (!_browserReady) {
         await _prepareBrowser();
         return;
       }
-      final target = _connection.page;
+      // 空白にしていたときは、いつもの入口の機種一覧から開く（空白から開くとアドレスを直接開く形になるので、
+      // 途中の台別ページなどを直接開かない。2026-11-05）。
+      final target = parked ? Uri.parse(PscubeStore.index) : _connection.page;
       final url = target != null && PscubeConnection.allowedPage(target)
           ? target
           : Uri.parse(PscubeStore.root);
@@ -600,7 +614,8 @@ class _PscubeImportPageState extends State<PscubeImportPage>
   Future<void> _toggleAuto([String? direction]) async {
     if (_autoChanging) return;
     if (_auto.enabled) {
-      await _stopAuto('停止中（開始済みの保存は完了まで待ちます）');
+      // 利用者がOFFにした：続けて手で取り込むことがあるので、すぐには空白にしない（操作が無ければ _parkWhenIdle）。
+      await _stopAuto('停止中（開始済みの保存は完了まで待ちます）', park: false);
       return;
     }
     if (direction != null) _direction = direction;
@@ -634,7 +649,8 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     }
   }
 
-  Future<void> _stopAuto(String message) async {
+  /// 自動取り込みを止める。[park] なら、止めた後にサイトのページを空白にする（[_park]、2026-11-05）。
+  Future<void> _stopAuto(String message, {bool park = true}) async {
     _auto.turnOff();
     _store?.resetIndexConfirmation();
     // 「すべて取り込みました」などで止まった時刻を、一覧の件数と並べて読めるよう残す（2026-11-04）。
@@ -655,6 +671,48 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       _firedTonight = false;
       _releasedAfterRun = true;
     }
+    if (park) unawaited(_park());
+  }
+
+  /// サイトのページを空白にする（2026-11-05 利用者「ABCD実装」のA）。サイトのページは開いているだけで定期的に
+  /// 通信するため、自動取り込みが止まった後・終わった後・[pscubeIdlePark] 操作が無いときは開いたままにしない。
+  /// 次に開くとき（「もう一度開く」・ボタン・0時の予約）は、今までどおりページを読み込む。
+  Future<void> _park() async {
+    if (!mounted || _parked || !_browserReady || _opening || _preparing) {
+      return;
+    }
+    _parked = true;
+    try {
+      await _web.loadRequest(Uri.parse('about:blank'));
+    } catch (_) {
+      _parked = false; // 空白にできなくても取り込みには関係しない。次の見張りでやり直す。
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (_connection.failure == null) {
+        _status =
+            'サイトのページを閉じました（開いたままだとサイトと定期的に通信するため）。'
+            '「もう一度開く」か「スロット機種一覧」で開き直せます。';
+      }
+    });
+  }
+
+  /// 自動取り込みがOFFのまま [pscubeIdlePark] たったら空白にする（周期の見張りから呼ぶ）。
+  void _parkWhenIdle() {
+    final last = _lastSiteActivity;
+    if (_parked ||
+        last == null ||
+        _auto.enabled ||
+        _autoChanging ||
+        _busy ||
+        _opening ||
+        _midnightStarting ||
+        _now().difference(last) < pscubeIdlePark) {
+      return;
+    }
+    unawaited(_park());
   }
 
   /// 0時の予約を待つ間の画面（常駐サービスは起こさない）。周期Timerから呼び、変わったときだけ切り替える。
@@ -954,6 +1012,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       if (_page != page || !_samePage(capturedUrl, await _web.currentUrl())) {
         throw const FormatException('保存前にページが切り替わりました。');
       }
+      _lastSiteActivity = _now(); // 取り込んだ（[_parkWhenIdle]）
       final result = await store.importPage(
         raw,
         capturedUrl,
@@ -1105,7 +1164,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
       _autoFailures[signature] = pscubeAutoMaxFailures; // 見張りは、このページをもう読まずに待つ
       final message =
           'ON・$detail。$count回読み直しても進みませんでした。待機中'
-          '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）';
+          '（「もう一度開く」で開き直し、一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）';
       _autoHeld[signature] = message;
       _autoMessage(message);
       unawaited(
@@ -1114,9 +1173,11 @@ class _PscubeImportPageState extends State<PscubeImportPage>
           '$detail。$count回読み直しても進みませんでした。',
         ),
       );
+      unawaited(_park()); // 待機中もページを開いたままにしない（「もう一度開く」で機種一覧から開き直せる）
       return;
     }
-    if (count % pscubeListReloadEvery != 0) {
+    if (count % pscubeListReloadEvery != 0 ||
+        count ~/ pscubeListReloadEvery > pscubeListMaxReloads) {
       _autoMessage('ON・$detail。同じページで下まで送り直します（$count回目）');
       return;
     }
@@ -1189,7 +1250,7 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     if (ok != true || !mounted || _busy || _opening) return;
     setState(() => _busy = true);
     try {
-      await _stopAuto('停止中（サイトの記録を消して開き直します）');
+      await _stopAuto('停止中（サイトの記録を消して開き直します）', park: false);
       _blankLoaded = Completer<void>();
       await _web.loadRequest(Uri.parse('about:blank'));
       await _blankLoaded!.future.timeout(const Duration(seconds: 10));

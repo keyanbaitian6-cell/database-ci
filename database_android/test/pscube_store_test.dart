@@ -913,7 +913,43 @@ void main() {
           RegExp(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?[+-]\d\d:\d\d$'),
         ),
       );
-      expect(data['rack_captures'], hasLength(1));
+      expect(
+        data['rack_captures'],
+        hasLength(7),
+        reason: '台別7日分の7日すべてを取り込み済みにする（2026-11-05）',
+      );
+    });
+
+    // 2026-11-05 利用者「ABCD実装」のB・D。
+    test('台別ページの7日分で前の日も取り込み済みになり、前の日の台別ページを読み直さない', () async {
+      await seedRack();
+      for (var i = 0; i < 7; i++) {
+        final d = DateTime.utc(
+          2026,
+          10,
+          1,
+        ).subtract(Duration(days: i)).toIso8601String().substring(0, 10);
+        final next = await store.nextTarget(d);
+        expect(next.url, isNull, reason: '$d は10/1の台別ページの履歴で済んでいる');
+        expect(next.remaining, 0);
+      }
+    });
+
+    test('500G以下の台は台別ページを読まない（当たりがあっても）。回転数の分からない台は読む', () {
+      Map<String, dynamic> row(int? games, {int bb = 1}) => {
+        'bb': bb,
+        'rb': 0,
+        'at_art': 0,
+        'games': games,
+      };
+      expect(PscubeStore.skipsRackPage(row(500)), isTrue);
+      expect(PscubeStore.skipsRackPage(row(501)), isFalse);
+      expect(
+        PscubeStore.skipsRackPage(row(3000, bb: 0)),
+        isTrue,
+        reason: '当たり0回',
+      );
+      expect(PscubeStore.skipsRackPage(row(null)), isFalse);
     });
 
     test('イベント名：全貸玉に付け、書き出し・読み込みで新しい方が勝ち、古い末尾イベの印も読める', () async {

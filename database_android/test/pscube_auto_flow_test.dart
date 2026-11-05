@@ -222,6 +222,12 @@ void main() {
     );
   }
 
+  /// 一覧が進まないとき、[tries] 回読み直すまでにページを読み込み直す回数（3回に1回、[pscubeListMaxReloads] 回まで）。
+  int reloadsAfter(int tries) {
+    final reloads = tries ~/ pscubeListReloadEvery;
+    return reloads < pscubeListMaxReloads ? reloads : pscubeListMaxReloads;
+  }
+
   Future<void> tick(WidgetTester tester) async {
     elapsed += const Duration(seconds: 26); // 抽選値15〜25秒の上限を越す。
     // 周期Timer・一覧表示待ち・読取Promiseの監視をすべて仮想時間で実行。
@@ -501,14 +507,11 @@ void main() {
         expect(platform.web.captures, hasLength(i), reason: '$i回目も読み直す');
         expect(
           platform.web.pageReloads,
-          (i < pscubeListMaxRetries ? i : i - 1) ~/ pscubeListReloadEvery,
-          reason: '3回に1回だけ読み込み直す。上限の回は読み込み直さずに待つ',
+          reloadsAfter(i < pscubeListMaxRetries ? i : i - 1),
+          reason: '3回に1回だけ、3回まで読み込み直す（2026-11-05）。上限の回は読み込み直さずに待つ',
         );
       }
-      expect(
-        platform.web.pageReloads,
-        (pscubeListMaxRetries - 1) ~/ pscubeListReloadEvery,
-      );
+      expect(platform.web.pageReloads, pscubeListMaxReloads);
       await tick(tester);
       expect(
         platform.web.captures,
@@ -559,8 +562,8 @@ void main() {
       }
       expect(
         platform.web.pageReloads,
-        (pscubeListMaxRetries - 1) ~/ pscubeListReloadEvery,
-        reason: '同じ2機種の一覧が返り続けても受け付けない。3回に1回だけ読み込み直す',
+        reloadsAfter(pscubeListMaxRetries - 1),
+        reason: '同じ2機種の一覧が返り続けても受け付けない。3回に1回だけ、3回まで読み込み直す',
       );
       const shortNote =
           '途中までしか読めていません（いつもの3機種に対して2機種）。$pscubeListMaxRetries回読み直しても進みませんでした';
@@ -820,7 +823,41 @@ void main() {
       );
       expect(find.text('自動取り込み：OFF'), findsOneWidget);
       expect(find.textContaining('10/18の分をすべて取り込みました'), findsOneWidget);
+      expect(
+        platform.web.loads.last,
+        'about:blank',
+        reason: 'すべて取り込んだら、サイトのページを空白にする（定期通信を止める。2026-11-05）',
+      );
       expect(notices, ['P’s CUBE：取り込み完了｜10/18（日）：2機種・3台']);
+      await finish(tester);
+    });
+
+    // 2026-11-05 利用者「ABCD実装」のA。
+    testWidgets('予約を待つ間、操作が無いまま5分たったらサイトのページを空白にし、0時には機種一覧から始める', (
+      tester,
+    ) async {
+      clock = DateTime(2026, 10, 18, 23, 50);
+      await open(tester, reserved: true);
+      expect(platform.web.loads, isNot(contains('about:blank')));
+      await passMidnight(tester, DateTime(2026, 10, 18, 23, 54, 59));
+      expect(
+        platform.web.loads,
+        isNot(contains('about:blank')),
+        reason: '5分たつまでは開いたまま',
+      );
+      await passMidnight(tester, DateTime(2026, 10, 18, 23, 55, 1));
+      expect(platform.web.loads.last, 'about:blank');
+      expect(find.textContaining('サイトのページを閉じました'), findsOneWidget);
+      await passMidnight(tester, DateTime(2026, 10, 19, 0, 0, 1));
+      expect(find.text('自動取り込み：ON'), findsOneWidget);
+      expect(
+        platform.web.loads.last,
+        PscubeStore.index,
+        reason: '空白から機種一覧を開いて始める',
+      );
+      platform.web.show('index');
+      await tick(tester);
+      expect(platform.web.captures, ['index']);
       await finish(tester);
     });
 

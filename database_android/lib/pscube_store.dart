@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'models.dart' show timestampWithOffset;
+import 'scoring.dart' show minScoredGames;
 import 'pscube_viewer_data.dart';
 import 'capture_health.dart';
 
@@ -235,6 +236,14 @@ class PscubeStore {
 
   static bool noHits(Map<String, dynamic> r) =>
       (r['bb'] as int) + (r['rb'] as int) + (r['at_art'] as int) == 0;
+
+  /// 台別7日分を取りに行かない台（2026-11-05 利用者「ABCD実装」のD）：当たりが1回もない台（[noHits]）と、回転数が
+  /// 採点の下限（[minScoredGames]＝500G）以下の台。どちらも採点しない台で、1晩に約20ページ、サイトへのアクセスが減る
+  /// （11/5、サイトにアクセスを拒否された）。その台のグラフと差枚は無いまま（日の総差枚にも入らない）。全台一覧の数値は
+  /// 保存する。回転数が分からない台は読む。PC版 `skips_rack_page` と同じ。
+  static bool skipsRackPage(Map<String, dynamic> r) =>
+      noHits(r) ||
+      ((r['games'] as int?) ?? minScoredGames + 1) <= minScoredGames;
 
   static String _key(Map<String, dynamic> row, {bool record = false}) =>
       jsonEncode([
@@ -680,10 +689,14 @@ class PscubeStore {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
       if (rackPage) {
-        final current = records.singleWhere((r) => r['day'] == day);
-        await txn.insert('rack_captures', {
-          'key': _key(current, record: true),
-        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        // 台別ページには、その台の7日分（選んだ日とそれより前の日）の数値・グラフ・差枚が入る。前の日の分も取り込み済み
+        // にして、抜けた日の取り戻し・同じ日の取り直しで同じ台別ページを読み直さない（2026-11-05 利用者「ABCD実装」のB。
+        // 前の日の値は確定している。数値が変わった日は上で印を外す決まりのまま）。PC版と同じ。
+        for (final record in records) {
+          await txn.insert('rack_captures', {
+            'key': _key(record, record: true),
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
       }
     });
     if (records.any((r) => r['net_capture'] != null)) await _trimProbes();
@@ -1080,7 +1093,7 @@ class PscubeStore {
                 (r) =>
                     r['detail_url'] != null &&
                     !captured.contains(_key(r, record: true)) &&
-                    !noHits(r),
+                    !skipsRackPage(r),
               )
               .map((r) => (index, r['rack'] as int, r['detail_url'] as String)),
         );

@@ -135,8 +135,7 @@ RESET_SITE_SCRIPT = r'''(async () => {
   try { for (const key of await caches.keys()) await caches.delete(key); } catch (_) {}
   return true;
 })()'''
-BLOCKED_MESSAGE = ('サイトがデータを表示しなくなりました（止められた可能性）。自動取り込みを止めました。'
-                   '時間を空けてから、Cookieを消さずに「もう一度開く」を試してください。')
+BLOCKED_MESSAGE = 'サイトがデータを表示しなくなったため（止められた可能性）、自動取り込みを止めました'
 RESET_DONE_MESSAGE = ('サイトのCookie・保存データを消しました（取り込んだ記録はそのまま）。最初のページを開き直します。'
                       '人間確認・同意が出たら手で操作してください。')
 
@@ -274,6 +273,19 @@ def no_hits(r: dict) -> bool:
     台別7日分（グラフ）は取りに行かない（メルヘンv12の「大当たり0回はグラフを取らない」を、AT/ARTも
     含めて引き継ぐ。利用者の指定、2026-10-01）。一覧を取り直して当たりが付けば、また取る対象に戻る。"""
     return r['bb'] + r['rb'] + r['at_art'] == 0
+
+
+# 台別ページを読まない回転数の上限。採点の下限（core.MIN_SCORED_GAMES、Android `minScoredGames`）と同じ500G。
+RACK_PAGE_MIN_GAMES = 500
+
+
+def skips_rack_page(r: dict) -> bool:
+    """台別7日分を取りに行かない台（2026-11-05 利用者「ABCD実装」のD）：当たりが1回もない台と、回転数が
+    RACK_PAGE_MIN_GAMES（500G）以下の台。どちらも採点しない台で、1晩に約20ページ、サイトへのアクセスが減る
+    （11/5、サイトにアクセスを拒否された）。その台のグラフと差枚は無いまま。回転数が分からない台は読む。
+    Android `PscubeStore.skipsRackPage` と同じ。"""
+    games = r.get('games')
+    return no_hits(r) or (games is not None and games <= RACK_PAGE_MIN_GAMES)
 
 
 def _machine_key(m: dict) -> str:
@@ -904,7 +916,11 @@ class PscubeStore:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('active_machine_keys', json.dumps([_machine_key(m) for m in data['machines']], ensure_ascii=False)))
             if is_rack:
-                self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (_record_key(current),))
+                # 台別ページには、その台の7日分（選んだ日とそれより前の日）の数値・グラフ・差枚が入る。前の日の分も
+                # 取り込み済みにして、同じ日の取り直しで同じ台別ページを読み直さない（2026-11-05 利用者「ABCD実装」のB。
+                # 前の日の値は確定している。数値が変わった日は上で印を外す決まりのまま）。Androidと同じ。
+                for r in data['records']:
+                    self.db.execute('INSERT OR IGNORE INTO rack_captures VALUES (?)', (_record_key(r),))
         if any(r.get('net_capture') for r in data['records']):
             self._trim_net_probes()
         if (is_table or is_rack) and day and day not in fresh_since:
@@ -1045,7 +1061,7 @@ class PscubeStore:
             if len(rows) + len(missing) != machine.get('expected_count') or (cutoff is not None and oldest is not None and oldest < cutoff):
                 pending.append((index, -1, machine['url']))
             else:
-                pending += [(index, r['rack'], r['detail_url']) for r in rows if r.get('detail_url') and _record_key(r) not in captured and not no_hits(r)]
+                pending += [(index, r['rack'], r['detail_url']) for r in rows if r.get('detail_url') and _record_key(r) not in captured and not skips_rack_page(r)]
         if after is not None and pending:
             keys = [_machine_key(m) for m in machines]
             if after[0] in keys:
@@ -1400,7 +1416,8 @@ class AutoPilot:
         self.index_confirmation = None
         self.index_confirmation_page = None
         self.loaded_pages = 0
-        # 自動取り込みが「すべて取り込みました」で止まったときの文。窓はこれを見て閉じる（close_when_finished）。
+        # 自動取り込みが止まったときの文。窓はこれを見て閉じる（close_when_finished）。「すべて取り込みました」のほか、
+        # 2026-11-05 から通信エラー（403のアクセス拒否など）・止められた・同じページで3回失敗して待つときも（_stop_and_close）。
         self.completed = None
         self.eval_timeout = self.EVAL_TIMEOUT if eval_timeout is None else eval_timeout
         self._lock = threading.RLock()
@@ -1471,10 +1488,24 @@ class AutoPilot:
     def connection_failed(self, message):
         """Native WebView2 callback: no JS/UI wait here."""
         with self._lock:
+            was_auto = self.auto.state()['enabled']
             self.connection_error = message
             self.index_confirmation = self.index_confirmation_page = None
             self.auto.configure(False, self.auto.state()['seconds'])
             self.auto.pause(message)
+            if was_auto:
+                # 自動取り込み中の通信エラー（403のアクセス拒否など）は、窓を閉じてサイトのページを開いたままにしない。
+                # 手で開いていたときは閉じない（「もう一度開く」などで続けられる）。
+                self._stop_and_close(f'自動取り込みを止めました（通信エラー：{message}）')
+
+    def _stop_and_close(self, message):
+        """自動取り込みを止め、取り込み窓を閉じる文を残す（2026-11-05 利用者「ABCD実装」のA）。サイトのページは開いて
+        いるだけで定期的に通信する（jquery.netcube.alive.js、AGENTS.md 2026-10-06）ので、自動取り込みが止まった後は
+        窓を開いたままにしない（完了のときは 2026-10-30 から閉じていた）。鍵を持って呼ぶ。"""
+        self.auto.configure(False, self.auto.state()['seconds'])
+        self.target_day = None
+        self.completed = message + '。サイトのページは閉じました。時間を空けてから、Cookieを消さずに取り込み窓を開き直してください'
+        self.auto.pause(self.completed)
 
     def connection_started(self):
         with self._lock:
@@ -1530,8 +1561,7 @@ class AutoPilot:
                 self.missing.append(now)
                 if len(self.missing) >= self.BLOCK_CHECKS and now - self.missing[0] >= self.BLOCK_SECONDS:
                     self.missing.clear()
-                    self.auto.configure(False, self.auto.state()['seconds'])
-                    self.auto.pause(BLOCKED_MESSAGE)
+                    self._stop_and_close(BLOCKED_MESSAGE)
                     self.render()
                     return
             else:
@@ -1550,7 +1580,7 @@ class AutoPilot:
             elif probe.get('signature') in self.done:
                 self.auto.pause('ON・次のページ待ち（同じページは重複保存しません）', token)
             elif self.failures.get(probe.get('signature'), 0) >= self.MAX_FAILURES:
-                self.auto.pause('ON・同じページで3回失敗したため待機中（内容を確かめて手動で取り込むか、OFF→ONで再開）', token)
+                self._stop_and_close('同じページで3回失敗したため、自動取り込みを止めました（内容を確かめて手動で取り込むか、ONで再開）')
             else:
                 signature = probe['signature']
 
@@ -1605,14 +1635,12 @@ class AutoPilot:
                     result['reload'] = False                 # 3回目は開き直さない（この後は待機）
                     self.index_confirmation = self.index_confirmation_page = None
                 short = result.get('short')
-                if enabled:
-                    self.auto.pause('ON・機種一覧を開き直し、もう一度確認します' + (f'（{count}回目）' if count else '')
-                                    if result.get('reload', True) else
-                                    f'ON・機種一覧が途中までしか読めていません（いつもの{short[1]}機種に対して{short[0]}機種）。'
-                                    '3回開き直しても同じでした。待機中（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）'
-                                    if short else
-                                    'ON・機種一覧が前回より少なく、開き直すたびに違う一覧でした。3回で止めて待機中'
-                                    '（一覧を一番下まで表示して手動で取り込むか、OFF→ONで再開）')
+                if enabled and result.get('reload', True):
+                    self.auto.pause('ON・機種一覧を開き直し、もう一度確認します' + (f'（{count}回目）' if count else ''))
+                elif enabled:
+                    self._stop_and_close(f'機種一覧が途中までしか読めていません（いつもの{short[1]}機種に対して{short[0]}機種）。'
+                                         '3回開き直しても同じだったため、自動取り込みを止めました' if short else
+                                         '機種一覧が前回より少なく、開き直すたびに違う一覧だったため、3回で自動取り込みを止めました')
             elif result is not None:
                 if signature is not None:
                     self.done.add(signature)
@@ -1931,6 +1959,7 @@ FINISHED_NAME = 'pscube-capture-finished.json'
 
 def close_when_finished(pilot, saving, window, data_dir) -> bool:
     """自動取り込みが「すべて取り込みました」で止まり、保存も終わっていれば、結果の文を親画面への知らせに残して窓を閉じる。
+    2026-11-05 から、通信エラー（403など）・止められた・同じページで3回失敗したときも同じく閉じる（AutoPilot._stop_and_close）。
 
     取り込み窓はタイマーを間引かない設定（keep_page_timers）なので、サイトのページを開いたままにすると、取り込みの
     あともサイトの定期通信が続く（2026-10-30 利用者「各取り込み終わったら停止してほしい」、PCのP’s CUBEだけ）。

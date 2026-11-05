@@ -69,6 +69,28 @@ class AutoPilotTests(unittest.TestCase):
     def message(self):
         return self.pilot.state()['message']
 
+    # 2026-11-05 利用者「ABCD実装」のA：自動取り込みが止まったら窓を閉じる（サイトのページを開いたままにしない）。
+    def test_connection_error_during_auto_leaves_a_close_message_but_not_when_manual(self):
+        self.pilot.connection_failed('HTTP 403')
+        self.assertIsNone(self.pilot.completed, '手で開いていたときは窓を閉じない')
+        self.pilot.connection_started()
+        self.pilot.configure(True, 10)
+        self.assertTrue(self.pilot.state()['enabled'])
+        self.pilot.connection_failed('サイトがページ・データへのアクセスを拒否しました（HTTP 403）')
+        self.assertFalse(self.pilot.state()['enabled'])
+        self.assertIn('HTTP 403', self.pilot.completed)
+        self.assertIn('サイトのページは閉じました', self.pilot.completed)
+        self.assertIn('Cookieを消さずに', self.pilot.completed)
+
+    def test_three_failures_on_one_page_stop_and_leave_a_close_message(self):
+        self.pilot.configure(True, 10)
+        self.window.probe = page('A')
+        self.pilot.failures['A'] = self.pilot.MAX_FAILURES
+        self.wait(10)
+        self.pilot.tick()
+        self.assertFalse(self.pilot.state()['enabled'])
+        self.assertIn('同じページで3回失敗したため、自動取り込みを止めました', self.pilot.completed)
+
     def test_default_pilot_uses_the_pscube_range(self):
         pilot = AutoPilot(self.window, PROBE)
         self.assertEqual(pilot.state()['seconds'], 20)

@@ -16,6 +16,16 @@ const pscubeAutoMaxFailures = 3;
 const pscubeListMaxRetries = 60;
 const pscubeListReloadEvery = 3;
 
+/// 一覧が進まないときにページを読み込み直すのは、この回数まで（2026-11-05 利用者「ABCD実装」のC）。その後は同じページで
+/// 下まで送り直すだけにする（通信は増えない）。11/5 0時は、同じページの読み直し1回で60機種そろった。それまでは60回の
+/// うち3回に1回、最大約20回読み込み直していた（11/5、サイトにアクセスを拒否された）。
+const pscubeListMaxReloads = 3;
+
+/// 自動取り込みがOFFのまま、サイトのページを開いたり取り込んだりしないで、この時間がたったら、サイトのページを空白に
+/// する（2026-11-05 利用者「ABCD実装」のA）。サイトのページは開いているだけで定期的に通信する（jquery.netcube.alive.js、
+/// AGENTS.md 2026-10-06）。0時の予約を待つ間・手で開いたまま離れたときも、ページを開き続けない。
+const pscubeIdlePark = Duration(minutes: 5);
+
 /// 抜けた日を探す範囲（取り込み日を含めて7日。サイトの台別ページが持つ7日、日付指定取り込みの選択肢と同じ）。
 const pscubeGapDays = 7;
 
