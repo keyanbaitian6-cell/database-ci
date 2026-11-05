@@ -533,3 +533,4 @@
 - 試験：PC全試験 784件 OK（`TZ=JST-9`、`database/.venv`）。`test_pscube_scroll.mjs`・`test_pscube_auto_browser.mjs` 成功（後者は `python` が venv を指すようPATHを通して実行）。全体ゲートは流していない。
 - 反映：PCアプリは閉じたまま。次に start.cmd で起動したときから11/3の動き。push は利用者の承認待ち（.py を含むのでCIが1回動く）。
 - 送信（11/6 06:00）：利用者「送って」→ `d3567b6` を `tools/push_ci.py` で正本mainへpush。[CI 42108713140](https://github.com/imakurudev-eng/database/actions/runs/42108713140) は実行中（結果は未確認）。
+- 11/6 06:15 の様子（Claude、errors.log・pscube.sqlite3・プロセス一覧を読んだだけ）：利用者が06:00に11/3の版のPCアプリと取り込み窓を起動。06:01:03 ON → 06:01:16 OFF（ボタン）→ 06:09:53 `pscube.auto.off`「サイトがデータを表示しなくなりました（止められた可能性）」。11/5の台別は11台→20台（9台増えた）。11/3の版は止まっても窓を閉じないので、06:15時点で取り込み窓「P’s CUBE 取り込み」が開いたまま（サイトのページが残っている可能性）。利用者に閉じるよう案内。CI 42108713140 は実行中。
