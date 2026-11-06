@@ -192,3 +192,23 @@ test('date events are per store, rate and day; the pull-down lists used names ne
   assert.deepEqual(merged.machines,validateData(data()).machines);
   assert.deepEqual(dateEventNames(merged.date_events),['末尾イベ','周年','旧イベ']);
 });
+
+test('アナスロの補完の推定差枚は読み取り・同期スクリプトで落とさず、同じページの補完に後から移す（2026-11-06）', () => {
+  const ext = {store: 'c1', rate: '20', machine: '試験機種', url: null, expected_count: null, source_site: 'anaslo'};
+  const anaslo = (extra = {}) => ({store: 'c1', rate: '20', machine: '試験機種', rack: 1, day: '2026-11-04', bb: 3, rb: 1, at_art: 0,
+    games: 600, my: null, detail_url: null, observed_at: null, graph: null, net_medals: null, source_site: 'anaslo',
+    source_url: 'https://ana-slo.com/2026-11-04-p-stationii-data/', source_sha256: 'a'.repeat(64), source_machine: '試験機種',
+    source_probabilities: {}, source_graph: null, ...extra});
+  const doc = rec => ({...emptyData(), machines: [ext], records: [rec]});
+  const e = {value: -400, sure: false, method: 'anaslo-graph-v1'};
+  assert.deepEqual(validateData(doc(anaslo({net_estimate: e}))).records[0].net_estimate, e);
+  assert.equal('net_estimate' in validateData(doc(anaslo())).records[0], false);
+  assert.throws(() => validateData(doc(anaslo({net_estimate: {...e, value: 1.5}}))), /推定差枚/);
+  assert.throws(() => validateData({...emptyData(), machines: [machine], records: [{...record, net_estimate: e}]}), /推定差枚/,
+    'P’s CUBEの実データには付けない');
+  const merged = mergeData(doc(anaslo()), doc(anaslo({net_estimate: e, games: 999})));
+  assert.deepEqual(merged.records[0].net_estimate, e);
+  assert.equal(merged.records[0].games, 600, '数値・出典は先にある方のまま');
+  const other = mergeData(doc(anaslo()), doc(anaslo({net_estimate: e, source_sha256: 'b'.repeat(64)})));
+  assert.equal('net_estimate' in other.records[0], false, '別のページの推定は移さない');
+});
