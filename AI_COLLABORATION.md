@@ -878,3 +878,12 @@
 - 同期フォルダ（`G:\マイドライブ\database共有`、読むだけで確認）：`pscube-viewer-drive.json`（PC版の書き出し、直近31日）に `net_estimate` 280件、`pscube-backup-auto.json` に2214件、`pscube-backup-cloud.json`（同期スクリプト）は0件。`database-viewer-parts-pscube.json` は22:31更新（同期スクリプトの履歴方式）。
 - 直すには：`web/pscube/data.mjs` の検査・組み立て・統合に `net_estimate`（PC・Android と同じ形と規則）→ `pscube_cloud_sync.gs` を作り直す → 利用者が同期スクリプトを貼り替える（そのとき `5511c49` の貼り間違いで止まる仕組みと、利用者の設定行 `PSCUBE_HISTORY_VIEWER = true` を残す）→ 閲覧ページを作り直して公開。閲覧用の `viewer_drive_script*.gs` 2本は記録の項目を選んでいないので貼り替え不要の見込み（未確認）。
 - 同期フォルダに 10/16 の補完のJSON（`pscube-backup-anaslo-20260101-20260128.json` ほか4本）が残っている。`a38593b` からPC版が自動で読む対象になるので、次にPC版が起動したときに読み込まれる。どれも DB に入っている日で、補完は既存の台・日を上書きしないため、変化は無い見込み（未確認）。
+
+### 2026-11-06（夜）P’s CUBE の読み取り・同期スクリプトで推定差枚を落とさないよう直し、公開・貼り替え用ファイルを作った（Claude）
+
+- 利用者「直して作って」（上の訂正の節の続き）。
+- 直したこと：`database_android/web/pscube/data.mjs` に `validNetEstimate`（PC・Android・共有カレンダーと同じ形）。`validateData` は補完の台の `net_estimate` を残し、形が違う・補完以外の台なら断る。`mergeData` は既にある台・日の補完でも、同じアナスロのページ（`source_sha256` が同じ）から後で付いた推定差枚だけ移す。`node tool/build_pscube_cloud_sync.mjs`・`build_viewer_parts.mjs` で `pscube_cloud_sync.gs` ほかを作り直し、`build_release_info.py` で版を `f4263a0031d6` に（`1c80efa` では作り直していなかった）。メルヘンの同期スクリプトと閲覧用の2本は版の行だけの変化で、貼り替え不要。
+- 試験：`database_android/tool/test_pscube_data.mjs` に1件（残す・断る・同じページなら移す・別のページは移さない）。`test_pscube_cloud_sync.mjs` 49件 OK（`PYTHON` を渡さないと Python を呼ぶ1件が 9009 で落ちる点に注意）。`check_before_build.sh`（`/c/w/cbw-net5`）**ALL PASSED**（88項目、PC 855件・Flutter 814件）。
+- コミット `a03539b` を正本へ（23:09、CI が1回動く）。公開：database-viewer **`89e2a82`**、database-share **`1b8e1e8`**（release 34170c760bbb; source a03539b）。Pages は2本とも success。公開版の `pscube/data.mjs` に `validNetEstimate`、共有カレンダーの `viewer_parts.mjs` に `SCRIPT_RELEASE = 'f4263a0031d6'` を確かめた。
+- **貼り替え用ファイル**：`../outputs/net-estimate-20261106/pscube_cloud_sync_貼り替え用_20261106.gs`。リポジトリの `pscube_cloud_sync.gs` との違いは `const PSCUBE_HISTORY_VIEWER = true;` の1行だけ（利用者の運用、`diff --strip-trailing-cr` で確認）。`5511c49` の貼り間違いで止まる仕組み（`vhModeProblem`・`changePscubeCloudMode`）も入っている。貼り替えは利用者（未）。貼り替えたあと、次にPC版が閲覧用・バックアップを書き出したときに同期スクリプトが読み直し、既にある補完の台にも推定差枚が移る見込み（未確認）。
+- APK（0.5.53、`1c80efa`）はこの直しを含まないが、Android はこの `data.mjs` を使わないので動きは同じ（画面の版の表示だけ古い）。
