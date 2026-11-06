@@ -202,5 +202,19 @@ class SyncFolderTests(unittest.TestCase):
             self.assertEqual(ui.json_folder(pscube), ui.JSON_DIR, '同期フォルダが見つからなければ今まで通り')
 
 
+class PcButtonTests(unittest.TestCase):
+    """PC版から変換アプリを開くボタン（2026-11-06 利用者「1」＝PC版にボタン）。"""
+
+    def test_the_command_opens_the_converter_with_the_same_python(self):
+        import app
+        command, folder = app.anaslo_converter_command()
+        self.assertEqual(command[0], sys.executable)
+        self.assertTrue(Path(command[1]).is_file())
+        self.assertEqual(Path(command[1]).name, 'app.py')
+        self.assertEqual(folder.name, 'html_converter')
+        source = Path(app.__file__).read_text(encoding='utf-8')
+        self.assertIn("text='アナスロから補う（P-STATION・幸町）'", source)
+
+
 if __name__ == '__main__':
     unittest.main()

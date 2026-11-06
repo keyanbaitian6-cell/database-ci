@@ -887,3 +887,9 @@
 - コミット `a03539b` を正本へ（23:09、CI が1回動く）。公開：database-viewer **`89e2a82`**、database-share **`1b8e1e8`**（release 34170c760bbb; source a03539b）。Pages は2本とも success。公開版の `pscube/data.mjs` に `validNetEstimate`、共有カレンダーの `viewer_parts.mjs` に `SCRIPT_RELEASE = 'f4263a0031d6'` を確かめた。
 - **貼り替え用ファイル**：`../outputs/net-estimate-20261106/pscube_cloud_sync_貼り替え用_20261106.gs`。リポジトリの `pscube_cloud_sync.gs` との違いは `const PSCUBE_HISTORY_VIEWER = true;` の1行だけ（利用者の運用、`diff --strip-trailing-cr` で確認）。`5511c49` の貼り間違いで止まる仕組み（`vhModeProblem`・`changePscubeCloudMode`）も入っている。貼り替えは利用者（未）。貼り替えたあと、次にPC版が閲覧用・バックアップを書き出したときに同期スクリプトが読み直し、既にある補完の台にも推定差枚が移る見込み（未確認）。
 - APK（0.5.53、`1c80efa`）はこの直しを含まないが、Android はこの `data.mjs` を使わないので動きは同じ（画面の版の表示だけ古い）。
+
+### 2026-11-06（夜）PC版に「アナスロから補う（P-STATION・幸町）」のボタン（Claude）
+
+- 利用者「めんどくさいからdatabaseにアナスロ取り込みのやつって組み込める？」→ 案1（PC版にボタン、変換アプリを別の窓で開く）／案2（PC版の中に組み込み、直接DBへ）から「１」。
+- `database/app.py`：ホームの「P’s CUBE（スロット）を取り込む」の下に同じ形のボタン「アナスロから補う（P-STATION・幸町）」。押すと `anaslo_converter_command()`（PC版と同じ Python で `html_converter/app.py` を、作業フォルダ `html_converter` で開く。配布版EXEからは開けないと知らせる）で変換アプリを別の窓で開く。開いている間にもう一度押したら「開いています」と知らせ、二重に開かない。記録欄に「P-STATIONは同期フォルダに保存すると、この画面が数分以内に自動で読み込みます（幸町は保存後に『バックアップを読み込む』）」。変換アプリの画面・操作は変えていない。
+- 試験：`database/tests/test_anaslo_net.py` に1件（同じ Python・`html_converter/app.py`・作業フォルダ、ボタンの文言）。アナスロに関わる試験121件、PCの全試験856件 OK。閲覧ページ・Android は変えていないので、全体ゲート・公開・APK はしていない。PC版の実際の画面でボタンを押す確認はしていない（利用者が次に開いたとき）。

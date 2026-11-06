@@ -75,6 +75,18 @@ def recent_converter_folder(folder=None, now=None):
     return {'initialdir': str(folder)} if recent else {}
 
 
+def anaslo_converter_command():
+    """アナスロのHTML変換アプリ（html_converter/）を別の窓で開くコマンドと作業フォルダ（2026-11-06 利用者
+    「databaseにアナスロ取り込みのやつって組み込める？」→ 案1「PC版にボタン」）。画面・操作は変換アプリのまま。
+    P-STATION は保存先の初期値が同期フォルダで、起動中のPC版が数分おきに自動で読み込む（pscube_import.ANDROID_SYNC_NAME）。"""
+    if getattr(sys, 'frozen', False):
+        raise OSError('配布版（EXE）からは開けません。html_converter/start.cmd から開いてください。')
+    app_path = Path(__file__).resolve().parent.parent / 'html_converter' / 'app.py'
+    if not app_path.is_file():
+        raise OSError('html_converter/app.py が見つかりません。')
+    return [sys.executable, str(app_path)], app_path.parent
+
+
 def decode_machine_token(token):
     if not token:
         return None
@@ -795,6 +807,8 @@ def main():
                    command=lambda: open_browser_import()).pack(anchor='w')
     ttk.Button(tab_home, text='P’s CUBE（スロット）を取り込む',
                command=lambda: open_pscube_import()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
+    ttk.Button(tab_home, text='アナスロから補う（P-STATION・幸町）',
+               command=lambda: open_anaslo_converter()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
     ttk.Label(tab_home, style='Sub.TLabel', justify='left', text=(
         '① 機種一覧・機種別の表・個別台グラフで「この画面を取り込む」\n'
         '② 表は表、グラフはグラフとして保存され、次の必要な台へ移動\n'
@@ -1073,6 +1087,23 @@ def main():
             return browser_import.take_finished_message(DATA_DIR)
 
         watch_capture_window(process, 'メルヘン', meruhen_message)
+
+    anaslo_process = [None]
+
+    def open_anaslo_converter():
+        running = anaslo_process[0]
+        if running is not None and running.poll() is None:
+            messagebox.showinfo('開いています', 'アナスロの取り込みの画面は開いています。タスクバーから選んでください。', parent=root)
+            return
+        try:
+            command, folder = anaslo_converter_command()
+            anaslo_process[0] = subprocess.Popen(command, cwd=str(folder))
+        except OSError as exc:
+            messagebox.showerror('起動できません', f'アナスロの取り込みを開けません：{exc}', parent=root)
+            return
+        logbox.insert('end', 'アナスロの取り込み画面を開きました。P-STATIONは同期フォルダに保存すると、'
+                      'この画面が数分以内に自動で読み込みます（幸町は保存後に「バックアップを読み込む」）。\n')
+        logbox.see('end')
 
     def open_pscube_import():
         try:
