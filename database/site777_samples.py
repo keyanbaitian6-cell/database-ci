@@ -59,7 +59,7 @@ SNAPSHOT_JS = r'''(() => {
     try { return {width: canvas.width, height: canvas.height, png: canvas.toDataURL('image/png')}; }
     catch (_) { return {error: 'このcanvasは画素を読み出せません'}; }
   });
-  if (start !== location.href) return null;
+  // 読み取り前後のURLはcollectが取り込み本体と共通のsame_pageで確認する。
   return {url: start, html: clone.outerHTML, images, canvases};
 })()'''
 
