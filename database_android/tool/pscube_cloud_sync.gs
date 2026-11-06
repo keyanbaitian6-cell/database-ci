@@ -31,7 +31,7 @@ const PSCUBE_CLOUD_FAILED = 'pscubeCloudFailed';
 const PSCUBE_CLOUD_FAILED_MAX = 120;
 // 取り込みの規則の版。規則を直して貼り替えた最初の実行で、前に取り込めなかった入力をもう一度読む
 // （2026-10-18、アナスロの出典リンクを拒んでPCの閲覧用ファイルが処理されないままだった。版が同じだと再試行されない）。
-const PSCUBE_CLOUD_RULES = '2026-10-24-capture-health-browser';
+const PSCUBE_CLOUD_RULES = '2026-11-07-site777';
 // 書き出しの一時的な失敗（429・5xx・通信の例外）は、同じ実行の中でこの回数まで少し待って試す（1秒・2秒）。
 const PSCUBE_CLOUD_WRITE_TRIES = 3;
 
@@ -39,26 +39,31 @@ const PSCUBE_CLOUD_WRITE_TRIES = 3;
 class PscubeCloudTransient extends Error {}
 
 // Google Apps ScriptにはブラウザのURLクラスがないため、共通パーサーが使う部分を実装する。
-// P’s CUBEのページと、アナスロ履歴の出典（`validateAnasloRecord` が見る ana-slo.com）だけを読む。
+// P’s CUBEのページ、アナスロの出典、サイトセブンのP-STATION全台表の出典だけを検証する。
+// 出典URLをここから取得する処理はない。
 // 出典を拒むと、アナスロの記録を含むPCの閲覧用ファイル全体が取り込めなくなる（2026-10-18、10/17以降が共有に出なかった）。
 class PscubeCloudUrl {
   constructor(raw) {
     if (typeof raw !== 'string') throw new Error('P’s CUBEのリンクが不正です。');
     const anaslo = raw.match(/^https:\/\/ana-slo\.com(\/[^?#\s]*)(?:\?([^#]*))?(#.*)?$/);
-    const match = anaslo || raw.match(/^https:\/\/www\.pscube\.jp(\/dedamajyoho-P-townDMMpachi\/c\d+\/cgi-bin\/nc-v(?:03-001|05-011|06-001)\.php)(?:\?([^#]*))?(#.*)?$/);
+    const site777 = raw.match(/^https:\/\/m\.site777\.jp(\/f\/D3300\.do)(?:\?([^#]*))?(#.*)?$/);
+    const match = anaslo || site777 || raw.match(/^https:\/\/www\.pscube\.jp(\/dedamajyoho-P-townDMMpachi\/c\d+\/cgi-bin\/nc-v(?:03-001|05-011|06-001)\.php)(?:\?([^#]*))?(#.*)?$/);
     if (!match) throw new Error('P’s CUBEのリンクが不正です。');
-    this.origin = anaslo ? 'https://ana-slo.com' : 'https://www.pscube.jp';
+    this.origin = anaslo ? 'https://ana-slo.com' : site777 ? 'https://m.site777.jp' : 'https://www.pscube.jp';
     this.username = this.password = '';
     this.pathname = match[1]; this.hash = match[3] || ''; this.href = raw;
-    const params = new Map();
+    const params = new Map(), all = new Map();
     for (const pair of (match[2] || '').split('&')) {
       if (!pair) continue;
       const at = pair.indexOf('=');
       const decode = s => decodeURIComponent(s.replace(/\+/g, ' '));
       const key = decode(at < 0 ? pair : pair.slice(0, at));
-      if (!params.has(key)) params.set(key, decode(at < 0 ? '' : pair.slice(at + 1)));
+      const value=decode(at < 0 ? '' : pair.slice(at + 1));
+      if (!params.has(key)) params.set(key, value);
+      if (!all.has(key)) all.set(key,[]);
+      all.get(key).push(value);
     }
-    this.searchParams = {get: key => params.has(key) ? params.get(key) : null, has: key => params.has(key)};
+    this.searchParams = {get: key => params.has(key) ? params.get(key) : null, has: key => params.has(key),getAll:key=>all.get(key)||[]};
   }
 }
 const URL = PscubeCloudUrl;
@@ -494,7 +499,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
-const APPLICATION_RELEASE = 'f4263a0031d6';
+const APPLICATION_RELEASE = '5e3bae7ca131';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -604,7 +609,7 @@ function viewerNetCapture(value) {
 
 function netCaptureLabel(record) {
   if (Number.isSafeInteger(record.net_medals)) return record.net_medals === 0 ? '取得済み（0枚）' : '取得済み';
-  if (record.source_site === 'anaslo') return '出典に差枚なし';
+  if (['anaslo','site777'].includes(record.source_site)) return '出典に差枚なし';
   const reason = record.net_capture?.reason;
   return ({missing_series:'日別の系列なし',empty:'元数値が空',short_series:'元数値の点が不足',
     invalid_points:'元数値の形式不正',invalid_net:'差枚の範囲不正',invalid_response:'応答の形式不正',
@@ -818,6 +823,35 @@ function validateAnasloRecord(r) {
       ['my', 'detail_url', 'observed_at', 'graph', 'net_medals'].some(k => !Object.hasOwn(r, k) || r[k] !== null)) fail('アナスロ履歴の出典または欠損値が不正です。');
 }
 
+/** サイトセブンはP-STATIONの20スロの補完専用。差枚・ART欠損を0に変えない。 */
+function validateSite777Record(r) {
+  let u; try {u=new URL(r.source_url);} catch {fail('サイトセブンの出典が不正です。');}
+  if (u.origin!=='https://m.site777.jp' || u.username || u.password || u.pathname!=='/f/D3300.do' ||
+      u.searchParams.get('pmc')!=='04034001' || u.searchParams.get('urt')!=='2000' ||
+      !/^\d+$/.test(u.searchParams.get('mdc')||'') ||
+      ['pmc','urt','mdc','dtdd','pan'].some(k=>u.searchParams.getAll(k).length>1) ||
+      r.store!=='c740601' || r.rate!=='20' || !validDay(r.day) ||
+      typeof r.source_machine!=='string' || !r.source_machine.trim() ||
+      typeof r.source_sha256!=='string' || !/^[0-9a-f]{64}$/.test(r.source_sha256) ||
+      ['my','at_art','graph','detail_url','observed_at','net_medals'].some(k=>!Object.hasOwn(r,k)) ||
+      ['detail_url','observed_at','net_medals'].some(k=>r[k]!==null) || r.net_estimate!=null || r.net_capture!=null ||
+      ['my','at_art'].some(k=>r[k]!==null&&(!integer(r[k])||r[k]>1000000))) fail('サイトセブンの出典・数値・欠損値が不正です。');
+  const label=typeof r.source_day_label==='string'&&r.source_day_label.match(/^(\d{1,2})\/(\d{1,2})$/);
+  const captured=Date.parse(r.source_captured_at);
+  const age=Number.isFinite(captured)?(Date.parse(new Date(captured+9*3600000).toISOString().slice(0,10))-Date.parse(r.day))/86400000:NaN;
+  if (!label || Number(label[1])!==Number(r.day.slice(5,7)) || Number(label[2])!==Number(r.day.slice(8,10)) ||
+      typeof r.source_captured_at!=='string' || !r.source_captured_at.endsWith('+09:00') || !(age>=0&&age<=9))
+    fail('サイトセブンの採取日と営業日が不正です。');
+  const s=r.source_graph,g=r.graph;
+  if (!s || s.format!=='site777-yellow-pixels-v1' || s.width!==260 || s.height!==226 ||
+      typeof s.image_sha256!=='string' || !/^[0-9a-f]{64}$/.test(s.image_sha256)) fail('サイトセブンの原画像の出典が不正です。');
+  if (g===null && ['zero_line_unknown','curve_unknown'].includes(s.error)) return;
+  if (!g || g.kind!=='daily' || !Number.isFinite(g.zero_y) || g.zero_y<0 || g.zero_y>226 ||
+      !Array.isArray(g.points) || g.points.length<2 || g.points.length>260 ||
+      g.points.some(p=>!Array.isArray(p)||p.length!==2||!p.every(Number.isFinite)||p[0]<0||p[0]>260||p[1]<0||p[1]>226))
+    fail('サイトセブンの画像とグラフ座標が一致しません。');
+}
+
 function validateData(raw) {
   if (raw?.format !== FORMAT || raw.version !== 1 || !Array.isArray(raw.machines) || !Array.isArray(raw.records) || (raw.history !== true && raw.records.length > 200000) || raw.machines.length > 10000) fail('P’s CUBEの保存ファイルではありません。');
   if (raw.history === true) {
@@ -830,24 +864,25 @@ function validateData(raw) {
     return { store: r.store, rate: r.rate, machine: r.machine.trim() };
   };
   const machines = raw.machines.map(m => {
-    const base = basic(m), external = m.source_site === 'anaslo' && m.url == null;
+    const base = basic(m), external = ['anaslo','site777'].includes(m.source_site) && m.url == null;
     const url = external ? null : sameStore(m.url, base.store);
     if ((!external && (!url.pathname.endsWith('nc-v05-011.php') || url.searchParams.get('bai') !== base.rate ||
         (url.searchParams.has('cd_ps') && url.searchParams.get('cd_ps') !== '2'))) ||
         (m.expected_count !== null && (!integer(m.expected_count) || m.expected_count < 1 || m.expected_count > 5000))) fail('機種情報が不正です。');
     if (m.machine_type != null && !['normal', 'other'].includes(m.machine_type)) fail('機種タイプが不正です。');
     return { ...base, url: url?.href ?? null, expected_count: m.expected_count, machine_type: m.machine_type ?? null,
-      ...(external ? {source_site: 'anaslo'} : {}) };
+      ...(external ? {source_site: m.source_site} : {}) };
   });
   const records = raw.records.map(r => {
-    const base = basic(r), external = r.source_site === 'anaslo';
+    const base = basic(r), anaslo = r.source_site === 'anaslo', site777 = r.source_site === 'site777', external = anaslo || site777;
     const url = external ? null : sameStore(r.detail_url, base.store);
     if (!integer(r.rack) || r.rack < 1 || !validDay(r.day) || (!external && (!url.pathname.endsWith('nc-v06-001.php') ||
         url.searchParams.get('cd_dai') !== String(r.rack) || url.hash !== `#${r.day.replaceAll('-', '')}`))) fail('台番号・営業日・リンクが一致しません。');
-    if (external) validateAnasloRecord(r);
-    for (const k of external ? ['bb', 'rb', 'at_art', 'games'] : ['bb', 'rb', 'at_art', 'games', 'my']) if (!integer(r[k])) fail('台の数値が不正です。');
+    if (anaslo) validateAnasloRecord(r);
+    if (site777) validateSite777Record(r);
+    for (const k of site777 ? ['bb','rb','games'] : external ? ['bb', 'rb', 'at_art', 'games'] : ['bb', 'rb', 'at_art', 'games', 'my']) if (!integer(r[k])) fail('台の数値が不正です。');
     if (r.net_medals != null && (!Number.isSafeInteger(r.net_medals) || Math.abs(r.net_medals) > 1000000)) fail('差枚の数値が不正です。');
-    if (r.net_estimate != null && (!external || !validNetEstimate(r.net_estimate))) fail('推定差枚の形式が不正です。');
+    if (r.net_estimate != null && (!anaslo || !validNetEstimate(r.net_estimate))) fail('推定差枚の形式が不正です。');
     let graph = null;
     if (r.graph != null) {
       const g = r.graph;
@@ -861,10 +896,12 @@ function validateData(raw) {
         ['bb','rb','at_art','games','my'].every(k => n[k]===r[k])))) fail('差枚の取得診断と台の数値が一致しません。');
     return { ...base, rack: r.rack, day: r.day, bb: r.bb, rb: r.rb, at_art: r.at_art, games: r.games, my: r.my,
       detail_url: url?.href ?? null, observed_at: r.observed_at ?? null, graph,
-      ...(external ? {source_site:'anaslo', source_url:r.source_url, source_sha256:r.source_sha256,
-        source_machine:r.source_machine, source_probabilities:r.source_probabilities, source_graph:r.source_graph} : {}),
+      ...(external ? {source_site:r.source_site, source_url:r.source_url, source_sha256:r.source_sha256,
+        source_machine:r.source_machine, source_graph:r.source_graph,
+        ...(anaslo ? {source_probabilities:r.source_probabilities} : {})} : {}),
+      ...(site777 ? {source_day_label:r.source_day_label, source_captured_at:r.source_captured_at} : {}),
       ...(external ? {net_medals:null} : r.net_medals == null ? {} : {net_medals: r.net_medals}),
-      ...(external && r.net_estimate != null ? {net_estimate: {value: r.net_estimate.value, sure: r.net_estimate.sure, method: r.net_estimate.method}} : {}),
+      ...(anaslo && r.net_estimate != null ? {net_estimate: {value: r.net_estimate.value, sure: r.net_estimate.sure, method: r.net_estimate.method}} : {}),
       ...(netCapture ? {net_capture:netCapture} : {}) };
   });
   if (new Set(machines.map(machineKey)).size !== machines.length || new Set(records.map(recordKey)).size !== records.length) fail('同じ機種・台が重複しています。');
@@ -885,7 +922,7 @@ function mergeData(stored, incoming) {
   const machines = new Map(old.machines.map(m => [machineKey(m), m]));
   for (const m of fresh.machines) {
     const previous = machines.get(machineKey(m));
-    if (previous && m.source_site === 'anaslo') continue;
+    if (previous && ['anaslo','site777'].includes(m.source_site)) continue;
     machines.set(machineKey(m), { ...m, expected_count: m.expected_count ?? previous?.expected_count ?? null,
       machine_type: m.machine_type ?? previous?.machine_type ?? null });
   }
@@ -895,10 +932,10 @@ function mergeData(stored, incoming) {
   const occupied = new Set([...records.values()].map(rackDayKey));
   for (const r of fresh.records) {
     const key = recordKey(r), previous = records.get(key);
-    if (r.source_site === 'anaslo' && occupied.has(rackDayKey(r))) {
+    if (['anaslo','site777'].includes(r.source_site) && occupied.has(rackDayKey(r))) {
       // 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を付けたときは
       // 推定差枚だけ移す（PC _merge・Android _merge と同じ、2026-11-06）。
-      if (previous?.source_site === 'anaslo' && r.net_estimate && r.source_sha256 === previous.source_sha256 &&
+      if (r.source_site==='anaslo' && previous?.source_site === 'anaslo' && r.net_estimate && r.source_sha256 === previous.source_sha256 &&
           JSON.stringify(r.net_estimate) !== JSON.stringify(previous.net_estimate ?? null)) {
         records.set(key, {...previous, net_estimate: r.net_estimate});
       }
@@ -906,7 +943,7 @@ function mergeData(stored, incoming) {
     }
     occupied.add(rackDayKey(r));
     if (!previous) { records.set(key, r); continue; }
-    if (previous.source_site === 'anaslo' && r.source_site !== 'anaslo') { records.set(key, r); continue; }
+    if (['anaslo','site777'].includes(previous.source_site) && !['anaslo','site777'].includes(r.source_site)) { records.set(key, r); continue; }
     const sameNumbers = ['bb', 'rb', 'at_art', 'games', 'my'].every(k => previous[k] === r[k]);
     const oldTime = Date.parse(previous.observed_at), newTime = Date.parse(r.observed_at);
     const older = Number.isFinite(oldTime) && Number.isFinite(newTime)
@@ -939,14 +976,14 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   for (const value of fresh.records.filter(r=>r.net_medals!=null)) {
     const key=recordKey(value),r=records.get(key);
     if (!r) {report.unmatched++;continue;}
-    if (r.source_site==='anaslo' || value.source_site==='anaslo' || !['bb','rb','at_art','games','my'].every(k=>r[k]===value[k])) {report.mismatched++;continue;}
+    if (['anaslo','site777'].includes(r.source_site) || ['anaslo','site777'].includes(value.source_site) || !['bb','rb','at_art','games','my'].every(k=>r[k]===value[k])) {report.mismatched++;continue;}
     if (r.net_medals!=null) {report.known++;continue;}
     report.applied++;
     records.set(key,{...r,net_medals:value.net_medals,...(value.net_capture ? {net_capture:value.net_capture} : {})});
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
-const SCRIPT_RELEASE = 'f4263a0031d6';
+const SCRIPT_RELEASE = '5e3bae7ca131';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

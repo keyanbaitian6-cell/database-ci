@@ -36,6 +36,13 @@ try {
   assert.match(await page.locator('#database-capture-status').innerText(), /確認・保存中/);
   const box = await page.locator('#database-overlay').boundingBox();
   assert.ok(box.x >= 0 && box.y >= 0 && box.x+box.width <= 390 && box.y+box.height <= 850);
+  // 共通カードの倍率が自動取り込み側の窓内調整へ届くこと（旧sizeScale参照の再発防止）。
+  await page.locator('#database-overlay button[title="大きくする"]').click();
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('#database-overlay').evaluate(el=>Number(el.style.zoom)),1.15);
+  const enlarged=await page.locator('#database-overlay').boundingBox();
+  assert.ok(enlarged.x>=0 && enlarged.x+enlarged.width<=390 && enlarged.y+enlarged.height<=850);
+  await page.locator('#database-overlay button[title="小さくする"]').click();
   // 日付指定取り込み・上から／下から：日付を選ぶとPython側へ伝え、押すと選んだ日と向きで自動取り込みを始める。
   await page.evaluate(() => {
     window.__calls = [];

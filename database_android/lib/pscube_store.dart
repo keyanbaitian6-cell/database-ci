@@ -212,7 +212,8 @@ class PscubeStore {
       // アナスロだけにある補完機種はP’s CUBEの機種URLを持たない（_machine と同じ扱い）。台数確認へ
       // 混ぜない。住所の検査で止めると、補完機種を取り込んだ端末ではどの全台一覧も「対象のP’s CUBE
       // ページではありません」で保存できなかった（2026-10-20）。PC版 installation_count と同じ。
-      if (machine['source_site'] == 'anaslo' && machine['url'] == null) {
+      if (['anaslo', 'site777'].contains(machine['source_site']) &&
+          machine['url'] == null) {
         continue;
       }
       final stored = _site(machine['url'] as String?, 'nc-v05-011.php');
@@ -235,7 +236,7 @@ class PscubeStore {
       excludedMachineWords.any((word) => (name ?? '').contains(word));
 
   static bool noHits(Map<String, dynamic> r) =>
-      (r['bb'] as int) + (r['rb'] as int) + (r['at_art'] as int) == 0;
+      ['bb', 'rb', 'at_art'].every((k) => r[k] == 0);
 
   /// 台別7日分を取りに行かない台（2026-11-05 利用者「ABCD実装」のD）：当たりが1回もない台（[noHits]）と、回転数が
   /// 採点の下限（[minScoredGames]＝500G）以下の台。どちらも採点しない台で、1晩に約20ページ、サイトへのアクセスが減る
@@ -279,7 +280,9 @@ class PscubeStore {
 
   static void _machine(Map<String, dynamic> row) {
     _base(row);
-    final external = row['source_site'] == 'anaslo' && row['url'] == null;
+    final external =
+        ['anaslo', 'site777'].contains(row['source_site']) &&
+        row['url'] == null;
     final uri = external
         ? null
         : _site(row['url'] as String?, 'nc-v05-011.php');
@@ -310,8 +313,11 @@ class PscubeStore {
         DateTime.tryParse(day)?.toIso8601String().substring(0, 10) != day) {
       throw const FormatException('台番号・営業日が不正です。');
     }
-    final external = row['source_site'] == 'anaslo';
-    if (external) validateAnasloRecord(row);
+    final anaslo = row['source_site'] == 'anaslo';
+    final site777 = row['source_site'] == 'site777';
+    final external = anaslo || site777;
+    if (anaslo) validateAnasloRecord(row);
+    if (site777) validateSite777Record(row);
     final uri = external
         ? null
         : _site(row['detail_url'] as String?, 'nc-v06-001.php');
@@ -321,7 +327,9 @@ class PscubeStore {
       throw const FormatException('台番号・営業日とリンクが一致しません。');
     }
     for (final field
-        in external
+        in site777
+            ? ['bb', 'rb', 'games']
+            : external
             ? ['bb', 'rb', 'at_art', 'games']
             : ['bb', 'rb', 'at_art', 'games', 'my']) {
       final value = row[field];
@@ -333,7 +341,7 @@ class PscubeStore {
       throw const FormatException('差枚の数値が不正です。');
     }
     if (row.containsKey('net_estimate') &&
-        (!external || !validPscubeNetEstimate(row['net_estimate']))) {
+        (!anaslo || !validPscubeNetEstimate(row['net_estimate']))) {
       throw const FormatException('推定差枚の形式が不正です。');
     }
     if (row['net_capture'] != null) {
@@ -918,6 +926,7 @@ class PscubeStore {
     Map<String, dynamic> fresh,
   ) {
     if (old == null) return fresh;
+    if (fresh['source_site'] == 'site777') return old;
     if (fresh['source_site'] == 'anaslo') {
       // 補完どうしで、同じアナスロのページから後で推定差枚を付けたときだけ移す（PC `_merge` と同じ、2026-11-06）。
       final estimate = fresh['net_estimate'];
@@ -929,7 +938,7 @@ class PscubeStore {
       }
       return old;
     }
-    if (old['source_site'] == 'anaslo') return fresh;
+    if (['anaslo', 'site777'].contains(old['source_site'])) return fresh;
     final same = [
       'bb',
       'rb',
@@ -1695,7 +1704,8 @@ class PscubeStore {
         final key = _key(machine);
         final previous = oldMachines[key];
         if (previous != null &&
-            (fillMissing || machine['source_site'] == 'anaslo')) {
+            (fillMissing ||
+                ['anaslo', 'site777'].contains(machine['source_site']))) {
           continue;
         }
         batch.insert('machines', {
@@ -1711,7 +1721,7 @@ class PscubeStore {
       }
       for (final record in records) {
         final key = _key(record, record: true);
-        if (record['source_site'] == 'anaslo' &&
+        if (['anaslo', 'site777'].contains(record['source_site']) &&
             occupied.contains(rackDayKey(record))) {
           // 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を
           // 付けたときは推定差枚だけ移す（_merge、PC `import_backup` と同じ、2026-11-06）。

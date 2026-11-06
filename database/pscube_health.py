@@ -147,7 +147,7 @@ def viewer_net_capture(value):
 def net_capture_label(row):
     if type(row.get('net_medals')) is int:
         return '取得済み（0枚）' if row['net_medals'] == 0 else '取得済み'
-    if row.get('source_site') == 'anaslo':
+    if row.get('source_site') in ('anaslo', 'site777'):
         return '出典に差枚なし'
     return {'missing_series': '日別の系列なし', 'empty': '元数値が空', 'short_series': '元数値の点が不足',
             'invalid_points': '元数値の形式不正', 'invalid_net': '差枚の範囲不正',

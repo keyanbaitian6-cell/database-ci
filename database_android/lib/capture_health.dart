@@ -211,7 +211,7 @@ String netCaptureLabel(Map row) {
   if (row['net_medals'] is int) {
     return row['net_medals'] == 0 ? '取得済み（0枚）' : '取得済み';
   }
-  if (row['source_site'] == 'anaslo') return '出典に差枚なし';
+  if (['anaslo', 'site777'].contains(row['source_site'])) return '出典に差枚なし';
   return {
         'missing_series': '日別の系列なし',
         'empty': '元数値が空',

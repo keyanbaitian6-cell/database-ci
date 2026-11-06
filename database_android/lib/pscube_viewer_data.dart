@@ -186,6 +186,109 @@ void validateAnasloRecord(Map<dynamic, dynamic> row) {
   }
 }
 
+/// PCで採取したサイトセブンの出典・日付・未知値。追加通信は行わない。
+void validateSite777Record(Map<dynamic, dynamic> row) {
+  final url = Uri.tryParse(row['source_url']?.toString() ?? '');
+  final day = row['day'];
+  if (url == null ||
+      url.scheme != 'https' ||
+      url.host != 'm.site777.jp' ||
+      url.userInfo.isNotEmpty ||
+      url.hasPort ||
+      url.path != '/f/D3300.do' ||
+      url.queryParameters['pmc'] != '04034001' ||
+      url.queryParameters['urt'] != '2000' ||
+      !RegExp(r'^\d+$').hasMatch(url.queryParameters['mdc'] ?? '') ||
+      [
+        'pmc',
+        'urt',
+        'mdc',
+        'dtdd',
+        'pan',
+      ].any((k) => (url.queryParametersAll[k]?.length ?? 0) > 1) ||
+      row['store'] != 'c740601' ||
+      row['rate'] != '20' ||
+      day is! String ||
+      !isValidRecordDay(day) ||
+      row['source_sha256'] is! String ||
+      !RegExp(r'^[0-9a-f]{64}$').hasMatch(row['source_sha256']) ||
+      row['source_machine'] is! String ||
+      (row['source_machine'] as String).trim().isEmpty ||
+      [
+        'my',
+        'at_art',
+        'graph',
+        'detail_url',
+        'observed_at',
+        'net_medals',
+      ].any((k) => !row.containsKey(k)) ||
+      ['detail_url', 'observed_at', 'net_medals'].any((k) => row[k] != null) ||
+      row['net_estimate'] != null ||
+      row['net_capture'] != null ||
+      ['my', 'at_art'].any(
+        (k) =>
+            row[k] != null &&
+            (row[k] is! int || row[k] < 0 || row[k] > 1000000),
+      )) {
+    throw const FormatException('サイトセブンの出典・数値・欠損値が不正です。');
+  }
+  final label = row['source_day_label'] is String
+      ? RegExp(r'^(\d{1,2})/(\d{1,2})$').firstMatch(row['source_day_label'])
+      : null;
+  final rawCaptured = row['source_captured_at'];
+  final captured = rawCaptured is String
+      ? DateTime.tryParse(rawCaptured)
+      : null;
+  if (label == null ||
+      captured == null ||
+      rawCaptured is! String ||
+      !rawCaptured.endsWith('+09:00') ||
+      int.parse(label[1]!) != int.parse(day.substring(5, 7)) ||
+      int.parse(label[2]!) != int.parse(day.substring(8, 10))) {
+    throw const FormatException('サイトセブンの採取日と営業日が不正です。');
+  }
+  final local = captured.toUtc().add(const Duration(hours: 9));
+  final age = DateTime.utc(
+    local.year,
+    local.month,
+    local.day,
+  ).difference(DateTime.parse('${day}T00:00:00Z')).inDays;
+  if (age < 0 || age > 9) throw const FormatException('サイトセブンの掲載期間が不正です。');
+  final source = row['source_graph'], graph = row['graph'];
+  if (source is! Map ||
+      source['format'] != 'site777-yellow-pixels-v1' ||
+      source['width'] != 260 ||
+      source['height'] != 226 ||
+      source['image_sha256'] is! String ||
+      !RegExp(r'^[0-9a-f]{64}$').hasMatch(source['image_sha256'])) {
+    throw const FormatException('サイトセブンの原画像の出典が不正です。');
+  }
+  if (graph == null &&
+      ['zero_line_unknown', 'curve_unknown'].contains(source['error']))
+    return;
+  if (graph is! Map ||
+      graph['kind'] != 'daily' ||
+      graph['zero_y'] is! num ||
+      !(graph['zero_y'] as num).isFinite ||
+      graph['zero_y'] < 0 ||
+      graph['zero_y'] > 226 ||
+      graph['points'] is! List ||
+      (graph['points'] as List).length < 2 ||
+      (graph['points'] as List).length > 260 ||
+      (graph['points'] as List).any(
+        (p) =>
+            p is! List ||
+            p.length != 2 ||
+            p.any((v) => v is! num || !v.isFinite) ||
+            p[0] < 0 ||
+            p[0] > 260 ||
+            p[1] < 0 ||
+            p[1] > 226,
+      )) {
+    throw const FormatException('サイトセブンの画像とグラフ座標が一致しません。');
+  }
+}
+
 List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
   if (data['format'] != 'pscube-viewer' ||
       data['version'] != 1 ||
@@ -221,10 +324,15 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
     final name = normalizeMachineName(item['machine'] as String);
     // Preserve the existing exclusion chosen by the user.
     if (['沖ドキ', '沖ﾄﾞｷ', 'オキドキ', 'ｵｷﾄﾞｷ'].any(name.contains)) continue;
-    final external = item['source_site'] == 'anaslo';
-    if (external) validateAnasloRecord(item);
+    final anaslo = item['source_site'] == 'anaslo';
+    final site777 = item['source_site'] == 'site777';
+    final external = anaslo || site777;
+    if (anaslo) validateAnasloRecord(item);
+    if (site777) validateSite777Record(item);
     for (final field
-        in external
+        in site777
+            ? ['rack', 'games', 'bb', 'rb']
+            : external
             ? ['rack', 'games', 'bb', 'rb', 'at_art']
             : ['rack', 'games', 'bb', 'rb', 'at_art', 'my']) {
       final value = item[field];
@@ -239,7 +347,7 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
     }
     final netEstimate = item['net_estimate'];
     if (netEstimate != null &&
-        (!external || !validPscubeNetEstimate(netEstimate))) {
+        (!anaslo || !validPscubeNetEstimate(netEstimate))) {
       throw const FormatException('推定差枚の形式が不正です。');
     }
     final netCapture = validateNetCapture(item['net_capture'], record: item);
@@ -308,9 +416,13 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
       capturedAt: item['observed_at'] as String?,
       extra: {
         'source': 'pscube',
-        if (external) 'source_site': 'anaslo',
+        if (external) 'source_site': item['source_site'],
         if (external) 'source_url': item['source_url'],
         if (external) 'source_machine': item['source_machine'],
+        if (site777) 'source_sha256': item['source_sha256'],
+        if (site777) 'source_day_label': item['source_day_label'],
+        if (site777) 'source_captured_at': item['source_captured_at'],
+        if (site777) 'source_graph': item['source_graph'],
         'source_store': item['store'],
         'rate': item['rate'],
         'my': item['my'],

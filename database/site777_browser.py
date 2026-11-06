@@ -4,8 +4,8 @@
 端末の名乗り（User-Agent）をAndroidのChromeにして、スマホ向けのページを開く。
 ログインは利用者が自分で入力する。Cookieは data/site777-webview に残し、次からはログイン済みで開く。
 
-今は「見るだけ」のブラウザ。データの読み取り・保存はしない（取り込みは、台データのページの形を
-確かめてから足す）。サイトへの自動のアクセス（巡回・再読み込み）もしない。
+起動直後の自動取り込みはOFF。利用者がオーバーレイで開始したときだけ、表示されたリンクを使い、
+表・グラフ一覧を既存P’s CUBE用DBの未保存の台・日へ補完する。調査のための巡回や再読み込みはしない。
 
 2026-11-07 追記：ログイン・機種一覧・グラフは開けたが「台番が押せない」（利用者）。
 - スマホとしての見え方をそろえる：タッチの画面として振る舞い、マウスのクリックをタッチとして送る。
@@ -189,18 +189,40 @@ def run(data_dir, start_url=START_URL):
     import webview
 
     log = DiagnosticLog(data_dir)
+    from site777_session import Session
+    from capture_card import CARD_JS
+    session = Session(data_dir, log)
     window = webview.create_window(TITLE, start_url, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1],
-                                   js_api=Bridge(log))
+                                   js_api=session)
+    session._window = window
     handlers = []
 
     def install():
         try:
             handlers.extend(keep_popups_here(window, log))
+            from site777_history import install as install_history
+            handlers.extend(install_history(window, log))
         except Exception as error:  # noqa: BLE001 - 表示は続ける。何が効かないかを残す
             log.write('setup_failed', error=str(error)[:200])
 
     if hasattr(window.events, 'before_show'):
         window.events.before_show += install
+    # 明示的に有効にした開発時だけ、利用者が開いたページの資料を控える。
+    # evaluate_js は表示済みDOMと画像を読むだけで、サイトへの要求は出さない。
+    import site777_samples
+    def loaded():
+        session._loaded()
+        try:
+            root = Path(__file__).resolve().parent / 'assets'
+            window.evaluate_js(CARD_JS + '\n;' + (root / 'site777_capture.js').read_text(encoding='utf-8')
+                + '\n;window.__site777Layout=' + json.dumps(session._layout()) + ';\n'
+                + (root / 'site777_overlay.js').read_text(encoding='utf-8'))
+        except Exception:
+            session.pause('取り込みカードを表示できませんでした。窓を開き直してください。')
+            log.write('overlay_failed')
+        site777_samples.collect(window, data_dir, log)
+
+    window.events.loaded += loaded
     log.write('start')
     # pywebview の初期設定はシークレットモード（閉じるとCookieが消える）なので、
     # private_mode=False と専用の保存先でログインを残す。

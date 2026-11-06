@@ -301,7 +301,7 @@ def no_hits(r: dict) -> bool:
     """当たりが1回もない台（BB・RB・AT/ARTがすべて0、0回転を含む）。全台一覧の数値は保存するが、
     台別7日分（グラフ）は取りに行かない（メルヘンv12の「大当たり0回はグラフを取らない」を、AT/ARTも
     含めて引き継ぐ。利用者の指定、2026-10-01）。一覧を取り直して当たりが付けば、また取る対象に戻る。"""
-    return r['bb'] + r['rb'] + r['at_art'] == 0
+    return all(r.get(k) == 0 for k in ('bb', 'rb', 'at_art'))
 
 
 # 台別ページを読まない回転数の上限。採点の下限（core.MIN_SCORED_GAMES、Android `minScoredGames`）と同じ500G。
@@ -335,7 +335,7 @@ def _validate_machine(m):
         raise ValueError('店舗・貸玉を確認できません。')
     if not isinstance(m.get('machine'), str) or not m['machine'].strip():
         raise ValueError('機種名を確認できません。')
-    if not (m.get('source_site') == 'anaslo' and m.get('url') is None):
+    if not (m.get('source_site') in ('anaslo', 'site777') and m.get('url') is None):
         u = site_url(m.get('url'), 'nc-v05-011.php')
         if parse_qs(u.query).get('bai') != [m['rate']] or parse_qs(u.query).get('cd_ps') not in (None, ['2']):
             raise ValueError('機種リンクの貸玉が一致しません。')
@@ -362,13 +362,18 @@ def _validate_record(r):
     except (TypeError, ValueError) as e:
         raise ValueError('営業日が不正です。') from e
     external = r.get('source_site') == 'anaslo'
+    site777 = r.get('source_site') == 'site777'
     if external:
         _validate_external_record(r)
+    elif site777:
+        from site777_import import validate_record
+        validate_record(r)
     else:
         u = site_url(r.get('detail_url'), 'nc-v06-001.php')
         if parse_qs(u.query).get('cd_dai') != [str(r['rack'])] or u.fragment != r['day'].replace('-', ''):
             raise ValueError('台番号または日付とリンクが一致しません。')
-    for name in ('bb', 'rb', 'at_art', 'games') if external else ('bb', 'rb', 'at_art', 'games', 'my'):
+    for name in (('bb', 'rb', 'games') if site777 else
+                 ('bb', 'rb', 'at_art', 'games') if external else ('bb', 'rb', 'at_art', 'games', 'my')):
         _number(r.get(name), name)
     if r.get('net_medals') is not None and (type(r['net_medals']) is not int or abs(r['net_medals']) > 1000000):
         raise ValueError('差枚の数値が不正です。')
@@ -434,6 +439,8 @@ def stale_cutoff(day, fresh_since):
 def _merge(old: dict | None, fresh: dict) -> dict:
     if old is None:
         return fresh
+    if fresh.get('source_site') == 'site777':
+        return old  # サイトセブンは既存の出典・数値・グラフを補完で上書きしない。
     # External HTML is fill-only, including later restores of exported backups.
     # A real capture always replaces a source-only record regardless of game count.
     if fresh.get('source_site') == 'anaslo':
@@ -444,7 +451,7 @@ def _merge(old: dict | None, fresh: dict) -> dict:
                 and fresh.get('net_estimate') != old.get('net_estimate')):
             return {**old, 'net_estimate': fresh['net_estimate']}
         return old
-    if old.get('source_site') == 'anaslo':
+    if old.get('source_site') in ('anaslo', 'site777'):
         return fresh
     same = all(old[k] == fresh[k] for k in ('bb', 'rb', 'at_art', 'games', 'my'))
     old_time = old.get('observed_at') or ''
@@ -744,7 +751,7 @@ def installation_count(db_path, current_url):
             machine = json.loads(row[0])
             # アナスロだけにある補完機種はP’s CUBEの機種URLを持たない。
             # 表示中の機種の台数確認へ混ぜず、補完記録はそのまま保持する。
-            if machine.get('source_site') == 'anaslo' and machine.get('url') is None:
+            if machine.get('source_site') in ('anaslo', 'site777') and machine.get('url') is None:
                 continue
             stored = site_url(machine['url'])
             if (stored.path, parse_qs(stored.query)) == identity:
@@ -1308,7 +1315,7 @@ class PscubeStore:
                 previous = self._read('machines', key) or {}
                 if previous and data.get('import_mode') == 'fill_missing':
                     continue
-                if previous and m.get('source_site') == 'anaslo':
+                if previous and m.get('source_site') in ('anaslo', 'site777'):
                     continue
                 saved = {**m, 'expected_count': m.get('expected_count') or previous.get('expected_count'),
                          'machine_type': previous.get('machine_type') or m.get('machine_type')}
@@ -1316,7 +1323,7 @@ class PscubeStore:
             for r in data['records']:
                 key = _record_key(r)
                 identity = (r['store'], r['rate'], r['rack'], r['day'])
-                if r.get('source_site') == 'anaslo' and identity in occupied:
+                if r.get('source_site') in ('anaslo', 'site777') and identity in occupied:
                     # 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を
                     # 付けたときは推定差枚だけ移す（_merge、2026-11-06）。
                     previous = self._read('records', key)

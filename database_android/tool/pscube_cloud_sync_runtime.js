@@ -27,7 +27,7 @@ const PSCUBE_CLOUD_FAILED = 'pscubeCloudFailed';
 const PSCUBE_CLOUD_FAILED_MAX = 120;
 // 取り込みの規則の版。規則を直して貼り替えた最初の実行で、前に取り込めなかった入力をもう一度読む
 // （2026-10-18、アナスロの出典リンクを拒んでPCの閲覧用ファイルが処理されないままだった。版が同じだと再試行されない）。
-const PSCUBE_CLOUD_RULES = '2026-10-24-capture-health-browser';
+const PSCUBE_CLOUD_RULES = '2026-11-07-site777';
 // 書き出しの一時的な失敗（429・5xx・通信の例外）は、同じ実行の中でこの回数まで少し待って試す（1秒・2秒）。
 const PSCUBE_CLOUD_WRITE_TRIES = 3;
 
@@ -35,26 +35,31 @@ const PSCUBE_CLOUD_WRITE_TRIES = 3;
 class PscubeCloudTransient extends Error {}
 
 // Google Apps ScriptにはブラウザのURLクラスがないため、共通パーサーが使う部分を実装する。
-// P’s CUBEのページと、アナスロ履歴の出典（`validateAnasloRecord` が見る ana-slo.com）だけを読む。
+// P’s CUBEのページ、アナスロの出典、サイトセブンのP-STATION全台表の出典だけを検証する。
+// 出典URLをここから取得する処理はない。
 // 出典を拒むと、アナスロの記録を含むPCの閲覧用ファイル全体が取り込めなくなる（2026-10-18、10/17以降が共有に出なかった）。
 class PscubeCloudUrl {
   constructor(raw) {
     if (typeof raw !== 'string') throw new Error('P’s CUBEのリンクが不正です。');
     const anaslo = raw.match(/^https:\/\/ana-slo\.com(\/[^?#\s]*)(?:\?([^#]*))?(#.*)?$/);
-    const match = anaslo || raw.match(/^https:\/\/www\.pscube\.jp(\/dedamajyoho-P-townDMMpachi\/c\d+\/cgi-bin\/nc-v(?:03-001|05-011|06-001)\.php)(?:\?([^#]*))?(#.*)?$/);
+    const site777 = raw.match(/^https:\/\/m\.site777\.jp(\/f\/D3300\.do)(?:\?([^#]*))?(#.*)?$/);
+    const match = anaslo || site777 || raw.match(/^https:\/\/www\.pscube\.jp(\/dedamajyoho-P-townDMMpachi\/c\d+\/cgi-bin\/nc-v(?:03-001|05-011|06-001)\.php)(?:\?([^#]*))?(#.*)?$/);
     if (!match) throw new Error('P’s CUBEのリンクが不正です。');
-    this.origin = anaslo ? 'https://ana-slo.com' : 'https://www.pscube.jp';
+    this.origin = anaslo ? 'https://ana-slo.com' : site777 ? 'https://m.site777.jp' : 'https://www.pscube.jp';
     this.username = this.password = '';
     this.pathname = match[1]; this.hash = match[3] || ''; this.href = raw;
-    const params = new Map();
+    const params = new Map(), all = new Map();
     for (const pair of (match[2] || '').split('&')) {
       if (!pair) continue;
       const at = pair.indexOf('=');
       const decode = s => decodeURIComponent(s.replace(/\+/g, ' '));
       const key = decode(at < 0 ? pair : pair.slice(0, at));
-      if (!params.has(key)) params.set(key, decode(at < 0 ? '' : pair.slice(at + 1)));
+      const value=decode(at < 0 ? '' : pair.slice(at + 1));
+      if (!params.has(key)) params.set(key, value);
+      if (!all.has(key)) all.set(key,[]);
+      all.get(key).push(value);
     }
-    this.searchParams = {get: key => params.has(key) ? params.get(key) : null, has: key => params.has(key)};
+    this.searchParams = {get: key => params.has(key) ? params.get(key) : null, has: key => params.has(key),getAll:key=>all.get(key)||[]};
   }
 }
 const URL = PscubeCloudUrl;

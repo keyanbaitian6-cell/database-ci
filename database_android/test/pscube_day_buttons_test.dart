@@ -26,15 +26,29 @@ void main() {
     try {
       await tester.pumpWidget(const MaterialApp(home: PscubeImportPage()));
       await tester.pumpAndSettle();
-      await tester.runAsync(
-        () async => Future<void>.delayed(const Duration(milliseconds: 100)),
-      );
-      await tester.pumpAndSettle();
       final top = find.widgetWithText(FilledButton, '上から取り込む');
       final bottom = find.widgetWithText(FilledButton, '下から取り込む');
+      // SQLiteとアセットの初期化完了を待つ。100ms固定ではWindowsの実I/O完了を保証しない。
+      for (
+        var i = 0;
+        i < 60 && tester.widget<FilledButton>(top).onPressed == null;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)),
+        );
+        await tester.pumpAndSettle();
+      }
       expect(top, findsOneWidget);
       expect(bottom, findsOneWidget);
-      expect(tester.widget<FilledButton>(top).onPressed, isNotNull);
+      expect(
+        tester.widget<FilledButton>(top).onPressed,
+        isNotNull,
+        reason: tester
+            .widgetList<Text>(find.byType(Text))
+            .map((t) => t.data)
+            .join('\n'),
+      );
       expect(find.text('日付指定取り込み（取り込む日）'), findsOneWidget);
       expect(find.text('指定なし（サイトの表示どおり）'), findsOneWidget);
       // 日付を選ぶ（直近7日の営業日）。

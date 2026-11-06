@@ -21,7 +21,7 @@ def read_records(path):
 
 
 def has_external_day(path, day):
-    return any(r['day'] == day and r.get('source_site') == 'anaslo' for r in read_records(path))
+    return any(r['day'] == day and r.get('source_site') in ('anaslo', 'site777') for r in read_records(path))
 
 
 def build_report(path, folder, day=None, machine=None):
@@ -35,7 +35,7 @@ def build_report(path, folder, day=None, machine=None):
     compact = []
     for r in records:
         row = {key: r.get(key) for key in ('day', 'machine', 'rate', 'rack', 'games', 'bb', 'rb', 'at_art', 'my', 'net_medals')}
-        row['source'] = 'アナスロ（補完）' if r.get('source_site') == 'anaslo' else 'P’s CUBE'
+        row['source'] = {'anaslo': 'アナスロ（補完）', 'site777': 'サイトセブン（補完）'}.get(r.get('source_site'), 'P’s CUBE')
         row['combined'] = ((r.get('source_probabilities') or {}).get('combined') or {}).get('display')
         compact.append(row)
     data = json.dumps({'records': compact, 'day': day, 'machine': machine}, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')

@@ -354,8 +354,8 @@ AUTO_CAPTURE_JS = r'''
   });
   const fitCard = () => {
     card.style.boxSizing = 'border-box';
-    card.style.width = Math.min(216, (window.innerWidth - 8) / sizeScale) + 'px';
-    card.style.maxHeight = Math.max(60, (window.innerHeight - 8) / sizeScale) + 'px';
+    card.style.width = Math.min(216, (window.innerWidth - 8) / getScale()) + 'px';
+    card.style.maxHeight = Math.max(60, (window.innerHeight - 8) / getScale()) + 'px';
     card.style.overflowY = 'auto';
     for (const child of card.children) child.style.flexShrink = '0';
     const rect = card.getBoundingClientRect();

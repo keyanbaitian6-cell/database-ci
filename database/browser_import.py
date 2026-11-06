@@ -14,6 +14,8 @@ This module is split in two halves:
 """
 from __future__ import annotations
 
+from capture_card import CARD_JS
+
 import json
 import re
 import threading
@@ -521,6 +523,7 @@ GRAPH_EXTRACT_BODY = READ_DAY_JS + r'''
 NO_RACKS_PATTERN = re.compile(r'該当する台情報が(?:見つかりませんでした|ありません)')
 
 OVERLAY_JS = (
+    CARD_JS + "\n;" +
     "(() => {\n"
     "  if (window.__databaseOverlayInstalled) return;\n"
     "  window.__databaseOverlayInstalled = true;\n"
@@ -532,45 +535,8 @@ OVERLAY_JS = (
     # click. Remembering a drag (in a file on the Python side, so it survives
     # both the page reload that "next rack" causes and closing the browser)
     # keeps the capture buttons next to whatever the user is actually clicking.
-    "  const card = document.createElement('div');\n"
-    "  card.id = 'database-overlay';\n"
-    "  card.style.cssText = 'position:fixed;z-index:2147483647;background:#203044;color:#fff;"
-    "padding:8px;display:flex;flex-direction:column;gap:6px;font:13px system-ui;"
-    "border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.4);width:176px';\n"
-    # カードの大きさ。サイトの文字や表に合わせて見やすい大きさに変えられる。
-    # 倍率は localStorage に残すので、ページを移動しても同じ大きさのまま。
-    # 位置と倍率は、ブラウザを閉じても残るようPython側のファイルに保存する
-    # （Cookie/localStorageは専用プロファイルに保持する。配置ファイルも従来どおり使う）。
-    # 開くたびに install_overlay が window.__databaseLayout へ入れて渡す。
-    "  const SIZE_MIN = 0.7, SIZE_MAX = 2, SIZE_STEP = 0.15;\n"
-    "  const layout = window.__databaseLayout || {};\n"
-    "  let sizeScale = 1;\n"
-    "  if (layout.scale >= SIZE_MIN && layout.scale <= SIZE_MAX) sizeScale = layout.scale;\n"
-    "  const saveLayout = () => {\n"
-    "    const rect = card.getBoundingClientRect();\n"
-    "    window.__databaseLayout = {left: rect.left, top: rect.top, scale: sizeScale};\n"
-    "    try {\n"
-    "      window.pywebview.api.save_overlay_layout(JSON.stringify(window.__databaseLayout));\n"
-    "    } catch (e) {}\n"
-    "  };\n"
-    "  const grip = document.createElement('div');\n"
-    "  grip.style.cssText = 'cursor:move;font-size:11px;opacity:.75;padding:2px 4px;"
-    "user-select:none;display:flex;align-items:center;gap:4px';\n"
-    "  const gripLabel = document.createElement('span');\n"
-    "  gripLabel.textContent = 'database（ドラッグで移動）';\n"
-    "  gripLabel.style.cssText = 'flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';\n"
-    "  const sizeButton = (text, title, step) => {\n"
-    "    const button = document.createElement('button');\n"
-    "    button.textContent = text;\n"
-    "    button.title = title;\n"
-    "    button.style.cssText = 'border:1px solid #5b6b84;border-radius:5px;background:transparent;"
-    "color:#c9d3e3;cursor:pointer;font-size:11px;line-height:1;padding:2px 5px';\n"
-    "    button.addEventListener('mousedown', e => e.stopPropagation());\n"
-    "    button.onclick = () => applySize(sizeScale + step);\n"
-    "    return button;\n"
-    "  };\n"
-    "  grip.append(gripLabel, sizeButton('－', '小さくする', -SIZE_STEP),\n"
-    "    sizeButton('＋', '大きくする', SIZE_STEP));\n"
+    "  const {card, grip, mount, place, getScale} = window.databaseCaptureCard({id:'database-overlay', layout:window.__databaseLayout || {},\n"
+    "    save:value => {window.__databaseLayout=value;window.pywebview.api.save_overlay_layout(JSON.stringify(value));}});\n"
     "  const currentStore = location.pathname.startsWith('/saiwaichou/') ? 'saiwaichou' :\n"
     "    location.pathname.startsWith('/nagamachiminami/') ? 'nagamachiminami' : null;\n"
     "  const otherStore = currentStore === 'saiwaichou' ? 'nagamachiminami' : 'saiwaichou';\n"
@@ -877,7 +843,7 @@ OVERLAY_JS = (
     "  };\n"
     "  window.__databaseRenderRainbow = renderRainbow;\n"
     "  card.append(grip, switchBtn, captureBtn, status, progress, rainbowBox, undoBtn, retryBtn);\n"
-    "  document.body.appendChild(card);\n"
+    "  mount();\n"
     # Carries the "saved" / "残りN台" message across the page navigation that
     # a save (either kind) triggers -- set by the confirm subprocess (via
     # run_session()'s advance-signal watcher) or by nextBtn above, read back
@@ -894,45 +860,6 @@ OVERLAY_JS = (
     "  renderRainbow();\n"
     "  markMachines();\n"
     "  setTimeout(markMachines, 1000);\n"
-    # 位置はすべて「画面に見えている座標」で扱う。カードは zoom で拡大するため、
-    # 見た目の大きさは getBoundingClientRect で測り、CSS の left/top には
-    # zoom で割った値を入れる（そうしないと拡大したとき位置がずれる）。
-    "  const place = (left, top) => {\n"
-    "    const rect = card.getBoundingClientRect();\n"
-    "    const maxLeft = Math.max(0, window.innerWidth - rect.width - 4);\n"
-    "    const maxTop = Math.max(0, window.innerHeight - rect.height - 4);\n"
-    "    card.style.left = Math.min(Math.max(0, left), maxLeft) / sizeScale + 'px';\n"
-    "    card.style.top = Math.min(Math.max(0, top), maxTop) / sizeScale + 'px';\n"
-    "  };\n"
-    # 大きさを変えても、そのときの画面上の位置はできるだけ動かさない。
-    "  const applySize = value => {\n"
-    "    const rect = card.getBoundingClientRect();\n"
-    "    sizeScale = Math.min(SIZE_MAX, Math.max(SIZE_MIN, Math.round(value * 100) / 100));\n"
-    "    card.style.zoom = sizeScale;\n"
-    "    place(rect.left, rect.top);\n"
-    "    saveLayout();\n"
-    "  };\n"
-    "  card.style.zoom = sizeScale;\n"
-    "  if (typeof layout.left === 'number' && typeof layout.top === 'number') {\n"
-    "    place(layout.left, layout.top);\n"
-    "  } else {\n"
-    "    place(window.innerWidth - 196, 12);\n"
-    "  }\n"
-    "  let dragging = null;\n"
-    "  grip.addEventListener('mousedown', e => {\n"
-    "    const rect = card.getBoundingClientRect();\n"
-    "    dragging = {dx: e.clientX - rect.left, dy: e.clientY - rect.top};\n"
-    "    e.preventDefault();\n"
-    "  });\n"
-    "  window.addEventListener('mousemove', e => {\n"
-    "    if (!dragging) return;\n"
-    "    place(e.clientX - dragging.dx, e.clientY - dragging.dy);\n"
-    "  });\n"
-    "  window.addEventListener('mouseup', () => {\n"
-    "    if (!dragging) return;\n"
-    "    dragging = null;\n"
-    "    saveLayout();\n"
-    "  });\n"
     "  const extractTable = () => {\n" + TABLE_EXTRACT_BODY + "\n  };\n"
     "  const extractGraph = () => {\n" + GRAPH_EXTRACT_BODY + "\n  };\n"
     # 機種の表の代わりにサイトが「該当する台情報が見つかりませんでした」を出しているか

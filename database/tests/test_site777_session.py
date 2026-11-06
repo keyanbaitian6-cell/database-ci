@@ -1,0 +1,149 @@
+"""自動取り込みの順序・停止・再開・原子的な保存を一時DBで確認する。"""
+from datetime import datetime
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pscube_import import PscubeStore
+from site777_browser import DiagnosticLog
+from site777_session import Session
+from test_site777_import import bitmap
+
+NOW = datetime.fromisoformat('2026-11-07T02:00:00+09:00')
+
+
+def url(path, model='123', page=1):
+    return f'https://m.site777.jp/f/{path}.do?pmc=04034001&urt=2000&mdc={model}&dtdd=0&pan={page}'
+
+
+def table():
+    return {'kind':'table','url':url('D3300'),'machine':'試験ジャグラー3','model_id':'123','count':2,
+            'selected_md':'11/6','days':[{'label':'11/6','url':url('D3300')}],
+            'headers':['','台番','累計ゲーム','BB回数','RB回数','最高出玉','ART回数'],
+            'rows':[['','101','3000','10','8','900','--'],['','102','2800','9','5','900','0']],
+            'graph_url':url('D4300'), 'index_url':url('D0300')}
+
+
+def graph(page=1, metadata=False):
+    value={'kind':'graphs','url':url('D4300',page=page),'model_id':'123','count':2,
+           'selected_md':'11/6','page':page,'pages':[{'number':1},{'number':2}], 'index_url':url('D0300')}
+    if metadata:value['deferred_images']=True
+    else:value['graphs']=[{'rack':100+page,'png':bitmap(),'my_label':'900枚'}]
+    return value
+
+
+class SessionTest(unittest.TestCase):
+    def test_page_api_does_not_expose_file_paths_store_factories_or_native_window(self):
+        allowed={'note','state','configure','pause','save_overlay_layout','capture'}
+        public={name for name in dir(self.session) if not name.startswith('_')}
+        self.assertEqual(public,allowed)
+
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name)
+        self.session=self.new_session()
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+
+    def new_session(self):
+        return Session(self.root,DiagnosticLog(self.root),now=lambda:NOW,
+                       store_factory=lambda path:PscubeStore(path,recording=False))
+
+    def cycle(self,payload):
+        result=self.session.capture(json.dumps(payload),self.epoch)
+        self.assertNotIn('error',result,result.get('error'))
+        return result
+
+    def test_table_then_both_graph_pages_before_any_db_record_is_saved(self):
+        self.assertEqual(self.cycle(table())['action']['url'].split('/f/')[1].split('.')[0],'D4300')
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+        self.assertTrue(self.cycle(graph(metadata=True))['prepare_graphs'])
+        self.assertEqual(self.cycle(graph())['action'],{'type':'page','number':2})
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+        self.cycle(graph(2))
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:
+            records=store.export_payload()['records']
+            self.assertEqual({r['rack'] for r in records},{101,102})
+            self.assertTrue(all(r['source_site']=='site777' and r['net_medals'] is None for r in records))
+        finally:store.close()
+
+    def test_stop_invalidates_extraction_in_flight(self):
+        self.session.configure(False)
+        result=self.session.capture(json.dumps(table()),self.epoch)
+        self.assertIn('error',result)
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+
+    def test_wrong_day_or_rack_on_second_page_does_not_save_partial_machine(self):
+        self.cycle(table())
+        self.cycle(graph())
+        bad=graph(2)
+        bad['graphs'][0]['rack']=999
+        result=self.session.capture(json.dumps(bad),self.epoch)
+        self.assertIn('error',result)
+        self.assertFalse(result['state']['enabled'])
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+
+    def test_reopen_reuses_saved_graph_page(self):
+        self.cycle(table())
+        self.cycle(graph())
+        self.session=self.new_session()
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.cycle(table())
+        result=self.cycle(graph(metadata=True))
+        self.assertEqual(result['action'],{'type':'page','number':2})
+        self.assertNotIn('prepare_graphs',result)
+        self.cycle(graph(2))
+
+    def test_duplicate_rack_across_pages_is_rejected_without_overwriting_staging(self):
+        self.cycle(table())
+        self.cycle(graph())
+        path=self.root/'site777-staging'/'2026-11-06-123.json'
+        before=path.read_bytes()
+        repeated=graph(2)
+        repeated['graphs'][0]['rack']=101
+        result=self.session.capture(json.dumps(repeated),self.epoch)
+        self.assertIn('error',result)
+        self.assertEqual(path.read_bytes(),before)
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+
+    def test_wrong_date_my_or_page_number_stops_before_save(self):
+        for field,value in [('selected_md','11/5'),('my_label','901枚'),('page',2)]:
+            with self.subTest(field=field):
+                self.session=self.new_session()
+                self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+                self.cycle(table())
+                bad=graph()
+                if field=='my_label':bad['graphs'][0][field]=value
+                else:bad[field]=value
+                result=self.session.capture(json.dumps(bad),self.epoch)
+                self.assertIn('error',result)
+                self.assertFalse((self.root/'pscube.sqlite3').exists())
+
+    def test_actual_browser_page_change_before_final_save_rejects_all_records(self):
+        self.cycle(table())
+        self.cycle(graph())
+        class MovingWindow:
+            calls=0
+            def get_current_url(self):
+                self.calls+=1
+                return url('D4300',page=2) if self.calls==1 else url('D4300',page=1)
+        self.session._window=MovingWindow()
+        result=self.session.capture(json.dumps(graph(2)),self.epoch)
+        self.assertIn('error',result)
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+
+    def test_all_index_pages_are_read_before_using_a_previously_listed_next_machine(self):
+        def index(page, model):
+            return {'kind':'index','url':url('D0300',page=page),'page':page,
+                    'pages':[{'number':1},{'number':2}],
+                    'machines':[{'name':'試験機種'+model,'model_id':model,'url':url('D2300',model)}]}
+        self.assertEqual(self.cycle(index(1,'123'))['action'],{'type':'page','number':2})
+        result=self.cycle(index(2,'456'))
+        self.assertEqual(result['action']['type'],'listed')
+        self.assertIn('mdc=123',result['action']['url'])
+        self.session._done.add('123')
+        self.assertIn('mdc=456',self.session._next()['action']['url'])

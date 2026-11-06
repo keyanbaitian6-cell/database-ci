@@ -27,7 +27,7 @@ def localize(base):
     import collector
     collector.HOST = '127.0.0.1'
     bi.is_allowed_url = lambda url: url.startswith(base + '/')
-    bi.machine_list_url = lambda store, day: base + LIST + '#database_next_machine=1&database_day=' + day
+    bi.machine_list_url = lambda store, day, after=None: base + LIST + '#database_next_machine=1&database_day=' + day
     return bi
 
 
@@ -229,6 +229,12 @@ def child(folder):
         except Exception:
             import traceback
             observed['error'] = traceback.format_exc()
+            observed['requests'] = requests
+            if 'bridge' in refs:
+                observed['connection_failure'] = refs['bridge']._connection.failure
+            log_path = db_path.parent / 'errors.log'
+            if log_path.exists():
+                observed['fixture_errors'] = log_path.read_text(encoding='utf-8')
         finally:
             release.set()
             if 'cover' in refs:

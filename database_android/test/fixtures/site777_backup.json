@@ -1,0 +1,111 @@
+{
+  "format": "pscube-viewer",
+  "version": 1,
+  "kind": "backup",
+  "source": "site777",
+  "import_mode": "fill_missing",
+  "machines": [
+    {
+      "store": "c740601",
+      "rate": "20",
+      "machine": "試験ジャグラー3",
+      "url": null,
+      "expected_count": 2,
+      "machine_type": null,
+      "source_site": "site777"
+    }
+  ],
+  "records": [
+    {
+      "rack": 101,
+      "games": 3000,
+      "bb": 10,
+      "rb": 8,
+      "my": 900,
+      "at_art": null,
+      "store": "c740601",
+      "rate": "20",
+      "machine": "試験ジャグラー3",
+      "day": "2026-11-06",
+      "detail_url": null,
+      "observed_at": null,
+      "net_medals": null,
+      "graph": {
+        "kind": "daily",
+        "zero_y": 111.5,
+        "points": [
+          [
+            8,
+            111.0
+          ],
+          [
+            37,
+            109.5
+          ],
+          [
+            66,
+            116.5
+          ]
+        ]
+      },
+      "source_graph": {
+        "format": "site777-yellow-pixels-v1",
+        "image_sha256": "1346f5d637b0c7f3497e8d8ecd287fc70b191ed1e14c51f50e3fb6eec58ff408",
+        "width": 260,
+        "height": 226
+      },
+      "source_site": "site777",
+      "source_url": "https://m.site777.jp/f/D3300.do?dtdd=0&mdc=123&pan=1&pmc=04034001&urt=2000",
+      "source_sha256": "90c825effae981d71138bc5d9c40f8005511a3053fe773e3bbb2f730b5f70fbe",
+      "source_machine": "試験ジャグラー3",
+      "source_day_label": "11/6",
+      "source_captured_at": "2026-11-07T01:50:00+09:00"
+    },
+    {
+      "rack": 102,
+      "games": 2800,
+      "bb": 9,
+      "rb": 5,
+      "my": 1234,
+      "at_art": 0,
+      "store": "c740601",
+      "rate": "20",
+      "machine": "試験ジャグラー3",
+      "day": "2026-11-06",
+      "detail_url": null,
+      "observed_at": null,
+      "net_medals": null,
+      "graph": {
+        "kind": "daily",
+        "zero_y": 111.5,
+        "points": [
+          [
+            8,
+            111.0
+          ],
+          [
+            37,
+            109.5
+          ],
+          [
+            66,
+            116.5
+          ]
+        ]
+      },
+      "source_graph": {
+        "format": "site777-yellow-pixels-v1",
+        "image_sha256": "1346f5d637b0c7f3497e8d8ecd287fc70b191ed1e14c51f50e3fb6eec58ff408",
+        "width": 260,
+        "height": 226
+      },
+      "source_site": "site777",
+      "source_url": "https://m.site777.jp/f/D3300.do?dtdd=0&mdc=123&pan=1&pmc=04034001&urt=2000",
+      "source_sha256": "90c825effae981d71138bc5d9c40f8005511a3053fe773e3bbb2f730b5f70fbe",
+      "source_machine": "試験ジャグラー3",
+      "source_day_label": "11/6",
+      "source_captured_at": "2026-11-07T01:50:00+09:00"
+    }
+  ],
+  "rack_captures": []
+}

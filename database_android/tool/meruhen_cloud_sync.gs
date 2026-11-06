@@ -539,7 +539,7 @@ function meruhenWrite(folder, file, name, text) {
   throw new MeruhenCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 // BEGIN GENERATED VIEWER PARTS
-const SCRIPT_RELEASE = 'f4263a0031d6';
+const SCRIPT_RELEASE = '5e3bae7ca131';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -783,7 +783,7 @@ function vpMaintain(folder, site, props) {
   catch (error) { console.log('古い閲覧用キャッシュの整理は次回再試行します：' + String(error.message || error)); }
 }
 
-const APPLICATION_RELEASE = 'f4263a0031d6';
+const APPLICATION_RELEASE = '5e3bae7ca131';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -893,7 +893,7 @@ function viewerNetCapture(value) {
 
 function netCaptureLabel(record) {
   if (Number.isSafeInteger(record.net_medals)) return record.net_medals === 0 ? '取得済み（0枚）' : '取得済み';
-  if (record.source_site === 'anaslo') return '出典に差枚なし';
+  if (['anaslo','site777'].includes(record.source_site)) return '出典に差枚なし';
   const reason = record.net_capture?.reason;
   return ({missing_series:'日別の系列なし',empty:'元数値が空',short_series:'元数値の点が不足',
     invalid_points:'元数値の形式不正',invalid_net:'差枚の範囲不正',invalid_response:'応答の形式不正',
