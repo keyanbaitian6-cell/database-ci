@@ -87,6 +87,15 @@ def anaslo_converter_command():
     return [sys.executable, str(app_path)], app_path.parent
 
 
+def site777_browser_command():
+    """サイトセブン（スマホ会員）をAndroidとして開くブラウザ（site777_browser.py）を別の窓で開くコマンド
+    （2026-11-07 利用者「PC版でandroidユーザーとしてブラウザを開いてログインをしたい」）。今は見るだけ。"""
+    if getattr(sys, 'frozen', False):
+        raise OSError('配布版（EXE）からは開けません。database/start.cmd から開いてください。')
+    here = Path(__file__).resolve().parent
+    return [sys.executable, str(here / 'site777_browser.py'), str(here / 'data')], here
+
+
 def decode_machine_token(token):
     if not token:
         return None
@@ -809,6 +818,8 @@ def main():
                command=lambda: open_pscube_import()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
     ttk.Button(tab_home, text='アナスロから補う（P-STATION・幸町）',
                command=lambda: open_anaslo_converter()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
+    ttk.Button(tab_home, text='サイトセブンを開く（スマホ会員）',
+               command=lambda: open_site777_browser()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
     ttk.Label(tab_home, style='Sub.TLabel', justify='left', text=(
         '① 機種一覧・機種別の表・個別台グラフで「この画面を取り込む」\n'
         '② 表は表、グラフはグラフとして保存され、次の必要な台へ移動\n'
@@ -1103,6 +1114,23 @@ def main():
             return
         logbox.insert('end', 'アナスロの取り込み画面を開きました。P-STATIONは同期フォルダに保存すると、'
                       'この画面が数分以内に自動で読み込みます（幸町は保存後に「バックアップを読み込む」）。\n')
+        logbox.see('end')
+
+    site777_process = [None]
+
+    def open_site777_browser():
+        running = site777_process[0]
+        if running is not None and running.poll() is None:
+            messagebox.showinfo('開いています', 'サイトセブンの窓は開いています。タスクバーから選んでください。', parent=root)
+            return
+        try:
+            command, folder = site777_browser_command()
+            site777_process[0] = subprocess.Popen(command, cwd=str(folder))
+        except OSError as exc:
+            messagebox.showerror('起動できません', f'サイトセブンを開けません：{exc}', parent=root)
+            return
+        logbox.insert('end', 'サイトセブンをスマホとして開きました。初めてのときはスマホ会員のIDでログインしてください'
+                      '（次からはログインしたまま開きます）。今は見るだけで、データの取り込みはまだできません。\n')
         logbox.see('end')
 
     def open_pscube_import():
