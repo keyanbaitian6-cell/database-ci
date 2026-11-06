@@ -332,6 +332,10 @@ class PscubeStore {
             (row['net_medals'] as int).abs() > 1000000)) {
       throw const FormatException('差枚の数値が不正です。');
     }
+    if (row.containsKey('net_estimate') &&
+        (!external || !validPscubeNetEstimate(row['net_estimate']))) {
+      throw const FormatException('推定差枚の形式が不正です。');
+    }
     if (row['net_capture'] != null) {
       row['net_capture'] = validateNetCapture(row['net_capture'], record: row);
     }
@@ -914,7 +918,17 @@ class PscubeStore {
     Map<String, dynamic> fresh,
   ) {
     if (old == null) return fresh;
-    if (fresh['source_site'] == 'anaslo') return old;
+    if (fresh['source_site'] == 'anaslo') {
+      // 補完どうしで、同じアナスロのページから後で推定差枚を付けたときだけ移す（PC `_merge` と同じ、2026-11-06）。
+      final estimate = fresh['net_estimate'];
+      if (old['source_site'] == 'anaslo' &&
+          estimate != null &&
+          fresh['source_sha256'] == old['source_sha256'] &&
+          jsonEncode(estimate) != jsonEncode(old['net_estimate'])) {
+        return {...old, 'net_estimate': estimate};
+      }
+      return old;
+    }
     if (old['source_site'] == 'anaslo') return fresh;
     final same = [
       'bb',
@@ -1699,8 +1713,20 @@ class PscubeStore {
         final key = _key(record, record: true);
         if (record['source_site'] == 'anaslo' &&
             occupied.contains(rackDayKey(record))) {
-          keptLocal++;
-          unchanged++;
+          // 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を
+          // 付けたときは推定差枚だけ移す（_merge、PC `import_backup` と同じ、2026-11-06）。
+          final previous = oldRecords[key];
+          final moved = previous == null ? null : _merge(previous, record);
+          if (moved == null || identical(moved, previous)) {
+            keptLocal++;
+            unchanged++;
+            continue;
+          }
+          updated++;
+          batch.insert('records', {
+            'key': key,
+            'payload': jsonEncode(moved),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
           continue;
         }
         occupied.add(rackDayKey(record));

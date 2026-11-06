@@ -41,6 +41,11 @@ def blocks_resource(url, *, light=False, document=False):
     return True
 
 
+LINK_NOTICE = 'サイト内リンクへの移動を止めました。日付は取得画面の指定期間で選び、上部「取得」→「表示を確認して自動取得を開始」を押してください。'
+# 表示確認待ちの窓の題。開始の操作をここにも書く（2026-11-06）。
+WAITING_TITLE = 'アナスロ HTML取得：表示を確認したら、上部メニュー「取得」→「表示を確認して自動取得を開始」'
+
+
 def document_identity(url):
     parts = urlsplit(url)
     return (parts.scheme.lower(), parts.netloc.lower(), unquote(parts.path), parts.query)
@@ -86,7 +91,7 @@ class NavigationState:
             if not self.same(url):
                 # A cancelled click must not terminate the capture session or
                 # invalidate the document that is still displayed.
-                self.notice = 'サイト内リンクへの移動を止めました。日付は取得画面の指定期間で選び、上部「取得」→「表示を確認して自動取得を開始」を押してください。'
+                self.notice = LINK_NOTICE
                 self.blocked_windows.add(document_identity(url))
                 return False
             self.navigation = identity
@@ -119,6 +124,19 @@ class NavigationState:
             self.web_error = str(web_error)
             if not success and (self.status is None or self.status == 200):
                 self.error = 'ブラウザのページ読み込みに失敗しました。' + (f' ({web_error})' if web_error else '')
+
+
+def ask_start(window):
+    """日付リンクを押されたとき、その場で開始を聞く（OKなら上部メニューの開始と同じ扱い）。
+    ページの中には何も足さない（保存するHTMLを変えないため）。"""
+    try:
+        return window.create_confirmation_dialog(
+            '自動取得を始めますか',
+            'サイト内のリンクでは移動しません。日付は取得画面で指定した期間を順に取得します。\n'
+            'ページが正しく表示されていれば「OK」で自動取得を始めます。'
+            '（上部メニュー「取得」→「表示を確認して自動取得を開始」と同じです）') is True
+    except Exception:  # noqa: BLE001 - 聞けなければ今までどおり上部メニューから始める
+        return False
 
 
 def navigate_target(window, url, previous):
@@ -227,7 +245,7 @@ def run_host(connection, profile):
     handlers = []
     approved = False
     shell = '<html lang="ja"><meta charset="utf-8"><body><p>指定したページを表示します。</p><p>表示後、上部メニュー「取得」から「表示を確認して自動取得を開始」を選んでください。</p></body></html>'
-    window = webview.create_window('アナスロ HTML取得：表示確認待ち', html=shell, width=1100, height=800)
+    window = webview.create_window(WAITING_TITLE, html=shell, width=1100, height=800)
 
     def confirm():
         with state.lock:
@@ -283,6 +301,10 @@ def run_host(connection, profile):
                     window.set_title(f'HTTP {status or "未確認"}：取得待機中／表示・認証を確認してください')
             if notice:
                 send('progress', text=notice)
+                if notice is LINK_NOTICE and not approved and not confirmed.is_set() and ask_start(window):
+                    # 2026-11-06：11/6 20:01 にブラウザの日付リンクを4回押して止められ、そのまま停止された。
+                    # 開始の操作（上部メニュー）が見つけにくいので、リンクを押したらその場で開始を聞く。
+                    confirm()
             if error:
                 raise ValueError(error)
             if complete and status is not None and status >= 400 and status not in (401, 403, 429):

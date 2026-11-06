@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import sys
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -11,6 +12,7 @@ from app import apply_style
 from anaslo_converter import (TARGETS, MeruhenTarget, PscubeTarget, analyze, make_normal_analysis,
                               make_other_analysis, save_backup, save_normal_analysis, save_other_analysis)
 from anaslo_download import PaceState
+from anaslo_html import prune_cache
 from html_converter_diagnostics import LOGGER, setup as setup_diagnostics
 
 KEEP = 'HTMLの機種名を使う'
@@ -19,6 +21,10 @@ PENDING = '対応する機種を選択'
 # 幸町のジャグラー・ハナハナだけの分析用ファイル（databaseに読み込まない、2026-10-17）。
 NORMAL_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'normal_analysis'
 OTHER_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'other_analysis'
+# 解析結果の控え（Git対象外。2026-11-06）。
+PARSE_CACHE_DIR = Path(__file__).resolve().parent / 'data' / 'parse_cache'
+# 補完用JSONの保存先の初期値。PC版の「バックアップを読み込む」も、保存から3時間はここを開く（2026-11-06）。
+JSON_DIR = Path(__file__).resolve().parent / 'data' / 'backup_json'
 
 
 class Converter:
@@ -30,6 +36,8 @@ class Converter:
         apply_style(root)
         self.staging = None
         self.target = None
+        self.loading = False
+        self.parse_cache = PARSE_CACHE_DIR
         self.racks = {}
         self.mapping = {}
         self.download_pacing = PaceState()
@@ -78,7 +86,7 @@ class Converter:
         footer = ttk.Frame(frame)
         footer.pack(fill='x')
         ttk.Button(footer, text='未対応はHTMLの機種名を使う', command=self.keep_remaining).pack(side='left')
-        self.save_button = ttk.Button(footer, text='補完用JSONを保存', style='Accent.TButton', command=self.save, state='disabled')
+        self.save_button = ttk.Button(footer, text='補完用JSONを保存', style='Accent.TButton', command=lambda: self.save(background=True), state='disabled')
         self.save_button.pack(side='right')
         self.notice = tk.StringVar(value=PscubeTarget.notice)
         ttk.Label(frame, textvariable=self.notice, style='Sub.TLabel', wraplength=960).pack(anchor='w', pady=(12, 0))
@@ -87,19 +95,102 @@ class Converter:
         paths = filedialog.askopenfilenames(parent=self.root, title='保存HTMLを選ぶ', filetypes=[('HTML', '*.html *.htm')])
         if not paths:
             return
-        self.load_paths(paths)
+        self.load_paths(paths, background=True)
 
     def open_download(self):
         from download_dialog import DownloadDialog
-        DownloadDialog(self.root, self.load_paths, pacing=self.download_pacing)
+        DownloadDialog(self.root, lambda paths: self.load_paths(paths, background=True), pacing=self.download_pacing, suggest=True)
 
-    def load_paths(self, paths):
+    def show_window(self):
+        # 取得画面を閉じたあと、変換画面が後ろに隠れたままにならないよう前に出す（2026-11-06）。
         try:
-            staging = analyze(paths)
-            target = TARGETS[staging['hall']](ROOT / 'database' / 'data')
-        except Exception as exc:
-            messagebox.showerror('読み取れません', str(exc), parent=self.root)
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except tk.TclError:
+            pass
+
+    def load_paths(self, paths, *, background=False):
+        """background：画面から読むとき。HTMLの解析（1か月分で約8秒）を別のスレッドで行い、その間も画面を
+        応答させる（2026-11-06 利用者「取り込んでいた画面を下部のアイコンからえらんでも開かない」。Windowsは5秒以上
+        応答しない窓を「応答なし」にし、タスクバーから前に出せなくなる）。画面の部品に触るのはメインスレッドだけ。"""
+        paths = list(paths)
+        self.show_window()
+        if not background:
+            try:
+                staging = analyze(paths)
+                target = TARGETS[staging['hall']](ROOT / 'database' / 'data')
+            except Exception as exc:
+                messagebox.showerror('読み取れません', str(exc), parent=self.root)
+                return
+            self.show_loaded(staging, target)
             return
+        if self.loading:
+            messagebox.showinfo('読み込み中です', '前の処理が終わってから選び直してください。', parent=self.root)
+            return
+
+        def work():
+            # 同じHTMLの2回目以降は解析結果の控えを使う（2026-11-06、anaslo_html.parse_cached）。
+            staging = analyze(paths, cache_dir=self.parse_cache) if self.parse_cache else analyze(paths)
+            if self.parse_cache:
+                prune_cache(self.parse_cache)
+            return staging, TARGETS[staging['hall']](ROOT / 'database' / 'data')
+
+        def done(value):
+            self.show_loaded(*value)
+            self.show_window()
+
+        self.in_background(f'{len(paths)}件のHTMLを読み込んでいます。しばらくお待ちください。', work, done,
+                           'HTMLを読み取れませんでした。', '読み取れません')
+
+    def in_background(self, message, work, done, failed_status, failed_title):
+        """work を別のスレッドで行い、終わったら done(結果) をメインスレッドで呼ぶ（画面の部品はメインだけ）。
+        読み込み・保存のどちらの途中でも、もう一方は始めない（self.loading）。"""
+        self.loading = True
+        self.set_buttons()
+        self.status.set(message)
+        result = {}
+
+        def run():
+            try:
+                result['value'] = work()
+            except Exception as exc:  # noqa: BLE001 - 画面に理由を出す
+                LOGGER.exception('background task failed: %s', failed_title)
+                result['error'] = exc
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+
+        def check():
+            if thread.is_alive():
+                self.root.after(100, check)
+                return
+            self.loading = False
+            self.set_buttons()
+            if 'error' in result:
+                self.status.set(failed_status)
+                messagebox.showerror(failed_title, str(result['error']), parent=self.root)
+                return
+            done(result['value'])
+
+        self.root.after(100, check)
+
+    def set_buttons(self):
+        """処理の途中は保存のボタンを押せないようにする。"""
+        if self.loading or not self.staging:
+            state = 'disabled'
+            self.save_button.configure(state=state)
+            self.normal_button.configure(state=state)
+            self.other_button.configure(state=state)
+            return
+        unresolved = sum(n not in self.mapping for n in self.names)
+        self.save_button.configure(state='disabled' if unresolved else 'normal')
+        # 分析用は機種名の対応が済んでいなくても作れる（幸町だけ）。
+        meruhen = 'normal' if isinstance(self.target, MeruhenTarget) else 'disabled'
+        self.normal_button.configure(state=meruhen)
+        self.other_button.configure(state=meruhen)
+
+    def show_loaded(self, staging, target):
         self.staging, self.target = staging, target
         self.hall_text.set(f'店舗：{target.hall.label}　{target.rate_text}')
         self.notice.set(target.notice)
@@ -138,10 +229,7 @@ class Converter:
         unresolved = sum(n not in self.mapping for n in self.names)
         text = ' / '.join(f"{d['day']}：{len(d['records'])}台" for d in self.staging['days'])
         self.status.set(f'{text}　機種名の未確認：{unresolved}件')
-        self.save_button.configure(state='disabled' if unresolved else 'normal')
-        # 分析用は機種名の対応が済んでいなくても作れる（幸町だけ）。
-        self.normal_button.configure(state='normal' if isinstance(self.target, MeruhenTarget) else 'disabled')
-        self.other_button.configure(state='normal' if isinstance(self.target, MeruhenTarget) else 'disabled')
+        self.set_buttons()
 
     def select(self, event=None):
         selected = self.tree.selection()
@@ -176,38 +264,71 @@ class Converter:
         self.refresh()
         self.select()
 
-    def save(self):
-        if not self.staging:
-            return
-        try:
-            payload = self.target.make_backup(self.staging, self.mapping)
-        except Exception as exc:
-            messagebox.showerror('保存できません', str(exc), parent=self.root)
+    def save(self, *, background=False):
+        """background：画面のボタンから。保存先を先に選び、変換（1か月分で数秒、推定差枚込み）と書き込みは
+        別のスレッドで行う（2026-11-06。画面のスレッドで行うと、期間が長いとき「応答なし」になる）。"""
+        if not self.staging or self.loading:
             return
         days = sorted(d['day'].replace('-', '') for d in self.staging['days'])
         period = days[0] if len(days) == 1 else f'{days[0]}-{days[-1]}'
+        try:
+            JSON_DIR.mkdir(parents=True, exist_ok=True)
+            folder = {'initialdir': str(JSON_DIR)}
+        except OSError:
+            folder = {}
+        mapping, staging, target = dict(self.mapping), self.staging, self.target
+        if not background:
+            try:
+                payload = target.make_backup(staging, mapping)
+            except Exception as exc:
+                messagebox.showerror('保存できません', str(exc), parent=self.root)
+                return
         path = filedialog.asksaveasfilename(parent=self.root, title='補完用JSONの保存先',
-                                           initialfile=self.target.file_name(period), defaultextension='.json', filetypes=[('JSON', '*.json')])
+                                           initialfile=target.file_name(period), defaultextension='.json',
+                                           filetypes=[('JSON', '*.json')], **folder)
         if not path:
             return
-        try:
-            save_backup(path, payload)
-        except Exception as exc:
-            messagebox.showerror('保存できません', str(exc), parent=self.root)
+        if not background:
+            try:
+                save_backup(path, payload)
+            except Exception as exc:
+                messagebox.showerror('保存できません', str(exc), parent=self.root)
+                return
+            self.saved(path, payload, mapping)
             return
+
+        def work():
+            payload = target.make_backup(staging, mapping)
+            save_backup(path, payload)
+            return payload
+
+        self.in_background('補完用JSONを作っています。しばらくお待ちください。', work,
+                           lambda payload: self.saved(path, payload, mapping), 'JSONを保存できませんでした。', '保存できません')
+
+    def saved(self, path, payload, mapping):
         # Alias persistence failure must not misreport a successful JSON save.
         warning = ''
         try:
             self.alias_file.parent.mkdir(parents=True, exist_ok=True)
-            self.aliases.update(self.mapping)
+            self.aliases.update(mapping)
             self.alias_file.write_text(json.dumps(self.aliases, ensure_ascii=False, indent=2), encoding='utf-8')
         except OSError:
             warning = '\n機種名の対応表は保存できませんでした。次回は再確認してください。'
+        # PC版の「バックアップを読み込む」のファイル名の欄に貼り付けられるよう、保存先をクリップボードに入れる。
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(str(Path(path)))
+            copied = '\n保存先はクリップボードに入れました（ファイルを選ぶ画面のファイル名の欄に貼り付けられます）。'
+        except tk.TclError:
+            copied = ''
         skipped = payload['conversion_summary']['skipped']
         detail = ''.join(f'\n{label}：{skipped[key]}件' for key, label in
                          (('existing', 'databaseに保存済みの日付・台'), ('unknown_rack', 'databaseに記録のない台番号'),
                           ('excluded', '対象外の機種'), ('manual', '取り込み対象から外した機種')) if skipped.get(key))
-        messagebox.showinfo('保存しました', f"{len(payload['records'])}件の補完用JSONを保存しました。{detail}\n{path}\n\ndatabase → バックアップ・同期 → バックアップを読み込む、から選択してください。" + warning, parent=self.root)
+        self.refresh()
+        messagebox.showinfo('保存しました', f"{len(payload['records'])}件の補完用JSONを保存しました。{detail}\n{path}\n\n"
+                            "database → バックアップ・同期 → バックアップを読み込む、から選択してください。"
+                            "保存から3時間は、読み込む画面がこのフォルダーで開きます。" + copied + warning, parent=self.root)
 
     def save_normal(self):
         """ジャグラー・ハナハナだけを分析用に保存する。databaseには読み込まないので、共有・採点・翌日候補に出ない。"""

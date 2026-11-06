@@ -28,6 +28,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 from auto_capture import AutoCapture
 import error_log
 import power
+import pscube_netlog
+import anaslo_net
 from pscube_health import validate_net_capture, trim_net_probes, merge_net_capture, viewer_net_capture
 from pscube_connection import (BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page,
                                retry_page, retry_target, stop_navigation)
@@ -370,6 +372,9 @@ def _validate_record(r):
         _number(r.get(name), name)
     if r.get('net_medals') is not None and (type(r['net_medals']) is not int or abs(r['net_medals']) > 1000000):
         raise ValueError('差枚の数値が不正です。')
+    # アナスロで補った台の推定差枚（anaslo_net.py、2026-11-06）。本当の差枚（net_medals）とは別の項目で、補完の台だけ。
+    if 'net_estimate' in r and not (external and anaslo_net.valid(r['net_estimate'])):
+        raise ValueError('推定差枚の形式が不正です。')
     if r.get('net_capture') is not None:
         r['net_capture'] = validate_net_capture(r['net_capture'], r)
     g = r.get('graph')
@@ -432,6 +437,12 @@ def _merge(old: dict | None, fresh: dict) -> dict:
     # External HTML is fill-only, including later restores of exported backups.
     # A real capture always replaces a source-only record regardless of game count.
     if fresh.get('source_site') == 'anaslo':
+        # 補完どうしで、同じアナスロのページから後で推定差枚を付けた（作り直した）ときだけ、推定差枚を移す
+        # （2026-11-06。既に補ってある日にも推定差枚を届けるため。数値・出典は先にある方のまま）。
+        if (old.get('source_site') == 'anaslo' and fresh.get('net_estimate') is not None
+                and fresh.get('source_sha256') == old.get('source_sha256')
+                and fresh.get('net_estimate') != old.get('net_estimate')):
+            return {**old, 'net_estimate': fresh['net_estimate']}
         return old
     if old.get('source_site') == 'anaslo':
         return fresh
@@ -1303,8 +1314,16 @@ class PscubeStore:
                 key = _record_key(r)
                 identity = (r['store'], r['rate'], r['rack'], r['day'])
                 if r.get('source_site') == 'anaslo' and identity in occupied:
-                    summary['kept_local'] += 1
-                    summary['unchanged'] += 1
+                    # 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を
+                    # 付けたときは推定差枚だけ移す（_merge、2026-11-06）。
+                    previous = self._read('records', key)
+                    moved = _merge(previous, r) if previous is not None else None
+                    if moved is None or moved is previous:
+                        summary['kept_local'] += 1
+                        summary['unchanged'] += 1
+                        continue
+                    summary['updated'] += 1
+                    self.db.execute('INSERT OR REPLACE INTO records VALUES (?,?)', (key, json.dumps(moved, ensure_ascii=False)))
                     continue
                 occupied.add(identity)
                 previous = self._read('records', key)
@@ -1390,16 +1409,18 @@ class PscubeStore:
 class PscubeRandomCapture(AutoCapture):
     """Draw a new 100-microsecond interval for each scheduled wait, inclusive.
 
-    2026-11-06 から30〜45秒（以前は15〜25秒）。11/5〜6にONから8〜17分（20〜40ページ）でサイトに拒否され続けたため
-    （利用者「減らす＋休む＋自動再開」）。画面から送られる値は使わず毎回引き直すので、受け付ける値は古い画面の20秒も含む。"""
-    LOW, HIGH = 30, 45
+    2026-11-06 夜から10〜20秒（その前は朝から30〜45秒、10/5〜11/5は15〜25秒）。利用者「30秒は長すぎるかな」
+    「10-20秒にして休憩ためして」：10/5〜10月末は15〜25秒・休憩なしで1日分を通せていて、拒否は続けて8〜12分回ったところで
+    起きているので、間隔より休憩（REST_EVERY_PAGES・REST_SECONDS）を効かせる。画面から送られる値は使わず毎回引き直すので、
+    受け付ける値は古い画面の20秒・37.5秒も含む（上限45秒）。"""
+    LOW, HIGH = 10, 20
 
     def __init__(self, clock=time.monotonic, draw=secrets.randbelow):
-        super().__init__(clock=clock, minimum=15, maximum=self.HIGH, default=37.5)
+        super().__init__(clock=clock, minimum=self.LOW, maximum=45, default=15)
         self._draw = draw
 
     def _schedule(self):
-        # 0.0001秒刻みに丸める（30 + n/10000 のままだと 31.667099999… のような誤差が出て、
+        # 0.0001秒刻みに丸める（10 + n/10000 のままだと 11.667099999… のような誤差が出て、
         # 画面のスライダーの値と一致しない）。
         self._seconds = round(self.LOW + self._draw((self.HIGH - self.LOW) * 10000 + 1) / 10000, 4)
         super()._schedule()
@@ -1418,7 +1439,7 @@ class AutoPilot:
     # 直すのは3回に1回・3回まで（ほかは同じページで下まで送り直すだけで、サイトへの通信は増えない）。
     LIST_MAX_RETRIES, LIST_RELOAD_EVERY, LIST_MAX_RELOADS = 60, 3, 3
     # P’s CUBEの間隔（秒）。サイトに止められないよう、メルヘン（0.1〜4.5秒）より長くする。
-    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 30, 45, 37.5
+    MIN_SECONDS, MAX_SECONDS, DEFAULT_SECONDS = 10, 20, 15
     # 休憩（2026-11-06 利用者「減らす＋休む」）：サイトのページを「休憩中」の画面（サイトに接続しない、PARKED_PAGE）に
     # 替えて待ち、時間が来たら続きのページを開く。数えるのは、自動取り込みがONの間に開いたサイトのページの数
     # （読み込み直し・保存できなかったページも数える）。1つの取り込み窓の中では、OFF→ONにしても数え直さない。
@@ -1898,11 +1919,11 @@ def overlay_script(capture_script, index_url):
       label.style.cssText = 'font-size:12px;display:block;color:#33445a';
       const seconds = document.createElement('input');
       seconds.id = 'database-pscube-interval';
-      seconds.type = 'range'; seconds.min = '30'; seconds.max = '45'; seconds.step = '0.0001'; seconds.value = '37.5';
+      seconds.type = 'range'; seconds.min = '10'; seconds.max = '20'; seconds.step = '0.0001'; seconds.value = '15';
       seconds.disabled = true;
       seconds.style.width = '100%';
       const value = document.createElement('span');
-      value.textContent = '間隔：30〜45秒ランダム';
+      value.textContent = '間隔：10〜20秒ランダム';
       label.append(value, seconds);
       const status = document.createElement('div');
       status.id = 'database-pscube-auto-status';
@@ -2014,7 +2035,7 @@ def overlay_script(capture_script, index_url):
         auto.disabled = autoChanging;
         seconds.disabled = true;
         seconds.value = String(state.seconds);
-        value.textContent = '30〜45秒ランダム・10ページごとに10分休憩（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
+        value.textContent = '10〜20秒ランダム・10ページごとに10分休憩（今回 ' + Number(state.seconds).toFixed(4) + '秒）';
         status.textContent = state.message;
         // 取り込み日の選択肢は、午前3時で営業日が変わるので、画面を開いたままでも毎回つくり直す。
         const days = Array.isArray(state.days) ? state.days : [];
@@ -2198,6 +2219,9 @@ def run_session(db_path, export_path):
     script = CAPTURE.read_text(encoding='utf-8')
     probe = PROBE.read_text(encoding='utf-8')
     connection = BrowserConnection(ROOT_URL)
+    # 通信の診断記録（2026-11-06、pscube_netlog.py）。サイトへの通信は増やさない。記録の失敗で取り込みは止めない。
+    netlog = pscube_netlog.NetLog(data_dir)
+    netlog.intent('window_open', ROOT_URL)
 
     class Bridge:
         def __init__(self):
@@ -2216,6 +2240,8 @@ def run_session(db_path, export_path):
             with self._capture_lock:
                 self.pilot.capture_started()
                 self._page_url = None
+                netlog.saving = True
+                netlog.event('capture_start')
                 try:
                     result = self._submit_page(raw)
                 except Exception as error:
@@ -2223,6 +2249,9 @@ def run_session(db_path, export_path):
                     error_log.record(data_dir, 'pscube.save', error, detail=self._page_url or 'URL不明')
                     self._notify('window.pscubeCaptureFailed?.(' + json.dumps(str(error), ensure_ascii=True) + ')')
                     self.pilot.finished(error=str(error))
+                    netlog.event('capture_end', ok=False, stage='save', error=str(error)[:160],
+                                 page=pscube_netlog.safe_url(self._page_url))
+                    netlog.saving = False
                     raise
                 for where, message in capture_notes(result, self._page_url):
                     error_log.note(data_dir, where, message)
@@ -2230,6 +2259,7 @@ def run_session(db_path, export_path):
                 # recreate pywebview's promise callbacks on that navigation,
                 # so deliver completion to our own stable DOM handler too.
                 self.pilot.finished(result=result)
+                note_capture(result, self._page_url, raw)
                 self._notify('window.pscubeCaptureComplete?.(' + json.dumps(result, ensure_ascii=True) + ')')
                 return result
 
@@ -2240,6 +2270,7 @@ def run_session(db_path, export_path):
         def capture_failed(self, message):
             # 読み取りの途中（保存の前）で失敗したとき。保存中の失敗は submit_page が数える。
             error_log.note(data_dir, 'pscube.read', str(message)[:300])
+            netlog.event('capture_end', ok=False, stage='read', error=str(message)[:160])
             if not self._capture_lock.locked():
                 self.pilot.finished(error=str(message)[:300])
             return True
@@ -2271,9 +2302,27 @@ def run_session(db_path, export_path):
             if not self._capture_lock.acquire(blocking=False):
                 raise ValueError('保存中です。保存が終わってから押してください。')
             try:
+                netlog.intent('retry_button')
                 return retry_page(self._window, self.pilot, connection, saving=lambda: False)
             finally:
                 self._capture_lock.release()
+
+    def note_capture(result, page_url, raw):
+        # 保存の結果と、そのあとアプリが開くページ（次のページ・一覧の読み込み直し）を診断記録に残す。
+        # 差枚APIを取りに行ったか・その失敗のHTTP状態は、保存の結果ではなく受け取った記録（raw）の net_capture から読む。
+        net_called, statuses = pscube_netlog.app_net_fetch(raw)
+        netlog.event('capture_end', ok=True, kind=result.get('kind'), remaining=result.get('remaining'),
+                     net_called=net_called,
+                     net_warning=bool(result.get('net_warning')), net_http=statuses, net_denied=result.get('net_denied'),
+                     skipped=bool(result.get('skipped')), retry_index=bool(result.get('retry_index')),
+                     reload=result.get('reload'), reread=result.get('reread'), parked=result.get('parked'),
+                     page=pscube_netlog.safe_url(page_url))
+        if result.get('retry_index'):
+            if result.get('reload'):
+                netlog.intent('reload_list', page_url)
+        elif result.get('next_url') and not result.get('net_denied') and not result.get('parked'):
+            netlog.intent('next_page', result['next_url'])
+        netlog.saving = False
 
     bridge = Bridge()
     window = webview.create_window('P’s CUBE 取り込み', ROOT_URL, width=1050, height=780, js_api=bridge)
@@ -2289,6 +2338,7 @@ def run_session(db_path, export_path):
                 return
             message = connection.failure['message']
             revision = connection.revision
+        netlog.event('connection_failed', message=str(message)[:160])
         def show():
             with connection.lock:
                 if stop.is_set() or revision != connection.revision or not connection.failure:
@@ -2304,6 +2354,10 @@ def run_session(db_path, export_path):
     def install_native():
         native_handlers.extend(install_webview2_handlers(
             window, connection, failed))
+        try:
+            native_handlers.extend(pscube_netlog.install(window, netlog))
+        except Exception as error:  # noqa: BLE001 - 診断をつなげなくても取り込みは続ける
+            netlog.event('cdp_unavailable', error=f'{type(error).__name__}: {str(error)[:200]}')
 
     def install_overlay():
         if bridge.pilot.is_parked():
@@ -2329,6 +2383,8 @@ def run_session(db_path, export_path):
             return
         kind, url = action
         if kind == 'park':
+            netlog.event('park_request')
+            netlog.intent('rest')
             try:
                 if url is None:
                     bridge.pilot.remember_url(retry_target(window, connection, ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'))
@@ -2337,6 +2393,7 @@ def run_session(db_path, export_path):
                 window.load_html(PARKED_PAGE.replace('MESSAGE', html_escape(bridge.pilot.state().get('message') or '')))
             except Exception as error:  # noqa: BLE001 - 替えられなければ、サイトのページを残さないよう窓を閉じる
                 error_log.record(data_dir, 'pscube.auto.park', error)
+                netlog.event('park_switch_failed', error=f'{type(error).__name__}: {str(error)[:160]}')
                 bridge.pilot.park_failed(f'{type(error).__name__}: {error}')
             return
         if kind == 'check':
@@ -2344,14 +2401,18 @@ def run_session(db_path, export_path):
                 current = window.get_current_url()
             except Exception as error:  # noqa: BLE001 - 確かめられないときも、残っているとみなして閉じる
                 error_log.record(data_dir, 'pscube.auto.park', error)
+                netlog.event('park_check', on_site=None, error=type(error).__name__)
                 bridge.pilot.park_failed(f'表示中のページを確かめられませんでした：{type(error).__name__}')
                 return
-            if still_on_site(current):
+            on_site = still_on_site(current)
+            netlog.event('park_check', on_site=on_site, url=pscube_netlog.safe_url(current))
+            if on_site:
                 error_log.note(data_dir, 'pscube.auto.park', f'休憩中の画面に替わっていません：{current}')
                 bridge.pilot.park_failed('サイトのページが表示されたままでした')
             return
         url = url or ROOT_URL + 'cgi-bin/nc-v03-001.php?cd_ps=2'
         error_log.note(data_dir, 'pscube.auto.resume', url)
+        netlog.intent('resume', url)
         bridge.pilot.connection_started()
         connection.start(url)
         reopen_page(window, url)
@@ -2360,7 +2421,25 @@ def run_session(db_path, export_path):
         # 窓を最小化してもJavaScriptのタイマーのように遅れないよう、Python側で数える。
         was_on = False
         awake = False
+        shown = {'message': None, 'missing': 0, 'completed': None}
         while not stop.wait(0.1):
+            try:
+                # 診断記録の状態（ON・OFF・休憩中・完了）と、表示の文・データが出ない回数（DOMの判定、HTTPとは別）。
+                netlog.set_state(pscube_netlog.pilot_state(bridge.pilot, bridge._capture_lock.locked))
+                message = bridge.pilot.state().get('message')
+                if message != shown['message']:
+                    shown['message'] = message
+                    netlog.event('message', text=str(message or '')[:160])
+                missing = len(bridge.pilot.missing)
+                if missing != shown['missing']:
+                    if missing > shown['missing']:
+                        netlog.event('dom_missing', count=missing)
+                    shown['missing'] = missing
+                if bridge.pilot.completed and bridge.pilot.completed != shown['completed']:
+                    shown['completed'] = bridge.pilot.completed
+                    netlog.event('stopped', message=str(bridge.pilot.completed)[:200])
+            except Exception:  # noqa: BLE001 - 診断の記録で見張りを止めない
+                netlog.dropped += 1
             try:
                 # 自動取り込みがONの間（休憩・待機中も）は、PCを自動でスリープさせない（2026-11-06、power.py）。
                 # このスレッドは窓と一緒に終わるので、窓が閉じればスリープの禁止も解ける。
@@ -2414,7 +2493,11 @@ def run_session(db_path, export_path):
     # Cookieも拒否する）。そのため人間確認（hCaptcha）の確認済みが残らず、何度も確認が
     # 出る。Safariと同じく、data の中の専用の場所にCookieを残す（2026-10-01、Androidで
     # 同じ原因を直して人間確認が出なくなったことを受けて）。
-    webview.start(gui='edgechromium', private_mode=False, storage_path=str(webview_storage(db_path)))
+    try:
+        webview.start(gui='edgechromium', private_mode=False, storage_path=str(webview_storage(db_path)))
+    finally:
+        # 窓が閉じたら、診断記録の残りを書き、集計（-summary.txt）を書く。数秒で打ち切る。
+        netlog.close(timeout=5)
 
 
 def webview_storage(db_path) -> Path:

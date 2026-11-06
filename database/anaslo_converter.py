@@ -13,7 +13,8 @@ import re
 import sqlite3
 import unicodedata
 
-from anaslo_html import convert
+import anaslo_net
+from anaslo_html import convert, set_rate
 from anaslo_index import HALL_NAMES, HALLS, P_STATION, SAIWAICHOU
 
 SHOP = 'c740601'
@@ -42,10 +43,11 @@ def suggestions(name, catalog, rate='20'):
     return {'automatic': exact[0] if len(exact) == 1 else None, 'candidates': candidates}
 
 
-def analyze(paths, rate='20'):
+def analyze(paths, rate='20', cache_dir=None):
     """``rate`` is the user-confirmed P-STATION rate. 幸町 goes to the meruhen
-    DB (1000円46枚 only), so no rate is attached there."""
-    staging = convert(paths)
+    DB (1000円46枚 only), so no rate is attached there.
+    ``cache_dir``：解析結果の控えの置き場（変換アプリ。anaslo_html.parse_cached）。"""
+    staging = convert(paths, cache_dir=cache_dir)
     names = {d['store']['source_name'] for d in staging['days']}
     halls = [h for h in HALLS if h.source_name in names]
     if len(halls) != len(names):
@@ -53,13 +55,30 @@ def analyze(paths, rate='20'):
     if len(halls) != 1:
         raise ValueError('1回に変換できるのは1店舗のHTMLだけです。店舗ごとに選び直してください。')
     if halls[0] is P_STATION:
-        staging = convert(paths, rate)
+        # 解析し直さず、1回目の結果に貸玉を付ける（2026-11-06。以前は全ファイルを2回解析していた）。
+        set_rate(staging, rate)
     staging['hall'] = halls[0].key
     return staging
 
 
-def make_backup(staging, mapping, catalog):
-    """Mapping entries are explicitly chosen names; None means omit this machine."""
+def read_native_occupied(path):
+    """P’s CUBE で実際に取った台・日（アナスロの補完でないもの）。読み取りだけ。"""
+    path = Path(path)
+    if not path.is_file():
+        return frozenset()
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        rows = db.execute("SELECT json_extract(payload, '$.day'), json_extract(payload, '$.rack') FROM records "
+                          "WHERE json_extract(payload, '$.store')=? AND json_extract(payload, '$.rate')='20' "
+                          "AND COALESCE(json_extract(payload, '$.source_site'), '')<>'anaslo'", (SHOP,)).fetchall()
+    return frozenset((day, int(rack)) for day, rack in rows if isinstance(day, str) and rack is not None)
+
+
+def make_backup(staging, mapping, catalog, native=frozenset()):
+    """Mapping entries are explicitly chosen names; None means omit this machine.
+
+    ``native``：P’s CUBE の実データがある (日, 台番号)。取り込みでも飛ばされる（実データを優先）ので、
+    JSON に入れない（2026-11-06。36日分で10,620件のうち大半がこれだった）。アナスロの補完どうしは
+    今までどおり入れる（後から付けた推定差枚を取り込みで移すため）。"""
     from pscube_import import _validate_machine, _validate_record, is_excluded_machine
     if staging.get('format') != 'anaslo-hall-staging' or staging.get('version') != 1:
         raise ValueError('解析結果の形式が違います。')
@@ -84,6 +103,9 @@ def make_backup(staging, mapping, catalog):
             if not isinstance(target, str) or not target.strip() or is_excluded_machine(target):
                 raise ValueError(f'対応する機種名が不正です：{name}')
             target = target.strip()
+            if (d['day'], source['rack']) in native:
+                skipped['existing'] += 1
+                continue
             key = (SHOP, rate, target)
             if key not in machines:
                 # Use real catalog URLs only; source-only machines are never capture targets.
@@ -101,8 +123,13 @@ def make_backup(staging, mapping, catalog):
                             'source_site': 'anaslo', 'source_url': d['source']['url'],
                             'source_sha256': d['source']['sha256'], 'source_machine': name,
                             'source_probabilities': source['probabilities'], 'source_graph': source['graph']})
+            # 推定差枚（anaslo_net.py、2026-11-06）。付けられない台（AT機などの確かでない台・式の無い機種）は付けない。
+            guess = anaslo_net.estimate(records[-1])
+            if guess:
+                records[-1]['net_estimate'] = guess
     if not records:
-        raise ValueError('出力対象のデータがありません。')
+        raise ValueError('出力対象のデータがありません（P’s CUBEに実データがある日付・台、または対象外だけでした）。'
+                         if skipped.get('existing') else '出力対象のデータがありません。')
     for m in machines.values():
         _validate_machine(m)
     for r in records:
@@ -428,11 +455,12 @@ class PscubeTarget:
     hall = P_STATION
     alias_file = 'machine_names.json'
     rate_text = '貸玉：20円'
-    notice = ('既存の日付・台の記録を優先します。MY・差枚は不明のまま保存します。\n'
+    notice = ('P’s CUBEに実データがある日付・台は出力しません（既存の記録を優先）。MY・差枚は不明のまま保存します。\n'
               '沖ドキは既存ルールに従い対象外です。実DBへの反映はdatabaseの「バックアップを読み込む」で行います。')
 
     def __init__(self, data_dir):
         self.catalog = read_catalog(Path(data_dir) / 'pscube.sqlite3')
+        self.native = read_native_occupied(Path(data_dir) / 'pscube.sqlite3')
 
     def names(self):
         return sorted({m['machine'] for m in self.catalog if m['store'] == SHOP and m['rate'] == '20'})
@@ -445,7 +473,7 @@ class PscubeTarget:
         return is_excluded_machine(name)
 
     def make_backup(self, staging, mapping):
-        return make_backup(staging, mapping, self.catalog)
+        return make_backup(staging, mapping, self.catalog, self.native)
 
     def file_name(self, period):
         return f'pscube-backup-anaslo-{period}.json'
@@ -481,3 +509,59 @@ class MeruhenTarget:
 
 
 TARGETS = {target.hall.key: target for target in (PscubeTarget, MeruhenTarget)}
+
+
+# --- 取得期間の初期値（2026-11-06）----------------------------------------------------
+# 11/5 から P’s CUBE の取り込みは PC がメインで、取れなかった日をアナスロで補うのが主な使い方。
+# DB の台数が足りない日を読み取りだけで探し、取得画面の開始日・終了日に入れる。
+
+def day_counts(hall_key, data_dir):
+    """日ごとの台数（読み取りだけ）。P-STATION は P’s CUBE 用DB（アナスロの補完も数える）、幸町はメルヘン用DB。"""
+    data_dir = Path(data_dir)
+    if hall_key == P_STATION.key:
+        path, sql, args = (data_dir / 'pscube.sqlite3',
+                           "SELECT json_extract(payload, '$.day'), COUNT(*) FROM records "
+                           "WHERE json_extract(payload, '$.store')=? AND json_extract(payload, '$.rate')='20' GROUP BY 1",
+                           (SHOP,))
+    elif hall_key == SAIWAICHOU.key:
+        path, sql, args = data_dir / 'database.sqlite3', 'SELECT day, COUNT(*) FROM days WHERE store=? GROUP BY day', (MERUHEN_STORE,)
+    else:
+        return {}
+    if not path.is_file():
+        return {}
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        return {day: count for day, count in db.execute(sql, args) if isinstance(day, str)}
+
+
+def suggest_period(hall_key, data_dir, folder, today=None, window=14):
+    """直近 window 日（昨日まで）で台数が足りない日のうち、HTMLをまだ保存していない日の、いちばん新しい連続した
+    範囲を返す。範囲の途中に要らない日を入れない（サイトへのアクセスを増やさない）。無ければ None。
+    返り値：{'start', 'end', 'note'}。"""
+    from datetime import date, timedelta
+    from statistics import median
+    today = today or date.today()
+    days = [(today - timedelta(days=i)).isoformat() for i in range(1, window + 1)]
+    counts = day_counts(hall_key, data_dir)
+    seen = [counts[d] for d in days if counts.get(d)]
+    if not seen:
+        return None
+    full = median(seen)
+    short = [d for d in days if counts.get(d, 0) < full * 0.97]  # 台の入替の数台の差は数えない
+    folder = Path(folder)
+    saved = {d for d in short if any(folder.glob(f'{d}-{hall_key}-*.html'))}
+    need = sorted(d for d in short if d not in saved)
+    notes = []
+    if saved:
+        notes.append('HTML保存済みで変換だけで補える日：' + '・'.join(sorted(saved)))
+    if not need:
+        return {'start': None, 'end': None, 'note': '　'.join(notes)} if notes else None
+    end = need[-1]
+    start = end
+    while (prev := (date.fromisoformat(start) - timedelta(days=1)).isoformat()) in need:
+        start = prev
+    others = [d for d in need if d < start]
+    if others:
+        notes.append('ほかに台数が足りない日：' + '・'.join(others))
+    label = {P_STATION.key: 'P’s CUBE', SAIWAICHOU.key: 'database'}[hall_key]
+    note = f'初期値は{label}の台数が足りない日（{start}〜{end}）です。' + ('　'.join(['', *notes]) if notes else '')
+    return {'start': start, 'end': end, 'note': note}

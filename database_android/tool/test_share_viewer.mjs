@@ -106,6 +106,18 @@ test('台の読み込み：数値異常の台は数えず、差枚の無い日�
   ]});
   assert.deepEqual(p.map(r => [r.store, r.net]), [['pscube:c740601:20', 300], ['pscube:c740601:5', -40]]);
   assert.equal(storeLabel('pscube:c740601:20'), 'P-STATION（20スロ）', '閲覧専用ページの表記');
+  // アナスロで補った台の推定差枚（2026-11-06）：確かでない台は※、合計に入る。壊れた形・本当の差枚がある台では使わない。
+  const anaslo = (rack, net_estimate, extra = {}) => ({store: 'c740601', rate: '20', day: '2026-11-04', machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack,
+    games: 3000, bb: 10, rb: 5, my: null, net_medals: null, source_site: 'anaslo', net_estimate, ...extra});
+  const est = pscubeRecords({format: 'pscube-viewer', records: [
+    anaslo(11, {value: 420, sure: true, method: 'anaslo-graph-v1'}),
+    anaslo(12, {value: -650, sure: false, method: 'anaslo-graph-v1'}),
+    anaslo(13, {value: 1.5, sure: true, method: 'anaslo-graph-v1'}),
+    anaslo(14, {value: 100, sure: true, method: 'anaslo-graph-v1'}, {source_site: undefined, net_medals: -7}),
+  ]});
+  assert.deepEqual(est.map(r => [r.rack, r.net, r.needsCheck, r.estimated]),
+    [[11, 420, false, true], [12, -650, true, true], [13, null, false, false], [14, -7, false, false]]);
+  assert.deepEqual(dayNet(indexRecords(est).get('pscube:c740601:20|2026-11-04')).total, 420 - 650 - 7);
 });
 
 test('イベント：入力時刻の新しい方、時刻のある方が勝つ、消した印は出さない、その日の03:00より前の入力は＊なし（2026-10-26に2時から3時へ）', () => {

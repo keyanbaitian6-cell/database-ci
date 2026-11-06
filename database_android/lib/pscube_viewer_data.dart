@@ -150,6 +150,17 @@ Map<String, List<String>> pscubeEventNames(Iterable<PscubeDateEvent> events) {
   };
 }
 
+/// アナスロで補った台の推定差枚の形（PC `anaslo_net.valid` と同じ、2026-11-06）。
+/// {'value': 整数, 'sure': 真偽, 'method': 'anaslo-graph-v1'} だけ。
+const pscubeNetEstimateMethod = 'anaslo-graph-v1';
+bool validPscubeNetEstimate(Object? value) =>
+    value is Map &&
+    value.length == 3 &&
+    value['value'] is int &&
+    (value['value'] as int).abs() <= 1000000 &&
+    value['sure'] is bool &&
+    value['method'] == pscubeNetEstimateMethod;
+
 /// Convert at the input boundary so both data sites use the same viewer UI.
 /// MY stays in extra['my']; it is never written to Meruhen's max_hold field.
 void validateAnasloRecord(Map<dynamic, dynamic> row) {
@@ -226,6 +237,11 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
             (item['net_medals'] as int).abs() > 1000000)) {
       throw const FormatException('差枚の数値が不正です。');
     }
+    final netEstimate = item['net_estimate'];
+    if (netEstimate != null &&
+        (!external || !validPscubeNetEstimate(netEstimate))) {
+      throw const FormatException('推定差枚の形式が不正です。');
+    }
     final netCapture = validateNetCapture(item['net_capture'], record: item);
     final day = item['day'];
     if (day is! String || !isValidRecordDay(day))
@@ -299,6 +315,7 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
         'rate': item['rate'],
         'my': item['my'],
         'net_medals': item['net_medals'],
+        if (netEstimate != null) 'net_estimate': netEstimate,
         if (netCapture != null) 'net_capture': netCapture,
         'at_art': item['at_art'],
         'machine_type': m['machine_type'],

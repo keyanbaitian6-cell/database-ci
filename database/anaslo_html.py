@@ -194,13 +194,68 @@ def parse_html(raw, filename):
                            'racks_without_detail_table': sorted(racks - checked), 'graphs': len(graphs)}}
 
 
-def convert(paths, rate=None):
-    days = [parse_html(Path(p).read_bytes(), Path(p).name) for p in paths]
+# 解析結果の控え（2026-11-06）。1か月分の解析に10〜20秒かかるため、同じHTMLを読み直すときは控えを使う。
+# 鍵は HTML の中身・ファイル名・このファイル自体の SHA-256。解析の規則を変えれば自動で使われなくなる。
+_PARSER_REVISION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+
+
+def parse_cached(raw, filename, cache_dir=None):
+    if cache_dir is None:
+        return parse_html(raw, filename)
+    key = hashlib.sha256(raw + b'\0' + filename.encode('utf-8') + b'\0' + _PARSER_REVISION.encode()).hexdigest()
+    path = Path(cache_dir) / f'{key}.json'
+    try:
+        cached = json.loads(path.read_text(encoding='utf-8'))
+        if (isinstance(cached, dict) and cached.get('revision') == _PARSER_REVISION
+                and cached.get('sha256') == hashlib.sha256(raw).hexdigest() and isinstance(cached.get('day'), dict)):
+            try:
+                path.touch()  # 使った順に残す（prune_cache）
+            except OSError:
+                pass
+            return cached['day']
+    except (OSError, ValueError):
+        pass
+    day = parse_html(raw, filename)  # 解析できないHTMLは控えを作らず、今までどおり例外にする
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name(path.name + '.part')
+        temp.write_text(json.dumps({'revision': _PARSER_REVISION, 'sha256': day['source']['sha256'], 'day': day},
+                                   ensure_ascii=False, allow_nan=False), encoding='utf-8')
+        temp.replace(path)
+    except (OSError, ValueError):
+        pass  # 控えが書けなくても変換は続ける
+    return day
+
+
+def prune_cache(cache_dir, keep=400):
+    """控えは1日分で約0.2MB。最近使った keep 件（約80MB）だけ残す。"""
+    try:
+        files = sorted(Path(cache_dir).glob('*.json*'), key=lambda f: f.stat().st_mtime, reverse=True)
+    except OSError:
+        return 0
+    removed = 0
+    for f in files[keep:]:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def set_rate(staging, rate):
+    """解析済みの日に、利用者が確かめた貸玉を付ける（HTMLに貸玉は無い）。"""
+    if not re.fullmatch(r'\d+(?:\.\d+)?', rate):
+        raise ValueError('Invalid explicit rate')
+    for d in staging['days']:
+        d['store'].update(rate=rate, rate_basis='user_confirmed; not present in HTML')
+    return staging
+
+
+def convert(paths, rate=None, cache_dir=None):
+    days = [parse_cached(Path(p).read_bytes(), Path(p).name, cache_dir) for p in paths]
     if rate is not None:
-        if not re.fullmatch(r'\d+(?:\.\d+)?', rate):
-            raise ValueError('Invalid explicit rate')
-        for d in days:
-            d['store'].update(rate=rate, rate_basis='user_confirmed; not present in HTML')
+        set_rate({'days': days}, rate)
     identities = [(d['store']['source_name'], d['day']) for d in days]
     if len(set(identities)) != len(identities):
         raise ValueError('Duplicate store/day input')

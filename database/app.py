@@ -59,6 +59,22 @@ LIST_DOWNLOAD_RE = re.compile(
     r'database-list-(\d{4}-\d{2}-\d{2})(?:~s(nagamachiminami|saiwaichou))?(?:~m([A-Za-z0-9_-]+)~)?-.+\.png')
 
 
+# HTML変換アプリ（html_converter）の補完用JSONの保存先。保存から3時間は「バックアップを読み込む」がここを開く
+# （2026-11-06。それ以外のときは今までどおり Windows が覚えている場所）。
+CONVERTER_JSON_DIR = Path(__file__).resolve().parent.parent / 'html_converter' / 'data' / 'backup_json'
+CONVERTER_RECENT_SECONDS = 3 * 3600
+
+
+def recent_converter_folder(folder=None, now=None):
+    folder = Path(folder or CONVERTER_JSON_DIR)
+    now = datetime.now().timestamp() if now is None else now
+    try:
+        recent = any(now - f.stat().st_mtime <= CONVERTER_RECENT_SECONDS for f in folder.glob('*.json'))
+    except OSError:
+        return {}
+    return {'initialdir': str(folder)} if recent else {}
+
+
 def decode_machine_token(token):
     if not token:
         return None
@@ -1164,7 +1180,7 @@ def main():
         """取り込めたら True。失敗・取り消しは False（自動取り込みは成功したファイルだけを覚える）。"""
         path = path or filedialog.askopenfilename(
             title='取り込むバックアップファイルを選択',
-            filetypes=[('JSON', '*.json'), ('すべて', '*.*')])
+            filetypes=[('JSON', '*.json'), ('すべて', '*.*')], **recent_converter_folder())
         if not path:
             return False
         if pscube_import.is_pscube_backup(path):

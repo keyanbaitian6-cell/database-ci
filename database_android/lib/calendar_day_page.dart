@@ -132,6 +132,8 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
       for (final r in usable)
         if (r.netValue != null) r.netValue!,
     ];
+    // P’s CUBE：アナスロで補った台の推定差枚も合計に入る（2026-11-06）。何台が推定かを添える。
+    final estimated = usable.where((r) => r.pscubeNetEstimate != null).length;
     final judged = [
       for (final r in usable)
         if (r.won != null) r.won!,
@@ -196,6 +198,7 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                     TextSpan(
                       text:
                           '（$netLabelがわかった台 ${nets.length}/${usable.length}台'
+                          '${estimated > 0 ? '・うち推定$estimated台（アナスロの集計時点の値）' : ''}'
                           '${lowGamesNote(usable)}）',
                     ),
                   ],

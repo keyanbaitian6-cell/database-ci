@@ -13,6 +13,8 @@ from html_converter_diagnostics import LOGGER
 BROWSER = 'browser'
 DIRECT = 'direct'
 DOWNLOADS = Path(__file__).parent / 'data' / 'downloaded_htmls'
+DATA_DIR = Path(__file__).resolve().parent.parent / 'database' / 'data'
+DEFAULT_STATUS = '開始日・終了日を必ず指定してください。範囲内の日別HTMLだけを取得します。'
 
 
 def default_folder(hall):
@@ -21,7 +23,7 @@ def default_folder(hall):
 
 
 class DownloadDialog(tk.Toplevel):
-    def __init__(self, parent, on_files, *, pacing=None):
+    def __init__(self, parent, on_files, *, pacing=None, suggest=False, data_dir=DATA_DIR):
         super().__init__(parent)
         self.title('一覧からHTMLを取得')
         self.geometry('1000x740')
@@ -41,6 +43,10 @@ class DownloadDialog(tk.Toplevel):
         self.links = []
         self.scan_key = None
         self.paths = []
+        # 開始日・終了日の初期値（DBの台数が足りない日、2026-11-06）。試験では使わない（suggest=False）。
+        self.suggest = suggest
+        self.data_dir = data_dir
+        self.suggested = None
         self.hall = tk.StringVar(value=P_STATION.key)
         self.url = tk.StringVar(value=P_STATION.index_url)
         self.start_day = tk.StringVar()
@@ -48,7 +54,7 @@ class DownloadDialog(tk.Toplevel):
         self.local = tk.BooleanVar(value=False)
         self.saved_index = tk.StringVar()
         self.folder = tk.StringVar(value=str(default_folder(P_STATION)))
-        self.status = tk.StringVar(value='開始日・終了日を必ず指定してください。範囲内の日別HTMLだけを取得します。')
+        self.status = tk.StringVar(value=DEFAULT_STATUS)
         frame = ttk.Frame(self, padding=20)
         frame.pack(fill='both', expand=True)
         ttk.Label(frame, text='一覧からHTMLを取得', style='H2.TLabel').pack(anchor='w', pady=(0, 10))
@@ -132,6 +138,8 @@ class DownloadDialog(tk.Toplevel):
         self.after_id = self.after(100, self.poll)
         for variable in (self.hall, self.url, self.start_day, self.end_day, self.local, self.saved_index, self.method):
             variable.trace_add('write', lambda *args: self.invalidate())
+        if self.suggest:
+            self.apply_suggestion()
 
     def key(self):
         return (self.url.get().strip(), self.start_day.get().strip(), self.end_day.get().strip(), self.local.get(), self.saved_index.get().strip(), self.method.get())
@@ -146,6 +154,28 @@ class DownloadDialog(tk.Toplevel):
         if self.folder.get().strip() in defaults:
             self.folder.set(str(default_folder(hall)))
         self.url.set(hall.index_url)
+        # 入っている日付がこの画面の出した初期値のままなら、店舗に合わせて出し直す（手で入れた日付は変えない）。
+        if self.suggest and (self.start_day.get().strip(), self.end_day.get().strip()) in ((self.suggested or (None, None)), ('', '')):
+            self.apply_suggestion()
+
+    def apply_suggestion(self):
+        from datetime import date
+        from anaslo_converter import suggest_period
+        hall = self.selected_hall()
+        try:
+            found = suggest_period(hall.key, self.data_dir, self.folder.get().strip() or default_folder(hall), date.today())
+        except Exception:  # noqa: BLE001 - 初期値が出せなくても手で選べる
+            LOGGER.exception('period suggestion failed')
+            found = None
+        start, end = (found['start'], found['end']) if found and found['start'] else ('', '')
+        self.start_day.set(start)
+        self.end_day.set(end)
+        self.suggested = (start, end) if start else None
+        if found:
+            self.status.set(found['note'] + ('　変えるときはカレンダーから選んでください。' if start else ''))
+            LOGGER.info('period suggested: %s %s %s', hall.key, start or '-', end or '-')
+        else:
+            self.status.set(DEFAULT_STATUS)
 
     def choose_date(self, variable):
         from calendar_picker import CalendarPicker
@@ -332,8 +362,17 @@ class DownloadDialog(tk.Toplevel):
                         self.scan_key = None
                     self.status.set(f'新規取得{data.downloaded}件・保存済み{data.skipped}件・失敗{data.failed}件。' + data.stopped)
                     self.set_busy(False)
+                    LOGGER.info('download finished: new=%d saved=%d failed=%d stopped=%s',
+                                data.downloaded, data.skipped, data.failed, bool(data.stopped))
                     if data.stopped and not self.cancel.is_set():
                         self.show_stop(data.stopped)
+                    elif data.failed:
+                        self.deiconify()
+                        self.lift()
+                    elif self.paths and not self.cancel.is_set():
+                        # 最後まで取れたら、取得画面を閉じて変換画面へ渡す（2026-11-06 利用者「データ取得終わったら
+                        # 閉じるように」。取得ブラウザは取得の処理の終わりで閉じ済み）。失敗・停止のときは残して理由を見せる。
+                        self.after_idle(self.use)
                 elif kind == 'error':
                     self.scan_key = None
                     self.status.set('処理を停止しました：' + data)
@@ -373,7 +412,7 @@ class DownloadDialog(tk.Toplevel):
         super().destroy()
 
     def use(self):
-        if self.busy or not self.paths:
+        if self.busy or not self.paths or not self.winfo_exists():
             return
         paths = list(self.paths)
         self.grab_release()

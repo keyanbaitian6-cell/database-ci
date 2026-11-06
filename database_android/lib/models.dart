@@ -414,6 +414,15 @@ class SlotRecord {
   int? get netMedals =>
       isPscube ? (extra['net_medals'] as num?)?.toInt() : null;
 
+  /// アナスロで補った台の推定差枚（PC `anaslo_net.py`、2026-11-06）。本当の差枚があれば使わない。
+  /// sure=false は確からしさ0.9未満（ノーマルタイプだけ。AT機などは確かな台だけ付く）。
+  ({int value, bool sure})? get pscubeNetEstimate {
+    if (!isPscube || netMedals != null) return null;
+    final e = extra['net_estimate'];
+    if (e is! Map || e['value'] is! int || e['sure'] is! bool) return null;
+    return (value: e['value'] as int, sure: e['sure'] as bool);
+  }
+
   /// メルヘンの推定差枚（グラフと最大持玉から計算、`meruhen_net.dart`）。確定差枚ではない。
   int? get estimatedNetMedals => _meruhenNet?.value;
 
@@ -424,7 +433,9 @@ class SlotRecord {
   /// 推定差枚に「※」（要確認）を付けるか。グラフだけでは縦軸の目盛りを決めきれず、
   /// 1回転あたりの使用枚数で選び直した台（`meruhenNetEstimateDetail`）。
   /// ジャグラーオンラインの差枚を使うときは付けない。
-  bool get netNeedsCheck => joNet == null && (_meruhenNet?.needsCheck ?? false);
+  bool get netNeedsCheck => isPscube
+      ? pscubeNetEstimate?.sure == false
+      : joNet == null && (_meruhenNet?.needsCheck ?? false);
 
   ({int? value, bool needsCheck})? get _meruhenNet {
     final g = graph;
@@ -454,7 +465,9 @@ class SlotRecord {
 
   /// 画面に出す差枚：P’s CUBEは元グラフの確定差枚、メルヘンはジャグラーオンラインの差枚、
   /// 無ければ推定差枚。
-  int? get netValue => isPscube ? netMedals : (joNet ?? estimatedNetMedals);
+  int? get netValue => isPscube
+      ? (netMedals ?? pscubeNetEstimate?.value)
+      : (joNet ?? estimatedNetMedals);
 
   /// 画面に出す差枚の文字（符号つき）。要確認の推定差枚には「※」を付ける。
   String? get netText => netValue == null
@@ -462,7 +475,11 @@ class SlotRecord {
       : '${signedMedals(netValue!)}${netNeedsCheck ? '※' : ''}';
 
   /// [netValue] の呼び方。メルヘンは推定であることを必ず添える。
-  String get netLabel => isPscube || joNet != null ? '差枚' : '推定差枚';
+  String get netLabel => isPscube
+      ? (pscubeNetEstimate != null ? '推定差枚' : '差枚')
+      : joNet != null
+          ? '差枚'
+          : '推定差枚';
 
   /// その台がプラスで終わったか。分からなければ null（勝率に数えない）。差枚があればその符号、
   /// 無ければグラフの終点がゼロ線より上か（採点の終点と同じく1ピクセル以内はプラスにしない。

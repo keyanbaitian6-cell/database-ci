@@ -251,7 +251,7 @@ function render() {
       ${issues.length ? `<details class="data-warning" data-record-issues><summary>${conflicts.length ? `内容が異なる${conflicts.length}台分を集計から除外しています` : '同一記録の重複を1件として集計しています'}</summary>${issues.map(i => `<p>${esc(i.day)} ${i.rack}番 ${esc(displayMachineName(i.machine))}：${i.kind === 'conflict' ? '内容が競合・集計保留' : '同一内容の重複'}（${i.count}件）</p>`).join('')}<p>保存元の記録は削除していません。</p></details>` : ''}
       <div class="month-stats" aria-label="月間の集計">
         <div class="month-stat" data-month-rate><span class="stat-label">月間勝率</span><span class="stat-value num">${monthRate.judged ? winRateText(monthRate.won, monthRate.judged).replace('勝率', '') : '—'}</span><span class="stat-detail">${monthRate.judged ? `${monthRate.days}日分・${count(monthRate.won)} / ${count(monthRate.judged)}台プラス` : '勝率データなし'}</span></div>
-        <div class="month-stat" data-month-net><span class="stat-label">月間差枚${state.store.startsWith('pscube:') ? '' : '（推定含む）'}</span><span class="stat-value num ${monthNet == null ? '' : tone(monthNet)}">${monthNet == null ? '—' : signed(monthNet)}<small>${monthNet == null ? '' : '枚'}</small></span><span class="stat-detail">${monthNet == null ? '差枚データなし' : `取得分 ${netDays}日・延べ${count(monthNets.length)}台`}</span></div>
+        <div class="month-stat" data-month-net><span class="stat-label">月間差枚${!state.store.startsWith('pscube:') || monthNets.some(r => r.estimated) ? '（推定含む）' : ''}</span><span class="stat-value num ${monthNet == null ? '' : tone(monthNet)}">${monthNet == null ? '—' : signed(monthNet)}<small>${monthNet == null ? '' : '枚'}</small></span><span class="stat-detail">${monthNet == null ? '差枚データなし' : `取得分 ${netDays}日・延べ${count(monthNets.length)}台`}</span></div>
         ${exchange ? `<div class="exchange-summary" data-month-exchange><div class="exchange-head"><span>交換額換算（参考）</span><strong class="exchange-value num">${exchangeAmount}</strong></div><p class="exchange-rate">${exchange.loan}枚貸し・${exchange.payout}枚交換 ／ 1枚${exchange.payout === 50 ? '20' : '約17.24'}円で換算</p><p class="exchange-note">取得できた差枚だけの参考額です。<br>実収支ではありません。</p><details class="exchange-info"><summary>換算について</summary><p>過去月も現在指定の交換条件で換算しています。貸出・交換の枚数はそれぞれ1,000円相当として計算。現金投資時の貸出・交換の差は含みません。現金投資か持ちメダル遊技かによって収支は変わります。${state.store.startsWith('pscube:') ? '' : '元の差枚が推定の場合、換算額にも誤差を含みます。'}差枚が分かる台だけの合計を換算し、差枚データがない月は「—」と表示します。</p></details></div>` : ''}
       </div>
       ${comment ? `<div class="day-comment" data-day-comment><span class="stat-label">ひとこと</span><p>${esc(comment)}</p></div>` : ''}
@@ -388,7 +388,7 @@ function rackView({rack: r}) {
         <span class="value num ${r.net != null ? tone(r.net) : 'zero'}">${r.net != null ? `${signed(r.net)}${r.needsCheck ? '※' : ''}` : '—'}</span>
         ${r.net == null ? `<span class="sub">${name}はわかりません。</span>` : ''}</p>
       <dl class="stats">${stats.map(([k, v]) => `<div><dt>${k}</dt><dd class="num">${v}</dd></div>`).join('')}</dl>
-      ${r.estimated && r.net != null ? `<p class="note">推定差枚はグラフと最大持玉からの計算で、確定値ではありません${r.needsCheck ? '（※は要確認）' : ''}。</p>` : ''}`;
+      ${r.estimated && r.net != null ? `<p class="note">推定差枚は${r.store?.startsWith('pscube:') ? 'アナスロのグラフとBB・RB・G数からの計算で、アナスロの集計時点の値です。閉店後とは前後50枚ほどずれることがあり' : 'グラフと最大持玉からの計算で'}、確定値ではありません${r.needsCheck ? '（※は要確認）' : ''}。</p>` : ''}`;
 }
 
 /*
@@ -830,7 +830,7 @@ function openDay(first) {
       ${tapList([{lead: '', attrs: 'data-all-racks', main: '<span class="machine" style="display:block">全機種の台一覧を見る</span>',
         right: `<span class="small num">${new Set(others.map(r => r.machine)).size}機種・${others.length}台</span>`}])}` : '';
       })()}
-      ${estimated ? '<p class="note">推定差枚はグラフと最大持玉からの計算で、確定値ではありません（※は要確認）。</p>' : ''}`;
+      ${estimated ? `<p class="note">推定差枚は${racks.some(x => x.store?.startsWith('pscube:')) ? 'アナスロのグラフとBB・RB・G数からの計算で、アナスロの集計時点の値です。閉店後とは前後50枚ほどずれることがあり' : 'グラフと最大持玉からの計算で'}、確定値ではありません（※は要確認）。</p>` : ''}`;
   };
 
   const machineView = (view) => {

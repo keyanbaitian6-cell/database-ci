@@ -69,9 +69,66 @@ class DialogTests(unittest.TestCase):
         self.finish()
         self.assertEqual(len(opener.calls), 1)
         self.assertEqual(len(self.dialog.paths), 1)
+        # 最後まで取れたら、取得画面は自動で閉じて変換画面へ渡す（2026-11-06）。もう一度押しても二重に渡さない。
+        self.root.update()
+        self.assertFalse(self.dialog.winfo_exists())
         self.dialog.use()
         self.assertEqual(len(self.used), 1)
         self.assertIn('2026-09-15', self.used[0].name)
+
+    def test_failed_day_keeps_the_dialog_open_instead_of_handing_off(self):
+        self.dialog.paths = [self.folder / 'x.html']
+        self.dialog.events.put(('download', Result(paths=[self.folder / 'x.html'], downloaded=0, skipped=1, failed=1)))
+        self.poll_once()
+        self.root.update()
+        self.assertTrue(self.dialog.winfo_exists(), '失敗した日があれば画面を残して見せる')
+        self.assertEqual(self.used, [])
+        self.assertIn('失敗1件', self.dialog.status.get())
+
+    def test_stopped_download_keeps_the_dialog_open(self):
+        with patch('download_dialog.messagebox.showwarning') as warning:
+            self.dialog.events.put(('download', Result(paths=[self.folder / 'x.html'], downloaded=1, stopped='HTTP 403：取得を停止しました。')))
+            self.poll_once()
+            self.root.update()
+        warning.assert_called_once()
+        self.assertTrue(self.dialog.winfo_exists())
+        self.assertEqual(self.used, [])
+
+    def test_converter_reads_html_in_the_background_and_keeps_the_window_responsive(self):
+        spec = importlib.util.spec_from_file_location('converter_background_test', CONVERTER / 'app.py')
+        ui = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ui)
+        converter = ui.Converter(self.root)
+        converter.aliases = {}
+        converter.parse_cache = None  # 解析結果の控えは test_html_converter_speed で確かめる
+        path = self.folder / '2026-09-15.html'
+        path.write_bytes(html())
+        import threading as threading_module
+        release = threading_module.Event()
+        real_analyze = ui.analyze
+
+        def slow_analyze(paths):
+            release.wait(5)        # 解析が終わるまでの間に、画面の処理が回ることを確かめる
+            return real_analyze(paths)
+        with patch.object(ui, 'analyze', slow_analyze), patch('anaslo_converter.read_catalog', return_value=[]):
+            converter.load_paths([path], background=True)
+            self.assertTrue(converter.loading)
+            self.assertIn('読み込んでいます', converter.status.get())
+            ticks = []
+            self.root.after(10, lambda: ticks.append(1))
+            deadline = time.monotonic() + 1
+            while not ticks and time.monotonic() < deadline:
+                self.root.update()
+                time.sleep(0.005)
+            self.assertEqual(ticks, [1], '解析の途中でも画面のイベントが処理される')
+            release.set()
+            deadline = time.monotonic() + 5
+            while converter.loading and time.monotonic() < deadline:
+                self.root.update()
+                time.sleep(0.005)
+        self.assertFalse(converter.loading)
+        self.assertEqual(converter.target.hall.key, 'p-station')
+        self.assertEqual(converter.staging['days'][0]['day'], '2026-09-15')
 
     def test_changed_range_requires_new_preview(self):
         engine, opener = client([])
