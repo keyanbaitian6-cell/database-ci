@@ -858,3 +858,15 @@
 - 端末 `RFGL146LVVW` は adb でつながっている（読むだけ。インストールは利用者が行う、未）。
 - 版の行のコミットは手元だけ（AGENTS.md「版番号だけのコミットを単独でpushしない」）。次のコードの変更と一緒に送る。
 - スマホに入る変更（0.5.52 から）：アナスロで補った台の推定差枚（台の差枚・合計・順位、※、「うち推定n台（アナスロの集計時点の値）」）、補完どうしで後から推定差枚を移す取り込み、`5511c49` 以降の Android の変更（`88bcd7a`・`1c07209` の P’s CUBE の一覧・拒否の扱いなど）。
+
+### 2026-11-06（夜）アナスロの補完を同期フォルダへ保存し、起動中のPC版が自動で読み込む（Claude）
+
+- 利用者「おそらく今後もアナスロからpstationはデータ取ると思うけど取ったら毎回データ処理してドライブに挙げる仕様にしなきゃいけないよね」→ 案A（変換アプリが同期フォルダに保存し、起動中のPC版が自動で読む）／案B（変換アプリが直接DBへ）から「Aにして」。
+- 変えたこと：
+  - `database/pscube_import.py` の `ANDROID_SYNC_NAME` に `pscube-backup-anaslo-<8桁>(-<8桁>).json` を足した。起動中のPC版の数分おきの確認（`app.py` `poll_pscube_from_sync`。スマホの P’s CUBE のファイルと同じ仕組み、書き込みが落ち着いてから・更新時刻で覚える）で読み込み、読み込み後は今まで通り閲覧用データ・ドライブ（`pscube-backup-auto.json`・`pscube-viewer-drive.json`）へ書き出す。PC版自身の書き出しは拾わない。
+  - `html_converter/app.py`：P-STATION の補完用JSONの保存先の初期値を、PC版の同期フォルダ（`core.load_settings(database/data)['sync_dir']`、読むだけ・書き換えない）に。幸町（メルヘン用DB）と、同期フォルダが未設定・見つからないときは今まで通り `html_converter/data/backup_json`。同期フォルダに保存したときは「起動中のPC版が数分以内に自動で読み込み…」と知らせる。
+  - `html_converter/README.md` の手順5に追記。
+- 試験：`database/tests/test_anaslo_net.py` に2件（PC版の確認が補完のJSONを拾い、自分の書き出しは拾わない・古い順。変換アプリの保存先の初期値）。`test_html_converter_speed.py` の保存の試験は「同期フォルダが無いとき」を明示（このPCには同期フォルダ `G:\マイドライブ\database共有` があり、初期値が変わったため）。
+- `check_before_build.sh`（`/c/w/cbw-net4`）：PC 855件・Flutter 814件など87項目が OK、`test_variety_week_browser` だけ失敗（ボタンを押したあと画面がホームのまま）。今回の変更は Python だけで閲覧ページのコードは前回 ALL PASSED と同じ。同じ公開用ファイルで単独に2回流し直して2回とも成功したので、一時的な失敗と判断（閲覧ページの作り直し・公開はしていない）。
+- コミット `a38593b`（版の行 `b223533` の Android 0.5.53 と一緒に）を `push_ci.py` で正本へ（22:42）。CI [42227634858](https://github.com/imakurudev-eng/database/actions/runs/42227634858) は記録の時点で待ち。前の `1c80efa` の CI [42222707261](https://github.com/imakurudev-eng/database/actions/runs/42222707261) は success。
+- 未確認：実際に変換アプリで同期フォルダへ保存し、起動中のPC版が読み込むところ（次の取得のときに見る）。スマホ（Android）が同期フォルダのこのファイルを直接読むことは無い（PC版の書き出し経由で届く）。
