@@ -20,10 +20,15 @@ try {
     } else if(u.pathname.endsWith('.png')) {
       await route.fulfill({contentType:'image/png',body:Buffer.from(fixture.background,'base64')});
     } else {
-      const body=u.pathname==='/f/D3300.do'?fixture.table:fixture['graph'+(u.searchParams.get('pan')||1)];
+      const body=u.pathname==='/f/D2300.do'
+        ?`<h2 class=page-title>Ｐ－ＳＴＡＴＩＯＮ＆ＩＩ　スロット館</h2><section id=halltop><div class="list-style mod-mt10px"><ul><li><a href="${source('D3300')}">大当り一覧</a></li></ul></div></section>`
+        :u.pathname==='/f/D3300.do'?fixture.table:fixture['graph'+(u.searchParams.get('pan')||1)];
       await route.fulfill({contentType:'text/html; charset=utf-8',body});
     }
   });
+  await page.goto(source('D2300'));
+  await page.evaluate(reader);
+  assert.ok(await page.evaluate(()=>databaseSite777.read().table_url),'機種ページのlist-style内の大当り一覧を読む');
   await page.goto(source('D3300'));
   await page.evaluate(reader);
   const table=await page.evaluate(()=>databaseSite777.read());

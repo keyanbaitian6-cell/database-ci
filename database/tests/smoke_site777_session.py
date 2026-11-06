@@ -38,8 +38,8 @@ def main():
                     text=f'<h2 class=page-title>Ｐ－ＳＴＡＴＩＯＮ＆ＩＩ　スロット館</h2><a class=imageSet href="{source("D2300",model)}"><strong>{name}</strong></a>'
                     text+='<ul class=pager-style>'+''.join(f'<li><a '+('class=active' if n==page else f'href="javascript:changePage(\'{n}\');"')+f'>{n}</a></li>' for n in (1,2))+'</ul>'
                 elif u.path.endswith('D2300.do'):
-                    text='<h2 class=page-title>Ｐ－ＳＴＡＴＩＯＮ＆ＩＩ　スロット館</h2><ul class=tab-style-b>'
-                    text+=f'<li><a href="{source("D3300",model)}">大当り一覧</a></li></ul>'
+                    text='<h2 class=page-title>Ｐ－ＳＴＡＴＩＯＮ＆ＩＩ　スロット館</h2><section id=halltop><div class="list-style mod-mt10px"><ul>'
+                    text+=f'<li><a href="{source("D3300",model)}">大当り一覧</a></li></ul></div></section>'
                 else:
                     kind='table' if u.path.endswith('D3300.do') else 'graphs'
                     text=fixture(kind,page,model).decode('utf-8')

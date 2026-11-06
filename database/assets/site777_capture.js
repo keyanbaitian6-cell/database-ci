@@ -70,7 +70,7 @@
       count:count ? Number(count[1]) : null, selected_md:selected[0] || null, days:tabs,
       pages, page:Number(u.searchParams.get('pan') || 1), updated:norm(document.querySelector('#details p')?.textContent),
       index_url:clean(link('a', '設置機種')?.href || ''),
-      table_url:clean(link('.tab-style-b a', '大当り一覧')?.href || ''),
+      table_url:clean(link('a', '大当り一覧')?.href || ''),
       graph_url:clean(link('.tab-style-b a', '出玉推移一覧')?.href || '')};
     if (kind === 'index') {
       result.machines = Array.from(document.querySelectorAll('a.imageSet')).map(a => {
