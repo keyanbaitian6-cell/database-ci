@@ -1070,3 +1070,12 @@
 - Google貼り替え用 `../outputs/site777-20261107/pscube_cloud_sync_貼り替え用_20261107.gs` を最終版から作成。前回の配布物の3設定を保持し、リポジトリの生成物との差はHISTORY_VIEWER=trueの1行だけと検算した。`使い方.md` も同じフォルダーへ用意。Googleへの貼り替え・実同期・本番サイトの自動取り込み・iPhone実機は未確認。
 - 送信前のpush_ci.py --dry-runは日本時間2026-11-07 03:23、送り先imakurudev-eng/database、両mainの包含確認に成功。元の4コミット・Claudeの文書6コミット・Codex実装50ae1e8/実構造修正d38a01eを保持。pushは検証・公開準備後に1回で行う（この記録時点でまだ送信していない）。
 - Androidの保存/閲覧ソースは対応済みだが、APK作成は依頼の有無を利用者へ確認中。明示的な返答がない間はAPKを作らない。EXEは作らない。実DB/Cookie・Googleの保留中のゴミ箱の原因箇所は変更していない。
+
+### 2026-11-07 サイトセブン：正本へ一括送信、閲覧ページ・共有カレンダーを公開（Codex）
+
+- 03:30 JST、`database/.venv/Scripts/python.exe tools/push_ci.py` で **39e937c** までを正本imakurudev-eng/databaseへ1回で送信。fc02f48からの元4コミット、Claudeの文書コミット、今回の取り込み実装をすべて含む。CIは [42271315458](https://github.com/imakurudev-eng/database/actions/runs/42271315458)。Windows・UbuntuのPCジョブは成功、全体ジョブはこの追記時点で継続中。原因不明の再実行やCI設定変更はしていない。
+- 全体ゲート成功後、機能のコードは変えず最終照合版adaa07a84a59を含めてFlutter Webを再ビルドし、stage_viewer.py・stage_share_viewer.pyを通した。実データ由来90種の文字列・スクリプトIDの混入検査を通過。最終stageでtest_viewer_import_browserとtest_share_viewer_browserの3件も成功（合成データ・Googleの偽応答）。
+- 公開：database-viewer **17c3e84**、database-share **17ea34c**（共有公開版3cb7146d4d91、どちらも元39e937c）。Pagesは [viewer 42271776362](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42271776362)・[share 42271783777](https://github.com/keyanbaitian6-cell/database-share/actions/runs/42271783777) ともsuccess。実際に配信中のviewerのpscube/data.mjs・capture_health.mjs・main.dart.js、shareのcapture_health.mjs・app.mjsを取得し、改行をそろえてstageと一致することを確認。Site SevenやGoogleへの接続ではなく、自分の静的公開ファイルだけの確認。
+- 利用者へ最終のGoogle同期貼り替え用ファイルを案内し、現在使っているP’s CUBE同期プロジェクトへ全文を貼り替えて保存するよう依頼済み。**貼り替え・実同期はまだ利用者の返答待ち。** メルヘン用・閲覧専用スクリプトは今回貼り替え不要。実サイトの自動取り込み・実iPhoneの表示は未確認。Android APKについても返答待ちで未作成。
+- この公開後の記録は一括送信後の追記なので、元コードのpushを繰り返さず、次の送信へ同梱するため手元に残す。実装・公開物のコードは送信済み。
+- **最終結果：CI 42271315458 は全ジョブsuccess。** Ubuntu PC 1分6秒、Windows PC 4分49秒、full 16分30秒。再実行なし、追加pushなし。全体ゲート・両OSのPC確認を通った元コードは39e937c。Google貼り替え、本番取り込み、iPhone実機、Android APKは上記の返答/操作待ちのまま。公開後の結果のこの文書だけをローカルでコミットし、次の作業の送信へ同梱する（この記録だけのpushはしない）。
