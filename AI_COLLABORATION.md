@@ -835,3 +835,13 @@
 - 試験：`database/tests/test_html_converter_speed.py`（新規20件：1回解析と同じ結果、控えの同一・規則が変わったとき・壊れた控え・日付の違うファイル名・解析できないHTML・残す件数、実データの台を除く・補完は残す・全部除いたときの文、期間の初期値（連続範囲・保存済みの日・数台少ない日・記録の無い日・データなし）、取得画面の初期値と店舗切り替え・手入力の維持・試験の既定、別スレッドでの保存（画面が応答・ボタン・クリップボード・失敗の表示）、リンクを押したときの案内・`ask_start`、PC版の読み込み先）。`test_anaslo_download_ui.py` の読み込みの試験は控えを使わない設定にした。PC全体（`database/.venv` の Python で `unittest discover -s tests`）853件 OK（取得画面の文の小さな直しの前に流した。直した後は変換まわり145件を流し直して OK）。
 - 未確認：実際の WebView2 で日付リンクを押したときの確認ダイアログ（pywebview の `create_confirmation_dialog` を取得の処理のスレッドから呼ぶ）。実際の取得での自動で閉じる動き（案3）。PC版の読み込み画面が実際にその場所で開くか（Windows の画面）。
 - 変えていないもの：DB、取り込みの決まり（`pscube_import.py`）、サイトへのアクセスの間隔・停止の規則、閲覧ページ・共有カレンダー・Android（表示は変わらないので公開は要らない）。
+
+### 2026-11-06（夜）コミット・正本へ送信・閲覧ページと共有カレンダーを公開（Claude）
+
+- 利用者：別のセッションの作業について「終わりました」（未コミットのまま終わっていたので、両方の作業をまとめてコミットした）。
+- 最終の作業コピーで `bash database_android/tool/check_before_build.sh`（`CHECK_BUILD_WORK=/c/w/cbw-net3`）**ALL PASSED**（88項目。PC 853件、Flutter 814件、JS 全件、閲覧ページ・共有カレンダーの画面試験。Flutter analyze は30件の注意で合格の範囲）。
+- コミット（自分たちの変えたファイルだけ `git add` で指定）：`fa0c3fc`（PC P’s CUBE の通信の診断記録・間隔10〜20秒）、`1c80efa`（アナスロの推定差枚、閲覧ページ・共有カレンダー、取り込み窓の診断のつなぎ込み、変換アプリの改善＝もう1つの Claude のセッションの分を含む）。`py -3 tools/push_ci.py` で正本 `imakurudev-eng/database` へ `bbf30c4..1c80efa`（日本時間22:05、月の前半）。database-ci の main（`7a9df13`）も手元に含まれていた。CI：[42222707261](https://github.com/imakurudev-eng/database/actions/runs/42222707261) は記録の時点で実行中（結果は未確認）。
+- 公開：確認で作った `/c/w/cbw-net3/viewer`・`share` を、`../outputs/net-estimate-20261106/public-viewer`・`public-share` の複製に入れ替えて非強制 push。database-viewer **`b6d8b9a`**、database-share **`d58dfa9`**（どちらも「release 25aaeb1d0054; source 1c80efa」）。Pages：viewer [42222988409](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42222988409)・share [42222994140](https://github.com/keyanbaitian6-cell/database-share/actions/runs/42222994140) とも success。公開中の版の元 `c2f539a` は手元の履歴に含まれることを確かめた（古いコードで戻していない）。
+- 配信の確認：共有カレンダーの `data.mjs`・`app.mjs` と閲覧ページの `version.json` は、改行をそろえると作ったファイルとバイト一致。公開版に `pscubeNetEstimate`・「アナスロの集計時点」・`anaslo-graph-v1` が入っている。
+- 一緒に公開されたもの：`5511c49`（見直しの修正と台番号の末尾の印、11/5、CI success）も公開が未実施だったので、今回の公開に入った。保留の理由の記録は無かった。
+- 未実施：Android の APK（Android に推定差枚を出すには APK が要る。版を上げるコミットは次のコードの変更と一緒に送る決まり）。Google の同期スクリプト2本の貼り替え（次に貼り替えるとき、`5511c49` の仕組みと利用者の設定行を入れる）。実機の iPhone での表示の確認。
