@@ -205,39 +205,39 @@ class AutoPilotTests(unittest.TestCase):
 
     def test_default_pilot_uses_the_pscube_range(self):
         pilot = AutoPilot(self.window, PROBE)
-        self.assertEqual(pilot.state()['seconds'], 37.5)   # 2026-11-06 から30〜45秒
+        self.assertEqual(pilot.state()['seconds'], 15)   # 2026-11-06 夜から10〜20秒
         self.assertIsInstance(pilot.auto, PscubeRandomCapture)
         with self.assertRaises(ValueError):
             pilot.configure(True, 4.5)
 
     def test_random_interval_all_choices_and_wait_does_not_redraw(self):
-        choices = iter(range(150001))
+        choices = iter(range(100001))
         def draw(bound):
-            self.assertEqual(bound, 150001)
+            self.assertEqual(bound, 100001)
             return next(choices)
         auto = PscubeRandomCapture(clock=self.clock, draw=draw)
-        auto.configure(True, 20)   # 古い画面の値（20秒）も受け付け、引き直す
+        auto.configure(True, 37.5)   # 古い画面の値（20秒・37.5秒）も受け付け、引き直す
         actual = [auto.state()['seconds']]
-        for _ in range(150000):
+        for _ in range(100000):
             auto.loaded()
             actual.append(auto.state()['seconds'])
-        self.assertEqual(len(set(actual)), 150001)
-        self.assertEqual((actual[0], actual[-1]), (30, 45))
-        self.assertEqual(actual[12345], 31.2345)
-        self.clock.now += 44.9999
+        self.assertEqual(len(set(actual)), 100001)
+        self.assertEqual((actual[0], actual[-1]), (10, 20))
+        self.assertEqual(actual[12345], 11.2345)
+        self.clock.now += 19.9999
         self.assertIsNone(auto.due())
         self.clock.now += .0001
         self.assertIsNotNone(auto.due())
-        self.assertEqual(auto.state()['seconds'], 45)
+        self.assertEqual(auto.state()['seconds'], 20)
 
     def test_random_wait_redraws_on_pause_and_busy_and_off_stops(self):
-        draw = mock.Mock(side_effect=[0, 12345, 150000, 1])
+        draw = mock.Mock(side_effect=[0, 12345, 100000, 1])
         auto = PscubeRandomCapture(clock=self.clock, draw=draw)
         auto.configure(True, 20)
         auto.pause('保存待ち')
-        self.assertEqual(auto.state()['seconds'], 31.2345)
+        self.assertEqual(auto.state()['seconds'], 11.2345)
         self.assertIsNone(auto.due(busy=True))
-        self.assertEqual(auto.state()['seconds'], 45)
+        self.assertEqual(auto.state()['seconds'], 20)
         auto.configure(False, 25)
         self.clock.now += 100
         self.assertIsNone(auto.due())

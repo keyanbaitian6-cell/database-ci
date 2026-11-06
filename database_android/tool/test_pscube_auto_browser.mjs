@@ -84,7 +84,7 @@ async function install(url, api, script = overlay) {
         window.__calls.push(['submit', JSON.parse(payload)]);
         sessionStorage.setItem('submitted', payload);
         if (stub.fail) throw new Error(stub.fail);
-        if (stub.stop_before_result) window.__pscubeRenderAuto({enabled: false, seconds: 37.5, revision: 99, message: '停止中'});
+        if (stub.stop_before_result) window.__pscubeRenderAuto({enabled: false, seconds: 15, revision: 99, message: '停止中'});
         return stub.result;
       },
       capture_failed: async message => { window.__calls.push(['failed', message]); return true; },
@@ -99,7 +99,7 @@ async function install(url, api, script = overlay) {
       set_target_day: async (day, direction) => {
         window.__calls.push(['target', day, direction]);
         window.__target = { day: day || null, direction: direction || window.__target?.direction || 'top' };
-        return { enabled: false, seconds: 37.5, message: '停止中', revision: 8,
+        return { enabled: false, seconds: 15, message: '停止中', revision: 8,
           target_day: window.__target.day, direction: window.__target.direction, days: ['2026-10-01', '2026-09-30', '2026-09-29'] };
       },
     } };
@@ -117,7 +117,7 @@ for (const localStop of [true, false]) {
   await install(mUrl, {stop_before_result: localStop, result: {
     retry_index: true, next_url: mUrl, ...(localStop ? {} : {reload: false}),
   }});
-  await page.evaluate(() => window.__pscubeRenderAuto({enabled: true, seconds: 37.5, revision: 10, message: 'ON'}));
+  await page.evaluate(() => window.__pscubeRenderAuto({enabled: true, seconds: 15, revision: 10, message: 'ON'}));
   let navigated = false;
   const onNavigation = frame => { if (frame === page.mainFrame()) navigated = true; };
   page.on('framenavigated', onNavigation);
@@ -129,14 +129,14 @@ for (const localStop of [true, false]) {
 }
 await install(mUrl, { result: { kind: '全台一覧', remaining: 2, next_url: `${base}nc-v06-001.php?cd_dai=1#20261001`, backup: 'バックアップ済み' } });
 assert.equal(await page.locator('#database-pscube-auto').innerText(), '自動取り込み：OFF（押すと開始）', '起動時はOFF');
-assert.equal(await page.locator('#database-pscube-interval').inputValue(), '37.5');
+assert.equal(await page.locator('#database-pscube-interval').inputValue(), '15');
 assert.equal(await page.locator('#database-pscube-interval').getAttribute('step'), '0.0001');
 assert.equal(await page.locator('#database-pscube-interval').isDisabled(), true, 'OFFでもランダム間隔は固定指定しない');
-assert.match(await page.locator('#database-pscube-card label').innerText(), /30〜45秒ランダム/);
+assert.match(await page.locator('#database-pscube-card label').innerText(), /10〜20秒ランダム/);
 // ON/OFFの切り替えはPython側へ頼み、返ってきた状態を表示する。
 await page.locator('#database-pscube-auto').click();
 await page.waitForFunction(() => document.getElementById('database-pscube-auto').textContent.includes('ON'));
-assert.deepEqual(await page.evaluate(() => window.__calls[0]), ['auto', true, 37.5, '', null], '日付は選ばず、向きは変えない');
+assert.deepEqual(await page.evaluate(() => window.__calls[0]), ['auto', true, 15, '', null], '日付は選ばず、向きは変えない');
 assert.equal(await page.locator('#database-pscube-capture').isDisabled(), true, 'ONの間は手動の取り込みを押せない');
 assert.equal(await page.locator('#database-pscube-interval').isDisabled(), true, 'ONの間は間隔を変えられない');
 assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('database-pscube-auto')).backgroundColor), 'rgb(8, 125, 89)');
@@ -179,11 +179,11 @@ await install(root, {});
 assert.equal(await page.evaluate(() => window.__pscubeStartCapture()), false);
 assert.equal(await page.locator('#database-pscube-capture').innerText(), 'スロット機種一覧へ');
 // 状態の表示（古い番号の状態は無視）。
-await page.evaluate(() => window.__pscubeRenderAuto({ enabled: true, seconds: 37.1234, message: 'ON・待機：人間確認', revision: 5 }));
+await page.evaluate(() => window.__pscubeRenderAuto({ enabled: true, seconds: 17.1234, message: 'ON・待機：人間確認', revision: 5 }));
 await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 5, message: '古い', revision: 4 }));
 assert.equal(await page.locator('#database-pscube-auto-status').innerText(), 'ON・待機：人間確認');
-assert.equal(await page.locator('#database-pscube-interval').inputValue(), '37.1234');
-assert.match(await page.locator('#database-pscube-card label').innerText(), /今回 37.1234秒/);
+assert.equal(await page.locator('#database-pscube-interval').inputValue(), '17.1234');
+assert.match(await page.locator('#database-pscube-card label').innerText(), /今回 17.1234秒/);
 // Cookie・保存値を保持する再試行は、消去APIや確認画面を使わない。
 await install(mUrl, {});
 await page.evaluate(() => { document.cookie='retained=keep; path=/'; localStorage.setItem('retained','keep'); });
@@ -224,7 +224,7 @@ assert.deepEqual(await page.evaluate(() => window.__calls), []);
 await page.evaluate(() => { window.__pscubeBusy = false; });
 // 日付指定取り込み・上から／下から：日付を選ぶとPython側へ伝え、押すと選んだ日と向きで自動取り込みを始める。
 await install(mUrl, {});
-await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 37.5, message: '停止中', revision: 1, target_day: null, direction: 'top', days: ['2026-10-01', '2026-09-30', '2026-09-29'] }));
+await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 15, message: '停止中', revision: 1, target_day: null, direction: 'top', days: ['2026-10-01', '2026-09-30', '2026-09-29'] }));
 const options = await page.locator('#database-pscube-day option').allInnerTexts();
 assert.deepEqual(options, ['指定なし（サイトの表示どおり）', '10/1（木）　今の営業日', '9/30（水）', '9/29（火）']);
 assert.equal(await page.locator('#database-pscube-top').innerText(), '上から取り込む');
@@ -235,12 +235,12 @@ assert.deepEqual(await page.evaluate(() => window.__calls.at(-1)), ['target', '2
 assert.equal(await page.locator('#database-pscube-day').inputValue(), '2026-09-30');
 await page.locator('#database-pscube-bottom').click();
 await page.waitForFunction(() => document.getElementById('database-pscube-auto').textContent.includes('ON'));
-assert.deepEqual(await page.evaluate(() => window.__calls.at(-1)), ['auto', true, 37.5, '2026-09-30', 'bottom']);
+assert.deepEqual(await page.evaluate(() => window.__calls.at(-1)), ['auto', true, 15, '2026-09-30', 'bottom']);
 assert.equal(await page.locator('#database-pscube-top').isDisabled(), true, 'ONの間は押せない');
 assert.equal(await page.locator('#database-pscube-day').isDisabled(), true, 'ONの間は日付を変えられない');
 assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('database-pscube-bottom')).outlineStyle), 'solid', '選んだ向きに印');
 // 営業日が変わったら（午前2時）、選択肢を作り直す。選んだ日は残る。
-await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 37.5, message: '停止中', revision: 20, target_day: '2026-09-30', direction: 'bottom', days: ['2026-10-02', '2026-10-01', '2026-09-30'] }));
+await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 15, message: '停止中', revision: 20, target_day: '2026-09-30', direction: 'bottom', days: ['2026-10-02', '2026-10-01', '2026-09-30'] }));
 assert.deepEqual(await page.locator('#database-pscube-day option').allInnerTexts(), ['指定なし（サイトの表示どおり）', '10/2（金）　今の営業日', '10/1（木）', '9/30（水）']);
 assert.equal(await page.locator('#database-pscube-day').inputValue(), '2026-09-30');
 // OFFの間も、いまの向き（手動の取り込みもこの向き）に印が残る（2026-10-06）。
@@ -248,7 +248,7 @@ assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById(
 assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('database-pscube-top')).outlineStyle), 'none');
 assert.equal(await page.locator('#database-pscube-bottom').getAttribute('aria-pressed'), 'true');
 await install(root, {});
-await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 37.5, message: '停止中', revision: 1, target_day: null, direction: 'top', days: ['2026-10-01'] }));
+await page.evaluate(() => window.__pscubeRenderAuto({ enabled: false, seconds: 15, message: '停止中', revision: 1, target_day: null, direction: 'top', days: ['2026-10-01'] }));
 assert.equal(await page.locator('#database-pscube-top').isDisabled(), true, '最初のページでは始められない');
 // 小さい窓でもカードが画面に収まる。
 await page.setViewportSize({ width: 360, height: 300 });

@@ -133,7 +133,8 @@ def run(case, workdir):
             time.sleep(0.2)
         time.sleep(1)
         window.load_url(INDEX)
-        deadline = time.time() + 90
+        # 3ba1466 からページの間を30〜45秒あける。3ページ（一覧・機種・台別）で約2分かかるので、4分まで待つ。
+        deadline = time.time() + 240
         window_state = None
         while time.time() < deadline:
             time.sleep(1)
