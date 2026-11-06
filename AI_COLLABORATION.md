@@ -845,3 +845,16 @@
 - 配信の確認：共有カレンダーの `data.mjs`・`app.mjs` と閲覧ページの `version.json` は、改行をそろえると作ったファイルとバイト一致。公開版に `pscubeNetEstimate`・「アナスロの集計時点」・`anaslo-graph-v1` が入っている。
 - 一緒に公開されたもの：`5511c49`（見直しの修正と台番号の末尾の印、11/5、CI success）も公開が未実施だったので、今回の公開に入った。保留の理由の記録は無かった。
 - 未実施：Android の APK（Android に推定差枚を出すには APK が要る。版を上げるコミットは次のコードの変更と一緒に送る決まり）。Google の同期スクリプト2本の貼り替え（次に貼り替えるとき、`5511c49` の仕組みと利用者の設定行を入れる）。実機の iPhone での表示の確認。
+
+### 2026-11-06（夜）Android 0.5.53 の APK を作った（推定差枚を含む）（Claude）
+
+- 依頼：利用者「APKを作って」（Android にもアナスロの推定差枚を出すため）。コードは `1c80efa`（`check_before_build.sh` `/c/w/cbw-net3` ALL PASSED と同じ。その後は .md だけ）。リリース情報（`release_info.dart`）はソースの中身から作る版で `pubspec.yaml` を含まないので作り直していない（25aaeb1d0054 のまま）。
+- 版：`pubspec.yaml` を `0.5.53+2026110602`。`flutter build apk --release --no-pub --build-name 0.5.53` で `DATABASE_ANDROID_CLONE=original`（`--build-number 2026110601`）と `pscube`（`2026110602`）。Gradle 129.9秒・79.4秒。
+- `database_android/build/releases/0.5.53/`：
+  - `database-0.5.53-2026110601.apk`（97,049,777バイト、`com.keyan.database_android`、表示名 database、SHA-256 `68c178048240c47d68f1099b63139d928a11f4b96ebf8cc519e8cb4bf40effe8`）
+  - `database-pscube-0.5.53-2026110602.apk`（97,049,793バイト、`com.keyan.database_android.pscube`、表示名 database P’s CUBE、SHA-256 `77d32ee4c5b524d1cd7216e779290f1abf1e4a93b394e68a95c911534cc302f2`）
+  - aapt2 で版・ID・表示名、apksigner で署名（証明書 SHA-256 `4332fcb9…a047`、0.5.52 と同じ）。`SHA256SUMS.txt`・ビルドログ2本を同じフォルダーに保存。
+- 0.5.52 の APK 2本と `build/app/outputs/flutter-apk/app-release.apk` をごみ箱へ移した。
+- 端末 `RFGL146LVVW` は adb でつながっている（読むだけ。インストールは利用者が行う、未）。
+- 版の行のコミットは手元だけ（AGENTS.md「版番号だけのコミットを単独でpushしない」）。次のコードの変更と一緒に送る。
+- スマホに入る変更（0.5.52 から）：アナスロで補った台の推定差枚（台の差枚・合計・順位、※、「うち推定n台（アナスロの集計時点の値）」）、補完どうしで後から推定差枚を移す取り込み、`5511c49` 以降の Android の変更（`88bcd7a`・`1c07209` の P’s CUBE の一覧・拒否の扱いなど）。
