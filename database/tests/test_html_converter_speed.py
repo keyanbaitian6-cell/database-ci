@@ -281,7 +281,8 @@ class BackgroundSaveTests(unittest.TestCase):
         def slow(staging, mapping):
             release.wait(5)
             return real(staging, mapping)
-        with patch.object(ui, 'JSON_DIR', self.folder / 'json'), \
+        # 同期フォルダが無いとき（あれば P-STATION はそこが初期値。test_anaslo_net.SyncFolderTests、2026-11-06）。
+        with patch.object(ui, 'JSON_DIR', self.folder / 'json'), patch.object(ui, 'sync_folder', return_value=None), \
                 patch.object(ui.filedialog, 'asksaveasfilename', return_value=str(out)) as choose, \
                 patch.object(converter.target, 'make_backup', slow), \
                 patch.object(ui.messagebox, 'showinfo') as shown:

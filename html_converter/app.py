@@ -12,6 +12,7 @@ from app import apply_style
 from anaslo_converter import (TARGETS, MeruhenTarget, PscubeTarget, analyze, make_normal_analysis,
                               make_other_analysis, save_backup, save_normal_analysis, save_other_analysis)
 from anaslo_download import PaceState
+import pscube_import
 from anaslo_html import prune_cache
 from html_converter_diagnostics import LOGGER, setup as setup_diagnostics
 
@@ -25,6 +26,28 @@ OTHER_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'other_analysis'
 PARSE_CACHE_DIR = Path(__file__).resolve().parent / 'data' / 'parse_cache'
 # 補完用JSONの保存先の初期値。PC版の「バックアップを読み込む」も、保存から3時間はここを開く（2026-11-06）。
 JSON_DIR = Path(__file__).resolve().parent / 'data' / 'backup_json'
+DATA_DIR = ROOT / 'database' / 'data'
+
+
+def sync_folder():
+    """PC版の同期フォルダ（ドライブ）。設定を読むだけで書き換えない。未設定・見つからなければ None。"""
+    try:
+        from core import load_settings
+        folder = load_settings(DATA_DIR).get('sync_dir')
+        return Path(folder) if folder and Path(folder).is_dir() else None
+    except Exception:  # noqa: BLE001 - 見つからなければ今まで通りの保存先
+        return None
+
+
+def json_folder(target):
+    """補完用JSONの保存先の初期値。P-STATION は同期フォルダ：起動中のPC版が数分おきに自動で読み込み、
+    DB・閲覧用データ・ドライブへの書き出しまで行う（2026-11-06 利用者「Aにして」）。幸町・同期フォルダ未設定は JSON_DIR。"""
+    if isinstance(target, PscubeTarget):
+        folder = sync_folder()
+        if folder:
+            return folder
+    JSON_DIR.mkdir(parents=True, exist_ok=True)
+    return JSON_DIR
 
 
 class Converter:
@@ -272,8 +295,7 @@ class Converter:
         days = sorted(d['day'].replace('-', '') for d in self.staging['days'])
         period = days[0] if len(days) == 1 else f'{days[0]}-{days[-1]}'
         try:
-            JSON_DIR.mkdir(parents=True, exist_ok=True)
-            folder = {'initialdir': str(JSON_DIR)}
+            folder = {'initialdir': str(json_folder(self.target))}
         except OSError:
             folder = {}
         mapping, staging, target = dict(self.mapping), self.staging, self.target
@@ -326,9 +348,16 @@ class Converter:
                          (('existing', 'databaseに保存済みの日付・台'), ('unknown_rack', 'databaseに記録のない台番号'),
                           ('excluded', '対象外の機種'), ('manual', '取り込み対象から外した機種')) if skipped.get(key))
         self.refresh()
+        sync = sync_folder()
+        automatic = (isinstance(self.target, PscubeTarget) and sync is not None
+                     and Path(path).parent.resolve() == sync.resolve()
+                     and pscube_import.ANDROID_SYNC_NAME.fullmatch(Path(path).name) is not None)
+        how = ('同期フォルダに保存したので、起動中のPC版が数分以内に自動で読み込み、閲覧用データとドライブへの書き出しまで'
+               '行います（PC版が閉じていれば、次に起動したときに読み込みます）。' if automatic else
+               'database → バックアップ・同期 → バックアップを読み込む、から選択してください。'
+               '保存から3時間は、読み込む画面がこのフォルダーで開きます。')
         messagebox.showinfo('保存しました', f"{len(payload['records'])}件の補完用JSONを保存しました。{detail}\n{path}\n\n"
-                            "database → バックアップ・同期 → バックアップを読み込む、から選択してください。"
-                            "保存から3時間は、読み込む画面がこのフォルダーで開きます。" + copied + warning, parent=self.root)
+                            + how + copied + warning, parent=self.root)
 
     def save_normal(self):
         """ジャグラー・ハナハナだけを分析用に保存する。databaseには読み込まないので、共有・採点・翌日候補に出ない。"""

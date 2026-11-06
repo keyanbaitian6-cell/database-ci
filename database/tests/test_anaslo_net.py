@@ -163,5 +163,44 @@ class ConverterTests(unittest.TestCase):
         self.addCleanup(store_dir.cleanup)
 
 
+class SyncFolderTests(unittest.TestCase):
+    """取ったら毎回、処理してドライブへ（2026-11-06 利用者「Aにして」）：変換アプリが同期フォルダに保存した補完を、
+    起動中のPC版が数分おきに自動で読み込む。"""
+
+    def test_the_pc_poll_picks_up_converter_supplements_but_not_its_own_exports(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            names = ['pscube-backup-anaslo-20261104-20261105.json', 'pscube-backup-anaslo-20261106.json',
+                     'pscube-day-android-2026-11-06.json', 'pscube-backup-auto.json', 'pscube-viewer-drive.json',
+                     'pscube-backup-anaslo-2026.json']
+            for i, name in enumerate(names):
+                (Path(tmp) / name).write_text('{}', encoding='utf-8')
+                os.utime(Path(tmp) / name, (1000 + i, 1000 + i))
+            found = [name for name, _mtime, _path in pscube_import.android_sync_files(tmp)]
+            self.assertEqual(found, names[:3])
+            due, initial = pscube_import.android_sync_due(pscube_import.android_sync_files(tmp), {}, 10_000)
+            self.assertIsNone(initial)
+            self.assertEqual([name for name, _m, _p in due], names[:3], '書き込みが落ち着いたものを古い順に読む')
+
+    def test_the_converter_saves_p_station_supplements_into_the_sync_folder(self):
+        import importlib.util
+        import tempfile
+        from unittest import mock
+        converter_dir = Path(__file__).resolve().parents[2] / 'html_converter'
+        sys.path.append(str(converter_dir))
+        spec = importlib.util.spec_from_file_location('converter_sync_test', converter_dir / 'app.py')
+        ui = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ui)
+        pscube = ui.PscubeTarget.__new__(ui.PscubeTarget)
+        meruhen = ui.MeruhenTarget.__new__(ui.MeruhenTarget)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch('core.load_settings', return_value={'sync_dir': tmp}):
+            self.assertEqual(ui.json_folder(pscube), Path(tmp))
+            self.assertEqual(ui.json_folder(meruhen), ui.JSON_DIR, '幸町は今まで通り')
+            self.assertTrue(pscube_import.ANDROID_SYNC_NAME.fullmatch(pscube.file_name('20261104-20261105')))
+        with mock.patch('core.load_settings', return_value={'sync_dir': str(Path(tmp) / 'gone')}):
+            self.assertEqual(ui.json_folder(pscube), ui.JSON_DIR, '同期フォルダが見つからなければ今まで通り')
+
+
 if __name__ == '__main__':
     unittest.main()

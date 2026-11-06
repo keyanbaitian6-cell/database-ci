@@ -668,7 +668,10 @@ def write_backup(store: 'PscubeStore', path) -> Path:
 
 # Androidが同期フォルダに置くP’s CUBEのファイル：全期間（手で保存）と、自動取り込みを終えたときの当日分
 # （Apps Script経由、2026-10-26 PSCUBE_SYNC.md「当日分の自動送信」）。PC版は起動中にこれだけを自動で読む。
-ANDROID_SYNC_NAME = re.compile(r'pscube-(?:backup-android-\d{8}-\d{6}|day-android-\d{4}-\d{2}-\d{2})\.json')
+# 起動中のPC版が数分おきに自動で読む同期フォルダのファイル：Android の P’s CUBE（全期間・当日分）と、HTML変換アプリが
+# 保存したアナスロの補完（pscube-backup-anaslo-日付.json、2026-11-06 利用者「Aにして」＝取ったら毎回、処理してドライブへ）。
+ANDROID_SYNC_NAME = re.compile(r'pscube-(?:backup-android-\d{8}-\d{6}|day-android-\d{4}-\d{2}-\d{2}'
+                               r'|backup-anaslo-\d{8}(?:-\d{8})?)\.json')
 
 
 def android_sync_files(folder) -> list[tuple[str, float, Path]]:
