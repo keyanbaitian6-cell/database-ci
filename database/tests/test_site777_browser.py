@@ -1,4 +1,5 @@
 """サイトセブンをスマホとして開くブラウザ（site777_browser.py、2026-11-07）。サイトには接続しない。"""
+import json
 import sys
 import tempfile
 import unittest
@@ -26,6 +27,16 @@ class FakeCore:
     def __init__(self, default):
         self.NewWindowRequested = FakeEvent()
         self.NewWindowRequested += default
+        self.NavigationStarting = FakeEvent()
+        self.NavigationCompleted = FakeEvent()
+        self.devtools = []
+        self.scripts = []
+
+    def CallDevToolsProtocolMethodAsync(self, name, params):
+        self.devtools.append((name, json.loads(params)))
+
+    def AddScriptToExecuteOnDocumentCreatedAsync(self, script):
+        self.scripts.append(script)
 
 
 class FakeArgs:
@@ -79,6 +90,15 @@ class Site777BrowserTest(unittest.TestCase):
 
         site777_browser.keep_popups_here(Window())
         self.assertEqual(len(core.NewWindowRequested.handlers), 1)
+        # スマホとしての見え方（タッチ・Client Hints）と、ページの中で新しい窓をこの窓にする処理
+        sent = dict(core.devtools)
+        self.assertEqual(sent['Emulation.setUserAgentOverride']['userAgentMetadata']['platform'], 'Android')
+        self.assertTrue(sent['Emulation.setUserAgentOverride']['userAgentMetadata']['mobile'])
+        self.assertTrue(sent['Emulation.setTouchEmulationEnabled']['enabled'])
+        self.assertEqual(sent['Emulation.setEmitTouchEventsForMouse'], {'enabled': True, 'configuration': 'mobile'})
+        self.assertEqual(core.scripts, [site777_browser.PAGE_SCRIPT])
+        for part in ("el.target = '_self'", 'HTMLFormElement.prototype.submit', 'window.open = function'):
+            self.assertIn(part, site777_browser.PAGE_SCRIPT)
 
         class Sender:
             def Navigate(self, uri):
@@ -90,6 +110,20 @@ class Site777BrowserTest(unittest.TestCase):
         self.assertTrue(args.handled)
         self.assertEqual(navigated, ['https://m.site777.jp/f/D0300.do'])
         self.assertEqual(opened_outside, [])
+
+    def test_the_log_keeps_where_but_not_the_values_in_urls(self):
+        self.assertEqual(site777_browser.safe_url('https://m.site777.jp/f/D0300.do?pmc=123&sid=abcdef#x'),
+                         'https://m.site777.jp/f/D0300.do?pmc&sid#…')
+        self.assertEqual(site777_browser.safe_url('b.html'), 'b.html')
+        with tempfile.TemporaryDirectory() as tmp:
+            log = site777_browser.DiagnosticLog(tmp)
+            site777_browser.Bridge(log).note(json.dumps({'kind': 'click', 'href': '/f/D0400.do?dai=1235', 'tag': 'A'}))
+            site777_browser.Bridge(log).note('not json')
+            lines = log.path.read_text(encoding='utf-8').splitlines()
+            self.assertEqual(len(lines), 1)
+            row = json.loads(lines[0])
+            self.assertEqual((row['kind'], row['href'], row['tag']), ('click', '/f/D0400.do?dai', 'A'))
+            self.assertEqual(log.path.parent.name, 'logs')
 
     def test_the_home_button_opens_it_with_the_same_python(self):
         import app

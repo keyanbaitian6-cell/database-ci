@@ -948,3 +948,13 @@
 - 試験：`database/tests/test_site777_browser.py` 4件（名乗り・保存先・新しい窓を同じ窓で開く・ボタンのコマンド）。PCの全試験 **860件 OK**。実際の WebView2 で手元の試しのページ（サイトではない）を開き、`navigator.userAgent` が上の Android の形、幅 414、`target=_blank` のリンクが同じ窓で開くことを確かめた。閲覧ページ・Android は変えていないので全体ゲート・公開・APK はしていない。
 - 未確認：実際のサイトセブンでスマホ会員としてログインできるか（利用者が初めて開いたとき）。WebView2 は User-Agent を変えても、Client Hints（`Sec-CH-UA-Platform` など）は Windows のままの可能性があり、サイトがそれを見ていればPCと判定される（確かめていない）。台データのページの形（BB・RB・回転数・差枚・グラフ、何日前まで）は未確認で、取り込みはその後に作る。
 - **送信は保留**：利用者「一緒でいい」（2026-11-07）→ `fc02f48` は正本へまだ送っていない。サイトセブンの取り込みを作ったら、そのコードと一緒に1回で送る（CIを1回で済ませるため）。
+
+### 2026-11-07 サイトセブン：ログイン・機種一覧・グラフは開けたが台番が押せない → スマホのまねを強めた（Claude、手元でコミット・未送信）
+
+- 利用者「ログインはできて機種一覧もひらけたけど台番が押せない。グラフはだせるね」。サイトの中身はまだ見ていない（原因は未確定）。考えられるのは、①タッチの操作だけを待っている（PCのマウスのクリックでは反応しない）、②新しい窓を開くリンク・フォームで、前の版の「URLだけでこの窓を移動」では送る中身が落ちる。
+- `database/site777_browser.py` に足したこと：
+  - DevTools の Emulation で、`setUserAgentOverride`（Client Hints も platform Android・mobile、機種 SM-A253C・Android 16・Chrome 156.0.8078.79）、`setTouchEmulationEnabled`（タッチ5点）、`setEmitTouchEventsForMouse`（mobile、マウスをタッチとして送る）。`pscube_netlog.py` と同じ `CallDevToolsProtocolMethodAsync`。
+  - ページが作られるたびに先に動く処理（`AddScriptToExecuteOnDocumentCreatedAsync`）：押したリンク・フォームの target を `_self` に、`form.submit()` も同じ、`window.open` はこの窓の移動にする。
+  - 記録 `database/data/logs/site777-browser.log`（Git に入らない、1MBで世代交代）：押したもの（タグ・href・target・onclick 200字・属性名・文字40字）、移動・新しい窓・読み込み結果。URL は場所と項目名だけ（値は落とす。`safe_url`）。onclick の文はそのまま200字まで残る。
+- 確認：手元の試しのページ（サイトではない）を実際の WebView2 で開き、Windows のマウス操作（SendInput 相当）で押した。`navigator.userAgentData` が mobile・Android、`maxTouchPoints` 5、`ontouchstart` あり、`pointer: coarse`。タッチだけを待つ要素にマウスで押して touchend と click の両方が届く。ふつうのリンクもマウスで開ける。`window.open('…','_blank')` は同じ窓で開き、記録に click・window_open・navigate・loaded が残る。試験 `test_site777_browser.py` 5件 OK（前回の PC 全試験 860件 OK のあと、変えたのはこのファイルと試験だけ）。
+- 未確認：実際のサイトセブンで台番が押せるようになったか（利用者が試す）。押せなければ `site777-browser.log` の click の行で、何を押してどうなったかを見る。送信は前の節のとおり、取り込みと一緒に1回で（`fc02f48` 以降、正本へ未送信）。
