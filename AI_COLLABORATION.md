@@ -870,3 +870,11 @@
 - `check_before_build.sh`（`/c/w/cbw-net4`）：PC 855件・Flutter 814件など87項目が OK、`test_variety_week_browser` だけ失敗（ボタンを押したあと画面がホームのまま）。今回の変更は Python だけで閲覧ページのコードは前回 ALL PASSED と同じ。同じ公開用ファイルで単独に2回流し直して2回とも成功したので、一時的な失敗と判断（閲覧ページの作り直し・公開はしていない）。
 - コミット `a38593b`（版の行 `b223533` の Android 0.5.53 と一緒に）を `push_ci.py` で正本へ（22:42）。CI [42227634858](https://github.com/imakurudev-eng/database/actions/runs/42227634858) は記録の時点で待ち。前の `1c80efa` の CI [42222707261](https://github.com/imakurudev-eng/database/actions/runs/42222707261) は success。
 - 未確認：実際に変換アプリで同期フォルダへ保存し、起動中のPC版が読み込むところ（次の取得のときに見る）。スマホ（Android）が同期フォルダのこのファイルを直接読むことは無い（PC版の書き出し経由で届く）。
+
+### 2026-11-06（夜）訂正：推定差枚は同期スクリプトと閲覧ページの P’s CUBE の読み取りで落ちる（Claude、未修正）
+
+- 利用者「スクリプトの張り替えとかはある？」で調べて分かった。上の「公開した」の節で、iPhone の閲覧ページ・共有カレンダーに推定差枚が出るとした記述は**確かめていない**。
+- `database_android/web/pscube/data.mjs` の `validateData` は記録を決まった項目で組み立て直す（`source_graph` などは残すが `net_estimate` は無い）。`mergeData` も「既にある台・日の補完は飛ばす」。`database_android/tool/pscube_cloud_sync.gs` はこの `data.mjs` から `build_pscube_cloud_sync.mjs` で作られるので、同期スクリプトでも落ちる。閲覧ページはブラウザの中でもこの `data.mjs` を使う。Claude の試験は Dart の `ViewerData.parse` と共有カレンダーの `pscubeRecords` に記録を直接渡しただけで、この経路を通していなかった。
+- 同期フォルダ（`G:\マイドライブ\database共有`、読むだけで確認）：`pscube-viewer-drive.json`（PC版の書き出し、直近31日）に `net_estimate` 280件、`pscube-backup-auto.json` に2214件、`pscube-backup-cloud.json`（同期スクリプト）は0件。`database-viewer-parts-pscube.json` は22:31更新（同期スクリプトの履歴方式）。
+- 直すには：`web/pscube/data.mjs` の検査・組み立て・統合に `net_estimate`（PC・Android と同じ形と規則）→ `pscube_cloud_sync.gs` を作り直す → 利用者が同期スクリプトを貼り替える（そのとき `5511c49` の貼り間違いで止まる仕組みと、利用者の設定行 `PSCUBE_HISTORY_VIEWER = true` を残す）→ 閲覧ページを作り直して公開。閲覧用の `viewer_drive_script*.gs` 2本は記録の項目を選んでいないので貼り替え不要の見込み（未確認）。
+- 同期フォルダに 10/16 の補完のJSON（`pscube-backup-anaslo-20260101-20260128.json` ほか4本）が残っている。`a38593b` からPC版が自動で読む対象になるので、次にPC版が起動したときに読み込まれる。どれも DB に入っている日で、補完は既存の台・日を上書きしないため、変化は無い見込み（未確認）。
