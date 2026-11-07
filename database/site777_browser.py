@@ -293,6 +293,14 @@ def run(data_dir, start_url=START_URL):
                     return
             except Exception as error:  # noqa: BLE001 - 閉じられなくても見張りは続ける
                 log.write('close_failed', error=type(error).__name__)
+            # 止まってから3分たったら自動で再開し、表示中のページを1回だけ読み込み直す（2026-11-08 利用者）。
+            # 読み込み直しも移動の守り（別店舗・ログイン画面など）を通る。
+            try:
+                url = session._resume_if_due()
+                if url:
+                    window.load_url(url)
+            except Exception as error:  # noqa: BLE001 - 再開できなくても見張りは続ける
+                log.write('resume_failed', error=type(error).__name__)
 
     threading.Thread(target=watch_finished, daemon=True).start()
     log.write('start')

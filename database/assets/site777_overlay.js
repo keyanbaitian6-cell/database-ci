@@ -28,7 +28,10 @@
   const progress=document.createElement('div');progress.id='database-site777-range';progress.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere';
   const interval=document.createElement('div');interval.textContent='間隔：5〜7秒ランダム';interval.style.fontSize='11px';
   const status=document.createElement('div');status.id='database-site777-status';status.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere';
-  card.append(grip,capture,auto,startRow,dayLabel,untilLabel,progress,interval,status);mount();
+  // 前回の取り込みの範囲・済んだ日・止まった理由（2026-11-08）。窓を開き直したとき、開始するまで出す。
+  const previous=document.createElement('div');previous.id='database-site777-previous';
+  previous.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere;background:#fff6dc;border-radius:4px;padding:4px;display:none';
+  card.append(grip,capture,auto,startRow,dayLabel,untilLabel,progress,previous,interval,status);mount();
   let busy=false,alive=true,token=0,current=null;
   const api=()=>window.pywebview.api;
   const render=s=>{
@@ -51,9 +54,17 @@
     const rest=s.queue||[];
     progress.textContent=(s.finished_days||[]).length||rest.length
       ?`済み：${(s.finished_days||[]).join('、')||'なし'}／この後：${rest.join('、')||'なし'}`:'';
-    auto.textContent=s.enabled?'自動取り込み：ON（押すと停止）':'自動取り込み：OFF（押すと開始）';
-    auto.style.background=s.enabled?'#b74237':'#304d6e';
+    // 止まって自動の再開を待っている間（2026-11-08 利用者「3分後には自動復帰」）。押すと再開を取り消す。
+    auto.textContent=s.enabled?'自動取り込み：ON（押すと停止）':s.resume_at?`自動取り込み：${s.resume_at}に再開予定（押すと取り消し）`
+      :'自動取り込み：OFF（押すと開始）';
+    auto.style.background=s.enabled||s.resume_at?'#b74237':'#304d6e';
+    // 自動で再開したら、グラフの読み込み直しの回数を0に戻す（再開のたびに PC が resume_serial を増やす）。
+    if(s.resume_serial){
+      try{if(sessionStorage.getItem(resumeKey)!==String(s.resume_serial)){
+        sessionStorage.removeItem(retryKey);sessionStorage.setItem(resumeKey,String(s.resume_serial));}}catch(_){}
+    }
     status.textContent=s.status;
+    previous.textContent=s.previous||'';previous.style.display=s.previous?'block':'none';
   };
   // グラフが出ないとき（2026-11-07 利用者「グラフが出なかったら1分後に再読みするんじゃなかったの？」）：自動取り込み中だけ、
   // 1分待ってからそのページを読み込み直し、自動取り込みはONのまま続ける（読み込み後はいつもどおり続きから）。
@@ -61,7 +72,7 @@
   // 回数は、利用者が自動取り込みを新しく開始したときだけ0に戻す（2026-11-08 Codexのレビュー：同じ窓で止めて開始し直しても
   // 前の3回が残り、次にグラフが出ないとすぐOFFになっていた）。自動の読み込み直しの間は残す。
   // 戻り値：読み込み直した（または古い処理で何もしない）は true、上限は 'limit'、回数を残せないときは 'storage'。
-  const MAX_RETRIES=3, retryKey='database-site777-retries';
+  const MAX_RETRIES=3, retryKey='database-site777-retries', resumeKey='database-site777-resume';
   const retryCounts=()=>{try{const v=JSON.parse(sessionStorage.getItem(retryKey)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:null;}catch(_){return null;}};
   const retryLater=async(mine,epoch)=>{
     const url=databaseSite777.read(true).url, counts=retryCounts();
@@ -142,7 +153,7 @@
   capture.onclick=()=>cycle(false);
   const start=async direction=>{
     try{
-      if(current?.enabled){await stop(null,'user_stop');return;}
+      if(current?.enabled||current?.resume_at){await stop(null,'user_stop');return;}
       try{sessionStorage.removeItem(retryKey);}catch(_){}
       token++;render(await api().configure(true,day.value||null,until.value&&until.value!==day.value?until.value:null,direction));
     }catch(error){status.textContent=error.message||String(error);}

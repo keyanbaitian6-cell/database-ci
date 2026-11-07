@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -22,6 +22,28 @@ import site777_import as source
 # 移動中は次の読み取りをしない（旧画面を読み直さない）ので、来ないままだと止まらずに待ち続けるため。
 NAVIGATION_LIMIT = 90
 BACKUP_OK = 'バックアップ済み'
+# 自動取り込み中に止まったら、3分後に自動で再開する（2026-11-08 利用者「別店舗など、取り込み対象以外へ移動しようとした
+# （navigation_blocked）これ以外は全て3分後には自動復帰でお願いします」「利用者の停止ボタンも対象外」）。
+# 取り込みが進まないまま（機種・日が1つも済まないまま）自動の再開が5回続いたら、それ以上は再開しない
+# （利用者「連続5回まで」。直らない原因で3分ごとにサイトへアクセスし続けないため）。
+RESUME_DELAY = 180
+RESUME_LIMIT = 5
+# 停止の理由コードの呼び名（ホームのログ欄・前回の案内・カードに出す。2026-11-08 Codexの提案「画像待ちの上限」
+# 「移動失敗」「認証の確認が必要」などを区別し、PCホームにも残す）。
+REASON_LABELS = {
+    'graph_retry_limit': '画像待ちの上限', 'graph_retry_storage': '画像待ち',
+    'not_moved': '移動失敗（リンクで移動しない）', 'navigation_timeout': '移動失敗（読み込みが終わらない）',
+    'navigation_failed': '移動失敗（ページを読み込めない）', 'login_required': 'ログインの確認が必要',
+    'navigation_blocked': '対象外のページへの移動', 'capture_error': '読み取りの失敗',
+    'card_error': '取り込みカードの失敗', 'overlay_failed': '取り込みカードを出せない',
+    'range_unknown': '次の日の機種一覧が分からない', 'user_stop': '停止ボタン', 'stopped': '停止',
+}
+# 前回の取り込みの範囲・済んだ日・止まった理由（2026-11-08 Codexの提案：窓を開き直すと日付の範囲を選び直しになり、
+# 前回どこまで取り込んだかが分からなかった）。窓を開いたとき、カードに案内を出し、残りの日を選んでおく。
+LAST_RUN_NAME = 'site777-last-run.json'
+RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
+                       'graph_retry_limit', 'graph_retry_storage', 'card_error', 'overlay_failed',
+                       'range_unknown'})
 
 
 class StaleRun(ValueError):
@@ -89,6 +111,18 @@ class Session(Bridge):
         self._stage = None
         # バックアップ・同期フォルダーへの書き出しがうまくいかなかったときの文（DBには保存済み）。完了の文に添える。
         self._backup_note = None
+        # 自動の再開（RESUME_DELAY 秒後）。_resume_at は monotonic の時刻、_resume_plan は再開する日・範囲・向き・理由、
+        # _resume_count は取り込みが進まないまま続けて再開した回数、_resume_serial は再開のたびに増やす番号
+        # （カードがこれを見て、グラフの読み込み直しの回数を0に戻す）。
+        self._resume_at = None
+        self._resume_label = None
+        self._resume_plan = None
+        self._resume_count = 0
+        self._resume_serial = 0
+        # 今の取り込みの範囲の始まり・終わり（前回の案内に残す）と、窓を開いたときの前回の案内の文。
+        self._run_start = self._run_until = None
+        self._previous = None
+        self._load_previous()
 
     def state(self):
         self._watch_navigation()
@@ -100,7 +134,59 @@ class Session(Bridge):
                     'days': self._days, 'status': self._status, 'added': self._added, 'kept': self._kept,
                     'ready': self._pace.due() is not None and not self._pending_navigation,
                     'navigating': self._pending_navigation, 'unknown_graphs': self._unknown,
-                    'direction': self._direction}
+                    'direction': self._direction, 'resume_at': self._resume_label if self._resume_at else None,
+                    'resume_serial': self._resume_serial, 'previous': self._previous}
+
+    def _save_run(self, stopped=None, completed=False, remaining=None, locked=False):
+        """前回の案内のため、今の取り込みの範囲・済んだ日・残りの日・止まった理由を残す。書けなくても取り込みは続ける。
+        locked は呼ぶ側が _state_lock を持っているとき。"""
+        if not locked:
+            with self._state_lock:
+                return self._save_run(stopped, completed, remaining, locked=True)
+        if self._run_start is None:
+            return None
+        if remaining is None:
+            remaining = [] if completed else [self._day, *self._queue]
+        data = {'at': self._now().isoformat(timespec='minutes'), 'start': self._run_start, 'until': self._run_until,
+                'finished_days': list(self._finished_days), 'remaining': list(remaining),
+                'direction': self._direction, 'stopped': stopped, 'completed': bool(completed)}
+        try:
+            self._write(self._folder / LAST_RUN_NAME, data)
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
+
+    def _load_previous(self):
+        """窓を開いたとき：前回の取り込みの案内の文を作り、途中で終わっていれば残りの日を選んでおく（掲載日にある日だけ）。"""
+        try:
+            data = json.loads((self._folder / LAST_RUN_NAME).read_text(encoding='utf-8'))
+            start, until, at = data['start'], data.get('until') or data['start'], datetime.fromisoformat(data['at'])
+            finished, remaining = [str(d) for d in data.get('finished_days', [])], [str(d) for d in data.get('remaining', [])]
+            for value in (start, until, *remaining):
+                if date.fromisoformat(value).isoformat() != value:
+                    raise ValueError(value)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return
+        md = lambda d: d[5:].replace('-', '/')
+        span = md(start) if start == until else f'{md(start)}〜{md(until)}'
+        head = f'前回（{at:%m/%d %H:%M}）：{span}'
+        if data.get('completed'):
+            self._previous = f'{head}を最後まで取り込みました。'
+            return
+        why = f'【{data["stopped"]}】' if isinstance(data.get('stopped'), str) and data['stopped'] else \
+            '（止まった理由の記録なし。取り込み中に窓を閉じたなど）'
+        text = f'{head}を取り込む途中で止まりました{why}。済み：{"、".join(finished) or "なし"}。'
+        if remaining and all(d in self._days for d in remaining):
+            ordered = sorted(remaining)
+            self._day, self._queue = ordered[0], ordered[1:]
+            self._until = ordered[-1] if len(ordered) > 1 else None
+            if data.get('direction') in DIRECTIONS:
+                self._direction = data['direction']
+            rest = md(ordered[0]) if len(ordered) == 1 else f'{md(ordered[0])}〜{md(ordered[-1])}'
+            text += f'残りの{rest}を選んであります（開始を押すと続きから。保存済みの台は飛ばします）。'
+        elif remaining:
+            text += f'残りの{"、".join(md(d) for d in remaining)}には、掲載が終わった日があります。日付を選び直してください。'
+        self._previous = text
 
     def _watch_navigation(self):
         with self._state_lock:
@@ -109,20 +195,82 @@ class Session(Bridge):
                 # 手動の取り込みのあと：止めるものは無いので、待つのをやめるだけ（「この画面を取り込む」を押せるように戻す）。
                 self._pending_navigation = late = False
         if late:
-            self.pause(f'ページの移動が{NAVIGATION_LIMIT}秒たっても終わらないため停止しました。'
-                       '画面を確認してから再開してください。自動の再取得は行いません。', 'navigation_timeout')
+            self.pause(f'ページの移動が{NAVIGATION_LIMIT}秒たっても終わらないため停止しました。', 'navigation_timeout')
 
     def _stopped(self, reason, message=None, **detail):
         """自動取り込みが止まった・終わった理由を残す（2026-11-08。今まではカードの停止は理由をログに書かず、
         読み取りの失敗も例外の型しか残らなかったため、OFFになった原因を後から区別できなかった）。
         理由コード・営業日・工程・実行番号を残す。URL・会員情報・ページの中身は残さない。
         窓を閉じたとき親画面に出せるよう、最後の停止の文を知らせファイルにも残す。"""
+        resume = None
         with self._state_lock:
             day, epoch, stage = self._day, self._epoch, self._stage
+            if detail.get('was_on') and reason in RESUMABLE:
+                if self._resume_count >= RESUME_LIMIT:
+                    resume = 'gave_up'
+                    self._status = (f'{self._status} 自動での再開を{RESUME_LIMIT}回続けても取り込みが進まないため、'
+                                    'これ以上は自動で再開しません。画面を確認してから開始してください。')
+                else:
+                    resume = 'scheduled'
+                    plan_day, plan_until = day, self._until
+                    if detail.get('left_days'):
+                        plan_day, plan_until = detail['left_days'][0], detail['left_days'][-1]
+                    self._resume_plan = {'day': plan_day, 'until': plan_until if plan_until != plan_day else None,
+                                         'direction': self._direction, 'reason': reason}
+                    self._resume_at = monotonic() + RESUME_DELAY
+                    self._resume_label = f'{self._now() + timedelta(seconds=RESUME_DELAY):%H:%M}'
+                    self._status = (f'{self._status} {self._resume_label}に自動で再開します'
+                                    f'（{self._resume_count + 1}/{RESUME_LIMIT}回目。取り消すときは自動取り込みのボタンを押す）。')
+            status = self._status
         text = clean_reason(message)
+        detail.pop('left_days', None)
         self._log.write('auto_off', reason=reason, day=day, epoch=epoch, stage=stage, message=text,
+                        resume=resume, resume_count=self._resume_count if resume else None,
                         **{k: v for k, v in detail.items() if v is not None})
-        write_notice(self._folder / LAST_STOP_NAME, f'{self._now():%m/%d %H:%M}に停止：{text or "停止しました。"}')
+        notice = clean_reason(status) if resume else text
+        label = REASON_LABELS.get(reason, reason)
+        write_notice(self._folder / LAST_STOP_NAME,
+                     f'{self._now():%m/%d %H:%M}に停止【{label}】：{notice or "停止しました。"}')
+        if reason != 'range_unknown':
+            self._save_run(stopped=label)
+
+    def _resume_if_due(self):
+        """自動の再開の時刻が来ていたら、止まる前と同じ日・範囲・向きでONに戻す。読み込み直す表示中のページのURLを返す
+        （窓の見張り site777_browser.run が、そのページを1回だけ読み込み直す。移動の守りはふだんどおり効く）。
+        再開しないときは None。"""
+        with self._state_lock:
+            if self._resume_at is None or monotonic() < self._resume_at or self._work_lock.locked():
+                return None
+            plan, count = self._resume_plan, self._resume_count + 1
+            self._resume_at = None
+            run = (self._run_start, self._run_until, list(self._finished_days))
+        try:
+            self.configure(True, plan['day'], plan['until'], plan['direction'])
+        except ValueError as error:
+            self._log.write('auto_resume_failed', reason=plan['reason'], error=clean_reason(error))
+            return None
+        with self._state_lock:
+            self._run_start, self._run_until = run[0], run[1]
+            if not self._finished_days:
+                self._finished_days = run[2]
+        self._save_run()
+        url = None
+        try:
+            url = self._window.get_current_url() if self._window else None
+        except Exception:  # noqa: BLE001 - 読めなければ読み込み直さずに続ける
+            url = None
+        url = url if isinstance(url, str) and url.startswith('https://') else None
+        with self._state_lock:
+            self._resume_count = count
+            self._resume_serial += 1
+            if url:
+                # 読み込み直しが終わるまで読み取らない（移動中と同じ）。
+                self._pending_navigation = True
+                self._pending_since = monotonic()
+            self._status = (f'止まってから{RESUME_DELAY // 60}分たったので、自動で再開しました'
+                            f'（{count}/{RESUME_LIMIT}回目）。' + ('このページを読み込み直します。' if url else ''))
+        self._log.write('auto_resume', reason=plan['reason'], day=plan['day'], count=count, reload=bool(url))
+        return url
 
     def _with_backup(self, text):
         if not self._backup_note:
@@ -173,12 +321,22 @@ class Session(Bridge):
             self._enabled = enabled
             self._completed = None
             if enabled:
+                # 開始したら前回の案内は消し、今回の範囲を残す（自動の再開は _resume_if_due が元の範囲に戻す）。
+                self._previous = None
+                self._run_start, self._run_until = self._day, self._until or self._day
+            # 設定し直したら（開始・停止・日付の変更・自動の再開）、待っている自動の再開は取り消す。
+            # 利用者が開始したときは、続けて再開した回数も数え直す（自動の再開は _resume_if_due が回数を戻す）。
+            self._resume_at = None
+            if enabled:
                 self._backup_note = None
+                self._resume_count = 0
             self._pending_navigation = False
             self._blocked_navigation = False
             self._pace.configure(enabled, 15)
             self._epoch += 1
             self._status = '自動取り込みを開始します。' if enabled else '停止しました。'
+        if enabled:
+            self._save_run()
         return self.state()
 
     def _loaded(self):
@@ -195,8 +353,23 @@ class Session(Bridge):
             source.source_url(raw)
             return True
         except (TypeError, ValueError):
-            self.pause('P-STATIONの20円スロット以外への移動を止めました。'
-                       '対象店の画面を確認してから再開してください。自動の再取得は行いません。', 'navigation_blocked')
+            # ログイン・会員の画面（/f/P… 、ログインが切れたときにサイトが移す先）なら「ログインの確認が必要」と分けて出す
+            # （2026-11-08 Codexの提案）。どちらも自動では再開しない（利用者「navigation_blocked これ以外は全て3分後」）。
+            try:
+                target = source.urlsplit(raw)
+                login = target.hostname == 'm.site777.jp' and target.path.startswith('/f/P')
+            except (TypeError, ValueError, AttributeError):
+                login = False
+            if login:
+                self.pause('ログインの確認が必要です（ログイン・会員の画面へ移ろうとしたため止めました）。'
+                           'ログインしてからP-STATIONの20円スロットを開き、開始してください。自動では再開しません。',
+                           'login_required')
+                # 利用者がこのあとログイン画面を開けるよう、別店舗のときの「止めたあとも守る」（_blocked_navigation）は付けない。
+                self._log.write('navigation_blocked', redirected=bool(redirected), login=True)
+                return False
+            else:
+                self.pause('P-STATIONの20円スロット以外への移動を止めました。'
+                           '対象店の画面を確認してから再開してください。自動の再取得は行いません。', 'navigation_blocked')
             with self._state_lock:
                 self._blocked_navigation = True
             # 認証用の問い合わせは記録せず、公開の店舗・貸玉・機種コードだけ残す。
@@ -243,8 +416,7 @@ class Session(Bridge):
             active = self._enabled
         if active:
             detail = f'HTTP {status}' if type(status) is int and status else str(error or '不明')[:60]
-            self.pause(f'ページを読み込めませんでした（{detail}）。画面を確認してから再開してください。'
-                       '自動の再取得は行いません。', 'navigation_failed')
+            self.pause(f'ページを読み込めませんでした（{detail}）。', 'navigation_failed')
 
     def save_overlay_layout(self, raw):
         value = clean_overlay_layout(json.loads(raw))
@@ -403,6 +575,7 @@ class Session(Bridge):
                         self._completed = self._status
                     self._log.write('auto_finished', day=self._day, automatic=automatic,
                                     backup_ok=not self._backup_note)
+                    self._save_run(completed=True, locked=True)
                     return {'complete': True}
                 # 機種一覧は日付で変わらないので、読んだ一覧のまま次の日を確かめる。
                 self._day = self._queue.pop(0)
@@ -441,6 +614,7 @@ class Session(Bridge):
             self._enabled = False
             self._pace.configure(False, 15)
             left = len(self._queue)
+            left_days = list(self._queue)
             self._queue = []
             self._until = None
             if left:
@@ -456,9 +630,11 @@ class Session(Bridge):
                 self._completed = self._status
             status = self._status
         if left:
-            self._stopped('range_unknown', status, left=left)
+            self._save_run(stopped=REASON_LABELS['range_unknown'], remaining=left_days)
+            self._stopped('range_unknown', status, left=left, was_on=automatic, left_days=left_days)
         else:
             self._log.write('auto_finished', day=self._day, automatic=automatic, backup_ok=not self._backup_note)
+            self._save_run(completed=True)
         return {'complete': True}
 
     def capture(self, raw, epoch):
@@ -484,12 +660,16 @@ class Session(Bridge):
                 if type(page) is not int or page < 1 or str(page) != selected:
                     raise ValueError('読み取り資料と表示中のページ番号が違います。')
             self._stage = kind
+            done_before = len(self._done) + len(self._finished_days)
             result = self._capture(payload, epoch)
             with self._state_lock:
                 current = epoch == self._epoch
                 if current and result.get('action'):
                     self._pending_navigation = True
                     self._pending_since = monotonic()
+                if current and len(self._done) + len(self._finished_days) > done_before:
+                    # 機種・日が1つ済んだ＝取り込みが進んだ。自動の再開の回数を数え直す。
+                    self._resume_count = 0
             if not current:
                 raise StaleRun('取り込みの設定が変わったため停止しました。')
             self._pace.pause('次のページを待ちます。')
@@ -500,6 +680,7 @@ class Session(Bridge):
                 # 停止・再開の前に始まった処理（古い実行番号）の失敗は、今の取り込みを止めない（2026-11-08 Codexの
                 # レビュー：停止前の読み取りが遅れて届くと、再開したばかりの取り込みまでOFFにしていた）。
                 stale = isinstance(error, StaleRun) or epoch != self._epoch
+                was_on = self._enabled
                 if not stale:
                     self._enabled = False
                     self._pace.configure(False, 15)
@@ -509,7 +690,7 @@ class Session(Bridge):
                 self._log.write('stale_result_dropped', error_type=type(error).__name__)
                 return {'error': str(error), 'stale': True, 'state': self.state()}
             self._log.write('capture_stopped', error_type=type(error).__name__)
-            self._stopped('capture_error', str(error), error_type=type(error).__name__)
+            self._stopped('capture_error', str(error), error_type=type(error).__name__, was_on=was_on)
             return {'error': str(error), 'state': self.state()}
         finally:
             self._active_url = None

@@ -211,5 +211,36 @@ try {
   assert.equal(stopped[2],'graph_retry_storage');
   assert.match(stopped[1],/回数を残せないため、読み込み直していません/);
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す・停止の理由コード：成功');
+  // 2026-11-08 利用者「3分後には自動復帰」：再開を待つ間はボタンに時刻を出し、押すと取り消す（停止ボタン扱い）。
+  // 自動で再開したら（resume_serial が変わったら）、グラフの読み込み直しの回数を0に戻す。
+  const waiting=await browser.newPage({viewport:{width:560,height:800}});
+  waiting.on('pageerror',e=>errors.push(e.message));
+  await waiting.route('**/*',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:'<!doctype html><body>手元の試験</body>'}));
+  await waiting.goto(source('D4300',1));
+  await waiting.evaluate(()=>{
+    sessionStorage.setItem('database-site777-retries',JSON.stringify({[location.href]:3}));
+    window.__calls=[];
+    window.__s={enabled:false,epoch:5,ready:false,day:'2026-11-06',days:['2026-11-06'],status:'止まりました。',resume_at:'02:03',resume_serial:0,
+      previous:'前回（11/07 23:50）：11/04〜11/06を取り込む途中で止まりました【画像待ちの上限】。'};
+    window.pywebview={api:{state:async()=>structuredClone(window.__s),
+      pause:async(message,reason,retries)=>{window.__calls.push(['pause',message,reason,retries]);
+        Object.assign(window.__s,{resume_at:null});return structuredClone(window.__s);},
+      configure:async()=>{window.__calls.push(['configure']);return structuredClone(window.__s);},save_overlay_layout:async()=>{}}};
+    window.databaseSite777={read:()=>({url:location.href}),samePage:(a,b)=>a===b,go:()=>{}};
+  });
+  await waiting.evaluate(card);await waiting.evaluate(overlay);
+  await waiting.waitForFunction(()=>document.querySelector('#database-site777-auto')?.textContent==='自動取り込み：02:03に再開予定（押すと取り消し）');
+  assert.ok(await waiting.evaluate(()=>sessionStorage.getItem('database-site777-retries')),'再開する前は回数を残す');
+  // 窓を開き直したときの前回の案内（2026-11-08）。PCが消したら（開始したら）隠す。
+  assert.match(await waiting.locator('#database-site777-previous').innerText(),/前回（11\/07 23:50）.*【画像待ちの上限】/);
+  await waiting.evaluate(()=>{window.__s.previous=null;});
+  await waiting.waitForFunction(()=>getComputedStyle(document.querySelector('#database-site777-previous')).display==='none');
+  await waiting.evaluate(()=>{window.__s.resume_serial=1;});
+  await waiting.waitForFunction(()=>!sessionStorage.getItem('database-site777-retries'));
+  await waiting.click('#database-site777-auto');
+  await waiting.waitForFunction(()=>window.__calls.length>0);
+  assert.deepEqual(await waiting.evaluate(()=>window.__calls),[['pause',null,'user_stop',null]],'待っている間に押すと取り消す（開始しない）');
+  await waiting.waitForFunction(()=>document.querySelector('#database-site777-auto')?.textContent.includes('OFF（押すと開始）'));
+  assert.deepEqual(errors,[]);
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内：成功');
 } finally {await browser.close();}

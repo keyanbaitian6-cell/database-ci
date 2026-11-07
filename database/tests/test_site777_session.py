@@ -126,7 +126,7 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn('secret',json.dumps(self.log(),ensure_ascii=False))
         self.assertIn('（URL）',row['message'])
         stop=site777_browser.take_stop_message(self.root)
-        self.assertRegex(stop,r'^11/07 02:00に停止：3回読み込み直しても')
+        self.assertRegex(stop,r'^11/07 02:00に停止【画像待ちの上限】：3回読み込み直しても')
         self.assertIsNone(site777_browser.take_stop_message(self.root),'1回読んだら消す')
         # 理由コードはページから渡るので、形の違うものは使わない。
         self.session.pause(None,'<script>',-1)
@@ -159,6 +159,156 @@ class SessionTest(unittest.TestCase):
         self.epoch=self.session.configure(True,'2026-11-06')['epoch']
         self.assertTrue(self.cycle(index)['complete'])
         self.assertNotIn('バックアップ',self.session._completed)
+
+    def due(self):
+        """待っている自動の再開の時刻を今にする（3分待たない）。"""
+        from time import monotonic
+        self.assertIsNotNone(self.session._resume_at)
+        self.session._resume_at=monotonic()-1
+        return self.session._resume_if_due()
+
+    def test_a_stop_during_auto_capture_resumes_after_three_minutes_and_reloads_the_page_once(self):
+        # 2026-11-08 利用者「別店舗など、取り込み対象以外へ移動しようとした（navigation_blocked）これ以外は全て
+        # 3分後には自動復帰でお願いします」「利用者の停止ボタンも対象外」「連続5回まで」。
+        import site777_session
+        from types import SimpleNamespace
+        here=url('D4300')
+        self.session._window=SimpleNamespace(get_current_url=lambda:here)
+        self.assertEqual(site777_session.RESUME_DELAY,180)
+        self.session.pause('リンクを押しても移動しないため停止しました。','not_moved')
+        state=self.session.state()
+        self.assertFalse(state['enabled'])
+        self.assertEqual(state['resume_at'],'02:03')
+        self.assertIn('02:03に自動で再開します（1/5回目',state['status'])
+        self.assertIsNone(self.session._resume_if_due(),'3分たつまでは再開しない')
+        self.assertEqual(self.due(),here,'表示中のページを1回だけ読み込み直す')
+        state=self.session.state()
+        self.assertTrue(state['enabled']);self.assertTrue(state['navigating']);self.assertIsNone(state['resume_at'])
+        self.assertEqual((state['day'],state['direction'],state['resume_serial']),('2026-11-06','top',1))
+        self.assertIn('自動で再開しました（1/5回目）',state['status'])
+        self.assertIsNone(self.session._resume_if_due(),'1回だけ')
+        row=self.log('auto_resume')[-1]
+        self.assertEqual((row['reason'],row['count'],row['reload']),('not_moved',1,True))
+
+    def test_every_reason_except_blocked_pages_and_the_stop_button_resumes(self):
+        import site777_session
+        for reason in sorted(site777_session.RESUMABLE):
+            with self.subTest(reason=reason):
+                self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+                self.session.pause('止まりました。',reason)
+                self.assertIsNotNone(self.session.state()['resume_at'])
+        for reason in ('navigation_blocked','user_stop','stopped'):
+            with self.subTest(reason=reason):
+                self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+                self.session.pause('止まりました。',reason)
+                self.assertIsNone(self.session.state()['resume_at'])
+        # 別店舗への移動を止めたとき（実際の守りの経路）も再開しない。
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.assertFalse(self.session._navigation_starting(url('D4300').replace('04034001','23170004'),True))
+        self.assertIsNone(self.session.state()['resume_at'])
+        # 手動の取り込み（OFF）の失敗は再開しない。読み取りの失敗（ON）は再開する。
+        bad=table();bad['days']=[]
+        self.epoch=self.session.configure(False,'2026-11-06')['epoch']
+        self.assertIn('error',self.session.capture(json.dumps(bad),self.epoch))
+        self.assertIsNone(self.session.state()['resume_at'])
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.assertIn('error',self.session.capture(json.dumps(bad),self.epoch))
+        self.assertIsNotNone(self.session.state()['resume_at'])
+        self.assertEqual(self.log('auto_off')[-1]['resume'],'scheduled')
+
+    def test_the_stop_button_or_a_date_change_cancels_a_waiting_resume(self):
+        self.session.pause('止まりました。','capture_error')
+        self.session.pause(None,'user_stop')
+        self.assertIsNone(self.session.state()['resume_at'])
+        self.assertIsNone(self.session._resume_if_due())
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.session.pause('止まりました。','capture_error')
+        self.session.configure(False,'2026-11-05')
+        self.assertIsNone(self.session.state()['resume_at'])
+
+    def test_resuming_gives_up_after_five_in_a_row_without_progress_and_progress_counts_again(self):
+        for count in range(1,6):
+            self.session.pause('止まりました。','navigation_failed')
+            self.assertIn(f'（{count}/5回目',self.session.state()['status'])
+            self.due()
+        self.session.pause('止まりました。','navigation_failed')
+        state=self.session.state()
+        self.assertIsNone(state['resume_at'])
+        self.assertIn('5回続けても取り込みが進まないため',state['status'])
+        self.assertEqual(self.log('auto_off')[-1]['resume'],'gave_up')
+        import site777_browser
+        self.assertIn('5回続けても',site777_browser.take_stop_message(self.root),'ホームのログ欄にも出す')
+        # 利用者が開始し直したら数え直す。途中で機種が1つ済めば（取り込みが進めば）数え直す。
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.assertEqual(self.session._resume_count,0)
+        self.session._resume_count=4
+        self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
+        self.assertEqual(self.session._resume_count,4)
+        self.cycle(graph(2))
+        self.assertEqual(self.session._resume_count,0)
+
+    def test_a_redirect_to_the_login_page_says_login_is_needed_and_does_not_resume(self):
+        # 2026-11-08 Codexの提案：「認証の確認が必要」を、別店舗への移動と分けて出す。自動では再開しない。
+        import site777_browser
+        login='https://m.site777.jp/f/P0300.do?skskb=3&returnUrl=%2FF0900.do'
+        self.assertFalse(self.session._navigation_starting(login,True))
+        state=self.session.state()
+        self.assertFalse(state['enabled']);self.assertIsNone(state['resume_at'])
+        self.assertIn('ログインの確認が必要です',state['status'])
+        self.assertEqual(self.log('auto_off')[-1]['reason'],'login_required')
+        self.assertIn('【ログインの確認が必要】',site777_browser.take_stop_message(self.root))
+        self.assertTrue(self.session._navigation_starting(login,False),'止めたあとは、利用者がログイン画面を開ける')
+        self.assertNotIn('returnUrl',json.dumps(self.log(),ensure_ascii=False))
+
+    def test_reopening_the_window_shows_the_last_run_and_selects_the_remaining_days(self):
+        # 2026-11-08 Codexの提案：窓を開き直すと日付の範囲を選び直しになり、前回どこまで取り込んだか分からなかった。
+        self.epoch=self.session.configure(True,'2026-11-04','2026-11-06','bottom')['epoch']
+        self.session.pause('3回読み込み直してもグラフが表示されないため停止しました。','graph_retry_limit',3)
+        self.session.pause(None,'user_stop')
+        reopened=self.new_session().state()
+        self.assertEqual(reopened['previous'],'前回（11/07 02:00）：11/04〜11/06を取り込む途中で止まりました【停止ボタン】。'
+                         '済み：なし。残りの11/04〜11/06を選んであります（開始を押すと続きから。保存済みの台は飛ばします）。')
+        self.assertEqual((reopened['day'],reopened['until'],reopened['queue'],reopened['direction']),
+                         ('2026-11-04','2026-11-06',['2026-11-05','2026-11-06'],'bottom'))
+        self.assertFalse(reopened['enabled'])
+        # 開始したら案内は消す。
+        session=self.new_session()
+        self.assertIsNone(session.configure(True,'2026-11-05')['previous'])
+        # 取り込み中に窓を閉じた（止まった記録が無い）とき。
+        self.assertIn('止まった理由の記録なし',self.new_session().state()['previous'])
+        # 掲載が終わった日が残っているときは選ばず、選び直しを案内する。
+        (self.root/'site777-last-run.json').write_text(json.dumps({'at':'2026-10-02T23:00+09:00','start':'2026-10-01',
+            'until':'2026-10-01','finished_days':[],'remaining':['2026-10-01'],'stopped':'読み取りの失敗','completed':False}),encoding='utf-8')
+        reopened=self.new_session().state()
+        self.assertIn('掲載が終わった日があります',reopened['previous'])
+        self.assertEqual(reopened['day'],self.session._days[0])
+        # 壊れたファイルは無視する。
+        (self.root/'site777-last-run.json').write_text('{',encoding='utf-8')
+        self.assertIsNone(self.new_session().state()['previous'])
+
+    def test_the_last_run_keeps_the_original_range_across_auto_resume_and_records_completion(self):
+        from types import SimpleNamespace
+        self.session._window=SimpleNamespace(get_current_url=lambda:url('D4300'))
+        self.epoch=self.session.configure(True,'2026-11-04','2026-11-06')['epoch']
+        with self.session._state_lock:
+            self.session._day,self.session._queue=('2026-11-05',['2026-11-06'])
+            self.session._finished_days=['11/04（追加1台・既存0台・グラフ不明0台）']
+        self.session.pause('止まりました。','navigation_failed')
+        self.due()
+        saved=json.loads((self.root/'site777-last-run.json').read_text(encoding='utf-8'))
+        self.assertEqual((saved['start'],saved['until'],saved['remaining']),('2026-11-04','2026-11-06',['2026-11-05','2026-11-06']))
+        self.assertEqual(saved['finished_days'],['11/04（追加1台・既存0台・グラフ不明0台）'])
+        self.assertIn('済み：11/04（追加1台',self.new_session().state()['previous'])
+        # 最後まで終わったら「最後まで取り込みました」。残りの日は選ばない（いつもの最新の日）。
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2}]}
+        self.session._window=None
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph());self.cycle(graph(2))
+        self.assertTrue(self.cycle(index)['complete'])
+        reopened=self.new_session().state()
+        self.assertEqual(reopened['previous'],'前回（11/07 02:00）：11/06を最後まで取り込みました。')
+        self.assertEqual(reopened['day'],self.session._days[0])
 
     def test_table_then_both_graph_pages_before_any_db_record_is_saved(self):
         self.assertEqual(self.cycle(table())['action']['url'].split('/f/')[1].split('.')[0],'D4300')

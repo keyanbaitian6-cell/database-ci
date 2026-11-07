@@ -1428,3 +1428,35 @@
 - コミットにはCodexのレビュー文書（SITE777_CAPTURE_REVIEW_20261108.md）と、上のCodexの記録も含めた（利用者が貼った報告の元のため）。
 - 見つけて直したもの（記録）：この AI_COLLABORATION.md の1199行目（8f4babf「Site Seven replacement run」の記録）の DB 件数の部分だけ Shift-JIS で書かれていて、ファイル全体が UTF-8 として読めなかった（編集ツールが拒否）。その部分を UTF-8 に直した（文字は同じ）。
 - push：07086a8 を tools/push_ci.py で正本（imakurudev-eng/database、11/8は月の前半）へ1回送った。CI：https://github.com/imakurudev-eng/database/actions/runs/42424044144 （送った時点では待ち。結果は未確認）。実WebView2・実サイトでの確認は、利用者の次の取り込み待ち。
+
+## 2026-11-08 サイトセブン：止まったら3分後に自動で再開・停止理由の呼び名・前回の案内（Claude）
+
+- 依頼：利用者「別店舗など、取り込み対象以外へ移動しようとした（navigation_blocked）これ以外は全て3分後には自動復帰でお願いします」「ごめん。利用者の停止ボタンも対象外」。続けて止まるときの上限を聞き、利用者「連続5回まで」。その後、Codexの追加の提案2点（停止理由を区別してPCホームにも残す／窓を開き直したとき前回どこまで取り込みどこで止まったかを示す）を利用者が「今の修正おわったらお願いします」。基準：手元main 5a6bd84（上の修正 07086a8 の後）。決まりは AGENTS.md にも足した。
+- 完了の条件（着手前に利用者へ提示）：対象の理由で止まったら3分後に同じ日・範囲・向きでONに戻し、表示中のページを1回だけ読み込み直す／navigation_blocked・user_stop では戻らない／待つ間はカードに再開の時刻を出し、押すと取り消す／進まないまま5回続いたら再開しない／auto_resume をログに残す。
+
+### 変えたこと（database/site777_session.py・site777_browser.py・assets/site777_overlay.js）
+
+1. **自動の再開**：`RESUMABLE`（not_moved・navigation_timeout・navigation_failed・capture_error・graph_retry_limit・graph_retry_storage・card_error・overlay_failed・range_unknown）で、自動取り込みがONのときに止まったら（was_on）、`_stopped` が `RESUME_DELAY`=180秒後の再開を予約する。窓の見張り（site777_browser.run の watch_finished、0.5秒ごと）が `Session._resume_if_due()` を呼び、時刻が来たら `configure(True, 日, 範囲の終わり, 向き)` でONに戻し、表示中のURL（https のときだけ）を `window.load_url` で1回読み込み直す。読み込みが終わるまでは移動中と同じく読み取らない。読み込み直しも移動の守りを通る。`range_unknown` は残りの日から再開する。手動の取り込み（OFF）の失敗では再開しない。
+2. **上限**：`RESUME_LIMIT`=5。取り込みが進まない（`_done`＋`_finished_days` が増えない）まま5回再開して6回目に止まったら、再開せず「自動での再開を5回続けても取り込みが進まないため…」と出す（`auto_off` の resume='gave_up'、ホームのログ欄にも出る）。機種・日が1つ済むか、利用者が開始し直すと数え直す。
+3. **取り消し**：待つ間、カードの自動取り込みボタンは「自動取り込み：HH:MMに再開予定（押すと取り消し）」。押すと `user_stop`。日付の変更・開始など `configure` を呼ぶと予約は消える。自動で再開したら `resume_serial` が増え、カードはグラフの読み込み直しの回数を0に戻す（3回まで再び読み込み直す）。
+4. **停止理由の呼び名**：`REASON_LABELS`（画像待ちの上限・移動失敗（リンクで移動しない／読み込みが終わらない／ページを読み込めない）・ログインの確認が必要・対象外のページへの移動・読み取りの失敗 など）。ホームのログ欄に出る文は「サイトセブンの取り込み画面を閉じました。最後の停止：11/08 23:50に停止【画像待ちの上限】：…」の形。
+5. **ログインの確認が必要（login_required）**：取り込み中に m.site777.jp の `/f/P…`（ログイン・会員の画面。START_URL の P0300.do など）へ移ろうとしたら、別店舗と分けて「ログインの確認が必要です…」で止める。自動では再開しない（navigation_blocked と同じ扱い）。別店舗のときの「止めたあとも守る」（`_blocked_navigation`）は付けないので、そのあと利用者がログイン画面を開ける。※今までは別店舗と同じ扱いで、止めたあとも守りが残り、ログイン画面を開こうとしても止められていた（見つけて直したもの）。
+6. **前回の案内**：`data/site777-last-run.json` に、開始した範囲・済んだ日・残りの日・向き・止まった理由の呼び名・最後まで終わったかを書く（開始・停止・自動の再開・完了のとき）。窓を開くと、カードに「前回（11/07 23:50）：11/04〜11/06を取り込む途中で止まりました【画像待ちの上限】。済み：…。残りの11/05〜11/06を選んであります（開始を押すと続きから。保存済みの台は飛ばします）」を出し、残りの日が掲載日にあれば日付（から・まで）と向きを選んでおく。掲載が終わった日が残っていれば選ばず、選び直しを案内する。最後まで終わっていれば「…を最後まで取り込みました」だけ。止まった記録が無い（取り込み中に窓を閉じた）ときは「止まった理由の記録なし」。開始すると案内は消える。
+
+### 確認
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 3分後にONに戻り、ページを1回だけ読み込み直す | 済 | test_site777_session `test_a_stop_during_auto_capture_resumes_after_three_minutes_and_reloads_the_page_once` |
+| 対象の理由だけ再開・blocked/user_stop/手動は再開しない | 済 | `test_every_reason_except_blocked_pages_and_the_stop_button_resumes`（RESUMABLE の全理由と、別店舗の守りの実経路） |
+| 待つ間の取り消し | 済 | `test_the_stop_button_or_a_date_change_cancels_a_waiting_resume`、test_site777_capture_browser.mjs（ボタンの表示・押すと user_stop） |
+| 5回で打ち切り・進めば数え直す | 済 | `test_resuming_gives_up_after_five_in_a_row_without_progress_and_progress_counts_again` |
+| 再開で画像の再試行回数を戻す | 済 | test_site777_capture_browser.mjs（resume_serial が変わると回数を消す） |
+| ログインの確認が必要を分ける・再開しない・あとでログイン画面を開ける | 済 | `test_a_redirect_to_the_login_page_says_login_is_needed_and_does_not_resume` |
+| 前回の案内・残りの日を選ぶ | 済 | `test_reopening_the_window_shows_the_last_run_and_selects_the_remaining_days`、`test_the_last_run_keeps_the_original_range_across_auto_resume_and_records_completion`、mjs（案内の表示・開始で隠す） |
+| サイトセブンの試験 | 済 | test_site777_session・test_site777_browser 43件 OK |
+| 全体ゲート | 済 | `bash database_android/tool/check_before_build.sh`（作業コピー、コミット前の最終の変更で実行）90項目 ALL PASSED |
+| 実WebView2・実サイト | 未確認 | 実サイトへのアクセスなし。利用者の次の取り込みで確かめる。特に `window.load_url` での読み込み直し、ログイン切れのときの行き先（/f/P… か）は実物で未確認 |
+
+- アクセスの見込み：再開1回につき、表示中のページの読み込み直し1回＋そのあとのふだんの取り込み。直らない原因でも、進まないまま最大5回（約15分）で止まる。
+- 公開：表示が変わるのはPCの取り込みカードとホームのログ欄だけ。閲覧ページ・共有カレンダー・APKは対象外。
