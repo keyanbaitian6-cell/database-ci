@@ -130,6 +130,8 @@ def main():
                     # 元ページの8秒の移動待ちタイマーが、停止理由を上書きしないこと。
                     time.sleep(9)
                     assert '移動を止めました' in session.state()['status'],session.state()
+                    assert '移動を止めました' in window.evaluate_js("document.querySelector('#database-site777-status')?.textContent"),'カードに停止理由が出ません'
+                    assert 'OFF' in window.evaluate_js("document.querySelector('#database-site777-auto')?.textContent"),'カードがOFFになりません'
                     result.update(ok=True,redirect_blocked=True,foreign_requests=0,original_table_kept=True,no_db_write=True)
                     return
                 assert session.state()['added']==32,session.state()

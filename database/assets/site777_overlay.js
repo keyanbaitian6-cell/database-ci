@@ -87,7 +87,9 @@
     try{token++;render(await api().configure(false,day.value||null));}
     catch(error){status.textContent=error.message||String(error);}
   };
-  window.addEventListener('beforeunload',()=>{alive=false;token++;});
+  // 移動がキャンセルされたら元ページは残る。古い処理だけ無効化し、表示更新は続ける。
+  window.addEventListener('beforeunload',()=>{token++;});
+  window.addEventListener('pagehide',()=>{alive=false;token++;});
   const tick=async()=>{
     try{const s=await api().state();if(alive&&!busy){render(s);if(s.enabled&&s.ready)await cycle(true);}}
     catch(_){if(alive)status.textContent='PCとの接続を待っています。';}
