@@ -78,6 +78,26 @@ class Site777BrowserTest(unittest.TestCase):
         core.WebResourceRequested.handlers[0](core,request)
         self.assertEqual(request.Response,403)
 
+    def test_a_failed_page_load_is_reported_to_the_session_and_logged(self):
+        # 2026-11-08：読み込めなかったページ（HTTP 403・通信エラー）は、自動取り込みを止めるためセッションへ知らせる。
+        browser=SimpleNamespace(on_new_window_request=lambda *args:None)
+        core=FakeCore(browser.on_new_window_request)
+        window=SimpleNamespace(native=SimpleNamespace(webview=SimpleNamespace(CoreWebView2=core),browser=browser))
+        seen,notes=[],[]
+        log=SimpleNamespace(write=lambda kind,**data:notes.append((kind,data)))
+        site777_browser.keep_popups_here(window,log,navigation_done=lambda *args:seen.append(args))
+        done=core.NavigationCompleted.handlers[0]
+        done(core,SimpleNamespace(IsSuccess=False,HttpStatusCode=403,WebErrorStatus='Unknown'))
+        done(core,SimpleNamespace(IsSuccess=True,HttpStatusCode=200))
+        self.assertEqual(seen,[(False,403,'Unknown'),(True,200,None)])
+        self.assertEqual(notes[0],('loaded',{'ok':False,'status':403,'error':'Unknown'}))
+        # 知らせる先が失敗しても、窓の処理は止めない。
+        core=FakeCore(browser.on_new_window_request)
+        window.native.webview.CoreWebView2=core
+        site777_browser.keep_popups_here(window,log,navigation_done=lambda *args:1/0)
+        core.NavigationCompleted.handlers[0](core,SimpleNamespace(IsSuccess=True,HttpStatusCode=200))
+        self.assertEqual(notes[-1][0],'navigation_done_failed')
+
     def test_it_presents_itself_as_android_chrome_on_a_phone(self):
         ua = site777_browser.ANDROID_USER_AGENT
         self.assertIn('Linux; Android', ua)

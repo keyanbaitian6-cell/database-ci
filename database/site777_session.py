@@ -6,14 +6,37 @@ from datetime import datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 import threading
+from time import monotonic
 
 from anaslo_converter import read_catalog, suggestions
 from browser_import import clean_overlay_layout
 from pscube_import import PscubeStore, PscubeRandomCapture, auto_backup, is_excluded_machine, recent_business_days
-from site777_browser import Bridge
+from file_io import write_notice
+from site777_browser import Bridge, LAST_STOP_NAME
 import site777_import as source
+
+# 移動を指示してから、読み込みの完了（成功・失敗）がこれだけ来なければ止める（2026-11-08）。
+# 移動中は次の読み取りをしない（旧画面を読み直さない）ので、来ないままだと止まらずに待ち続けるため。
+NAVIGATION_LIMIT = 90
+BACKUP_OK = 'バックアップ済み'
+
+
+class StaleRun(ValueError):
+    """停止・再開の前に始まった古い処理。今の取り込みの状態は変えずに捨てる（2026-11-08）。"""
+
+
+def clean_reason(message):
+    """停止の文をログ・知らせに残す形にする。URL（問い合わせに会員情報が入りうる）は残さない。"""
+    if not message:
+        return None
+    return re.sub(r'(?:https?|javascript):\S+', '（URL）', str(message))[:300]
+
+
+def reason_code(value, default):
+    return value if isinstance(value, str) and re.fullmatch(r'[a-z_]{1,40}', value) else default
 
 
 class Site777RandomCapture(PscubeRandomCapture):
@@ -60,15 +83,52 @@ class Session(Bridge):
         self._unknown = 0
         self._active_url = None
         self._pending_navigation = False
+        self._pending_since = 0.0
         self._blocked_navigation = False
+        # 今の工程（読み取ったページの種類）。停止の記録に残す。
+        self._stage = None
+        # バックアップ・同期フォルダーへの書き出しがうまくいかなかったときの文（DBには保存済み）。完了の文に添える。
+        self._backup_note = None
 
     def state(self):
+        self._watch_navigation()
         with self._state_lock:
+            # 移動を指示してから読み込みが終わるまでは ready にしない（2026-11-08 Codexのレビュー：
+            # 移動先の応答が遅いと、5〜7秒の間隔だけで旧画面を読み直し、同じリンクを押し直していた）。
             return {'enabled': self._enabled, 'epoch': self._epoch, 'day': self._day,
                     'until': self._until, 'queue': list(self._queue), 'finished_days': list(self._finished_days),
                     'days': self._days, 'status': self._status, 'added': self._added, 'kept': self._kept,
-                    'ready': self._pace.due() is not None, 'unknown_graphs': self._unknown,
+                    'ready': self._pace.due() is not None and not self._pending_navigation,
+                    'navigating': self._pending_navigation, 'unknown_graphs': self._unknown,
                     'direction': self._direction}
+
+    def _watch_navigation(self):
+        with self._state_lock:
+            late = self._pending_navigation and monotonic() - self._pending_since > NAVIGATION_LIMIT
+            if late and not self._enabled:
+                # 手動の取り込みのあと：止めるものは無いので、待つのをやめるだけ（「この画面を取り込む」を押せるように戻す）。
+                self._pending_navigation = late = False
+        if late:
+            self.pause(f'ページの移動が{NAVIGATION_LIMIT}秒たっても終わらないため停止しました。'
+                       '画面を確認してから再開してください。自動の再取得は行いません。', 'navigation_timeout')
+
+    def _stopped(self, reason, message=None, **detail):
+        """自動取り込みが止まった・終わった理由を残す（2026-11-08。今まではカードの停止は理由をログに書かず、
+        読み取りの失敗も例外の型しか残らなかったため、OFFになった原因を後から区別できなかった）。
+        理由コード・営業日・工程・実行番号を残す。URL・会員情報・ページの中身は残さない。
+        窓を閉じたとき親画面に出せるよう、最後の停止の文を知らせファイルにも残す。"""
+        with self._state_lock:
+            day, epoch, stage = self._day, self._epoch, self._stage
+        text = clean_reason(message)
+        self._log.write('auto_off', reason=reason, day=day, epoch=epoch, stage=stage, message=text,
+                        **{k: v for k, v in detail.items() if v is not None})
+        write_notice(self._folder / LAST_STOP_NAME, f'{self._now():%m/%d %H:%M}に停止：{text or "停止しました。"}')
+
+    def _with_backup(self, text):
+        if not self._backup_note:
+            return text
+        return (f'{text} ただし{self._backup_note}。バックアップ・同期フォルダーへの書き出しを確かめてください'
+                '（サイトへ戻る必要はありません。本体の「バックアップ・同期」で状態を見られます）。')
 
     def configure(self, enabled, day=None, until=None, direction=None):
         """自動取り込みのON/OFFと取り込む日。until を付けると day〜until の範囲（どちらが先でもよい）を
@@ -112,6 +172,8 @@ class Session(Bridge):
                 self._direction = direction
             self._enabled = enabled
             self._completed = None
+            if enabled:
+                self._backup_note = None
             self._pending_navigation = False
             self._blocked_navigation = False
             self._pace.configure(enabled, 15)
@@ -134,7 +196,7 @@ class Session(Bridge):
             return True
         except (TypeError, ValueError):
             self.pause('P-STATIONの20円スロット以外への移動を止めました。'
-                       '対象店の画面を確認してから再開してください。自動の再取得は行いません。')
+                       '対象店の画面を確認してから再開してください。自動の再取得は行いません。', 'navigation_blocked')
             with self._state_lock:
                 self._blocked_navigation = True
             # 認証用の問い合わせは記録せず、公開の店舗・貸玉・機種コードだけ残す。
@@ -158,12 +220,31 @@ class Session(Bridge):
             return True
         return self._navigation_starting(raw)
 
-    def pause(self, message=None):
+    def pause(self, message=None, reason=None, retries=None):
+        """止める。reason はカード・PCが付ける理由コード（user_stop、not_moved、graph_retry_limit など）。"""
+        with self._state_lock:
+            was_on = self._enabled
         self.configure(False)
         if message:
             with self._state_lock:
                 self._status = str(message)[:500]
+        self._stopped(reason_code(reason, 'stopped'), message, was_on=was_on,
+                      retries=retries if type(retries) is int and 0 <= retries <= 99 else None)
         return self.state()
+
+    def _navigation_done(self, ok, status=None, error=None):
+        """ページの読み込みが終わった（WebView2 の NavigationCompleted）。自動取り込み中に読み込めなかったら、
+        理由を出して止める（2026-11-08。今までは読み込めないページ（通信エラー・HTTP 403 など）のまま、
+        カードが出ずにONのまま止まるか、読み取りの失敗としか分からなかった）。読み込み直しはしない。
+        自分の守り（別店舗への移動など）で取り消した移動・別の移動に置き換わった移動（OperationCanceled）は除く。"""
+        if ok or 'OperationCanceled' in str(error or ''):
+            return
+        with self._state_lock:
+            active = self._enabled
+        if active:
+            detail = f'HTTP {status}' if type(status) is int and status else str(error or '不明')[:60]
+            self.pause(f'ページを読み込めませんでした（{detail}）。画面を確認してから再開してください。'
+                       '自動の再取得は行いません。', 'navigation_failed')
 
     def save_overlay_layout(self, raw):
         value = clean_overlay_layout(json.loads(raw))
@@ -204,7 +285,7 @@ class Session(Bridge):
     def _check(self, epoch):
         with self._state_lock:
             if epoch != self._epoch:
-                raise ValueError('取り込みの設定が変わったため停止しました。')
+                raise StaleRun('取り込みの設定が変わったため停止しました。')
         if self._active_url and self._window and not source.same_page(self._window.get_current_url(), self._active_url):
             raise ValueError('読み取り中に表示ページが変わったため保存を止めました。')
 
@@ -239,8 +320,24 @@ class Session(Bridge):
         （suggestions の automatic）をした機種名と、サイトセブンの台は出典URLの機種コード（mdc）でも合わせる。
         アナスロで補った台は数えない（置き換えるため）。台数の読めない機種は今までどおり開いて確かめる。
         DB は読むだけ。何も返さない（続きは _next が決める）。"""
+        skipped = 0
+        for model, count in self._covered_models().items():
+            if model in self._done:
+                continue
+            self._done.add(model)
+            self._kept += count
+            skipped += 1
+        if skipped:
+            self._log.write('machines_skipped', day=self._day, skipped=skipped)
+            left = sum(1 for key in self._models if key not in self._done)
+            self._status = f'保存済みの{skipped}機種は開かずに飛ばしました。残り{left}機種を取り込みます。'
+        return None
+
+    def _covered_models(self):
+        """機種一覧の台数（[31] など）だけ、その機種の台がその日に保存済みの機種（機種コード→台数）。
+        台数の読めない機種は入れない（開いて確かめる）。DB は読むだけ。"""
         if not self._db_path.is_file():
-            return None
+            return {}
         with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
             rows = [json.loads(r[0]) for r in db.execute(
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
@@ -261,36 +358,34 @@ class Session(Bridge):
             if model:
                 racks.setdefault(model, set()).add(r['rack'])
         catalog = read_catalog(self._db_path) if by_name else []
-        skipped = 0
+        covered = {}
         for model, m in self._models.items():
             count = m.get('count')
-            if model in self._done or type(count) is not int or count < 1:
+            if type(count) is not int or count < 1:
                 continue
             name = suggestions(m['name'], catalog)['automatic'] or m['name']
             if len(racks.get(model, set()) | by_name.get(name, set())) >= count:
-                self._done.add(model)
-                self._kept += count
-                skipped += 1
-        if skipped:
-            self._log.write('machines_skipped', day=self._day, skipped=skipped)
-            left = sum(1 for key in self._models if key not in self._done)
-            self._status = f'保存済みの{skipped}機種は開かずに飛ばしました。残り{left}機種を取り込みます。'
-        return None
+                covered[model] = count
+        return covered
 
     def _skip_complete_days(self):
         """機種一覧の台数（[31] など）の合計だけ、その日の台が保存済みなら、機種ページを開かずにその日を飛ばす
         （2026-11-07 利用者「この改善は導入してね」。11/4・11/5 は全台保存済みなのに約50機種の表を開いていた）。
-        台数の読めない機種が1つでもあれば飛ばさない（今までどおり機種ごとに確かめる）。全部飛ばせたら完了。"""
+        台数の読めない機種が1つでもあれば飛ばさない（今までどおり機種ごとに確かめる）。全部飛ばせたら完了。
+        2026-11-08（Codexのレビュー）：その日の保存済みの台数の合計だけでは判断しない。別の機種の台でも数が足りれば
+        「全台保存済み」になっていたため、機種ごとに（_skip_saved_machines と同じ照合で）全機種そろったときだけ飛ばす。"""
         while True:
             counts = [m.get('count') for m in self._models.values()]
             known = [c for c in counts if type(c) is int and c >= 1]
             total, saved = sum(known), len(self._saved_racks())
-            # 飛ばすかどうかの数（機種数・台数の合計・台数の読めない機種・保存済み）を残す。名前・URL・会員情報は残さない。
+            covered = self._covered_models() if counts and len(known) == len(counts) else {}
+            # 飛ばすかどうかの数（機種数・台数の合計・台数の読めない機種・保存済み・そろった機種）を残す。
+            # 名前・URL・会員情報は残さない。
             self._log.write('day_check', day=self._day, machines=len(counts), unknown_counts=len(counts) - len(known),
-                            total=total, saved=saved)
+                            total=total, saved=saved, covered=len(covered))
             if not counts or len(known) != len(counts):
                 return None
-            if saved < total:
+            if len(covered) < len(self._models):
                 return None
             with self._state_lock:
                 finished = f'{self._day[5:].replace("-", "/")}（全{total}台が保存済み・機種ページを開かずに飛ばした）'
@@ -301,11 +396,13 @@ class Session(Bridge):
                     self._enabled = False
                     self._pace.configure(False, 15)
                     self._until = None
-                    self._status = ('範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
-                                    if len(self._finished_days) > 1 else
-                                    f'{finished}。取り込む台はありませんでした。')
+                    self._status = self._with_backup('範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
+                                                     if len(self._finished_days) > 1 else
+                                                     f'{finished}。取り込む台はありませんでした。')
                     if automatic:
                         self._completed = self._status
+                    self._log.write('auto_finished', day=self._day, automatic=automatic,
+                                    backup_ok=not self._backup_note)
                     return {'complete': True}
                 # 機種一覧は日付で変わらないので、読んだ一覧のまま次の日を確かめる。
                 self._day = self._queue.pop(0)
@@ -353,9 +450,15 @@ class Session(Bridge):
                 self._status = '範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
             else:
                 self._status = f'指定日の取り込みが完了しました。追加{self._added}台、既存を保持{self._kept}台、グラフ不明{self._unknown}台。'
+            self._status = self._with_backup(self._status)
             # 残りの日が分からず止まったとき（left）は、続きを選べるよう窓を閉じない。
             if automatic and not left:
                 self._completed = self._status
+            status = self._status
+        if left:
+            self._stopped('range_unknown', status, left=left)
+        else:
+            self._log.write('auto_finished', day=self._day, automatic=automatic, backup_ok=not self._backup_note)
         return {'complete': True}
 
     def capture(self, raw, epoch):
@@ -380,20 +483,33 @@ class Session(Bridge):
                 selected = dict(source.parse_qsl(source.urlsplit(url).query)).get('pan', '1')
                 if type(page) is not int or page < 1 or str(page) != selected:
                     raise ValueError('読み取り資料と表示中のページ番号が違います。')
+            self._stage = kind
             result = self._capture(payload, epoch)
-            if result.get('action'):
-                with self._state_lock:
+            with self._state_lock:
+                current = epoch == self._epoch
+                if current and result.get('action'):
                     self._pending_navigation = True
+                    self._pending_since = monotonic()
+            if not current:
+                raise StaleRun('取り込みの設定が変わったため停止しました。')
             self._pace.pause('次のページを待ちます。')
             result['state'] = self.state()
             return result
         except Exception as error:
             with self._state_lock:
-                self._enabled = False
-                self._pace.configure(False, 15)
-                self._status = str(error)
+                # 停止・再開の前に始まった処理（古い実行番号）の失敗は、今の取り込みを止めない（2026-11-08 Codexの
+                # レビュー：停止前の読み取りが遅れて届くと、再開したばかりの取り込みまでOFFにしていた）。
+                stale = isinstance(error, StaleRun) or epoch != self._epoch
+                if not stale:
+                    self._enabled = False
+                    self._pace.configure(False, 15)
+                    self._status = str(error)
             # 元資料・URL・会員情報をログに出さない。
+            if stale:
+                self._log.write('stale_result_dropped', error_type=type(error).__name__)
+                return {'error': str(error), 'stale': True, 'state': self.state()}
             self._log.write('capture_stopped', error_type=type(error).__name__)
+            self._stopped('capture_error', str(error), error_type=type(error).__name__)
             return {'error': str(error), 'state': self.state()}
         finally:
             self._active_url = None
@@ -516,15 +632,21 @@ class Session(Bridge):
         try:
             self._check(epoch)
             summary = store.import_backup(backup)
-            auto_backup(store, self._folder / 'pscube-viewer.json')
+            # 書き出しに失敗してもDBへの保存は済んでいる（auto_backup は例外を出さず文で返す）。
+            # 今までは戻り値を捨て、いつもの完了の文で窓を閉じていた（2026-11-08 Codexのレビュー）。
+            written = auto_backup(store, self._folder / 'pscube-viewer.json')
         finally:
             store.close()
+        if written != BACKUP_OK:
+            self._backup_note = str(written)
+            self._log.write('backup_problem', result=self._backup_note)
         self._done.add(model)
         self._added += summary['added']
         self._kept += summary['kept_local']
         unknown = sum(r['graph'] is None for r in backup['records'])
         self._unknown += unknown
-        self._status = f'{name}：追加{summary["added"]}台、既存を保持{summary["kept_local"]}台、グラフ不明{unknown}台。'
+        self._status = self._with_backup(
+            f'{name}：追加{summary["added"]}台、既存を保持{summary["kept_local"]}台、グラフ不明{unknown}台。')
         self._job = None
         self._check(epoch)
         return self._next(index_url)

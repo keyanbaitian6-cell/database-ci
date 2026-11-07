@@ -26,6 +26,8 @@ from urllib.parse import parse_qsl, urlsplit
 from file_io import take_notice, write_notice
 
 FINISHED_NAME = 'site777-capture-finished.json'
+# 最後に自動取り込みが止まった理由（2026-11-08）。窓を閉じたとき親画面のログ欄に出す（止まった時刻・文が分からなかったため）。
+LAST_STOP_NAME = 'site777-last-stop.json'
 
 
 def close_when_finished(session, window, data_dir) -> bool:
@@ -43,6 +45,11 @@ def close_when_finished(session, window, data_dir) -> bool:
 def take_finished_message(data_dir) -> str | None:
     """取り込み窓が閉じたあとに親画面が呼ぶ。自動で閉じたときの結果の文を返して知らせを消す（無ければ None）。"""
     return take_notice(Path(data_dir) / FINISHED_NAME)
+
+
+def take_stop_message(data_dir) -> str | None:
+    """取り込み窓が閉じたあとに親画面が呼ぶ。最後に止まった時刻と理由の文を返して知らせを消す（無ければ None）。"""
+    return take_notice(Path(data_dir) / LAST_STOP_NAME)
 
 # 開いたらすぐログイン画面（2026-11-07 利用者「ホームからサイトセブンクリックしたらそのままログイン画面にして
 # 欲しい」「クレジットカード会員だからここね」）。利用者はスマホ会員のクレジットカード会員で、そのログイン画面。
@@ -171,7 +178,7 @@ def webview_storage(data_dir) -> Path:
 
 
 def keep_popups_here(window, log=None, *, navigation_guard=None, document_guard=None,
-                     document_filter='https://m.site777.jp/f/*', document_context=None):
+                     document_filter='https://m.site777.jp/f/*', document_context=None, navigation_done=None):
     """スマホとしての見え方をそろえ、新しい窓を開くリンクを普段のブラウザ（ログインしていない、
     PCとして名乗る）ではなくこの窓で開く。pywebview は先に自分の処理（普段のブラウザで開く）を
     登録するので、それを外してから足す（anaslo_browser_host.install_handlers と同じ理由）。"""
@@ -197,7 +204,14 @@ def keep_popups_here(window, log=None, *, navigation_guard=None, document_guard=
             note('document_blocked', href=str(args.Request.Uri))
 
     def completed(sender, args):
-        note('loaded', ok=bool(args.IsSuccess), status=getattr(args, 'HttpStatusCode', None))
+        ok, status = bool(args.IsSuccess), getattr(args, 'HttpStatusCode', None)
+        error = None if ok else str(getattr(args, 'WebErrorStatus', '') or '')[:60] or None
+        note('loaded', ok=ok, status=status, error=error)
+        if navigation_done is not None:
+            try:
+                navigation_done(ok, status if type(status) is int else None, error)
+            except Exception as failure:  # noqa: BLE001 - 読み込みの知らせで窓を止めない
+                note('navigation_done_failed', error=type(failure).__name__)
 
     def attach(core):
         for name, params in emulation_commands():
@@ -241,7 +255,8 @@ def run(data_dir, start_url=START_URL):
     def install():
         try:
             handlers.extend(keep_popups_here(window, log, navigation_guard=session._navigation_starting,
-                                             document_guard=session._document_allowed))
+                                             document_guard=session._document_allowed,
+                                             navigation_done=session._navigation_done))
             from site777_history import install as install_history
             handlers.extend(install_history(window, log))
         except Exception as error:  # noqa: BLE001 - 表示は続ける。何が効かないかを残す
@@ -260,12 +275,13 @@ def run(data_dir, start_url=START_URL):
                 + '\n;window.__site777Layout=' + json.dumps(session._layout()) + ';\n'
                 + (root / 'site777_overlay.js').read_text(encoding='utf-8'))
         except Exception:
-            session.pause('取り込みカードを表示できませんでした。窓を開き直してください。')
+            session.pause('取り込みカードを表示できませんでした。窓を開き直してください。', 'overlay_failed')
             log.write('overlay_failed')
         site777_samples.collect(window, data_dir, log)
 
     window.events.loaded += loaded
     take_finished_message(data_dir)  # 前回の窓の知らせが残っていれば消す
+    take_stop_message(data_dir)
     closed = threading.Event()
     window.events.closed += closed.set
 

@@ -58,6 +58,108 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn('error',result,result.get('error'))
         return result
 
+    def log(self,kind=None):
+        path=self.root/'logs'/'site777-browser.log'
+        rows=[json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()] if path.exists() else []
+        return [r for r in rows if kind is None or r['kind']==kind]
+
+    def test_no_new_capture_is_ready_until_the_requested_page_has_loaded(self):
+        # 2026-11-08 Codexのレビュー：移動先の応答が遅いと、5〜7秒の間隔だけで旧画面を読み直していた。
+        # 移動を指示したら、読み込みが終わる（_loaded）まで ready にしない。
+        self.session._pace.due=lambda:0
+        self.assertTrue(self.session.state()['ready'])
+        self.assertIn('D4300',self.cycle(table())['action']['url'])
+        state=self.session.state()
+        self.assertTrue(state['navigating']);self.assertFalse(state['ready']);self.assertTrue(state['enabled'])
+        self.session._loaded()
+        self.session._pace.due=lambda:0
+        state=self.session.state()
+        self.assertFalse(state['navigating']);self.assertTrue(state['ready'])
+
+    def test_a_navigation_that_never_finishes_stops_with_its_reason(self):
+        import site777_session
+        self.cycle(table())
+        self.session._pending_since-=site777_session.NAVIGATION_LIMIT+1
+        state=self.session.state()
+        self.assertFalse(state['enabled'])
+        self.assertIn('秒たっても終わらない',state['status'])
+        self.assertEqual(self.log('auto_off')[-1]['reason'],'navigation_timeout')
+
+    def test_a_failed_page_load_during_auto_capture_stops_without_reloading(self):
+        self.session._navigation_done(False,None,'OperationCanceled')
+        self.assertTrue(self.session.state()['enabled'],'守りで取り消した移動・置き換わった移動では止めない')
+        self.session._navigation_done(True,200,None)
+        self.assertTrue(self.session.state()['enabled'])
+        self.session._navigation_done(False,403,'Unknown')
+        state=self.session.state()
+        self.assertFalse(state['enabled'])
+        self.assertIn('HTTP 403',state['status'])
+        self.assertEqual(self.log('auto_off')[-1]['reason'],'navigation_failed')
+        # OFFのとき（手動で見ているとき）は何もしない。
+        self.session._navigation_done(False,500,'Unknown')
+        self.assertEqual(len(self.log('auto_off')),1)
+
+    def test_a_late_result_from_before_a_restart_does_not_turn_the_new_run_off(self):
+        # 2026-11-08 Codexのレビュー：停止前の読み取りが遅れて届くと、再開したばかりの取り込みまでOFFにしていた。
+        old=self.epoch
+        self.session.pause()
+        new=self.session.configure(True,'2026-11-06')['epoch']
+        result=self.session.capture(json.dumps(table()),old)
+        self.assertTrue(result.get('stale'))
+        state=self.session.state()
+        self.assertTrue(state['enabled']);self.assertEqual(state['epoch'],new)
+        self.assertEqual(state['status'],'自動取り込みを開始します。')
+        self.assertTrue(self.log('stale_result_dropped'))
+        self.assertEqual([r['reason'] for r in self.log('auto_off')],['stopped'],'古い処理では止めた記録を足さない')
+        # 今の実行番号の読み取りは続けられる。
+        self.epoch=new
+        self.assertIn('D4300',self.cycle(table())['action']['url'])
+
+    def test_every_stop_leaves_a_reason_code_day_and_stage_without_urls(self):
+        # 2026-11-08：自動取り込みがOFFになった理由を後から区別できるよう、理由コード・営業日・工程・実行番号を残す。
+        import site777_browser
+        self.cycle(table())
+        self.session.pause('3回読み込み直しても https://m.site777.jp/f/D4300.do?pmc=04034001&secret=abc','graph_retry_limit',3)
+        row=self.log('auto_off')[-1]
+        self.assertEqual((row['reason'],row['day'],row['stage'],row['retries'],row['was_on']),
+                         ('graph_retry_limit','2026-11-06','table',3,True))
+        self.assertNotIn('secret',json.dumps(self.log(),ensure_ascii=False))
+        self.assertIn('（URL）',row['message'])
+        stop=site777_browser.take_stop_message(self.root)
+        self.assertRegex(stop,r'^11/07 02:00に停止：3回読み込み直しても')
+        self.assertIsNone(site777_browser.take_stop_message(self.root),'1回読んだら消す')
+        # 理由コードはページから渡るので、形の違うものは使わない。
+        self.session.pause(None,'<script>',-1)
+        row=self.log('auto_off')[-1]
+        self.assertEqual(row['reason'],'stopped');self.assertNotIn('retries',row)
+        # 読み取りの失敗も、例外の型だけでなく理由と工程を残す。
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        bad=table();bad['days']=[]
+        self.assertIn('error',self.session.capture(json.dumps(bad),self.epoch))
+        row=self.log('auto_off')[-1]
+        self.assertEqual((row['reason'],row['stage'],row['error_type']),('capture_error','table','ValueError'))
+        self.assertIn('掲載日付がありません',row['message'])
+
+    def test_a_backup_failure_is_shown_in_the_completion_message(self):
+        # 2026-11-08 Codexのレビュー：DBには保存できても、バックアップ・同期フォルダーへの書き出しの失敗を
+        # 捨てて、いつもの完了の文で窓を閉じていた。
+        from unittest.mock import patch
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2}]}
+        with patch('site777_session.auto_backup',return_value='バックアップに失敗（取り込みは保存済み）'):
+            self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
+            result=self.cycle(graph(2))
+        self.assertIn('バックアップに失敗',result['state']['status'])
+        self.assertTrue(self.cycle(index)['complete'])
+        self.assertIn('バックアップに失敗（取り込みは保存済み）',self.session._completed)
+        self.assertIn('サイトへ戻る必要はありません',self.session._completed)
+        self.assertEqual(self.log('backup_problem')[-1]['result'],'バックアップに失敗（取り込みは保存済み）')
+        self.assertFalse(self.log('auto_finished')[-1]['backup_ok'])
+        # 新しく開始したら注意は消す。うまくいったときは何も足さない。
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.assertTrue(self.cycle(index)['complete'])
+        self.assertNotIn('バックアップ',self.session._completed)
+
     def test_table_then_both_graph_pages_before_any_db_record_is_saved(self):
         self.assertEqual(self.cycle(table())['action']['url'].split('/f/')[1].split('.')[0],'D4300')
         self.assertFalse((self.root/'pscube.sqlite3').exists())
@@ -245,13 +347,16 @@ class SessionTest(unittest.TestCase):
         self.assertEqual((state['day'],state['queue'],state['until']),('2026-11-05',[],None))
 
     def test_days_already_fully_saved_are_skipped_without_opening_machine_pages(self):
-        # 2026-11-07 利用者「この改善は導入してね」：機種一覧の台数の合計だけ保存済みなら、その日は機種ページを開かない。
+        # 2026-11-07 利用者「この改善は導入してね」：機種一覧の台数だけ、どの機種も保存済みなら、その日は機種ページを開かない。
+        # 2026-11-08：台数の合計ではなく機種ごとに照合する（別機種の台で数が足りても飛ばさない、下の試験）。
         from test_pscube_sync import machine, record, put
         store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
         try:
-            m=machine('別の出典の名前')
-            put(store,m,[record(m,rack,day) for day in ('2026-11-04','2026-11-05') for rack in (101,102,103)]
-                +[record(m,101,'2026-11-06'),record(machine('沖ドキ！GOLD-30'),900,'2026-11-06')])
+            a,b=machine('試験機種123'),machine('試験機種456')
+            for m,racks in ((a,(101,102)),(b,(103,))):
+                put(store,m,[record(m,rack,day) for day in ('2026-11-04','2026-11-05') for rack in racks]
+                    +([record(m,101,'2026-11-06')] if m is a else []))
+            put(store,machine('沖ドキ！GOLD-30'),[record(machine('沖ドキ！GOLD-30'),900,'2026-11-06')])
         finally:store.close()
         def index(counts):
             return {'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],
@@ -267,6 +372,22 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(len(result['state']['finished_days']),2)
         self.assertTrue(all('機種ページを開かずに飛ばした' in d for d in result['state']['finished_days']))
         self.assertTrue(result['state']['enabled'])
+
+    def test_other_machines_with_the_same_number_of_racks_never_finish_the_day(self):
+        # 2026-11-08 Codexのレビュー：対象の機種の台が1台も無くても、別の機種の台が同じ数だけあると
+        # 「全台が保存済み」として完了していた。機種ごとにそろっていなければ、機種ページを開く。
+        from test_pscube_sync import machine, record, put
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:
+            m=machine('別機種');put(store,m,[record(m,rack,'2026-11-06') for rack in (901,902)])
+        finally:store.close()
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2}]}
+        result=self.cycle(index)
+        self.assertEqual(result['action'],{'type':'listed','url':source_url(url('D2300'),'model')})
+        self.assertTrue(result['state']['enabled'])
+        self.assertIsNone(self.session._completed)
+        self.assertEqual(self.log('day_check')[-1]['covered'],0)
 
     def test_a_fully_saved_single_day_finishes_and_unknown_counts_never_skip(self):
         from test_pscube_sync import machine, record, put

@@ -1011,7 +1011,7 @@ def main():
     for note in startup_notes:
         logbox.insert('end', note)
 
-    def watch_capture_window(process, label, take_message, after_auto=None):
+    def watch_capture_window(process, label, take_message, after_auto=None, take_stop=None):
         """自動取り込みが全部終わると取り込み窓は自分で閉じる（2026-10-30、サイトへの接続を止めるため）。
         窓のプロセスが終わったら、その結果をログ欄に出す。自動で閉じたとき（結果の文がある）は after_auto も呼ぶ。"""
         def check():
@@ -1022,7 +1022,15 @@ def main():
                 message = take_message()
             except Exception:  # noqa: BLE001 - the notice is only a convenience
                 message = None
+            stop = None
+            if not message and take_stop is not None:
+                # 途中で止まって閉じたとき、最後に止まった時刻と理由を出す（2026-11-08、サイトセブン）。
+                try:
+                    stop = take_stop()
+                except Exception:  # noqa: BLE001 - the notice is only a convenience
+                    stop = None
             logbox.insert('end', f'{label}：{message}。取り込み画面を閉じ、サイトへの接続を止めました。\n' if message
+                          else f'{label}の取り込み画面を閉じました。最後の停止：{stop}\n' if stop
                           else f'{label}の取り込み画面を閉じました。\n')
             logbox.see('end')
             if message and after_auto is not None:
@@ -1140,7 +1148,8 @@ def main():
             return
         # 自動取り込みが最後まで終わると窓は自分で閉じる（2026-11-07）。閉じたら結果をログ欄に出す（P’s CUBEと同じ）。
         import site777_browser
-        watch_capture_window(site777_process[0], 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR))
+        watch_capture_window(site777_process[0], 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR),
+                             take_stop=lambda: site777_browser.take_stop_message(DATA_DIR))
         logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
                       'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')
         logbox.see('end')

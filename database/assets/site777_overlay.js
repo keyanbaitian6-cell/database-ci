@@ -41,7 +41,8 @@
     }
     day.value=s.day||'';
     until.value=s.until||s.day||'';
-    day.disabled=until.disabled=busy||s.enabled;capture.disabled=busy||s.enabled;
+    // ページの移動中（PCが読み込みの完了を待っている間）は、旧画面を取り込み直さない（2026-11-08）。
+    day.disabled=until.disabled=busy||s.enabled;capture.disabled=busy||s.enabled||!!s.navigating;
     for(const button of [top,bottom]){
       button.disabled=busy||s.enabled;button.style.opacity=button.disabled?'.5':'1';
       const chosen=button===(s.direction==='bottom'?bottom:top);
@@ -57,13 +58,16 @@
   // グラフが出ないとき（2026-11-07 利用者「グラフが出なかったら1分後に再読みするんじゃなかったの？」）：自動取り込み中だけ、
   // 1分待ってからそのページを読み込み直し、自動取り込みはONのまま続ける（読み込み後はいつもどおり続きから）。
   // 同じページで3回まで。回数はページを読み込み直しても残るよう sessionStorage に置き、残せないときは読み込み直さずに止める。
+  // 回数は、利用者が自動取り込みを新しく開始したときだけ0に戻す（2026-11-08 Codexのレビュー：同じ窓で止めて開始し直しても
+  // 前の3回が残り、次にグラフが出ないとすぐOFFになっていた）。自動の読み込み直しの間は残す。
+  // 戻り値：読み込み直した（または古い処理で何もしない）は true、上限は 'limit'、回数を残せないときは 'storage'。
   const MAX_RETRIES=3, retryKey='database-site777-retries';
   const retryCounts=()=>{try{const v=JSON.parse(sessionStorage.getItem(retryKey)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:null;}catch(_){return null;}};
   const retryLater=async(mine,epoch)=>{
     const url=databaseSite777.read(true).url, counts=retryCounts();
-    if(!counts)return false;
+    if(!counts)return 'storage';
     const count=(Number(counts[url])||0)+1;
-    if(count>MAX_RETRIES)return false;
+    if(count>MAX_RETRIES)return 'limit';
     const until=Date.now()+(window.__site777RetryMs||60000);
     while(Date.now()<until){
       if(!alive||token!==mine)return true;
@@ -74,15 +78,16 @@
     if(!alive||token!==mine||!s.enabled||s.epoch!==epoch)return true;
     try{
       sessionStorage.setItem(retryKey,JSON.stringify({...counts,[url]:count}));
-      if(Number(retryCounts()?.[url])!==count)return false;
-    }catch(_){return false;}
+      if(Number(retryCounts()?.[url])!==count)return 'storage';
+    }catch(_){return 'storage';}
     status.textContent='このページを読み込み直しています…';
     location.reload();
     return true;
   };
-  const stop=async message=>{
+  // reason は停止の理由コード（PCのログに残す。2026-11-08）。
+  const stop=async(message,reason,retries)=>{
     token++;
-    const s=await api().pause(message||null);render(s);
+    const s=await api().pause(message||null,reason||null,Number.isInteger(retries)?retries:null);render(s);
   };
   const cycle=async automatic=>{
     if(busy||!alive)return;
@@ -113,17 +118,22 @@
           try{
             const s=await api().state();
             if(s.epoch!==epoch){render(s);return;}
-            if(databaseSite777.samePage(databaseSite777.read(true).url,before))await stop('リンクを押しても移動しないため停止しました。画面を確認してください。');
+            if(databaseSite777.samePage(databaseSite777.read(true).url,before))await stop('リンクを押しても移動しないため停止しました。画面を確認してください。','not_moved');
           }catch(_){}
         },8000);
       }
     }catch(error){
       if(error?.stalled&&automatic&&alive&&token===mine){
-        try{if(await retryLater(mine,epoch))return;}catch(_){}
-        if(alive&&token===mine)await stop(`${MAX_RETRIES}回読み込み直してもグラフが表示されないため停止しました。画面を確認してください。`);
+        let retried='storage';
+        try{retried=await retryLater(mine,epoch);}catch(_){}
+        if(retried===true)return;
+        // 表示の回数を実際に読み込み直した回数に合わせる（回数を残せず読み込み直していないのに「3回」と出していた）。
+        if(alive&&token===mine)await (retried==='limit'
+          ?stop(`${MAX_RETRIES}回読み込み直してもグラフが表示されないため停止しました。画面を確認してください。`,'graph_retry_limit',MAX_RETRIES)
+          :stop('グラフが表示されないため停止しました（読み込み直しの回数を残せないため、読み込み直していません）。画面を確認してください。','graph_retry_storage',0));
         return;
       }
-      if(alive&&token===mine)await stop(error.message||String(error));
+      if(alive&&token===mine)await stop(error.message||String(error),'card_error');
     }finally{
       busy=false;
       if(alive&&current)render(current);
@@ -132,7 +142,8 @@
   capture.onclick=()=>cycle(false);
   const start=async direction=>{
     try{
-      if(current?.enabled){await stop();return;}
+      if(current?.enabled){await stop(null,'user_stop');return;}
+      try{sessionStorage.removeItem(retryKey);}catch(_){}
       token++;render(await api().configure(true,day.value||null,until.value&&until.value!==day.value?until.value:null,direction));
     }catch(error){status.textContent=error.message||String(error);}
   };

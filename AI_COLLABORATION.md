@@ -1196,7 +1196,7 @@
 | Web・Google同期 同じ規則 | 済 | `test_site777_import.mjs` 追加1件、同期・統合に関わる JS 195件 |
 | 全体ゲート | 済 | `/c/w/cbw-replace` ALL PASSED（90項目、PC 906件・Flutter 822件） |
 | 実際に 11/4・11/5 を取り込み、アナスロ→サイトセブンを DB で確認 | 未 | 11/6 の取り込み（旧コードの窓）が終わってから |
-- 取り込み（新しい決まり、Claude が窓を開いた）：12:14 の `day_check` で 11/4 は一覧295台・アナスロ以外の保存71台 → 機種ごとに取り込みへ。12:22 に利用者が手動で取り込もうとカードを操作し、自動がOFFになったため、**Claude の見張り（自動OFF＝終了とみなして窓を閉じる）が窓を閉じた**（Claude の作りの不備。利用者には PC版のボタンから開くよう案内し、以後 Claude は窓を開かない）。この時点の DB（mode=ro）：11-04 anaslo 77��A11-04 anaslo�i���肠��j 68��A11-04 pscube 71��A11-04 site777 7��A11-04 site777�i���肠��j 72��A11-05 anaslo 100��A11-05 anaslo�i���肠��j 141��A11-05 pscube 54��A11-06 pscube 5��A11-06 site777 200��。
+- 取り込み（新しい決まり、Claude が窓を開いた）：12:14 の `day_check` で 11/4 は一覧295台・アナスロ以外の保存71台 → 機種ごとに取り込みへ。12:22 に利用者が手動で取り込もうとカードを操作し、自動がOFFになったため、**Claude の見張り（自動OFF＝終了とみなして窓を閉じる）が窓を閉じた**（Claude の作りの不備。利用者には PC版のボタンから開くよう案内し、以後 Claude は窓を開かない）。この時点の DB（mode=ro）：11-04 anaslo 77台、11-04 anaslo（推定あり） 68台、11-04 pscube 71台、11-04 site777 7台、11-04 site777（推定あり） 72台、11-05 anaslo 100台、11-05 anaslo（推定あり） 141台、11-05 pscube 54台、11-06 pscube 5台、11-06 site777 200台。
 - 同期スクリプトの貼り替え用：`../outputs/site777-net-20261107/pscube_cloud_sync_貼り替え用_20261107_置き換え.gs`（リポジトリの `pscube_cloud_sync.gs` と同一、SCRIPT_RELEASE 4fef780cf0ea、HISTORY true）。会話で利用者へ送った。貼り替えは利用者（未）。
 - 公開（元 `ba7bf66`、全体ゲート ALL PASSED と同じ内容）：database-viewer **`d764c5c`**（照合版 4fef780cf0ea）、database-share **`dc20f19`**（公開版 434c35e184ca）。記録の文字列90種の混入なし。
 - 追記：利用者が同期スクリプトを貼り替えた（「スクリプトは張り替えた」、`…_20261107_置き換え.gs`、SCRIPT_RELEASE 4fef780cf0ea）。**利用者の報告**で、同期の実行ログはまだ見ていない。
@@ -1373,3 +1373,57 @@
 - 判断：Drive上の原本は壊れていない。容量は一致してハッシュだけ違ったので、その実行でApps ScriptがDriveから読んだ中身が一時的に正しくなかった（途中までしか読めなかった等）とみられる。原因は確定していない。データは失われておらず、次の30分ごとの自動実行がやり直す。
 - 次の手順：次の自動実行（0:30ごろ）以降の実行ログが「完了」か確かめる。同じエラーが続くなら、ログに日付が出ないので、どの日で止まるかを出すよう `vhRead` のエラー文に日付を足すことを検討する（コード変更・貼り替えが要るので利用者に聞く）。
 - 追記（0:13）：利用者が手動で再実行し「問題なく終わった模様」と報告（利用者の報告）。AIの直接確認：一覧 `database-viewer-parts-pscube.json` の更新が 11/8 0:12:18 に進んでいた（保存まで進んだ）。0:01の停止は一時的な読み込みの失敗と扱い、コードは変えない。また出たら、エラー文に日付を足すことを利用者に相談する。
+
+## 2026-11-08 サイトセブン自動取り込みがOFFになる件のレビュー（Codex、修正なし）
+
+- 依頼：自動取り込みが何回かOFFになるため、仕組みと周辺の修正・改善点を検討。利用者確認：サイトセブン、停止時の文・時刻は不明。
+- 基準：手元・正本 8d99b0a。もう一方のmain 7a9df13は手元に包含。詳細は SITE777_CAPTURE_REVIEW_20261108.md。製品コード・本番DB・Cookie・設定の変更、実サイトへの通信、ビルド・公開・pushは行っていない。
+- 実ログ：11/7 23:47:59で機種ページの読み込みがあり、23:50:46以降にログイン操作、23:50:52に自動再開、23:57:00に自動終了の記録。中断の理由コード・DOMはなく、認証切れなどの直接原因は未確定。JS側の停止は理由をログへ書かず、Python側も例外型のみのため、最初に診断を補う案を推奨。
+- 条件を作って確認した修正候補：移動中に5〜7秒後の次の読み取りを許して旧画面を再読取／古いepochの処理が再開したONをOFFへ戻す／手動再開でも画像再試行3回の記録が残る／別機種の同数の記録で日全体を完了と判定／auto_backup失敗の戻り値を捨てて通常完了通知・自動終了になる。
+- 対応案：移動中の取り込み抑止、古い実行結果の破棄、明示再開時だけ再試行の範囲を更新、機種別の完了照合、DB保存とバックアップ出力結果を分けて通知。実際の申告の原因を特定できた、あるいは修正済み、とは扱わない。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| Pythonの3条件の再現 | 済 | ../outputs/site777-review-20261108/reproduce.py。一時DB・固定JST日時、専用.venvで実行 |
+| カードJSの2条件の再現 | 済 | ../outputs/site777-review-20261108/reproduce.mjs。全通信を手元のHTML応答へ差し替えたChromium、移動先10秒遅延で旧画面2回読み取り、再試行残存で再開後OFF。PythonのAPIは模擬、実WebView2ではない |
+| 保存済みデータの保全確認 | 済 | SQLite mode=ro・query_only=ON、quick_check=ok。サイトセブン1050件の既存validate_recordでエラー0。未取得台の不存在を証明する検査ではない |
+| 今回の停止の直接原因 | 未確認 | 利用者は時刻・文不明、該当区間の停止理由ログなし |
+| 製品修正・全体試験・実サイト・公開 | 未実施 | 今回はレビューだけ。過去の成功試験の再実行なし。生成したChromium debug.logは調査用outputsへ移動 |
+
+- 調査文書と本記録は手元に保存。コミット・pushなし。実装を依頼されたら、報告の再現条件を正式な回帰試験にし、ローカルWebView2でも確認する。Googleドライブのゴミ箱・過去に対応しないと決めた項目は触っていない。
+
+## 2026-11-08 サイトセブン自動取り込みの停止まわりの修正（Claude、上のCodexのレビューの5件＋見つけた2件）
+
+- 依頼：利用者がCodexのレビュー（SITE777_CAPTURE_REVIEW_20261108.md）を貼り「修正お願いします。途中で他に何か見つけた場合も修正で」。対象はPCのサイトセブン取り込み窓（Android・閲覧ページ・共有カレンダーにサイトセブンの取り込みは無い）。基準：手元main 8d99b0a。
+- 完了の条件（着手前に利用者へ提示）：自動OFFの全経路で理由を残す／移動中に旧画面を読み直さない／古い処理が再開後のONを戻さない／明示的な開始で再試行回数を戻す／日まるごとの完了は機種ごとの照合だけ／バックアップ失敗を完了の文に出す。確かめ方：再現条件を正式な試験にし、check_before_build.sh が ALL PASSED。
+- 今回OFFになった直接の原因は**まだ分からない**（Codexの調べたとおり、停止理由のログが無かった）。次にOFFになったら `data/logs/site777-browser.log` の `auto_off`（reason）と、窓を閉じたときのホームのログ欄「最後の停止：…」で経路が分かる。
+
+### 変えたこと（database/site777_session.py・site777_browser.py・assets/site777_overlay.js・app.py）
+
+1. **停止理由の記録**：`Session._stopped` が `auto_off` を書く（reason・営業日・工程 stage・実行番号 epoch・was_on・retries・URLを除いた文）。経路と reason：カードの停止ボタン `user_stop`／リンクで移動しない `not_moved`／画像の再試行上限 `graph_retry_limit`／回数を残せない `graph_retry_storage`／その他のカードのエラー `card_error`／読み取りの失敗 `capture_error`（error_type も）／別店舗への移動を止めた `navigation_blocked`／カードを出せない `overlay_failed`／移動が90秒終わらない `navigation_timeout`／ページを読み込めない `navigation_failed`／範囲の残りの日が分からず止めた `range_unknown`。完了は `auto_finished`（backup_ok 付き）。最後の停止の文は `data/site777-last-stop.json` に残し、窓が完了以外で閉じたらホームのログ欄に「サイトセブンの取り込み画面を閉じました。最後の停止：11/08 23:50に停止：…」と出す（窓を開くときに前回分は消す）。`pause(message, reason, retries)` に引数を足した（ページからの reason は `[a-z_]{1,40}` 以外は `stopped` にする）。
+2. **移動中の読み直し防止**：移動を指示したら、読み込みの完了（pywebview の loaded）まで `state().ready` を false、`navigating` を true にする。カードは移動中「この画面を取り込む」を押せない。完了が90秒来なければ、自動中は `navigation_timeout` で止め、手動のあとは待つのをやめるだけ。8秒の「リンクで移動しない」判定はそのまま。
+3. **古い処理の失敗を捨てる**：実行番号の食い違いは `StaleRun`。捕まえたとき、実行番号が今と違えば ON/OFF・状態の文を変えず `stale_result_dropped` を書いて `{'stale': True}` を返す。結果が出たあとに番号が変わっていた場合も同じ。
+4. **再試行回数**：自動取り込みの開始ボタン（上から・下から含む）を押したとき sessionStorage の回数を消す。自動の読み込み直しの間は残す。回数を残せず読み込み直していないのに「3回読み込み直しても」と出していたのを、実際の理由の文に分けた。
+5. **日まるごとの完了**：保存済みの台数の合計ではなく、`_covered_models`（機種コード mdc・読み替えた機種名で機種ごとに照合、`_skip_saved_machines` と共通）で全機種そろったときだけ飛ばす。`day_check` に covered を足した。
+6. **バックアップ失敗**：`auto_backup` の戻り値が「バックアップ済み」以外なら `backup_problem` を書き、機種ごとの文と完了の文（窓を閉じるときホームへ渡す文）に「ただしバックアップに失敗（取り込みは保存済み）。…サイトへ戻る必要はありません。本体の「バックアップ・同期」で状態を見られます」を添える。新しく開始したら消す。
+7. **見つけて直したもの**：ページを読み込めなかったとき（WebView2 の NavigationCompleted が失敗。HTTP 403・通信エラーなど）、今までは止まらず、エラーページではカードが出ないので「ONのまま何もしない」になり得た。自動中は `navigation_failed`（HTTP番号・エラー名入り）で止める。自動の読み込み直しはしない（アクセスを増やさない）。自分の守りで取り消した移動・置き換わった移動（OperationCanceled）は除く。もう1つは上の4の表示の食い違い。
+
+### 確認
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 停止理由が全経路で残る・URLを残さない | 済 | test_site777_session `test_every_stop_leaves_a_reason_code_day_and_stage_without_urls`、`test_a_navigation_that_never_finishes_stops_with_its_reason`、`test_a_failed_page_load_during_auto_capture_stops_without_reloading` |
+| 移動中は ready にしない | 済 | `test_no_new_capture_is_ready_until_the_requested_page_has_loaded`、test_site777_capture_browser.mjs（移動中は1回だけ読み取り・手動ボタンも押せない） |
+| 古い処理が再開後のONを戻さない | 済 | `test_a_late_result_from_before_a_restart_does_not_turn_the_new_run_off`。Codexの reproduce.py の1件目の確認が通らなくなった（直った） |
+| 開始し直しで回数を戻す・表示の食い違い | 済 | test_site777_capture_browser.mjs（3回使い切った窓で開始→「1/3回目」、回数を残せない→ graph_retry_storage）。Codexの reproduce.mjs の2件目は止まらずに待つようになった |
+| 別機種の同数の台で完了しない | 済 | `test_other_machines_with_the_same_number_of_racks_never_finish_the_day`。既存の `test_days_already_fully_saved_...` は「別の出典の名前」の台で飛ばす（＝この不具合に頼る）作りだったので、機種ごとの台に直した |
+| バックアップ失敗が完了の文に出る | 済 | `test_a_backup_failure_is_shown_in_the_completion_message` |
+| 読み込み失敗の知らせ | 済 | test_site777_browser `test_a_failed_page_load_is_reported_to_the_session_and_logged` |
+| サイトセブンの試験 | 済 | test_site777_session・test_site777_browser 36件 OK（新規8件） |
+| 全体ゲート | 済 | `bash database_android/tool/check_before_build.sh`（作業コピー、コミット前）90項目 ALL PASSED（pc-tests・flutter-test・flutter-analyze・test_site777_capture_browser を含む）。ゲート開始後に `_watch_navigation`（手動のあとは待つのをやめるだけ）を直したため、そのあとPC全試験 922件 OK・サイトセブン36件 OK を流し直した |
+| 実WebView2・実サイトでの動作 | 未確認 | 実サイトへのアクセスはしていない。次に利用者が取り込むときに確かめる |
+| 今回のOFFの直接の原因 | 未確認 | 次にOFFになったときの `auto_off` で特定する |
+
+- 公開：表示が変わるのはPCの取り込みカードとホームのログ欄だけ。閲覧ページ・共有カレンダーの公開は不要。APK・EXEは作っていない。
+- コミットにはCodexのレビュー文書（SITE777_CAPTURE_REVIEW_20261108.md）と、上のCodexの記録も含めた（利用者が貼った報告の元のため）。
+- 見つけて直したもの（記録）：この AI_COLLABORATION.md の1199行目（8f4babf「Site Seven replacement run」の記録）の DB 件数の部分だけ Shift-JIS で書かれていて、ファイル全体が UTF-8 として読めなかった（編集ツールが拒否）。その部分を UTF-8 に直した（文字は同じ）。

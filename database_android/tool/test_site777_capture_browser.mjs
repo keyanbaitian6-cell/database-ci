@@ -153,5 +153,63 @@ try {
   await stalled.waitForTimeout(2500);
   assert.equal(loads.length,5,'手動では読み込み直さない');
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）：成功');
+  // 2026-11-08 Codexのレビュー：(1) 移動中（PCが読み込みの完了を待つ間）は旧画面を取り込み直さない。
+  // (2) 同じ窓で止めて開始し直したら、画像の読み込み直しの回数を0に戻す。(3) 止めるときは理由コードをPCへ渡す。
+  const card=readFileSync(new URL('../../database/assets/capture_card.js',import.meta.url),'utf8');
+  const overlay=readFileSync(new URL('../../database/assets/site777_overlay.js',import.meta.url),'utf8');
+  const review=await browser.newPage({viewport:{width:560,height:800}});
+  review.on('pageerror',e=>errors.push(e.message));
+  await review.route('**/*',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:'<!doctype html><body>手元の試験</body>'}));
+  await review.goto(source('D4300',1));
+  await review.evaluate(()=>{
+    window.__site777RetryMs=600000;
+    window.__calls=[];
+    window.__s={enabled:false,epoch:1,ready:true,navigating:false,day:'2026-11-06',days:['2026-11-06'],status:'停止'};
+    window.pywebview={api:{state:async()=>structuredClone(window.__s),
+      configure:async enabled=>{window.__calls.push(['configure',enabled]);
+        Object.assign(window.__s,{enabled,epoch:window.__s.epoch+1,status:'開始'});return structuredClone(window.__s);},
+      capture:async()=>{window.__calls.push(['capture']);
+        // PCと同じく、移動を指示したら読み込みが終わるまで ready にしない（この試験では読み込みは来ない）。
+        Object.assign(window.__s,{ready:false,navigating:true});
+        return {action:{type:'listed',url:location.href},state:structuredClone(window.__s)};},
+      pause:async(message,reason,retries)=>{window.__calls.push(['pause',message,reason,retries]);
+        Object.assign(window.__s,{enabled:false,status:message||'停止しました。'});return structuredClone(window.__s);},
+      save_overlay_layout:async()=>{}}};
+    window.databaseSite777={read:()=>({url:location.href}),samePage:(a,b)=>a===b,go:()=>{}};
+  });
+  await review.evaluate(card);await review.evaluate(overlay);
+  await review.click('#database-site777-auto');
+  await review.waitForFunction(()=>window.__calls.some(c=>c[0]==='capture'));
+  await review.waitForTimeout(3000);
+  assert.equal(await review.evaluate(()=>window.__calls.filter(c=>c[0]==='capture').length),1,'移動中は旧画面を読み直さない');
+  await review.evaluate(()=>{window.__s.enabled=false;});
+  await review.waitForFunction(()=>document.querySelector('#database-site777-auto').textContent.includes('OFF'));
+  assert.equal(await review.locator('#database-site777-capture').isDisabled(),true,'移動中は手動の取り込みも押せない');
+  // 前の試行で3回使い切った窓で、開始し直す。読み込み直しの回数が0に戻り、すぐにはOFFにならない。
+  await review.evaluate(()=>{
+    sessionStorage.setItem('database-site777-retries',JSON.stringify({[location.href]:3}));
+    Object.assign(window.__s,{ready:true,navigating:false});window.__calls.length=0;
+    window.pywebview.api.capture=async()=>{window.__calls.push(['capture']);return {prepare_graphs:true};};
+    window.databaseSite777.prepare=async()=>{throw Object.assign(new Error('試験'),{stalled:true});};
+  });
+  await review.click('#database-site777-auto');
+  await review.waitForFunction(()=>/（1\/3回目）/.test(document.querySelector('#database-site777-status')?.textContent||''));
+  assert.equal(await review.evaluate(()=>window.__calls.some(c=>c[0]==='pause')),false,'開始し直したら前の3回を数えない');
+  // 停止ボタンは理由コード user_stop を渡す。
+  await review.click('#database-site777-auto');
+  await review.waitForFunction(()=>window.__calls.some(c=>c[0]==='pause'));
+  assert.deepEqual(await review.evaluate(()=>window.__calls.find(c=>c[0]==='pause')),['pause',null,'user_stop',null]);
+  // 回数を残せない（sessionStorage が使えない）ときは、読み込み直さずに止め、「3回読み込み直しても」とは書かない。
+  await review.evaluate(()=>{
+    Storage.prototype.getItem=()=>{throw new Error('blocked');};
+    Object.assign(window.__s,{enabled:false});window.__calls.length=0;
+  });
+  await review.waitForFunction(()=>document.querySelector('#database-site777-auto').textContent.includes('OFF'));
+  await review.click('#database-site777-auto');
+  await review.waitForFunction(()=>window.__calls.some(c=>c[0]==='pause'));
+  const stopped=await review.evaluate(()=>window.__calls.find(c=>c[0]==='pause'));
+  assert.equal(stopped[2],'graph_retry_storage');
+  assert.match(stopped[1],/回数を残せないため、読み込み直していません/);
+  assert.deepEqual(errors,[]);
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す・停止の理由コード：成功');
 } finally {await browser.close();}
