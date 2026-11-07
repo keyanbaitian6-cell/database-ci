@@ -111,8 +111,8 @@ try {
   await page.waitForFunction(()=>document.querySelector('#database-site777-bottom').getAttribute('aria-pressed')==='true');
   assert.match(await page.locator('#database-site777').innerText(),/間隔：5〜7秒ランダム/);
   assert.deepEqual(errors,[]);
-  // グラフが出ないとき（2026-11-07 利用者「1分後に自動取り込み再開」）：自動取り込み中は、ページを読み込み直さずに
-  // 待ってから同じページのまま再開する。同じページで3回まで、それでも出なければ止める。
+  // グラフが出ないとき（2026-11-07 利用者「グラフが出なかったら1分後に再読みするんじゃなかったの？」）：自動取り込み中は
+  // 待ってからページを読み込み直し、ONのまま続ける。同じページで3回まで、それでも出なければ止める。
   const stalled=await browser.newPage({viewport:{width:560,height:800}}),loads=[];
   stalled.on('pageerror',e=>errors.push(e.message));
   await stalled.route('**/*',async route=>{
@@ -122,38 +122,36 @@ try {
     else {loads.push(u.pathname);await route.fulfill({contentType:'text/html; charset=utf-8',body:fixture.graph1});}
   });
   await stalled.addInitScript(()=>{
-    window.__site777GraphWaitMs=300;window.__site777RetryMs=1200;window.__captures=0;
+    window.__site777GraphWaitMs=300;window.__site777RetryMs=1200;
     const paused=sessionStorage.getItem('test-paused');
-    window.__state={enabled:!paused,epoch:1,ready:true,day:'2026-11-06',days:['2026-11-06'],status:paused||'取り込み中'};
+    window.__state={enabled:!paused&&!sessionStorage.getItem('test-manual'),epoch:1,ready:true,day:'2026-11-06',days:['2026-11-06'],status:paused||'取り込み中'};
     window.pywebview={api:{state:async()=>structuredClone(window.__state),
-      capture:async()=>{window.__captures++;return {prepare_graphs:true};},
+      capture:async()=>({prepare_graphs:true}),
       pause:async message=>{sessionStorage.setItem('test-paused',message||'停止');
         Object.assign(window.__state,{enabled:false,status:message});return structuredClone(window.__state);}}};
   });
+  // PC版と同じく、ページを読み込むたびにカードを入れる。
   const inject=async()=>{
-    for(const file of ['site777_capture.js','capture_card.js','site777_overlay.js'])
-      await stalled.evaluate(readFileSync(new URL('../../database/assets/'+file,import.meta.url),'utf8'));
+    try{for(const file of ['site777_capture.js','capture_card.js','site777_overlay.js'])
+      await stalled.evaluate(readFileSync(new URL('../../database/assets/'+file,import.meta.url),'utf8'));}catch(_){}
   };
+  stalled.on('domcontentloaded',()=>{inject();});
   await stalled.goto(source('D4300',1));
-  await inject();
-  await stalled.waitForFunction(()=>/秒後に自動取り込みを再開します（1\/3回目）/.test(document.querySelector('#database-site777-status')?.textContent||''));
-  await stalled.waitForFunction(()=>sessionStorage.getItem('test-paused'),{},{timeout:20000});
-  assert.match(await stalled.evaluate(()=>sessionStorage.getItem('test-paused')),/3回再開してもグラフが表示されない/);
-  assert.equal(await stalled.evaluate(()=>window.__captures),4,'最初の1回と、待ってからの再開3回');
+  await stalled.waitForFunction(()=>/秒後にこのページを読み込み直して続けます（1\/3回目）/.test(document.querySelector('#database-site777-status')?.textContent||''));
+  await stalled.waitForFunction(()=>sessionStorage.getItem('test-paused'),{},{timeout:30000});
+  assert.match(await stalled.evaluate(()=>sessionStorage.getItem('test-paused')),/3回読み込み直してもグラフが表示されない/);
+  assert.equal(loads.length,4,'最初の1回と、1分後（試験では1.2秒後）の読み込み直し3回');
   await stalled.waitForTimeout(2500);
-  assert.equal(await stalled.evaluate(()=>window.__captures),4,'止めた後は再開しない');
-  assert.equal(loads.length,1,'ページは読み込み直さない');
+  assert.equal(loads.length,4,'止めた後は読み込み直さない');
   // 手動の「この画面を取り込む」では読み込み直さず、止めるだけ。
-  await stalled.evaluate(()=>{sessionStorage.clear();});
+  await stalled.evaluate(()=>{sessionStorage.clear();sessionStorage.setItem('test-manual','1');});
   await stalled.reload();
-  await stalled.evaluate(()=>{window.__state.enabled=false;});
-  await inject();
+  await stalled.waitForSelector('#database-site777-capture');
   await stalled.click('#database-site777-capture');
   await stalled.waitForFunction(()=>sessionStorage.getItem('test-paused'),{},{timeout:10000});
   assert.match(await stalled.evaluate(()=>sessionStorage.getItem('test-paused')),/グラフが読み込まれないため停止しました/);
   await stalled.waitForTimeout(2500);
-  assert.equal(await stalled.evaluate(()=>window.__captures),1,'手動では再開しない');
-  assert.equal(loads.length,2,'手動でも読み込み直さない');
+  assert.equal(loads.length,5,'手動では読み込み直さない');
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の再開（3回まで）：成功');
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）：成功');
 } finally {await browser.close();}

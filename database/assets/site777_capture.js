@@ -151,7 +151,7 @@
         await new Promise(resolve => setTimeout(resolve, 250));
       }
       if (!ready()) {
-        // 自動取り込み中なら、カード側が1分待って自動取り込みを再開する（同じページで3回まで。2026-11-07 利用者の依頼）。
+        // 自動取り込み中なら、カード側が1分待ってページを読み込み直し、続ける（同じページで3回まで。2026-11-07 利用者の依頼）。
         const error = new Error('グラフが読み込まれないため停止しました。');
         error.stalled = true;
         throw error;

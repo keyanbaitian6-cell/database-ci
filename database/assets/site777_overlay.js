@@ -54,24 +54,30 @@
     auto.style.background=s.enabled?'#b74237':'#304d6e';
     status.textContent=s.status;
   };
-  // グラフが出ないとき（2026-11-07 利用者「1分後に再読み込みじゃなくて1分後に自動取り込み再開するように」）：
-  // 自動取り込み中だけ、ページは読み込み直さずに1分待ち、同じページのまま自動取り込みを続きから再開する。
-  // 同じページで3回まで（それでも出なければ止める。ずっと繰り返さないため）。待つ間に停止を押せば取りやめる。
-  const MAX_RETRIES=3, retries=new Map();
-  let retryNow=false;
+  // グラフが出ないとき（2026-11-07 利用者「グラフが出なかったら1分後に再読みするんじゃなかったの？」）：自動取り込み中だけ、
+  // 1分待ってからそのページを読み込み直し、自動取り込みはONのまま続ける（読み込み後はいつもどおり続きから）。
+  // 同じページで3回まで。回数はページを読み込み直しても残るよう sessionStorage に置き、残せないときは読み込み直さずに止める。
+  const MAX_RETRIES=3, retryKey='database-site777-retries';
+  const retryCounts=()=>{try{const v=JSON.parse(sessionStorage.getItem(retryKey)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:null;}catch(_){return null;}};
   const retryLater=async(mine,epoch)=>{
-    const url=databaseSite777.read(true).url, count=(retries.get(url)||0)+1;
+    const url=databaseSite777.read(true).url, counts=retryCounts();
+    if(!counts)return false;
+    const count=(Number(counts[url])||0)+1;
     if(count>MAX_RETRIES)return false;
-    retries.set(url,count);
     const until=Date.now()+(window.__site777RetryMs||60000);
     while(Date.now()<until){
       if(!alive||token!==mine)return true;
-      status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後に自動取り込みを再開します（${count}/${MAX_RETRIES}回目）。`;
+      status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後にこのページを読み込み直して続けます（${count}/${MAX_RETRIES}回目）。`;
       await new Promise(resolve=>setTimeout(resolve,Math.min(1000,Math.max(0,until-Date.now()))));
     }
     const s=await api().state();
     if(!alive||token!==mine||!s.enabled||s.epoch!==epoch)return true;
-    retryNow=true;
+    try{
+      sessionStorage.setItem(retryKey,JSON.stringify({...counts,[url]:count}));
+      if(Number(retryCounts()?.[url])!==count)return false;
+    }catch(_){return false;}
+    status.textContent='このページを読み込み直しています…';
+    location.reload();
     return true;
   };
   const stop=async message=>{
@@ -114,15 +120,13 @@
     }catch(error){
       if(error?.stalled&&automatic&&alive&&token===mine){
         try{if(await retryLater(mine,epoch))return;}catch(_){}
-        if(alive&&token===mine)await stop(`${MAX_RETRIES}回再開してもグラフが表示されないため停止しました。画面を確認してください。`);
+        if(alive&&token===mine)await stop(`${MAX_RETRIES}回読み込み直してもグラフが表示されないため停止しました。画面を確認してください。`);
         return;
       }
       if(alive&&token===mine)await stop(error.message||String(error));
     }finally{
       busy=false;
       if(alive&&current)render(current);
-      // 待ち終えたら、ページ移動を待たずにそのまま続きから（次のページの読み込みは無いので、間隔の待ちは来ない）。
-      if(retryNow){retryNow=false;if(alive&&token===mine)setTimeout(()=>cycle(true),0);}
     }
   };
   capture.onclick=()=>cycle(false);
