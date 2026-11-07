@@ -7,8 +7,8 @@ const PSCUBE_CLOUD_BACKUP = 'pscube-backup-cloud.json';
 const PSCUBE_CLOUD_VIEWER = 'pscube-viewer-drive.json';
 // 両ページ用Apps Scriptの更新後にtrueへ変更（VIEWER_INCREMENTAL_SYNC.md）。
 const PSCUBE_INCREMENTAL_VIEWER = false;
-// 両ページと読み取りGSの更新後にtrue（VIEWER_HISTORY_SYNC.md）。
-const PSCUBE_HISTORY_VIEWER = false;
+// 履歴方式（日別に保存。VIEWER_HISTORY_SYNC.md）。初期値 true（2026-11-07 利用者「trueのほうがよさそう」→ 初期値を変更。利用者のGoogleプロジェクトは10月から true で運用中で、貼り替えのたびに1行を直していた）。
+const PSCUBE_HISTORY_VIEWER = true;
 const PSCUBE_CLOUD_BATCH = 10;
 const PSCUBE_CLOUD_MAX_BYTES = 48 * 1024 * 1024;
 const PSCUBE_CLOUD_HANDLER = 'syncPscubeCloud';

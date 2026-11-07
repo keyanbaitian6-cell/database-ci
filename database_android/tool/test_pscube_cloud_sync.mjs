@@ -203,7 +203,7 @@ function drive({seed = true, incremental = false, history = false} = {}) {
     }},
   };
   vm.createContext(context); vm.runInContext(source.replace('const PSCUBE_INCREMENTAL_VIEWER = false;', 'let PSCUBE_INCREMENTAL_VIEWER = ' + incremental + ';')
-    .replace('const PSCUBE_HISTORY_VIEWER = false;', 'const PSCUBE_HISTORY_VIEWER = ' + history + ';'), context);
+    .replace(/const PSCUBE_HISTORY_VIEWER = (?:true|false);/, 'const PSCUBE_HISTORY_VIEWER = ' + history + ';'), context);
   const doc = name => JSON.parse(files.find(f => !f.trashed && f.parent === folder && f.name === name).text);
   const replace = (file, value) => { file.text = typeof value === 'string' ? value : JSON.stringify(value); file.updated = clock++; };
   if (seed) {

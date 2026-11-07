@@ -301,7 +301,7 @@ function drive({seed = true, incremental = false, history = false} = {}) {
     }},
   };
   vm.createContext(context); vm.runInContext(source.replace('const MERUHEN_INCREMENTAL_VIEWER = false;', 'let MERUHEN_INCREMENTAL_VIEWER = ' + incremental + ';')
-    .replace('const MERUHEN_HISTORY_VIEWER = false;', 'const MERUHEN_HISTORY_VIEWER = ' + history + ';'), context);
+    .replace(/const MERUHEN_HISTORY_VIEWER = (?:true|false);/, 'const MERUHEN_HISTORY_VIEWER = ' + history + ';'), context);
   const doc = name => JSON.parse(files.find(f => !f.trashed && f.parent === folder && f.name === name).text);
   const replace = (file, value) => { file.text = typeof value === 'string' ? value : JSON.stringify(value); file.updated = clock++; };
   if (seed) add('database-viewer.json', viewer([record(537, '2026-10-02', {games: 1624, bb: 70, rb: 77, captured_at: '2026-10-02T22:00:00'})]));

@@ -20,7 +20,7 @@ Web公開済み：自分用 `8b9b0da`、共有 `0c4c3f2`。Pages成功、配信6
 
 ## 導入前に確認すること
 
-配布元GSの `MERUHEN_HISTORY_VIEWER` / `PSCUBE_HISTORY_VIEWER` は **false** のまま。利用者は履歴trueの導入用コピーを既存Googleプロジェクトへ貼り替えて運用中。
+配布元GSの `MERUHEN_HISTORY_VIEWER` / `PSCUBE_HISTORY_VIEWER` は **true**（2026-11-07 に false から変更。利用者の既存Googleプロジェクトは10月から true で運用中で、それまでは貼り替えのたびに導入用コピーでこの行を true に直していた）。今は配布元の .gs をそのまま全文貼り替えればよい。
 最終検証後に、Web両ページと読み取りGS2本を先に更新し、その後に同期GS2本の履歴フラグをtrueにする順序が必要。
 当初の模擬試験後、利用者による実Google切替・初回同期とオフライン表示確認まで進んだ。途中で判明したGoogle側の途切れたP-STATION閲覧用JSONは、同一元データの正常なPC完全版から修復し、Google読み戻しで全バイト一致を確認。元バックアップ・SQLite・日別履歴はその修復で変更していない。
 
@@ -48,7 +48,7 @@ Web公開済み：自分用 `8b9b0da`、共有 `0c4c3f2`。Pages成功、配信6
 1. 自分用Webと共有Webを更新する。P-STATIONのPC同期を使う場合は、新しいPC配布物へ先に更新する。旧EXEは日別原本を読めない。
 2. 既存の自分用読み取りプロジェクトへ `viewer_drive_script.gs`、共有読み取りプロジェクトへ `viewer_drive_script_readonly.gs` の全文を貼って保存する。既存デプロイの編集で「新バージョン」を選び、同じURLで再デプロイする。同期プロジェクトへ貼らない。
 3. Webで従来の記録を読めることを確かめる。この時点では同期GSの履歴フラグはまだfalse。
-4. メルヘン同期へ導入用 `meruhen_cloud_sync.gs`、P-STATION同期へ導入用 `pscube_cloud_sync.gs` を貼って保存する。導入用コピーでは各 `HISTORY_VIEWER` をtrueにする。既存の30分トリガーを維持し、`syncMeruhenCloud` / `syncPscubeCloud` を1回実行する。未設置の場合だけ各 `setup...CloudSync` を実行する。
+4. メルヘン同期へ導入用 `meruhen_cloud_sync.gs`、P-STATION同期へ導入用 `pscube_cloud_sync.gs` を貼って保存する。（2026-11-07 以降は配布元が true なので、そのまま貼ればよい。）既存の30分トリガーを維持し、`syncMeruhenCloud` / `syncPscubeCloud` を1回実行する。未設置の場合だけ各 `setup...CloudSync` を実行する。
 5. `showMeruhenCloudStatus` / `showPscubeCloudStatus` で履歴モード・残り・失敗ファイルを確認する。初回は24更新日／1実行で区切るため、複数回かかる。「残り0」でも失敗情報があれば全入力成功ではない。
 6. 「最新を読む」で更新し、既知の古い日・最新日・訂正した台を照合する。別の新規ブラウザでGoogleから過去分を取得できることも確認する。既存ブラウザの保存を消して試さない。
 7. 共有ページをオンラインで開いてページ本体の保存完了後、閉じる→機内モード→同じリンクを開く。オンラインへ戻して手動更新も確認する。実iPhoneのこの工程は利用者確認が必要。

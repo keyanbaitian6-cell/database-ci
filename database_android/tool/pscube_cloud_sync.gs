@@ -11,8 +11,8 @@ const PSCUBE_CLOUD_BACKUP = 'pscube-backup-cloud.json';
 const PSCUBE_CLOUD_VIEWER = 'pscube-viewer-drive.json';
 // 両ページ用Apps Scriptの更新後にtrueへ変更（VIEWER_INCREMENTAL_SYNC.md）。
 const PSCUBE_INCREMENTAL_VIEWER = false;
-// 両ページと読み取りGSの更新後にtrue（VIEWER_HISTORY_SYNC.md）。
-const PSCUBE_HISTORY_VIEWER = false;
+// 履歴方式（日別に保存。VIEWER_HISTORY_SYNC.md）。初期値 true（2026-11-07 利用者「trueのほうがよさそう」→ 初期値を変更。利用者のGoogleプロジェクトは10月から true で運用中で、貼り替えのたびに1行を直していた）。
+const PSCUBE_HISTORY_VIEWER = true;
 const PSCUBE_CLOUD_BATCH = 10;
 const PSCUBE_CLOUD_MAX_BYTES = 48 * 1024 * 1024;
 const PSCUBE_CLOUD_HANDLER = 'syncPscubeCloud';
@@ -499,7 +499,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
-const APPLICATION_RELEASE = '4290b0c1014e';
+const APPLICATION_RELEASE = '0949e413425a';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -997,7 +997,7 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
-const SCRIPT_RELEASE = '4290b0c1014e';
+const SCRIPT_RELEASE = '0949e413425a';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

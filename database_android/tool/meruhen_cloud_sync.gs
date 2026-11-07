@@ -12,8 +12,8 @@
 const MERUHEN_FOLDER_ID = '';
 // 自分用・共有用の両Apps Scriptを更新してから true にする（VIEWER_INCREMENTAL_SYNC.md）。
 const MERUHEN_INCREMENTAL_VIEWER = false;
-// 両ページと読み取りGSの更新後にtrue。過去分を日別に保持する（VIEWER_HISTORY_SYNC.md）。
-const MERUHEN_HISTORY_VIEWER = false;
+// 履歴方式（過去分を日別に保持する。VIEWER_HISTORY_SYNC.md）。初期値 true（2026-11-07 利用者「trueのほうがよさそう」→ 初期値を変更。利用者のGoogleプロジェクトは10月から true で運用中で、貼り替えのたびに1行を直していた）。
+const MERUHEN_HISTORY_VIEWER = true;
 const MERUHEN_CLOUD_VIEWER = 'database-viewer.json';
 const MERUHEN_CLOUD_STORE = 'database-android-cloud.json';
 const MERUHEN_CLOUD_HANDLER = 'syncMeruhenCloud';
@@ -539,7 +539,7 @@ function meruhenWrite(folder, file, name, text) {
   throw new MeruhenCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 // BEGIN GENERATED VIEWER PARTS
-const SCRIPT_RELEASE = '4290b0c1014e';
+const SCRIPT_RELEASE = '0949e413425a';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;
@@ -783,7 +783,7 @@ function vpMaintain(folder, site, props) {
   catch (error) { console.log('古い閲覧用キャッシュの整理は次回再試行します：' + String(error.message || error)); }
 }
 
-const APPLICATION_RELEASE = '4290b0c1014e';
+const APPLICATION_RELEASE = '0949e413425a';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
