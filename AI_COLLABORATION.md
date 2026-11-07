@@ -1199,3 +1199,4 @@
 - 取り込み（新しい決まり、Claude が窓を開いた）：12:14 の `day_check` で 11/4 は一覧295台・アナスロ以外の保存71台 → 機種ごとに取り込みへ。12:22 に利用者が手動で取り込もうとカードを操作し、自動がOFFになったため、**Claude の見張り（自動OFF＝終了とみなして窓を閉じる）が窓を閉じた**（Claude の作りの不備。利用者には PC版のボタンから開くよう案内し、以後 Claude は窓を開かない）。この時点の DB（mode=ro）：11-04 anaslo 77��A11-04 anaslo�i���肠��j 68��A11-04 pscube 71��A11-04 site777 7��A11-04 site777�i���肠��j 72��A11-05 anaslo 100��A11-05 anaslo�i���肠��j 141��A11-05 pscube 54��A11-06 pscube 5��A11-06 site777 200��。
 - 同期スクリプトの貼り替え用：`../outputs/site777-net-20261107/pscube_cloud_sync_貼り替え用_20261107_置き換え.gs`（リポジトリの `pscube_cloud_sync.gs` と同一、SCRIPT_RELEASE 4fef780cf0ea、HISTORY true）。会話で利用者へ送った。貼り替えは利用者（未）。
 - 公開（元 `ba7bf66`、全体ゲート ALL PASSED と同じ内容）：database-viewer **`d764c5c`**（照合版 4fef780cf0ea）、database-share **`dc20f19`**（公開版 434c35e184ca）。記録の文字列90種の混入なし。
+- 追記：利用者が同期スクリプトを貼り替えた（「スクリプトは張り替えた」、`…_20261107_置き換え.gs`、SCRIPT_RELEASE 4fef780cf0ea）。**利用者の報告**で、同期の実行ログはまだ見ていない。
