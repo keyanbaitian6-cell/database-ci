@@ -1136,3 +1136,9 @@
 - 利用者「ホームからサイトセブンクリックしたらそのままログイン画面にして欲しいな」、アドレスを貼り付け「クレジットカード会員だからここね」。**利用者はスマホ会員のうちクレジットカード会員**で、そのログイン画面は `https://m.site777.jp/f/P0300.do?skskb=3&skver=2&returnUrl=%2FF0900.do%3Fcksc%3Dc%26latc%3D1`（ログイン後はサイトの returnUrl でマイページへ）。Claude は先に、PC版のサイトセブン専用ブラウザの閲覧履歴（`data/site777-webview/.../History`、mode=ro・immutable、URLと題名だけ。Cookie・保存ストレージは読まない）で同じアドレスを確かめていた。サイトへのアクセスはしていない。
 - `database/site777_browser.py` の `START_URL` をこのアドレスに（以前は `https://m.site777.jp/`）。`database/app.py` の開いたときの案内を「クレジットカード会員のログイン画面から開きました。ログインしたら…日付（から・まで）を確認して開始」に。ログインの入力は利用者。取り込みの保護（取り込み中だけデータページの移動を確かめる）はログイン画面に関わらない。
 - 試験：`test_site777_browser.py` の開始アドレスの確認を、このアドレスと完全一致に。PCの全試験 903件 OK、実 WebView2 の1日分の取り込み（手元の試しのページ）OK。版の照合が `409940cdebfc` に変わったので生成物を作り直し、版の一致・同期スクリプト・サイトセブンの JS 62件・Dart 7件 OK。この変更は PC の Python だけで、閲覧ページ・Android の機能は変えていない（全体ゲートは上の結果のまま、流し直していない）。**実際にログイン画面が開くかは未確認**（利用者が次に開くとき）。
+
+### 2026-11-07 正本へ送信（推定差枚・日付範囲・ログイン画面、Codex の未送信分を含む）（Claude）
+
+- 利用者「pushまでお願いします」。10:40 JST、`database/.venv/Scripts/python.exe tools/push_ci.py` で **`45ff269`** までを正本 imakurudev-eng/database へ1回で送信（`39e937c..45ff269`、37ファイル）。含むもの：Codex の未送信分（`f387ae5`・`339448c`・`e461f26`（別店舗への転送の保護）・`2af37c5`・`308e44d`（停止理由の表示））と、Claude の `172849c`（推定差枚）・`87599e5`（merge）・`fa0e685`（日付範囲）・`45ff269`（ログイン画面）。送信前に `--dry-run` で送り先と両方の main の包含を確認。CI [42325320708](https://github.com/imakurudev-eng/database/actions/runs/42325320708) はこの記録の時点で queued。
+- **まだしていないこと**：閲覧ページ（database-viewer）・共有カレンダー（database-share）の公開（iPhone・共有カレンダーにサイトセブンの推定差枚はまだ出ない）。Google の P’s CUBE 同期スクリプトの貼り替え（`pscube_cloud_sync.gs` が推定差枚を通すようになったため必要。貼り替え用は利用者の設定行 HISTORY_VIEWER=true を残して作る）。保存済みの185台への後付け（`site777_backfill.py`、PC版を開き直してから）。Android APK は作らない（利用者「ビルドはやらなくていい」）。
+- 作業用の worktree `../database-net777`（ブランチ `site777-net`）は main に早送りで取り込み済み。片付けは未。
