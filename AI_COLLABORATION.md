@@ -1356,3 +1356,11 @@
 | 本番DBとPC内の閲覧用ファイル | 済 | 新規0、更新674。コミット前の比較で net_estimate だけの差分、コミット後のDBとローカルJSON2本で674台一致 |
 | Google同期スクリプトの貼り替え | 利用者報告 | ../outputs/site777-net-medals-20261107/pscube_cloud_sync_貼り替え用_20261107_1枚単位.gs、利用者「はりかえた」。前回の設定3項目を引き継いだ。ローカルの検証で前回版は新方式を拒否し、新版は674件すべてを受理 |
 | 公開・APK・実同期 | 未実施 | 正本へのpush、閲覧ページ・共有カレンダーの公開、Android APKの再作成は利用者確認後。同期フォルダーへの新しい出力は閲覧側の更新後に行う。対象サイトへの追加アクセスなし |
+
+## 2026-11-07 サイトセブンの1枚単位対応を正本へ送り、閲覧ページと共有カレンダーを公開（Codex）
+
+- 利用者「apkはまだ。公開とpushおねがい」。07db41c（照合版 722eadb1a018、手元全体ゲート ALL PASSED）を、両方のmainを確認してから日本時間17:07に imakurudev-eng/database のmainへ tools/push_ci.py で1回送信。
+- 正本CI 42354148162 の3ジョブ成功。Ubuntu PC 1分17秒、Windows PC 4分29秒、全体ゲート16分6秒。https://github.com/imakurudev-eng/database/actions/runs/42354148162
+- iPhone閲覧ページ database-viewer 8d55f68（Pages 42354327669）、共有カレンダー database-share 906a6b0（公開版 d653338c4a39、Pages 42354327355）。いずれも07db41cの全体試験でstageした成果物を使用。公開用78ファイルを検査し、記録に固有の文字列90種とスクリプトIDに該当なし。
+- Pagesは両方成功。配信中の変更ファイルを全件（閲覧5・共有9）取得し、SHA-256が公開Gitと一致。seed・イベント履歴・設定ファイルのパスは両方で404。https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42354327669 ・ https://github.com/keyanbaitian6-cell/database-share/actions/runs/42354327355
+- Android APKは利用者指定で保留。今回の操作は正本への送信とWeb公開まで。本番DBの674台の新方式を同期フォルダーに再出力する作業と、実端末での確認は未実施。この共有記録だけの追加送信はせず、次の承認済みの送信に同梱する。
