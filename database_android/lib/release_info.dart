@@ -1,2 +1,2 @@
 // 生成元: tool/build_release_info.py
-const applicationRelease = 'adaa07a84a59';
+const applicationRelease = 'a53ba342a4e9';

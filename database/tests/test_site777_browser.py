@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -43,12 +44,40 @@ class FakeArgs:
     def __init__(self, uri):
         self.Uri = uri
         self.handled = False
+        self.cancelled = False
+        self.IsRedirected = False
 
     def set_Handled(self, value):
         self.handled = value
 
+    def set_Cancel(self, value):
+        self.cancelled = value
+
 
 class Site777BrowserTest(unittest.TestCase):
+    def test_redirect_and_document_are_blocked_without_reading_request_headers(self):
+        browser=SimpleNamespace(on_new_window_request=lambda *args:None)
+        core=FakeCore(browser.on_new_window_request)
+        core.WebResourceRequested=FakeEvent()
+        filters=[]
+        core.AddWebResourceRequestedFilter=lambda *args:filters.append(args)
+        core.Environment=SimpleNamespace(CreateWebResourceResponse=lambda stream,status,reason,headers:status)
+        window=SimpleNamespace(native=SimpleNamespace(webview=SimpleNamespace(CoreWebView2=core),browser=browser))
+        good='https://m.site777.jp/f/D4300.do?pmc=04034001&urt=2000'
+        bad=good.replace('04034001','23170004')
+        site777_browser.keep_popups_here(window,navigation_guard=lambda raw,redirected:raw==good,
+            document_guard=lambda raw:raw==good,document_context='Document')
+        self.assertEqual(filters,[('https://m.site777.jp/f/*','Document')])
+        args=FakeArgs(bad);args.IsRedirected=True
+        core.NavigationStarting.handlers[0](core,args)
+        self.assertTrue(args.cancelled)
+        allowed=FakeArgs(good)
+        core.NavigationStarting.handlers[0](core,allowed)
+        self.assertFalse(allowed.cancelled)
+        request=SimpleNamespace(Request=SimpleNamespace(Uri=bad),Response=None)
+        core.WebResourceRequested.handlers[0](core,request)
+        self.assertEqual(request.Response,403)
+
     def test_it_presents_itself_as_android_chrome_on_a_phone(self):
         ua = site777_browser.ANDROID_USER_AGENT
         self.assertIn('Linux; Android', ua)

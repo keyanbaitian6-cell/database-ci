@@ -136,6 +136,27 @@ class SessionTest(unittest.TestCase):
         self.assertIn('error',result)
         self.assertFalse((self.root/'pscube.sqlite3').exists())
 
+    def test_foreign_hall_redirect_is_blocked_and_resource_guard_survives_stop(self):
+        good=url('D4300')
+        bad=good.replace('04034001','23170004').replace('2000','2173')
+        self.assertTrue(self.session._navigation_starting(good,False))
+        self.assertFalse(self.session._navigation_starting(bad,True))
+        self.assertFalse(self.session.state()['enabled'])
+        self.assertIn('移動を止めました',self.session.state()['status'])
+        self.assertFalse(self.session._document_allowed(bad))
+        self.assertTrue(self.session._document_allowed(good))
+        self.assertTrue(self.session._document_allowed('https://example.com/captcha-frame'))
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+        # 利用者が明示的にOFFへ切り替えたら、通常の手動閲覧へ戻れる。
+        self.session.configure(False)
+        self.assertTrue(self.session._navigation_starting(bad,False))
+
+    def test_manual_capture_action_also_protects_its_pending_navigation(self):
+        self.epoch=self.session.configure(False)['epoch']
+        self.cycle(table())
+        self.assertFalse(self.session._navigation_starting(url('D4300').replace('2000','500'),False))
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
+
     def test_all_index_pages_are_read_before_using_a_previously_listed_next_machine(self):
         def index(page, model):
             return {'kind':'index','url':url('D0300',page=page),'page':page,

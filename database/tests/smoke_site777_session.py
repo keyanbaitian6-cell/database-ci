@@ -21,12 +21,20 @@ from smoke_site777_capture import fixture,image_bytes,NOW
 
 
 def main():
+    redirected='--redirect' in sys.argv
+    without_guard='--without-guard' in sys.argv
+    resource_only='--resource-only' in sys.argv
+    if without_guard and not redirected:raise ValueError('対照試験には--redirectも指定してください')
     requests,result,handlers=[],{},[]
     watchdog=threading.Timer(90,lambda:os._exit(2));watchdog.daemon=True;watchdog.start()
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
             u=urlsplit(self.path);q=parse_qs(u.query)
+            if redirected and u.path.endswith('D4300.do') and q.get('pmc')==['04034001']:
+                self.send_response(302)
+                self.send_header('Location',self.path.replace('pmc=04034001','pmc=23170004').replace('urt=2000','urt=2173'))
+                self.end_headers();return
             if u.path.startswith('/chart/') or u.path.endswith('.png'):
                 body=image_bytes(u.path.endswith('.png'));mime='image/png'
             else:
@@ -73,7 +81,13 @@ def main():
                 return raw.replace(base,'https://m.site777.jp',1)
         session._window=FixtureWindow()
         ready=threading.Event()
-        def install():handlers.extend(keep_popups_here(window,log))
+        def mapped_url(raw):
+            return raw.replace(base,'https://m.site777.jp',1) if raw.startswith(base+'/') else raw
+        def install():
+            guards={} if without_guard else dict(
+                navigation_guard=None if resource_only else lambda raw,redirected:session._navigation_starting(mapped_url(raw),redirected),
+                document_guard=lambda raw:session._document_allowed(mapped_url(raw)),document_filter=base+'/f/*')
+            handlers.extend(keep_popups_here(window,log,**guards))
         def loaded():
             try:
                 session._loaded()
@@ -92,10 +106,32 @@ def main():
                 deadline=time.monotonic()+65
                 while time.monotonic()<deadline:
                     state=session.state()
+                    if redirected:
+                        foreign=any('pmc=23170004' in r for r in requests)
+                        if without_guard and foreign:break
+                        if not without_guard and not state['enabled'] and '移動を止めました' in state['status']:break
+                        time.sleep(.15);continue
                     if state['added']==32 and not state['enabled']:break
                     if not state['enabled'] and state['status']!='P-STATIONの20円スロットを開き、取り込む日付を確認してください。':
                         raise AssertionError(state['status'])
                     time.sleep(.15)
+                if redirected:
+                    foreign=any('pmc=23170004' in r for r in requests)
+                    assert foreign==without_guard,(requests,session.state())
+                    assert not (folder/'pscube.sqlite3').exists(),'別店舗のデータを書き込みました'
+                    if without_guard:
+                        result.update(ok=True,local_negative_control=True,foreign_request_observed=True)
+                        return
+                    assert not session.state()['enabled'],session.state()
+                    if resource_only:
+                        result.update(ok=True,resource_guard_blocked=True,foreign_requests=0,no_db_write=True)
+                        return
+                    assert window.evaluate_js("document.querySelector('#test-page')?.textContent")=='table1'
+                    # 元ページの8秒の移動待ちタイマーが、停止理由を上書きしないこと。
+                    time.sleep(9)
+                    assert '移動を止めました' in session.state()['status'],session.state()
+                    result.update(ok=True,redirect_blocked=True,foreign_requests=0,original_table_kept=True,no_db_write=True)
+                    return
                 assert session.state()['added']==32,session.state()
                 store=PscubeStore(folder/'pscube.sqlite3',recording=False)
                 try:records=store.export_payload()['records']

@@ -62,7 +62,11 @@
         databaseSite777.go(result.action);
         setTimeout(async()=>{
           if(!alive||token!==mine)return;
-          try{if(databaseSite777.samePage(databaseSite777.read(true).url,before))await stop('リンクを押しても移動しないため停止しました。画面を確認してください。');}catch(_){}
+          try{
+            const s=await api().state();
+            if(s.epoch!==epoch){render(s);return;}
+            if(databaseSite777.samePage(databaseSite777.read(true).url,before))await stop('リンクを押しても移動しないため停止しました。画面を確認してください。');
+          }catch(_){}
         },8000);
       }
     }catch(error){

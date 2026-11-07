@@ -146,7 +146,8 @@ def webview_storage(data_dir) -> Path:
     return folder
 
 
-def keep_popups_here(window, log=None):
+def keep_popups_here(window, log=None, *, navigation_guard=None, document_guard=None,
+                     document_filter='https://m.site777.jp/f/*', document_context=None):
     """スマホとしての見え方をそろえ、新しい窓を開くリンクを普段のブラウザ（ログインしていない、
     PCとして名乗る）ではなくこの窓で開く。pywebview は先に自分の処理（普段のブラウザで開く）を
     登録するので、それを外してから足す（anaslo_browser_host.install_handlers と同じ理由）。"""
@@ -157,10 +158,19 @@ def keep_popups_here(window, log=None):
         # ページの中の処理（PAGE_SCRIPT）で拾えなかった新しい窓。URLだけでこの窓を移動する。
         args.set_Handled(True)
         note('new_window', href=str(args.Uri))
-        sender.Navigate(str(args.Uri))
+        if navigation_guard is None or navigation_guard(str(args.Uri), False):
+            sender.Navigate(str(args.Uri))
 
     def starting(sender, args):
-        note('navigate', href=str(args.Uri))
+        redirected = bool(getattr(args, 'IsRedirected', False))
+        note('navigate', href=str(args.Uri), redirected=redirected)
+        if navigation_guard is not None and not navigation_guard(str(args.Uri), redirected):
+            args.set_Cancel(True)
+
+    def document_requested(sender, args):
+        if not document_guard(str(args.Request.Uri)):
+            args.Response = sender.Environment.CreateWebResourceResponse(None, 403, 'Capture scope blocked', '')
+            note('document_blocked', href=str(args.Request.Uri))
 
     def completed(sender, args):
         note('loaded', ok=bool(args.IsSuccess), status=getattr(args, 'HttpStatusCode', None))
@@ -173,6 +183,13 @@ def keep_popups_here(window, log=None):
         core.NewWindowRequested += popup
         core.NavigationStarting += starting
         core.NavigationCompleted += completed
+        if document_guard is not None:
+            context = document_context
+            if context is None:
+                from Microsoft.Web.WebView2.Core import CoreWebView2WebResourceContext
+                context = CoreWebView2WebResourceContext.Document
+            core.AddWebResourceRequestedFilter(document_filter, context)
+            core.WebResourceRequested += document_requested
 
     def initialized(sender, args):
         if args.IsSuccess:
@@ -182,7 +199,7 @@ def keep_popups_here(window, log=None):
         control.CoreWebView2InitializationCompleted += initialized
     else:
         attach(control.CoreWebView2)
-    return [popup, initialized, starting, completed]  # 呼び出し側で参照を保持し、途中で消されないようにする
+    return [popup, initialized, starting, completed, document_requested]  # 窓が閉じるまで参照を保持
 
 
 def run(data_dir, start_url=START_URL):
@@ -199,7 +216,8 @@ def run(data_dir, start_url=START_URL):
 
     def install():
         try:
-            handlers.extend(keep_popups_here(window, log))
+            handlers.extend(keep_popups_here(window, log, navigation_guard=session._navigation_starting,
+                                             document_guard=session._document_allowed))
             from site777_history import install as install_history
             handlers.extend(install_history(window, log))
         except Exception as error:  # noqa: BLE001 - 表示は続ける。何が効かないかを残す

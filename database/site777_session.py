@@ -40,6 +40,8 @@ class Session(Bridge):
         self._kept = 0
         self._unknown = 0
         self._active_url = None
+        self._pending_navigation = False
+        self._blocked_navigation = False
 
     def state(self):
         with self._state_lock:
@@ -66,13 +68,51 @@ class Session(Bridge):
                 self._unknown = 0
             self._day = day or self._day
             self._enabled = enabled
+            self._pending_navigation = False
+            self._blocked_navigation = False
             self._pace.configure(enabled, 15)
             self._epoch += 1
             self._status = '自動取り込みを開始します。' if enabled else '停止しました。'
         return self.state()
 
     def _loaded(self):
+        with self._state_lock:
+            self._pending_navigation = False
         self._pace.loaded()
+
+    def _navigation_starting(self, raw, redirected=False):
+        with self._state_lock:
+            protected = self._enabled or self._pending_navigation or self._blocked_navigation
+        if not protected:
+            return True
+        try:
+            source.source_url(raw)
+            return True
+        except (TypeError, ValueError):
+            self.pause('P-STATIONの20円スロット以外への移動を止めました。'
+                       '対象店の画面を確認してから再開してください。自動の再取得は行いません。')
+            with self._state_lock:
+                self._blocked_navigation = True
+            # 認証用の問い合わせは記録せず、公開の店舗・貸玉・機種コードだけ残す。
+            try:
+                query = dict(source.parse_qsl(source.urlsplit(raw).query))
+                public = {k: v for k, v in query.items() if k in ('pmc', 'urt', 'mdc')
+                          and v.isdecimal() and len(v) <= 12}
+            except (TypeError, ValueError):
+                public = {}
+            self._log.write('navigation_blocked', redirected=bool(redirected), **public)
+            return False
+
+    def _document_allowed(self, raw):
+        # NavigationStartingのキャンセルだけではGETが先行しうるため、データ文書にも保護を置く。
+        # iframeの認証ページ・画像・通信ヘッダーには触れない。
+        try:
+            uri = source.urlsplit(raw)
+        except (TypeError, ValueError):
+            return False
+        if uri.hostname != 'm.site777.jp' or uri.path not in source.PATHS:
+            return True
+        return self._navigation_starting(raw)
 
     def pause(self, message=None):
         self.configure(False)
@@ -168,6 +208,9 @@ class Session(Bridge):
                 if type(page) is not int or page < 1 or str(page) != selected:
                     raise ValueError('読み取り資料と表示中のページ番号が違います。')
             result = self._capture(payload, epoch)
+            if result.get('action'):
+                with self._state_lock:
+                    self._pending_navigation = True
             self._pace.pause('次のページを待ちます。')
             result['state'] = self.state()
             return result
