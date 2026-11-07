@@ -811,31 +811,35 @@ def main():
     refresh_machines()
 
     ttk.Label(tab_home, text='ブラウザで取り込む', style='H2.TLabel').pack(anchor='w')
-    ttk.Label(tab_home, text='ふだんの取り込みは、ここから始めます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 12))
-    GradientButton(tab_home, text='メルヘンワールドを取り込む',
-                   command=lambda: open_browser_import()).pack(anchor='w')
-    ttk.Button(tab_home, text='P’s CUBE（スロット）を取り込む',
-               command=lambda: open_pscube_import()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
-    ttk.Button(tab_home, text='アナスロから補う（P-STATION・幸町）',
-               command=lambda: open_anaslo_converter()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
-    ttk.Button(tab_home, text='サイトセブンを開く（スマホ会員）',
-               command=lambda: open_site777_browser()).pack(anchor='w', ipadx=22, ipady=9, pady=(9, 0))
-    ttk.Label(tab_home, style='Sub.TLabel', justify='left', text=(
-        '① 機種一覧・機種別の表・個別台グラフで「この画面を取り込む」\n'
-        '② 表は表、グラフはグラフとして保存され、次の必要な台へ移動\n'
-        '③ 機種が終わると、機種一覧へ自動で移動')).pack(anchor='w', pady=(14, 18))
-    ttk.Separator(tab_home).pack(fill='x', pady=(0, 14))
+    ttk.Label(tab_home, text='ふだんの取り込みは、ここから始めます。', style='Sub.TLabel').pack(anchor='w', pady=(0, 10))
+    # 取り込みのボタンは2列×2段（2026-11-07 利用者「縦に取り込みが四つならんで見切れちゃう項目あった」）。
+    # 上の段はふだんの取り込み（メルヘン・P’s CUBE）、下の段は補う取り込み（サイトセブン・アナスロ）。
+    imports = ttk.Frame(tab_home)
+    imports.pack(anchor='w', fill='x')
+    GradientButton(imports, text='メルヘンワールドを取り込む',
+                   command=lambda: open_browser_import()).grid(row=0, column=0, sticky='w')
+    ttk.Button(imports, text='P’s CUBE（スロット）を取り込む',
+               command=lambda: open_pscube_import()).grid(row=0, column=1, sticky='ew', ipadx=22, ipady=9, padx=(14, 0))
+    ttk.Button(imports, text='サイトセブンを開く（スマホ会員）',
+               command=lambda: open_site777_browser()).grid(row=1, column=0, sticky='ew', ipadx=22, ipady=9, pady=(9, 0))
+    ttk.Button(imports, text='アナスロから補う（P-STATION・幸町）',
+               command=lambda: open_anaslo_converter()).grid(row=1, column=1, sticky='ew', ipadx=22, ipady=9,
+                                                             padx=(14, 0), pady=(9, 0))
+    # よく使うボタン（まとめ・記録・取り消し・パチンコ）を取り込みのすぐ下に。窓が小さいときに見切れても困らない
+    # 説明の文は一番下（2026-11-07、最小の窓の大きさでまとめ・パチンコの段が隠れていた）。
+    ttk.Separator(tab_home).pack(fill='x', pady=(12, 10))
     quick = ttk.Frame(tab_home)
     quick.pack(anchor='w')
     ttk.Button(quick, text='この日のまとめ', command=lambda: open_summary()).pack(side='left')
     ttk.Button(quick, text='過去の記録を見る', command=lambda: open_history()).pack(side='left', padx=8)
     ttk.Button(quick, text='直前の保存を取り消す', command=lambda: undo_last()).pack(side='left')
+    # パチンコの記録のボタンも同じ段に（2026-11-07、ホームの高さを詰めるため）。下の段は取り込む末尾だけ。
+    ttk.Button(quick, text='パチンコの記録', command=lambda: open_pachinko()).pack(side='left', padx=(8, 0))
     # 4円パチンコ（PC版だけ、PACHINKO.md）：記録のページと、取り込む末尾（2026-10-12 利用者「取り込む末尾を毎月
     # 変えたいから取り込む末尾選択ボタンが欲しい」。月に合わせる＝10月→0、11月→1）。
     pachi = ttk.Frame(tab_home)
-    pachi.pack(anchor='w', pady=(10, 0))
-    ttk.Button(pachi, text='パチンコの記録', command=lambda: open_pachinko()).pack(side='left')
-    ttk.Label(pachi, text='パチンコで取り込む末尾（スロットには関係なし）', style='Sub.TLabel').pack(side='left', padx=(16, 6))
+    pachi.pack(anchor='w', pady=(8, 0))
+    ttk.Label(pachi, text='パチンコで取り込む末尾（スロットには関係なし）', style='Sub.TLabel').pack(side='left', padx=(0, 6))
     tail_choices = {'month': '月に合わせる（10月→0・11月→1）', **{str(d): f'末尾{d}' for d in range(10)}}
     tail_saved = str(load_settings(DATA_DIR).get('pachinko_tail', 'month'))
     tail_var = tk.StringVar(value=tail_choices.get(tail_saved, tail_choices['month']))
@@ -849,6 +853,11 @@ def main():
         except OSError as exc:
             messagebox.showerror('取り込む末尾を保存できません', str(exc), parent=root)
     tail_box.bind('<<ComboboxSelected>>', choose_tail)
+    ttk.Label(tab_home, style='Sub.TLabel', justify='left', text=(
+        'メルヘンワールドの取り込み\n'
+        '① 機種一覧・機種別の表・個別台グラフで「この画面を取り込む」\n'
+        '② 表は表、グラフはグラフとして保存され、次の必要な台へ移動\n'
+        '③ 機種が終わると、機種一覧へ自動で移動')).pack(anchor='w', pady=(16, 0))
 
     sync_box = ttk.LabelFrame(tab_sync, text='同期フォルダ（Google Driveなど）', padding=14)
     sync_box.pack(fill='x', pady=(0, 14))
