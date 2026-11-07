@@ -145,12 +145,17 @@
         new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do';
       if (ready()) continue;
       box.scrollIntoView({block:'center', behavior:'instant'});
-      const until = Date.now() + 12000;
+      const until = Date.now() + (window.__site777GraphWaitMs || 12000);
       while (!ready() && Date.now() < until) {
         if (cancelled()) throw new Error('停止しました。');
         await new Promise(resolve => setTimeout(resolve, 250));
       }
-      if (!ready()) throw new Error('グラフが読み込まれないため停止しました。自動の再取得は行いません。');
+      if (!ready()) {
+        // 自動取り込み中なら、カード側が1分待って同じページを1回だけ読み込み直す（2026-11-07 利用者の依頼）。
+        const error = new Error('グラフが読み込まれないため停止しました。');
+        error.stalled = true;
+        throw error;
+      }
     }
   };
   window.databaseSite777 = {read, go, prepare, samePage};

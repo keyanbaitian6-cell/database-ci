@@ -100,5 +100,50 @@ try {
   await page.waitForFunction(()=>document.querySelector('#database-site777-range')?.textContent.includes('この後：2026-11-05、2026-11-06'));
   assert.equal(await page.locator('#database-site777-until').isDisabled(),true,'取り込み中は日付を変えない');
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし：成功');
+  // グラフが出ないとき（2026-11-07）：自動取り込み中は待ってから同じページを1回だけ読み込み直し、
+  // 読み込み直したページでも出なければ止める（3回目は読み込まない）。
+  const stalled=await browser.newPage({viewport:{width:560,height:800}}),loads=[];
+  stalled.on('pageerror',e=>errors.push(e.message));
+  await stalled.route('**/*',async route=>{
+    const u=new URL(route.request().url());
+    if(u.pathname.startsWith('/chart/'))await route.abort();
+    else if(u.pathname.endsWith('.png'))await route.fulfill({contentType:'image/png',body:Buffer.from(fixture.background,'base64')});
+    else {loads.push(u.pathname);await route.fulfill({contentType:'text/html; charset=utf-8',body:fixture.graph1});}
+  });
+  await stalled.addInitScript(()=>{
+    window.__site777GraphWaitMs=300;window.__site777ReloadMs=1500;
+    const paused=sessionStorage.getItem('test-paused');
+    window.__state={enabled:!paused,epoch:1,ready:true,day:'2026-11-06',days:['2026-11-06'],status:paused||'取り込み中'};
+    window.pywebview={api:{state:async()=>structuredClone(window.__state),
+      capture:async()=>({prepare_graphs:true}),
+      pause:async message=>{sessionStorage.setItem('test-paused',message||'停止');
+        Object.assign(window.__state,{enabled:false,status:message});return structuredClone(window.__state);}}};
+  });
+  const inject=async()=>{
+    for(const file of ['site777_capture.js','capture_card.js','site777_overlay.js'])
+      await stalled.evaluate(readFileSync(new URL('../../database/assets/'+file,import.meta.url),'utf8'));
+  };
+  await stalled.goto(source('D4300',1));
+  await inject();
+  await stalled.waitForFunction(()=>/秒後にこのページを1回だけ読み込み直します/.test(document.querySelector('#database-site777-status')?.textContent||''));
+  await stalled.waitForFunction(()=>!document.getElementById('database-site777'),{},{timeout:10000});
+  await stalled.waitForLoadState('load');
+  assert.equal(loads.length,2,'待ってから1回だけ読み込み直す');
+  await inject();
+  await stalled.waitForFunction(()=>sessionStorage.getItem('test-paused'),{},{timeout:10000});
+  assert.match(await stalled.evaluate(()=>sessionStorage.getItem('test-paused')),/読み込み直してもグラフが表示されない/);
+  await stalled.waitForTimeout(2500);
+  assert.equal(loads.length,2,'読み込み直したページでは、もう読み込み直さない');
+  // 手動の「この画面を取り込む」では読み込み直さず、止めるだけ。
+  await stalled.evaluate(()=>{sessionStorage.clear();});
+  await stalled.reload();
+  await stalled.evaluate(()=>{window.__state.enabled=false;});
+  await inject();
+  await stalled.click('#database-site777-capture');
+  await stalled.waitForFunction(()=>sessionStorage.getItem('test-paused'),{},{timeout:10000});
+  assert.match(await stalled.evaluate(()=>sessionStorage.getItem('test-paused')),/グラフが読み込まれないため停止しました/);
+  await stalled.waitForTimeout(2500);
+  assert.equal(loads.length,3,'手動では読み込み直さない');
+  assert.deepEqual(errors,[]);
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1回だけの読み込み直し：成功');
 } finally {await browser.close();}

@@ -44,6 +44,31 @@
     auto.style.background=s.enabled?'#b74237':'#304d6e';
     status.textContent=s.status;
   };
+  // グラフが出ないとき（2026-11-07 利用者「1分後に再読み込みみたいな処理」）：自動取り込み中だけ、
+  // 1分待ってから同じページを1回だけ読み込み直す。読み込み直したページでまた出なければ止める。
+  // 読み込み直した記録が残せない（保存できない）ときは読み込み直さない（何度も繰り返さないため）。
+  const reloadKey='database-site777-reloaded';
+  const reloaded=()=>{try{const v=JSON.parse(sessionStorage.getItem(reloadKey)||'[]');return Array.isArray(v)?v:null;}catch(_){return null;}};
+  const markReloaded=url=>{
+    const old=reloaded();if(!old)return false;
+    try{sessionStorage.setItem(reloadKey,JSON.stringify([...old,url].slice(-200)));return reloaded()?.includes(url)||false;}catch(_){return false;}
+  };
+  const reloadLater=async(mine,epoch)=>{
+    const url=databaseSite777.read(true).url, done=reloaded();
+    if(!done||done.includes(url))return false;
+    const until=Date.now()+(window.__site777ReloadMs||60000);
+    while(Date.now()<until){
+      if(!alive||token!==mine)return true;
+      status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後にこのページを1回だけ読み込み直します。`;
+      await new Promise(resolve=>setTimeout(resolve,Math.min(1000,Math.max(0,until-Date.now()))));
+    }
+    const s=await api().state();
+    if(!alive||token!==mine||!s.enabled||s.epoch!==epoch)return true;
+    if(!markReloaded(url))return false;
+    status.textContent='このページを読み込み直しています…';
+    location.reload();
+    return true;
+  };
   const stop=async message=>{
     token++;
     const s=await api().pause(message||null);render(s);
@@ -52,10 +77,11 @@
     if(busy||!alive)return;
     busy=true;
     const mine=token;
+    let epoch=null;
     try{
       const s=await api().state();render(s);
       if(automatic&&!s.enabled)return;
-      const epoch=s.epoch;
+      epoch=s.epoch;
       let result=await api().capture(JSON.stringify(databaseSite777.read(true)),epoch);
       if(result.prepare_graphs){
         status.textContent='表示されていないグラフを順に読み込んでいます…';
@@ -81,6 +107,13 @@
         },8000);
       }
     }catch(error){
+      if(error?.stalled&&automatic&&alive&&token===mine){
+        try{if(await reloadLater(mine,epoch))return;}catch(_){}
+        if(alive&&token===mine)await stop(reloaded()?.includes(databaseSite777.read(true).url)
+          ?'読み込み直してもグラフが表示されないため停止しました。画面を確認してください。'
+          :error.message);
+        return;
+      }
       if(alive&&token===mine)await stop(error.message||String(error));
     }finally{
       busy=false;
