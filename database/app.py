@@ -1129,8 +1129,8 @@ def main():
         except OSError as exc:
             messagebox.showerror('起動できません', f'サイトセブンを開けません：{exc}', parent=root)
             return
-        logbox.insert('end', 'サイトセブンをスマホとして開きました。初めてのときはスマホ会員のIDでログインしてください'
-                      '（次からはログインしたまま開きます）。P-STATIONの20スロを表示し、取り込みカードの日付を確認して開始してください。\n')
+        logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
+                      'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')
         logbox.see('end')
 
     def open_pscube_import():

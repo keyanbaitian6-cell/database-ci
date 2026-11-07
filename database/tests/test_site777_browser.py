@@ -85,7 +85,9 @@ class Site777BrowserTest(unittest.TestCase):
         self.assertNotIn('Windows', ua)
         width, height = site777_browser.WINDOW_SIZE
         self.assertLess(width, height)
-        self.assertTrue(site777_browser.START_URL.startswith('https://m.site777.jp/'))
+        # 開いたらクレジットカード会員のログイン画面（利用者が指定したアドレス、2026-11-07）。
+        self.assertEqual(site777_browser.START_URL,
+                         'https://m.site777.jp/f/P0300.do?skskb=3&skver=2&returnUrl=%2FF0900.do%3Fcksc%3Dc%26latc%3D1')
 
     def test_login_is_kept_in_its_own_folder_under_data(self):
         with tempfile.TemporaryDirectory() as tmp:

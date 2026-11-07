@@ -23,7 +23,10 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
-START_URL = 'https://m.site777.jp/'
+# 開いたらすぐログイン画面（2026-11-07 利用者「ホームからサイトセブンクリックしたらそのままログイン画面にして
+# 欲しい」「クレジットカード会員だからここね」）。利用者はスマホ会員のクレジットカード会員で、そのログイン画面。
+# ログイン後はサイトの決まり（returnUrl）でマイページへ戻る。ログインの入力は利用者が行う。
+START_URL = 'https://m.site777.jp/f/P0300.do?skskb=3&skver=2&returnUrl=%2FF0900.do%3Fcksc%3Dc%26latc%3D1'
 # 利用者のスマホ（Galaxy A25 SM-A253C、Android 16、Chrome 156.0.8078.79）に合わせる。Chromeは
 # User-Agent では端末名・Androidの版を「Android 10; K」に固定して送る（簡略化）ので、それに合わせる。
 CHROME_VERSION = '156.0.8078.79'
