@@ -24,9 +24,11 @@ def main():
     redirected='--redirect' in sys.argv
     without_guard='--without-guard' in sys.argv
     resource_only='--resource-only' in sys.argv
+    # --range：11/6と11/5の2日を見せ、カードで「まで」を選んで2日分を古い順に取り込む（2026-11-07）。
+    ranged='--range' in sys.argv
     if without_guard and not redirected:raise ValueError('対照試験には--redirectも指定してください')
     requests,result,handlers=[],{},[]
-    watchdog=threading.Timer(90,lambda:os._exit(2));watchdog.daemon=True;watchdog.start()
+    watchdog=threading.Timer(170 if ranged else 90,lambda:os._exit(2));watchdog.daemon=True;watchdog.start()
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
@@ -51,6 +53,19 @@ def main():
                 else:
                     kind='table' if u.path.endswith('D3300.do') else 'graphs'
                     text=fixture(kind,page,model).decode('utf-8')
+                    if ranged:
+                        older=q.get('dtdd')==['1']
+                        here,other=('dtdd=1','dtdd=0') if older else ('dtdd=0','dtdd=1')
+                        tabs=('<ul class=tab-style-data>'+''.join(
+                            f'<li'+(' class=active' if (label=='11/5')==older else '')+f'><a href="{source("D3300" if kind=="table" else "D4300",model,page).replace("dtdd=0",d)}">{label}</a></li>'
+                            for label,d in (('11/6','dtdd=0'),('11/5','dtdd=1')))+'</ul>')
+                        start=text.index('<ul class=tab-style-data>');end=text.index('</ul>',start)+5
+                        text=text[:start]+tabs+text[end:]
+                        # 本物のページの下のメニューと同じく「設置機種」（機種一覧）へのリンクを置く。
+                        text+=f'<nav><a href="{source("D0300")}">設置機種</a></nav>'
+                        if older:
+                            text=text.replace('dtdd=0','dtdd=1').replace('/chart/RequestSPDedamaTransitionChartForPortal.do?','/chart/RequestSPDedamaTransitionChartForPortal.do?day=1105&')
+                            text=text.replace(tabs.replace('dtdd=0','dtdd=1'),tabs)
                 # テスト文書のリンクだけをlocalhostへ対応付ける。外部のサイトへは一切移動しない。
                 text+='''<script>
                   function localUrl(raw){const u=new URL(raw);if(u.origin!=='https://m.site777.jp')throw Error('外部移動を拒否');return location.origin+u.pathname+u.search;}
@@ -102,8 +117,13 @@ def main():
         def exercise():
             try:
                 assert ready.wait(15),'カードを表示できません'
+                if ranged:
+                    window.evaluate_js("const u=document.querySelector('#database-site777-until');"
+                                       "u.value='2026-11-05';u.dispatchEvent(new Event('change'))")
+                    time.sleep(1.5)
+                    assert (session.state()['day'],session.state()['queue'])==('2026-11-05',['2026-11-06']),session.state()
                 window.evaluate_js("document.querySelector('#database-site777-auto').click()")
-                deadline=time.monotonic()+65
+                deadline=time.monotonic()+(140 if ranged else 65)
                 while time.monotonic()<deadline:
                     state=session.state()
                     if redirected:
@@ -138,6 +158,14 @@ def main():
                 store=PscubeStore(folder/'pscube.sqlite3',recording=False)
                 try:records=store.export_payload()['records']
                 finally:store.close()
+                if ranged:
+                    days=sorted({r['day'] for r in records})
+                    assert days==['2026-11-05','2026-11-06'] and len(records)==64,(days,len(records))
+                    assert len(session.state()['finished_days'])==2 and '範囲の取り込みが完了しました' in session.state()['status'],session.state()
+                    charts=[r for r in requests if r.startswith('/chart/')]
+                    assert len(charts)==len(set(charts))==64,'同じグラフを再取得しています'
+                    result.update(ok=True,records=64,days=days,graph_requests=64,auto_off_at_end=True)
+                    return
                 assert len(records)==32 and all(r['source_site']=='site777' for r in records)
                 charts=[r for r in requests if r.startswith('/chart/')]
                 assert len(charts)==len(set(charts))==32,'同じグラフを再取得しています'

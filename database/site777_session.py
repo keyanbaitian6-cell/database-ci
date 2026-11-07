@@ -31,6 +31,11 @@ class Session(Bridge):
         self._enabled = False
         self._days = recent_business_days(self._now(), count=8)
         self._day = self._days[0]
+        # 日付の範囲で取り込む（2026-11-07 利用者「日付範囲指定できるようにしてほしい」）。_day が今の日、
+        # _queue がこの後に取り込む日（古い順）、_until は範囲の終わり（単日なら None）。
+        self._until = None
+        self._queue = []
+        self._finished_days = []
         self._status = 'P-STATIONの20円スロットを開き、取り込む日付を確認してください。'
         self._models = {}
         self._done = set()
@@ -46,17 +51,31 @@ class Session(Bridge):
     def state(self):
         with self._state_lock:
             return {'enabled': self._enabled, 'epoch': self._epoch, 'day': self._day,
+                    'until': self._until, 'queue': list(self._queue), 'finished_days': list(self._finished_days),
                     'days': self._days, 'status': self._status, 'added': self._added, 'kept': self._kept,
                     'ready': self._pace.due() is not None, 'unknown_graphs': self._unknown}
 
-    def configure(self, enabled, day=None):
+    def configure(self, enabled, day=None, until=None):
+        """自動取り込みのON/OFFと取り込む日。until を付けると day〜until の範囲（どちらが先でもよい）を
+        古い日から順に取り込む。範囲は掲載日（_days）の中だけ。"""
         if type(enabled) is not bool:
             raise ValueError('自動取り込みの設定が不正です。')
-        if day is not None:
-            from datetime import date
-            if not isinstance(day, str) or date.fromisoformat(day).isoformat() != day:
+        from datetime import date
+        for value in (day, until):
+            if value is not None and (not isinstance(value, str) or date.fromisoformat(value).isoformat() != value):
                 raise ValueError('取り込み日が不正です。')
+        if until is not None and day is None:
+            raise ValueError('範囲の始まりの日を選んでください。')
         with self._state_lock:
+            queue = []
+            if until is not None and until != day:
+                first, last = sorted((day, until))
+                span = sorted(d for d in self._days if first <= d <= last)
+                if not span:
+                    raise ValueError('選んだ範囲に掲載日がありません。')
+                day, queue = span[0], span[1:]
+                if self._work_lock.locked() and day != self._day:
+                    raise ValueError('読み取り処理中は日付を変えられません。停止して処理の完了を待ってください。')
             if day != self._day and day is not None:
                 if self._work_lock.locked():
                     raise ValueError('読み取り処理中は日付を変えられません。停止して処理の完了を待ってください。')
@@ -66,6 +85,11 @@ class Session(Bridge):
                 self._job = None
                 self._added = self._kept = 0
                 self._unknown = 0
+            if day is not None and day != self._day:
+                self._finished_days = []
+            if day is not None:
+                self._queue = queue
+                self._until = queue[-1] if queue else None
             self._day = day or self._day
             self._enabled = enabled
             self._pending_navigation = False
@@ -180,9 +204,33 @@ class Session(Bridge):
         if not self._models and index_url:
             return {'action': {'type': 'link', 'url': index_url}}
         with self._state_lock:
+            finished = f'{self._day[5:].replace("-", "/")}（追加{self._added}台・既存{self._kept}台・グラフ不明{self._unknown}台）'
+            self._finished_days.append(finished)
+            if self._queue and index_url:
+                # 範囲の次の日へ。表示中のページの「設置機種」のリンク（index_url）から機種一覧を読み直す
+                # （日によって設置機種が違うことがある。サイトの既存のリンクを押すだけで、URLを作って開かない）。
+                self._day = self._queue.pop(0)
+                if not self._queue:
+                    self._until = None
+                self._models.clear()
+                self._done.clear()
+                self._index_pages.clear()
+                self._job = None
+                self._added = self._kept = self._unknown = 0
+                self._status = f'{finished}が完了。次は{self._day}を取り込みます。'
+                return {'action': {'type': 'link', 'url': index_url}}
             self._enabled = False
             self._pace.configure(False, 15)
-            self._status = f'指定日の取り込みが完了しました。追加{self._added}台、既存を保持{self._kept}台、グラフ不明{self._unknown}台。'
+            left = len(self._queue)
+            self._queue = []
+            self._until = None
+            if left:
+                self._status = (f'{finished}まで完了しました。機種一覧のページが分からないため、残りの{left}日は'
+                                '取り込んでいません。機種一覧を開いてから、残りの日を選んで再開してください。')
+            elif len(self._finished_days) > 1:
+                self._status = '範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
+            else:
+                self._status = f'指定日の取り込みが完了しました。追加{self._added}台、既存を保持{self._kept}台、グラフ不明{self._unknown}台。'
         return {'complete': True}
 
     def capture(self, raw, epoch):

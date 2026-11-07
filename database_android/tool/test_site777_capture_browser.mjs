@@ -67,6 +67,30 @@ try {
   });
   await page.waitForFunction(()=>document.querySelector('#database-site777-status')?.textContent==='別店舗への移動を止めました',{},{timeout:5000});
   assert.match(await page.locator('#database-site777-auto').innerText(),/OFF/);
+  // 日付の範囲（2026-11-07）：「まで」を選ぶと始まり・終わりを渡し、開始でも同じ範囲を渡す。進み具合を出す。
+  await page.evaluate(()=>{
+    window.__configured=[];
+    Object.assign(window.__scopeState,{enabled:false,epoch:3,day:'2026-11-06',days:['2026-11-06','2026-11-05','2026-11-04'],status:'停止しました。'});
+    window.pywebview.api.configure=async(enabled,day,until)=>{
+      window.__configured.push([enabled,day,until]);
+      const first=until&&until<day?until:day;
+      Object.assign(window.__scopeState,{enabled,day:first,until:until?(until>day?until:day):null,
+        queue:until?['2026-11-05','2026-11-06'].filter(d=>d>first):[],finished_days:enabled?['11/04（追加3台・既存0台・グラフ不明0台）']:[]});
+      return structuredClone(window.__scopeState);
+    };
+  });
+  await page.waitForFunction(()=>document.querySelector('#database-site777-until')?.options.length===3);
+  assert.equal(await page.inputValue('#database-site777-until'),'2026-11-06','初めは1日だけ（始まりと同じ日）');
+  await page.selectOption('#database-site777-until','2026-11-04');
+  await page.waitForFunction(()=>window.__configured.length===1);
+  assert.deepEqual(await page.evaluate(()=>window.__configured[0]),[false,'2026-11-06','2026-11-04']);
+  await page.waitForFunction(()=>document.querySelector('#database-site777-day').value==='2026-11-04');
+  assert.equal(await page.inputValue('#database-site777-until'),'2026-11-06');
+  await page.click('#database-site777-auto');
+  await page.waitForFunction(()=>window.__configured.length===2);
+  assert.deepEqual(await page.evaluate(()=>window.__configured[1]),[true,'2026-11-04','2026-11-06']);
+  await page.waitForFunction(()=>document.querySelector('#database-site777-range')?.textContent.includes('この後：2026-11-05、2026-11-06'));
+  assert.equal(await page.locator('#database-site777-until').isDisabled(),true,'取り込み中は日付を変えない');
   assert.deepEqual(errors,[]);
   console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし：成功');
 } finally {await browser.close();}

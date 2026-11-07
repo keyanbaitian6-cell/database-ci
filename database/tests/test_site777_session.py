@@ -168,3 +168,45 @@ class SessionTest(unittest.TestCase):
         self.assertIn('mdc=123',result['action']['url'])
         self.session._done.add('123')
         self.assertIn('mdc=456',self.session._next()['action']['url'])
+
+    def test_a_date_range_runs_oldest_first_and_returns_to_the_machine_list_between_days(self):
+        # 2026-11-07 利用者「日付範囲指定できるようにしてほしい」。古い日から順に、日が終わったら機種一覧へ戻る。
+        days=[{'label':'11/6','url':url('D3300')},{'label':'11/5','url':url('D3300').replace('dtdd=0','dtdd=1')}]
+        def day_table(label):
+            value=table();value['selected_md']=label;value['days']=days;return value
+        def day_graph(label,page=1,metadata=False):
+            value=graph(page,metadata);value['selected_md']=label;return value
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300')}]}
+        state=self.session.configure(True,'2026-11-06','2026-11-05')
+        self.assertEqual((state['day'],state['queue'],state['until']),('2026-11-05',['2026-11-06'],'2026-11-06'))
+        self.epoch=state['epoch']
+        self.assertEqual(self.cycle(index)['action']['type'],'listed')
+        for label in ('11/5','11/6'):
+            self.assertIn('D4300',self.cycle(day_table(label))['action']['url'])
+            self.assertTrue(self.cycle(day_graph(label,metadata=True))['prepare_graphs'])
+            self.assertEqual(self.cycle(day_graph(label))['action'],{'type':'page','number':2})
+            result=self.cycle(day_graph(label,2))
+            if label=='11/5':
+                # 1日目が終わったら、次の日のために機種一覧へ戻る（自動はONのまま）。
+                self.assertIn('D0300',result['action']['url'])
+                self.assertEqual((result['state']['day'],result['state']['queue'],result['state']['enabled']),('2026-11-06',[],True))
+                self.assertEqual(len(result['state']['finished_days']),1)
+                self.assertEqual(self.cycle(index)['action']['type'],'listed')
+        self.assertTrue(result['complete'])
+        self.assertFalse(result['state']['enabled'])
+        self.assertIn('範囲の取り込みが完了しました',result['state']['status'])
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:
+            records=store.export_payload()['records']
+            self.assertEqual(sorted((r['day'],r['rack']) for r in records),
+                             [('2026-11-05',101),('2026-11-05',102),('2026-11-06',101),('2026-11-06',102)])
+        finally:store.close()
+
+    def test_a_range_outside_the_listed_days_or_without_a_start_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.session.configure(False,None,'2026-11-05')
+        with self.assertRaises(ValueError):
+            self.session.configure(False,'2025-01-01','2025-01-02')
+        state=self.session.configure(False,'2026-11-05','2026-11-05')
+        self.assertEqual((state['day'],state['queue'],state['until']),('2026-11-05',[],None))
