@@ -1162,3 +1162,4 @@
 - 変更：`database_android/tool/pscube_cloud_sync_runtime.js`（→ 生成 `pscube_cloud_sync.gs`）と `meruhen_cloud_sync.gs` の `*_HISTORY_VIEWER` を **true**。`*_INCREMENTAL_VIEWER` は false のまま。`VIEWER_HISTORY_SYNC.md` を「配布元は true、そのまま全文貼り替えればよい」に。試験 `test_meruhen_cloud_sync.mjs`・`test_pscube_cloud_sync.mjs` は方式を切り替えるときの置き換えを true/false どちらにも合うように。**今後の貼り替えは、配布元の .gs をそのまま渡せばよい**（念のため HISTORY の行が true かは確かめる）。今の Google プロジェクトの動きは変わらない。
 - 試験：同期スクリプトに関わる JS 147件 OK、版の照合（`0949e413425a` に変わり生成物を作り直した）OK。
 - 公開中の閲覧ページ・共有カレンダーと、先に渡した貼り替え用ファイル（`../outputs/site777-net-20261107/…_推定差枚.gs`）は照合版 4290b0c1014e でそろっている。リポジトリはこの変更で 0949e413425a になったが、機能は同じ（初期値とコメントと版の文字だけ）。利用者は先に渡したファイルを貼ればよく、次の公開・貼り替えでそろえる。
+- 追記：正本の CI [42325320708](https://github.com/imakurudev-eng/database/actions/runs/42325320708)（`45ff269`）は **success**。再実行なし。
