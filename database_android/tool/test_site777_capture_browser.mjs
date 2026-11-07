@@ -52,6 +52,21 @@ try {
   }
   assert.equal(charts.length,31);
   assert.equal(new Set(charts).size,31,'遅延画像を再取得しない');
+  // 転送をネイティブ側でキャンセルしたとき、beforeunload後も停止理由を表示する。
+  await page.goto(source('D3300'));
+  await page.evaluate(()=>{
+    window.__scopeState={enabled:true,epoch:1,day:'2026-11-06',days:['2026-11-06'],status:'準備中',ready:false};
+    window.pywebview={api:{state:async()=>structuredClone(window.__scopeState)}};
+  });
+  await page.evaluate(readFileSync(new URL('../../database/assets/capture_card.js',import.meta.url),'utf8'));
+  await page.evaluate(readFileSync(new URL('../../database/assets/site777_overlay.js',import.meta.url),'utf8'));
+  await page.waitForFunction(()=>document.querySelector('#database-site777-auto')?.textContent.includes('ON'));
+  await page.evaluate(()=>{
+    window.dispatchEvent(new Event('beforeunload'));
+    Object.assign(window.__scopeState,{enabled:false,epoch:2,status:'別店舗への移動を止めました'});
+  });
+  await page.waitForFunction(()=>document.querySelector('#database-site777-status')?.textContent==='別店舗への移動を止めました',{},{timeout:5000});
+  assert.match(await page.locator('#database-site777-auto').innerText(),/OFF/);
   assert.deepEqual(errors,[]);
   console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし：成功');
 } finally {await browser.close();}
