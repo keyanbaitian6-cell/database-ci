@@ -54,29 +54,24 @@
     auto.style.background=s.enabled?'#b74237':'#304d6e';
     status.textContent=s.status;
   };
-  // グラフが出ないとき（2026-11-07 利用者「1分後に再読み込みみたいな処理」）：自動取り込み中だけ、
-  // 1分待ってから同じページを1回だけ読み込み直す。読み込み直したページでまた出なければ止める。
-  // 読み込み直した記録が残せない（保存できない）ときは読み込み直さない（何度も繰り返さないため）。
-  const reloadKey='database-site777-reloaded';
-  const reloaded=()=>{try{const v=JSON.parse(sessionStorage.getItem(reloadKey)||'[]');return Array.isArray(v)?v:null;}catch(_){return null;}};
-  const markReloaded=url=>{
-    const old=reloaded();if(!old)return false;
-    try{sessionStorage.setItem(reloadKey,JSON.stringify([...old,url].slice(-200)));return reloaded()?.includes(url)||false;}catch(_){return false;}
-  };
-  const reloadLater=async(mine,epoch)=>{
-    const url=databaseSite777.read(true).url, done=reloaded();
-    if(!done||done.includes(url))return false;
-    const until=Date.now()+(window.__site777ReloadMs||60000);
+  // グラフが出ないとき（2026-11-07 利用者「1分後に再読み込みじゃなくて1分後に自動取り込み再開するように」）：
+  // 自動取り込み中だけ、ページは読み込み直さずに1分待ち、同じページのまま自動取り込みを続きから再開する。
+  // 同じページで3回まで（それでも出なければ止める。ずっと繰り返さないため）。待つ間に停止を押せば取りやめる。
+  const MAX_RETRIES=3, retries=new Map();
+  let retryNow=false;
+  const retryLater=async(mine,epoch)=>{
+    const url=databaseSite777.read(true).url, count=(retries.get(url)||0)+1;
+    if(count>MAX_RETRIES)return false;
+    retries.set(url,count);
+    const until=Date.now()+(window.__site777RetryMs||60000);
     while(Date.now()<until){
       if(!alive||token!==mine)return true;
-      status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後にこのページを1回だけ読み込み直します。`;
+      status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後に自動取り込みを再開します（${count}/${MAX_RETRIES}回目）。`;
       await new Promise(resolve=>setTimeout(resolve,Math.min(1000,Math.max(0,until-Date.now()))));
     }
     const s=await api().state();
     if(!alive||token!==mine||!s.enabled||s.epoch!==epoch)return true;
-    if(!markReloaded(url))return false;
-    status.textContent='このページを読み込み直しています…';
-    location.reload();
+    retryNow=true;
     return true;
   };
   const stop=async message=>{
@@ -118,16 +113,16 @@
       }
     }catch(error){
       if(error?.stalled&&automatic&&alive&&token===mine){
-        try{if(await reloadLater(mine,epoch))return;}catch(_){}
-        if(alive&&token===mine)await stop(reloaded()?.includes(databaseSite777.read(true).url)
-          ?'読み込み直してもグラフが表示されないため停止しました。画面を確認してください。'
-          :error.message);
+        try{if(await retryLater(mine,epoch))return;}catch(_){}
+        if(alive&&token===mine)await stop(`${MAX_RETRIES}回再開してもグラフが表示されないため停止しました。画面を確認してください。`);
         return;
       }
       if(alive&&token===mine)await stop(error.message||String(error));
     }finally{
       busy=false;
       if(alive&&current)render(current);
+      // 待ち終えたら、ページ移動を待たずにそのまま続きから（次のページの読み込みは無いので、間隔の待ちは来ない）。
+      if(retryNow){retryNow=false;if(alive&&token===mine)setTimeout(()=>cycle(true),0);}
     }
   };
   capture.onclick=()=>cycle(false);
