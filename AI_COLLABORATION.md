@@ -1281,3 +1281,24 @@
 | 手動では再開しない | 済 | 同上 |
 | 本物のサイトでの動き | 未確認 | 利用者がPC版を開き直した後 |
 - CI：`c3029e8`（上から／下から・5〜7秒の `47f9cb3` を含む）success https://github.com/imakurudev-eng/database/actions/runs/42338450979 。成功を確かめてから `4aeaf0d`（1分後の再開）を送った。
+
+## 2026-11-07 サイトセブン：最新CIの確認と保存済みの推定差枚185台の反映準備（Codex）
+
+- 基準は正本と一致する 8837589。グラフが出ないときに同じページで1分待って再開する 4aeaf0d を含む。GitHub Actions 42339660575 は Windows PC、Ubuntu PC、全体の3ジョブが成功（https://github.com/imakurudev-eng/database/actions/runs/42339660575）。実サイトで1分後に再開するところは未確認。
+- 共有記録の利用者指示「ビルドはやらなくていい」を確認し、Android APK の作成を再開しなかった。コードの変更・再送信はなし。
+- P’s CUBE の本番DBを読み取り専用で確認した。サイトセブン由来は対象店舗・20円スロのみ409台・日。184台は推定済み。保存済み画像を照合し、11/6の185台は追記可能、40台は線が短い・画像の端に触れるなどで保留。
+- 確認用の反映ファイルは同期フォルダー外の ../outputs/site777-net-20261107/確認用-site777net-20261107.json。DBのコピーに既存の PscubeStore.import_backup で読み込むと、対象185台の推定差枚だけが増えた。追加レコード0、機種情報・取り込み済みの印・状態の差分0。2回目は更新0。
+- 本番DBへの反映とGoogle同期は保留。反映する場合は、利用者確認後に既存の取り込み手順を使い、推定差枚の反映件数を照合する。今回、サイトセブンへのアクセスはなし。
+
+## 2026-11-07 Android 0.5.54の通常版・P’s CUBE版 APKを作成（Codex）
+
+- 利用者「ビルドして」。両リポジトリの main を含むことを push_ci.py --dry-run で試験前とビルド前に確認。起点 8837589、照合版 4fef780cf0ea。最新のサイトセブンの推定差枚と、サイトセブンがアナスロの補完を置き換える処理を含む。
+- 出力は database_android/build/releases/0.5.54/ の database-0.5.54-2026110703.apk（通常版）と database-pscube-0.5.54-2026110704.apk。pubspec.yaml の版番号は最終ビルドの 2026110704。2本目のビルド前は versionCode のみを上げた。SHA256SUMS.txt と verification.json に検証値を保存。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 手元のビルド前全体試験 | 済 | check_before_build.sh が ALL PASSED。PC 910件、UTC 27件、Flutter 822件、JS 82ファイル。PythonのUTCオフセット +09:00。静的解析は情報レベル31件。ログは database_android/build/check_apk_054_20261107/ |
+| APKの版・ID・署名 | 済 | aapt2 で通常 com.keyan.database_android、P’s CUBE com.keyan.database_android.pscube。apksigner で0.5.53の両版と同じ証明書 |
+| 推定差枚のコードとAPKの中身 | 済 | 3 ABIで site777-axis-pixels-v1 と照合版4fef780cf0ea（画面用の日本語を含むUTF-16LE文字列）を確認。両版の ABI 別 libapp.so のSHA-256と、同梱seedの原本との一致を確認 |
+| 古いAPKの整理 | 済 | 0.5.53の両版、午前の0.5.54通常版、0.5.51デバッグ版の計4ファイルをWindowsのごみ箱へ |
+| 実機への導入・推定差枚185台の本番反映 | 未実施 | 今回はAPK作成まで。端末操作、DBの反映、Google同期、GitHubへの送信はなし |
