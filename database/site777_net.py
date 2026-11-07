@@ -4,7 +4,7 @@
 260×226 の画像で、+5,000 の線が y=15、ゼロ線が y=111、-5,000 の線が y=207。
 推定差枚 = (111 - 終点の y) × 10000 / 192。終点は黄色い線の一番右の列の、黄色の画素の y の中央値。
 
-- 正確な差枚ではない（net_medals には入れない）。1画素で約52枚なので、50枚単位に丸める。
+- 推定差枚として保存する（net_medals には入れない）。終点から換算した値を1枚単位に丸める。
 - 目盛りの文字（+5,000・-5,000）が確かめた形と同じ画像だけを読む。違う大きさ・目盛りは推測で通さない。
 - 上下の端に触れた（見切れ）、右端に届いた、線が途切れた、終点が分かれた、色の閾値で終点が動く、
   線が短い（10画素未満）ときは推定を付けない（保留）。理由は status で返す。
@@ -19,7 +19,8 @@ import hashlib
 import math
 from io import BytesIO
 
-METHOD = 'site777-axis-pixels-v1'
+LEGACY_METHOD = 'site777-axis-pixels-v1'
+METHOD = 'site777-axis-pixels-v2'
 SIZE = (260, 226)
 # 確かめた 105 枚の画像の「5,000」「-5,000」の文字部分の白い画素の形（汎用の文字読み取りではない）。
 TOP_LABEL = '3e266372af51f73d2b43c2b5bc413c6ca12c0419b819533ef0774b72e6448e3f'
@@ -33,8 +34,8 @@ SHORT_PIXELS = 10
 def valid(value) -> bool:
     """記録に付いたサイトセブンの推定差枚の形（PC・Android・閲覧ページ・共有カレンダーで同じ検査）。"""
     return (isinstance(value, dict) and set(value) == {'value', 'sure', 'method'} and type(value['value']) is int
-            and abs(value['value']) <= 1000000 and value['value'] % 50 == 0 and type(value['sure']) is bool
-            and value['method'] == METHOD)
+            and abs(value['value']) <= 1000000 and type(value['sure']) is bool
+            and (value['method'] == METHOD or (value['method'] == LEGACY_METHOD and value['value'] % 50 == 0)))
 
 
 def _yellow(a, threshold=130, blue_max=100):
@@ -57,8 +58,8 @@ def _trace(mask):
     return points
 
 
-def _round50(value):
-    return int(math.copysign(math.floor(abs(value) / 50 + .5) * 50, value))
+def _round_medals(value):
+    return int(math.copysign(math.floor(abs(value) + .5), value))
 
 
 def analyze(raw: bytes) -> dict:
@@ -132,7 +133,7 @@ def analyze(raw: bytes) -> dict:
     short = points[-1][0] - points[0][0] < SHORT_PIXELS
     return {**result, 'status': 'review_short' if short else 'candidate',
             'reason': 'short_curve' if short else 'axis_and_endpoint_confirmed',
-            'estimate': _round50(net), 'estimate_unrounded': net, 'interval': [low, high],
+            'estimate': _round_medals(net), 'estimate_unrounded': net, 'interval': [low, high],
             'sign_uncertain': low <= 0 <= high, 'endpoint': [points[-1][0], points[-1][1]]}
 
 

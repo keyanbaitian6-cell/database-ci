@@ -90,18 +90,18 @@ void main() {
   });
 
   // グラフ画像の目盛りから読んだ推定差枚（PC `site777_net.py`、2026-11-07）。
-  Map<String, dynamic> estimate(int value, {bool sure = true}) => {
+  Map<String, dynamic> estimate(int value, {bool sure = true, bool legacy = false}) => {
     'value': value,
     'sure': sure,
-    'method': 'site777-axis-pixels-v1',
+    'method': legacy ? 'site777-axis-pixels-v1' : 'site777-axis-pixels-v2',
   };
 
   test('サイトセブンの推定差枚を「推定差枚」で出し、確かでない台は※。MYは差枚にしない', () {
     final data = fixture();
-    data['records'][0]['net_estimate'] = estimate(-700);
-    data['records'][1]['net_estimate'] = estimate(50, sure: false);
+    data['records'][0]['net_estimate'] = estimate(-573);
+    data['records'][1]['net_estimate'] = estimate(50, sure: false, legacy: true);
     final rows = ViewerData.parse(jsonEncode(data)).records;
-    expect(rows[0].netText, '-700');
+    expect(rows[0].netText, '-573');
     expect(rows[0].netLabel, '推定差枚');
     expect(rows[1].netText, '+50※');
     expect(rows[0].netMedals, isNull);
@@ -109,7 +109,7 @@ void main() {
     expect(ViewerData.parse(jsonEncode(held)).records[1].netText, isNull);
   });
 
-  test('方式・出典の合わない推定差枚や50枚単位でない値は拒否する', () {
+  test('方式・出典の合わない推定差枚や旧方式の50枚単位でない値は拒否する', () {
     for (final bad in <Object?>[
       {'value': -700, 'sure': true, 'method': 'anaslo-graph-v1'},
       {'value': -703, 'sure': true, 'method': 'site777-axis-pixels-v1'},
@@ -129,13 +129,16 @@ void main() {
       factory: databaseFactoryFfi,
     );
     try {
-      await store.importBackup(jsonEncode(fixture()));
+      final legacy = fixture();
+      legacy['records'][0]['net_estimate'] = estimate(-550, legacy: true);
+      await store.importBackup(jsonEncode(legacy));
       final later = fixture();
-      later['records'][0]['net_estimate'] = estimate(-700);
+      later['records'][0]['net_estimate'] = estimate(-573);
       later['records'][1]['net_estimate'] = estimate(300);
       (later['records'][1]['source_graph'] as Map)['image_sha256'] =
           List.filled(64, 'f').join();
       await store.importBackup(jsonEncode(later));
+      await store.importBackup(jsonEncode(legacy));
       final file = await store.exportViewer(path: '${directory.path}/b.json');
       final rows = {
         for (final r in jsonDecode(await file.readAsString())['records'])
@@ -143,7 +146,7 @@ void main() {
       };
       final first = later['records'][0]['rack'];
       final second = later['records'][1]['rack'];
-      expect(rows[first]['net_estimate'], estimate(-700));
+      expect(rows[first]['net_estimate'], estimate(-573));
       expect(rows[first]['games'], fixture()['records'][0]['games']);
       expect(rows[second].containsKey('net_estimate'), isFalse);
     } finally {

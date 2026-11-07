@@ -126,10 +126,13 @@ export function lastRainbowText(last, day) {
  *  validSite777NetEstimate と同じ形）。アナスロ（2026-11-06）とサイトセブン（画像の目盛り、2026-11-07）。方式は出典と合わせる。 */
 export function pscubeNetEstimate(raw) {
   const e = raw?.net_estimate;
-  const method = {anaslo: 'anaslo-graph-v1', site777: 'site777-axis-pixels-v1'}[raw?.source_site];
-  if (!method || raw?.net_medals != null || !e || typeof e !== 'object') return null;
+  if (raw?.net_medals != null || !e || typeof e !== 'object') return null;
   if (Object.keys(e).length !== 3 || !Number.isInteger(e.value) || Math.abs(e.value) > 1000000 ||
-      typeof e.sure !== 'boolean' || e.method !== method || (raw.source_site === 'site777' && e.value % 50 !== 0)) return null;
+      typeof e.sure !== 'boolean') return null;
+  const supported = raw.source_site === 'site777'
+    ? e.method === 'site777-axis-pixels-v2' || (e.method === 'site777-axis-pixels-v1' && e.value % 50 === 0)
+    : raw.source_site === 'anaslo' && e.method === 'anaslo-graph-v1';
+  if (!supported) return null;
   return {value: e.value, sure: e.sure};
 }
 

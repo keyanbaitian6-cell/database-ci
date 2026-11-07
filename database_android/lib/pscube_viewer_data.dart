@@ -162,16 +162,18 @@ bool validPscubeNetEstimate(Object? value) =>
     value['method'] == pscubeNetEstimateMethod;
 
 /// サイトセブンの台の推定差枚の形（PC `site777_net.valid` と同じ、2026-11-07）。グラフ画像の目盛りから
-/// 読んだ値で、50枚単位。{'value': 整数, 'sure': 真偽, 'method': 'site777-axis-pixels-v1'} だけ。
-const site777NetEstimateMethod = 'site777-axis-pixels-v1';
+/// 読んだ値で、旧方式は50枚単位、新方式は1枚単位。
+const site777LegacyNetEstimateMethod = 'site777-axis-pixels-v1';
+const site777NetEstimateMethod = 'site777-axis-pixels-v2';
 bool validSite777NetEstimate(Object? value) =>
     value is Map &&
     value.length == 3 &&
     value['value'] is int &&
     (value['value'] as int).abs() <= 1000000 &&
-    (value['value'] as int) % 50 == 0 &&
     value['sure'] is bool &&
-    value['method'] == site777NetEstimateMethod;
+    (value['method'] == site777NetEstimateMethod ||
+        (value['method'] == site777LegacyNetEstimateMethod &&
+            (value['value'] as int) % 50 == 0));
 
 /// 補完の台の推定差枚が、出典に合った方式か（アナスロ・サイトセブン）。
 bool validSupplementNetEstimate(Object? source, Object? value) =>

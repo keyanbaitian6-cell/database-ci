@@ -64,8 +64,7 @@ class EstimateTest(unittest.TestCase):
             result = site777_net.analyze(png(curve))
             self.assertEqual(result['status'], 'candidate', result)
             expected = (111 - result['endpoint'][1]) * 10000 / 192
-            self.assertEqual(result['estimate'] % 50, 0)
-            self.assertLessEqual(abs(result['estimate'] - expected), 25)
+            self.assertLessEqual(abs(result['estimate'] - expected), .5)
             estimate = site777_net.net_estimate(png(curve))
             self.assertEqual(estimate, {'value': result['estimate'], 'sure': True, 'method': site777_net.METHOD})
             self.assertTrue(site777_net.valid(estimate))
@@ -76,6 +75,15 @@ class EstimateTest(unittest.TestCase):
         estimate = site777_net.net_estimate(png(FLAT))
         self.assertIsNotNone(estimate)
         self.assertFalse(estimate['sure'])
+
+    def test_ten_and_eleven_pixels_round_to_individual_medals(self):
+        for y, expected in ((101, 521), (100, 573), (121, -521), (122, -573)):
+            with self.subTest(y=y):
+                raw = png([(9, 111), (20, y), (100, y)],
+                          extra=lambda d: d.line([(101, y), (120, y)], fill=(250, 230, 30)))
+                result = site777_net.analyze(raw)
+                self.assertEqual(result['status'], 'candidate', result)
+                self.assertEqual(result['estimate'], expected)
 
     def test_held_or_unreadable_images_get_no_estimate(self):
         cases = {
@@ -95,9 +103,10 @@ class EstimateTest(unittest.TestCase):
         self.assertEqual(site777_net.analyze(b'not a png')['reason'], 'image_unreadable')
 
     def test_only_the_site777_form_is_valid(self):
-        good = {'value': -700, 'sure': True, 'method': site777_net.METHOD}
+        good = {'value': -573, 'sure': True, 'method': site777_net.METHOD}
         self.assertTrue(site777_net.valid(good))
-        for bad in ({**good, 'method': 'anaslo-graph-v1'}, {**good, 'value': -703}, {**good, 'value': 700.0},
+        self.assertTrue(site777_net.valid({**good, 'value': -550, 'method': site777_net.LEGACY_METHOD}))
+        for bad in ({**good, 'method': 'anaslo-graph-v1'}, {**good, 'method': site777_net.LEGACY_METHOD}, {**good, 'value': 700.0},
                     {**good, 'sure': 1}, {**good, 'extra': 1}, {'value': -700, 'sure': True}, None):
             self.assertFalse(site777_net.valid(bad), bad)
 
@@ -217,3 +226,33 @@ class BackfillTest(unittest.TestCase):
             self.assertIsNone(site777_backfill.build(db_path, sources)[0])
         self.assertTrue(ANDROID_SYNC_NAME.fullmatch('pscube-backup-site777net-20261107.json'))
         self.assertFalse(ANDROID_SYNC_NAME.fullmatch('pscube-backup-site777net-x.json'))
+
+    def test_upgrade_recalculates_only_legacy_estimates_with_matching_images(self):
+        import json
+        from pscube_import import PscubeStore
+        import site777_backfill
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            images = {101: png(DOWN), 102: png(UP)}
+            precise = ImportTest().backup(images)
+            legacy = {**precise, 'records': [
+                {**r, 'net_estimate': {'value': 500, 'sure': True, 'method': site777_net.LEGACY_METHOD}}
+                for r in precise['records']
+            ]}
+            (root / 'page.json').write_text(json.dumps({
+                'kind': 'graphs', 'graphs': [{'rack': 101, 'png': data_uri(images[101])}],
+            }), encoding='utf-8')
+            db_path = root / 'test.sqlite3'
+            store = PscubeStore(db_path, recording=False)
+            try:
+                store.import_backup(legacy)
+                self.assertIsNone(site777_backfill.build(db_path, root)[0])
+                upgrade, counts = site777_backfill.build(db_path, root, upgrade=True)
+                self.assertEqual(counts['推定を更新する'], 1)
+                self.assertEqual(counts['画像なし'], 1)
+                self.assertEqual(upgrade['records'], precise['records'][:1])
+                self.assertEqual(store.import_backup(upgrade)['updated'], 1)
+                self.assertEqual(store.import_backup(legacy)['updated'], 0)
+                self.assertCountEqual(store.export_payload()['records'], [precise['records'][0], legacy['records'][1]])
+            finally:
+                store.close()

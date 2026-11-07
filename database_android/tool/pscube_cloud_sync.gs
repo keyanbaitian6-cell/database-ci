@@ -499,7 +499,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
-const APPLICATION_RELEASE = '4fef780cf0ea';
+const APPLICATION_RELEASE = '722eadb1a018';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -818,10 +818,13 @@ function validNetEstimate(e) {
 }
 
 // サイトセブンの台の推定差枚（PC site777_net.valid・Dart validSite777NetEstimate と同じ形、2026-11-07）。
-// グラフ画像の目盛りから読んだ値で50枚単位。方式名だけがアナスロと違う。
+// グラフ画像の目盛りから読んだ値。旧方式は50枚単位、新方式は1枚単位。
+const site777LegacyEstimateMethod = 'site777-axis-pixels-v1';
+const site777EstimateMethod = 'site777-axis-pixels-v2';
 function validSite777NetEstimate(e) {
   return !!e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).length === 3 && Number.isSafeInteger(e.value) &&
-    Math.abs(e.value) <= 1000000 && e.value % 50 === 0 && typeof e.sure === 'boolean' && e.method === 'site777-axis-pixels-v1';
+    Math.abs(e.value) <= 1000000 && typeof e.sure === 'boolean' &&
+    (e.method === site777EstimateMethod || (e.method === site777LegacyEstimateMethod && e.value % 50 === 0));
 }
 
 function validateAnasloRecord(r) {
@@ -959,6 +962,7 @@ function mergeData(stored, incoming) {
       // サイトセブンは同じ表・同じグラフ画像から後で付けた推定差枚だけ移す（PC・Android と同じ、2026-11-07）。
       if (r.source_site==='site777' && previous?.source_site === 'site777' && r.net_estimate && r.source_sha256 === previous.source_sha256 &&
           r.source_graph?.image_sha256 === previous.source_graph?.image_sha256 &&
+          !(previous.net_estimate?.method === site777EstimateMethod && r.net_estimate.method === site777LegacyEstimateMethod) &&
           JSON.stringify(r.net_estimate) !== JSON.stringify(previous.net_estimate ?? null)) {
         records.set(key, {...previous, net_estimate: r.net_estimate});
       }
@@ -1006,7 +1010,7 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
-const SCRIPT_RELEASE = '4fef780cf0ea';
+const SCRIPT_RELEASE = '722eadb1a018';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

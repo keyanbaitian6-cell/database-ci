@@ -447,11 +447,15 @@ def _merge(old: dict | None, fresh: dict) -> dict:
     if fresh.get('source_site') == 'site777':
         # サイトセブンは既存の出典・数値・グラフを補完で上書きしない。ただし、同じ表・同じグラフ画像から
         # 後で推定差枚を付けた（作り直した）ときだけ、推定差枚を移す（2026-11-07。既に保存した日にも届けるため）。
-        if (old.get('source_site') == 'site777' and fresh.get('net_estimate') is not None
+        old_estimate = old.get('net_estimate') or {}
+        estimate = fresh.get('net_estimate')
+        if (old.get('source_site') == 'site777' and estimate is not None
+                and not (old_estimate.get('method') == site777_net.METHOD
+                         and estimate['method'] == site777_net.LEGACY_METHOD)
                 and fresh.get('source_sha256') == old.get('source_sha256')
                 and (fresh.get('source_graph') or {}).get('image_sha256') == (old.get('source_graph') or {}).get('image_sha256')
-                and fresh.get('net_estimate') != old.get('net_estimate')):
-            return {**old, 'net_estimate': fresh['net_estimate']}
+                and estimate != old_estimate):
+            return {**old, 'net_estimate': estimate}
         return old
     # External HTML is fill-only, including later restores of exported backups.
     # A real capture always replaces a source-only record regardless of game count.

@@ -6,7 +6,8 @@
 - DB は読むだけ（mode=ro）。書き換えは、作ったバックアップを起動中のPC版が読み込むときに、
   既存の PscubeStore.import_backup（_merge：同じ表・同じ画像のときだけ推定差枚を移す）で行う。
 - 出力は推定差枚を付けられた台だけ。数値・出典・MY は保存済みのまま（推定差枚以外を変えない）。
-- 既に推定差枚がある台、画像が見つからない台、保留（見切れ・短い線など）の台は入れない。
+- 既に推定差枚がある台は通常は対象外。--upgrade では50枚刻みの旧方式を同じ画像から再計算する。
+- 画像が見つからない台、保留（見切れ・短い線など）の台は入れない。
 - サイトには接続しない。
 
 使い方（database フォルダーで）：
@@ -54,7 +55,7 @@ def estimates_from_sources(sources_dir) -> dict:
     return found
 
 
-def build(db_path, sources_dir):
+def build(db_path, sources_dir, *, upgrade=False):
     """(バックアップ, 件数の内訳)。推定差枚を付けられた台が無ければバックアップは None。"""
     analyzed = estimates_from_sources(sources_dir)
     uri = Path(db_path).resolve().as_uri() + '?mode=ro'
@@ -68,7 +69,9 @@ def build(db_path, sources_dir):
         if r.get('source_site') != 'site777':
             continue
         summary['サイトセブンの台'] += 1
-        if r.get('net_estimate') is not None:
+        previous = r.get('net_estimate')
+        is_upgrade = upgrade and site777_net.valid(previous) and previous['method'] == site777_net.LEGACY_METHOD
+        if previous is not None and not is_upgrade:
             summary['既に推定あり'] += 1
             continue
         result = analyzed.get((r.get('source_graph') or {}).get('image_sha256'))
@@ -79,7 +82,7 @@ def build(db_path, sources_dir):
         if estimate is None:
             summary[f"保留：{result['reason']}"] += 1
             continue
-        summary['推定を付ける'] += 1
+        summary['推定を更新する' if is_upgrade else '推定を付ける'] += 1
         out.append({**r, 'net_estimate': estimate})
         keys.add(_machine_key(r))
     if not out:
@@ -95,8 +98,9 @@ def main(argv=None):
     parser.add_argument('--db', default=str(ROOT / 'data' / 'pscube.sqlite3'))
     parser.add_argument('--sources', default=str(ROOT / 'data' / 'site777-staging' / 'sources'))
     parser.add_argument('--out', help='バックアップを書くファイル（無ければ件数を見るだけ）')
+    parser.add_argument('--upgrade', action='store_true', help='50枚刻みの旧方式も、同じ画像から再計算する')
     args = parser.parse_args(argv)
-    backup, summary = build(args.db, args.sources)
+    backup, summary = build(args.db, args.sources, upgrade=args.upgrade)
     for name, count in sorted(summary.items()):
         print(f'{name}: {count}')
     if args.out and backup:

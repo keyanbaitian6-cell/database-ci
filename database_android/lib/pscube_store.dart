@@ -932,14 +932,17 @@ class PscubeStore {
     }
     if (fresh['source_site'] == 'site777') {
       // 同じ表・同じグラフ画像から後で推定差枚を付けたときだけ移す（PC `_merge` と同じ、2026-11-07）。
-      final estimate = fresh['net_estimate'];
+      final estimate = fresh['net_estimate'] as Map?;
+      final oldEstimate = old['net_estimate'] as Map?;
       final freshImage = (fresh['source_graph'] as Map?)?['image_sha256'];
       final oldImage = (old['source_graph'] as Map?)?['image_sha256'];
       if (old['source_site'] == 'site777' &&
           estimate != null &&
+          !(oldEstimate?['method'] == site777NetEstimateMethod &&
+              estimate['method'] == site777LegacyNetEstimateMethod) &&
           fresh['source_sha256'] == old['source_sha256'] &&
           freshImage == oldImage &&
-          jsonEncode(estimate) != jsonEncode(old['net_estimate'])) {
+          jsonEncode(estimate) != jsonEncode(oldEstimate)) {
         return {...old, 'net_estimate': estimate};
       }
       return old;
