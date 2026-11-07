@@ -1266,3 +1266,4 @@
 | PCのサイトセブン試験 | 済 | `test_site777*.py` 53件 OK |
 | CI（40abb95・6f2057c） | 確認中 | 送った時点で実行中 |
 | 本物のサイトでの動き | 未確認 | 利用者がPC版を開き直した後 |
+- CI：`40abb95`（グラフが出ないときの読み込み直し・グラフ一覧での日付切り替えを含む）success https://github.com/imakurudev-eng/database/actions/runs/42336543285 、`6f2057c`（保存済みの機種を飛ばす）success https://github.com/imakurudev-eng/database/actions/runs/42337144770 。利用者「CIの結果を待つ」→ 成功を確かめてから `47f9cb3`（上から／下から・5〜7秒）を送った。
