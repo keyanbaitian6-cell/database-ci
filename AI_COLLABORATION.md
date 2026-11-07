@@ -1364,3 +1364,11 @@
 - iPhone閲覧ページ database-viewer 8d55f68（Pages 42354327669）、共有カレンダー database-share 906a6b0（公開版 d653338c4a39、Pages 42354327355）。いずれも07db41cの全体試験でstageした成果物を使用。公開用78ファイルを検査し、記録に固有の文字列90種とスクリプトIDに該当なし。
 - Pagesは両方成功。配信中の変更ファイルを全件（閲覧5・共有9）取得し、SHA-256が公開Gitと一致。seed・イベント履歴・設定ファイルのパスは両方で404。https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42354327669 ・ https://github.com/keyanbaitian6-cell/database-share/actions/runs/42354327355
 - Android APKは利用者指定で保留。今回の操作は正本への送信とWeb公開まで。本番DBの674台の新方式を同期フォルダーに再出力する作業と、実端末での確認は未実施。この共有記録だけの追加送信はせず、次の承認済みの送信に同梱する。
+
+## 2026-11-08 0:05 P’s CUBEの同期スクリプトの「履歴の日別原本が破損しています」（Claude、調べただけ）
+
+- 依頼：利用者がApps Script「P-STATION自動同期のApps Script」（P’s CUBE用、`syncPscubeCloud`）の実行ログの画面写真を見せて「これなに？」。11/7 23:59:13開始、11/8 0:01:06に `Error: 履歴の日別原本が破損しています。上書きせず停止しました。`（`vhRead` コード.gs:1266 ← `loadDay` 1343 ← `vhSync` 1402 ← `vhPscube` 1627）。行番号はリポジトリの `database_android/tool/pscube_cloud_sync.gs` と一致。
+- 仕組み：履歴方式は日別原本 `database-history-day-pscube-<日>-<SHA-256>.json` を書き換えず、一覧 `database-viewer-parts-pscube.json` の `cloud_days` に名前・バイト数・ハッシュを持つ。`vhRead` は名前・容量が一致したあと、読んだ中身のハッシュが一覧と違うと、何も書かずに止まる（守りの停止）。1343行は取り込み中の日の読み込み。
+- 確かめたこと（読むだけ、PCのGoogleドライブ `G:\マイドライブ\database共有`）：一覧の `cloud_days` 150日分すべてで、ファイルあり・容量一致・SHA-256一致（不一致0）。`history_progress` は空。一覧の更新は11/7 23:32（0:01の失敗した実行は何も書いていない）。
+- 判断：Drive上の原本は壊れていない。容量は一致してハッシュだけ違ったので、その実行でApps ScriptがDriveから読んだ中身が一時的に正しくなかった（途中までしか読めなかった等）とみられる。原因は確定していない。データは失われておらず、次の30分ごとの自動実行がやり直す。
+- 次の手順：次の自動実行（0:30ごろ）以降の実行ログが「完了」か確かめる。同じエラーが続くなら、ログに日付が出ないので、どの日で止まるかを出すよう `vhRead` のエラー文に日付を足すことを検討する（コード変更・貼り替えが要るので利用者に聞く）。
