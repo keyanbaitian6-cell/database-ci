@@ -89,7 +89,7 @@ def anaslo_converter_command():
 
 def site777_browser_command():
     """サイトセブン（スマホ会員）をAndroidとして開くブラウザ（site777_browser.py）を別の窓で開くコマンド
-    （2026-11-07 利用者「PC版でandroidユーザーとしてブラウザを開いてログインをしたい」）。今は見るだけ。"""
+    （2026-11-07 利用者「PC版でandroidユーザーとしてブラウザを開いてログインをしたい」）。"""
     if getattr(sys, 'frozen', False):
         raise OSError('配布版（EXE）からは開けません。database/start.cmd から開いてください。')
     here = Path(__file__).resolve().parent
@@ -1130,7 +1130,7 @@ def main():
             messagebox.showerror('起動できません', f'サイトセブンを開けません：{exc}', parent=root)
             return
         logbox.insert('end', 'サイトセブンをスマホとして開きました。初めてのときはスマホ会員のIDでログインしてください'
-                      '（次からはログインしたまま開きます）。今は見るだけで、データの取り込みはまだできません。\n')
+                      '（次からはログインしたまま開きます）。P-STATIONの20スロを表示し、取り込みカードの日付を確認して開始してください。\n')
         logbox.see('end')
 
     def open_pscube_import():
