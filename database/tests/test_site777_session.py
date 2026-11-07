@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pscube_import import PscubeStore
 from site777_browser import DiagnosticLog
 from site777_session import Session
+from site777_import import source_url
 from test_site777_import import bitmap
 
 NOW = datetime.fromisoformat('2026-11-07T02:00:00+09:00')
@@ -70,6 +71,21 @@ class SessionTest(unittest.TestCase):
             self.assertEqual({r['rack'] for r in records},{101,102})
             self.assertTrue(all(r['source_site']=='site777' and r['net_medals'] is None for r in records))
         finally:store.close()
+
+    def test_graph_page_first_moves_to_table_and_other_day_presses_the_day_tab(self):
+        # 2026-11-07 利用者「グラフの時に日付を切り替えてる挙動じゃなかった」：グラフ一覧で押しても止めずに進む。
+        first=graph(metadata=True)
+        first.update(selected_md='11/5',table_url=url('D3300'),
+                     days=[{'label':'11/6','url':url('D4300')},{'label':'11/5','url':url('D4300').replace('dtdd=0','dtdd=1')}])
+        result=self.cycle(first)
+        self.assertEqual(result['action'],{'type':'link','url':source_url(url('D3300'),'table')})
+        self.cycle(table())
+        result=self.cycle(first)
+        self.assertEqual(result['action']['type'],'link')
+        self.assertIn('dtdd=0',result['action']['url'])
+        self.assertIn('D4300',result['action']['url'])
+        self.assertTrue(self.session.state()['enabled'])
+        self.assertFalse((self.root/'pscube.sqlite3').exists())
 
     def test_stop_invalidates_extraction_in_flight(self):
         self.session.configure(False)

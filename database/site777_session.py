@@ -379,8 +379,20 @@ class Session(Bridge):
                 return self._finish(self._job, epoch, payload.get('index_url'))
             self._status = f'{payload["machine"]}：表{len(rows)}台、未保存{len(wanted)}台のグラフを読みます。'
             return {'action': {'type': 'link', 'url': source.source_url(payload.get('graph_url'), 'graphs')}}
-        if kind != 'graphs' or not self._job:
+        if kind != 'graphs':
             raise ValueError('先に同じ機種・日付の全台一覧を取り込んでください。')
+        # グラフ一覧から押したとき（2026-11-07 利用者「グラフの時に日付を切り替えてる挙動じゃなかった」）：
+        # まだこの機種の全台一覧を読んでいなければ、ページにある「大当り一覧」のリンクで全台一覧へ移る
+        # （日付の切り替えは全台一覧で行う）。読んだ後で日付だけ違うなら、ページにある日付のタブを押す。
+        if not self._job or payload.get('model_id') != self._job['table']['model_id']:
+            if payload.get('table_url'):
+                return {'action': {'type': 'link', 'url': source.source_url(payload['table_url'], 'table')}}
+            raise ValueError('先に同じ機種・日付の全台一覧を取り込んでください。')
+        if source.day_from_label(payload.get('selected_md'), self._now()) != self._day:
+            tabs = {source.day_from_label(d['label'], self._now()): d for d in payload.get('days', [])}
+            if self._day in tabs:
+                return {'action': {'type': 'link', 'url': source.source_url(tabs[self._day]['url'], 'graphs')}}
+            raise ValueError('指定した日付はこの機種のグラフ一覧にありません。')
         job = self._job
         model = job['table']['model_id']
         if payload.get('count') != len(job['all_racks']):
