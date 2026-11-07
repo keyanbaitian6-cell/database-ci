@@ -191,14 +191,15 @@ class Session(Bridge):
     def _occupied(self):
         if not self._db_path.is_file():
             return set()
+        # アナスロで補った台はまだ無いものとして数える（サイトセブンで置き換えるため、2026-11-07）。
         with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
-            return {json.loads(r[0])['rack'] for r in db.execute(
+            return {r['rack'] for r in (json.loads(row[0]) for row in db.execute(
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
-                (source.SHOP, self._day))}
+                (source.SHOP, self._day))) if r.get('source_site') != 'anaslo'}
 
     def _saved_racks(self):
-        """その日の保存済みの台番号（取り込まない機種＝is_excluded_machine は数えない）。DB は読むだけ。"""
+        """その日の保存済みの台番号（取り込まない機種＝is_excluded_machine と、アナスロで補った台は数えない）。DB は読むだけ。"""
         if not self._db_path.is_file():
             return set()
         with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
@@ -206,7 +207,8 @@ class Session(Bridge):
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
                 (source.SHOP, self._day))]
-        return {r['rack'] for r in rows if not is_excluded_machine(r.get('machine'))}
+        # アナスロで補った台は数えない（サイトセブンで置き換えるため、2026-11-07）。
+        return {r['rack'] for r in rows if not is_excluded_machine(r.get('machine')) and r.get('source_site') != 'anaslo'}
 
     def _skip_complete_days(self):
         """機種一覧の台数（[31] など）の合計だけ、その日の台が保存済みなら、機種ページを開かずにその日を飛ばす
@@ -214,9 +216,13 @@ class Session(Bridge):
         台数の読めない機種が1つでもあれば飛ばさない（今までどおり機種ごとに確かめる）。全部飛ばせたら完了。"""
         while True:
             counts = [m.get('count') for m in self._models.values()]
-            if not counts or any(type(c) is not int or c < 1 for c in counts):
+            known = [c for c in counts if type(c) is int and c >= 1]
+            total, saved = sum(known), len(self._saved_racks())
+            # 飛ばすかどうかの数（機種数・台数の合計・台数の読めない機種・保存済み）を残す。名前・URL・会員情報は残さない。
+            self._log.write('day_check', day=self._day, machines=len(counts), unknown_counts=len(counts) - len(known),
+                            total=total, saved=saved)
+            if not counts or len(known) != len(counts):
                 return None
-            total, saved = sum(counts), len(self._saved_racks())
             if saved < total:
                 return None
             with self._state_lock:

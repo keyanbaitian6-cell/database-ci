@@ -20,12 +20,20 @@ try {
     } else if(u.pathname.endsWith('.png')) {
       await route.fulfill({contentType:'image/png',body:Buffer.from(fixture.background,'base64')});
     } else {
-      const body=u.pathname==='/f/D2300.do'
+      // 本物の機種一覧と同じ形：台数は「名前 [31]」、1台の機種は角かっこ無しの名前だけ（2026-11-07）。
+      const index=`<h2 class=page-title>Ｐ－ＳＴＡＴＩＯＮ＆ＩＩ　スロット館</h2>`+
+        [['120141','ゴーゴージャグラー３ [31]'],['120406','L牙狼 闇を照らす者'],['120500','試験機種 [不明]']].map(([m,label])=>
+          `<a href="D2300.do?pmc=04034001&amp;clc=03&amp;urt=2000&amp;mdc=${m}&amp;bn=1" class="imageSet"><div class="icon-kisyu"></div><strong>${label}</strong></a>`).join('');
+      const body=u.pathname==='/f/D0300.do'?index:u.pathname==='/f/D2300.do'
         ?`<h2 class=page-title>Ｐ－ＳＴＡＴＩＯＮ＆ＩＩ　スロット館</h2><section id=halltop><div class="list-style mod-mt10px"><ul><li><a href="${source('D3300')}">大当り一覧</a></li></ul></div></section>`
         :u.pathname==='/f/D3300.do'?fixture.table:fixture['graph'+(u.searchParams.get('pan')||1)];
       await route.fulfill({contentType:'text/html; charset=utf-8',body});
     }
   });
+  await page.goto('https://m.site777.jp/f/D0300.do?pmc=04034001&clc=03&urt=2000&pan=1');
+  await page.evaluate(reader);
+  assert.deepEqual(await page.evaluate(()=>databaseSite777.read().machines.map(m=>[m.name,m.count])),
+    [['ゴーゴージャグラー3',31],['L牙狼 闇を照らす者',1],['試験機種 [不明]',null]],'角かっこ無しは1台、読めない角かっこは不明');
   await page.goto(source('D2300'));
   await page.evaluate(reader);
   assert.ok(await page.evaluate(()=>databaseSite777.read().table_url),'機種ページのlist-style内の大当り一覧を読む');

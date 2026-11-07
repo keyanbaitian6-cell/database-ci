@@ -128,3 +128,19 @@ test('生成するGoogle同期スクリプトも推定差枚を落とさない',
   assert.deepEqual(plain(context.validateData(value)),plain(validateData(value)));
   assert.deepEqual(plain(context.validateData(value)).records[0].net_estimate,estimate(-700));
 });
+
+test('サイトセブンはアナスロで補った台を置き換え（別表記でも）、アナスロが後から来ても戻らない',()=>{
+  // 2026-11-07 利用者「サイトセブンのを取り込んでっていってるの」（PC import_backup・Android と同じ規則）。
+  const site=fixture(), base=site.records[0];
+  const anaslo={store:base.store,rate:base.rate,machine:'アナスロの別表記',rack:base.rack,day:base.day,games:1000,bb:1,rb:1,at_art:0,
+    my:null,detail_url:null,observed_at:null,graph:null,net_medals:null,source_site:'anaslo',
+    source_url:`https://ana-slo.com/${base.day}-p-stationii-data/`,source_sha256:'a'.repeat(64),source_machine:'アナスロの別表記'};
+  const anasloDoc={format:'pscube-viewer',version:1,machines:[{store:base.store,rate:base.rate,machine:'アナスロの別表記',
+    expected_count:null,machine_type:null,url:null,source_site:'anaslo'}],records:[anaslo]};
+  const merged=mergeData(validateData(anasloDoc),validateData(site));
+  const same=merged.records.filter(r=>r.rack===base.rack&&r.day===base.day);
+  assert.equal(same.length,1,'同じ台・日に2つ残らない');
+  assert.equal(same[0].source_site,'site777');
+  const again=mergeData(merged,validateData(anasloDoc));
+  assert.equal(again.records.find(r=>r.rack===base.rack&&r.day===base.day).source_site,'site777','アナスロでは戻らない');
+});

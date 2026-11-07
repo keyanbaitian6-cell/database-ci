@@ -926,6 +926,10 @@ class PscubeStore {
     Map<String, dynamic> fresh,
   ) {
     if (old == null) return fresh;
+    // サイトセブンはアナスロの補完を置き換える（PC `_merge` と同じ、2026-11-07）。
+    if (fresh['source_site'] == 'site777' && old['source_site'] == 'anaslo') {
+      return fresh;
+    }
     if (fresh['source_site'] == 'site777') {
       // 同じ表・同じグラフ画像から後で推定差枚を付けたときだけ移す（PC `_merge` と同じ、2026-11-07）。
       final estimate = fresh['net_estimate'];
@@ -1709,7 +1713,11 @@ class PscubeStore {
     const numbers = ['bb', 'rb', 'at_art', 'games', 'my'];
     String rackDayKey(Map<String, dynamic> r) =>
         jsonEncode([r['store'], r['rate'], r['rack'], r['day']]);
-    final occupied = oldRecords.values.map(rackDayKey).toSet();
+    // 台・日 → (記録の鍵, 出典)。サイトセブンがアナスロの台を置き換えるときに、別表記の古い記録を消すため。
+    final occupied = <String, (String, Object?)>{
+      for (final e in oldRecords.entries)
+        rackDayKey(e.value): (e.key, e.value['source_site']),
+    };
     var added = 0, updated = 0, unchanged = 0, keptLocal = 0;
     await db.transaction((txn) async {
       final batch = txn.batch();
@@ -1734,8 +1742,22 @@ class PscubeStore {
       }
       for (final record in records) {
         final key = _key(record, record: true);
+        // サイトセブンはアナスロで補った台を置き換える（PC `import_backup` と同じ、2026-11-07）。
+        // 機種名の表記が違っても、同じ台・日のアナスロの記録は消す。P’s CUBE本来・サイトセブンどうしは置き換えない。
+        final occupant = occupied[rackDayKey(record)];
+        if (record['source_site'] == 'site777' && occupant?.$2 == 'anaslo') {
+          occupied.remove(rackDayKey(record));
+          if (occupant!.$1 != key) {
+            batch.delete('records', where: 'key=?', whereArgs: [occupant.$1]);
+            batch.delete(
+              'rack_captures',
+              where: 'key=?',
+              whereArgs: [occupant.$1],
+            );
+          }
+        }
         if (['anaslo', 'site777'].contains(record['source_site']) &&
-            occupied.contains(rackDayKey(record))) {
+            occupied.containsKey(rackDayKey(record))) {
           // 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を
           // 付けたときは推定差枚だけ移す（_merge、PC `import_backup` と同じ、2026-11-06）。
           final previous = oldRecords[key];
@@ -1752,7 +1774,7 @@ class PscubeStore {
           }, conflictAlgorithm: ConflictAlgorithm.replace);
           continue;
         }
-        occupied.add(rackDayKey(record));
+        occupied[rackDayKey(record)] = (key, record['source_site']);
         final previous = oldRecords[key];
         final saved = _merge(previous, record);
         final numbersChanged =

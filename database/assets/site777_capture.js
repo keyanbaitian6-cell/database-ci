@@ -78,7 +78,9 @@
         if (!href || new URL(href).pathname !== '/f/D2300.do') return null;
         const label = norm(a.querySelector('strong')?.textContent || a.textContent);
         const match = label.match(/^(.*?)\s*\[(\d+)\]$/);
-        return {name:match ? match[1].trim() : label, count:match ? Number(match[2]) : null,
+        // 1台だけの機種は「[1]」を付けずに名前だけで出る（2026-11-07、本物の機種一覧で確認。台数の多い順の最後に並ぶ）。
+        // 角かっこが全く無いときだけ1台とし、角かっこがあるのに読めないときは不明（null）のまま。
+        return {name:match ? match[1].trim() : label, count:match ? Number(match[2]) : (/[\[［]/.test(label) ? null : 1),
           model_id:new URL(href).searchParams.get('mdc'), url:href};
       }).filter(Boolean);
       remember(result.machines.map(m=>m.url));

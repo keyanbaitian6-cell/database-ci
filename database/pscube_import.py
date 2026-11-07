@@ -442,6 +442,8 @@ def stale_cutoff(day, fresh_since):
 def _merge(old: dict | None, fresh: dict) -> dict:
     if old is None:
         return fresh
+    if fresh.get('source_site') == 'site777' and old.get('source_site') == 'anaslo':
+        return fresh  # サイトセブンはアナスロの補完を置き換える（2026-11-07、import_backup の説明を参照）。
     if fresh.get('source_site') == 'site777':
         # サイトセブンは既存の出典・数値・グラフを補完で上書きしない。ただし、同じ表・同じグラフ画像から
         # 後で推定差枚を付けた（作り直した）ときだけ、推定差枚を移す（2026-11-07。既に保存した日にも届けるため）。
@@ -1317,8 +1319,10 @@ class PscubeStore:
             # separate process. Protect same rack/day even if aliases differ.
             if _transaction and not self.db.in_transaction:
                 self.db.execute('BEGIN IMMEDIATE')
-            occupied = {(r['store'], r['rate'], r['rack'], r['day']) for row in
-                        self.db.execute('SELECT payload FROM records') for r in [json.loads(row[0])]}
+            occupied = {}
+            for (payload,) in self.db.execute('SELECT payload FROM records'):
+                r = json.loads(payload)
+                occupied[(r['store'], r['rate'], r['rack'], r['day'])] = (_record_key(r), r.get('source_site'))
             if summary['events']:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('date_events', json.dumps(merged_events, ensure_ascii=False)))
@@ -1335,6 +1339,14 @@ class PscubeStore:
             for r in data['records']:
                 key = _record_key(r)
                 identity = (r['store'], r['rate'], r['rack'], r['day'])
+                # サイトセブンはアナスロで補った台を置き換える（2026-11-07 利用者「サイトセブンのを取り込んでっていってるの。
+                # 差枚の計算データにもつながるでしょ」。サイトセブンには MY・グラフ・画像の推定差枚がある）。機種名の表記が
+                # 違っても同じ台・日のアナスロの記録は消す。P’s CUBE本来の記録・サイトセブンどうしは今までどおり置き換えない。
+                if r.get('source_site') == 'site777' and occupied.get(identity, (None, None))[1] == 'anaslo':
+                    old_key = occupied.pop(identity)[0]
+                    if old_key != key:
+                        self.db.execute('DELETE FROM records WHERE key=?', (old_key,))
+                        self.db.execute('DELETE FROM rack_captures WHERE key=?', (old_key,))
                 if r.get('source_site') in ('anaslo', 'site777') and identity in occupied:
                     # 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を
                     # 付けたときは推定差枚だけ移す（_merge、2026-11-06）。
@@ -1347,7 +1359,7 @@ class PscubeStore:
                     summary['updated'] += 1
                     self.db.execute('INSERT OR REPLACE INTO records VALUES (?,?)', (key, json.dumps(moved, ensure_ascii=False)))
                     continue
-                occupied.add(identity)
+                occupied[identity] = (key, r.get('source_site'))
                 previous = self._read('records', key)
                 saved = _merge(previous, r)
                 numbers = ('bb', 'rb', 'at_art', 'games', 'my')

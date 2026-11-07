@@ -256,3 +256,31 @@ class SessionTest(unittest.TestCase):
             self.session=session
             self.epoch=session.configure(True,'2026-11-06')['epoch']
             self.assertEqual(self.cycle(index(count))['action']['type'],'listed')
+
+    def test_anaslo_supplements_are_replaced_by_site777(self):
+        # 2026-11-07 利用者「サイトセブンのを取り込んでっていってるの」：アナスロで補った台はサイトセブンで置き換える。
+        from test_pscube_sync import machine, record, put
+        from pscube_import import _record_key
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:
+            m=machine('アナスロの別表記')
+            anaslo=record(m,101,'2026-11-06',source_site='anaslo',my=None)
+            native=record(m,102,'2026-11-06')
+            put(store,m,[anaslo,native])
+        finally:store.close()
+        # 飛ばす判定：アナスロの台は数えない（2台のうち保存済みは P’s CUBE の1台だけ）。
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2}]}
+        self.assertEqual(self.cycle(index)['action']['type'],'listed')
+        self.assertEqual(self.session._occupied(),{102})
+        # 全台表→グラフ2ページ：101（アナスロ）はサイトセブンに置き換わり、102（P’s CUBE本来）はそのまま。
+        self.assertIn('D4300',self.cycle(table())['action']['url'])
+        self.assertTrue(self.cycle(graph(metadata=True))['prepare_graphs'])
+        self.assertTrue(self.cycle(graph())['complete'])  # 足りないのは101だけなので1ページ目で終わる
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:
+            records={(r['rack'],r.get('source_site')) for r in store.export_payload()['records']}
+            self.assertEqual(records,{(101,'site777'),(102,None)})
+            self.assertIsNone(store._read('records',_record_key(anaslo)))
+            self.assertEqual(store._read('records',_record_key(native)),native)
+        finally:store.close()

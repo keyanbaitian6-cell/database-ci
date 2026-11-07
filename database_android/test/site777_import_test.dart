@@ -151,4 +151,54 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+
+  test('サイトセブンはアナスロで補った台を置き換え、P’s CUBE本来の台は置き換えない', () async {
+    // 2026-11-07 利用者「サイトセブンのを取り込んでっていってるの」（PC `import_backup` と同じ規則）。
+    sqfliteFfiInit();
+    final directory = await Directory.systemTemp.createTemp('site777-replace-');
+    final store = await PscubeStore.open(
+      path: '${directory.path}/test.sqlite3',
+      factory: databaseFactoryFfi,
+    );
+    try {
+      Map<String, dynamic> anaslo(int rack) => {
+        'store': 'c740601', 'rate': '20', 'machine': 'アナスロの別表記', 'rack': rack,
+        'day': '2026-11-06', 'games': 1000, 'bb': 1, 'rb': 1, 'at_art': 0, 'my': null,
+        'detail_url': null, 'observed_at': null, 'graph': null, 'net_medals': null,
+        'source_site': 'anaslo',
+        'source_url': 'https://ana-slo.com/2026-11-06-p-stationii-data/',
+        'source_sha256': List.filled(64, 'a').join(),
+        'source_machine': 'アナスロの別表記',
+      };
+      await store.importBackup(jsonEncode({
+        'format': 'pscube-viewer', 'version': 1,
+        'machines': [
+          {'store': 'c740601', 'rate': '20', 'machine': 'アナスロの別表記', 'expected_count': null,
+           'machine_type': null, 'url': null, 'source_site': 'anaslo'},
+        ],
+        'records': [anaslo(101), anaslo(102)],
+      }));
+      final result = await store.importBackup(jsonEncode(fixture()));
+      expect(result.added, 2);
+      final file = await store.exportViewer(path: '${directory.path}/b.json');
+      final rows = (jsonDecode(await file.readAsString())['records'] as List);
+      expect(rows.length, 2, reason: 'アナスロの記録は消え、同じ台・日に2つ残らない');
+      expect(rows.every((r) => r['source_site'] == 'site777'), isTrue);
+      // アナスロをもう一度読み込んでも、サイトセブンの台は戻らない。
+      await store.importBackup(jsonEncode({
+        'format': 'pscube-viewer', 'version': 1,
+        'machines': [
+          {'store': 'c740601', 'rate': '20', 'machine': 'アナスロの別表記', 'expected_count': null,
+           'machine_type': null, 'url': null, 'source_site': 'anaslo'},
+        ],
+        'records': [anaslo(101)],
+      }));
+      final again = await store.exportViewer(path: '${directory.path}/c.json');
+      expect((jsonDecode(await again.readAsString())['records'] as List)
+          .every((r) => r['source_site'] == 'site777'), isTrue);
+    } finally {
+      await store.close();
+      await directory.delete(recursive: true);
+    }
+  });
 }
