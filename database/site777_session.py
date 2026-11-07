@@ -16,6 +16,15 @@ from site777_browser import Bridge
 import site777_import as source
 
 
+class Site777RandomCapture(PscubeRandomCapture):
+    """サイトセブンの間隔：5〜7秒のランダム（2026-11-07 利用者「取り込み間隔も10秒程度じゃなくて5～7秒程度にしよう」）。
+    P’s CUBE（PscubeRandomCapture の10〜20秒）は変えない。"""
+    LOW, HIGH = 5, 7
+
+
+DIRECTIONS = ('top', 'bottom')
+
+
 class Session(Bridge):
     def __init__(self, data_dir, log, *, now=None, store_factory=PscubeStore):
         super().__init__(log)
@@ -27,7 +36,9 @@ class Session(Bridge):
         self._state_lock = threading.Lock()
         self._work_lock = threading.Lock()
         self._epoch = 0
-        self._pace = PscubeRandomCapture()
+        self._pace = Site777RandomCapture()
+        # 機種を一覧の上から（top）か下から（bottom）か。メルヘンの「上から取り込む／下から取り込む」と同じ（2026-11-07）。
+        self._direction = 'top'
         self._enabled = False
         self._days = recent_business_days(self._now(), count=8)
         self._day = self._days[0]
@@ -53,9 +64,10 @@ class Session(Bridge):
             return {'enabled': self._enabled, 'epoch': self._epoch, 'day': self._day,
                     'until': self._until, 'queue': list(self._queue), 'finished_days': list(self._finished_days),
                     'days': self._days, 'status': self._status, 'added': self._added, 'kept': self._kept,
-                    'ready': self._pace.due() is not None, 'unknown_graphs': self._unknown}
+                    'ready': self._pace.due() is not None, 'unknown_graphs': self._unknown,
+                    'direction': self._direction}
 
-    def configure(self, enabled, day=None, until=None):
+    def configure(self, enabled, day=None, until=None, direction=None):
         """自動取り込みのON/OFFと取り込む日。until を付けると day〜until の範囲（どちらが先でもよい）を
         古い日から順に取り込む。範囲は掲載日（_days）の中だけ。"""
         if type(enabled) is not bool:
@@ -64,6 +76,8 @@ class Session(Bridge):
         for value in (day, until):
             if value is not None and (not isinstance(value, str) or date.fromisoformat(value).isoformat() != value):
                 raise ValueError('取り込み日が不正です。')
+        if direction is not None and direction not in DIRECTIONS:
+            raise ValueError('取り込む向きが不正です。')
         if until is not None and day is None:
             raise ValueError('範囲の始まりの日を選んでください。')
         with self._state_lock:
@@ -91,6 +105,8 @@ class Session(Bridge):
                 self._queue = queue
                 self._until = queue[-1] if queue else None
             self._day = day or self._day
+            if direction is not None:
+                self._direction = direction
             self._enabled = enabled
             self._pending_navigation = False
             self._blocked_navigation = False
@@ -296,7 +312,9 @@ class Session(Bridge):
     def _next(self, index_url=None):
         remaining = [m for key, m in self._models.items() if key not in self._done]
         if remaining:
-            return {'action': {'type': 'listed', 'url': remaining[0]['url']}}
+            # 「下から」なら一覧の下から（メルヘンの direction='bottom' と同じ）。
+            pick = remaining[-1] if self._direction == 'bottom' else remaining[0]
+            return {'action': {'type': 'listed', 'url': pick['url']}}
         if not self._models and index_url:
             return {'action': {'type': 'link', 'url': index_url}}
         with self._state_lock:

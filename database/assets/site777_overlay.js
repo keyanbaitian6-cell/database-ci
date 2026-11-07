@@ -13,6 +13,11 @@
   };
   const capture=makeButton('この画面を取り込む'), auto=makeButton('自動取り込み：OFF（押すと開始）');
   capture.id='database-site777-capture';auto.id='database-site777-auto';
+  // 上から／下から（2026-11-07 利用者「メルヘンは上から取り込みとか下から取り込みとかとても良い感じ」）：メルヘンと同じく、
+  // 押すと自動取り込みをONにする。選んだ向きはOFFの間も枠で示し、手動の「この画面を取り込む」もこの向きで次の機種を選ぶ。
+  const top=makeButton('上から取り込む'), bottom=makeButton('下から取り込む');
+  top.id='database-site777-top';bottom.id='database-site777-bottom';
+  const startRow=document.createElement('div');startRow.style.cssText='display:flex;gap:6px';startRow.append(top,bottom);
   const dayLabel=document.createElement('label'), day=document.createElement('select');
   dayLabel.textContent='日付指定取り込み（から）';day.id='database-site777-day';day.setAttribute('aria-label','取り込む日付（から）');
   day.style.cssText='width:100%;padding:5px;margin-top:4px';dayLabel.append(day);
@@ -21,9 +26,9 @@
   untilLabel.textContent='（まで）';until.id='database-site777-until';until.setAttribute('aria-label','取り込む日付（まで）');
   until.style.cssText='width:100%;padding:5px;margin-top:4px';untilLabel.append(until);
   const progress=document.createElement('div');progress.id='database-site777-range';progress.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere';
-  const interval=document.createElement('div');interval.textContent='間隔：10〜20秒ランダム';interval.style.fontSize='11px';
+  const interval=document.createElement('div');interval.textContent='間隔：5〜7秒ランダム';interval.style.fontSize='11px';
   const status=document.createElement('div');status.id='database-site777-status';status.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere';
-  card.append(grip,capture,auto,dayLabel,untilLabel,progress,interval,status);mount();
+  card.append(grip,capture,auto,startRow,dayLabel,untilLabel,progress,interval,status);mount();
   let busy=false,alive=true,token=0,current=null;
   const api=()=>window.pywebview.api;
   const render=s=>{
@@ -37,6 +42,11 @@
     day.value=s.day||'';
     until.value=s.until||s.day||'';
     day.disabled=until.disabled=busy||s.enabled;capture.disabled=busy||s.enabled;
+    for(const button of [top,bottom]){
+      button.disabled=busy||s.enabled;button.style.opacity=button.disabled?'.5':'1';
+      const chosen=button===(s.direction==='bottom'?bottom:top);
+      button.style.outline=chosen?'3px solid #087d59':'';button.setAttribute('aria-pressed',String(chosen));
+    }
     const rest=s.queue||[];
     progress.textContent=(s.finished_days||[]).length||rest.length
       ?`済み：${(s.finished_days||[]).join('、')||'なし'}／この後：${rest.join('、')||'なし'}`:'';
@@ -121,12 +131,15 @@
     }
   };
   capture.onclick=()=>cycle(false);
-  auto.onclick=async()=>{
+  const start=async direction=>{
     try{
       if(current?.enabled){await stop();return;}
-      token++;render(await api().configure(true,day.value||null,until.value&&until.value!==day.value?until.value:null));
+      token++;render(await api().configure(true,day.value||null,until.value&&until.value!==day.value?until.value:null,direction));
     }catch(error){status.textContent=error.message||String(error);}
   };
+  auto.onclick=()=>start(null);
+  top.onclick=()=>{if(!current?.enabled)start('top');};
+  bottom.onclick=()=>{if(!current?.enabled)start('bottom');};
   day.onchange=async()=>{
     // 始まりを変えたら、終わりも同じ日に戻す（1日だけ）。範囲にするときは、その後で終わりを選ぶ。
     try{token++;render(await api().configure(false,day.value||null));}

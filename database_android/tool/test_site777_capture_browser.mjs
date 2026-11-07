@@ -79,8 +79,9 @@ try {
   await page.evaluate(()=>{
     window.__configured=[];
     Object.assign(window.__scopeState,{enabled:false,epoch:3,day:'2026-11-06',days:['2026-11-06','2026-11-05','2026-11-04'],status:'停止しました。'});
-    window.pywebview.api.configure=async(enabled,day,until)=>{
-      window.__configured.push([enabled,day,until]);
+    window.pywebview.api.configure=async(enabled,day,until,direction)=>{
+      window.__configured.push(direction?[enabled,day,until,direction]:[enabled,day,until]);
+      if(direction)window.__scopeState.direction=direction;
       const first=until&&until<day?until:day;
       Object.assign(window.__scopeState,{enabled,day:first,until:until?(until>day?until:day):null,
         queue:until?['2026-11-05','2026-11-06'].filter(d=>d>first):[],finished_days:enabled?['11/04（追加3台・既存0台・グラフ不明0台）']:[]});
@@ -99,6 +100,16 @@ try {
   assert.deepEqual(await page.evaluate(()=>window.__configured[1]),[true,'2026-11-04','2026-11-06']);
   await page.waitForFunction(()=>document.querySelector('#database-site777-range')?.textContent.includes('この後：2026-11-05、2026-11-06'));
   assert.equal(await page.locator('#database-site777-until').isDisabled(),true,'取り込み中は日付を変えない');
+  // 上から／下から（2026-11-07、メルヘンと同じ）：OFFのとき押すと、その向きで自動取り込みを始める。間隔は5〜7秒。
+  assert.equal(await page.locator('#database-site777-bottom').isDisabled(),true,'取り込み中は向きを変えない');
+  await page.evaluate(()=>{Object.assign(window.__scopeState,{enabled:false,epoch:4,direction:'top'});});
+  await page.waitForFunction(()=>!document.querySelector('#database-site777-bottom').disabled);
+  assert.equal(await page.getAttribute('#database-site777-top','aria-pressed'),'true');
+  await page.click('#database-site777-bottom');
+  await page.waitForFunction(()=>window.__configured.length===3);
+  assert.deepEqual(await page.evaluate(()=>window.__configured[2]),[true,'2026-11-04','2026-11-06','bottom']);
+  await page.waitForFunction(()=>document.querySelector('#database-site777-bottom').getAttribute('aria-pressed')==='true');
+  assert.match(await page.locator('#database-site777').innerText(),/間隔：5〜7秒ランダム/);
   assert.deepEqual(errors,[]);
   // グラフが出ないとき（2026-11-07）：自動取り込み中は待ってから同じページを1回だけ読み込み直し、
   // 読み込み直したページでも出なければ止める（3回目は読み込まない）。

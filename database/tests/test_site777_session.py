@@ -305,6 +305,24 @@ class SessionTest(unittest.TestCase):
                            {'name':'別の機種','model_id':'456','url':other,'count':1}]}
         self.assertEqual(self.cycle(index)['action']['url'],source_url(other,'model'))
 
+    def test_bottom_direction_picks_from_the_end_and_interval_is_5_to_7_seconds(self):
+        # 2026-11-07 利用者「メルヘンは上から取り込みとか下から取り込みとか」「5～7秒程度にしよう」
+        from site777_session import Site777RandomCapture
+        from pscube_import import PscubeRandomCapture
+        self.assertEqual((Site777RandomCapture.LOW,Site777RandomCapture.HIGH),(5,7))
+        self.assertEqual((PscubeRandomCapture.LOW,PscubeRandomCapture.HIGH),(10,20),'P’s CUBEの間隔は変えない')
+        for draw in (lambda n:0,lambda n:n-1):
+            pace=Site777RandomCapture(draw=draw);pace.configure(True,15)
+            self.assertTrue(5<=pace.state()['seconds']<=7)
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'上の機種','model_id':'123','url':url('D2300'),'count':2},
+                           {'name':'下の機種','model_id':'456','url':url('D2300',model='456'),'count':1}]}
+        state=self.session.configure(True,'2026-11-06',None,'bottom')
+        self.epoch=state['epoch'];self.assertEqual(state['direction'],'bottom')
+        self.assertEqual(self.cycle(index)['action']['url'],source_url(url('D2300',model='456'),'model'))
+        self.assertEqual(self.session.configure(False,'2026-11-06')['direction'],'bottom','向きを渡さなければ保つ')
+        with self.assertRaises(ValueError):self.session.configure(True,'2026-11-06',None,'left')
+
     def test_anaslo_supplements_are_replaced_by_site777(self):
         # 2026-11-07 利用者「サイトセブンのを取り込んでっていってるの」：アナスロで補った台はサイトセブンで置き換える。
         from test_pscube_sync import machine, record, put
