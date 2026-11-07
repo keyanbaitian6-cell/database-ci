@@ -156,6 +156,23 @@ class Site777BrowserTest(unittest.TestCase):
             self.assertEqual((row['kind'], row['href'], row['tag']), ('click', '/f/D0400.do?dai', 'A'))
             self.assertEqual(log.path.parent.name, 'logs')
 
+    def test_window_closes_only_after_auto_capture_finished_and_saving_is_done(self):
+        # 2026-11-07 利用者「取り込み終わったなら閉じる仕様にしてね」（メルヘン・P’s CUBEの close_when_finished と同じ）
+        import threading
+        closed=[]
+        window=SimpleNamespace(destroy=lambda:closed.append(True))
+        with tempfile.TemporaryDirectory() as folder:
+            session=SimpleNamespace(_completed=None,_work_lock=threading.Lock())
+            self.assertFalse(site777_browser.close_when_finished(session,window,folder))
+            session._completed='範囲の取り込みが完了しました。'
+            with session._work_lock:
+                self.assertFalse(site777_browser.close_when_finished(session,window,folder),'保存の処理中は閉じない')
+            self.assertEqual(closed,[])
+            self.assertTrue(site777_browser.close_when_finished(session,window,folder))
+            self.assertEqual(closed,[True])
+            self.assertEqual(site777_browser.take_finished_message(folder),'範囲の取り込みが完了しました。')
+            self.assertIsNone(site777_browser.take_finished_message(folder),'知らせは1回だけ')
+
     def test_the_home_button_opens_it_with_the_same_python(self):
         import app
         command, folder = app.site777_browser_command()

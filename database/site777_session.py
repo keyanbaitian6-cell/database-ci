@@ -47,6 +47,9 @@ class Session(Bridge):
         self._until = None
         self._queue = []
         self._finished_days = []
+        # 自動取り込みが最後まで終わったときの結果の文。窓はこれを見て閉じる（site777_browser.close_when_finished、
+        # 2026-11-07 利用者「取り込み終わったなら閉じる仕様にしてね」。メルヘン・P’s CUBEの close_when_finished と同じ）。
+        self._completed = None
         self._status = 'P-STATIONの20円スロットを開き、取り込む日付を確認してください。'
         self._models = {}
         self._done = set()
@@ -108,6 +111,7 @@ class Session(Bridge):
             if direction is not None:
                 self._direction = direction
             self._enabled = enabled
+            self._completed = None
             self._pending_navigation = False
             self._blocked_navigation = False
             self._pace.configure(enabled, 15)
@@ -293,12 +297,15 @@ class Session(Bridge):
                 self._finished_days.append(finished)
                 self._kept = saved
                 if not self._queue:
+                    automatic = self._enabled
                     self._enabled = False
                     self._pace.configure(False, 15)
                     self._until = None
                     self._status = ('範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
                                     if len(self._finished_days) > 1 else
                                     f'{finished}。取り込む台はありませんでした。')
+                    if automatic:
+                        self._completed = self._status
                     return {'complete': True}
                 # 機種一覧は日付で変わらないので、読んだ一覧のまま次の日を確かめる。
                 self._day = self._queue.pop(0)
@@ -333,6 +340,7 @@ class Session(Bridge):
                 self._added = self._kept = self._unknown = 0
                 self._status = f'{finished}が完了。次は{self._day}を取り込みます。'
                 return {'action': {'type': 'link', 'url': index_url}}
+            automatic = self._enabled
             self._enabled = False
             self._pace.configure(False, 15)
             left = len(self._queue)
@@ -345,6 +353,9 @@ class Session(Bridge):
                 self._status = '範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
             else:
                 self._status = f'指定日の取り込みが完了しました。追加{self._added}台、既存を保持{self._kept}台、グラフ不明{self._unknown}台。'
+            # 残りの日が分からず止まったとき（left）は、続きを選べるよう窓を閉じない。
+            if automatic and not left:
+                self._completed = self._status
         return {'complete': True}
 
     def capture(self, raw, epoch):

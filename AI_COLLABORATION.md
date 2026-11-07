@@ -1324,3 +1324,20 @@
 | 本物のサイトでの動き | 未確認 | 実行中の取り込みで、次のグラフが出ないとき |
 - 覚え書き（両AI向け）：利用者「意思疎通取るの難しいね。でもこれですり合わせできたね。人間の気持ちになってくれると助かるよ」。依頼は言葉の形だけでなく「何に困っていて、どうなってほしいか」で読む。二通りに読めるときは、作る前に「つまり〜になればいいですか」と結果の形で一言たしかめる（今回は「再読み込みじゃなくて自動取り込み再開」を「読み込み直しをやめる」と取り違え、効いていた読み込み直しを外して止まった）。
 - 11/6 の取り込み完了（16:33）：追加90台・既存205台・グラフ不明8台。DB（mode=ro）：11/4 site777 224（推定あり197）・pscube 71、11/5 site777 241（推定あり220）・pscube 54、11/6 site777 290（推定あり257）・pscube 5。3日ともアナスロ0台、合計 295・295・295台。`site777_backfill.py`（件数だけ）：サイトセブンの台755のうち推定あり674、残り81は保留（short_curve 40・curve_missing 17・boundary_contact 12・endpoint_unstable 5・curve_start_unknown 4・multiple_endpoint_traces 2・right_edge_contact 1）で、後付けできる台は無い（後付けのバックアップは作っていない）。
+
+## 2026-11-07 サイトセブン：自動取り込みが終わったら窓を閉じる（メルヘン・P’s CUBEと同じ、Claude）
+
+- 依頼：利用者「取り込み終わったなら閉じる仕様にしてね」。基準 `0304be8`。メルヘン（`browser_import.close_when_finished`）・P’s CUBE（`pscube_import.close_when_finished`、2026-10-30 利用者「各取り込み終わったら停止してほしい」）と同じ作りにした。
+- 変更：
+  - `database/site777_session.py`：`_completed`（自動取り込みが最後まで終わったときの結果の文）。日ごと飛ばしで全部済んだとき・`_next` で最後の日が終わったときに、**自動ONだったときだけ**入れる。残りの日が分からず止まったとき（機種一覧のページが分からない）は入れない（続きを選べるよう閉じない）。`configure` で消す。
+  - `database/site777_browser.py`：`FINISHED_NAME = 'site777-capture-finished.json'`、`close_when_finished(session, window, data_dir)`（`_completed` があり、保存の処理中（`_work_lock`）でなければ、知らせを書いて `window.destroy()`）、`take_finished_message`。`run` で起動時に古い知らせを消し、0.5秒ごとに見張る（窓が閉じたら終わる）。
+  - `database/app.py`：サイトセブンの窓を開いたら `watch_capture_window(…, 'サイトセブン', site777_browser.take_finished_message)`。閉じたら記録欄に「サイトセブン：（結果）。取り込み画面を閉じ、サイトへの接続を止めました。」（P’s CUBEと同じ文）。
+- 閉じないとき：手動の取り込み、途中で止まったとき（グラフが3回読み込み直しても出ない、停止ボタン、誤り）。
+- 前の項の表示の誤り（終わった後に押し直すと完了の記録が二重に出る）は、終わったら窓が閉じるので起きにくくなった。直してはいない。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 自動で最後まで終わったら閉じる文を残す、手動では残さない、設定し直すと消す | 済 | `test_auto_completion_leaves_the_close_message_but_manual_does_not` |
+| 保存の処理中は閉じない、閉じたら知らせを1回だけ渡す | 済 | `test_window_closes_only_after_auto_capture_finished_and_saving_is_done` |
+| PC全試験 | 済 | `unittest discover -s tests` 912件 OK |
+| 本物の窓で閉じるか・記録欄の文 | 未確認 | 次の自動取り込みが終わったとき |

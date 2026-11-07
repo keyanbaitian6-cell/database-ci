@@ -87,6 +87,23 @@ class SessionTest(unittest.TestCase):
         self.assertTrue(self.session.state()['enabled'])
         self.assertFalse((self.root/'pscube.sqlite3').exists())
 
+    def test_auto_completion_leaves_the_close_message_but_manual_does_not(self):
+        # 2026-11-07 利用者「取り込み終わったなら閉じる仕様にしてね」：自動で最後まで終わったときだけ窓を閉じる文を残す。
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2}]}
+        for enabled in (True,False):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as folder:
+                self.root=Path(folder)
+                self.session=self.new_session()
+                self.epoch=self.session.configure(enabled,'2026-11-06')['epoch']
+                self.assertIsNone(self.session._completed)
+                self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph());self.cycle(graph(2))
+                self.assertTrue(self.cycle(index)['complete'])
+                if enabled:self.assertIn('取り込む台はありませんでした',self.session._completed)
+                else:self.assertIsNone(self.session._completed)
+                self.session.configure(False,'2026-11-06')
+                self.assertIsNone(self.session._completed,'設定し直したら消す')
+
     def test_stop_invalidates_extraction_in_flight(self):
         self.session.configure(False)
         result=self.session.capture(json.dumps(table()),self.epoch)

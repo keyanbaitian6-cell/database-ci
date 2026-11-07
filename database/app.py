@@ -1138,6 +1138,9 @@ def main():
         except OSError as exc:
             messagebox.showerror('起動できません', f'サイトセブンを開けません：{exc}', parent=root)
             return
+        # 自動取り込みが最後まで終わると窓は自分で閉じる（2026-11-07）。閉じたら結果をログ欄に出す（P’s CUBEと同じ）。
+        import site777_browser
+        watch_capture_window(site777_process[0], 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR))
         logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
                       'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')
         logbox.see('end')

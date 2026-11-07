@@ -23,6 +23,27 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
+from file_io import take_notice, write_notice
+
+FINISHED_NAME = 'site777-capture-finished.json'
+
+
+def close_when_finished(session, window, data_dir) -> bool:
+    """自動取り込みが最後まで終わり、保存の処理も終わっていれば、結果の文を親画面への知らせに残して窓を閉じる
+    （2026-11-07 利用者「取り込み終わったなら閉じる仕様にしてね」。メルヘン・P’s CUBEの close_when_finished と同じ。
+    サイトのページを開いたままにしない）。手動の取り込み・途中で止まったときは閉じない。"""
+    message = session._completed
+    if not message or session._work_lock.locked():
+        return False
+    write_notice(Path(data_dir) / FINISHED_NAME, message)
+    window.destroy()
+    return True
+
+
+def take_finished_message(data_dir) -> str | None:
+    """取り込み窓が閉じたあとに親画面が呼ぶ。自動で閉じたときの結果の文を返して知らせを消す（無ければ None）。"""
+    return take_notice(Path(data_dir) / FINISHED_NAME)
+
 # 開いたらすぐログイン画面（2026-11-07 利用者「ホームからサイトセブンクリックしたらそのままログイン画面にして
 # 欲しい」「クレジットカード会員だからここね」）。利用者はスマホ会員のクレジットカード会員で、そのログイン画面。
 # ログイン後はサイトの決まり（returnUrl）でマイページへ戻る。ログインの入力は利用者が行う。
@@ -244,6 +265,20 @@ def run(data_dir, start_url=START_URL):
         site777_samples.collect(window, data_dir, log)
 
     window.events.loaded += loaded
+    take_finished_message(data_dir)  # 前回の窓の知らせが残っていれば消す
+    closed = threading.Event()
+    window.events.closed += closed.set
+
+    def watch_finished():
+        while not closed.wait(0.5):
+            try:
+                if close_when_finished(session, window, data_dir):
+                    log.write('closed_when_finished')
+                    return
+            except Exception as error:  # noqa: BLE001 - 閉じられなくても見張りは続ける
+                log.write('close_failed', error=type(error).__name__)
+
+    threading.Thread(target=watch_finished, daemon=True).start()
     log.write('start')
     # pywebview の初期設定はシークレットモード（閉じるとCookieが消える）なので、
     # private_mode=False と専用の保存先でログインを残す。
