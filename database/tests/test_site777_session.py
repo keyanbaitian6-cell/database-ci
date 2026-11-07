@@ -273,6 +273,38 @@ class SessionTest(unittest.TestCase):
             self.epoch=session.configure(True,'2026-11-06')['epoch']
             self.assertEqual(self.cycle(index(count))['action']['type'],'listed')
 
+    def test_reopened_index_skips_machines_already_saved_from_site777(self):
+        # 2026-11-07 利用者「機種一覧で取り込んでってやったら未取り込みに飛べばよくない？なんでまたゴーゴージャグラーからいくの？」
+        self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph());self.cycle(graph(2))
+        self.session=self.new_session()
+        self.epoch=self.session.configure(False,'2026-11-06')['epoch']
+        other=url('D2300',model='456')
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2},
+                           {'name':'別の機種','model_id':'456','url':other,'count':1}]}
+        result=self.cycle(index)
+        self.assertEqual(result['action'],{'type':'listed','url':source_url(other,'model')},'保存済みの機種は開かずに次の未取り込みへ')
+        self.assertIn('保存済みの1機種は開かずに飛ばしました',result['state']['status'])
+        # 台が足りない機種・台数の読めない機種は今までどおり開く。
+        for count in (3,None):
+            self.session=self.new_session()
+            self.epoch=self.session.configure(False,'2026-11-06')['epoch']
+            index['machines'][0]['count']=count
+            self.assertEqual(self.cycle(index)['action']['url'],source_url(url('D2300'),'model'))
+
+    def test_index_skips_machine_saved_from_pscube_by_name_like_meruhen(self):
+        # メルヘンと同じく、保存済みの台を機種名ごとに数える（P’s CUBEで取った台の機種も開かない）。
+        from test_pscube_sync import machine, record, put
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:
+            m=machine('試験ジャグラー3');put(store,m,[record(m,rack,'2026-11-06') for rack in (101,102)])
+        finally:store.close()
+        other=url('D2300',model='456')
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2},
+                           {'name':'別の機種','model_id':'456','url':other,'count':1}]}
+        self.assertEqual(self.cycle(index)['action']['url'],source_url(other,'model'))
+
     def test_anaslo_supplements_are_replaced_by_site777(self):
         # 2026-11-07 利用者「サイトセブンのを取り込んでっていってるの」：アナスロで補った台はサイトセブンで置き換える。
         from test_pscube_sync import machine, record, put

@@ -210,6 +210,53 @@ class Session(Bridge):
         # アナスロで補った台は数えない（サイトセブンで置き換えるため、2026-11-07）。
         return {r['rack'] for r in rows if not is_excluded_machine(r.get('machine')) and r.get('source_site') != 'anaslo'}
 
+    def _skip_saved_machines(self):
+        """機種一覧の台数（[31] など）だけ、その機種のサイトセブンの台がその日に保存済みなら、機種ページを開かずに済みにする
+        （2026-11-07 利用者「機種一覧で取り込んでってやったら未取り込みに飛べばよくない？なんでまたゴーゴージャグラーからいくの？」。
+        開き直すと済んだ機種の覚えが消え、先頭の機種から1つずつ開いて確かめていた）。
+        メルヘンの「次の未取り込み台へ」（browser_import.py の machine_progress：保存済みの台を機種名ごとに数え、
+        一覧の台数と比べ、一覧の順で最初の足りない機種へ）と同じ考え方。機種は、保存のときと同じ読み替え
+        （suggestions の automatic）をした機種名と、サイトセブンの台は出典URLの機種コード（mdc）でも合わせる。
+        アナスロで補った台は数えない（置き換えるため）。台数の読めない機種は今までどおり開いて確かめる。
+        DB は読むだけ。何も返さない（続きは _next が決める）。"""
+        if not self._db_path.is_file():
+            return None
+        with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+            rows = [json.loads(r[0]) for r in db.execute(
+                "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
+                "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
+                (source.SHOP, self._day))]
+        rows = [r for r in rows if r.get('source_site') != 'anaslo' and not is_excluded_machine(r.get('machine'))]
+        by_name = {}
+        for r in rows:
+            by_name.setdefault(r.get('machine'), set()).add(r['rack'])
+        racks = {}
+        for r in rows:
+            if r.get('source_site') != 'site777':
+                continue
+            try:
+                model = dict(source.parse_qsl(source.urlsplit(r.get('source_url') or '').query)).get('mdc')
+            except (TypeError, ValueError):
+                continue
+            if model:
+                racks.setdefault(model, set()).add(r['rack'])
+        catalog = read_catalog(self._db_path) if by_name else []
+        skipped = 0
+        for model, m in self._models.items():
+            count = m.get('count')
+            if model in self._done or type(count) is not int or count < 1:
+                continue
+            name = suggestions(m['name'], catalog)['automatic'] or m['name']
+            if len(racks.get(model, set()) | by_name.get(name, set())) >= count:
+                self._done.add(model)
+                self._kept += count
+                skipped += 1
+        if skipped:
+            self._log.write('machines_skipped', day=self._day, skipped=skipped)
+            left = sum(1 for key in self._models if key not in self._done)
+            self._status = f'保存済みの{skipped}機種は開かずに飛ばしました。残り{left}機種を取り込みます。'
+        return None
+
     def _skip_complete_days(self):
         """機種一覧の台数（[31] など）の合計だけ、その日の台が保存済みなら、機種ページを開かずにその日を飛ばす
         （2026-11-07 利用者「この改善は導入してね」。11/4・11/5 は全台保存済みなのに約50機種の表を開いていた）。
@@ -340,7 +387,7 @@ class Session(Bridge):
             for page in payload.get('pages', []):
                 if page['number'] not in self._index_pages:
                     return {'action': {'type': 'page', 'number': page['number']}}
-            return self._skip_complete_days() or self._next()
+            return self._skip_complete_days() or (self._skip_saved_machines() or self._next(payload.get('index_url')))
         if kind == 'model':
             url = source.source_url(payload.get('table_url'), 'table')
             return {'action': {'type': 'link', 'url': url}}
