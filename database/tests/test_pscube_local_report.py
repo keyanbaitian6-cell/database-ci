@@ -42,12 +42,25 @@ class LocalReportTests(unittest.TestCase):
             self.assertNotIn(name, text)
             self.assertEqual(data['records'][0]['games'], 0)
             self.assertIsNone(data['records'][0]['my'])
-            self.assertIsNone(data['records'][0]['net_medals'])
+            self.assertIsNone(data['records'][0]['net'])
             self.assertEqual(data['records'][0]['source'], 'アナスロ（補完）')
             self.assertEqual(data['records'][1]['my'], 1234)
             self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), before)
             with self.assertRaises(ValueError):
                 build_report(path, root, '2026-08-03')
+
+    def test_net_column_shows_real_net_or_a_marked_estimate(self):
+        from pscube_report import net_text
+        self.assertEqual(net_text({'net_medals': -120}), '-120')
+        self.assertEqual(net_text({'net_medals': 0, 'net_estimate': {'value': 50, 'sure': True, 'method': 'x'}}), '+0')
+        site777 = {'source_site': 'site777', 'net_medals': None}
+        self.assertEqual(net_text({**site777, 'net_estimate': {'value': -700, 'sure': True, 'method': 'site777-axis-pixels-v1'}}), '推定 -700')
+        self.assertEqual(net_text({**site777, 'net_estimate': {'value': 1500, 'sure': False, 'method': 'site777-axis-pixels-v1'}}), '推定 +1,500※')
+        anaslo = {'source_site': 'anaslo', 'net_medals': None}
+        self.assertEqual(net_text({**anaslo, 'net_estimate': {'value': 300, 'sure': True, 'method': 'anaslo-graph-v1'}}), '推定 +300')
+        # 方式と出典が合わない・形が違う推定は出さない（MY などを差枚にしない）。
+        self.assertIsNone(net_text({**site777, 'net_estimate': {'value': 300, 'sure': True, 'method': 'anaslo-graph-v1'}}))
+        self.assertIsNone(net_text({**site777, 'my': 6915}))
 
     def test_missing_database_is_not_created(self):
         with tempfile.TemporaryDirectory() as tmp:

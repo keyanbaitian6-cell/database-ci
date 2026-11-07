@@ -1105,3 +1105,16 @@
 - Astra用の分析依頼は `../outputs/site777-net-astra-20261107/依頼プロンプト.md` として用意し利用者へ案内。保存済みの構造化資料だけを使い、専用出力先へ報告・検算を作る。別セッションは製品コード・pubspec・共有記録・実DBを変更せず、サイト/Googleへのアクセス、試験/ビルド/公開/commit/pushを行わない条件にした。
 - 追記：利用者が修正版の窓を開き直し、対象店・20スロ・11/6指定で再開後、「問題なく動いてますね」と報告。修正版の本番再開は利用者確認済み。全機種完了や転送が今後一切起きないことまで確認したとは扱わない。
 - PCホームの起動案内に残っていた「今は見るだけ、取り込みはまだできません」を、対象店・カードの日付を確認して開始する案内へ更新。操作の機能変更はなく、最終照合版は012b96b67cbf。修正版ゲートのPC試験中、Flutterのビルド前にこの案内と版を更新した。
+
+### 2026-11-07 サイトセブンの推定差枚（グラフ画像の目盛りから）を4画面・Google同期に入れた（Claude、別ブランチ・未送信）
+
+- 依頼：利用者「差枚導出方法まで導き終わりました。実装をお願いします」。読んだ資料：`../outputs/site777-net-astra-20261107/報告.md`・`実装引き継ぎ.md`・`analyze_saved_graphs.py`（Codex・Astra の分析）。この節より上の記録（確定版の節、Codex の取り込み実装）も読んだ。
+- **作業場所**：Codex が同じフォルダー（`database-main`）でまだ作業中（利用者が確認。`smoke_site777_session.py` に Codex の未コミットの変更があった）。同じファイルを触らないよう、Claude の変更は **git worktree `../database-net777`、ブランチ `site777-net`（`2af37c5` から）** へ移した。共有フォルダーには Claude の変更を残していない。Codex はこの後 `308e44d` をコミットしている。取り込むには、このブランチを main へ merge する。
+- 方式：`database/site777_net.py`（新規）。Astra の再現コードの判定を製品用に移した。260×226・目盛りの文字（+5,000・-5,000）の白画素の形が一致・ゼロ線 y=111・目盛り線（上下端必須、8本以上）を確かめ、推定差枚 =(111−終点y)×10000/192 を **50枚単位**に丸める。見切れ（上下端・右端）・線の途切れ・終点の分離・色の閾値で終点が動く・短い線（10画素未満）・線なし・目盛り不明は **推定を付けない（保留）**。読み取りの幅が0をまたぐ台は `sure=false`（画面では※）。MY・最大値・BB/RB は使わない。**Astra の105枚の結果と1枚ずつ突き合わせて全件一致**（推定99・短い線4・判定不能2、※10）。
+- 保存の形：アナスロと同じ `net_estimate: {value, sure, method}`、method だけ `site777-axis-pixels-v1`。`net_medals` は null のまま。方式は出典と合わせて検査（アナスロの台にサイトセブンの方式、その逆は拒否）。保留の理由は記録に保存しない（引き継ぎ案の `net_estimate_status` は入れていない。MY は今までどおり `my` に残り、画面のMYの欄に出る）。
+- 変えたところ：
+  - PC：`site777_import.py`（グラフ一覧の画像から推定を付ける・検査）、`pscube_import.py`（検査・`_merge`：**同じ表SHA・同じ画像SHAのサイトセブンどうしのときだけ推定差枚を移す**。数値・出典・MY は先にある方のまま。P’s CUBE本来の記録は今までどおり優先）、`pscube_report.py`（PCの保存データの表の差枚の欄：本当の差枚、無ければ「推定 ±n」、確かでなければ※。**アナスロの推定もここで出るようになった**）、`event_calendar.py`（PCのP’s CUBEのカレンダー：日ごとの合計と台の一覧に推定差枚を「要確認」付きで入れる。**アナスロの推定もPCのカレンダーに入るようになった**。iPhone・共有カレンダーは 11/6 の利用者「全部入れる」で既に入れていた）、`pscube_health.py`（取得状況：推定のある台は「出典に差枚なし（推定あり）」）。
+  - Android・iPhone（Dart）：`pscube_viewer_data.dart`（`validSite777NetEstimate`・`validSupplementNetEstimate`、サイトセブンの記録の検査）、`pscube_store.dart`（検査・`_merge` を PC と同じに）、`capture_health.dart`（文言）。表示（`models.dart` の `pscubeNetEstimate`・`netText`・`netLabel`）はアナスロと同じ経路で「推定差枚」と※が出る（変更なし）。
+  - Web・共有カレンダー・Google同期：`web/pscube/data.mjs`（`validSite777NetEstimate`、検査・組み立て・`mergeData`）、`share_viewer/data.mjs`（`pscubeNetEstimate` を出典ごとの方式で）、`capture_health.mjs`（2つ、文言）。生成物 `pscube_cloud_sync.gs`・`viewer_parts*`・`release_info` を作り直した。`meruhen_cloud_sync.gs` は取得状況の文言1行と版だけの変化（アナスロ・サイトセブンの台にしか関わらないので、メルヘンの貼り替えは不要）。
+- 保存済みの台への後付け：`database/site777_backfill.py`（新規）。`data/site777-staging/sources` に残るグラフ一覧の画像を読み、**同じ画像SHAの台だけ**に推定差枚を付けたバックアップを作る（DB は mode=ro で読むだけ）。同期フォルダへ `pscube-backup-site777net-YYYYMMDD.json` で置くと、起動中のPC版が自動で読み込む（`ANDROID_SYNC_NAME` に追加）。本番のDBで件数だけ見た結果（11/7 夕方）：サイトセブン 200台、**推定を付ける 185台**、保留 15台（見切れ 3・線なし 1・終点不安定 1・終点分離 1・短い線 9）、画像の見つからない台 0。**まだ実行していない**（このブランチを取り込み、PC版を開き直してから）。
+- 試験：PC `test_site777_net.py` 9件（合成画像：本物から写した目盛りの文字の形だけを使い、正・負・ゼロ付近※・見切れ・右端・短い線・目盛り不明・大きさ違い・線なし・途切れ・方式の検査・取り込み・Store の移す規則・カレンダー・後付け）、`test_pscube_local_report.py` に1件。Dart `site777_import_test.dart` に3件。JS `test_site777_import.mjs` に4件（Google同期の生成物も同じ結果）。

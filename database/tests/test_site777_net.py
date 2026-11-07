@@ -1,0 +1,219 @@
+"""サイトセブンのグラフ画像から読む推定差枚（site777_net.py、2026-11-07）。
+
+本物の画像はGitに入れない。目盛りの文字（+5,000・-5,000）の白い画素の形だけを本物の画像から写し、
+背景・目盛り線・ゼロ線・黄色い線を描いた合成画像で試す。サイト・実DBには接続しない。
+"""
+import base64
+import sys
+import tempfile
+import unittest
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import site777_import as capture  # noqa: E402
+import site777_net  # noqa: E402
+
+TOP_MASK = '000000000000000000003c0c30c001000000000c049248000824924000412492000200000000e230c3000020000000000000000000000000'
+BOTTOM_MASK = '000000000000000000003c0c30c001000000000c049248000824924070412492000200000000e230c3000020000000000000000000000000'
+NOW = datetime.fromisoformat('2026-11-07T09:05:00+09:00')
+URL = 'https://m.site777.jp/f/D3300.do?pmc=04034001&urt=2000&mdc=123&dtdd=0&pan=1'
+
+
+def mask(text):
+    return np.unpackbits(np.frombuffer(bytes.fromhex(text), dtype=np.uint8))[:12 * 37].reshape(12, 37).astype(bool)
+
+
+def png(curve, labels=True, size=(260, 226), extra=None):
+    """curve：黄色い線の [(x, y), ...]。extra：描き足す処理（draw を受け取る）。"""
+    image = Image.new('RGB', size, (24, 28, 24))
+    draw = ImageDraw.Draw(image)
+    for y in site777_net.GRID_Y:
+        if y != 111:
+            draw.line([(8, y), (244, y)], fill=(64, 64, 64))
+    if curve:
+        draw.line(curve, fill=(250, 230, 30), width=2)
+    draw.line([(8, 111), (244, 111)], fill=(255, 255, 255))
+    if extra:
+        extra(draw)
+    a = np.array(image)
+    if labels:
+        a[9:21, 16:53][mask(TOP_MASK)] = 255
+        a[201:213, 16:53][mask(BOTTOM_MASK)] = 255
+    stream = BytesIO()
+    Image.fromarray(a).save(stream, 'PNG')
+    return stream.getvalue()
+
+
+def data_uri(raw):
+    return 'data:image/png;base64,' + base64.b64encode(raw).decode()
+
+
+DOWN = [(9, 111), (40, 118), (80, 126), (120, 140)]
+UP = [(9, 111), (60, 90), (120, 70), (180, 60)]
+FLAT = [(9, 111), (30, 100), (100, 125), (106, 108), (115, 109)]
+
+
+class EstimateTest(unittest.TestCase):
+    def test_negative_and_positive_curves_read_from_the_axis(self):
+        for curve in (DOWN, UP):
+            result = site777_net.analyze(png(curve))
+            self.assertEqual(result['status'], 'candidate', result)
+            expected = (111 - result['endpoint'][1]) * 10000 / 192
+            self.assertEqual(result['estimate'] % 50, 0)
+            self.assertLessEqual(abs(result['estimate'] - expected), 25)
+            estimate = site777_net.net_estimate(png(curve))
+            self.assertEqual(estimate, {'value': result['estimate'], 'sure': True, 'method': site777_net.METHOD})
+            self.assertTrue(site777_net.valid(estimate))
+        self.assertLess(site777_net.analyze(png(DOWN))['estimate'], 0)
+        self.assertGreater(site777_net.analyze(png(UP))['estimate'], 0)
+
+    def test_near_zero_is_marked_unsure(self):
+        estimate = site777_net.net_estimate(png(FLAT))
+        self.assertIsNotNone(estimate)
+        self.assertFalse(estimate['sure'])
+
+    def test_held_or_unreadable_images_get_no_estimate(self):
+        cases = {
+            'boundary_contact': png([(9, 111), (60, 40), (100, 16), (140, 60)]),
+            'right_edge_contact': png([(9, 111), (20, 100), (120, 96), (243, 90)]),
+            'short_curve': png([(9, 111), (14, 115)]),
+            'axis_labels_unknown': png(DOWN, labels=False),
+            'unsupported_size': png(DOWN, size=(300, 226)),
+            'curve_missing': png(None),
+            'curve_gap': png(DOWN, extra=lambda d: d.rectangle([(60, 100), (66, 140)], fill=(24, 28, 24))),
+        }
+        for reason, raw in cases.items():
+            with self.subTest(reason):
+                result = site777_net.analyze(raw)
+                self.assertEqual(result['reason'], reason, result)
+                self.assertIsNone(site777_net.net_estimate(raw))
+        self.assertEqual(site777_net.analyze(b'not a png')['reason'], 'image_unreadable')
+
+    def test_only_the_site777_form_is_valid(self):
+        good = {'value': -700, 'sure': True, 'method': site777_net.METHOD}
+        self.assertTrue(site777_net.valid(good))
+        for bad in ({**good, 'method': 'anaslo-graph-v1'}, {**good, 'value': -703}, {**good, 'value': 700.0},
+                    {**good, 'sure': 1}, {**good, 'extra': 1}, {'value': -700, 'sure': True}, None):
+            self.assertFalse(site777_net.valid(bad), bad)
+
+
+class ImportTest(unittest.TestCase):
+    def table(self):
+        return {'url': URL, 'machine': '試験ジャグラー3', 'model_id': '123', 'selected_md': '11/6', 'count': 2,
+                'headers': ['', '台番', '累計ゲーム', 'BB回数', 'RB回数', '最高出玉', 'ART回数'],
+                'rows': [['', '101', '3000', '10', '8', '900', '--'], ['', '102', '2800', '9', '5', '1,234', '0']]}
+
+    def backup(self, images):
+        table = self.table()
+        rows = capture.table_records(table, '2026-11-06', NOW)
+        payload = {'url': URL.replace('D3300', 'D4300'), 'model_id': '123', 'selected_md': '11/6',
+                   'graphs': [{'rack': rack, 'png': data_uri(raw)} for rack, raw in images.items()]}
+        graphs = capture.graph_records(payload, '2026-11-06', '123', {101, 102}, NOW)
+        return capture.make_backup(table, rows, graphs, '2026-11-06', '試験ジャグラー3', now=NOW)
+
+    def test_capture_adds_the_estimate_only_where_it_can_be_read(self):
+        backup = self.backup({101: png(DOWN), 102: png([(9, 111), (60, 40), (100, 16), (140, 60)])})
+        by_rack = {r['rack']: r for r in backup['records']}
+        self.assertEqual(by_rack[101]['net_estimate']['method'], site777_net.METHOD)
+        self.assertIsNone(by_rack[101]['net_medals'])
+        self.assertNotIn('net_estimate', by_rack[102])  # 見切れ：推定なし。MYはそのまま
+        self.assertEqual(by_rack[102]['my'], 1234)
+        for record in backup['records']:
+            capture.validate_record(record)
+        with self.assertRaises(ValueError):
+            capture.validate_record({**by_rack[101], 'net_estimate': {'value': -700, 'sure': True, 'method': 'anaslo-graph-v1'}})
+
+    def test_store_accepts_it_and_moves_a_later_estimate_onto_the_same_image_only(self):
+        from pscube_import import PscubeStore, _record_key
+        with tempfile.TemporaryDirectory() as tmp:
+            store = PscubeStore(Path(tmp) / 'test.sqlite3', recording=False)
+            try:
+                with_estimate = self.backup({101: png(DOWN), 102: png(UP)})
+                without = {**with_estimate, 'records': [{k: v for k, v in r.items() if k != 'net_estimate'}
+                                                         for r in with_estimate['records']]}
+                store.import_backup(without)
+                key = _record_key(with_estimate['records'][0])
+                self.assertNotIn('net_estimate', store._read('records', key))
+                # 同じ表・同じ画像から後で付けた推定差枚は移る（数値・出典はそのまま）。
+                store.import_backup(with_estimate)
+                saved = store._read('records', key)
+                self.assertEqual(saved['net_estimate'], with_estimate['records'][0]['net_estimate'])
+                self.assertEqual({k: v for k, v in saved.items() if k != 'net_estimate'}, without['records'][0])
+                # 別の画像（取り直し）から作った推定差枚は移さない。
+                other = self.backup({101: png(UP), 102: png(UP)})
+                store.import_backup(other)
+                self.assertEqual(store._read('records', key)['net_estimate'], with_estimate['records'][0]['net_estimate'])
+                # 書き出し→読み直しでも残る。
+                exported = store.export_payload()
+                self.assertTrue(any(r.get('net_estimate', {}).get('method') == site777_net.METHOD for r in exported['records']))
+            finally:
+                store.close()
+
+    def test_an_anaslo_record_cannot_carry_the_site777_method(self):
+        from pscube_import import _validate_record
+        record = self.backup({101: png(DOWN), 102: png(UP)})['records'][0]
+        anaslo_like = {**record, 'source_site': 'anaslo'}
+        with self.assertRaises(ValueError):
+            _validate_record(anaslo_like)
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+class CalendarTest(unittest.TestCase):
+    def test_day_total_counts_estimates_as_needing_check_but_never_my(self):
+        from event_calendar import pscube_day_nets
+        base = {'rate': '20', 'day': '2026-11-06', 'games': 3000, 'bb': 10, 'rb': 5, 'my': 900}
+        records = [{**base, 'net_medals': 300},
+                   {**base, 'source_site': 'site777', 'net_medals': None,
+                    'net_estimate': {'value': -700, 'sure': True, 'method': site777_net.METHOD}},
+                   {**base, 'source_site': 'site777', 'net_medals': None,
+                    'net_estimate': {'value': 50, 'sure': False, 'method': site777_net.METHOD}},
+                   {**base, 'source_site': 'site777', 'net_medals': None, 'my': 6915}]  # 見切れ：MYは足さない
+        day = pscube_day_nets(records, '2026-11-06', '2026-11-06')['2026-11-06']
+        self.assertEqual((day['total'], day['captured'], day['needs_check']), (300 - 700 + 50, 3, 1))
+
+
+class BackfillTest(unittest.TestCase):
+    def test_saved_racks_get_estimates_only_from_their_own_images(self):
+        import json
+        from pscube_import import ANDROID_SYNC_NAME, PscubeStore, _record_key
+        import site777_backfill
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path, sources = root / 'pscube.sqlite3', root / 'sources'
+            sources.mkdir()
+            images = {101: png(DOWN), 102: png([(9, 111), (60, 40), (100, 16), (140, 60)])}
+            backup = ImportTest().backup(images)
+            plain = {**backup, 'records': [{k: v for k, v in r.items() if k != 'net_estimate'} for r in backup['records']]}
+            store = PscubeStore(db_path, recording=False)
+            try:
+                store.import_backup(plain)
+            finally:
+                store.close()
+            page = {'kind': 'graphs', 'graphs': [{'rack': rack, 'png': data_uri(raw)} for rack, raw in images.items()]}
+            (sources / 'page.json').write_text(json.dumps(page), encoding='utf-8')
+            before = db_path.read_bytes()
+            result, summary = site777_backfill.build(db_path, sources)
+            self.assertEqual(db_path.read_bytes(), before, '件数を見るだけではDBを変えない')
+            self.assertEqual(summary['推定を付ける'], 1)
+            self.assertEqual(summary['保留：boundary_contact'], 1)
+            self.assertEqual([r['rack'] for r in result['records']], [101])
+            self.assertEqual({k: v for k, v in result['records'][0].items() if k != 'net_estimate'}, plain['records'][0])
+            store = PscubeStore(db_path, recording=False)
+            try:
+                store.import_backup(result)
+                self.assertEqual(store._read('records', _record_key(result['records'][0]))['net_estimate'],
+                                 result['records'][0]['net_estimate'])
+            finally:
+                store.close()
+            # 付け終わったら、もう一度作っても入れる台は無い。
+            self.assertIsNone(site777_backfill.build(db_path, sources)[0])
+        self.assertTrue(ANDROID_SYNC_NAME.fullmatch('pscube-backup-site777net-20261107.json'))
+        self.assertFalse(ANDROID_SYNC_NAME.fullmatch('pscube-backup-site777net-x.json'))

@@ -161,6 +161,23 @@ bool validPscubeNetEstimate(Object? value) =>
     value['sure'] is bool &&
     value['method'] == pscubeNetEstimateMethod;
 
+/// サイトセブンの台の推定差枚の形（PC `site777_net.valid` と同じ、2026-11-07）。グラフ画像の目盛りから
+/// 読んだ値で、50枚単位。{'value': 整数, 'sure': 真偽, 'method': 'site777-axis-pixels-v1'} だけ。
+const site777NetEstimateMethod = 'site777-axis-pixels-v1';
+bool validSite777NetEstimate(Object? value) =>
+    value is Map &&
+    value.length == 3 &&
+    value['value'] is int &&
+    (value['value'] as int).abs() <= 1000000 &&
+    (value['value'] as int) % 50 == 0 &&
+    value['sure'] is bool &&
+    value['method'] == site777NetEstimateMethod;
+
+/// 補完の台の推定差枚が、出典に合った方式か（アナスロ・サイトセブン）。
+bool validSupplementNetEstimate(Object? source, Object? value) =>
+    (source == 'anaslo' && validPscubeNetEstimate(value)) ||
+    (source == 'site777' && validSite777NetEstimate(value));
+
 /// Convert at the input boundary so both data sites use the same viewer UI.
 /// MY stays in extra['my']; it is never written to Meruhen's max_hold field.
 void validateAnasloRecord(Map<dynamic, dynamic> row) {
@@ -223,7 +240,8 @@ void validateSite777Record(Map<dynamic, dynamic> row) {
         'net_medals',
       ].any((k) => !row.containsKey(k)) ||
       ['detail_url', 'observed_at', 'net_medals'].any((k) => row[k] != null) ||
-      row['net_estimate'] != null ||
+      (row.containsKey('net_estimate') &&
+          !validSite777NetEstimate(row['net_estimate'])) ||
       row['net_capture'] != null ||
       ['my', 'at_art'].any(
         (k) =>
@@ -347,7 +365,7 @@ List<SlotRecord> pscubeViewerRecords(Map<dynamic, dynamic> data) {
     }
     final netEstimate = item['net_estimate'];
     if (netEstimate != null &&
-        (!anaslo || !validPscubeNetEstimate(netEstimate))) {
+        !validSupplementNetEstimate(item['source_site'], netEstimate)) {
       throw const FormatException('推定差枚の形式が不正です。');
     }
     final netCapture = validateNetCapture(item['net_capture'], record: item);

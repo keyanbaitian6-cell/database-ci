@@ -1,2 +1,2 @@
 # 生成元: database_android/tool/build_release_info.py
-APPLICATION_RELEASE = '012b96b67cbf'
+APPLICATION_RELEASE = 'e1f87afe8ce8'

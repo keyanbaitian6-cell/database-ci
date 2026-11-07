@@ -341,7 +341,7 @@ class PscubeStore {
       throw const FormatException('差枚の数値が不正です。');
     }
     if (row.containsKey('net_estimate') &&
-        (!anaslo || !validPscubeNetEstimate(row['net_estimate']))) {
+        !validSupplementNetEstimate(row['source_site'], row['net_estimate'])) {
       throw const FormatException('推定差枚の形式が不正です。');
     }
     if (row['net_capture'] != null) {
@@ -926,7 +926,20 @@ class PscubeStore {
     Map<String, dynamic> fresh,
   ) {
     if (old == null) return fresh;
-    if (fresh['source_site'] == 'site777') return old;
+    if (fresh['source_site'] == 'site777') {
+      // 同じ表・同じグラフ画像から後で推定差枚を付けたときだけ移す（PC `_merge` と同じ、2026-11-07）。
+      final estimate = fresh['net_estimate'];
+      final freshImage = (fresh['source_graph'] as Map?)?['image_sha256'];
+      final oldImage = (old['source_graph'] as Map?)?['image_sha256'];
+      if (old['source_site'] == 'site777' &&
+          estimate != null &&
+          fresh['source_sha256'] == old['source_sha256'] &&
+          freshImage == oldImage &&
+          jsonEncode(estimate) != jsonEncode(old['net_estimate'])) {
+        return {...old, 'net_estimate': estimate};
+      }
+      return old;
+    }
     if (fresh['source_site'] == 'anaslo') {
       // 補完どうしで、同じアナスロのページから後で推定差枚を付けたときだけ移す（PC `_merge` と同じ、2026-11-06）。
       final estimate = fresh['net_estimate'];

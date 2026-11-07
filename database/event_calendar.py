@@ -178,8 +178,9 @@ def meruhen_day_nets(db, location, first, last):
 
 
 def pscube_day_nets(records, first, last):
-    """P’s CUBEの日ごとの総差枚（元グラフの確定差枚）。貸玉ごとに数え、貸玉が1つならその合計、
-    複数あれば {'by_rate': {貸玉: 合計}}（別の貸玉は混ぜない）。数値異常の台は数えない。"""
+    """P’s CUBEの日ごとの総差枚（元グラフの確定差枚、補完の台は推定差枚＝要確認を数える。pscube_report.net_value）。
+    貸玉ごとに数え、貸玉が1つならその合計、複数あれば {'by_rate': {貸玉: 合計}}（別の貸玉は混ぜない）。数値異常の台は数えない。"""
+    from pscube_report import net_value
     by_rate = {}
     for r in records:
         if not first <= r['day'] <= last:
@@ -187,7 +188,7 @@ def pscube_day_nets(records, first, last):
         if ((r.get('games') or 0) > 20000 or (r.get('bb') or 0) > 500 or (r.get('rb') or 0) > 500
                 or (r.get('my') or 0) > 100000):
             continue
-        _add_net(by_rate.setdefault(r['rate'], {}), r['day'], r.get('net_medals'))
+        _add_net(by_rate.setdefault(r['rate'], {}), r['day'], *net_value(r))
     if len(by_rate) <= 1:
         return next(iter(by_rate.values()), {})
     days = {day for totals in by_rate.values() for day in totals}
@@ -538,10 +539,11 @@ class PscubeEvents:
                        if r.get('day') == day]
         finally:
             store.close()
+        from pscube_report import net_value
         rates = {r['rate'] for r in records}
         return [{'rack': r['rack'], 'machine': (f"{r['rate']}スロ " if len(rates) > 1 else '') + r['machine'],
                  'games': r.get('games') or 0, 'bb': r.get('bb'), 'rb': r.get('rb'),
-                 'net': r.get('net_medals'), 'needs_check': False}
+                 'net': net_value(r)[0], 'needs_check': net_value(r)[1]}
                 for r in records
                 if not ((r.get('games') or 0) > 20000 or (r.get('bb') or 0) > 500 or (r.get('rb') or 0) > 500
                         or (r.get('my') or 0) > 100000)]

@@ -11,6 +11,8 @@ from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from PIL import Image
 
+import site777_net
+
 JST = timezone(timedelta(hours=9))
 HALL = '04034001'
 SHOP = 'c740601'
@@ -164,6 +166,10 @@ def graph_records(payload, target_day, model_id, expected_racks, now=None):
                 raise ValueError('表とグラフ一覧の最高出玉が違います。更新中の可能性があるため保存しません。')
         curve, source = trace_graph(item.get('png'))
         result[rack] = {'graph': curve, 'source_graph': source}
+        # 画像の目盛りから読んだ推定差枚（site777_net.py、2026-11-07）。読めない・保留の台には付けない。
+        estimate = site777_net.net_estimate(base64.b64decode(item['png'].split(',', 1)[1])) if curve else None
+        if estimate is not None:
+            result[rack]['net_estimate'] = estimate
     return result
 
 
@@ -199,7 +205,8 @@ def validate_record(record):
         raise ValueError('サイトセブンの欠損値が明示されていません。')
     if (record.get('store') != SHOP or record.get('rate') != '20'
             or record.get('detail_url') is not None or record.get('net_medals') is not None
-            or record.get('net_estimate') is not None or record.get('net_capture') is not None
+            or ('net_estimate' in record and not site777_net.valid(record['net_estimate']))
+            or record.get('net_capture') is not None
             or not re.fullmatch(r'[0-9a-f]{64}', str(record.get('source_sha256', '')))
             or not isinstance(record.get('source_machine'), str) or not record['source_machine'].strip()):
         raise ValueError('サイトセブンの出典・店舗・欠損値が不正です。')

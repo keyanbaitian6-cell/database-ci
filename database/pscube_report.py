@@ -9,6 +9,29 @@ import sqlite3
 
 from core import FLIP7_CSS, FLIP7_FAN, SUMMARY_REPORT_CSS
 from pscube_import import is_excluded_machine
+import anaslo_net
+import site777_net
+
+
+def net_value(r):
+    """(差枚, 要確認か)。本当の差枚、無ければ補完の台の推定差枚（確かでなければ要確認）。どちらも無ければ (None, False)。
+    閲覧ページ・共有カレンダーと同じく、推定差枚も合計に入れる（2026-11-06 利用者「全部入れる」）。"""
+    if type(r.get('net_medals')) is int:
+        return r['net_medals'], False
+    e = r.get('net_estimate')
+    if ((r.get('source_site') == 'anaslo' and anaslo_net.valid(e))
+            or (r.get('source_site') == 'site777' and site777_net.valid(e))):
+        return e['value'], not e['sure']
+    return None, False
+
+
+def net_text(r):
+    """差枚の欄の文字。本当の差枚があればそれ。無ければ補完の台の推定差枚（「推定」、勝ち負けを言い切れない・
+    確かでない台は「※」）。アナスロ（anaslo_net.py）・サイトセブン（site777_net.py、2026-11-07）。"""
+    if type(r.get('net_medals')) is int:
+        return f"{r['net_medals']:+,}"
+    value, needs_check = net_value(r)
+    return None if value is None else f"推定 {value:+,}{'※' if needs_check else ''}"
 
 
 def read_records(path):
@@ -34,7 +57,8 @@ def build_report(path, folder, day=None, machine=None):
         raise ValueError(f'{day}のP’s CUBE保存データがありません。')
     compact = []
     for r in records:
-        row = {key: r.get(key) for key in ('day', 'machine', 'rate', 'rack', 'games', 'bb', 'rb', 'at_art', 'my', 'net_medals')}
+        row = {key: r.get(key) for key in ('day', 'machine', 'rate', 'rack', 'games', 'bb', 'rb', 'at_art', 'my')}
+        row['net'] = net_text(r)
         row['source'] = {'anaslo': 'アナスロ（補完）', 'site777': 'サイトセブン（補完）'}.get(r.get('source_site'), 'P’s CUBE')
         row['combined'] = ((r.get('source_probabilities') or {}).get('combined') or {}).get('display')
         compact.append(row)
@@ -59,7 +83,7 @@ select{font:inherit;padding:8px;border:1px solid var(--hairline);border-radius:6
 <p class="sub">P-STATION&amp;IIスロット館 ｜ このPCの保存済み記録</p>
 <div class="filters"><label>日付 <select id="day"></select></label><label>機種名 <select id="machine"></select></label></div>
 <p class="sub" id="count"></p>
-<p class="sub">アナスロ補完のMY・差枚は不明のため「—」です。補完データは採点・翌日候補の対象外です。BB・RB・ARTと合成確率は掲載値です。</p>
+<p class="sub">アナスロ補完のMYは不明のため「—」です。補完の台の差枚は、グラフから読んだ推定です（「推定」。※は確かでない・勝ち負けを言い切れない台。サイトセブンは画像の目盛りから読み、見切れなどで読めない台は「—」）。補完データは採点・翌日候補の対象外です。BB・RB・ARTと合成確率は掲載値です。</p>
 <div class="card"><table><thead><tr><th>機種名</th><th>貸玉</th><th>台番号</th><th>総回転</th><th>BB</th><th>RB</th><th>ART</th><th>MY</th><th>差枚</th><th>合成確率（掲載）</th><th>出典</th></tr></thead><tbody id="rows"></tbody></table></div>
 </main><script type="application/json" id="data">__DATA__</script><script>
 'use strict';
@@ -78,7 +102,7 @@ function render(){
     .sort((a,b)=>a.machine.localeCompare(b.machine,'ja')||Number(a.rate)-Number(b.rate)||a.rack-b.rack);
   const body=document.getElementById('rows');body.replaceChildren();
   for(const r of records){const tr=document.createElement('tr');
-    for(const key of ['machine','rate','rack','games','bb','rb','at_art','my','net_medals','combined','source']){
+    for(const key of ['machine','rate','rack','games','bb','rb','at_art','my','net','combined','source']){
       const td=document.createElement('td');td.textContent=r[key]===null||r[key]===undefined?'—':String(r[key]);
       if(!['machine','combined','source'].includes(key))td.className='num';tr.append(td);
     }body.append(tr);

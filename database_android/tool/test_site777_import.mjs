@@ -82,3 +82,49 @@ test('生成するGoogle同期スクリプトとブラウザの検証結果が�
   const invalid=fixture();invalid.records[0].source_url+='&mdc=999';
   assert.throws(()=>context.validateData(invalid));
 });
+
+// グラフ画像の目盛りから読んだ推定差枚（PC site777_net.py、2026-11-07）。
+const estimate=(value,sure=true)=>({value,sure,method:'site777-axis-pixels-v1'});
+
+test('サイトセブンの推定差枚を保持し、共有カレンダーでは推定（確かでなければ※）として数える',()=>{
+  const value=fixture();
+  value.records[0].net_estimate=estimate(-700);
+  value.records[1].net_estimate=estimate(50,false);
+  const parsed=validateData(value);
+  assert.deepEqual(parsed.records[0].net_estimate,estimate(-700));
+  assert.equal(parsed.records[0].net_medals,null);
+  assert.deepEqual(validateData(plain(parsed)),parsed);
+  const shown=pscubeRecords(parsed);
+  assert.deepEqual([shown[0].net,shown[0].needsCheck,shown[0].estimated],[-700,false,true]);
+  assert.deepEqual([shown[1].net,shown[1].needsCheck],[50,true]);
+  assert.equal(shown[0].output,900,'MYはMYのまま');
+  assert.equal(netCaptureLabel(parsed.records[0]),'出典に差枚なし（推定あり）');
+  assert.equal(pscubeRecords(validateData(fixture()))[0].net,null,'推定の無い台は差枚なしのまま（MYを入れない）');
+});
+
+test('方式・出典の合わない推定差枚や50枚単位でない値は拒否する',()=>{
+  for(const bad of [{...estimate(-700),method:'anaslo-graph-v1'},estimate(-703),{value:-700,sure:true}]){
+    const value=fixture();value.records[0].net_estimate=bad;
+    assert.throws(()=>validateData(value),/推定差枚|サイトセブン/);
+  }
+  const anaslo={source_site:'anaslo',net_medals:null,net_estimate:estimate(-700)};
+  assert.equal(pscubeRecords({format:'pscube-viewer',records:[{...fixture().records[0],...anaslo}]})[0].net,null);
+});
+
+test('同じ表・同じ画像から後で付けた推定差枚だけを保存済みの台へ移す',()=>{
+  const later=fixture();
+  later.records[0].net_estimate=estimate(-700);
+  later.records[1].net_estimate=estimate(300);
+  later.records[1].source_graph={...later.records[1].source_graph,image_sha256:'f'.repeat(64)};
+  const merged=mergeData(validateData(fixture()),validateData(later));
+  assert.deepEqual(merged.records.find(r=>r.rack===later.records[0].rack).net_estimate,estimate(-700));
+  assert.equal('net_estimate' in merged.records.find(r=>r.rack===later.records[1].rack),false);
+});
+
+test('生成するGoogle同期スクリプトも推定差枚を落とさない',()=>{
+  const context=vm.createContext({});
+  vm.runInContext(buildCloudScript(),context,{timeout:5000});
+  const value=fixture();value.records[0].net_estimate=estimate(-700);
+  assert.deepEqual(plain(context.validateData(value)),plain(validateData(value)));
+  assert.deepEqual(plain(context.validateData(value)).records[0].net_estimate,estimate(-700));
+});

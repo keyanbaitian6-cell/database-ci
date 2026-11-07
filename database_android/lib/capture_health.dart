@@ -211,7 +211,10 @@ String netCaptureLabel(Map row) {
   if (row['net_medals'] is int) {
     return row['net_medals'] == 0 ? '取得済み（0枚）' : '取得済み';
   }
-  if (['anaslo', 'site777'].contains(row['source_site'])) return '出典に差枚なし';
+  if (['anaslo', 'site777'].contains(row['source_site'])) {
+    // グラフから推定差枚を付けた台は、正確な差枚とは分けて「推定あり」（PC `net_capture_label` と同じ）。
+    return row['net_estimate'] != null ? '出典に差枚なし（推定あり）' : '出典に差枚なし';
+  }
   return {
         'missing_series': '日別の系列なし',
         'empty': '元数値が空',

@@ -499,7 +499,7 @@ function pscubeCloudWrite(folder, file, name, text) {
   throw new PscubeCloudStop('output', name + ' の更新に失敗しました（' + last + '）。次の自動実行でやり直します。');
 }
 
-const APPLICATION_RELEASE = '012b96b67cbf';
+const APPLICATION_RELEASE = 'e1f87afe8ce8';
 // 取得診断には固定の理由と数値だけを残す。認証値・HTML・自由文の応答は保存しない。
 const NET_PROBE_MAX = 64 * 1024;
 const NET_PROBE_BUDGET = 3 * 1024 * 1024;
@@ -609,7 +609,8 @@ function viewerNetCapture(value) {
 
 function netCaptureLabel(record) {
   if (Number.isSafeInteger(record.net_medals)) return record.net_medals === 0 ? '取得済み（0枚）' : '取得済み';
-  if (['anaslo','site777'].includes(record.source_site)) return '出典に差枚なし';
+  // グラフから推定差枚を付けた台は、正確な差枚とは分けて「推定あり」（PC net_capture_label と同じ）。
+  if (['anaslo','site777'].includes(record.source_site)) return record.net_estimate != null ? '出典に差枚なし（推定あり）' : '出典に差枚なし';
   const reason = record.net_capture?.reason;
   return ({missing_series:'日別の系列なし',empty:'元数値が空',short_series:'元数値の点が不足',
     invalid_points:'元数値の形式不正',invalid_net:'差枚の範囲不正',invalid_response:'応答の形式不正',
@@ -816,6 +817,13 @@ function validNetEstimate(e) {
     Math.abs(e.value) <= 1000000 && typeof e.sure === 'boolean' && e.method === 'anaslo-graph-v1';
 }
 
+// サイトセブンの台の推定差枚（PC site777_net.valid・Dart validSite777NetEstimate と同じ形、2026-11-07）。
+// グラフ画像の目盛りから読んだ値で50枚単位。方式名だけがアナスロと違う。
+function validSite777NetEstimate(e) {
+  return !!e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).length === 3 && Number.isSafeInteger(e.value) &&
+    Math.abs(e.value) <= 1000000 && e.value % 50 === 0 && typeof e.sure === 'boolean' && e.method === 'site777-axis-pixels-v1';
+}
+
 function validateAnasloRecord(r) {
   let url; try { url = new URL(r.source_url); } catch { fail('アナスロ履歴の出典が不正です。'); }
   if (url.origin !== 'https://ana-slo.com' || url.username || url.password || !url.pathname.startsWith(`/${r.day}-`) ||
@@ -834,7 +842,7 @@ function validateSite777Record(r) {
       typeof r.source_machine!=='string' || !r.source_machine.trim() ||
       typeof r.source_sha256!=='string' || !/^[0-9a-f]{64}$/.test(r.source_sha256) ||
       ['my','at_art','graph','detail_url','observed_at','net_medals'].some(k=>!Object.hasOwn(r,k)) ||
-      ['detail_url','observed_at','net_medals'].some(k=>r[k]!==null) || r.net_estimate!=null || r.net_capture!=null ||
+      ['detail_url','observed_at','net_medals'].some(k=>r[k]!==null) || (Object.hasOwn(r,'net_estimate') && !validSite777NetEstimate(r.net_estimate)) || r.net_capture!=null ||
       ['my','at_art'].some(k=>r[k]!==null&&(!integer(r[k])||r[k]>1000000))) fail('サイトセブンの出典・数値・欠損値が不正です。');
   const label=typeof r.source_day_label==='string'&&r.source_day_label.match(/^(\d{1,2})\/(\d{1,2})$/);
   const captured=Date.parse(r.source_captured_at);
@@ -882,7 +890,7 @@ function validateData(raw) {
     if (site777) validateSite777Record(r);
     for (const k of site777 ? ['bb','rb','games'] : external ? ['bb', 'rb', 'at_art', 'games'] : ['bb', 'rb', 'at_art', 'games', 'my']) if (!integer(r[k])) fail('台の数値が不正です。');
     if (r.net_medals != null && (!Number.isSafeInteger(r.net_medals) || Math.abs(r.net_medals) > 1000000)) fail('差枚の数値が不正です。');
-    if (r.net_estimate != null && (!anaslo || !validNetEstimate(r.net_estimate))) fail('推定差枚の形式が不正です。');
+    if (r.net_estimate != null && !(anaslo ? validNetEstimate(r.net_estimate) : site777 && validSite777NetEstimate(r.net_estimate))) fail('推定差枚の形式が不正です。');
     let graph = null;
     if (r.graph != null) {
       const g = r.graph;
@@ -901,7 +909,7 @@ function validateData(raw) {
         ...(anaslo ? {source_probabilities:r.source_probabilities} : {})} : {}),
       ...(site777 ? {source_day_label:r.source_day_label, source_captured_at:r.source_captured_at} : {}),
       ...(external ? {net_medals:null} : r.net_medals == null ? {} : {net_medals: r.net_medals}),
-      ...(anaslo && r.net_estimate != null ? {net_estimate: {value: r.net_estimate.value, sure: r.net_estimate.sure, method: r.net_estimate.method}} : {}),
+      ...(external && r.net_estimate != null ? {net_estimate: {value: r.net_estimate.value, sure: r.net_estimate.sure, method: r.net_estimate.method}} : {}),
       ...(netCapture ? {net_capture:netCapture} : {}) };
   });
   if (new Set(machines.map(machineKey)).size !== machines.length || new Set(records.map(recordKey)).size !== records.length) fail('同じ機種・台が重複しています。');
@@ -936,6 +944,12 @@ function mergeData(stored, incoming) {
       // 既にある台・日は補完で上書きしない。ただし同じアナスロのページの補完に、後で推定差枚を付けたときは
       // 推定差枚だけ移す（PC _merge・Android _merge と同じ、2026-11-06）。
       if (r.source_site==='anaslo' && previous?.source_site === 'anaslo' && r.net_estimate && r.source_sha256 === previous.source_sha256 &&
+          JSON.stringify(r.net_estimate) !== JSON.stringify(previous.net_estimate ?? null)) {
+        records.set(key, {...previous, net_estimate: r.net_estimate});
+      }
+      // サイトセブンは同じ表・同じグラフ画像から後で付けた推定差枚だけ移す（PC・Android と同じ、2026-11-07）。
+      if (r.source_site==='site777' && previous?.source_site === 'site777' && r.net_estimate && r.source_sha256 === previous.source_sha256 &&
+          r.source_graph?.image_sha256 === previous.source_graph?.image_sha256 &&
           JSON.stringify(r.net_estimate) !== JSON.stringify(previous.net_estimate ?? null)) {
         records.set(key, {...previous, net_estimate: r.net_estimate});
       }
@@ -983,7 +997,7 @@ function mergeNetSupplement(stored, incoming, report = {}) {
   }
   return validateData({...old,records:[...records.values()],sync_status:mergeSyncStatus(old.sync_status,fresh.sync_status)});
 }
-const SCRIPT_RELEASE = '012b96b67cbf';
+const SCRIPT_RELEASE = 'e1f87afe8ce8';
 // 日別の不変ファイルと、最後に確定する一覧。Google・ブラウザで同じ検査を使う。
 const VP_FORMAT = 'database-viewer-parts';
 const VP_MAX_BYTES = 48 * 1024 * 1024;

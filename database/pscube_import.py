@@ -30,6 +30,7 @@ import error_log
 import power
 import pscube_netlog
 import anaslo_net
+import site777_net
 from pscube_health import validate_net_capture, trim_net_probes, merge_net_capture, viewer_net_capture
 from pscube_connection import (BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page,
                                retry_page, retry_target, stop_navigation)
@@ -377,8 +378,10 @@ def _validate_record(r):
         _number(r.get(name), name)
     if r.get('net_medals') is not None and (type(r['net_medals']) is not int or abs(r['net_medals']) > 1000000):
         raise ValueError('差枚の数値が不正です。')
-    # アナスロで補った台の推定差枚（anaslo_net.py、2026-11-06）。本当の差枚（net_medals）とは別の項目で、補完の台だけ。
-    if 'net_estimate' in r and not (external and anaslo_net.valid(r['net_estimate'])):
+    # 補った台の推定差枚。本当の差枚（net_medals）とは別の項目で、補完の台だけ。アナスロはグラフの形から
+    # （anaslo_net.py、2026-11-06）、サイトセブンはグラフ画像の目盛りから（site777_net.py、2026-11-07）。方式は出典と合わせる。
+    if 'net_estimate' in r and not ((external and anaslo_net.valid(r['net_estimate']))
+                                    or (site777 and site777_net.valid(r['net_estimate']))):
         raise ValueError('推定差枚の形式が不正です。')
     if r.get('net_capture') is not None:
         r['net_capture'] = validate_net_capture(r['net_capture'], r)
@@ -440,7 +443,14 @@ def _merge(old: dict | None, fresh: dict) -> dict:
     if old is None:
         return fresh
     if fresh.get('source_site') == 'site777':
-        return old  # サイトセブンは既存の出典・数値・グラフを補完で上書きしない。
+        # サイトセブンは既存の出典・数値・グラフを補完で上書きしない。ただし、同じ表・同じグラフ画像から
+        # 後で推定差枚を付けた（作り直した）ときだけ、推定差枚を移す（2026-11-07。既に保存した日にも届けるため）。
+        if (old.get('source_site') == 'site777' and fresh.get('net_estimate') is not None
+                and fresh.get('source_sha256') == old.get('source_sha256')
+                and (fresh.get('source_graph') or {}).get('image_sha256') == (old.get('source_graph') or {}).get('image_sha256')
+                and fresh.get('net_estimate') != old.get('net_estimate')):
+            return {**old, 'net_estimate': fresh['net_estimate']}
+        return old
     # External HTML is fill-only, including later restores of exported backups.
     # A real capture always replaces a source-only record regardless of game count.
     if fresh.get('source_site') == 'anaslo':
@@ -678,7 +688,9 @@ def write_backup(store: 'PscubeStore', path) -> Path:
 # 起動中のPC版が数分おきに自動で読む同期フォルダのファイル：Android の P’s CUBE（全期間・当日分）と、HTML変換アプリが
 # 保存したアナスロの補完（pscube-backup-anaslo-日付.json、2026-11-06 利用者「Aにして」＝取ったら毎回、処理してドライブへ）。
 ANDROID_SYNC_NAME = re.compile(r'pscube-(?:backup-android-\d{8}-\d{6}|day-android-\d{4}-\d{2}-\d{2}'
-                               r'|backup-anaslo-\d{8}(?:-\d{8})?)\.json')
+                               r'|backup-anaslo-\d{8}(?:-\d{8})?'
+                               # 保存済みのサイトセブンの台へ後から付ける推定差枚（site777_backfill.py、2026-11-07）
+                               r'|backup-site777net-\d{8}(?:-\d{6})?)\.json')
 
 
 def android_sync_files(folder) -> list[tuple[str, float, Path]]:
