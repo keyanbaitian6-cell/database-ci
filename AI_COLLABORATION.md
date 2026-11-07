@@ -1427,3 +1427,4 @@
 - 公開：表示が変わるのはPCの取り込みカードとホームのログ欄だけ。閲覧ページ・共有カレンダーの公開は不要。APK・EXEは作っていない。
 - コミットにはCodexのレビュー文書（SITE777_CAPTURE_REVIEW_20261108.md）と、上のCodexの記録も含めた（利用者が貼った報告の元のため）。
 - 見つけて直したもの（記録）：この AI_COLLABORATION.md の1199行目（8f4babf「Site Seven replacement run」の記録）の DB 件数の部分だけ Shift-JIS で書かれていて、ファイル全体が UTF-8 として読めなかった（編集ツールが拒否）。その部分を UTF-8 に直した（文字は同じ）。
+- push：07086a8 を tools/push_ci.py で正本（imakurudev-eng/database、11/8は月の前半）へ1回送った。CI：https://github.com/imakurudev-eng/database/actions/runs/42424044144 （送った時点では待ち。結果は未確認）。実WebView2・実サイトでの確認は、利用者の次の取り込み待ち。
