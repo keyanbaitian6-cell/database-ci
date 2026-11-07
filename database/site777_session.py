@@ -197,6 +197,49 @@ class Session(Bridge):
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
                 (source.SHOP, self._day))}
 
+    def _saved_racks(self):
+        """その日の保存済みの台番号（取り込まない機種＝is_excluded_machine は数えない）。DB は読むだけ。"""
+        if not self._db_path.is_file():
+            return set()
+        with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+            rows = [json.loads(r[0]) for r in db.execute(
+                "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
+                "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
+                (source.SHOP, self._day))]
+        return {r['rack'] for r in rows if not is_excluded_machine(r.get('machine'))}
+
+    def _skip_complete_days(self):
+        """機種一覧の台数（[31] など）の合計だけ、その日の台が保存済みなら、機種ページを開かずにその日を飛ばす
+        （2026-11-07 利用者「この改善は導入してね」。11/4・11/5 は全台保存済みなのに約50機種の表を開いていた）。
+        台数の読めない機種が1つでもあれば飛ばさない（今までどおり機種ごとに確かめる）。全部飛ばせたら完了。"""
+        while True:
+            counts = [m.get('count') for m in self._models.values()]
+            if not counts or any(type(c) is not int or c < 1 for c in counts):
+                return None
+            total, saved = sum(counts), len(self._saved_racks())
+            if saved < total:
+                return None
+            with self._state_lock:
+                finished = f'{self._day[5:].replace("-", "/")}（全{total}台が保存済み・機種ページを開かずに飛ばした）'
+                self._finished_days.append(finished)
+                self._kept = saved
+                if not self._queue:
+                    self._enabled = False
+                    self._pace.configure(False, 15)
+                    self._until = None
+                    self._status = ('範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
+                                    if len(self._finished_days) > 1 else
+                                    f'{finished}。取り込む台はありませんでした。')
+                    return {'complete': True}
+                # 機種一覧は日付で変わらないので、読んだ一覧のまま次の日を確かめる。
+                self._day = self._queue.pop(0)
+                if not self._queue:
+                    self._until = None
+                self._done.clear()
+                self._job = None
+                self._added = self._kept = self._unknown = 0
+                self._status = f'{finished}。次は{self._day}を確かめます。'
+
     def _next(self, index_url=None):
         remaining = [m for key, m in self._models.items() if key not in self._done]
         if remaining:
@@ -291,7 +334,7 @@ class Session(Bridge):
             for page in payload.get('pages', []):
                 if page['number'] not in self._index_pages:
                     return {'action': {'type': 'page', 'number': page['number']}}
-            return self._next()
+            return self._skip_complete_days() or self._next()
         if kind == 'model':
             url = source.source_url(payload.get('table_url'), 'table')
             return {'action': {'type': 'link', 'url': url}}
