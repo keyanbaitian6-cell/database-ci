@@ -18,6 +18,7 @@ import 'event_history.dart';
 import 'event_name_dialog.dart';
 import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'pscube_suffix_page.dart';
+import 'pscube_validation_page.dart';
 import 'rack_suffix.dart';
 import 'rainbow_marks.dart';
 import 'remote_curve.dart';
@@ -1135,6 +1136,29 @@ class _ViewerHomeState extends State<ViewerHome> {
             onPressed: () => _openPscubeCalendar(store),
             icon: const Icon(Icons.calendar_month_outlined),
             label: const Text('イベントカレンダー'),
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (store == pscubeValidationStore) ...[
+          OutlinedButton.icon(
+            onPressed: () {
+              final url = _remote;
+              if (url == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('先にDriveの自動読み込みを設定してください。')),
+                );
+                return;
+              }
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => PscubeValidationPage(
+                    load: () => fetchSharedEvents(url, 'pscube-validation'),
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.fact_check_outlined),
+            label: const Text('検証候補'),
           ),
           const SizedBox(height: 8),
         ],

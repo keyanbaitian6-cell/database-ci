@@ -48,6 +48,7 @@ const errors=[];
 page.on('pageerror',e=>{errors.push(e.message);console.error('pageerror',e.message);});
 
 let driveRequests=[];
+const validationToday = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 // Optional local font for network-restricted test environments.
 if(process.env.VIEWER_TEST_FONT){
   const font=await fs.readFile(process.env.VIEWER_TEST_FONT);
@@ -55,6 +56,15 @@ if(process.env.VIEWER_TEST_FONT){
 }
 await page.route('https://script.google.com/**',route=>{
   driveRequests.push(route.request().url());
+  if (new URL(route.request().url()).searchParams.get('file') === 'pscube-validation') {
+    return route.fulfill({json: {format: 'pscube-validation', version: 1, days: [{
+      target: validationToday,
+      input_day: new Date(Date.now() - 15 * 3600000).toISOString().slice(0, 10),
+      saved_at: validationToday + 'T08:30:00+09:00',
+      preliminary: 1,
+      machines: [{name: 'マイジャグラーV', candidates: {random_draw: [1], date_two_exploratory: [8]}}],
+    }]}});
+  }
   return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({...data,exported_at:exported})});
 });
 
@@ -189,6 +199,11 @@ try {
   await page.getByText(/Googleドライブ/).first().waitFor();
   await page.getByText('Googleドライブの最新（56台）を読み込みました。').last().waitFor();
   assert.ok(driveRequests.some(url=>url.includes('file=pscube')));
+  await page.getByRole('button',{name:'検証候補',exact:true}).click();
+  await page.getByText('保存時刻 08:30:00（日本時間）',{exact:true}).waitFor();
+  await page.getByText(/確定前のサイトセブン記録が1台分/).waitFor();
+  assert.ok(driveRequests.some(url=>new URL(url).searchParams.get('file')==='pscube-validation'));
+  await page.getByRole('button',{name:/^Back$|^戻る$/}).click();
   assert.equal((await readStored('database-pscube-viewer','state','data')).date_events[0].name,null,'Drive update preserves removal');
   await page.evaluate(async incoming=>{
     await Promise.all([

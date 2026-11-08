@@ -57,8 +57,9 @@ const RAINBOW_MAX = 5000;
 const RAINBOW_STORED_MAX = 100000;
 
 function doGet(e) {
-  if (e?.parameter?.file === 'diagnostic') return respond(JSON.stringify({format:'database-release', release:SCRIPT_RELEASE, capabilities:['rainbow-storage-v2','recommendation-results','remote-curves','pscube-day-versioned']}));
+  if (e?.parameter?.file === 'diagnostic') return respond(JSON.stringify({format:'database-release', release:SCRIPT_RELEASE, capabilities:['rainbow-storage-v2','recommendation-results','remote-curves','pscube-day-versioned','pscube-validation']}));
   const key = (e && e.parameter && e.parameter.file) || '';
+  if (key === 'pscube-validation') return readPscubeValidation();
   // 週の構成はPCが作り、共有で編集した記号を重ねて返す。
   if (key === 'event-history') {
     return readEventHistory();
@@ -141,6 +142,57 @@ function doPost(e) {
     return respond(JSON.stringify({ ok: true, events: merged.events.length, changed: merged.changed }));
   } finally {
     lock.releaseLock();
+  }
+}
+
+// 指定したフォルダだけを読む。予測原本のデータを誤って置いても返さない。
+function readPscubeValidation() {
+  const folderId = PropertiesService.getScriptProperties().getProperty('PSCUBE_VALIDATION_FOLDER_ID');
+  if (!folderId) return respond(JSON.stringify({error: '検証候補のDrive連携が未設定です。'}));
+  try {
+    const files = DriveApp.getFolderById(folderId).getFilesByName('validation-candidates.json');
+    let file = null;
+    while (files.hasNext()) {
+      const next = files.next();
+      if (next.isTrashed()) continue;
+      if (file) throw new Error('duplicate');
+      file = next;
+    }
+    if (!file) return respond(JSON.stringify({format: 'pscube-validation', version: 1, days: []}));
+    if (file.getSize() > 256 * 1024) throw new Error('size');
+    const data = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
+    if (data?.format !== 'pscube-validation' || data.version !== 1 ||
+        !Array.isArray(data.days) || data.days.length > 31) throw new Error('format');
+    const days = data.days.map(day => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day.target) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(day.input_day) ||
+          !/^\d{4}-\d{2}-\d{2}T0[0-8]:[0-5]\d:[0-5]\d\+09:00$/.test(day.saved_at) ||
+          !day.saved_at.startsWith(day.target + 'T') ||
+          !Number.isSafeInteger(day.preliminary) || day.preliminary < 0 ||
+          !Array.isArray(day.machines) || day.machines.length > 100) throw new Error('day');
+      const machines = day.machines.map(machine => {
+        if (typeof machine.name !== 'string' || !machine.name || machine.name.length > 120) {
+          throw new Error('machine');
+        }
+        const methods = ['random_draw', 'date_two_exploratory'];
+        if (day.target.endsWith('-23')) methods.push('day23');
+        const candidates = {};
+        for (const method of methods) {
+          const racks = machine.candidates?.[method];
+          if (!Array.isArray(racks) || racks.length > 100 ||
+              racks.some(rack => !Number.isSafeInteger(rack) || rack < 1 || rack > 99999)) {
+            throw new Error('candidate');
+          }
+          candidates[method] = racks;
+        }
+        return {name: machine.name, candidates};
+      });
+      return {target: day.target, input_day: day.input_day, saved_at: day.saved_at,
+              preliminary: day.preliminary, machines};
+    });
+    return respond(JSON.stringify({format: 'pscube-validation', version: 1, days}));
+  } catch (_) {
+    return respond(JSON.stringify({error: '検証候補のファイルを確認できません。Driveの出力を確認してください。'}));
   }
 }
 

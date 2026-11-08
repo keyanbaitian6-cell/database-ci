@@ -35,6 +35,14 @@ function drive(properties = {}, code = source) {
   const locks = [];
   const context = {
     DriveApp: {
+      getFolderById(id) {
+        if (id !== 'validation-folder') throw new Error('folder');
+        return {getFilesByName(name) {
+          const list = files.filter(f => f.name === name && f.parent === shared);
+          let i = 0;
+          return {hasNext: () => i < list.length, next: () => list[i++]};
+        }};
+      },
       getFilesByName(name) {
         const list = files.filter(f => f.name === name);
         let i = 0;
@@ -58,6 +66,31 @@ function drive(properties = {}, code = source) {
 }
 
 const ev = (day, name, at, extra = {}) => ({store: 'nagamachiminami', day, name, updated_at: at, ...extra});
+
+test('検証候補は設定先だけを読み、表示項目だけ返す', () => {
+  const d = drive({PSCUBE_VALIDATION_FOLDER_ID: 'validation-folder'});
+  const name = 'validation-candidates.json';
+  const doc = {format: 'pscube-validation', version: 1, days: [{
+    target: '2026-11-23', input_day: '2026-11-22', saved_at: '2026-11-23T08:59:59+09:00',
+    preliminary: 1, input_snapshot: {secret: true},
+    machines: [{name: 'ジャグラー', candidates: {
+      random_draw: [101], date_two_exploratory: [123], day23: [123], private: [124],
+    }}],
+  }]};
+  d.root.createFile(name, JSON.stringify(doc));
+  assert.deepEqual(d.get('pscube-validation').days, []);
+  const file = d.shared.createFile(name, JSON.stringify(doc));
+  const {days} = d.get('pscube-validation');
+  assert.equal(days[0].input_snapshot, undefined);
+  assert.deepEqual(days[0].machines[0].candidates, {
+    random_draw: [101], date_two_exploratory: [123], day23: [123],
+  });
+  file.setContent(JSON.stringify({payload: doc}));
+  assert.match(d.get('pscube-validation').error, /確認できません/);
+  file.setContent(JSON.stringify(doc).replace('08:59:59', '09:00:00'));
+  assert.match(d.get('pscube-validation').error, /確認できません/);
+  assert.match(drive().get('pscube-validation').error, /未設定/);
+});
 
 test('閲覧用ファイルと同じフォルダに作り、新しい方を残して足し込む', () => {
   const d = drive();
