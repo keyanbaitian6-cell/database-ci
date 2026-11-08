@@ -1,4 +1,7 @@
-"""オーバーレイ→機種一覧2ページ→31台＋1台の保存をローカルだけで通す。"""
+"""オーバーレイ→機種一覧2ページ→31台＋1台の保存をローカルだけで通す。
+
+--failed-load（2026-11-08）：台の表のページを1回だけ HTTP 403 にし、読み込みの失敗で止まり（navigation_failed）、
+自動の再開（待ち時間は2秒に縮める）で表示中のページを1回だけ読み込み直して最後まで取り込むことを、実 WebView2 で確かめる。"""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -15,9 +18,14 @@ sys.path.insert(0,str(ROOT))
 import webview
 from capture_card import CARD_JS
 from pscube_import import PscubeRandomCapture, PscubeStore
+import site777_browser
 from site777_browser import DiagnosticLog,keep_popups_here
+import site777_session
 from site777_session import Session
-from smoke_site777_capture import fixture,image_bytes,NOW
+from datetime import datetime
+from smoke_site777_capture import fixture,image_bytes
+# 11/6 が終わった日になる時刻（2026-11-08：今の営業日は確認が要り、初めは前の営業日を選ぶようにしたため）。
+NOW=datetime.fromisoformat('2026-11-07T10:00:00+09:00')
 
 
 def main():
@@ -26,6 +34,9 @@ def main():
     resource_only='--resource-only' in sys.argv
     # --range：11/6と11/5の2日を見せ、カードで「まで」を選んで2日分を古い順に取り込む（2026-11-07）。
     ranged='--range' in sys.argv
+    failed_load='--failed-load' in sys.argv
+    if failed_load:site777_session.RESUME_DELAY=2
+    refused=[]
     if without_guard and not redirected:raise ValueError('対照試験には--redirectも指定してください')
     requests,result,handlers=[],{},[]
     watchdog=threading.Timer(170 if ranged else 90,lambda:os._exit(2));watchdog.daemon=True;watchdog.start()
@@ -33,6 +44,11 @@ def main():
         def do_GET(self):
             requests.append(self.path)
             u=urlsplit(self.path);q=parse_qs(u.query)
+            if failed_load and u.path.endswith('D3300.do') and q.get('mdc')==['123'] and not refused:
+                refused.append(self.path)
+                body='<!doctype html><meta charset=utf-8><title>403</title>拒否'.encode('utf-8')
+                self.send_response(403);self.send_header('Content-Type','text/html; charset=utf-8')
+                self.end_headers();self.wfile.write(body);return
             if redirected and u.path.endswith('D4300.do') and q.get('pmc')==['04034001']:
                 self.send_response(302)
                 self.send_header('Location',self.path.replace('pmc=04034001','pmc=23170004').replace('urt=2000','urt=2173'))
@@ -101,7 +117,8 @@ def main():
         def install():
             guards={} if without_guard else dict(
                 navigation_guard=None if resource_only else lambda raw,redirected:session._navigation_starting(mapped_url(raw),redirected),
-                document_guard=lambda raw:session._document_allowed(mapped_url(raw)),document_filter=base+'/f/*')
+                document_guard=lambda raw:session._document_allowed(mapped_url(raw)),document_filter=base+'/f/*',
+                navigation_done=session._navigation_done)  # 本番の窓（site777_browser.run）と同じく読み込みの完了をつなぐ
             handlers.extend(keep_popups_here(window,log,**guards))
         def loaded():
             try:
@@ -131,7 +148,12 @@ def main():
                         if without_guard and foreign:break
                         if not without_guard and not state['enabled'] and '移動を止めました' in state['status']:break
                         time.sleep(.15);continue
+                    if failed_load:
+                        # 本番の窓の見張り（site777_browser.run の watch_finished）と同じく、時刻が来たら再開して読み込み直す。
+                        again=session._resume_if_due()
+                        if again:site777_browser.reload_page(window,again.replace('https://m.site777.jp',base,1))
                     if state['added']==32 and not state['enabled']:break
+                    if failed_load and state['resume_at']:time.sleep(.15);continue
                     if not state['enabled'] and state['status']!='P-STATIONの20円スロットを開き、取り込む日付を確認してください。':
                         raise AssertionError(state['status'])
                     time.sleep(.15)
@@ -167,11 +189,25 @@ def main():
                     result.update(ok=True,records=64,days=days,graph_requests=64,auto_off_at_end=True)
                     return
                 assert len(records)==32 and all(r['source_site']=='site777' for r in records)
+                if failed_load:
+                    rows=[json.loads(line) for line in log.path.read_text(encoding='utf-8').splitlines()]
+                    off=[r for r in rows if r['kind']=='auto_off' and r['reason']=='navigation_failed']
+                    resumed=[r for r in rows if r['kind']=='auto_resume']
+                    assert len(refused)==1 and len(off)==1 and 'HTTP 403' in off[0]['message'] and off[0]['resume']=='scheduled',(refused,off)
+                    assert [(r['reason'],r['count'],r['reload']) for r in resumed]==[('navigation_failed',1,True)],resumed
+                    tables=[r for r in requests if '/f/D3300.do' in r and 'mdc=123' in r]
+                    assert len(tables)==2,('拒否された表を1回だけ読み込み直す',tables)
+                    result.update(ok=True,failed_load_stopped=True,resumed_once=True,table_requests=2,records=32)
+                    return
                 charts=[r for r in requests if r.startswith('/chart/')]
                 assert len(charts)==len(set(charts))==32,'同じグラフを再取得しています'
                 result.update(ok=True,records=32,machines=2,index_pages=2,graph_requests=32,auto_off_at_end=True)
             except Exception:
-                result.update(ok=False,error=traceback.format_exc(),state=session.state())
+                tail=[]
+                try:tail=[{k:v for k,v in json.loads(line).items() if k in ('kind','reason','ok','status','error','href','reload')}
+                          for line in log.path.read_text(encoding='utf-8').splitlines()[-14:]]
+                except OSError:pass
+                result.update(ok=False,error=traceback.format_exc(),state=session.state(),requests=requests[-6:],log=tail)
             finally:window.destroy()
         window.events.before_show+=install;window.events.loaded+=loaded
         webview.start(exercise,gui='edgechromium',private_mode=True,storage_path=str(folder/'webview'))

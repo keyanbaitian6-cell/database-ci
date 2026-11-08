@@ -1658,3 +1658,73 @@
 - 反映に必要なのは PC版の更新だけ（`start.cmd` で起動し直す）。Googleスクリプトの貼り替え・APK・閲覧ページの公開・データの書き直しは不要。更新後、最初の保存（または再出力）で全期間・直近7日・閲覧用・パチンコの共有用JSONが書き直される。
 - 11/8 は月の前半なので、`python tools/push_ci.py` で正本 `imakurudev-eng/database` へ送る。コミットとCIの結果は下に追記する。
 - 追記（同日 20:05）：コミット `073f0eb`（上の10ファイル。別作業の Site Seven・AGENTS.md の未コミットの変更は含めていない）を `python tools/push_ci.py` で正本 `imakurudev-eng/database` の main へ送った（`deada68..073f0eb`）。CI：https://github.com/imakurudev-eng/database/actions/runs/42474242584 （送った時点では待ち行列。結果は未確認。失敗したら原因を調べてから直す）。database-ci へは送っていない（月の前半）。PC版は利用者が `start.cmd` で起動し直すと反映される（未確認）。
+
+## 2026-11-08 サイトセブン：当日分は確認してから・再開でバックアップ失敗の知らせを残す・ログを5世代（Claude、上の点検の1(a)・3・4）
+
+- 依頼：上の点検の報告に、利用者「3件を直す」（PCだけで済む3件：当日分の確認・バックアップ失敗の知らせ・ログ）。基準：手元 main `deada68`（正本と同じ。database-ci `7a9df13` を含む）。対象はPCのサイトセブン取り込み窓だけ（Android・閲覧ページ・共有カレンダー・同期スクリプトにサイトセブンの取り込みは無く、記録の形も変えていない）。
+- 完了の条件（着手前に利用者へ提示）：当日分は初めに前の日を選び、今日を含めて取り込むときは確認してから（PC側でも止める）／自動の再開でバックアップ失敗の知らせを消さず、後で書き出しが成功したら消す／ログを数世代残す。確かめ方：試験を足し、全体ゲート ALL PASSED。
+
+### 変えたこと（database/site777_session.py・site777_browser.py・assets/site777_overlay.js）
+
+1. **当日分**：
+   - 窓を開いたとき初めに選ぶ日を、今の営業日（午前3時で切り替え）から**前の営業日**にした（`_days[1]`）。前回の案内が残りの日を選ぶときはそのまま。
+   - **今の営業日以降の日**（営業中・営業前の日。午前0〜3時に出る翌日のタブも含む）を含めて開始するときは、カードが `confirm()` で「…の分は、営業中（または営業前）の数値のことがあります。取り込んだ時点の数値のまま残り、あとで取り込み直しても置き換わりません。閉店後のデータか確かめましたか？」と聞く。OK なら `configure(…, today_ok=True)`、やめたら何もしない。終わった日だけなら聞かない。
+   - PC側でも、確認（today_ok）なしの開始は `configure` が何も変えずに止める。手動の「この画面を取り込む」も、確認していない今の営業日以降の日は全台一覧の段階で保存しない（カードが確認を出し、OK なら `configure(False, 日, 範囲, None, True)` で確認済みにしてから取り込む）。
+   - 止めるだけ（日付を変えない `configure(False)`）では確認済みを消さず、3分後の自動の再開は確認済みを引き継ぐ。開始し直し・日付の変更では、そのときの確認だけを使う（確認し直し）。
+   - 自動の再開の対象（`RESUMABLE`）は変えていない。新しい止まる理由も作っていない（手動の守りは、ふつうの「読み取りの失敗」）。自動の取り込みは開始のときに確かめ、営業日は進むだけなので、自動の途中でこの守りに当たることはない。
+   - 閉店後すぐ（例：11/7 23:22）に今日の分を取り込むときも確認が出る（閉店・サイトの最終更新の時刻が分からないため）。データ更新日時を記録に残して後で置き換える案（点検の1(b)）は、まだしていない。
+2. **バックアップ失敗の知らせ**：自動の再開（`_resume_if_due`）で `_backup_note` を引き継ぐ。書き出しが成功したら消す（`backup_recovered` をログへ）。利用者が新しく開始したときは今までどおり消す。
+3. **ログ**：`data/logs/site777-browser.log` は1MBごとに `.log.1`〜`.log.5` へ送って残す（`LOG_GENERATIONS = 5`、合わせて最大約6MB）。今までは1世代だけで、2〜3日前の `auto_off` が消えていた。
+
+### 確認
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 初めは前の営業日・確認なしの開始は何も変えない・終わった日は確認不要 | 済 | test_site777_session `test_the_current_business_day_needs_confirmation_and_the_first_choice_is_the_day_before` |
+| 手動でも確認なしは保存しない・確認すれば保存・再開で確認を引き継ぐ・日付の変更で確認し直し・翌日のタブも対象 | 済 | 同じ試験 |
+| カードの確認（やめたら開始・取り込みしない、OKで today_ok を渡す、終わった日は聞かない） | 済 | test_site777_capture_browser.mjs（Playwright の dialog） |
+| 再開でバックアップ失敗の知らせが残り、後の成功で消える | 済 | `test_a_backup_failure_survives_an_auto_resume_and_a_later_success_clears_it` |
+| ログを5世代残す | 済 | test_site777_browser `test_the_log_keeps_five_older_generations` |
+| サイトセブンの試験 | 済 | `test_site777*.py` 75件 OK（新規3件）。既存の試験は時刻を 11/7 02:00 → 10:00 に変えた（02:00 では 11/6 が今の営業日で確認が要るため）。初めに選ぶ日の期待値を `_days[1]` に直した |
+| 実WebView2の手元試験（ゲート外） | 済 | `smoke_site777_session.py`（時刻を 11/7 10:00 に。記録32台・自動OFFで終了）・`smoke_site777_capture.py` ok |
+| 全体ゲート | 済 | HEAD `deada68` に今回の変更だけを入れた別の作業フォルダー（`/c/w/s777wt`）で `bash database_android/tool/check_before_build.sh` 90項目 ALL PASSED（下の2・5・6の分も含めた最終の変更で1回）。本体の作業コピーには別のセッションの作業中の変更（保存とバックアップのレビュー）があり、その中で pc-tests の `test_backup_output_status` が1件落ちるため、本体では流していない |
+| 実サイト・実WebView2 の confirm() の見え方 | 未確認 | pywebview は `AreDefaultScriptDialogsEnabled = True`（P’s CUBE のカードも confirm を使用）。利用者の次の取り込みで確かめる |
+
+- 公開：表示が変わるのはPCの取り込みカードだけ。閲覧ページ・共有カレンダー・APK・同期スクリプトは対象外。
+- 作業コピーにあった `database/core.py`・`database/pachinko.py` の変更は、この作業のものではない（触っていない・コミットに入れていない）。ゲートはそれを含む作業コピーで流した。
+- push：まだ。下の1(b)（確定前の台の置き換え）と合わせて1回で送る（CIを1回にするため）。手元のコミットは下の節の終わりに書く。
+
+## 2026-11-08 サイトセブン：再開で読み込み直しの回数を戻さない・**自動の再開の読み込み直しが実際には動いていなかった件の修正**・試験と片付け（Claude、上の点検の2・5・6）
+
+- 依頼：利用者「あと１から6で終わってないのはどれかな」→「256やって」。基準は上の節と同じ（`deada68` に上の3件を足した作業コピー）。2は「再開のたびにグラフの読み込み直し（3回）を数え直すのをやめ、再開1回につき読み込み1回にする。3分・連続5回は変えない」と利用者に伝えてから進めた。
+
+### 見つけて直したもの（重い）：3分後の自動の再開で、ページを読み込み直せていなかった
+
+- `2f8eb93`（3分後の自動の再開）は、表示中のページを `window.load_url(url)` で読み込み直していた。pywebview の `load_url` は WebView2 の `Source` に入れるだけ（`webview/platforms/edgechromium.py` 220行 `self.webview.Source = Uri(url)`）で、**表示中と同じURLでは読み込み直さない**。今回足した手元試験 `smoke_site777_session.py --failed-load` の実 WebView2 で、再開のあとに移動の記録（navigate）が1つも出ず、「移動中」のまま進まないことを確かめた。本番では、再開しても読み込まれず、90秒後に navigation_timeout で止まり、また3分後に再開…を5回くり返して終わっていたはず（実サイトでは未確認。11/8 の修正のあと、利用者はまだ取り込んでいない）。
+- 直し方：`site777_browser.reload_page(window, url)` で、画面のスレッドから `CoreWebView2.Navigate(url)` を呼ぶ（同じURLでも読み込む）。移動の守り（NavigationStarting）はふだんどおり通る。直したあと、同じ手元試験で「403で止まる→再開→拒否された表を1回だけ読み込み直す→32台を最後まで取り込む」が通った。
+
+### 変えたこと（database/site777_browser.py・site777_session.py・assets/site777_overlay.js、試験）
+
+1. **2 再開で回数を戻さない**：カードが `resume_serial` の変化で sessionStorage の読み込み直しの回数を消すのをやめた。グラフが出ないページでも、再開の読み込みで出なければすぐ止まり、次の再開を待つ。最大約24回・約40分 → 約9回・約20分。利用者が新しく開始したときは今までどおり回数を消す。`resume_serial` は記録用に残した。AGENTS.md のサイトセブンの節にも書いた。
+2. **5 試験**：
+   - `smoke_site777_session.py` に `--failed-load` を足した（上のとおり。待ち時間は2秒に縮める）。手元試験の窓にも本番と同じく `navigation_done` をつないだ。失敗したときは最後の要求とログを結果に出す。
+   - `test_site777_browser`：`reload_page` が Navigate を使い、`run` が `window.load_url(url)` を使わないこと。フォームの送信先がログで値を残さないこと。
+   - `test_site777_capture_browser.mjs`：再開しても回数を残すこと。PYTHON の指定が無ければ database の .venv の Python を使う（単独で流すと Windows の 'python'（ストアの見せかけ）を呼んで失敗していた）。
+   - 手元試験はゲート・CI には入れていない（窓が出る。CIの Windows は分数が2倍）。サイトセブンの取り込みを変えたら、手で `smoke_site777_session.py`（引数なし・`--range`・`--redirect`・`--redirect --without-guard`・`--redirect --resource-only`・`--failed-load`）を流す。
+3. **6 片付け**：
+   - ログのフォームの送信先（submit・form_submit の action）も `safe_url` を通す（場所と項目名だけ）。
+   - 窓を開いたとき、今の営業日より14日以上前の日の、機種ごとの途中の記録（`site777-staging/日付-機種.json`）を消す（`STAGING_KEEP_DAYS`、`staging_pruned` をログへ）。元の資料 `sources` は推定差枚を付け直す（`site777_backfill.py`）のに使うので残す。今は14日より前のファイルは無いので、まだ何も消えない。
+   - `data/site777-samples`（11/7 の開発時の控え、10ファイル・9.9MB）を Windows のごみ箱へ移した（元に戻せる。控えを取る旗 `site777-samples.enabled` は無い）。
+   - `data/site777-webview`（318MB）は触らない：大半は WebView2 のキャッシュ（Cache 128MB・Code Cache 115MB）で、上限は WebView2 が自分で管理する。消すと次に開くときサイトの画像・スクリプトを取り直し、アクセスが増える。ログイン（Cookie）も同じ所にある。
+
+### 確認
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 再開でページを読み込み直す（実 WebView2） | 済 | `smoke_site777_session.py --failed-load`：`{"ok": true, "failed_load_stopped": true, "resumed_once": true, "table_requests": 2, "records": 32}`。直す前は再開後に navigate が出ず「移動中」のまま（同じ試験で確認） |
+| 手元試験のほかの形 | 済 | 引数なし（32台）・`--range`（64台）・`--redirect`・`--redirect --without-guard` は1回で成功。`--redirect --resource-only` は1回目だけ失敗し、そのあと9回続けて成功。失敗の中身は残っていない（結果に「止めた」は書かれていて、窓を閉じる間際の処理と重なったとみられる。未確認） |
+| 再開で回数を戻さない | 済 | test_site777_capture_browser.mjs（resume_serial が変わっても回数3のまま） |
+| reload_page・送信先のログ・ログ5世代・古い途中の記録の削除 | 済 | test_site777_browser・test_site777_session（新規5件） |
+| サイトセブンの PC 試験 | 済 | `test_site777*.py` 78件 OK |
+| 全体ゲート | 済 | HEAD `deada68` に今回の変更だけを入れた別の作業フォルダー（`/c/w/s777wt`）で `bash database_android/tool/check_before_build.sh` 90項目 ALL PASSED（下の2・5・6の分も含めた最終の変更で1回）。本体の作業コピーには別のセッションの作業中の変更（保存とバックアップのレビュー）があり、その中で pc-tests の `test_backup_output_status` が1件落ちるため、本体では流していない |
+| 実サイトでの再開の読み込み直し | 未確認 | 利用者の次の取り込みで、`auto_resume` のあとに `navigate`・`loaded` が出るかを見る |

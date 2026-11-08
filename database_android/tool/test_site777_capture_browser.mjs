@@ -1,9 +1,13 @@
 // 合成ページを全要求へ返す。実サイト・会員情報・実DBは使わない。
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+// PYTHON の指定が無いときは database の .venv を使う（2026-11-08。Windows の 'python' はストアの見せかけで、単独で流すと失敗していた）。
+const venvPython=new URL('../../database/.venv/Scripts/python.exe',import.meta.url);
+const python=process.env.PYTHON||(existsSync(venvPython)?fileURLToPath(venvPython):'python');
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');
-const fixture=JSON.parse(execFileSync(process.env.PYTHON||'python',['-c',
+const fixture=JSON.parse(execFileSync(python,['-c',
   'import json,sys,base64;sys.path.insert(0,"tests");from smoke_site777_capture import fixture,image_bytes;print(json.dumps({"table":fixture("table",1).decode(),"graph1":fixture("graphs",1).decode(),"graph2":fixture("graphs",2).decode(),"png":base64.b64encode(image_bytes()).decode(),"background":base64.b64encode(image_bytes(True)).decode()}))'],
   {cwd:new URL('../../database/',import.meta.url),encoding:'utf8'}));
 const reader=readFileSync(new URL('../../database/assets/site777_capture.js',import.meta.url),'utf8');
@@ -110,6 +114,42 @@ try {
   assert.deepEqual(await page.evaluate(()=>window.__configured[2]),[true,'2026-11-04','2026-11-06','bottom']);
   await page.waitForFunction(()=>document.querySelector('#database-site777-bottom').getAttribute('aria-pressed')==='true');
   assert.match(await page.locator('#database-site777').innerText(),/間隔：5〜7秒ランダム/);
+  // 今の営業日（営業中になりうる日）を取り込むときは確かめる（2026-11-08）：やめたら何も変えず、OKなら確認済みを渡す。
+  // 終わった日だけなら確かめない。手動の「この画面を取り込む」でも同じ。
+  const dialogs=[];
+  await page.evaluate(()=>{
+    window.__configured=[];
+    Object.assign(window.__scopeState,{enabled:false,epoch:5,day:'2026-11-06',until:null,queue:[],finished_days:[],
+      today:'2026-11-06',today_ok:false,status:'停止しました。'});
+    window.pywebview.api.configure=async(...args)=>{window.__configured.push(args);
+      Object.assign(window.__scopeState,{today_ok:args[4]===true});return structuredClone(window.__scopeState);};
+  });
+  await page.waitForFunction(()=>!document.querySelector('#database-site777-auto').disabled&&
+    document.querySelector('#database-site777-day').value==='2026-11-06');
+  page.once('dialog',d=>{dialogs.push(d.message());d.dismiss();});
+  await page.click('#database-site777-auto');
+  await page.waitForTimeout(300);
+  assert.equal(dialogs.length,1);assert.match(dialogs[0],/11\/06の分は、営業中（または営業前）の数値のことがあります/);
+  assert.match(dialogs[0],/あとで取り込み直しても置き換わりません/);
+  assert.deepEqual(await page.evaluate(()=>window.__configured),[],'やめたら開始しない');
+  page.once('dialog',d=>{dialogs.push(d.message());d.accept();});
+  await page.click('#database-site777-auto');
+  await page.waitForFunction(()=>window.__configured.length===1);
+  assert.deepEqual(await page.evaluate(()=>window.__configured[0]),[true,'2026-11-06',null,null,true]);
+  await page.evaluate(()=>{window.__configured=[];Object.assign(window.__scopeState,{enabled:false,epoch:6,day:'2026-11-05',today_ok:false});});
+  await page.waitForFunction(()=>document.querySelector('#database-site777-day').value==='2026-11-05');
+  await page.click('#database-site777-auto');
+  await page.waitForFunction(()=>window.__configured.length===1);
+  assert.deepEqual(await page.evaluate(()=>window.__configured[0]),[true,'2026-11-05',null,null,false],'終わった日は確かめない');
+  assert.equal(dialogs.length,2);
+  await page.evaluate(()=>{window.__configured=[];Object.assign(window.__scopeState,{enabled:false,epoch:7,day:'2026-11-06',today_ok:false});});
+  await page.waitForFunction(()=>document.querySelector('#database-site777-day').value==='2026-11-06'&&
+    !document.querySelector('#database-site777-capture').disabled);
+  page.once('dialog',d=>{dialogs.push(d.message());d.dismiss();});
+  await page.click('#database-site777-capture');
+  await page.waitForTimeout(300);
+  assert.equal(dialogs.length,3);
+  assert.deepEqual(await page.evaluate(()=>window.__configured),[],'手動でも、やめたら取り込まない');
   assert.deepEqual(errors,[]);
   // グラフが出ないとき（2026-11-07 利用者「グラフが出なかったら1分後に再読みするんじゃなかったの？」）：自動取り込み中は
   // 待ってからページを読み込み直し、ONのまま続ける。同じページで3回まで、それでも出なければ止める。
@@ -212,7 +252,8 @@ try {
   assert.match(stopped[1],/回数を残せないため、読み込み直していません/);
   assert.deepEqual(errors,[]);
   // 2026-11-08 利用者「3分後には自動復帰」：再開を待つ間はボタンに時刻を出し、押すと取り消す（停止ボタン扱い）。
-  // 自動で再開したら（resume_serial が変わったら）、グラフの読み込み直しの回数を0に戻す。
+  // 自動で再開しても（resume_serial が変わっても）、グラフの読み込み直しの回数は戻さない（2026-11-08 利用者「256やって」：
+  // 再開のたびに0に戻すと、出ないページを再開1回につき4回読み込んでいた）。
   const waiting=await browser.newPage({viewport:{width:560,height:800}});
   waiting.on('pageerror',e=>errors.push(e.message));
   await waiting.route('**/*',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:'<!doctype html><body>手元の試験</body>'}));
@@ -236,11 +277,12 @@ try {
   await waiting.evaluate(()=>{window.__s.previous=null;});
   await waiting.waitForFunction(()=>getComputedStyle(document.querySelector('#database-site777-previous')).display==='none');
   await waiting.evaluate(()=>{window.__s.resume_serial=1;});
-  await waiting.waitForFunction(()=>!sessionStorage.getItem('database-site777-retries'));
+  await waiting.waitForTimeout(1500);
+  assert.equal(await waiting.evaluate(()=>JSON.parse(sessionStorage.getItem('database-site777-retries'))[location.href]),3,'再開しても回数は残す');
   await waiting.click('#database-site777-auto');
   await waiting.waitForFunction(()=>window.__calls.length>0);
   assert.deepEqual(await waiting.evaluate(()=>window.__calls),[['pause',null,'user_stop',null]],'待っている間に押すと取り消す（開始しない）');
   await waiting.waitForFunction(()=>document.querySelector('#database-site777-auto')?.textContent.includes('OFF（押すと開始）'));
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内：成功');
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す（自動の再開では戻さない）・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内：成功');
 } finally {await browser.close();}

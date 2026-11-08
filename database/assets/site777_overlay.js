@@ -58,11 +58,9 @@
     auto.textContent=s.enabled?'自動取り込み：ON（押すと停止）':s.resume_at?`自動取り込み：${s.resume_at}に再開予定（押すと取り消し）`
       :'自動取り込み：OFF（押すと開始）';
     auto.style.background=s.enabled||s.resume_at?'#b74237':'#304d6e';
-    // 自動で再開したら、グラフの読み込み直しの回数を0に戻す（再開のたびに PC が resume_serial を増やす）。
-    if(s.resume_serial){
-      try{if(sessionStorage.getItem(resumeKey)!==String(s.resume_serial)){
-        sessionStorage.removeItem(retryKey);sessionStorage.setItem(resumeKey,String(s.resume_serial));}}catch(_){}
-    }
+    // 自動で再開しても、グラフの読み込み直しの回数は戻さない（2026-11-08 利用者「256やって」。今までは再開のたびに
+    // 0に戻し、グラフが出ないページを再開1回につき4回読み込み、5回の再開で約24回・約40分になっていた）。
+    // 再開の読み込み直し（PC）でも出なければ、すぐ止まり、3分後の次の再開を待つ（再開1回につき読み込み1回）。
     status.textContent=s.status;
     previous.textContent=s.previous||'';previous.style.display=s.previous?'block':'none';
   };
@@ -72,7 +70,7 @@
   // 回数は、利用者が自動取り込みを新しく開始したときだけ0に戻す（2026-11-08 Codexのレビュー：同じ窓で止めて開始し直しても
   // 前の3回が残り、次にグラフが出ないとすぐOFFになっていた）。自動の読み込み直しの間は残す。
   // 戻り値：読み込み直した（または古い処理で何もしない）は true、上限は 'limit'、回数を残せないときは 'storage'。
-  const MAX_RETRIES=3, retryKey='database-site777-retries', resumeKey='database-site777-resume';
+  const MAX_RETRIES=3, retryKey='database-site777-retries';
   const retryCounts=()=>{try{const v=JSON.parse(sessionStorage.getItem(retryKey)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:null;}catch(_){return null;}};
   const retryLater=async(mine,epoch)=>{
     const url=databaseSite777.read(true).url, counts=retryCounts();
@@ -150,12 +148,32 @@
       if(alive&&current)render(current);
     }
   };
-  capture.onclick=()=>cycle(false);
+  // 今の営業日以降の日（営業中になりうる日）を取り込むときは確かめる（2026-11-08）。サイトセブンは無い台だけ補うので、
+  // 営業中に取り込むと、その時点の数値のまま残り、あとで取り込み直しても置き換わらない。PCも確認なしの開始・保存を止める。
+  // 戻り値：今の営業日以降の日を含まない＝false、含んで確かめた＝true、やめた＝null。
+  const unfinishedOk=(first,last)=>{
+    const today=current?.today, [a,b]=[first,last||first].sort();
+    if(!today||!a||b<today)return false;
+    const label=(a>today?a:today).slice(5).replace('-','/');
+    return confirm(`${label}の分は、営業中（または営業前）の数値のことがあります。\n取り込んだ時点の数値のまま残り、あとで取り込み直しても置き換わりません。\n閉店後のデータか確かめましたか？ 取り込むときは「OK」を押してください。`)?true:null;
+  };
+  const range=()=>[day.value||null,until.value&&until.value!==day.value?until.value:null];
+  capture.onclick=async()=>{
+    if(current&&!current.today_ok){
+      const ok=unfinishedOk(current.day,current.until);
+      if(ok===null)return;
+      if(ok){try{token++;render(await api().configure(false,current.day,current.until||null,null,true));}
+        catch(error){status.textContent=error.message||String(error);return;}}
+    }
+    cycle(false);
+  };
   const start=async direction=>{
     try{
       if(current?.enabled||current?.resume_at){await stop(null,'user_stop');return;}
+      const [first,last]=range(), ok=unfinishedOk(first,last);
+      if(ok===null)return;
       try{sessionStorage.removeItem(retryKey);}catch(_){}
-      token++;render(await api().configure(true,day.value||null,until.value&&until.value!==day.value?until.value:null,direction));
+      token++;render(await api().configure(true,first,last,direction,ok));
     }catch(error){status.textContent=error.message||String(error);}
   };
   auto.onclick=()=>start(null);

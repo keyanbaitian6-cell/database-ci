@@ -13,7 +13,7 @@ from site777_session import Session
 from site777_import import source_url
 from test_site777_import import bitmap
 
-NOW = datetime.fromisoformat('2026-11-07T02:00:00+09:00')
+NOW = datetime.fromisoformat('2026-11-07T10:00:00+09:00')
 
 
 def url(path, model='123', page=1):
@@ -126,7 +126,7 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn('secret',json.dumps(self.log(),ensure_ascii=False))
         self.assertIn('（URL）',row['message'])
         stop=site777_browser.take_stop_message(self.root)
-        self.assertRegex(stop,r'^11/07 02:00に停止【画像待ちの上限】：3回読み込み直しても')
+        self.assertRegex(stop,r'^11/07 10:00に停止【画像待ちの上限】：3回読み込み直しても')
         self.assertIsNone(site777_browser.take_stop_message(self.root),'1回読んだら消す')
         # 理由コードはページから渡るので、形の違うものは使わない。
         self.session.pause(None,'<script>',-1)
@@ -178,8 +178,8 @@ class SessionTest(unittest.TestCase):
         self.session.pause('リンクを押しても移動しないため停止しました。','not_moved')
         state=self.session.state()
         self.assertFalse(state['enabled'])
-        self.assertEqual(state['resume_at'],'02:03')
-        self.assertIn('02:03に自動で再開します（1/5回目',state['status'])
+        self.assertEqual(state['resume_at'],'10:03')
+        self.assertIn('10:03に自動で再開します（1/5回目',state['status'])
         self.assertIsNone(self.session._resume_if_due(),'3分たつまでは再開しない')
         self.assertEqual(self.due(),here,'表示中のページを1回だけ読み込み直す')
         state=self.session.state()
@@ -266,7 +266,7 @@ class SessionTest(unittest.TestCase):
         self.session.pause('3回読み込み直してもグラフが表示されないため停止しました。','graph_retry_limit',3)
         self.session.pause(None,'user_stop')
         reopened=self.new_session().state()
-        self.assertEqual(reopened['previous'],'前回（11/07 02:00）：11/04〜11/06を取り込む途中で止まりました【停止ボタン】。'
+        self.assertEqual(reopened['previous'],'前回（11/07 10:00）：11/04〜11/06を取り込む途中で止まりました【停止ボタン】。'
                          '済み：なし。残りの11/04〜11/06を選んであります（開始を押すと続きから。保存済みの台は飛ばします）。')
         self.assertEqual((reopened['day'],reopened['until'],reopened['queue'],reopened['direction']),
                          ('2026-11-04','2026-11-06',['2026-11-05','2026-11-06'],'bottom'))
@@ -281,7 +281,7 @@ class SessionTest(unittest.TestCase):
             'until':'2026-10-01','finished_days':[],'remaining':['2026-10-01'],'stopped':'読み取りの失敗','completed':False}),encoding='utf-8')
         reopened=self.new_session().state()
         self.assertIn('掲載が終わった日があります',reopened['previous'])
-        self.assertEqual(reopened['day'],self.session._days[0])
+        self.assertEqual(reopened['day'],self.session._days[1])  # 初めは前の営業日（今日は確認が要る、2026-11-08）
         # 壊れたファイルは無視する。
         (self.root/'site777-last-run.json').write_text('{',encoding='utf-8')
         self.assertIsNone(self.new_session().state()['previous'])
@@ -307,7 +307,7 @@ class SessionTest(unittest.TestCase):
         self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph());self.cycle(graph(2))
         self.assertTrue(self.cycle(index)['complete'])
         reopened=self.new_session().state()
-        self.assertEqual(reopened['previous'],'前回（11/07 02:00）：11/06を最後まで取り込みました。')
+        self.assertEqual(reopened['previous'],'前回（11/07 10:00）：11/06を最後まで取り込みました。')
         self.assertEqual(reopened['day'],self.session._days[0])
 
     def test_table_then_both_graph_pages_before_any_db_record_is_saved(self):
@@ -638,3 +638,92 @@ class SessionTest(unittest.TestCase):
             self.assertIsNone(store._read('records',_record_key(anaslo)))
             self.assertEqual(store._read('records',_record_key(native)),native)
         finally:store.close()
+
+    def evening_session(self, now):
+        # setUp の取り込みの「前回の案内」が日付を選ばないよう、別のフォルダーで開く。
+        self.evening=self.root/'evening';self.evening.mkdir()
+        return Session(self.evening,DiagnosticLog(self.evening),now=lambda:now,
+                       store_factory=lambda path:PscubeStore(path,recording=False))
+
+    def test_the_current_business_day_needs_confirmation_and_the_first_choice_is_the_day_before(self):
+        # 2026-11-08：営業中の日を取り込むと、その時点の数値のまま残り、あとで取り込み直しても置き換わらなかった
+        # （サイトセブンは無い台だけ補う）。初めは前の営業日を選び、今の営業日以降は確かめてから。
+        from pscube_import import _record_key
+        session=self.evening_session(datetime.fromisoformat('2026-11-06T19:00:00+09:00'))
+        state=session.state()
+        self.assertEqual((state['today'],state['day'],state['today_ok']),('2026-11-06','2026-11-05',False))
+        epoch=state['epoch']
+        for args in (('2026-11-06',),('2026-11-04','2026-11-06')):
+            with self.assertRaisesRegex(ValueError,'11/06の分は営業中の数値になりうるため、確認してから'):
+                session.configure(True,*args)
+            self.assertEqual((session.state()['epoch'],session.state()['enabled'],session.state()['day']),
+                             (epoch,False,'2026-11-05'),'確認なしの開始は何も変えない')
+        self.assertTrue(session.configure(True,'2026-11-04','2026-11-05')['enabled'],'終わった日だけなら確認は要らない')
+        # 手動の取り込みでも、確認していなければ保存しない。
+        epoch=session.configure(False,'2026-11-06')['epoch']
+        result=session.capture(json.dumps(table()),epoch)
+        self.assertIn('営業中の数値になりうるため、取り込みませんでした',result['error'])
+        self.assertFalse((self.evening/'pscube.sqlite3').exists())
+        # 確かめたら取り込める。止まって3分後に自動で再開しても、確認は引き継ぐ。
+        from types import SimpleNamespace
+        session._window=SimpleNamespace(get_current_url=lambda:url('D3300'))
+        state=session.configure(True,'2026-11-06',None,None,True)
+        self.assertTrue(state['today_ok'])
+        session.pause('リンクを押しても移動しないため停止しました。','not_moved')
+        self.assertTrue(session.state()['today_ok'],'止めるだけでは確認を消さない')
+        from time import monotonic
+        session._resume_at=monotonic()-1
+        self.assertEqual(session._resume_if_due(),url('D3300'))
+        state=session.state()
+        self.assertTrue(state['enabled']);self.assertTrue(state['today_ok'])
+        session._window=None
+        epoch=state['epoch']
+        for payload in (table(),graph(metadata=True),graph(),graph(2)):
+            result=session.capture(json.dumps(payload),epoch)
+            self.assertNotIn('error',result,result.get('error'))
+        store=PscubeStore(self.evening/'pscube.sqlite3',recording=False)
+        try:self.assertEqual(sorted(r['rack'] for r in store.export_payload()['records']),[101,102])
+        finally:store.close()
+        # 日付を選び直したら、確認はやり直す。
+        self.assertFalse(session.configure(False,'2026-11-05')['today_ok'])
+        # 午前0〜3時に出る翌日のタブ（営業日より後の日）も確かめる対象。
+        self.assertEqual(Session._unfinished(['2026-11-07','2026-11-06','2026-11-05'],'2026-11-06'),
+                         ['2026-11-07','2026-11-06'])
+
+    def test_a_backup_failure_survives_an_auto_resume_and_a_later_success_clears_it(self):
+        # 2026-11-08：自動の再開（configure(True)）がバックアップの失敗の知らせを消し、再開のあと書き出さずに完了すると
+        # 完了の文に出なかった。書き出しは毎回DB全体なので、あとで成功したら知らせは消す。
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        failed='バックアップに失敗（取り込みは保存済み）'
+        self.session._backup_note=failed
+        self.session._window=SimpleNamespace(get_current_url=lambda:url('D3300'))
+        self.session.pause('リンクを押しても移動しないため停止しました。','not_moved')
+        self.assertEqual(self.due(),url('D3300'))
+        self.assertTrue(self.session.state()['enabled'])
+        self.assertEqual(self.session._backup_note,failed,'自動の再開では消さない')
+        self.assertIn(failed,self.session._with_backup('範囲の取り込みが完了しました。'))
+        self.session._window=None
+        self.epoch=self.session.state()['epoch']
+        with patch('site777_session.auto_backup',return_value='バックアップ済み'):
+            self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
+            result=self.cycle(graph(2))
+        self.assertIsNone(self.session._backup_note)
+        self.assertNotIn('バックアップに失敗',result['state']['status'])
+        self.assertTrue(self.log('backup_recovered'))
+        # 利用者が新しく開始したときは、今までどおり消す。
+        self.session._backup_note=failed
+        self.session.configure(True,'2026-11-06')
+        self.assertIsNone(self.session._backup_note)
+
+    def test_opening_the_window_removes_staging_of_days_that_can_no_longer_be_captured(self):
+        # 2026-11-08：機種ごとの途中の記録を消す仕組みが無く、1日に約50本ずつ増えていた。元の資料（sources）は残す。
+        staging=self.root/'site777-staging';(staging/'sources').mkdir(parents=True,exist_ok=True)
+        for name in ('2026-10-23-120141.json','2026-10-24-120141.json','2026-11-06-120141.json','memo.json'):
+            (staging/name).write_text('{}',encoding='utf-8')
+        (staging/'sources'/'abc.json').write_text('{}',encoding='utf-8')
+        self.new_session()  # 今の営業日 11/07 → 14日前の 10/24 より前だけ消す
+        self.assertEqual(sorted(p.name for p in staging.glob('*.json')),
+                         ['2026-10-24-120141.json','2026-11-06-120141.json','memo.json'])
+        self.assertTrue((staging/'sources'/'abc.json').exists())
+        self.assertEqual((self.log('staging_pruned')[-1]['removed'],self.log('staging_pruned')[-1]['before']),(1,'2026-10-24'))

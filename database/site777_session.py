@@ -13,7 +13,8 @@ from time import monotonic
 
 from anaslo_converter import read_catalog, suggestions
 from browser_import import clean_overlay_layout
-from pscube_import import PscubeStore, PscubeRandomCapture, auto_backup, is_excluded_machine, recent_business_days
+from pscube_import import (PscubeStore, PscubeRandomCapture, auto_backup, business_day, is_excluded_machine,
+                           recent_business_days)
 from file_io import write_notice
 from site777_browser import Bridge, LAST_STOP_NAME
 import site777_import as source
@@ -41,6 +42,8 @@ REASON_LABELS = {
 # 前回の取り込みの範囲・済んだ日・止まった理由（2026-11-08 Codexの提案：窓を開き直すと日付の範囲を選び直しになり、
 # 前回どこまで取り込んだかが分からなかった）。窓を開いたとき、カードに案内を出し、残りの日を選んでおく。
 LAST_RUN_NAME = 'site777-last-run.json'
+# 機種ごとの途中の記録を残す日数（今の営業日から。サイトが見せる8日分より長く取る。2026-11-08）。
+STAGING_KEEP_DAYS = 14
 RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
                        'graph_retry_limit', 'graph_retry_storage', 'card_error', 'overlay_failed',
                        'range_unknown'})
@@ -86,7 +89,10 @@ class Session(Bridge):
         self._direction = 'top'
         self._enabled = False
         self._days = recent_business_days(self._now(), count=8)
-        self._day = self._days[0]
+        # 初めに選ぶ日は前の営業日（2026-11-08）。今の営業日（営業中）を取り込むと、その時点の数値のまま残り、
+        # 後から取り込み直しても置き換わらないため（サイトセブンは無い台だけ補う）。今日は確認してから（_today_ok）。
+        self._day = self._days[1]
+        self._today_ok = False
         # 日付の範囲で取り込む（2026-11-07 利用者「日付範囲指定できるようにしてほしい」）。_day が今の日、
         # _queue がこの後に取り込む日（古い順）、_until は範囲の終わり（単日なら None）。
         self._until = None
@@ -113,7 +119,7 @@ class Session(Bridge):
         self._backup_note = None
         # 自動の再開（RESUME_DELAY 秒後）。_resume_at は monotonic の時刻、_resume_plan は再開する日・範囲・向き・理由、
         # _resume_count は取り込みが進まないまま続けて再開した回数、_resume_serial は再開のたびに増やす番号
-        # （カードがこれを見て、グラフの読み込み直しの回数を0に戻す）。
+        # （記録用。2026-11-08 からカードはこれで読み込み直しの回数を戻さない。再開1回につき読み込み1回）。
         self._resume_at = None
         self._resume_label = None
         self._resume_plan = None
@@ -123,6 +129,25 @@ class Session(Bridge):
         self._run_start = self._run_until = None
         self._previous = None
         self._load_previous()
+        self._prune_staging()
+
+    def _prune_staging(self):
+        """もう取り込めない古い日の、機種ごとの途中の記録（site777-staging/日付-機種.json）を消す（2026-11-08。
+        サイトが見せるのは8日分なので、続きから取り込むのに使えない。消す仕組みが無く、1日に約50本ずつ増えていた）。
+        今の営業日より STAGING_KEEP_DAYS 日以上前の日だけ。元の資料（sources、推定差枚を付け直すのに使う）は残す。
+        消せなくても窓は開く。"""
+        cutoff = (date.fromisoformat(self._days[0]) - timedelta(days=STAGING_KEEP_DAYS)).isoformat()
+        removed = 0
+        try:
+            for path in (self._folder / 'site777-staging').glob('*.json'):
+                match = re.fullmatch(r'(\d{4}-\d{2}-\d{2})-\d+\.json', path.name)
+                if match and match[1] < cutoff:
+                    path.unlink()
+                    removed += 1
+        except OSError:
+            pass
+        if removed:
+            self._log.write('staging_pruned', removed=removed, before=cutoff)
 
     def state(self):
         self._watch_navigation()
@@ -135,7 +160,17 @@ class Session(Bridge):
                     'ready': self._pace.due() is not None and not self._pending_navigation,
                     'navigating': self._pending_navigation, 'unknown_graphs': self._unknown,
                     'direction': self._direction, 'resume_at': self._resume_label if self._resume_at else None,
-                    'resume_serial': self._resume_serial, 'previous': self._previous}
+                    'resume_serial': self._resume_serial, 'previous': self._previous,
+                    'today': self._today(), 'today_ok': self._today_ok}
+
+    def _today(self):
+        """今の営業日（午前3時で切り替え）。この日の分は営業中の数値になりうる。"""
+        return business_day(self._now())
+
+    @staticmethod
+    def _unfinished(days, today):
+        """今の営業日以降の日（営業中・まだ始まっていない日。午前0〜3時に出る翌日のタブも含む）。"""
+        return [d for d in days if d and d >= today]
 
     def _save_run(self, stopped=None, completed=False, remaining=None, locked=False):
         """前回の案内のため、今の取り込みの範囲・済んだ日・残りの日・止まった理由を残す。書けなくても取り込みは続ける。
@@ -216,7 +251,8 @@ class Session(Bridge):
                     if detail.get('left_days'):
                         plan_day, plan_until = detail['left_days'][0], detail['left_days'][-1]
                     self._resume_plan = {'day': plan_day, 'until': plan_until if plan_until != plan_day else None,
-                                         'direction': self._direction, 'reason': reason}
+                                         'direction': self._direction, 'reason': reason,
+                                         'today_ok': self._today_ok}
                     self._resume_at = monotonic() + RESUME_DELAY
                     self._resume_label = f'{self._now() + timedelta(seconds=RESUME_DELAY):%H:%M}'
                     self._status = (f'{self._status} {self._resume_label}に自動で再開します'
@@ -243,14 +279,17 @@ class Session(Bridge):
                 return None
             plan, count = self._resume_plan, self._resume_count + 1
             self._resume_at = None
-            run = (self._run_start, self._run_until, list(self._finished_days))
+            # 止まる前のバックアップの失敗も引き継ぐ（2026-11-08。configure(True) が消していたので、再開のあと
+            # 書き出さずに完了すると、完了の文に失敗が出なかった）。
+            run = (self._run_start, self._run_until, list(self._finished_days), self._backup_note)
         try:
-            self.configure(True, plan['day'], plan['until'], plan['direction'])
+            self.configure(True, plan['day'], plan['until'], plan['direction'], plan.get('today_ok', False))
         except ValueError as error:
             self._log.write('auto_resume_failed', reason=plan['reason'], error=clean_reason(error))
             return None
         with self._state_lock:
             self._run_start, self._run_until = run[0], run[1]
+            self._backup_note = run[3]
             if not self._finished_days:
                 self._finished_days = run[2]
         self._save_run()
@@ -278,10 +317,12 @@ class Session(Bridge):
         return (f'{text} ただし{self._backup_note}。バックアップ・同期フォルダーへの書き出しを確かめてください'
                 '（サイトへ戻る必要はありません。本体の「バックアップ・同期」で状態を見られます）。')
 
-    def configure(self, enabled, day=None, until=None, direction=None):
+    def configure(self, enabled, day=None, until=None, direction=None, today_ok=False):
         """自動取り込みのON/OFFと取り込む日。until を付けると day〜until の範囲（どちらが先でもよい）を
-        古い日から順に取り込む。範囲は掲載日（_days）の中だけ。"""
-        if type(enabled) is not bool:
+        古い日から順に取り込む。範囲は掲載日（_days）の中だけ。
+        today_ok：今の営業日（営業中になりうる日）を取り込むことを利用者が確かめた（カードの確認、2026-11-08）。
+        今の営業日を含めて開始するときは必須。付けずに開始しようとしたら、何も変えずに止める。"""
+        if type(enabled) is not bool or type(today_ok) is not bool:
             raise ValueError('自動取り込みの設定が不正です。')
         from datetime import date
         for value in (day, until):
@@ -301,6 +342,16 @@ class Session(Bridge):
                 day, queue = span[0], span[1:]
                 if self._work_lock.locked() and day != self._day:
                     raise ValueError('読み取り処理中は日付を変えられません。停止して処理の完了を待ってください。')
+            planned = [self._day, *self._queue] if day is None else [day, *queue]
+            today = self._today()
+            unfinished = self._unfinished(planned, today)
+            if enabled and unfinished and not today_ok:
+                raise ValueError(f'{unfinished[0][5:].replace("-", "/")}の分は営業中の数値になりうるため、確認してから'
+                                 '開始してください（取り込んだ時点の数値のまま残り、後から取り込み直しても置き換わりません）。')
+            # 止めるだけ（日付を変えない configure(False)）のときは確認済みを残す（止まったあとの自動の再開で引き継ぐ）。
+            # 開始・日付の変更では、そのときの確認だけを使う。
+            if enabled or day is not None or today_ok:
+                self._today_ok = today_ok and bool(unfinished)
             if day != self._day and day is not None:
                 if self._work_lock.locked():
                     raise ValueError('読み取り処理中は日付を変えられません。停止して処理の完了を待ってください。')
@@ -726,6 +777,11 @@ class Session(Bridge):
                 self._day = self._day or self._days[0]
             if self._day not in days:
                 raise ValueError('指定した日付はこの機種のページにありません。')
+            if self._unfinished([self._day], self._today()) and not self._today_ok:
+                # 確認していない今の営業日以降の日は保存しない（手動の取り込みの守り。自動は開始のときに configure が
+                # 確かめ、営業日は進むだけなので、自動の途中でここに来ることはない）。
+                raise ValueError(f'{self._day[5:].replace("-", "/")}の分は営業中の数値になりうるため、取り込みませんでした。'
+                                        '閉店後のデータか確かめてから、カードの確認で取り込んでください。')
             if source.day_from_label(payload.get('selected_md'), self._now()) != self._day:
                 return {'action': {'type': 'link', 'url': days[self._day]['url']}}
             rows = source.table_records(payload, self._day, self._now())
@@ -821,6 +877,10 @@ class Session(Bridge):
         if written != BACKUP_OK:
             self._backup_note = str(written)
             self._log.write('backup_problem', result=self._backup_note)
+        elif self._backup_note:
+            # 書き出しは毎回DB全体なので、あとで成功すれば前の失敗の分も追いつく（2026-11-08）。
+            self._backup_note = None
+            self._log.write('backup_recovered')
         self._done.add(model)
         self._added += summary['added']
         self._kept += summary['kept_local']

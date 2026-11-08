@@ -70,6 +70,9 @@ USER_AGENT_METADATA = {
 WINDOW_SIZE = (430, 900)
 TITLE = 'サイトセブン（スマホとして表示）'
 LOG_LIMIT = 1024 * 1024
+# 1MBごとに .log.1〜.log.5 へ送って残す（2026-11-08。1世代だけだと、1日に約700KB書くので2〜3日前の
+# auto_off・auto_resume が消え、数日後に止まっていたと分かっても理由を追えなかった）。合わせて最大約6MB。
+LOG_GENERATIONS = 5
 
 
 def emulation_commands():
@@ -138,14 +141,20 @@ class DiagnosticLog:
         self.lock = threading.Lock()
 
     def write(self, kind, **data):
-        if 'href' in data:
-            data['href'] = safe_url(data['href'])
+        # 移動先（href）・フォームの送信先（action）は、場所と項目名だけ残す（action は 2026-11-08 から。値ごと残っていた）。
+        for key in ('href', 'action'):
+            if key in data:
+                data[key] = safe_url(data[key])
         line = json.dumps({'at': datetime.now().isoformat(timespec='seconds'), 'kind': kind, **data},
                           ensure_ascii=False)
         with self.lock:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 if self.path.exists() and self.path.stat().st_size > LOG_LIMIT:
+                    for n in range(LOG_GENERATIONS - 1, 0, -1):
+                        older = self.path.with_suffix(f'.log.{n}')
+                        if older.exists():
+                            older.replace(self.path.with_suffix(f'.log.{n + 1}'))
                     self.path.replace(self.path.with_suffix('.log.1'))
                 with self.path.open('a', encoding='utf-8') as f:
                     f.write(line + '\n')
@@ -240,6 +249,23 @@ def keep_popups_here(window, log=None, *, navigation_guard=None, document_guard=
     return [popup, initialized, starting, completed, document_requested]  # 窓が閉じるまで参照を保持
 
 
+def reload_page(window, url, invoke=None):
+    """表示中のページを1回読み込み直す（3分後の自動の再開、2026-11-08）。
+    window.load_url は WebView2 の Source に入れるだけで、表示中と同じURLでは読み込み直さない（2026-11-08、
+    smoke_site777_session.py --failed-load の実 WebView2 で確認。再開しても「移動中」のまま90秒で止まっていた）。
+    そのため CoreWebView2.Navigate を画面のスレッドで呼ぶ。移動の守り（NavigationStarting）はふだんどおり通る。
+    invoke は試験用（画面のスレッドで呼ぶ関数を差し替える）。"""
+    form = window.native
+
+    def go():
+        form.webview.CoreWebView2.Navigate(url)
+
+    if invoke is None:
+        from System import Func, Type
+        invoke = lambda action: form.Invoke(Func[Type](action))  # noqa: E731
+    invoke(go)
+
+
 def run(data_dir, start_url=START_URL):
     import webview
 
@@ -298,7 +324,7 @@ def run(data_dir, start_url=START_URL):
             try:
                 url = session._resume_if_due()
                 if url:
-                    window.load_url(url)
+                    reload_page(window, url)
             except Exception as error:  # noqa: BLE001 - 再開できなくても見張りは続ける
                 log.write('resume_failed', error=type(error).__name__)
 

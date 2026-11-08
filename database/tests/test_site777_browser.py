@@ -176,6 +176,44 @@ class Site777BrowserTest(unittest.TestCase):
             self.assertEqual((row['kind'], row['href'], row['tag']), ('click', '/f/D0400.do?dai', 'A'))
             self.assertEqual(log.path.parent.name, 'logs')
 
+    def test_the_auto_resume_reloads_with_navigate_not_load_url(self):
+        # 2026-11-08：window.load_url（WebView2 の Source）は表示中と同じURLでは読み込み直さず、自動の再開が
+        # 「移動中」のまま止まっていた（smoke_site777_session.py --failed-load で確認）。CoreWebView2.Navigate を使う。
+        calls = []
+        core = SimpleNamespace(Navigate=lambda url: calls.append(('navigate', url)))
+        window = SimpleNamespace(native=SimpleNamespace(webview=SimpleNamespace(CoreWebView2=core)),
+                                 load_url=lambda url: calls.append(('load_url', url)))
+        ran = []
+        site777_browser.reload_page(window, 'https://m.site777.jp/f/D4300.do?pmc=04034001',
+                                    invoke=lambda action: (ran.append(True), action()))
+        self.assertEqual((ran, calls), ([True], [('navigate', 'https://m.site777.jp/f/D4300.do?pmc=04034001')]))
+        source = Path(site777_browser.__file__).read_text(encoding='utf-8')
+        self.assertIn('reload_page(window, url)', source)
+        self.assertNotIn('window.load_url(url)', source)
+
+    def test_form_targets_in_the_log_keep_where_but_not_the_values(self):
+        # 2026-11-08：送信先（action）は safe_url を通さず、問い合わせの値ごと残っていた。
+        with tempfile.TemporaryDirectory() as tmp:
+            log = site777_browser.DiagnosticLog(tmp)
+            for kind in ('submit', 'form_submit'):
+                site777_browser.Bridge(log).note(json.dumps({'kind': kind, 'action': 'https://m.site777.jp/f/P0250.do?hkb=0&id=123', 'method': 'post'}))
+            rows = [json.loads(line) for line in log.path.read_text(encoding='utf-8').splitlines()]
+            self.assertEqual([r['action'] for r in rows], ['https://m.site777.jp/f/P0250.do?hkb&id'] * 2)
+
+    def test_the_log_keeps_five_older_generations(self):
+        # 2026-11-08：1世代だけだと、1日に約700KB書くので2〜3日前の停止の理由（auto_off）が消えていた。
+        from unittest.mock import patch
+        self.assertEqual(site777_browser.LOG_GENERATIONS, 5)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(site777_browser, 'LOG_LIMIT', 10):
+            log = site777_browser.DiagnosticLog(tmp)
+            for n in range(8):
+                log.write('auto_off', n=n)  # 毎回10バイトを超えるので、次に書くときに送る
+            names = sorted(p.name for p in log.path.parent.iterdir())
+            self.assertEqual(names, ['site777-browser.log'] + [f'site777-browser.log.{i}' for i in range(1, 6)])
+            number = lambda p: json.loads(p.read_text(encoding='utf-8'))['n']
+            self.assertEqual([number(log.path)] + [number(log.path.with_suffix(f'.log.{i}')) for i in range(1, 6)],
+                             [7, 6, 5, 4, 3, 2], '新しい順に残し、6世代より古いものだけ消す')
+
     def test_window_closes_only_after_auto_capture_finished_and_saving_is_done(self):
         # 2026-11-07 利用者「取り込み終わったなら閉じる仕様にしてね」（メルヘン・P’s CUBEの close_when_finished と同じ）
         import threading
