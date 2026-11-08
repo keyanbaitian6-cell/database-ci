@@ -1620,3 +1620,40 @@
 
 - 次の手順：直すかどうか・どれからかは利用者に聞く。直すなら 1(a)・3・4 は PC だけの小さな変更で、まとめて1回で送れる。1(b) は閉店・最終更新の時刻を聞いてから設計する。2 は決定の見直しなので、利用者が決めたときだけ。
 - 変えたもの：この記録だけ。
+
+## 2026-11-08 保存とバックアップのレビュー4件の修正（Claude）
+
+- 依頼：上の「保存とバックアップの読み取り専用レビュー」の4件について、利用者「1234全部直してもいいのでは？」。基準は手元 main `deada68`（正本と同じ。database-ci `7a9df13` を含む）。
+- **並行作業に注意**：同じ作業コピーで、別のClaudeの作業が Site Seven のファイル（`database/site777_*.py`・`assets/site777_overlay.js`・`tests/test_site777_*.py`・`tests/smoke_site777_session.py`・`database_android/tool/test_site777_capture_browser.mjs`）を変更中（未コミット）。この修正ではそれらに触れていない。コミットするときは下の「変えたファイル」だけを `git add <ファイル>` で指定する。
+- 完了の条件（着手前に利用者へ提示）：①古い写しから出力しても新しいバックアップに戻らない ②読めない行があるときは救出用を別名で書いて知らせ、正常な前回の控えを残す ③パチンコの共有用JSONが途中で壊れず、失敗を知らせる ④全件削除後も直近7日版を削除印付きで書き直し、Androidが読める。
+
+### 方針
+
+1. **出力の順番**（`database/backup_status.py` に `output_lock`・`issue_ticket`・`output_turn`）：書き出し元（`meruhen`・`pscube`）ごとに、`data_dir` の `backup-output-<元>.lock`（OSのファイル鍵。Windowsは msvcrt、ほかは flock。落ちたプロセスの鍵は残らない）と `backup-output-<元>-order.json`（発行した番号・書き始めた番号）を使う。写しを取るときは鍵を持って番号を受け取り（`core.snapshot_store(path, order=(data_dir,'meruhen'))`、出力ワーカーの写し）、`store.output_ticket` に付ける。`auto_backup`（メルヘン・P’s CUBEとも）は鍵を取り、自分の番号がすでに書き始めた番号より古ければ何も書かずに戻る（状態の記録も変えない）。写しでなく本体を読む呼び出し（削除・取り消し・P’s CUBEの取り込み直後・Site Seven）は、鍵を取った時点の番号を使う。時計は使わない（時刻の補正で戻ると新しい写しを古いと誤るため）。鍵の待ちは最大600秒で、超えたら「順番を待ちきれませんでした」の失敗として記録する。履歴ページの作成中は鍵を持たない（写しの取得と書き出しの間だけ）。
+2. **読めない記録**（`core.export_backup` に `stats`・`mark_recovery`、`export_backup_or_rescue`、`RESCUE_BACKUP_NAME = 'database-backup-rescue.json'`）：自動出力の書き出しで読めない行があれば、今日の日別控え・全期間バックアップ・直近7日分は前回の正常なまま残し、救出用（`recovery_required` 付き。Android版と同じ印で、PC・Androidとも通常の読み込みを断る）を日別控えの場所（同期フォルダがあれば `同期フォルダ/backups/`）に書く。状態は「一部の書き出しに失敗」で、件数と救出用の場所を知らせる。閲覧用は今までどおり読める台だけで更新する。手動の書き出し（`app.py`）は今までどおり（印を付けない）。
+3. **パチンコ**（`database/pachinko.py` の `export_records`）：ローカルは `atomic_writer`、同期フォルダへは `atomic_copy`。戻り値を「書けなかったときの一言（書けたら None）」にし、台一覧・台のページの保存の一言の後ろに付けて知らせる（台の保存とは分ける）。
+4. **全件削除**（`core.export_recent_backup`）：記録が無くても、削除印を含む空の直近版を書く（since は今日から7日）。Androidは今の版のまま読めることを試験で確認（下）。APKは要らない。
+- P’s CUBEの `auto_backup` は、本体を `_auto_backup` に分け、上の順番の確認だけを足した（書き出す中身は同じ）。
+
+### 変えたファイル
+
+`database/backup_status.py`・`database/core.py`・`database/output_worker.py`・`database/pachinko.py`・`database/pscube_import.py`・`database/tests/test_backup_output_status.py`（空のDBで直近版を書かない、という試験を「空の直近版を書く」に変えた。仕様の変更に合わせたもの）・新規 `database/tests/test_backup_review_20261108.py`（9件）・新規 `database/tests/fixtures/recent_backup_after_delete_all.json`（PCのコードで作った全件削除後の直近版の見本）・`database_android/test/recent_backup_test.dart`（1件追加）。
+
+### 確認の表
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| ① 古い写しが後から書き終えても戻らない（メルヘン・P’s CUBE・出力ワーカー・本体からの出力） | 済（Claude） | `test_backup_review_20261108.py` の StaleSnapshotTests 5件 |
+| ② 読めない行で正常な控えを置き換えず、救出用と件数を知らせる | 済（Claude） | UnreadableRecordTests 2件（日別・全期間・直近のバイト列が前回と同じ、救出用の `recovery_required`=1、状態 partial、救出用は `import_backup` が断る） |
+| ③ パチンコの共有用JSONが途中で壊れず、保存の一言で知らせる | 済（Claude） | PachinkoSharedCopyTests 1件（24バイトで中断→同期フォルダは前回のまま、ローカルは4台） |
+| ④ 全件削除後の直近版が空・削除印1件、見本と同じ形 | 済（Claude） | DeleteAllTests 1件 |
+| ④ Androidが空の直近版を読み、端末の台も消える | 済（Claude） | `flutter test test/recent_backup_test.dart test/record_deletions_test.dart`：5件合格。`flutter analyze test/recent_backup_test.dart`：問題なし |
+| 新しい試験が直す前のコードで落ちる | 済（Claude） | `C:\w\bkrev-head` に HEAD を取り出して流し、9件すべて失敗（6件は値の違い、3件は新しい部品が無い）。確認後に取り出しは削除 |
+| PCの全試験 | 済（Claude） | `database/.venv/Scripts/python.exe -m unittest discover -s tests`：941件 OK（別作業の Site Seven の未コミットの変更も入った状態） |
+| 全体ゲート（Flutterの全試験・閲覧ページの画面試験を含む） | 済（Claude） | 利用者「ゲート後に送る」。別作業の Site Seven の未コミット分が混ざらないよう、`C:\w\bkgate` に HEAD `deada68` を取り出し、この修正の9ファイルだけを写して `bash database_android/tool/check_before_build.sh`：**ALL PASSED**（90段すべて OK。PC 938件、Flutter 823件、analyze はお知らせ31件のみで今回のファイルには無し、JS・画面試験82件）。コミットしたファイルはゲートで試したものとバイト単位で同じ（`cmp`） |
+| 本番での動き（実Drive・実端末・PC版を起動しての出力） | 未確認 | PC版は起動していない |
+
+### 必要なこと・まだのこと
+
+- 反映に必要なのは PC版の更新だけ（`start.cmd` で起動し直す）。Googleスクリプトの貼り替え・APK・閲覧ページの公開・データの書き直しは不要。更新後、最初の保存（または再出力）で全期間・直近7日・閲覧用・パチンコの共有用JSONが書き直される。
+- 11/8 は月の前半なので、`python tools/push_ci.py` で正本 `imakurudev-eng/database` へ送る。コミットとCIの結果は下に追記する。

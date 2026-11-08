@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -204,21 +203,29 @@ def db_path_for(slot_db_path):
 
 
 def export_records(store, data_dir):
-    """全部の記録を pachinko-records.json に書き、同期フォルダがあれば複製する。失敗しても保存は止めない。"""
-    from core import load_settings
+    """全部の記録を pachinko-records.json に書き、同期フォルダがあれば複製する。失敗しても保存は止めない。
+
+    戻り値は、書けなかったときの利用者への一言（書けたら None）。台の保存結果とは分けて知らせる。
+    同期フォルダへも一時ファイル経由で置き換える。直接上書きすると、途中で失敗したときに
+    前回の正常な共有用ファイルまで壊れていた（2026-11-08 保存とバックアップのレビュー3）。
+    """
+    from core import resolve_sync_dir
+    from file_io import atomic_copy, atomic_writer
     try:
         local = Path(data_dir) / EXPORT_NAME
         document = dict(format='database-pachinko', version=1, exported_at=now_stamp(), records=store.rows())
-        temporary = local.with_suffix('.tmp')
-        temporary.write_text(json.dumps(document, ensure_ascii=False), encoding='utf-8')
-        temporary.replace(local)
-        from core import resolve_sync_dir
+        with atomic_writer(local) as out:
+            out.write(json.dumps(document, ensure_ascii=False))
+    except (OSError, ValueError) as error:
+        return f'（記録は保存済み。パチンコの書き出しファイル {EXPORT_NAME} は書けませんでした：{error}。次の保存でもう一度書き出します）'
+    try:
         folder = resolve_sync_dir(data_dir)
         if folder and Path(folder).is_dir():
-            shutil.copyfile(local, Path(folder) / EXPORT_NAME)
-        return local
-    except (OSError, ValueError):
-        return None
+            atomic_copy(local, Path(folder) / EXPORT_NAME)
+    except (OSError, ValueError) as error:
+        return (f'（記録は保存済み。同期フォルダの {EXPORT_NAME} は前回のまま、更新できませんでした：{error}。'
+                '次の保存でもう一度書き出します）')
+    return None
 
 
 def has_graph(row):
@@ -284,14 +291,14 @@ def save_table(payload, slot_db_path):
             store.save(dict(row, kind_code=payload.get('kind_code'), source_url=payload.get('source_url'),
                             captured_at=stamp))
         store.commit()
-        export_records(store, Path(slot_db_path).parent)
+        export_problem = export_records(store, Path(slot_db_path).parent)
         location = rows[0]['store']
         tail = capture_tail(slot_db_path, day)
         target = next((r for r in sorted(rows, key=lambda r: r['rack'])
                        if is_tail(r['rack'], tail) and not has_graph(store.get(location, day, r['rack']))), None)
     finally:
         store.close()
-    message = f'パチンコ {machine}（{day}）{len(rows)}台を保存しました。'
+    message = f'パチンコ {machine}（{day}）{len(rows)}台を保存しました。' + (export_problem or '')
     if target and target.get('detail_url'):
         return message + f"末尾{tail}の{target['rack']}番台へ移動します。", target['detail_url']
     return message + f'この台一覧の末尾{tail}の台は、グラフまで取り込み済みです。', None
@@ -363,7 +370,7 @@ def save_graph(payload, slot_db_path, measurement):
     try:
         store.save(row)
         store.commit()
-        export_records(store, Path(slot_db_path).parent)
+        export_problem = export_records(store, Path(slot_db_path).parent)
         tail = capture_tail(slot_db_path, target['day'])
         rack, url = next_tail(store, target['store'], target['day'], target['rack'], tail, payload.get('source_url'))
         left = [r for r in missing_tails(store, target['store'], target['day'], tail) if r < int(target['rack'])]
@@ -381,7 +388,7 @@ def save_graph(payload, slot_db_path, measurement):
     if history:
         read.append(f'当り履歴{len(history)}回')
     message = (f"パチンコ {target['rack']}番台（{target['day']}）を保存しました"
-               + (f"（{'・'.join(read)}）。" if read else '。'))
+               + (f"（{'・'.join(read)}）。" if read else '。') + (export_problem or ''))
     if skipped:
         span = f'{skipped[0]}番台' if len(skipped) == 1 else f'{skipped[0]}〜{skipped[-1]}番台'
         message += f'{span}は取り込み済みなので飛ばしました。'

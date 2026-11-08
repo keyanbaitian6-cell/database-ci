@@ -21,9 +21,15 @@ def refresh_outputs(database_path, data_dir, reports_dir, *, history=False, back
         with tempfile.TemporaryDirectory(prefix='database-output-') as directory:
             snapshot = Path(directory) / 'snapshot.sqlite3'
             try:
-                with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(sqlite3.connect(snapshot)) as destination:
-                    source.backup(destination)
+                # 写しを取る間だけ出力の鍵を持ち、写しの番号を付ける。取り込み窓など別プロセスの出力と
+                # 書き終わりの順が入れ替わっても、古い写しで新しい出力を上書きしない（backup_status.output_turn）。
+                from backup_status import issue_ticket, output_lock
+                with output_lock(data_dir, source_name):
+                    ticket = issue_ticket(data_dir, source_name)
+                    with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(sqlite3.connect(snapshot)) as destination:
+                        source.backup(destination)
                 store = factory(snapshot, recording=False)
+                store.output_ticket = ticket
             except Exception as error:
                 if source_name == 'pscube':
                     from backup_status import BackupStatus

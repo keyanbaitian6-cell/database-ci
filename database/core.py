@@ -1453,24 +1453,35 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     return count
 
 
-def snapshot_store(path):
+def snapshot_store(path, order=None):
     """本体DBを1つの時点で写し、その写しを開いた Store を渡す（with で使う）。
+
+    ``order`` に (data_dir, 'meruhen') を渡すと、写しを取る間だけ出力の鍵を持ち、写しの番号を
+    ``store.output_ticket`` に付ける。自動の出力（auto_backup）に渡す写しは必ず付ける
+    （古い写しで新しい出力を上書きしないため。backup_status.output_turn）。
 
     export_backup はイベント・削除印を読んでから台を読む。その間に別の接続が台を消すと、
     台も削除印も入っていないバックアップになっていた（2026-11-01、Codexの洗い出し4）。
     写しはSQLiteのバックアップ機能で一度に取るので、書き込み側を待たせるのは写す間だけ。
     """
     import tempfile
-    from contextlib import closing, contextmanager
+    from contextlib import ExitStack, closing, contextmanager
 
     @contextmanager
     def opened():
         with tempfile.TemporaryDirectory(prefix='database-snapshot-') as directory:
             copy = Path(directory) / 'snapshot.sqlite3'
-            with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, \
-                    closing(sqlite3.connect(copy)) as target:
-                source.backup(target)
+            ticket = None
+            with ExitStack() as hold:
+                if order is not None:
+                    from backup_status import issue_ticket, output_lock
+                    hold.enter_context(output_lock(*order))
+                    ticket = issue_ticket(*order)
+                with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as source, \
+                        closing(sqlite3.connect(copy)) as target:
+                    source.backup(target)
             store = Store(copy, recording=False)
+            store.output_ticket = ticket
             try:
                 yield store
             finally:
@@ -1489,11 +1500,11 @@ def backup_from_snapshot(db_path, data_dir, *, notices=None):
         error_log.record(data_dir, 'backup.shared_import', error)
         if notices is not None:
             notices.append(f'共有のイベント履歴を取り込めませんでした（元の記録は保持）：{error}')
-    with snapshot_store(db_path) as store:
+    with snapshot_store(db_path, order=(data_dir, 'meruhen')) as store:
         return auto_backup(store, data_dir, notices=notices, import_shared=False)
 
 
-def export_backup(store, path, location=None, day=None, since=None):
+def export_backup(store, path, location=None, day=None, since=None, *, stats=None, mark_recovery=False):
     """Write saved records as a portable JSON file (share via Drive, USB, etc.).
 
     The format is shared with the Android app's own backup export, so either
@@ -1505,6 +1516,9 @@ def export_backup(store, path, location=None, day=None, since=None):
     that day: the small "recent" backup Android reads day to day (RECENT_BACKUP_NAME).
     Deletion marks and pending 🌈 are always written in full (they are small, and an
     older record deleted on the PC must disappear on Android too).
+    ``stats`` (dict) receives the number of unreadable rows as ``unreadable``.
+    ``mark_recovery`` writes ``recovery_required`` when there are any, as Android does,
+    so the file is recognised as a rescue file rather than a normal backup.
     """
     events = [e for e in store.date_events(location=location, day=day, include_removed=True)
               if since is None or e['day'] >= since]
@@ -1526,7 +1540,7 @@ def export_backup(store, path, location=None, day=None, since=None):
     if since:
         query += ' AND day>=?'
         values.append(since)
-    count = 0
+    count = unreadable = 0
     # One record per line, written as read: the whole database is never held
     # as one string (this runs after every save), and the file can be read
     # back line by line (``iter_backup_file``). Payloads are copied verbatim.
@@ -1543,6 +1557,7 @@ def export_backup(store, path, location=None, day=None, since=None):
                 line = payload
             except ValueError:
                 line = json.dumps({'unreadable_record': payload}, ensure_ascii=False)
+                unreadable += 1
             out.write(('\n' if count == 0 else ',\n') + line)
             count += 1
         out.write('\n]')
@@ -1551,8 +1566,41 @@ def export_backup(store, path, location=None, day=None, since=None):
             snapshots = [x for x in snapshots if json.loads(x).get('day', '') >= since]
         if snapshots:
             out.write(', "candidate_snapshots": [\n' + ',\n'.join(snapshots) + '\n]')
+        if mark_recovery and unreadable:
+            out.write(f', "recovery_required": {unreadable}')
         out.write('}')
+    if stats is not None:
+        stats['unreadable'] = unreadable
     return count
+
+
+RESCUE_BACKUP_NAME = 'database-backup-rescue.json'
+
+
+def export_backup_or_rescue(store, path, rescue, stats=None, **options):
+    """書き出して、読めない記録が無ければ ``path`` を置き換える。あれば ``path`` は前回の正常なまま残し、
+    救出用（recovery_required 付き）として ``rescue`` に置く。読めない記録の件数を返す。
+
+    読めない行を含むファイルで正常な控えを置き換えると、そこから戻したときに
+    その台が黙って抜けた（2026-11-08 保存とバックアップのレビュー2。Android版は救出用と明示していた）。
+    ``rescue`` は ``path`` と同じフォルダに置く（一時ファイルから名前を変えるだけで済むように）。
+    """
+    import os
+    path, rescue = Path(path), Path(rescue)
+    stats = {} if stats is None else stats
+    work = path.with_name('.' + path.name + '.checking')
+    try:
+        export_backup(store, work, stats=stats, mark_recovery=True, **options)
+        os.replace(work, rescue if stats['unreadable'] else path)
+    finally:
+        work.unlink(missing_ok=True)
+    return stats['unreadable']
+
+
+def unreadable_message(count, rescue):
+    return (f'読めない記録が{count}件あるため、正常な前回のバックアップをそのまま残しました。'
+            f'読めない記録を含む救出用を {rescue} に書きました（通常の読み込み・復元には使えません。'
+            '元のDBの修復が必要です）。')
 
 
 RAINBOW_MARK = '🌈'
@@ -1902,7 +1950,7 @@ def snapshot_dir(data_dir):
     return root / 'backups'
 
 
-def snapshot_backup(store, data_dir, today=None, keep_days=SNAPSHOT_KEEP_DAYS):
+def snapshot_backup(store, data_dir, today=None, keep_days=SNAPSHOT_KEEP_DAYS, stats=None):
     """Keep one backup file per day (the day's latest state) and drop the old ones.
 
     The single auto-backup file is overwritten on every save, so a bad save is
@@ -1912,7 +1960,10 @@ def snapshot_backup(store, data_dir, today=None, keep_days=SNAPSHOT_KEEP_DAYS):
     today = today or date.today()
     folder = snapshot_dir(data_dir)
     target = folder / f'database-backup-{today.isoformat()}.json'
-    export_backup(store, target)
+    stats = {} if stats is None else stats
+    # 読めない記録があれば、今日の控えは前回の正常なまま残し、救出用を返す（export_backup_or_rescue）。
+    if export_backup_or_rescue(store, target, folder / RESCUE_BACKUP_NAME, stats):
+        target = folder / RESCUE_BACKUP_NAME
     for path in folder.glob(SNAPSHOT_PATTERN):
         try:
             stamp = date.fromisoformat(path.stem[len('database-backup-'):])
@@ -1956,15 +2007,22 @@ def restore_backup(store, path):
 
 
 def auto_backup(store, data_dir, *, strict=False, notices=None, import_shared=True):
-    from backup_status import BackupStatus
+    from backup_status import BackupStatus, output_turn
     status = BackupStatus(data_dir, 'meruhen', load_settings(data_dir).get('sync_dir'))
     try:
         names = {'nagamachiminami': '長町南', 'saiwaichou': '幸町'}
         status.stores = [dict(name=names.get(place, place), day=day, count=count)
                          for place, day, count in store.db.execute(
                              'SELECT store, MAX(day), COUNT(*) FROM days GROUP BY store')]
-        result = _auto_backup(store, data_dir, strict=strict, notices=notices,
-                              import_shared=import_shared, status=status)
+        # 写し（snapshot_store の order 付き）は写しの番号、本体をそのまま読むときは今の番号で順番を取る。
+        # もっと新しい写しからの出力がもう始まっていれば、何も書かずに戻る（状態の記録も変えない）。
+        status.step = '書き出しの順番待ち'
+        with output_turn(data_dir, 'meruhen', getattr(store, 'output_ticket', None)) as fresh:
+            if not fresh:
+                folder = resolve_sync_dir(data_dir)
+                return Path(folder) / AUTO_BACKUP_NAME if folder else None
+            result = _auto_backup(store, data_dir, strict=strict, notices=notices,
+                                  import_shared=import_shared, status=status)
         if not status.folder or not Path(status.folder).is_dir():
             state, message = 'unavailable', ('同期フォルダ未設定' if not status.folder else
                                              '同期フォルダが見つかりません。ドライブ・接続を確認してください。')
@@ -1993,10 +2051,19 @@ def _auto_backup(store, data_dir, *, strict, notices, import_shared, status):
         status.step = '共有編集の取り込み'
         sync_shared_history(store, data_dir, notices)
     snapshot = None
+    unreadable = 0
     try:
         status.step = '日別バックアップ'
-        snapshot = snapshot_backup(store, data_dir)
-        status.done('snapshot')
+        stats = {}
+        snapshot = snapshot_backup(store, data_dir, stats=stats)
+        unreadable = stats.get('unreadable', 0)
+        if unreadable:
+            # 読めない記録を含む書き出しで、正常な控え（日別・全期間）を置き換えない（レビュー2）。
+            status.problems.append(unreadable_message(unreadable, snapshot))
+            if notices is not None:
+                notices.append(unreadable_message(unreadable, snapshot))
+        else:
+            status.done('snapshot')
     except (OSError, ValueError) as error:
         status.problems.append(f'日別バックアップ：{error}')
         if strict:
@@ -2012,12 +2079,21 @@ def _auto_backup(store, data_dir, *, strict, notices, import_shared, status):
     try:
         status.step = '全期間バックアップの共有フォルダへの書き出し'
         path = Path(folder) / AUTO_BACKUP_NAME
-        if snapshot is not None:
+        if unreadable:
+            pass  # 前回の正常な全期間バックアップを残す（救出用は日別の控えの場所に書いた）
+        elif snapshot is not None:
             # 同じ内容なので、全データを2回書き出さず、書き出した1つを複製する。
             atomic_copy(snapshot, path)
+            status.done('backup')
         else:
-            export_backup(store, path)
-        status.done('backup')
+            rescue = Path(folder) / RESCUE_BACKUP_NAME
+            count = export_backup_or_rescue(store, path, rescue)
+            if count:
+                status.problems.append(unreadable_message(count, rescue))
+                if notices is not None:
+                    notices.append(unreadable_message(count, rescue))
+            else:
+                status.done('backup')
     except OSError as error:
         status.problems.append(f'{status.step}：{error}')
         if strict:
@@ -2060,20 +2136,27 @@ def _auto_backup(store, data_dir, *, strict, notices, import_shared, status):
     except (OSError, ValueError) as error:
         status.problems.append(f'{status.step}：{error}')
         if notices is not None:
+            done = '全期間のバックアップと閲覧用は更新済みです。' if {'backup', 'viewer'} <= set(status.completed) else ''
             notices.append(f'Android用の直近7日分（{RECENT_BACKUP_NAME}）を書き出せませんでした（{error}）。'
-                           '全期間のバックアップと閲覧用は更新済みです。次の保存でもう一度書き出します。')
+                           f'{done}次の保存でもう一度書き出します。')
     return path
 
 
 def export_recent_backup(store, data_dir, folder):
     """直近 RECENT_BACKUP_DAYS 日分のバックアップを、ローカルで書いてから同期フォルダへ複製する
-    （書きかけのファイルがDriveへ上がらないように）。記録が無ければ書かない。"""
-    latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0]
-    if not latest:
-        return None
+    （書きかけのファイルがDriveへ上がらないように）。
+
+    記録が1台も無くなっても（最後の台まで削除）、削除印を含む空の直近版を書く。書かずに戻ると、
+    前回の直近版が削除前のまま残り、直近版を読むAndroidに削除が届かなかった
+    （2026-11-08 保存とバックアップのレビュー4）。その場合の since は今日から数える。"""
+    latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0] or date.today().isoformat()
     since = (date.fromisoformat(latest) - timedelta(days=RECENT_BACKUP_DAYS - 1)).isoformat()
     local = Path(data_dir) / RECENT_BACKUP_NAME
-    export_backup(store, local, since=since)
+    stats = {}
+    export_backup(store, local, since=since, stats=stats, mark_recovery=True)
+    if stats['unreadable']:
+        # 読めない記録を含む直近版はAndroidが救出用として断るので、前回の正常な直近版を残す（レビュー2）。
+        raise ValueError(f'読めない記録が{stats["unreadable"]}件あるため、前回の直近7日分をそのまま残しました')
     return atomic_copy(local, Path(folder) / RECENT_BACKUP_NAME)
 
 

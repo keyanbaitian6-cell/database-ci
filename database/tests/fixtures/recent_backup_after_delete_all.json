@@ -1,0 +1,2 @@
+{"format": "database-backup", "version": 1, "exported_at": "2026-11-08T19:39:49.008874+09:00", "source": "pc", "date_events": [], "since": "2026-11-02", "record_deletions": [{"store": "saiwaichou", "day": "2026-10-22", "machine": "試験", "rack": 537, "deleted_at": "2026-11-08T19:39:48.934191+09:00"}], "rainbow_marks": [], "event_history_edits": {"format": "database-event-history", "version": 1, "cells": [], "weeks": [], "links": []}, "records": [
+]}

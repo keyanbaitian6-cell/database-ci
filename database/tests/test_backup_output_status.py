@@ -101,11 +101,16 @@ class BackupOutputStatusTests(unittest.TestCase):
         BackupStatus(self.data, 'pscube', another).finish('failed', '使用中')
         self.assertIsNone(read_status(self.data, 'pscube')['last_success_at'])
 
-    def test_empty_database_does_not_claim_a_recent_backup_was_written(self):
+    def test_empty_database_writes_an_empty_recent_backup(self):
+        # 2026-11-08 から、記録が無くても空の直近版を書く（全件削除がAndroidへ届くように。レビュー4）。
+        # 書いたときだけ「書いた」と記録する点は変わらない。
+        from core import RECENT_BACKUP_NAME
         with closing(Store(self.data / 'database.sqlite3')) as store:
             auto_backup(store, self.data, strict=True)
         self.assertEqual(read_status(self.data, 'meruhen')['state'], 'success')
-        self.assertNotIn('recent', read_status(self.data, 'meruhen')['completed'])
+        self.assertIn('recent', read_status(self.data, 'meruhen')['completed'])
+        recent = json.loads((self.shared / RECENT_BACKUP_NAME).read_text(encoding='utf-8'))
+        self.assertEqual(recent['records'], [])
 
     def test_pscube_auto_capture_reports_the_actual_copy_failure(self):
         import pscube_import
