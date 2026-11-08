@@ -1775,3 +1775,4 @@
 - あわせて、ゲートの前に、変えたファイルの静的解析と関係する試験を先に流す（今回の失敗の元は、これをしなかった Claude の手順の誤り）。
 - 流し直しの途中だった2回目の全体ゲート（`/c/w/cbw-s777final2`）は止めた（結果は使っていない）。
 - CI（同日 20:43、Claude）：`28f6d6f` を `tools/push_ci.py` で正本へ送った（`dcd323e..28f6d6f`、`126c312`・`524fb10` を含む）。https://github.com/imakurudev-eng/database/actions/runs/42476974061 （送った時点で実行中。結果は未確認）
+- 利用者の報告（同日、Claude が受けた）：「インストールして張り替えた」。APK 0.5.55 の2本（通常版・P’s CUBE版）の端末への導入と、P’s CUBE の Google 同期スクリプトの貼り替え（`pscube_cloud_sync_貼り替え用_20261108_確定前の置き換え.gs`）は利用者が済ませた（AI は端末・Google 側を直接確かめていない）。CI 42476974061 はこの時点で実行中（pc ubuntu は成功、full・pc windows は実行中）。残り：今夜 0:30 以降に同じ日を取り込み直して、確定前の台が置き換わるか、`auto_resume` のあとに `navigate`・`loaded` が出るか。
