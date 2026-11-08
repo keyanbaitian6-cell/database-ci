@@ -1795,3 +1795,6 @@
 |正本push、Web公開、実Google設定、iPhone実機|未実施・未確認|公開承認とApps Script更新後に確認|
 
 - 確認ログは ../outputs/pstation-forward-20261108/viewer-gate/。初回はログフォルダの相対パスが作業ディレクトリの切替後に解決できず失敗。絶対パスに修正して全体を実行した。
+
+- 公開（11/9、利用者承認）：正本へ f1d2445 を tools/push_ci.py で1回送信。CI https://github.com/imakurudev-eng/database/actions/runs/42497025246 は確認時に実行中。iPhone閲覧ページは全体ゲートの stage_viewer.py 出力を使い、database-viewer の 8d55f68 から 1bb7f2a に非強制更新。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42497203097 は成功。配信中の main.dart.js・pscube/data.mjs・shared_events.mjs・version.json は公開Gitとバイト一致。
+- 11/9分の表示用JSONをDriveの「database共有／P-STATION 前向き検証」に配置。Driveメタデータで親フォルダと1,367バイトを確認し、PCに同期されたファイルと出力元のSHA-256が一致。毎朝実行.cmd の隣に viewer-sync-dir.txt を設定。次の操作は、自分用閲覧Apps Scriptの貼り替え、PSCUBE_VALIDATION_FOLDER_ID の設定、既存デプロイの新バージョン更新。実Googleの返事とiPhone実機表示は未確認。
