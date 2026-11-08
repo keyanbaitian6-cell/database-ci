@@ -1730,3 +1730,47 @@
 | 実サイトでの再開の読み込み直し | 未確認 | 利用者の次の取り込みで、`auto_resume` のあとに `navigate`・`loaded` が出るかを見る |
 - 追記（同日 20:3x、Claude）：073f0eb の CI（https://github.com/imakurudev-eng/database/actions/runs/42474242584 ）は **失敗**。`pc (ubuntu, UTC)`・`pc (windows, UTC)` は成功、`full` が flutter-test の前の準備で止まった。原因：sqlite3 パッケージ（3.5.2）が取ってきた `libsqlite3.x64.linux.so` のハッシュが `de78a2a1…` で、期待値 `b1772918…` と違った（"Bad state: Hash of downloaded file …"）。配布元 `simolus3/sqlite3.dart` の `sqlite3-3.5.2` の公開情報（`gh api …/releases` の digest。ファイルは落としていない）では、このファイルは 2026-08-19 から `b1772918…` のまま。073f0eb は pubspec・lock・Androidのアプリのコードを変えておらず、11/7 の 2f8eb93 は同じ依存で成功しているので、CI上での一時的な取得の失敗と判断した（確定ではない）。再実行はしていない。サイトセブンの別セッションが 126c312 などを送るときのCIが、073f0eb も含めて流し直すので、その結果で確かめる（そこでも同じ失敗なら、取得元・キャッシュを調べる）。
 - 同日：サイトセブンの別セッションから「Android 0.5.55 のAPKを作る前の確認」。返答：この修正の作業はもう無い（Android の lib・assets・pubspec・web/pscube・同期スクリプトを変える予定なし）。073f0eb で変えたAndroid側は試験（`database_android/test/recent_backup_test.dart`）だけで、APKの中身は変わらない。実機で確かめることは特に無い（PC版の更新後、Androidのふだんの「直近7日分」の読み込みが今までどおり通れば十分）。
+
+## 2026-11-08 サイトセブン：翌日0:30より前に取った台（確定前）は、あとで取り込んだ台で置き換える（Claude、上の点検の1(b)）
+
+- 依頼：利用者「１についてお願いします。閉店時刻は23時半。0時前後には更新されるはず」。確定の時刻は利用者が選んだ「翌0:30以降」（案：0:15・0:30・1:00）。基準：手元 main `126c312`（上の2節のコミット。その下に別のセッションの `073f0eb`・`dcd323e` があり、正本 origin/main は `dcd323e`）。
+- 完了の条件（着手前に利用者へ提示）：翌日0:30以降に取った台を確定、それより前の台は確定前／確定前の台はあとで取ったサイトセブンの台で置き換え、確定した台は置き換えない（PC・Android・Google同期で同じ規則）／PCの取り込みは確定前の台を未取り込みとして数える／1(a)の確認は翌0:30より前の日に出し、文を「0:30以降に取り込み直すと置き換わります」に／表示は変えない。確かめ方：3か所に試験を足し、全体ゲート ALL PASSED、APK 0.5.55、同期スクリプトの貼り替え用ファイル。
+- 記録の形は変えていない。判定は、どの画面も受け渡している `source_captured_at`（取り込んだ時刻）だけで行う。
+
+### 変えたこと
+
+1. **PC**（`database/pscube_import.py`）：`SITE777_FINAL_AFTER`（翌日0:30）・`site777_final_at`・`site777_final`・`site777_supersedes` を足した。`_merge` は確定前のサイトセブンの台を、あとで取ったサイトセブンの台で置き換える。`import_backup` は、同じ台・日の確定前のサイトセブンの台を、アナスロの補完と同じく消して入れ替える（機種名の表記が違っても）。時刻が読めない台は確定（置き換えない）。古い取り込み（時刻が前）では置き換えない。P’s CUBE本来の台は対象外のまま。
+2. **PCの取り込み窓**（`database/site777_session.py`・`assets/site777_overlay.js`）：保存済みの数え方（`_occupied`・`_saved_racks`・`_covered_models`）から確定前のサイトセブンの台を外した（`_counts_as_saved`）。0:30以降に同じ日を取り込むと、確定前の台だけ表・グラフを読み直して置き換える。確認の基準を「まだ確定していない最初の日」（`unfinished_from`：今の営業日の翌0:30より前ならその営業日、過ぎていれば翌日）にし、初めに選ぶ日は確定したいちばん新しい日。確認の文は「…の分はまだ確定していません（閉店23:30・翌0時ごろ更新）。今取り込むと、営業中・更新前の数値で保存されます。翌日0:30以降に取り込み直すと置き換わります。」。
+3. **Android**（`database_android/lib/pscube_store.dart`）：`site777FinalAt`・`site777Final`・`site777Supersedes` を足し、`_merge` と `importBackup` に同じ規則を入れた。
+4. **Google同期**（`database_android/web/pscube/data.mjs` → `tool/build_pscube_cloud_sync.mjs` で `tool/pscube_cloud_sync.gs` を作り直し）：`site777Final`・`site777Supersedes` を足し、`mergeData` に同じ規則。規則の版 `PSCUBE_CLOUD_RULES` を `2026-11-08-site777-final` に上げた（貼り替えた最初の実行で、前に取り込めなかった入力を読み直す）。
+5. AGENTS.md のサイトセブンの節を新しい規則に書き直した。
+6. 見つけて直したもの：別のセッションの `073f0eb` から、`auto_backup` は「バックアップ済み（より新しい時点の書き出しが先に済んでいます）」という成功の文も返す。サイトセブンは「バックアップ済み」と完全一致で比べていたので、成功なのに「ただしバックアップに失敗」と出るところだった。「バックアップ済み」で始まれば成功とした（試験 `test_a_backup_already_written_by_a_newer_export_counts_as_success`）。
+7. 見つけたもの（直していない）：Android に組み込む P’s CUBE の読み取り用の JS（`database_android/assets/pscube_capture.js`・`pscube_auto_probe.js`、`tool/build_pscube_capture.mjs` で `web/pscube/data.mjs` から作る）は、最後に作り直したのが `50ae1e8`（11/7 のサイトセブン取り込みの最初）で、そのあとの推定差枚・アナスロの置き換えなどが入っていない。今回の規則には要らない（サイトセブンの記録をまとめるのは Dart）ので、作り直さずに戻した。作り直すかは次に相談。
+
+- 既存の台：11/7分の295台（11/7 23:22〜23:56 に取り込み）は確定前になった。サイトが 11/7 を出している間（11/14ごろまで）に 11/7 を取り込むと、その台が読み直されて置き換わる。11/4〜11/6分は翌日以降に取ったので確定。
+
+### 確認
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 確定は翌0:30以降・初めに選ぶ日 | 済 | test_site777_session `test_a_day_is_final_from_half_past_midnight_the_next_day`（23:59・0:29・0:30・2:59・10:00） |
+| 確定前は置き換え・確定は置き換えない・古い取り込みでは戻らない（PC） | 済 | `test_racks_captured_before_the_day_is_final_are_replaced_by_a_later_capture`（23:40→0:10→10:00 で置き換え、11:00 は保持）、`test_the_merge_rule_replaces_only_racks_that_were_not_final_and_only_with_newer_ones` |
+| 同じ規則（Android） | 済 | database_android/test/site777_import_test.dart「確定は翌日0:30以降…」（境界・時差の書き方・置き換え・保持・古いバックアップで戻らない） |
+| 同じ規則（data.mjs と生成した同期スクリプト） | 済 | tool/test_site777_import.mjs（13件、機種名の表記が違う場合も） |
+| 確認の画面の文 | 済 | test_site777_capture_browser.mjs |
+| 全体ゲート | 済（新しい決まりで） | 本体の作業コピー（`524fb10` の上に今回の変更、版 0.5.55+2026110802）で `bash database_android/tool/check_before_build.sh`：89項目 OK（PC 948件・Flutter 824件・JS試験・閲覧ページの画面試験を含む）、flutter-analyze だけ FAIL（今回の `pscube_store.dart` 1759行の不要な `!` の警告）。`!` を外したあと、下の新しい決まりで `flutter analyze --no-pub --no-fatal-infos`（警告・エラー0、情報31件）と `flutter test --no-pub`（824件 All tests passed）を流して通過。ゲートのあとに入ったのは、この1行と別のセッションの文書だけのコミット `524fb10` |
+| APK 0.5.55 | 済（作成のみ。端末への導入は未・利用者） | `database_android/build/releases/0.5.55/`：通常版 `database-0.5.55-2026110801.apk`（`com.keyan.database_android`、versionCode 2026110801、SHA256 `6ee13fe83e0603c3fd19f3b755e74420f17c3bd4a74d9f211f4febae6a951dd7`）、P’s CUBE版 `database-pscube-0.5.55-2026110802.apk`（`com.keyan.database_android.pscube`、2026110802、SHA256 `3f5bd8e56f63d43d8d0761c3fd7a74e6bf2f6e3a3f1c37ad4f997e788bdeee7e`）。aapt2 で ID・版、apksigner で証明書 SHA-256 `4332fcb9…a047`（0.5.54 と同じ）。ビルドのもとは上のゲートと同じ作業コピー（このコミットと同じ内容）。0.5.54 の2本と `build/app/outputs/flutter-apk/app-release.apk` は Windows のごみ箱へ |
+| 同期スクリプトの貼り替え | 未（利用者） | 貼り替え用：`../outputs/site777-final-20261108/pscube_cloud_sync_貼り替え用_20261108_確定前の置き換え.gs`（リポジトリの `tool/pscube_cloud_sync.gs` と同じ。履歴方式 `PSCUBE_HISTORY_VIEWER = true` の行はそのまま） |
+| 閲覧ページ・共有カレンダーの公開 | 不要 | 表示は変えていない。閲覧ページ・共有カレンダーは同期スクリプトの出力を読むだけで、まとめる規則を持たない |
+| 実サイト・実機 | 未確認 | 今夜の取り込みのあと、0:30以降に同じ日を取り込んで置き換わるか |
+
+- push：このコミットを `tools/push_ci.py` で正本 `imakurudev-eng/database` へ1回（11/8 は前半）。`126c312`・`524fb10` も一緒に入る。CI の URL は下に追記。
+- 次の手順（利用者）：APK 2本の導入、同期スクリプト（P’s CUBE）の貼り替え。今夜の取り込みのあと、0:30以降に同じ日を取り込んで確定前の台が置き換わるか、ログの `auto_resume` のあとに `navigate`・`loaded` が出るか。組み込みの P’s CUBE 読み取り JS を作り直すかは相談。
+- 手順の誤り（Claude）：最初のコミットで記録の空き（APK・push の欄）を埋める置き換えが、`python` がストアの仮の命令だったため動かず、空きのままコミットした。push の前に気づき、`database/.venv` の Python で埋めて同じコミットを直した。
+
+### 決まりの変更：落ちた項目だけの流し直し（2026-11-08 利用者「その決まりに変えていいよ」）
+
+- 経緯：上のゲートで静的解析だけが落ち（`!` 1つ）、全体を流し直して15分待たせた。利用者「なんで！一個消したものを修正するだけなのに流しなおしが15分かかるの」。Claude が「直前のゲートからの差が小さいときは、落ちた項目と関係する試験だけを流し直す」形を提案し、利用者が了承。
+- AGENTS.md「ビルド前の再発確認」に例外として書いた：直前の全体ゲートで落ちたのが1〜2項目だけで、そのあとの変更がその失敗を直す小さな差分だけ（ほかの取り込み・変更なし。.md は除く）なら、落ちた項目と、直したファイルに関係する試験だけ（Dart なら analyze と flutter test 全体、PC の Python なら database/tests 全体、JS なら関係する test_*.mjs、画面に関わるなら全体）。迷うときは全体。報告には元のゲート・落ちた項目・差分・流し直したものを書く。
+- あわせて、ゲートの前に、変えたファイルの静的解析と関係する試験を先に流す（今回の失敗の元は、これをしなかった Claude の手順の誤り）。
+- 流し直しの途中だった2回目の全体ゲート（`/c/w/cbw-s777final2`）は止めた（結果は使っていない）。

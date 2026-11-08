@@ -148,14 +148,14 @@
       if(alive&&current)render(current);
     }
   };
-  // 今の営業日以降の日（営業中になりうる日）を取り込むときは確かめる（2026-11-08）。サイトセブンは無い台だけ補うので、
-  // 営業中に取り込むと、その時点の数値のまま残り、あとで取り込み直しても置き換わらない。PCも確認なしの開始・保存を止める。
-  // 戻り値：今の営業日以降の日を含まない＝false、含んで確かめた＝true、やめた＝null。
+  // まだ確定していない日（翌日0:30より前。閉店23:30・0時前後に更新、2026-11-08 利用者）を取り込むときは確かめる。
+  // その時点の数値で保存し、0:30以降に取り込み直すと置き換わる（PC・Android・同期で同じ規則）。PCも確認なしの開始・保存を止める。
+  // 戻り値：確定前の日を含まない＝false、含んで確かめた＝true、やめた＝null。
   const unfinishedOk=(first,last)=>{
-    const today=current?.today, [a,b]=[first,last||first].sort();
-    if(!today||!a||b<today)return false;
-    const label=(a>today?a:today).slice(5).replace('-','/');
-    return confirm(`${label}の分は、営業中（または営業前）の数値のことがあります。\n取り込んだ時点の数値のまま残り、あとで取り込み直しても置き換わりません。\n閉店後のデータか確かめましたか？ 取り込むときは「OK」を押してください。`)?true:null;
+    const from=current?.unfinished_from, [a,b]=[first,last||first].sort();
+    if(!from||!a||b<from)return false;
+    const label=(a>from?a:from).slice(5).replace('-','/');
+    return confirm(`${label}の分はまだ確定していません（閉店23:30・翌0時ごろ更新）。\n今取り込むと、営業中・更新前の数値で保存されます。翌日0:30以降に取り込み直すと置き換わります。\n今取り込むときは「OK」を押してください。`)?true:null;
   };
   const range=()=>[day.value||null,until.value&&until.value!==day.value?until.value:null];
   capture.onclick=async()=>{

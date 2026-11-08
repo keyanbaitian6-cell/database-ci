@@ -204,4 +204,50 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+
+  test('確定は翌日0:30以降。確定前の台だけ、あとで取った台で置き換える（PC と同じ）', () async {
+    // 2026-11-08 利用者「閉店時刻は23時半。0時前後には更新されるはず」→「翌0:30以降」。
+    Map<String, dynamic> at(String captured) =>
+        {'source_site': 'site777', 'day': '2026-11-06', 'source_captured_at': captured};
+    expect(site777Final(at('2026-11-07T00:29:59+09:00')), isFalse);
+    expect(site777Final(at('2026-11-07T00:30:00+09:00')), isTrue);
+    expect(site777Final(at('2026-11-06T15:30:00Z')), isTrue, reason: '時差の書き方が違っても同じ瞬間');
+    expect(site777Final({'source_site': 'site777', 'day': '2026-11-06'}), isTrue,
+        reason: '時刻が読めない台は置き換えない');
+    expect(site777Supersedes(at('2026-11-06T23:40:00+09:00'), at('2026-11-06T23:30:00+09:00')), isFalse,
+        reason: '古い取り込みでは置き換えない');
+    sqfliteFfiInit();
+    final directory = await Directory.systemTemp.createTemp('site777-final-');
+    final store = await PscubeStore.open(
+      path: '${directory.path}/test.sqlite3',
+      factory: databaseFactoryFfi,
+    );
+    try {
+      Map<String, dynamic> capture(String captured, int games, String sha) {
+        final data = fixture();
+        for (final r in data['records'] as List) {
+          r['source_captured_at'] = captured;
+          r['source_sha256'] = List.filled(64, sha).join();
+        }
+        (data['records'] as List)[0]['games'] = games;
+        return data;
+      }
+      Future<Map<String, dynamic>> first() async {
+        final file = await store.exportViewer(path: '${directory.path}/x.json');
+        final rows = jsonDecode(await file.readAsString())['records'] as List;
+        expect(rows.length, 2, reason: '同じ台・日に2つ残らない');
+        return rows.firstWhere((r) => r['rack'] == fixture()['records'][0]['rack']) as Map<String, dynamic>;
+      }
+      await store.importBackup(jsonEncode(capture('2026-11-06T23:40:00+09:00', 3000, 'a')));
+      await store.importBackup(jsonEncode(capture('2026-11-07T10:00:00+09:00', 8000, 'b')));
+      expect((await first())['games'], 8000, reason: '確定前の台は、あとで取った台で置き換える');
+      await store.importBackup(jsonEncode(capture('2026-11-07T11:00:00+09:00', 9000, 'c')));
+      expect((await first())['games'], 8000, reason: '確定した台は置き換えない');
+      await store.importBackup(jsonEncode(capture('2026-11-06T23:40:00+09:00', 3000, 'a')));
+      expect((await first())['games'], 8000, reason: '古いバックアップを読み直しても戻らない');
+    } finally {
+      await store.close();
+      await directory.delete(recursive: true);
+    }
+  });
 }

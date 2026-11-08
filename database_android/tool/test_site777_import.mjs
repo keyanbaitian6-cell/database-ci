@@ -148,3 +148,26 @@ test('サイトセブンはアナスロで補った台を置き換え（別表�
   const again=mergeData(merged,validateData(anasloDoc));
   assert.equal(again.records.find(r=>r.rack===base.rack&&r.day===base.day).source_site,'site777','アナスロでは戻らない');
 });
+
+test('確定は翌日0:30以降。確定前の台だけ、あとで取った台で置き換える（PC・Android と同じ。生成する同期スクリプトも）',()=>{
+  // 2026-11-08 利用者「閉店時刻は23時半。0時前後には更新されるはず」→「翌0:30以降」。
+  const capture=(at,games,sha,machine)=>{
+    const value=fixture();
+    for(const r of value.records){r.source_captured_at=at;r.source_sha256=sha.repeat(64);if(machine){r.machine=machine;}}
+    if(machine)for(const m of value.machines)m.machine=machine;
+    value.records[0].games=games;return validateData(value);
+  };
+  const rack=fixture().records[0].rack;
+  const context=vm.createContext({});
+  vm.runInContext(buildCloudScript(),context,{timeout:5000});
+  for(const [name,merge] of [['data.mjs',mergeData],['同期スクリプト',(a,b)=>plain(context.mergeData(a,b))]]){
+    const early=capture('2026-11-06T23:40:00+09:00',3000,'a');
+    const pick=data=>{const same=data.records.filter(r=>r.rack===rack);assert.equal(same.length,1,name+'：同じ台・日に2つ残らない');return same[0];};
+    let merged=merge(early,capture('2026-11-07T10:00:00+09:00',8000,'b','表記の違う名前'));
+    assert.equal(pick(merged).games,8000,name+'：確定前の台は、あとで取った台で置き換える（機種名の表記が違っても）');
+    merged=merge(merged,capture('2026-11-07T11:00:00+09:00',9000,'c'));
+    assert.equal(pick(merged).games,8000,name+'：確定した台は置き換えない');
+    merged=merge(merged,early);
+    assert.equal(pick(merged).games,8000,name+'：古い取り込みでは戻らない');
+  }
+});

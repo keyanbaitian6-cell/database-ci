@@ -651,10 +651,10 @@ class SessionTest(unittest.TestCase):
         from pscube_import import _record_key
         session=self.evening_session(datetime.fromisoformat('2026-11-06T19:00:00+09:00'))
         state=session.state()
-        self.assertEqual((state['today'],state['day'],state['today_ok']),('2026-11-06','2026-11-05',False))
+        self.assertEqual((state['unfinished_from'],state['day'],state['today_ok']),('2026-11-06','2026-11-05',False))
         epoch=state['epoch']
         for args in (('2026-11-06',),('2026-11-04','2026-11-06')):
-            with self.assertRaisesRegex(ValueError,'11/06の分は営業中の数値になりうるため、確認してから'):
+            with self.assertRaisesRegex(ValueError,'11/06の分はまだ確定していません.*0:30以降に取り込み直すと置き換わります'):
                 session.configure(True,*args)
             self.assertEqual((session.state()['epoch'],session.state()['enabled'],session.state()['day']),
                              (epoch,False,'2026-11-05'),'確認なしの開始は何も変えない')
@@ -662,7 +662,7 @@ class SessionTest(unittest.TestCase):
         # 手動の取り込みでも、確認していなければ保存しない。
         epoch=session.configure(False,'2026-11-06')['epoch']
         result=session.capture(json.dumps(table()),epoch)
-        self.assertIn('営業中の数値になりうるため、取り込みませんでした',result['error'])
+        self.assertIn('まだ確定していないため、取り込みませんでした',result['error'])
         self.assertFalse((self.evening/'pscube.sqlite3').exists())
         # 確かめたら取り込める。止まって3分後に自動で再開しても、確認は引き継ぐ。
         from types import SimpleNamespace
@@ -716,6 +716,17 @@ class SessionTest(unittest.TestCase):
         self.session.configure(True,'2026-11-06')
         self.assertIsNone(self.session._backup_note)
 
+    def test_a_backup_already_written_by_a_newer_export_counts_as_success(self):
+        # 2026-11-08：073f0eb から auto_backup は「バックアップ済み（より新しい時点の書き出しが先に済んでいます）」も返す。
+        # 完全一致で比べていたので、成功なのに「バックアップに失敗」と出ていた。
+        from unittest.mock import patch
+        with patch('site777_session.auto_backup',return_value='バックアップ済み（より新しい時点の書き出しが先に済んでいます）'):
+            self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
+            result=self.cycle(graph(2))
+        self.assertIsNone(self.session._backup_note)
+        self.assertNotIn('バックアップに失敗',result['state']['status'])
+        self.assertFalse(self.log('backup_problem'))
+
     def test_opening_the_window_removes_staging_of_days_that_can_no_longer_be_captured(self):
         # 2026-11-08：機種ごとの途中の記録を消す仕組みが無く、1日に約50本ずつ増えていた。元の資料（sources）は残す。
         staging=self.root/'site777-staging';(staging/'sources').mkdir(parents=True,exist_ok=True)
@@ -727,3 +738,59 @@ class SessionTest(unittest.TestCase):
                          ['2026-10-24-120141.json','2026-11-06-120141.json','memo.json'])
         self.assertTrue((staging/'sources'/'abc.json').exists())
         self.assertEqual((self.log('staging_pruned')[-1]['removed'],self.log('staging_pruned')[-1]['before']),(1,'2026-10-24'))
+
+    def test_a_day_is_final_from_half_past_midnight_the_next_day(self):
+        # 2026-11-08 利用者「閉店時刻は23時半。0時前後には更新されるはず」→ 確定は翌日0:30以降。
+        for now,first,chosen in (('2026-11-06T23:59:00+09:00','2026-11-06','2026-11-05'),
+                                 ('2026-11-07T00:29:00+09:00','2026-11-06','2026-11-05'),
+                                 ('2026-11-07T00:30:00+09:00','2026-11-07','2026-11-06'),
+                                 ('2026-11-07T02:59:00+09:00','2026-11-07','2026-11-06'),
+                                 ('2026-11-07T10:00:00+09:00','2026-11-07','2026-11-06')):
+            folder=self.root/now[:16].replace(':','');folder.mkdir()
+            state=Session(folder,DiagnosticLog(folder),now=lambda now=now:datetime.fromisoformat(now)).state()
+            self.assertEqual((state['unfinished_from'],state['day']),(first,chosen),now)
+
+    def test_racks_captured_before_the_day_is_final_are_replaced_by_a_later_capture(self):
+        # 2026-11-08：営業中（翌0:30より前）に取ったサイトセブンの台は、あとで取り込み直すと置き換わる。
+        # 確定（翌0:30以降）した台は今までどおり置き換えない。
+        from types import SimpleNamespace
+        def capture(now,games,today_ok=False):
+            session=Session(self.root,DiagnosticLog(self.root),now=lambda:datetime.fromisoformat(now),
+                            store_factory=lambda path:PscubeStore(path,recording=False))
+            epoch=session.configure(True,'2026-11-06',None,None,today_ok)['epoch']
+            payload=table();payload['rows'][0][2]=str(games)
+            results=[session.capture(json.dumps(x),epoch) for x in (payload,graph(metadata=True),graph(),graph(2))]
+            return session,results
+        def games():
+            store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+            try:return {r['rack']:(r['games'],r['source_captured_at'][:16]) for r in store.export_payload()['records']}
+            finally:store.close()
+        (self.root/'site777-last-run.json').unlink(missing_ok=True)
+        capture('2026-11-06T23:40:00+09:00',3000,True)
+        self.assertEqual(games()[101],(3000,'2026-11-06T23:40'))
+        # 翌0:30より前の取り込み直し（まだ確定前）でも、新しい方で置き換える。
+        session,results=capture('2026-11-07T00:10:00+09:00',3100,True)
+        self.assertEqual(games()[101],(3100,'2026-11-07T00:10'))
+        # 0:30以降：確定前の台を未取り込みとして数え、取り直して置き換える。
+        session,results=capture('2026-11-07T10:00:00+09:00',8000)
+        self.assertNotIn('error',results[0],results[0].get('error'))
+        self.assertIn('D4300',results[0]['action']['url'],'確定前の台はもう一度グラフを読む')
+        self.assertEqual(games()[101],(8000,'2026-11-07T10:00'))
+        # 確定した台は置き換えない（表は「既存の記録を保持」で終わる）。
+        session,results=capture('2026-11-07T11:00:00+09:00',9000)
+        self.assertNotIn('error',results[0],results[0].get('error'))
+        self.assertNotIn('D4300',results[0]['action']['url'],'確定した台のグラフは読みに行かない')
+        self.assertIn('既存の記録を保持',results[0]['state']['status'])
+        self.assertEqual(games()[101],(8000,'2026-11-07T10:00'))
+
+    def test_the_merge_rule_replaces_only_racks_that_were_not_final_and_only_with_newer_ones(self):
+        from pscube_import import _merge, site777_final, site777_supersedes
+        def rack(captured,games=100,source='site777'):
+            return {'source_site':source,'day':'2026-11-06','source_captured_at':captured,'games':games}
+        early,late,final=rack('2026-11-06T23:40:00+09:00',1),rack('2026-11-07T00:20:00+09:00',2),rack('2026-11-07T00:30:00+09:00',3)
+        self.assertEqual([site777_final(r) for r in (early,late,final)],[False,False,True])
+        self.assertIs(_merge(early,late),late);self.assertIs(_merge(late,final),final)
+        self.assertIs(_merge(late,early),late,'古い取り込みでは置き換えない')
+        self.assertIs(_merge(final,rack('2026-11-07T10:00:00+09:00',4)),final,'確定した台は置き換えない')
+        self.assertFalse(site777_supersedes(rack('2026-11-06T23:40:00+09:00',source=None),late),'P’s CUBE本来の台は対象外')
+        self.assertTrue(site777_final(rack(None)),'時刻が読めない台は確定として扱う（置き換えない）')

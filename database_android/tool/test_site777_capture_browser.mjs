@@ -114,13 +114,13 @@ try {
   assert.deepEqual(await page.evaluate(()=>window.__configured[2]),[true,'2026-11-04','2026-11-06','bottom']);
   await page.waitForFunction(()=>document.querySelector('#database-site777-bottom').getAttribute('aria-pressed')==='true');
   assert.match(await page.locator('#database-site777').innerText(),/間隔：5〜7秒ランダム/);
-  // 今の営業日（営業中になりうる日）を取り込むときは確かめる（2026-11-08）：やめたら何も変えず、OKなら確認済みを渡す。
-  // 終わった日だけなら確かめない。手動の「この画面を取り込む」でも同じ。
+  // まだ確定していない日（翌日0:30より前）を取り込むときは確かめる（2026-11-08）：やめたら何も変えず、OKなら確認済みを渡す。
+  // 確定した日だけなら確かめない。手動の「この画面を取り込む」でも同じ。
   const dialogs=[];
   await page.evaluate(()=>{
     window.__configured=[];
     Object.assign(window.__scopeState,{enabled:false,epoch:5,day:'2026-11-06',until:null,queue:[],finished_days:[],
-      today:'2026-11-06',today_ok:false,status:'停止しました。'});
+      unfinished_from:'2026-11-06',today_ok:false,status:'停止しました。'});
     window.pywebview.api.configure=async(...args)=>{window.__configured.push(args);
       Object.assign(window.__scopeState,{today_ok:args[4]===true});return structuredClone(window.__scopeState);};
   });
@@ -129,8 +129,8 @@ try {
   page.once('dialog',d=>{dialogs.push(d.message());d.dismiss();});
   await page.click('#database-site777-auto');
   await page.waitForTimeout(300);
-  assert.equal(dialogs.length,1);assert.match(dialogs[0],/11\/06の分は、営業中（または営業前）の数値のことがあります/);
-  assert.match(dialogs[0],/あとで取り込み直しても置き換わりません/);
+  assert.equal(dialogs.length,1);assert.match(dialogs[0],/11\/06の分はまだ確定していません（閉店23:30・翌0時ごろ更新）/);
+  assert.match(dialogs[0],/翌日0:30以降に取り込み直すと置き換わります/);
   assert.deepEqual(await page.evaluate(()=>window.__configured),[],'やめたら開始しない');
   page.once('dialog',d=>{dialogs.push(d.message());d.accept();});
   await page.click('#database-site777-auto');

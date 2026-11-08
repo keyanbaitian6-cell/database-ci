@@ -439,11 +439,41 @@ def stale_cutoff(day, fresh_since):
     return min(since, day_end.timestamp()) - STALE_MARGIN_HOURS * 3600
 
 
+# サイトセブンの台は、営業日の翌日0:30以降に取り込んだものを確定とする（2026-11-08 利用者「閉店時刻は23時半。0時前後には
+# 更新されるはず」→「翌0:30以降」）。それより前に取った台は営業中・更新前の数値のことがあるので、あとで取り込んだ
+# サイトセブンの台で置き換える。確定した台は今までどおり置き換えない。Android `site777Final`・同期スクリプト `site777Final` と同じ。
+SITE777_FINAL_AFTER = timedelta(days=1, minutes=30)
+
+
+def site777_final_at(day: str) -> datetime:
+    """その営業日のサイトセブンの数値が確定する時刻（翌日0:30、日本時間）。"""
+    return datetime.fromisoformat(f'{day}T00:00:00+09:00') + SITE777_FINAL_AFTER
+
+
+def site777_final(r: dict) -> bool:
+    """サイトセブンの台が確定か（取り込んだ時刻が翌日0:30以降）。時刻が読めない台は確定として扱う（置き換えない）。"""
+    captured = _instant(r.get('source_captured_at'))
+    try:
+        return captured is None or captured >= site777_final_at(r['day']).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return True
+
+
+def site777_supersedes(old: dict | None, fresh: dict) -> bool:
+    """確定前のサイトセブンの台を、あとで取り込んだサイトセブンの台で置き換えるか。"""
+    if not old or old.get('source_site') != 'site777' or fresh.get('source_site') != 'site777' or site777_final(old):
+        return False
+    before, after = _instant(old.get('source_captured_at')), _instant(fresh.get('source_captured_at'))
+    return before is not None and after is not None and after > before
+
+
 def _merge(old: dict | None, fresh: dict) -> dict:
     if old is None:
         return fresh
     if fresh.get('source_site') == 'site777' and old.get('source_site') == 'anaslo':
         return fresh  # サイトセブンはアナスロの補完を置き換える（2026-11-07、import_backup の説明を参照）。
+    if site777_supersedes(old, fresh):
+        return fresh  # 確定前のサイトセブンの台は、あとで取ったサイトセブンの台で置き換える（2026-11-08）。
     if fresh.get('source_site') == 'site777':
         # サイトセブンは既存の出典・数値・グラフを補完で上書きしない。ただし、同じ表・同じグラフ画像から
         # 後で推定差枚を付けた（作り直した）ときだけ、推定差枚を移す（2026-11-07。既に保存した日にも届けるため）。
@@ -1337,7 +1367,7 @@ class PscubeStore:
             occupied = {}
             for (payload,) in self.db.execute('SELECT payload FROM records'):
                 r = json.loads(payload)
-                occupied[(r['store'], r['rate'], r['rack'], r['day'])] = (_record_key(r), r.get('source_site'))
+                occupied[(r['store'], r['rate'], r['rack'], r['day'])] = (_record_key(r), r.get('source_site'), r)
             if summary['events']:
                 self.db.execute('INSERT OR REPLACE INTO state VALUES (?,?)',
                                 ('date_events', json.dumps(merged_events, ensure_ascii=False)))
@@ -1356,8 +1386,11 @@ class PscubeStore:
                 identity = (r['store'], r['rate'], r['rack'], r['day'])
                 # サイトセブンはアナスロで補った台を置き換える（2026-11-07 利用者「サイトセブンのを取り込んでっていってるの。
                 # 差枚の計算データにもつながるでしょ」。サイトセブンには MY・グラフ・画像の推定差枚がある）。機種名の表記が
-                # 違っても同じ台・日のアナスロの記録は消す。P’s CUBE本来の記録・サイトセブンどうしは今までどおり置き換えない。
-                if r.get('source_site') == 'site777' and occupied.get(identity, (None, None))[1] == 'anaslo':
+                # 違っても同じ台・日のアナスロの記録は消す。P’s CUBE本来の記録は今までどおり置き換えない。
+                # サイトセブンどうしは、確定前（翌日0:30より前に取った）の台だけ、あとで取った台で置き換える（2026-11-08）。
+                occupant = occupied.get(identity)
+                if r.get('source_site') == 'site777' and occupant and (
+                        occupant[1] == 'anaslo' or site777_supersedes(occupant[2], r)):
                     old_key = occupied.pop(identity)[0]
                     if old_key != key:
                         self.db.execute('DELETE FROM records WHERE key=?', (old_key,))
@@ -1374,7 +1407,7 @@ class PscubeStore:
                     summary['updated'] += 1
                     self.db.execute('INSERT OR REPLACE INTO records VALUES (?,?)', (key, json.dumps(moved, ensure_ascii=False)))
                     continue
-                occupied[identity] = (key, r.get('source_site'))
+                occupied[identity] = (key, r.get('source_site'), r)
                 previous = self._read('records', key)
                 saved = _merge(previous, r)
                 numbers = ('bb', 'rb', 'at_art', 'games', 'my')

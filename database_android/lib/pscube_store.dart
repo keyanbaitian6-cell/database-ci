@@ -930,6 +930,8 @@ class PscubeStore {
     if (fresh['source_site'] == 'site777' && old['source_site'] == 'anaslo') {
       return fresh;
     }
+    // 確定前のサイトセブンの台は、あとで取ったサイトセブンの台で置き換える（PC `_merge` と同じ、2026-11-08）。
+    if (site777Supersedes(old, fresh)) return fresh;
     if (fresh['source_site'] == 'site777') {
       // 同じ表・同じグラフ画像から後で推定差枚を付けたときだけ移す（PC `_merge` と同じ、2026-11-07）。
       final estimate = fresh['net_estimate'] as Map?;
@@ -1748,9 +1750,13 @@ class PscubeStore {
         // サイトセブンはアナスロで補った台を置き換える（PC `import_backup` と同じ、2026-11-07）。
         // 機種名の表記が違っても、同じ台・日のアナスロの記録は消す。P’s CUBE本来・サイトセブンどうしは置き換えない。
         final occupant = occupied[rackDayKey(record)];
-        if (record['source_site'] == 'site777' && occupant?.$2 == 'anaslo') {
+        // 確定前（翌日0:30より前に取った）のサイトセブンの台も、あとで取った台で置き換える（PC と同じ、2026-11-08）。
+        if (record['source_site'] == 'site777' &&
+            occupant != null &&
+            (occupant.$2 == 'anaslo' ||
+                site777Supersedes(oldRecords[occupant.$1], record))) {
           occupied.remove(rackDayKey(record));
-          if (occupant!.$1 != key) {
+          if (occupant.$1 != key) {
             batch.delete('records', where: 'key=?', whereArgs: [occupant.$1]);
             batch.delete(
               'rack_captures',
@@ -1850,4 +1856,34 @@ class PscubeStore {
     );
     return rows.isEmpty ? null : rows.first['value'] as String;
   }
+}
+
+/// サイトセブンの数値が確定する時刻：営業日の翌日0:30（日本時間）。閉店23:30・0時前後に更新
+/// （2026-11-08 利用者「閉店時刻は23時半。0時前後には更新されるはず」→「翌0:30以降」）。PC `site777_final_at` と同じ。
+DateTime site777FinalAt(String day) =>
+    DateTime.parse('${day}T00:00:00+09:00').add(const Duration(days: 1, minutes: 30));
+
+/// サイトセブンの台が確定か（取り込んだ時刻が翌日0:30以降）。時刻が読めない台は確定（置き換えない）。PC `site777_final` と同じ。
+bool site777Final(Map<dynamic, dynamic> r) {
+  final captured = DateTime.tryParse(r['source_captured_at']?.toString() ?? '');
+  final day = r['day'];
+  if (captured == null || day is! String) return true;
+  try {
+    return !captured.isBefore(site777FinalAt(day));
+  } on FormatException {
+    return true;
+  }
+}
+
+/// 確定前のサイトセブンの台を、あとで取り込んだサイトセブンの台で置き換えるか。PC `site777_supersedes` と同じ。
+bool site777Supersedes(Map<dynamic, dynamic>? old, Map<dynamic, dynamic> fresh) {
+  if (old == null ||
+      old['source_site'] != 'site777' ||
+      fresh['source_site'] != 'site777' ||
+      site777Final(old)) {
+    return false;
+  }
+  final before = DateTime.tryParse(old['source_captured_at']?.toString() ?? '');
+  final after = DateTime.tryParse(fresh['source_captured_at']?.toString() ?? '');
+  return before != null && after != null && after.isAfter(before);
 }

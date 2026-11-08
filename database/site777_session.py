@@ -14,7 +14,7 @@ from time import monotonic
 from anaslo_converter import read_catalog, suggestions
 from browser_import import clean_overlay_layout
 from pscube_import import (PscubeStore, PscubeRandomCapture, auto_backup, business_day, is_excluded_machine,
-                           recent_business_days)
+                           recent_business_days, site777_final, site777_final_at)
 from file_io import write_notice
 from site777_browser import Bridge, LAST_STOP_NAME
 import site777_import as source
@@ -89,9 +89,9 @@ class Session(Bridge):
         self._direction = 'top'
         self._enabled = False
         self._days = recent_business_days(self._now(), count=8)
-        # 初めに選ぶ日は前の営業日（2026-11-08）。今の営業日（営業中）を取り込むと、その時点の数値のまま残り、
-        # 後から取り込み直しても置き換わらないため（サイトセブンは無い台だけ補う）。今日は確認してから（_today_ok）。
-        self._day = self._days[1]
+        # 初めに選ぶ日は、確定した（翌日0:30を過ぎた）いちばん新しい日（2026-11-08）。確定前の日を取り込むと営業中・
+        # 更新前の数値のことがあるので、確認してから（_today_ok）。確定前に取った台は、0:30以降に取り込み直すと置き換わる。
+        self._day = next((d for d in self._days if d < self._unfinished_from()), self._days[-1])
         self._today_ok = False
         # 日付の範囲で取り込む（2026-11-07 利用者「日付範囲指定できるようにしてほしい」）。_day が今の日、
         # _queue がこの後に取り込む日（古い順）、_until は範囲の終わり（単日なら None）。
@@ -161,16 +161,27 @@ class Session(Bridge):
                     'navigating': self._pending_navigation, 'unknown_graphs': self._unknown,
                     'direction': self._direction, 'resume_at': self._resume_label if self._resume_at else None,
                     'resume_serial': self._resume_serial, 'previous': self._previous,
-                    'today': self._today(), 'today_ok': self._today_ok}
+                    'unfinished_from': self._unfinished_from(), 'today_ok': self._today_ok}
 
-    def _today(self):
-        """今の営業日（午前3時で切り替え）。この日の分は営業中の数値になりうる。"""
-        return business_day(self._now())
+    def _unfinished_from(self):
+        """まだ確定していない最初の日。今の営業日（午前3時で切り替え）の翌日0:30（閉店23:30・0時前後に更新、
+        2026-11-08 利用者）より前ならその営業日、過ぎていれば翌日。"""
+        now = self._now()
+        day = business_day(now)
+        if now >= site777_final_at(day):
+            day = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+        return day
 
     @staticmethod
-    def _unfinished(days, today):
-        """今の営業日以降の日（営業中・まだ始まっていない日。午前0〜3時に出る翌日のタブも含む）。"""
-        return [d for d in days if d and d >= today]
+    def _unfinished(days, first):
+        """まだ確定していない日（営業中・更新前・まだ始まっていない日。午前0時から出る翌日のタブも含む）。"""
+        return [d for d in days if d and d >= first]
+
+    @staticmethod
+    def _counts_as_saved(r):
+        """保存済みに数える台。アナスロで補った台と、確定前（翌日0:30より前に取った）のサイトセブンの台は数えない
+        （どちらもサイトセブンで取り直して置き換える。2026-11-07・2026-11-08）。"""
+        return r.get('source_site') != 'anaslo' and (r.get('source_site') != 'site777' or site777_final(r))
 
     def _save_run(self, stopped=None, completed=False, remaining=None, locked=False):
         """前回の案内のため、今の取り込みの範囲・済んだ日・残りの日・止まった理由を残す。書けなくても取り込みは続ける。
@@ -343,11 +354,10 @@ class Session(Bridge):
                 if self._work_lock.locked() and day != self._day:
                     raise ValueError('読み取り処理中は日付を変えられません。停止して処理の完了を待ってください。')
             planned = [self._day, *self._queue] if day is None else [day, *queue]
-            today = self._today()
-            unfinished = self._unfinished(planned, today)
+            unfinished = self._unfinished(planned, self._unfinished_from())
             if enabled and unfinished and not today_ok:
-                raise ValueError(f'{unfinished[0][5:].replace("-", "/")}の分は営業中の数値になりうるため、確認してから'
-                                 '開始してください（取り込んだ時点の数値のまま残り、後から取り込み直しても置き換わりません）。')
+                raise ValueError(f'{unfinished[0][5:].replace("-", "/")}の分はまだ確定していません（翌日0:30より前は営業中・'
+                                 '更新前の数値のことがあります）。確認してから開始してください（0:30以降に取り込み直すと置き換わります）。')
             # 止めるだけ（日付を変えない configure(False)）のときは確認済みを残す（止まったあとの自動の再開で引き継ぐ）。
             # 開始・日付の変更では、そのときの確認だけを使う。
             if enabled or day is not None or today_ok:
@@ -515,12 +525,12 @@ class Session(Bridge):
     def _occupied(self):
         if not self._db_path.is_file():
             return set()
-        # アナスロで補った台はまだ無いものとして数える（サイトセブンで置き換えるため、2026-11-07）。
+        # アナスロで補った台と確定前のサイトセブンの台はまだ無いものとして数える（取り直して置き換えるため、2026-11-07・11-08）。
         with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
             return {r['rack'] for r in (json.loads(row[0]) for row in db.execute(
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
-                (source.SHOP, self._day))) if r.get('source_site') != 'anaslo'}
+                (source.SHOP, self._day))) if self._counts_as_saved(r)}
 
     def _saved_racks(self):
         """その日の保存済みの台番号（取り込まない機種＝is_excluded_machine と、アナスロで補った台は数えない）。DB は読むだけ。"""
@@ -531,8 +541,8 @@ class Session(Bridge):
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
                 (source.SHOP, self._day))]
-        # アナスロで補った台は数えない（サイトセブンで置き換えるため、2026-11-07）。
-        return {r['rack'] for r in rows if not is_excluded_machine(r.get('machine')) and r.get('source_site') != 'anaslo'}
+        # アナスロで補った台・確定前のサイトセブンの台は数えない（取り直して置き換えるため、2026-11-07・11-08）。
+        return {r['rack'] for r in rows if not is_excluded_machine(r.get('machine')) and self._counts_as_saved(r)}
 
     def _skip_saved_machines(self):
         """機種一覧の台数（[31] など）だけ、その機種のサイトセブンの台がその日に保存済みなら、機種ページを開かずに済みにする
@@ -566,7 +576,7 @@ class Session(Bridge):
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
                 (source.SHOP, self._day))]
-        rows = [r for r in rows if r.get('source_site') != 'anaslo' and not is_excluded_machine(r.get('machine'))]
+        rows = [r for r in rows if self._counts_as_saved(r) and not is_excluded_machine(r.get('machine'))]
         by_name = {}
         for r in rows:
             by_name.setdefault(r.get('machine'), set()).add(r['rack'])
@@ -777,11 +787,11 @@ class Session(Bridge):
                 self._day = self._day or self._days[0]
             if self._day not in days:
                 raise ValueError('指定した日付はこの機種のページにありません。')
-            if self._unfinished([self._day], self._today()) and not self._today_ok:
-                # 確認していない今の営業日以降の日は保存しない（手動の取り込みの守り。自動は開始のときに configure が
-                # 確かめ、営業日は進むだけなので、自動の途中でここに来ることはない）。
-                raise ValueError(f'{self._day[5:].replace("-", "/")}の分は営業中の数値になりうるため、取り込みませんでした。'
-                                        '閉店後のデータか確かめてから、カードの確認で取り込んでください。')
+            if self._unfinished([self._day], self._unfinished_from()) and not self._today_ok:
+                # 確認していない確定前の日は保存しない（手動の取り込みの守り。自動は開始のときに configure が確かめ、
+                # 確定前の最初の日は進むだけなので、自動の途中でここに来ることはない）。
+                raise ValueError(f'{self._day[5:].replace("-", "/")}の分はまだ確定していないため、取り込みませんでした'
+                                 '（翌日0:30より前）。取り込むときはカードの確認から（0:30以降に取り込み直すと置き換わります）。')
             if source.day_from_label(payload.get('selected_md'), self._now()) != self._day:
                 return {'action': {'type': 'link', 'url': days[self._day]['url']}}
             rows = source.table_records(payload, self._day, self._now())
@@ -874,7 +884,9 @@ class Session(Bridge):
             written = auto_backup(store, self._folder / 'pscube-viewer.json')
         finally:
             store.close()
-        if written != BACKUP_OK:
+        # 成功は「バックアップ済み」で始まる文（2026-11-08 の 073f0eb から「バックアップ済み（より新しい時点の書き出しが
+        # 先に済んでいます）」も返る）。完全一致で比べると、成功なのに「バックアップに失敗」と出ていた。
+        if not str(written).startswith(BACKUP_OK):
             self._backup_note = str(written)
             self._log.write('backup_problem', result=self._backup_note)
         elif self._backup_note:
