@@ -1657,3 +1657,4 @@
 
 - 反映に必要なのは PC版の更新だけ（`start.cmd` で起動し直す）。Googleスクリプトの貼り替え・APK・閲覧ページの公開・データの書き直しは不要。更新後、最初の保存（または再出力）で全期間・直近7日・閲覧用・パチンコの共有用JSONが書き直される。
 - 11/8 は月の前半なので、`python tools/push_ci.py` で正本 `imakurudev-eng/database` へ送る。コミットとCIの結果は下に追記する。
+- 追記（同日 20:05）：コミット `073f0eb`（上の10ファイル。別作業の Site Seven・AGENTS.md の未コミットの変更は含めていない）を `python tools/push_ci.py` で正本 `imakurudev-eng/database` の main へ送った（`deada68..073f0eb`）。CI：https://github.com/imakurudev-eng/database/actions/runs/42474242584 （送った時点では待ち行列。結果は未確認。失敗したら原因を調べてから直す）。database-ci へは送っていない（月の前半）。PC版は利用者が `start.cmd` で起動し直すと反映される（未確認）。
