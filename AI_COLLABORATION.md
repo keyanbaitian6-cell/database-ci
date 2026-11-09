@@ -1836,3 +1836,4 @@
   - 流し直し：`data.mjs`・同期スクリプトを使うJS試験10本（`test_anaslo_import`・`test_capture_health`・`test_pscube_cloud_sync` 49件・`test_pscube_data`・`test_pscube_net_days`・`test_pscube_scoring`・`test_pscube_sync`・`test_release_info`・`test_site777_import` 13件・`test_viewer_parts`）と `test_site777_capture_browser`・`test_pscube_capture`・`test_pscube_drive_browser` がすべて成功。Flutter の `site777_import_test.dart` 9件成功・`flutter analyze`（変えた2ファイル）でエラーなし。
 - コミットは自分の変更だけ。`database/app.py`・`database/pscube_import.py`・`AGENTS.md`・`AI_COLLABORATION.md` には別の作業（前向き検証の自動実行）の未コミットの変更があるので、HEAD の内容に私の変更だけを当てたものを index に置いた（作業コピーの相手の変更はそのまま）。
 - 反映：同期スクリプト `pscube_cloud_sync.gs` は利用者の貼り替えが必要（設定行 `PSCUBE_HISTORY_VIEWER = true` は生成物のまま true）。Android は次のAPKから。
+- 送信（11/10 07:17）：`80c16e9` を `tools/push_ci.py` で正本（imakurudev-eng/database）へ1回送った。CI https://github.com/imakurudev-eng/database/actions/runs/42710578148 は確認時に実行中。APKは作っていない。同期スクリプトの貼り替えとPCアプリの起動し直しは利用者がする。
