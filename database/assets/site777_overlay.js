@@ -145,9 +145,10 @@
       let result=await api().capture(JSON.stringify(databaseSite777.read(true)),epoch);
       if(result.prepare_graphs){
         status.textContent='表示されていないグラフを順に読み込んでいます…';
-        await databaseSite777.prepare(()=>!alive||token!==mine);
+        const wanted=result.wanted_racks??null;
+        await databaseSite777.prepare(()=>!alive||token!==mine,wanted);
         if(!alive||token!==mine)return;
-        result=await api().capture(JSON.stringify(databaseSite777.read()),epoch);
+        result=await api().capture(JSON.stringify(databaseSite777.read(false,wanted)),epoch);
       }
       if(!alive||token!==mine)return;
       if(result.state)render(result.state);
@@ -167,6 +168,10 @@
         },8000);
       }
     }catch(error){
+      if(error?.graph_wait&&alive&&token===mine){
+        try{await api().note?.(JSON.stringify({kind:'graph_wait',...error.graph_wait,
+          day:current?.day,page:Number(new URL(location.href).searchParams.get('pan')||1)}));}catch(_){}
+      }
       if(error?.stalled&&automatic&&alive&&token===mine){
         let retried='storage';
         try{retried=await retryLater(mine,epoch);}catch(_){}

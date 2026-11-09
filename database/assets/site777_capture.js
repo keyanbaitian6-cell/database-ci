@@ -35,7 +35,22 @@
       sessionStorage.setItem('database-site777-links', JSON.stringify([...new Set([...old,...urls].map(clean).filter(Boolean))].slice(-5000)));
     } catch (_) {}
   };
-  const read = (metadataOnly=false) => {
+  // 表と同様に非表示の複製を除く。台番を先に読むことで、画像の無い対象外の台も識別できる。
+  const graphBoxes = () => {
+    const boxes = Array.from(document.querySelectorAll('.lite-graph .graph-box')).filter(visible);
+    const racks = new Set();
+    const result = boxes.map(box => {
+      const match = norm(box.querySelector('span')?.textContent).match(/^\[(\d+)\]$/);
+      const rack = match ? Number(match[1]) : null;
+      if (!Number.isSafeInteger(rack) || rack <= 0 || racks.has(rack))
+        throw new Error('グラフ一覧の台番号が不明か重複しています。');
+      racks.add(rack);
+      return {box, rack};
+    });
+    if (!result.length || result.length > 20) throw new Error('表示中のグラフ一覧の台数を確認できません。');
+    return result;
+  };
+  const read = (metadataOnly=false, wantedRacks=null) => {
     const sourceUrl = location.href;
     const url = clean(sourceUrl);
     if (!url) throw new Error('P-STATIONの20円スロットの機種一覧・表・グラフ一覧を開いてください。');
@@ -92,12 +107,13 @@
       result.rows = Array.from(tables[0].querySelectorAll('tbody tr')).filter(tr => tr.querySelector('.daiData a'))
         .map(tr => Array.from(tr.children).map(td => norm(td.textContent)));
     } else if (kind === 'graphs') {
+      const boxes = graphBoxes();
+      result.graph_racks = boxes.map(g => g.rack);
       if (metadataOnly) {
         result.deferred_images=true;
         return result;
       }
-      result.graphs = Array.from(document.querySelectorAll('.lite-graph .graph-box')).map(box => {
-        const label = norm(box.querySelector('span')?.textContent), rack = label.match(/^\[(\d+)\]$/);
+      result.graphs = boxes.filter(g => wantedRacks === null || wantedRacks.includes(g.rack)).map(({box, rack}) => {
         const img = box.querySelector('img');
         if (!rack || !img || !img.complete || !img.naturalWidth ||
             new URL(img.currentSrc || img.src, location.href).pathname !== '/chart/RequestSPDedamaTransitionChartForPortal.do')
@@ -108,7 +124,7 @@
         let png;
         try { png = canvas.toDataURL('image/png'); }
         catch (_) { throw new Error('表示済みグラフを読み出せません。追加取得は行いません。'); }
-        return {rack:Number(rack[1]), width:canvas.width, height:canvas.height, png,
+        return {rack, width:canvas.width, height:canvas.height, png,
           my_label:norm(box.querySelector('.max-num')?.textContent)};
       });
     }
@@ -135,10 +151,11 @@
     target.click();
     return true;
   };
-  const prepare = async cancelled => {
+  const prepare = async (cancelled, wantedRacks=null) => {
     // サイト自身の遅延読み込みを通常の表示操作で進める。URLの直接取得や再試行はしない。
-    for (const box of document.querySelectorAll('.lite-graph .graph-box')) {
+    for (const {box, rack} of graphBoxes()) {
       if (cancelled()) throw new Error('停止しました。');
+      if (wantedRacks !== null && !wantedRacks.includes(rack)) continue;
       const img = box.querySelector('img');
       if (!img) throw new Error('グラフの画像がありません。');
       const ready = () => img.complete && img.naturalWidth > 0 &&
@@ -154,6 +171,10 @@
         // 自動取り込み中なら、カード側が1分待ってページを読み込み直し、続ける（同じページで3回まで。2026-11-07 利用者の依頼）。
         const error = new Error('グラフが読み込まれないため停止しました。');
         error.stalled = true;
+        // URLや画像・会員情報は記録せず、次回は止まった台と画像の状態を区別できるようにする。
+        error.graph_wait = {rack, complete:img.complete, width:img.naturalWidth,
+          image_kind:new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do'
+            ? 'chart' : 'placeholder', visible:visible(box)};
         throw error;
       }
     }

@@ -64,6 +64,32 @@ try {
   }
   assert.equal(charts.length,31);
   assert.equal(new Set(charts).size,31,'遅延画像を再取得しない');
+  // 同じページの対象外・保存済みの台や、非表示の複製が未読でも、必要な台だけを読む。
+  await page.goto(source('D4300'));
+  await page.evaluate(reader);
+  await page.evaluate(()=>{
+    window.__site777GraphWaitMs=300;
+    const boxes=[...document.querySelectorAll('.graph-box')];
+    const hidden=boxes[0].cloneNode(true);hidden.style.display='none';
+    hidden.querySelector('img').removeAttribute('src');boxes[0].parentElement.prepend(hidden);
+    const img=boxes[1].querySelector('img');
+    observer.unobserve(img);img.removeAttribute('src');delete img.dataset.graph;
+    window.__scrolledRacks=[];
+    const scroll=Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView=function(...args){window.__scrolledRacks.push(this.querySelector('span')?.textContent);return scroll.apply(this,args);};
+  });
+  await page.evaluate(()=>databaseSite777.prepare(()=>false,[101]));
+  const filtered=await page.evaluate(()=>databaseSite777.read(false,[101]));
+  assert.deepEqual(filtered.graphs.map(g=>g.rack),[101]);
+  assert.equal(filtered.graph_racks.length,20,'非表示の複製を含めない');
+  assert.ok(!(await page.evaluate(()=>window.__scrolledRacks)).includes('[102]'),'不要な台へスクロールしない');
+  await page.evaluate(()=>databaseSite777.prepare(()=>false,[]));
+  assert.deepEqual(await page.evaluate(()=>databaseSite777.read(false,[]).graphs),[],'対象がないページでは画像を読まない');
+  const failure=await page.evaluate(async()=>{
+    try{await databaseSite777.prepare(()=>false,[102]);}catch(e){return {stalled:e.stalled,detail:e.graph_wait};}
+  });
+  assert.equal(failure.stalled,true,'必要な台の画像不足は停止する');
+  assert.equal(failure.detail.rack,102);
   // 転送をネイティブ側でキャンセルしたとき、beforeunload後も停止理由を表示する。
   await page.goto(source('D3300'));
   await page.evaluate(()=>{
@@ -167,6 +193,7 @@ try {
     window.__state={enabled:!paused&&!sessionStorage.getItem('test-manual'),epoch:1,ready:true,day:'2026-11-06',days:['2026-11-06'],status:paused||'取り込み中'};
     window.pywebview={api:{state:async()=>structuredClone(window.__state),
       capture:async()=>({prepare_graphs:true}),
+      note:async payload=>{sessionStorage.setItem('test-graph-wait',payload);},
       pause:async message=>{sessionStorage.setItem('test-paused',message||'停止');
         Object.assign(window.__state,{enabled:false,status:message});return structuredClone(window.__state);}}};
   });
@@ -181,6 +208,10 @@ try {
   await stalled.waitForFunction(()=>sessionStorage.getItem('test-paused'),{},{timeout:30000});
   assert.match(await stalled.evaluate(()=>sessionStorage.getItem('test-paused')),/3回読み込み直してもグラフが表示されない/);
   assert.equal(loads.length,4,'最初の1回と、1分後（試験では1.2秒後）の読み込み直し3回');
+  const graphWait=JSON.parse(await stalled.evaluate(()=>sessionStorage.getItem('test-graph-wait')));
+  assert.deepEqual(Object.keys(graphWait).sort(),['kind','rack','complete','width','image_kind','visible','day','page'].sort());
+  assert.equal(graphWait.kind,'graph_wait');assert.equal(graphWait.rack,101);
+  assert.equal(graphWait.image_kind,'chart');assert.equal(graphWait.width,0);
   await stalled.waitForTimeout(2500);
   assert.equal(loads.length,4,'止めた後は読み込み直さない');
   // 手動の「この画面を取り込む」では読み込み直さず、止めるだけ。
@@ -310,5 +341,5 @@ try {
   await listing.waitForFunction(()=>window.__asked.length===2);
   assert.equal(await listing.evaluate(()=>document.querySelectorAll('.database-site777-badge').length),4,'付け直しても重ならない');
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す（自動の再開では戻さない）・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内・機種一覧の取り込み状況：成功');
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・必要な台だけの画像待ち・非表示の複製除外・不足画像の診断記録・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す（自動の再開では戻さない）・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内・機種一覧の取り込み状況：成功');
 } finally {await browser.close();}

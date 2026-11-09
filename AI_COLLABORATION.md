@@ -1885,3 +1885,28 @@
 - 反映：同期スクリプト `pscube_cloud_sync.gs` は利用者の貼り替えが必要（設定行 `PSCUBE_HISTORY_VIEWER = true` は生成物のまま true）。Android は次のAPKから。
 - 送信（11/10 07:17）：`80c16e9` を `tools/push_ci.py` で正本（imakurudev-eng/database）へ1回送った。CI https://github.com/imakurudev-eng/database/actions/runs/42710578148 は確認時に実行中。APKは作っていない。同期スクリプトの貼り替えとPCアプリの起動し直しは利用者がする。
 - 送信（11/10、利用者「お願い」）：上の 11/9「取り込み完了で前向き検証を自動実行」（`database/forward_validation.py`・`database/tests/test_forward_validation.py`・`database/app.py`・`database/pscube_import.py` の `capture_complete`・AGENTS.md の予定の1行）と、11/9 の記録の節（Codex の再検証・Claude の v2 準備）を、まとめて1つのコミットにして送った。窓を2つ開けるようにした `80c16e9` の上でも、サイトセブンの窓が自動で閉じたときに `save_forward_after` が呼ばれる（作業コピーの app.py 1192行目）。試験：`database/.venv/Scripts/python.exe -m unittest tests.test_forward_validation` 11件成功（11/10）。PCの全試験は同じ作業コピーで962件成功（80c16e9 の作業中、11/10）。2つの窓が両方最後まで取り込むと自動実行は2回呼ばれるが、同時には動かず、v1 は2回目に保存済みの予測を返す。
+
+## 2026-11-10 サイトセブン：対象外の台の画像待ちによる停止を修正（Codex）
+
+- 依頼：「グラフを読み込めませんでした、3回やったけど」のような停止が多いので原因を検討・修正。
+- 対象：PCのサイトセブン取り込み（P-STATION・20円スロット）。基準 `526c0092668b6109583dfdfa33e66447a68d0e11`。両方のmainをfetchし、origin/mainと同一、database-ci/mainを179コミット先で包含と確認。最初の取得はサンドボックス内の名前解決エラーで失敗し、権限拡張で取得成功。既存の `AI_COLLABORATION.md` の未コミット7行は保持し、今回のコミットには混ぜない。
+- 実ログで確認：`database/data/logs/site777-browser.log` の11/10 00:35:16から画像待ち上限（graph_retry_limit）で停止。00:38:17〜00:54:16に3分待ちの再開を5回行い、00:55:16にgave_up。再開自体が動かなかったわけではない。過去ログには待っていた台番号・画像状態がなく、昨夜のすべての停止が今回の不備によるものか、実サイトが画像を返さなかった理由はわからない。ほかに利用者停止・移動拒否・カード表示失敗・未完了ページなしの記録もあり、すべて同じ原因とは扱わない。
+- コードで確認・再現した原因：`site777_session.py` は500G未満・保存済みの台を保存対象から除くが、`site777_capture.js` の prepare/read は同じページの全グラフを無条件に待ち、画像化していた。対象外1台だけ画像が出なくてもページ全体が止まる。非表示のグラフも除外していなかった。新しい再発試験を修正前に実行し、Pythonの対象台通知不足とChromiumの画像待ち停止を確認してから修正した。非表示の複製が今回の実サイトにあったかは未確認。
+- 変更：PCが必要な台番号（wanted_racks）をカードへ返し、JSは表示中の台番号（graph_racks）を先に読んで、必要な台だけスクロール・画像待ち・canvas読み取りを行う。対象外だけのページは空の画像配列を検証して次へ進む。非表示の複製は表と同じ visible 判定で除く。PCは台番の未知・重複・必要な画像の欠落を検査し、不足を完了扱いしない。旧形式の保存資料（graph_racksなし）も従来どおり検証する。
+- 診断：画像待ちが失敗した時点で既存の note 経由で graph_wait を記録。台番号、日付、ページ番号、画像の完了状態・幅、実グラフ／仮背景、表示状態のみ。画像・URL・Cookie・会員情報は追加しない。HTTP状態を記録するものではなく、次回もこれだけでサイト側の原因を断定しない。
+- 維持：500Gちょうどは保存、500G未満と既存記録の扱い、23:30確定、機種ごとの一括保存、5〜7秒のページ間隔、12秒の画像待ち、1分ごと3回の再読み込み、3分後・進捗なし連続5回までの自動再開。直接取得や再試行回数の追加なし。ブラウザ自身が近くの画像を先読みすることまでは禁止しない。実DB・設定・ログイン情報は変更していない。
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| 500G未満・保存済みの台と必要な台が混在しても必要な画像だけ読む | 済 | `test_graph_wait_targets_only_needed_racks_on_mixed_page`、既存 `test_anaslo_supplements_are_replaced_by_site777` に同一ページの確認を追加 |
+| 対象外だけのページを飛ばし、必要な画像不足・未知／重複台は拒否 | 済 | `test_graph_page_with_only_unneeded_racks_advances_without_images`、`test_filtered_graph_page_still_rejects_missing_or_foreign_racks` |
+| サイトセブン関連のPython回帰 | 済 | `database/.venv/Scripts/python.exe -m unittest discover -s database/tests -p test_site777*.py`、88件成功 |
+| DOM・カード・停止・再試行・診断ログ | 済 | `node database_android/tool/test_site777_capture_browser.mjs` 成功（合成ページ、20+11台、非表示複製・不要画像欠落・必要画像欠落・再読み込み3回と停止・自動再開で回数を戻さない等） |
+| PC用WebView2の一連の取り込み | 済 | `database/.venv/Scripts/python.exe database/tests/smoke_site777_session.py --mixed-graphs`、31台保存・画像31要求・対象外102番台の画像要求なし・非表示複製除外・正常終了。一時DBのみ |
+| 従来のWebView2画像読み取り | 済 | `database/.venv/Scripts/python.exe database/tests/smoke_site777_capture.py`、表31台・グラフ20+11台・画像31要求・共通カード成功 |
+| 静的確認 | 済 | 両JSの `node --check`、`git diff --check` 成功 |
+| 修正後の実サイト・長時間取り込み | 未確認 | 実サイトへ調査アクセスしていない。取り込み窓を閉じて開き直すと新しいソースで起動する（app.py の site777_browser_command） |
+
+- Windowsのブラウザ試験環境：`PYTHONUTF8=1`、`PLAYWRIGHT_MODULE=file:///C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs`、`PLAYWRIGHT_BROWSERS_PATH=C:\Users\keyan\AppData\Local\ms-playwright`。既存のPlaywright／Chromiumを使用。最初はモジュール未指定・サンドボックス別キャッシュで起動できず、既存パスを指定して権限拡張後に実行した。WebView2もローカルHTTPだけを使用して権限拡張で実行。
+- 変更ファイル：`database/assets/site777_capture.js`、`site777_overlay.js`、`database/site777_session.py`、`database/tests/test_site777_session.py`、`smoke_site777_session.py`、`database_android/tool/test_site777_capture_browser.mjs`、共有記録の今回の節。
+- 反映範囲：PCソースを修正しローカルコミットする。push承認は今回受けていないため送信しない。CI・全体ビルドゲート・EXE/APK/Webビルド・Web公開・Google同期は行っていない。取り込み窓を開き直して使う。既存データの削除・取り直しは実施していない。

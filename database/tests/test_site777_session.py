@@ -629,8 +629,10 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(self.session._occupied(),{102})
         # 全台表→グラフ2ページ：101（アナスロ）はサイトセブンに置き換わり、102（P’s CUBE本来）はそのまま。
         self.assertIn('D4300',self.cycle(table())['action']['url'])
-        self.assertTrue(self.cycle(graph(metadata=True))['prepare_graphs'])
-        self.assertTrue(self.cycle(graph())['complete'])  # 足りないのは101だけなので1ページ目で終わる
+        meta=graph(metadata=True);meta['graph_racks']=[101,102]
+        self.assertEqual(self.cycle(meta)['wanted_racks'],[101],'同じページの保存済み102は画像を待たない')
+        full=graph();full['graph_racks']=[101,102]
+        self.assertTrue(self.cycle(full)['complete'])  # 足りないのは101だけなので1ページ目で終わる
         store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
         try:
             records={(r['rack'],r.get('source_site')) for r in store.export_payload()['records']}
@@ -806,6 +808,36 @@ class SessionTest(unittest.TestCase):
         return {'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
                 'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':count},
                             {'name':'別の機種','model_id':'456','url':url('D2300',model='456'),'count':1}]}
+
+    def test_graph_wait_targets_only_needed_racks_on_mixed_page(self):
+        payload=table();payload['rows'][1][2]='499'
+        self.cycle(payload)
+        meta=graph(metadata=True);meta['graph_racks']=[101,102]
+        self.assertEqual(self.cycle(meta)['wanted_racks'],[101])
+        full=graph();full['graph_racks']=[101,102]
+        self.cycle(full)
+        self.assertEqual(self.saved(),{101:3000})
+
+    def test_graph_page_with_only_unneeded_racks_advances_without_images(self):
+        payload=table();payload['rows'][0][2]='0'
+        self.cycle(payload)
+        meta=graph(metadata=True);meta['graph_racks']=[101]
+        self.assertEqual(self.cycle(meta)['wanted_racks'],[102])
+        full=graph();full.update(graph_racks=[101],graphs=[])
+        self.assertEqual(self.cycle(full)['action'],{'type':'page','number':2})
+        self.assertEqual(self.saved(),{})
+        self.cycle(graph(2))
+        self.assertEqual(self.saved(),{102:2800})
+
+    def test_filtered_graph_page_still_rejects_missing_or_foreign_racks(self):
+        for racks, images in (([101,999], []), ([101,101], []), ([101,102], []), ([101,102], graph()['graphs'])):
+            with self.subTest(racks=racks,images=len(images)):
+                self.session=self.new_session()
+                self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+                self.cycle(table())
+                full=graph();full.update(graph_racks=racks,graphs=images)
+                self.assertIn('error',self.session.capture(json.dumps(full),self.epoch))
+                self.assertEqual(self.saved(),{})
 
     def test_racks_under_500_games_are_not_saved_and_count_as_done(self):
         # 2026-11-10 利用者「サイトセブンの取り込みについて、0ゲーム、500g未満の台については取り込まなく定位」。

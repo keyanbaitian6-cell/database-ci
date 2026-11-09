@@ -900,15 +900,30 @@ class Session(Bridge):
             raise ValueError('表とグラフ一覧の表示台数が違います。')
         if source.day_from_label(payload.get('selected_md'), self._now()) != self._day or payload.get('model_id') != model:
             raise ValueError('グラフの機種・日付が全台一覧と一致しません。')
+        needed = {r['rack'] for r in job['rows']}
+        remaining = needed - {int(k) for k in job['graphs']}
+        # 画像を読む前に表示中の台番を検証する。500G未満・保存済みの台は、同じページでも画像を待たない。
+        page_racks = payload.get('graph_racks')
+        if page_racks is not None:
+            if (not isinstance(page_racks, list) or not 1 <= len(page_racks) <= 20
+                    or any(type(r) is not int or r not in job['all_racks'] for r in page_racks)
+                    or len(set(page_racks)) != len(page_racks)):
+                raise ValueError('グラフ一覧の台番号が不明・重複、または全台一覧と一致しません。')
         if payload.get('deferred_images'):
             if payload['page'] in job['pages']:
                 for other in payload.get('pages', []):
                     if other['number'] not in job['pages']:
                         return {'action': {'type': 'page', 'number': other['number']}}
                 raise ValueError('未完了のグラフページがありません。全台分を確認してください。')
-            return {'prepare_graphs': True}
+            return {'prepare_graphs': True, 'wanted_racks': sorted(remaining)}
         expected = {int(k): v for k,v in job.get('all_my', {}).items()} or set(job['all_racks'])
-        got = source.graph_records(payload, self._day, model, expected, self._now())
+        if page_racks is not None and not (remaining & set(page_racks)) and payload.get('graphs') == []:
+            got = {}  # 対象外だけのページ。画像不要でも、ページ確認と次ページへの移動は行う。
+        else:
+            got = source.graph_records(payload, self._day, model, expected, self._now())
+        if page_racks is not None and (not set(got) <= set(page_racks)
+                                      or not (remaining & set(page_racks)) <= set(got)):
+            raise ValueError('表示中の必要な台のグラフがそろっていません。完了とは扱いません。')
         page = payload['page']
         if page in job['pages']:
             raise ValueError('同じグラフページへ戻ったため停止しました。')

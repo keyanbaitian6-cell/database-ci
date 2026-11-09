@@ -35,6 +35,8 @@ def main():
     # --range：11/6と11/5の2日を見せ、カードで「まで」を選んで2日分を古い順に取り込む（2026-11-07）。
     ranged='--range' in sys.argv
     failed_load='--failed-load' in sys.argv
+    mixed_graphs='--mixed-graphs' in sys.argv
+    expected_count=31 if mixed_graphs else 32
     if failed_load:site777_session.RESUME_DELAY=2
     refused=[]
     if without_guard and not redirected:raise ValueError('対照試験には--redirectも指定してください')
@@ -69,6 +71,13 @@ def main():
                 else:
                     kind='table' if u.path.endswith('D3300.do') else 'graphs'
                     text=fixture(kind,page,model).decode('utf-8')
+                    if mixed_graphs and model=='123':
+                        if kind=='table':
+                            text=text.replace('>102</a></td><td>3000</td>', '>102</a></td><td>499</td>')
+                        else:
+                            # 対象外102台の画像は最後まで出さない。非表示の複製も画像なし。
+                            text=text.replace('data-graph="/chart/RequestSPDedamaTransitionChartForPortal.do?rack=102"','')
+                            text+='<script>const duplicate=document.querySelector(".graph-box").cloneNode(true);duplicate.style.display="none";duplicate.querySelector("img").removeAttribute("src");document.querySelector(".lite-graph").prepend(duplicate);</script>'
                     if ranged:
                         older=q.get('dtdd')==['1']
                         here,other=('dtdd=1','dtdd=0') if older else ('dtdd=0','dtdd=1')
@@ -152,7 +161,7 @@ def main():
                         # 本番の窓の見張り（site777_browser.run の watch_finished）と同じく、時刻が来たら再開して読み込み直す。
                         again=session._resume_if_due()
                         if again:site777_browser.reload_page(window,again.replace('https://m.site777.jp',base,1))
-                    if state['added']==32 and not state['enabled']:break
+                    if state['added']==expected_count and not state['enabled']:break
                     if failed_load and state['resume_at']:time.sleep(.15);continue
                     if not state['enabled'] and state['status']!='P-STATIONの20円スロットを開き、取り込む日付を確認してください。':
                         raise AssertionError(state['status'])
@@ -176,7 +185,7 @@ def main():
                     assert 'OFF' in window.evaluate_js("document.querySelector('#database-site777-auto')?.textContent"),'カードがOFFになりません'
                     result.update(ok=True,redirect_blocked=True,foreign_requests=0,original_table_kept=True,no_db_write=True)
                     return
-                assert session.state()['added']==32,session.state()
+                assert session.state()['added']==expected_count,session.state()
                 store=PscubeStore(folder/'pscube.sqlite3',recording=False)
                 try:records=store.export_payload()['records']
                 finally:store.close()
@@ -188,7 +197,15 @@ def main():
                     assert len(charts)==len(set(charts))==64,'同じグラフを再取得しています'
                     result.update(ok=True,records=64,days=days,graph_requests=64,auto_off_at_end=True)
                     return
-                assert len(records)==32 and all(r['source_site']=='site777' for r in records)
+                assert len(records)==expected_count and all(r['source_site']=='site777' for r in records)
+                if mixed_graphs:
+                    assert all(r['rack']!=102 for r in records)
+                    charts=[r for r in requests if r.startswith('/chart/')]
+                    assert len(charts)==len(set(charts))==31,charts
+                    assert not any('rack=102' in r for r in charts),charts
+                    result.update(ok=True,records=31,missing_unneeded_graph_skipped=True,hidden_graph_skipped=True,
+                                  graph_requests=31,auto_off_at_end=True)
+                    return
                 if failed_load:
                     rows=[json.loads(line) for line in log.path.read_text(encoding='utf-8').splitlines()]
                     off=[r for r in rows if r['kind']=='auto_off' and r['reason']=='navigation_failed']
