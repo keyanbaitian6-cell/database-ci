@@ -1750,7 +1750,7 @@ class PscubeStore {
         // サイトセブンはアナスロで補った台を置き換える（PC `import_backup` と同じ、2026-11-07）。
         // 機種名の表記が違っても、同じ台・日のアナスロの記録は消す。P’s CUBE本来・サイトセブンどうしは置き換えない。
         final occupant = occupied[rackDayKey(record)];
-        // 確定前（翌日0:30より前に取った）のサイトセブンの台も、あとで取った台で置き換える（PC と同じ、2026-11-08）。
+        // 確定前（その日の23:30より前に取った）のサイトセブンの台も、あとで取った台で置き換える（PC と同じ、2026-11-08）。
         if (record['source_site'] == 'site777' &&
             occupant != null &&
             (occupant.$2 == 'anaslo' ||
@@ -1858,12 +1858,12 @@ class PscubeStore {
   }
 }
 
-/// サイトセブンの数値が確定する時刻：営業日の翌日0:30（日本時間）。閉店23:30・0時前後に更新
-/// （2026-11-08 利用者「閉店時刻は23時半。0時前後には更新されるはず」→「翌0:30以降」）。PC `site777_final_at` と同じ。
+/// サイトセブンの数値が確定する時刻：営業日の23:30（日本時間）。2026-11-10 利用者「23時半以降に取り込みだしたやつも
+/// 飛ばしていいです。23時45分くらいに最終更新だから」（2026-11-08 は翌日0:30だった）。PC `site777_final_at` と同じ。
 DateTime site777FinalAt(String day) =>
-    DateTime.parse('${day}T00:00:00+09:00').add(const Duration(days: 1, minutes: 30));
+    DateTime.parse('${day}T00:00:00+09:00').add(const Duration(hours: 23, minutes: 30));
 
-/// サイトセブンの台が確定か（取り込んだ時刻が翌日0:30以降）。時刻が読めない台は確定（置き換えない）。PC `site777_final` と同じ。
+/// サイトセブンの台が確定か（取り込んだ時刻がその日の23:30以降）。時刻が読めない台は確定（置き換えない）。PC `site777_final` と同じ。
 bool site777Final(Map<dynamic, dynamic> r) {
   final captured = DateTime.tryParse(r['source_captured_at']?.toString() ?? '');
   final day = r['day'];

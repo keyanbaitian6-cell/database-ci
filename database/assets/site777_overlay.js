@@ -30,10 +30,45 @@
   const status=document.createElement('div');status.id='database-site777-status';status.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere';
   // 前回の取り込みの範囲・済んだ日・止まった理由（2026-11-08）。窓を開き直したとき、開始するまで出す。
   const previous=document.createElement('div');previous.id='database-site777-previous';
-  previous.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere;background:#fff6dc;border-radius:4px;padding:4px;display:none';
+  // 文字はカードの白を引き継ぐと薄い黄色の上で読めない（2026-11-10 利用者「オーバーレイの一番下みづらすぎてなにかえてるか見えない」）。
+  previous.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere;background:#fff6dc;color:#3a2a00;border-radius:4px;padding:4px;display:none';
   card.append(grip,capture,auto,startRow,dayLabel,untilLabel,progress,previous,interval,status);mount();
   let busy=false,alive=true,token=0,current=null;
   const api=()=>window.pywebview.api;
+  // 機種一覧の各機種の横に、その日の取り込み状況を出す（2026-11-10 利用者「なぜメルヘンと同じ仕様になってないんだ。
+  // 機種のよこに未取り込みとかもでてないし」）。文言と色はメルヘン（browser_import.py の markMachines）と同じ：
+  // 未取込（灰）／途中 n/m（黄）／済 n/m（緑）／対象外。500G未満で取り込まなかった台も済みに数える（PCが数える）。
+  // 日付・追加・保持の数が変わったときだけ PC に聞き直す。
+  let markedKey=null;
+  const markMachines=async s=>{
+    if(u.pathname!=='/f/D0300.do'||!api().machine_status)return;
+    const key=[s.day,s.added,s.kept,s.epoch].join('|');
+    if(key===markedKey)return;
+    markedKey=key;
+    try{
+      const machines=(databaseSite777.read(true).machines||[]).map(m=>({model_id:m.model_id,name:m.name,count:m.count}));
+      const data=await api().machine_status(JSON.stringify({machines}));
+      const byModel=new Map(machines.map((m,i)=>[m.model_id,data.status?.[i]]));
+      const md=data.day?`${+data.day.slice(5,7)}/${+data.day.slice(8,10)} `:'';
+      for(const a of document.querySelectorAll('a.imageSet')){
+        let model=null;
+        try{const href=new URL(a.href);if(href.pathname==='/f/D2300.do')model=href.searchParams.get('mdc');}catch(_){}
+        if(!model||!byModel.has(model))continue;
+        a.querySelector('.database-site777-badge')?.remove();
+        const st=byModel.get(model), badge=document.createElement('span');
+        badge.className='database-site777-badge';
+        let text,bg,fg;
+        if(st?.excluded){text='対象外';bg='transparent';fg='#8a94a6';}
+        else if(!st||!st.done){text=md+'未取込';bg='#e2e2e5';fg='#707070';}
+        else if(st.total&&st.done>=st.total){text=`${md}済 ${st.done}/${st.total}`;bg='#0d8b74';fg='#fff';}
+        else{text=`${md}${st.done}/${st.total??'?'}`;bg='#f5a623';fg='#1d1d1f';}
+        badge.textContent=text;
+        badge.style.cssText=`display:inline-block;margin-left:8px;padding:1px 9px;border-radius:980px;font:600 12px system-ui;background:${bg};color:${fg}`;
+        const strong=a.querySelector('strong');
+        if(strong)strong.insertAdjacentElement('afterend',badge);else a.append(badge);
+      }
+    }catch(_){markedKey=null;}
+  };
   const render=s=>{
     current=s;
     const dates=s.days||[];
@@ -148,14 +183,14 @@
       if(alive&&current)render(current);
     }
   };
-  // まだ確定していない日（翌日0:30より前。閉店23:30・0時前後に更新、2026-11-08 利用者）を取り込むときは確かめる。
-  // その時点の数値で保存し、0:30以降に取り込み直すと置き換わる（PC・Android・同期で同じ規則）。PCも確認なしの開始・保存を止める。
+  // まだ確定していない日（その日の23:30より前。2026-11-10 利用者「23時45分くらいに最終更新」、11/8 は翌0:30だった）を取り込むときは
+  // 確かめる。その時点の数値で保存し、23:30以降に取り込み直すと置き換わる（PC・Android・同期で同じ規則）。PCも確認なしの開始・保存を止める。
   // 戻り値：確定前の日を含まない＝false、含んで確かめた＝true、やめた＝null。
   const unfinishedOk=(first,last)=>{
     const from=current?.unfinished_from, [a,b]=[first,last||first].sort();
     if(!from||!a||b<from)return false;
     const label=(a>from?a:from).slice(5).replace('-','/');
-    return confirm(`${label}の分はまだ確定していません（閉店23:30・翌0時ごろ更新）。\n今取り込むと、営業中・更新前の数値で保存されます。翌日0:30以降に取り込み直すと置き換わります。\n今取り込むときは「OK」を押してください。`)?true:null;
+    return confirm(`${label}の分はまだ確定していません（閉店23:30・23:45ごろ最終更新）。\n今取り込むと、営業中・更新前の数値で保存されます。その日の23:30以降に取り込み直すと置き換わります。\n今取り込むときは「OK」を押してください。`)?true:null;
   };
   const range=()=>[day.value||null,until.value&&until.value!==day.value?until.value:null];
   capture.onclick=async()=>{
@@ -192,7 +227,7 @@
   window.addEventListener('beforeunload',()=>{token++;});
   window.addEventListener('pagehide',()=>{alive=false;token++;});
   const tick=async()=>{
-    try{const s=await api().state();if(alive&&!busy){render(s);if(s.enabled&&s.ready)await cycle(true);}}
+    try{const s=await api().state();if(alive&&!busy){render(s);markMachines(s);if(s.enabled&&s.ready)await cycle(true);}}
     catch(_){if(alive)status.textContent='PCとの接続を待っています。';}
     if(alive)setTimeout(tick,1000);
   };

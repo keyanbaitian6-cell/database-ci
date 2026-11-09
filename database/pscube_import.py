@@ -439,19 +439,19 @@ def stale_cutoff(day, fresh_since):
     return min(since, day_end.timestamp()) - STALE_MARGIN_HOURS * 3600
 
 
-# サイトセブンの台は、営業日の翌日0:30以降に取り込んだものを確定とする（2026-11-08 利用者「閉店時刻は23時半。0時前後には
-# 更新されるはず」→「翌0:30以降」）。それより前に取った台は営業中・更新前の数値のことがあるので、あとで取り込んだ
+# サイトセブンの台は、営業日の23:30以降に取り込んだものを確定とする（2026-11-10 利用者「23時半以降に取り込みだしたやつも
+# 飛ばしていいです。23時45分くらいに最終更新だから」。2026-11-08 は「翌0:30以降」だった）。それより前に取った台は営業中・更新前の数値のことがあるので、あとで取り込んだ
 # サイトセブンの台で置き換える。確定した台は今までどおり置き換えない。Android `site777Final`・同期スクリプト `site777Final` と同じ。
-SITE777_FINAL_AFTER = timedelta(days=1, minutes=30)
+SITE777_FINAL_AFTER = timedelta(hours=23, minutes=30)
 
 
 def site777_final_at(day: str) -> datetime:
-    """その営業日のサイトセブンの数値が確定する時刻（翌日0:30、日本時間）。"""
+    """その営業日のサイトセブンの数値が確定する時刻（その日の23:30、日本時間）。"""
     return datetime.fromisoformat(f'{day}T00:00:00+09:00') + SITE777_FINAL_AFTER
 
 
 def site777_final(r: dict) -> bool:
-    """サイトセブンの台が確定か（取り込んだ時刻が翌日0:30以降）。時刻が読めない台は確定として扱う（置き換えない）。"""
+    """サイトセブンの台が確定か（取り込んだ時刻がその日の23:30以降）。時刻が読めない台は確定として扱う（置き換えない）。"""
     captured = _instant(r.get('source_captured_at'))
     try:
         return captured is None or captured >= site777_final_at(r['day']).timestamp()
@@ -1387,7 +1387,7 @@ class PscubeStore:
                 # サイトセブンはアナスロで補った台を置き換える（2026-11-07 利用者「サイトセブンのを取り込んでっていってるの。
                 # 差枚の計算データにもつながるでしょ」。サイトセブンには MY・グラフ・画像の推定差枚がある）。機種名の表記が
                 # 違っても同じ台・日のアナスロの記録は消す。P’s CUBE本来の記録は今までどおり置き換えない。
-                # サイトセブンどうしは、確定前（翌日0:30より前に取った）の台だけ、あとで取った台で置き換える（2026-11-08）。
+                # サイトセブンどうしは、確定前（その日の23:30より前に取った）の台だけ、あとで取った台で置き換える（2026-11-08）。
                 occupant = occupied.get(identity)
                 if r.get('source_site') == 'site777' and occupant and (
                         occupant[1] == 'anaslo' or site777_supersedes(occupant[2], r)):

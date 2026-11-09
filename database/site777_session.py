@@ -44,6 +44,9 @@ REASON_LABELS = {
 LAST_RUN_NAME = 'site777-last-run.json'
 # 機種ごとの途中の記録を残す日数（今の営業日から。サイトが見せる8日分より長く取る。2026-11-08）。
 STAGING_KEEP_DAYS = 14
+# この回転数に満たない台（0Gを含む）は取り込まない（2026-11-10 利用者「0ゲーム、500g未満の台については取り込まない」）。
+# 採点の下限（core.MIN_SCORED_GAMES、P’s CUBE の RACK_PAGE_MIN_GAMES）と同じ500G。500Gちょうどは取り込む。
+MIN_SAVED_GAMES = 500
 RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
                        'graph_retry_limit', 'graph_retry_storage', 'card_error', 'overlay_failed',
                        'range_unknown'})
@@ -89,8 +92,8 @@ class Session(Bridge):
         self._direction = 'top'
         self._enabled = False
         self._days = recent_business_days(self._now(), count=8)
-        # 初めに選ぶ日は、確定した（翌日0:30を過ぎた）いちばん新しい日（2026-11-08）。確定前の日を取り込むと営業中・
-        # 更新前の数値のことがあるので、確認してから（_today_ok）。確定前に取った台は、0:30以降に取り込み直すと置き換わる。
+        # 初めに選ぶ日は、確定した（その日の23:30を過ぎた）いちばん新しい日（2026-11-08、11-10 に翌0:30から23:30へ）。確定前の日を
+        # 取り込むと営業中・更新前の数値のことがあるので、確認してから（_today_ok）。確定前に取った台は、23:30以降に取り込み直すと置き換わる。
         self._day = next((d for d in self._days if d < self._unfinished_from()), self._days[-1])
         self._today_ok = False
         # 日付の範囲で取り込む（2026-11-07 利用者「日付範囲指定できるようにしてほしい」）。_day が今の日、
@@ -140,7 +143,7 @@ class Session(Bridge):
         removed = 0
         try:
             for path in (self._folder / 'site777-staging').glob('*.json'):
-                match = re.fullmatch(r'(\d{4}-\d{2}-\d{2})-\d+\.json', path.name)
+                match = re.fullmatch(r'(\d{4}-\d{2}-\d{2})-(?:\d+|low)\.json', path.name)
                 if match and match[1] < cutoff:
                     path.unlink()
                     removed += 1
@@ -164,8 +167,8 @@ class Session(Bridge):
                     'unfinished_from': self._unfinished_from(), 'today_ok': self._today_ok}
 
     def _unfinished_from(self):
-        """まだ確定していない最初の日。今の営業日（午前3時で切り替え）の翌日0:30（閉店23:30・0時前後に更新、
-        2026-11-08 利用者）より前ならその営業日、過ぎていれば翌日。"""
+        """まだ確定していない最初の日。今の営業日（午前3時で切り替え）の23:30（2026-11-10 利用者「23時45分くらいに最終更新だから」
+        「23時半以降に取り込みだしたやつも飛ばしていいです」。11/8 は翌日0:30だった）より前ならその営業日、過ぎていれば翌日。"""
         now = self._now()
         day = business_day(now)
         if now >= site777_final_at(day):
@@ -179,7 +182,7 @@ class Session(Bridge):
 
     @staticmethod
     def _counts_as_saved(r):
-        """保存済みに数える台。アナスロで補った台と、確定前（翌日0:30より前に取った）のサイトセブンの台は数えない
+        """保存済みに数える台。アナスロで補った台と、確定前（その日の23:30より前に取った）のサイトセブンの台は数えない
         （どちらもサイトセブンで取り直して置き換える。2026-11-07・2026-11-08）。"""
         return r.get('source_site') != 'anaslo' and (r.get('source_site') != 'site777' or site777_final(r))
 
@@ -356,8 +359,8 @@ class Session(Bridge):
             planned = [self._day, *self._queue] if day is None else [day, *queue]
             unfinished = self._unfinished(planned, self._unfinished_from())
             if enabled and unfinished and not today_ok:
-                raise ValueError(f'{unfinished[0][5:].replace("-", "/")}の分はまだ確定していません（翌日0:30より前は営業中・'
-                                 '更新前の数値のことがあります）。確認してから開始してください（0:30以降に取り込み直すと置き換わります）。')
+                raise ValueError(f'{unfinished[0][5:].replace("-", "/")}の分はまだ確定していません（その日の23:30より前は営業中・'
+                                 '更新前の数値のことがあります）。確認してから開始してください（23:30以降に取り込み直すと置き換わります）。')
             # 止めるだけ（日付を変えない configure(False)）のときは確認済みを残す（止まったあとの自動の再開で引き継ぐ）。
             # 開始・日付の変更では、そのときの確認だけを使う。
             if enabled or day is not None or today_ok:
@@ -515,6 +518,32 @@ class Session(Bridge):
             raise ValueError('機種・日付を確認できません。')
         return self._folder / 'site777-staging' / f'{self._day}-{model}.json'
 
+    def _low_path(self):
+        return self._folder / 'site777-staging' / f'{self._day}-low.json'
+
+    def _low_racks(self):
+        """その日に確定した数値で MIN_SAVED_GAMES 未満だった台（機種コード→台番号の集合）。保存しないので DB には無いが、
+        機種の台がそろったかを数えるときは済みに数える（数えないと、その機種・その日を毎回開き直す）。"""
+        try:
+            data = json.loads(self._low_path().read_text(encoding='utf-8'))
+            return {str(k): {int(r) for r in v} for k, v in data.items()}
+        except (OSError, ValueError, TypeError, AttributeError):
+            return {}
+
+    def _remember_low(self, model, racks):
+        """確定した日の500G未満の台を覚える。確定前の日は覚えない（あとで回って500Gを超えることがあるため）。
+        書けなくても取り込みは続ける（次に開いたときにその機種を開き直すだけ）。"""
+        if self._unfinished([self._day], self._unfinished_from()):
+            return
+        data = {k: sorted(v) for k, v in self._low_racks().items()}
+        if data.get(model, []) == sorted(racks):
+            return
+        data[model] = sorted(racks)
+        try:
+            self._write(self._low_path(), data)
+        except OSError:
+            pass
+
     def _check(self, epoch):
         with self._state_lock:
             if epoch != self._epoch:
@@ -569,13 +598,42 @@ class Session(Bridge):
     def _covered_models(self):
         """機種一覧の台数（[31] など）だけ、その機種の台がその日に保存済みの機種（機種コード→台数）。
         台数の読めない機種は入れない（開いて確かめる）。DB は読むだけ。"""
-        if not self._db_path.is_file():
-            return {}
-        with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
-            rows = [json.loads(r[0]) for r in db.execute(
-                "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
-                "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
-                (source.SHOP, self._day))]
+        return {model: count for model, (done, count, _) in self._machine_counts(self._models).items()
+                if type(count) is int and count >= 1 and done >= count}
+
+    def machine_status(self, raw):
+        """機種一覧の各機種の横に出す、その日の取り込み状況（2026-11-10 利用者「なぜメルヘンと同じ仕様になってないんだ。
+        機種のよこに未取り込みとかもでてないし」。メルヘンの machine_status と同じ考え方）。raw は機種一覧の
+        [{model_id, name, count}] の JSON。返すのは日付と、機種ごとの {done, total, excluded}（同じ順）。
+        done は保存済みの台と、500G未満で取り込まなかった台の数。DB は読むだけ。"""
+        try:
+            machines = json.loads(raw).get('machines')
+            models = {str(m['model_id']): {'name': str(m['name']), 'count': m.get('count')}
+                      for m in machines if str(m.get('model_id', '')).isdecimal()}
+        except (TypeError, ValueError, AttributeError, KeyError):
+            return {'day': self._day, 'status': []}
+        try:
+            counts = self._machine_counts(models)
+        except (OSError, sqlite3.Error, ValueError):
+            counts = {}
+        status = []
+        for m in machines:
+            done, total, excluded = counts.get(str(m.get('model_id', '')), (0, m.get('count'), False))
+            if type(total) is int and total >= 1:
+                done = min(done, total)
+            status.append({'done': done, 'total': total if type(total) is int else None, 'excluded': excluded})
+        return {'day': self._day, 'status': status}
+
+    def _machine_counts(self, models):
+        """機種コード→（その日に済んだ台の数、一覧の台数、取り込まない機種か）。済んだ台は、保存済みの台（機種名、または
+        サイトセブンの台は出典URLの機種コードで合わせる）と、確定した日に500G未満で取り込まなかった台。DB は読むだけ。"""
+        rows = []
+        if self._db_path.is_file():
+            with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+                rows = [json.loads(r[0]) for r in db.execute(
+                    "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
+                    "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
+                    (source.SHOP, self._day))]
         rows = [r for r in rows if self._counts_as_saved(r) and not is_excluded_machine(r.get('machine'))]
         by_name = {}
         for r in rows:
@@ -590,16 +648,16 @@ class Session(Bridge):
                 continue
             if model:
                 racks.setdefault(model, set()).add(r['rack'])
+        # 500G未満で取り込まなかった台も済みに数える（確定した日だけ覚えている、2026-11-10）。
+        for model, low in self._low_racks().items():
+            racks.setdefault(model, set()).update(low)
         catalog = read_catalog(self._db_path) if by_name else []
-        covered = {}
-        for model, m in self._models.items():
-            count = m.get('count')
-            if type(count) is not int or count < 1:
-                continue
+        result = {}
+        for model, m in models.items():
             name = suggestions(m['name'], catalog)['automatic'] or m['name']
-            if len(racks.get(model, set()) | by_name.get(name, set())) >= count:
-                covered[model] = count
-        return covered
+            result[model] = (len(racks.get(model, set()) | by_name.get(name, set())), m.get('count'),
+                             is_excluded_machine(name) or is_excluded_machine(m['name']))
+        return result
 
     def _skip_complete_days(self):
         """機種一覧の台数（[31] など）の合計だけ、その日の台が保存済みなら、機種ページを開かずにその日を飛ばす
@@ -791,17 +849,21 @@ class Session(Bridge):
                 # 確認していない確定前の日は保存しない（手動の取り込みの守り。自動は開始のときに configure が確かめ、
                 # 確定前の最初の日は進むだけなので、自動の途中でここに来ることはない）。
                 raise ValueError(f'{self._day[5:].replace("-", "/")}の分はまだ確定していないため、取り込みませんでした'
-                                 '（翌日0:30より前）。取り込むときはカードの確認から（0:30以降に取り込み直すと置き換わります）。')
+                                 '（その日の23:30より前）。取り込むときはカードの確認から（23:30以降に取り込み直すと置き換わります）。')
             if source.day_from_label(payload.get('selected_md'), self._now()) != self._day:
                 return {'action': {'type': 'link', 'url': days[self._day]['url']}}
             rows = source.table_records(payload, self._day, self._now())
             model = payload['model_id']
             occupied = self._occupied()
-            wanted = [r for r in rows if r['rack'] not in occupied]
+            # 500G未満（0Gを含む）の台は取り込まない（2026-11-10 利用者）。グラフも読まない。すでに保存してある台は消さない。
+            low = [r['rack'] for r in rows if r['games'] < MIN_SAVED_GAMES]
+            self._remember_low(model, low)
+            wanted = [r for r in rows if r['rack'] not in occupied and r['games'] >= MIN_SAVED_GAMES]
+            skipped = f'（{MIN_SAVED_GAMES}G未満の{len(low)}台は取り込まず）' if low else ''
             if not wanted:
                 self._done.add(model)
-                self._kept += len(rows)
-                self._status = f'{payload["machine"]}：{len(rows)}台は既存の記録を保持しました。'
+                self._kept += len(rows) - len(low)
+                self._status = f'{payload["machine"]}：{len(rows) - len(low)}台は既存の記録を保持しました{skipped}。'
                 return self._next(payload.get('index_url'))
             digest = self._save_source(payload)
             old = {}

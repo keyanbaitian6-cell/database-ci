@@ -114,7 +114,7 @@ try {
   assert.deepEqual(await page.evaluate(()=>window.__configured[2]),[true,'2026-11-04','2026-11-06','bottom']);
   await page.waitForFunction(()=>document.querySelector('#database-site777-bottom').getAttribute('aria-pressed')==='true');
   assert.match(await page.locator('#database-site777').innerText(),/間隔：5〜7秒ランダム/);
-  // まだ確定していない日（翌日0:30より前）を取り込むときは確かめる（2026-11-08）：やめたら何も変えず、OKなら確認済みを渡す。
+  // まだ確定していない日（その日の23:30より前、2026-11-10）を取り込むときは確かめる（2026-11-08）：やめたら何も変えず、OKなら確認済みを渡す。
   // 確定した日だけなら確かめない。手動の「この画面を取り込む」でも同じ。
   const dialogs=[];
   await page.evaluate(()=>{
@@ -129,8 +129,8 @@ try {
   page.once('dialog',d=>{dialogs.push(d.message());d.dismiss();});
   await page.click('#database-site777-auto');
   await page.waitForTimeout(300);
-  assert.equal(dialogs.length,1);assert.match(dialogs[0],/11\/06の分はまだ確定していません（閉店23:30・翌0時ごろ更新）/);
-  assert.match(dialogs[0],/翌日0:30以降に取り込み直すと置き換わります/);
+  assert.equal(dialogs.length,1);assert.match(dialogs[0],/11\/06の分はまだ確定していません（閉店23:30・23:45ごろ最終更新）/);
+  assert.match(dialogs[0],/その日の23:30以降に取り込み直すと置き換わります/);
   assert.deepEqual(await page.evaluate(()=>window.__configured),[],'やめたら開始しない');
   page.once('dialog',d=>{dialogs.push(d.message());d.accept();});
   await page.click('#database-site777-auto');
@@ -283,6 +283,32 @@ try {
   await waiting.waitForFunction(()=>window.__calls.length>0);
   assert.deepEqual(await waiting.evaluate(()=>window.__calls),[['pause',null,'user_stop',null]],'待っている間に押すと取り消す（開始しない）');
   await waiting.waitForFunction(()=>document.querySelector('#database-site777-auto')?.textContent.includes('OFF（押すと開始）'));
+  // 機種一覧の各機種の横に取り込み状況を出す（2026-11-10 利用者「なぜメルヘンと同じ仕様になってないんだ。機種のよこに
+  // 未取り込みとかもでてないし」）。メルヘンと同じ文言：済 n/m・途中 n/m・未取込・対象外。
+  const listing=await browser.newPage({viewport:{width:560,height:800}});
+  listing.on('pageerror',e=>errors.push(e.message));
+  await listing.route('**/*',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:`<h2 class=page-title>Ｐ－ＳＴＡＴＩＯＮ＆ＩＩ　スロット館</h2>`+
+    [['120141','ゴーゴージャグラー３ [31]'],['120406','L牙狼 闇を照らす者'],['120500','試験機種 [2]'],['120600','沖ドキ！GOLD-30 [3]']].map(([m,label])=>
+      `<a href="D2300.do?pmc=04034001&amp;clc=03&amp;urt=2000&amp;mdc=${m}&amp;bn=1" class="imageSet"><div class="icon-kisyu"></div><strong>${label}</strong></a>`).join('')}));
+  await listing.goto('https://m.site777.jp/f/D0300.do?pmc=04034001&clc=03&urt=2000&pan=1');
+  await listing.evaluate(()=>{
+    window.__asked=[];
+    window.__s={enabled:false,epoch:1,ready:false,day:'2026-11-09',days:['2026-11-09'],status:'停止',added:0,kept:0};
+    window.pywebview={api:{state:async()=>structuredClone(window.__s),save_overlay_layout:async()=>{},
+      machine_status:async raw=>{const machines=JSON.parse(raw).machines;window.__asked.push(machines.map(m=>[m.model_id,m.count]));
+        return {day:'2026-11-09',status:[{done:31,total:31,excluded:false},{done:0,total:1,excluded:false},
+          {done:1,total:2,excluded:false},{done:0,total:3,excluded:true}]};}}};
+  });
+  await listing.evaluate(reader);await listing.evaluate(card);await listing.evaluate(overlay);
+  await listing.waitForFunction(()=>document.querySelectorAll('.database-site777-badge').length===4);
+  assert.deepEqual(await listing.evaluate(()=>[...document.querySelectorAll('a.imageSet')].map(a=>a.querySelector('.database-site777-badge')?.textContent)),
+    ['11/9 済 31/31','11/9 未取込','11/9 1/2','対象外']);
+  assert.deepEqual(await listing.evaluate(()=>window.__asked[0]),[['120141',31],['120406',1],['120500',2],['120600',3]]);
+  await listing.waitForTimeout(1500);
+  assert.equal(await listing.evaluate(()=>window.__asked.length),1,'状況が変わらないうちは聞き直さない');
+  await listing.evaluate(()=>{window.__s.added=1;});
+  await listing.waitForFunction(()=>window.__asked.length===2);
+  assert.equal(await listing.evaluate(()=>document.querySelectorAll('.database-site777-badge').length),4,'付け直しても重ならない');
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す（自動の再開では戻さない）・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内：成功');
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す（自動の再開では戻さない）・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内・機種一覧の取り込み状況：成功');
 } finally {await browser.close();}

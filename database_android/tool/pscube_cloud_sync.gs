@@ -31,7 +31,7 @@ const PSCUBE_CLOUD_FAILED = 'pscubeCloudFailed';
 const PSCUBE_CLOUD_FAILED_MAX = 120;
 // 取り込みの規則の版。規則を直して貼り替えた最初の実行で、前に取り込めなかった入力をもう一度読む
 // （2026-10-18、アナスロの出典リンクを拒んでPCの閲覧用ファイルが処理されないままだった。版が同じだと再試行されない）。
-const PSCUBE_CLOUD_RULES = '2026-11-08-site777-final';
+const PSCUBE_CLOUD_RULES = '2026-11-10-site777-final-2330';
 // 書き出しの一時的な失敗（429・5xx・通信の例外）は、同じ実行の中でこの回数まで少し待って試す（1秒・2秒）。
 const PSCUBE_CLOUD_WRITE_TRIES = 3;
 
@@ -827,11 +827,11 @@ function validSite777NetEstimate(e) {
     (e.method === site777EstimateMethod || (e.method === site777LegacyEstimateMethod && e.value % 50 === 0));
 }
 
-// サイトセブンの台は、営業日の翌日0:30以降に取り込んだものを確定とする（2026-11-08 利用者「閉店時刻は23時半。
-// 0時前後には更新されるはず」→「翌0:30以降」）。PC site777_final・Dart site777Final と同じ。時刻が読めない台は確定（置き換えない）。
+// サイトセブンの台は、営業日の23:30以降に取り込んだものを確定とする（2026-11-10 利用者「23時半以降に取り込みだしたやつも
+// 飛ばしていいです。23時45分くらいに最終更新だから」。2026-11-08 は翌日0:30だった）。PC site777_final・Dart site777Final と同じ。時刻が読めない台は確定（置き換えない）。
 function site777Final(r) {
   const captured = Date.parse(r?.source_captured_at), start = Date.parse(`${r?.day}T00:00:00+09:00`);
-  return !Number.isFinite(captured) || !Number.isFinite(start) || captured >= start + (24 * 60 + 30) * 60000;
+  return !Number.isFinite(captured) || !Number.isFinite(start) || captured >= start + (23 * 60 + 30) * 60000;
 }
 
 // 確定前のサイトセブンの台を、あとで取り込んだサイトセブンの台で置き換えるか（PC site777_supersedes・Dart site777Supersedes と同じ）。
@@ -960,7 +960,7 @@ function mergeData(stored, incoming) {
     const key = recordKey(r);
     // サイトセブンはアナスロで補った台を置き換える（PC import_backup・Android と同じ、2026-11-07）。
     // 機種名の表記が違っても同じ台・日のアナスロの記録は消す。P’s CUBE本来は置き換えない。サイトセブンどうしは、
-    // 確定前（翌日0:30より前に取った）の台だけ、あとで取った台で置き換える（PC・Android と同じ、2026-11-08）。
+    // 確定前（その日の23:30より前に取った）の台だけ、あとで取った台で置き換える（PC・Android と同じ、2026-11-08）。
     const occupantKey = occupied.get(rackDayKey(r));
     if (r.source_site === 'site777' && occupantKey && (records.get(occupantKey)?.source_site === 'anaslo' ||
         site777Supersedes(records.get(occupantKey), r))) {

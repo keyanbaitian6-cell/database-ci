@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-import {validateData,mergeData} from '../web/pscube/data.mjs';
+import {validateData,mergeData,site777Final} from '../web/pscube/data.mjs';
 import {pscubeRecords} from '../../share_viewer/data.mjs';
 import {netCaptureLabel} from '../web/capture_health.mjs';
 import {buildCloudScript} from './build_pscube_cloud_sync.mjs';
@@ -149,8 +149,8 @@ test('サイトセブンはアナスロで補った台を置き換え（別表�
   assert.equal(again.records.find(r=>r.rack===base.rack&&r.day===base.day).source_site,'site777','アナスロでは戻らない');
 });
 
-test('確定は翌日0:30以降。確定前の台だけ、あとで取った台で置き換える（PC・Android と同じ。生成する同期スクリプトも）',()=>{
-  // 2026-11-08 利用者「閉店時刻は23時半。0時前後には更新されるはず」→「翌0:30以降」。
+test('確定はその日の23:30以降。確定前の台だけ、あとで取った台で置き換える（PC・Android と同じ。生成する同期スクリプトも）',()=>{
+  // 2026-11-10 利用者「23時半以降に取り込みだしたやつも飛ばしていいです。23時45分くらいに最終更新だから」（11/8 は翌0:30だった）。
   const capture=(at,games,sha,machine)=>{
     const value=fixture();
     for(const r of value.records){r.source_captured_at=at;r.source_sha256=sha.repeat(64);if(machine){r.machine=machine;}}
@@ -160,8 +160,10 @@ test('確定は翌日0:30以降。確定前の台だけ、あとで取った台�
   const rack=fixture().records[0].rack;
   const context=vm.createContext({});
   vm.runInContext(buildCloudScript(),context,{timeout:5000});
-  for(const [name,merge] of [['data.mjs',mergeData],['同期スクリプト',(a,b)=>plain(context.mergeData(a,b))]]){
-    const early=capture('2026-11-06T23:40:00+09:00',3000,'a');
+  for(const [name,merge,final] of [['data.mjs',mergeData,site777Final],['同期スクリプト',(a,b)=>plain(context.mergeData(a,b)),context.site777Final]]){
+    const early=capture('2026-11-06T23:20:00+09:00',3000,'a');
+    assert.equal(final({day:'2026-11-06',source_captured_at:'2026-11-06T23:29:59+09:00'}),false,name);
+    assert.equal(final({day:'2026-11-06',source_captured_at:'2026-11-06T23:30:00+09:00'}),true,name);
     const pick=data=>{const same=data.records.filter(r=>r.rack===rack);assert.equal(same.length,1,name+'：同じ台・日に2つ残らない');return same[0];};
     let merged=merge(early,capture('2026-11-07T10:00:00+09:00',8000,'b','表記の違う名前'));
     assert.equal(pick(merged).games,8000,name+'：確定前の台は、あとで取った台で置き換える（機種名の表記が違っても）');

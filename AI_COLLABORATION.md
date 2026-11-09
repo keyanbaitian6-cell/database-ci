@@ -1798,3 +1798,41 @@
 
 - 公開（11/9、利用者承認）：正本へ f1d2445 を tools/push_ci.py で1回送信。CI https://github.com/imakurudev-eng/database/actions/runs/42497025246 は確認時に実行中。iPhone閲覧ページは全体ゲートの stage_viewer.py 出力を使い、database-viewer の 8d55f68 から 1bb7f2a に非強制更新。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42497203097 は成功。配信中の main.dart.js・pscube/data.mjs・shared_events.mjs・version.json は公開Gitとバイト一致。
 - 11/9分の表示用JSONをDriveの「database共有／P-STATION 前向き検証」に配置。Driveメタデータで親フォルダと1,367バイトを確認し、PCに同期されたファイルと出力元のSHA-256が一致。毎朝実行.cmd の隣に viewer-sync-dir.txt を設定。次の操作は、自分用閲覧Apps Scriptの貼り替え、PSCUBE_VALIDATION_FOLDER_ID の設定、既存デプロイの新バージョン更新。実Googleの返事とiPhone実機表示は未確認。
+
+## 2026-11-10 サイトセブン：500G未満は取り込まない・確定を23:30に・機種一覧の横に取り込み状況（Claude）
+
+- 依頼（利用者）：
+  - 「サイトセブンの取り込みについて、0ゲーム、500g未満の台については取り込まなく定位と伝えるのを忘れてました。今取り込んでいる分は仕方ないのですが修正お願いします」
+  - 「なんか結局この前取り込んだ奴は飛ばす処理にしたはずなのにまた取り込んでる。23時半以降に取り込みだしたやつも飛ばしていいです。23時45分くらいに最終更新だから」
+  - 「なぜメルヘンと同じ仕様になってないんだ。機種のよこに未取り込みとかもでてないし」
+- 基準：`1f596ed`（手元の main）。同じ作業コピーに、別の作業（P-STATIONの前向き検証の自動実行）の未コミットの変更がある（`database/app.py`・`database/pscube_import.py` の `capture_complete`・`database/forward_validation.py` など）。私のコミットには入れない。
+- 「また取り込んでいる」の原因（本番DB `database/data/pscube.sqlite3` を mode=ro・query_only=ON で数えた）：11/9 の台は 11/10 0:15〜6:46 に取っており、0:30 より前の分が「確定前」と数えられて取り直しになっていた。11/7 は 23:22〜23:56（23:30より前が171台）、11/8 は 23:30〜翌0時台。0:30 の規則では、これらがすべて確定前の扱いだった。
+- 変更：
+  - 確定の時刻を「翌日0:30」から「その日の23:30」へ。PC `SITE777_FINAL_AFTER`（`database/pscube_import.py`）、Android `site777FinalAt`（`database_android/lib/pscube_store.dart`）、同期スクリプト `site777Final`（`database_android/tool/pscube_cloud_sync.gs`）で同じ規則。カードの確認文（`database/assets/site777_overlay.js`）とPCの文言も直した。これで 11/8・11/9 の台と、11/7 の 23:30 以降の台は確定に数える（11/7 の 23:30 より前の171台は、11/7 を取り込み直すと取り直す）。
+  - 500G未満（0Gを含む）の台は保存しない・グラフも読まない（`database/site777_session.py` の `MIN_SAVED_GAMES = 500`、500Gちょうどは取り込む）。すでに保存してある台は消さない（利用者「今取り込んでいる分は仕方ない」）。確定した日の500G未満の台は `site777-staging/日付-low.json` に覚え、機種の台がそろったかを数えるとき（`_covered_models`）は済みに数える（数えないと毎回その機種を開き直す）。確定前の日は覚えない（あとで500Gを超えることがあるため）。古い日の掃除（`_prune_staging`）の対象にも入れた。
+  - 機種一覧の各機種の横に、その日の取り込み状況を出す（メルヘン `browser_import.py` の markMachines と同じ文言・色：未取込（灰）／途中 n/m（黄）／済 n/m（緑）／対象外）。PC `Session.machine_status`（画面から呼べる関数に足した）が機種ごとに、保存済みの台（機種名、またはサイトセブンの台は出典URLの機種コード）と500G未満で取り込まなかった台を数える。日付・追加・保持の数が変わったときだけ聞き直す。
+  - AGENTS.md のサイトセブンの節を直した（23:30・500G・機種一覧の表示）。
+  - カード下の「前回の案内」（薄い黄色の枠）が、文字色がカードの白のままで読めなかった（利用者の画面写真、「オーバーレイの一番下みづらすぎてなにかえてるか見えない」）。文字色を濃い茶色（#3a2a00）にした。利用者の画面写真には、サイトの「データ更新日時：2026/11/09 23:45」が出ていた（23:45ごろ最終更新という利用者の話と合う）。
+  - サイトセブンの窓を2つ以上開けるようにした（利用者「サイトセブンは緩い気がするから多重起動したいときもあるので基本は一つでしか取り込まないけど多重起動許してほしい。下から取り込みを入れた意味がないので」）。`database/app.py` の `open_site777_browser`：開いている窓があるときは「もう1つ開きますか」と確かめてから開く（ふだんは1つ）。確認文に、2つで同時に取り込むとアクセスが約2倍になること（1つの窓は5〜7秒に1ページ）と、片方を「上から」・もう片方を「下から」にする使い方を書いた。窓ごとに閉じたときの結果をログ欄に出す。
+    - 2つの窓が同じ日を取り込むとき：もう片方が済ませた機種は、機種一覧に戻ったとき（`_skip_saved_machines`）に飛ばす。同じ機種を同時に保存しても、あとの方は「既存を保持」になる（`fill_missing`）。DBの書き込みは SQLite の待ち（既定5秒）、書き出しは 073f0eb の順番のロックで守る。
+    - 共有のまま（未対応）：前回の案内（`site777-last-run.json`）・閉じたときの知らせ・カードの位置は、あとに書いた窓のものが残る。WebView2 の保存先（ログイン）は2つの窓で同じフォルダーを使う。2つの窓を実際に同時に動かすことは未確認（利用者の画面で確かめる）。
+- 確認：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 500G未満・0Gは保存せずグラフも読まない、500Gちょうどは保存 | 済 | `test_racks_under_500_games_are_not_saved_and_count_as_done` |
+| 500G未満の台を済みに数え、機種を開き直さない（確定した日だけ） | 済 | 同上、`test_low_racks_of_a_day_that_is_not_final_are_not_remembered` |
+| 確定は23:30（PC） | 済 | `test_a_day_is_final_from_half_past_eleven_that_night`、置き換えの試験2件を23:30基準に |
+| 確定は23:30（Android） | 済 | `site777_import_test.dart` 9件成功 |
+| 確定は23:30（同期スクリプト・data.mjs） | 済 | `test_site777_import.mjs`（境目を両方で）・`test_pscube_cloud_sync.mjs` 49件。利用者の貼り替えが必要 |
+| 機種一覧の横の表示 | 済（合成ページ） | `test_machine_status_reports_saved_racks_for_each_listed_machine`、`test_site777_capture_browser.mjs`（文言4種・聞き直しの回数・重ならない）。実サイトの見た目は未確認 |
+| 全体ゲート | 済（落ちた2項目は下のとおり直して流し直した） | `check_before_build.sh`（`CHECK_BUILD_WORK=/c/w/cbw-s7`） |
+
+- 反映：PCは次に `start.cmd` で起動したときから効く（起動中のアプリには入っていない）。Android は次のAPKから、同期スクリプトは利用者が `pscube_cloud_sync.gs` を貼り替えたときから。違う間も、PCが取り込まない・取り直さないだけなので、記録が壊れることはない（Androidと同期は、23:30〜0:30に取った台をあとの台で置き換えうる、という差だけ）。
+- ゲートと流し直し（2026-11-10、利用者「だから少しの修正のは全体やる必要ないって」→ AGENTS.md に「全体ゲートのあとの小さな修正」の例外を足した）：
+  - 全体ゲート（`CHECK_BUILD_WORK=/c/w/cbw-s7`、カードの文字色の直しを含む版。`app.py` の窓2つの変更は途中から）：失敗2件。
+    - `pc-tests`：8件（`test_push_ci`・`test_release_info_utf8`・`test_sqlite_fixture_cleanup`・`test_tk_threads`）が、子プロセスの起動失敗（終了コード 3221225794＝0xC0000142）。同じ時刻に私が別に `database/tests` の全体を流していたため。変更とは関係しない。その単独の実行（`app.py` の変更込み）は `database/.venv/Scripts/python.exe -m unittest discover -s tests` で962件すべて成功。
+    - `test_pscube_cloud_sync`：`pscube_cloud_sync.gs` は `tool/build_pscube_cloud_sync.mjs` が `web/pscube/data.mjs` と `tool/pscube_cloud_sync_runtime.js` から作る生成物で、私が直接直したため一致しなかった。元の `data.mjs` の `site777Final` を23:30にし、規則の版 `PSCUBE_CLOUD_RULES` を `2026-11-10-site777-final-2330` に上げて作り直した。`test_site777_import.mjs` も、23:40を確定前とする古い想定を23:20にし、境目（23:29:59 は確定前・23:30 は確定）を data.mjs と同期スクリプトの両方で確かめるようにした。
+  - 流し直し：`data.mjs`・同期スクリプトを使うJS試験10本（`test_anaslo_import`・`test_capture_health`・`test_pscube_cloud_sync` 49件・`test_pscube_data`・`test_pscube_net_days`・`test_pscube_scoring`・`test_pscube_sync`・`test_release_info`・`test_site777_import` 13件・`test_viewer_parts`）と `test_site777_capture_browser`・`test_pscube_capture`・`test_pscube_drive_browser` がすべて成功。Flutter の `site777_import_test.dart` 9件成功・`flutter analyze`（変えた2ファイル）でエラーなし。
+- コミットは自分の変更だけ。`database/app.py`・`database/pscube_import.py`・`AGENTS.md`・`AI_COLLABORATION.md` には別の作業（前向き検証の自動実行）の未コミットの変更があるので、HEAD の内容に私の変更だけを当てたものを index に置いた（作業コピーの相手の変更はそのまま）。
+- 反映：同期スクリプト `pscube_cloud_sync.gs` は利用者の貼り替えが必要（設定行 `PSCUBE_HISTORY_VIEWER = true` は生成物のまま true）。Android は次のAPKから。

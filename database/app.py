@@ -1133,22 +1133,30 @@ def main():
                       'この画面が数分以内に自動で読み込みます（幸町は保存後に「バックアップを読み込む」）。\n')
         logbox.see('end')
 
-    site777_process = [None]
+    site777_process = []
 
     def open_site777_browser():
-        running = site777_process[0]
-        if running is not None and running.poll() is None:
-            messagebox.showinfo('開いています', 'サイトセブンの窓は開いています。タスクバーから選んでください。', parent=root)
+        # 基本は1つの窓で取り込む。開いているときは確かめてから、もう1つ開ける（2026-11-10 利用者「基本は一つでしか
+        # 取り込まないけど多重起動許してほしい。下から取り込みを入れた意味がないので」）。2つの窓で同時に取り込むと
+        # サイトへのアクセスが約2倍になる（1つの窓は5〜7秒に1ページ）。済んだ機種は機種一覧に戻ったときに飛ばす。
+        site777_process[:] = [p for p in site777_process if p.poll() is None]
+        if site777_process and not messagebox.askyesno(
+                'もう1つ開きますか',
+                f'サイトセブンの窓は{len(site777_process)}つ開いています。もう1つ開きますか？\n\n'
+                '2つの窓で同時に取り込むと、サイトへのアクセスが約2倍になります。同じ日を取るときは、'
+                '片方を「上から取り込む」、もう片方を「下から取り込む」にしてください'
+                '（もう片方が済ませた機種は、機種一覧に戻ったときに飛ばします）。', parent=root):
             return
         try:
             command, folder = site777_browser_command()
-            site777_process[0] = subprocess.Popen(command, cwd=str(folder))
+            process = subprocess.Popen(command, cwd=str(folder))
         except OSError as exc:
             messagebox.showerror('起動できません', f'サイトセブンを開けません：{exc}', parent=root)
             return
+        site777_process.append(process)
         # 自動取り込みが最後まで終わると窓は自分で閉じる（2026-11-07）。閉じたら結果をログ欄に出す（P’s CUBEと同じ）。
         import site777_browser
-        watch_capture_window(site777_process[0], 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR),
+        watch_capture_window(process, 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR),
                              take_stop=lambda: site777_browser.take_stop_message(DATA_DIR))
         logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
                       'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')

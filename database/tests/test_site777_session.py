@@ -38,7 +38,7 @@ def graph(page=1, metadata=False):
 
 class SessionTest(unittest.TestCase):
     def test_page_api_does_not_expose_file_paths_store_factories_or_native_window(self):
-        allowed={'note','state','configure','pause','save_overlay_layout','capture'}
+        allowed={'note','state','configure','pause','save_overlay_layout','capture','machine_status'}
         public={name for name in dir(self.session) if not name.startswith('_')}
         self.assertEqual(public,allowed)
 
@@ -654,7 +654,7 @@ class SessionTest(unittest.TestCase):
         self.assertEqual((state['unfinished_from'],state['day'],state['today_ok']),('2026-11-06','2026-11-05',False))
         epoch=state['epoch']
         for args in (('2026-11-06',),('2026-11-04','2026-11-06')):
-            with self.assertRaisesRegex(ValueError,'11/06の分はまだ確定していません.*0:30以降に取り込み直すと置き換わります'):
+            with self.assertRaisesRegex(ValueError,'11/06の分はまだ確定していません.*23:30以降に取り込み直すと置き換わります'):
                 session.configure(True,*args)
             self.assertEqual((session.state()['epoch'],session.state()['enabled'],session.state()['day']),
                              (epoch,False,'2026-11-05'),'確認なしの開始は何も変えない')
@@ -739,11 +739,13 @@ class SessionTest(unittest.TestCase):
         self.assertTrue((staging/'sources'/'abc.json').exists())
         self.assertEqual((self.log('staging_pruned')[-1]['removed'],self.log('staging_pruned')[-1]['before']),(1,'2026-10-24'))
 
-    def test_a_day_is_final_from_half_past_midnight_the_next_day(self):
-        # 2026-11-08 利用者「閉店時刻は23時半。0時前後には更新されるはず」→ 確定は翌日0:30以降。
-        for now,first,chosen in (('2026-11-06T23:59:00+09:00','2026-11-06','2026-11-05'),
-                                 ('2026-11-07T00:29:00+09:00','2026-11-06','2026-11-05'),
-                                 ('2026-11-07T00:30:00+09:00','2026-11-07','2026-11-06'),
+    def test_a_day_is_final_from_half_past_eleven_that_night(self):
+        # 2026-11-10 利用者「23時半以降に取り込みだしたやつも飛ばしていいです。23時45分くらいに最終更新だから」
+        # → 確定はその日の23:30以降（2026-11-08 は翌日0:30だった）。
+        for now,first,chosen in (('2026-11-06T23:29:00+09:00','2026-11-06','2026-11-05'),
+                                 ('2026-11-06T23:30:00+09:00','2026-11-07','2026-11-06'),
+                                 ('2026-11-06T23:59:00+09:00','2026-11-07','2026-11-06'),
+                                 ('2026-11-07T00:29:00+09:00','2026-11-07','2026-11-06'),
                                  ('2026-11-07T02:59:00+09:00','2026-11-07','2026-11-06'),
                                  ('2026-11-07T10:00:00+09:00','2026-11-07','2026-11-06')):
             folder=self.root/now[:16].replace(':','');folder.mkdir()
@@ -751,8 +753,8 @@ class SessionTest(unittest.TestCase):
             self.assertEqual((state['unfinished_from'],state['day']),(first,chosen),now)
 
     def test_racks_captured_before_the_day_is_final_are_replaced_by_a_later_capture(self):
-        # 2026-11-08：営業中（翌0:30より前）に取ったサイトセブンの台は、あとで取り込み直すと置き換わる。
-        # 確定（翌0:30以降）した台は今までどおり置き換えない。
+        # 2026-11-08：営業中（2026-11-10 からはその日の23:30より前）に取ったサイトセブンの台は、あとで取り込み直すと置き換わる。
+        # 確定（23:30以降）した台は今までどおり置き換えない。
         from types import SimpleNamespace
         def capture(now,games,today_ok=False):
             session=Session(self.root,DiagnosticLog(self.root),now=lambda:datetime.fromisoformat(now),
@@ -766,12 +768,12 @@ class SessionTest(unittest.TestCase):
             try:return {r['rack']:(r['games'],r['source_captured_at'][:16]) for r in store.export_payload()['records']}
             finally:store.close()
         (self.root/'site777-last-run.json').unlink(missing_ok=True)
-        capture('2026-11-06T23:40:00+09:00',3000,True)
-        self.assertEqual(games()[101],(3000,'2026-11-06T23:40'))
-        # 翌0:30より前の取り込み直し（まだ確定前）でも、新しい方で置き換える。
-        session,results=capture('2026-11-07T00:10:00+09:00',3100,True)
-        self.assertEqual(games()[101],(3100,'2026-11-07T00:10'))
-        # 0:30以降：確定前の台を未取り込みとして数え、取り直して置き換える。
+        capture('2026-11-06T23:10:00+09:00',3000,True)
+        self.assertEqual(games()[101],(3000,'2026-11-06T23:10'))
+        # 23:30より前の取り込み直し（まだ確定前）でも、新しい方で置き換える。
+        session,results=capture('2026-11-06T23:25:00+09:00',3100,True)
+        self.assertEqual(games()[101],(3100,'2026-11-06T23:25'))
+        # 確定後：確定前の台を未取り込みとして数え、取り直して置き換える。
         session,results=capture('2026-11-07T10:00:00+09:00',8000)
         self.assertNotIn('error',results[0],results[0].get('error'))
         self.assertIn('D4300',results[0]['action']['url'],'確定前の台はもう一度グラフを読む')
@@ -787,10 +789,78 @@ class SessionTest(unittest.TestCase):
         from pscube_import import _merge, site777_final, site777_supersedes
         def rack(captured,games=100,source='site777'):
             return {'source_site':source,'day':'2026-11-06','source_captured_at':captured,'games':games}
-        early,late,final=rack('2026-11-06T23:40:00+09:00',1),rack('2026-11-07T00:20:00+09:00',2),rack('2026-11-07T00:30:00+09:00',3)
+        early,late,final=rack('2026-11-06T23:10:00+09:00',1),rack('2026-11-06T23:29:59+09:00',2),rack('2026-11-06T23:30:00+09:00',3)
         self.assertEqual([site777_final(r) for r in (early,late,final)],[False,False,True])
         self.assertIs(_merge(early,late),late);self.assertIs(_merge(late,final),final)
         self.assertIs(_merge(late,early),late,'古い取り込みでは置き換えない')
         self.assertIs(_merge(final,rack('2026-11-07T10:00:00+09:00',4)),final,'確定した台は置き換えない')
-        self.assertFalse(site777_supersedes(rack('2026-11-06T23:40:00+09:00',source=None),late),'P’s CUBE本来の台は対象外')
+        self.assertFalse(site777_supersedes(rack('2026-11-06T23:10:00+09:00',source=None),late),'P’s CUBE本来の台は対象外')
         self.assertTrue(site777_final(rack(None)),'時刻が読めない台は確定として扱う（置き換えない）')
+
+    def saved(self):
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:return {r['rack']:r['games'] for r in store.export_payload()['records']}
+        finally:store.close()
+
+    def index(self,count=2):
+        return {'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+                'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':count},
+                            {'name':'別の機種','model_id':'456','url':url('D2300',model='456'),'count':1}]}
+
+    def test_racks_under_500_games_are_not_saved_and_count_as_done(self):
+        # 2026-11-10 利用者「サイトセブンの取り込みについて、0ゲーム、500g未満の台については取り込まなく定位」。
+        # 500Gちょうどは取り込む。取り込まなかった台のグラフは読まず、機種一覧では済みに数える（毎回開き直さない）。
+        payload=table();payload['rows'][1][2]='499'
+        self.assertIn('D4300',self.cycle(payload)['action']['url'])
+        self.cycle(graph(metadata=True))
+        result=self.cycle(graph())
+        self.assertNotEqual(result.get('action'),{'type':'page','number':2},'取り込まない台のグラフページは読まない')
+        self.assertEqual(self.saved(),{101:3000})
+        self.assertEqual(self.session.machine_status(json.dumps({'machines':self.index()['machines']}))['status'],
+                         [{'done':2,'total':2,'excluded':False},{'done':0,'total':1,'excluded':False}])
+        self.session=self.new_session()
+        self.epoch=self.session.configure(False,'2026-11-06')['epoch']
+        self.assertEqual(self.cycle(self.index())['action']['url'],source_url(url('D2300',model='456'),'model'),
+                         '500G未満の台は済みに数え、その機種は開かない')
+        # 0Gと500Gちょうど：0Gは取り込まず、500Gは取り込む。全台が500G未満なら、グラフを読まずに次へ。
+        def day5(value):
+            value['selected_md']='11/5';value['days']=[{'label':'11/5','url':url('D3300')}];return value
+        for games in ('0','500'):
+            session=self.new_session();self.session=session
+            self.epoch=session.configure(False,'2026-11-05')['epoch']
+            payload=day5(table());payload['rows'][0][2]='0';payload['rows'][1][2]=games
+            result=self.cycle(payload)
+            if games=='0':
+                self.assertNotIn('D4300',result['action']['url'])
+                self.assertIn('500G未満の2台は取り込まず',result['state']['status'])
+            else:
+                self.assertIn('D4300',result['action']['url'])
+                self.cycle(day5(graph(metadata=True)))
+                self.assertEqual(self.cycle(day5(graph()))['action'],{'type':'page','number':2})
+                self.cycle(day5(graph(2)))
+        self.assertEqual(self.saved(),{101:3000,102:500})
+
+    def test_low_racks_of_a_day_that_is_not_final_are_not_remembered(self):
+        # 確定前（その日の23:30より前）の500G未満の台は、あとで500Gを超えることがあるので済みに数えない。
+        session=self.evening_session(datetime.fromisoformat('2026-11-06T19:00:00+09:00'))
+        epoch=session.configure(False,'2026-11-06',None,None,True)['epoch']
+        payload=table();payload['rows'][0][2]='10';payload['rows'][1][2]='20'
+        self.assertNotIn('error',session.capture(json.dumps(payload),epoch))
+        self.assertFalse((self.evening/'site777-staging'/'2026-11-06-low.json').exists())
+        self.assertEqual(session.machine_status(json.dumps({'machines':self.index()['machines']}))['status'][0]['done'],0)
+
+    def test_machine_status_reports_saved_racks_for_each_listed_machine(self):
+        # 機種一覧の横の表示（2026-11-10 利用者「なぜメルヘンと同じ仕様になってないんだ。機種のよこに未取り込みとかもでてないし」）。
+        from test_pscube_sync import machine, record, put
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:
+            m=machine('試験ジャグラー3');put(store,m,[record(m,101,'2026-11-06')])
+        finally:store.close()
+        machines=self.index(2)['machines']+[{'name':'沖ドキ！GOLD-30','model_id':'789','count':None},
+                                           {'name':'壊れた','model_id':'x','count':1}]
+        state=self.session.machine_status(json.dumps({'machines':machines}))
+        self.assertEqual(state['day'],'2026-11-06')
+        self.assertEqual(state['status'][:2],[{'done':1,'total':2,'excluded':False},{'done':0,'total':1,'excluded':False}])
+        self.assertTrue(state['status'][2]['excluded'],'取り込まない機種は対象外')
+        self.assertEqual(state['status'][3],{'done':0,'total':1,'excluded':False})
+        self.assertEqual(self.session.machine_status('壊れた'),{'day':'2026-11-06','status':[]})
