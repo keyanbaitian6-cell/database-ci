@@ -1798,6 +1798,53 @@
 
 - 公開（11/9、利用者承認）：正本へ f1d2445 を tools/push_ci.py で1回送信。CI https://github.com/imakurudev-eng/database/actions/runs/42497025246 は確認時に実行中。iPhone閲覧ページは全体ゲートの stage_viewer.py 出力を使い、database-viewer の 8d55f68 から 1bb7f2a に非強制更新。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42497203097 は成功。配信中の main.dart.js・pscube/data.mjs・shared_events.mjs・version.json は公開Gitとバイト一致。
 - 11/9分の表示用JSONをDriveの「database共有／P-STATION 前向き検証」に配置。Driveメタデータで親フォルダと1,367バイトを確認し、PCに同期されたファイルと出力元のSHA-256が一致。毎朝実行.cmd の隣に viewer-sync-dir.txt を設定。次の操作は、自分用閲覧Apps Scriptの貼り替え、PSCUBE_VALIDATION_FOLDER_ID の設定、既存デプロイの新バージョン更新。実Googleの返事とiPhone実機表示は未確認。
+- 利用者報告（11/9）「新デプロイにしました」。新規デプロイか既存デプロイの新バージョンかは未確認。URLが変わった場合はiPhone閲覧ページの「Googleドライブの自動読み込み」で新しい /exec URLへ切り替える。実Googleの応答とiPhone実機の表示は未確認。
+- iPhone実機（利用者報告、11/9）：P’s CUBE側のSafari画面が白い。添付画像はGitHub Pagesのアドレス欄だけ表示。自分用Apps Scriptは全文.txtを貼ったとのこと。Codexの確認では配信中の入口・起動ファイル8点が公開Gitと一致し、デスクトップChromiumとiPhone相当幅のデスクトップWebKitで起動。WebKitのローカル試験は保存済みP’s CUBEデータ約35MBを入れた状態でも起動した。確認用の /pscube/?load= は模擬設定と保存データを保持し、自動Drive読み込み0件で起動。iPhoneでこの確認用URLを開いた結果は未確認。
+- iPhone実機の続報（利用者）では、保存データとDrive読込みをスキップする確認用URLでも白画面。原因は未特定。復旧候補として公開リポジトリの現行1bb7f2aだけを打ち消すローカルコミット6422be9を ../outputs/pstation-forward-20261108/viewer-recovery に用意。直前の公開版8d55f68とGitツリーが一致。公開ファイル58点に実データの固有文字列90種の混入なし。直前版のP’s CUBE画面試験は成功。本番への反映には利用者の承認が必要。
+- iPhone実機の続報（利用者）「なんかみれるようになってる」。復旧用コミットは手元だけで、公開中の main.dart.js が検証候補追加版1bb7f2aと一致することを再確認。白画面の原因は不明。11/9の検証候補が実機に表示されるかはまだ未確認。
+- iPhone実機の続報（画像）：P’s CUBEの「検証候補」画面が開き、Drive読み込みの汎用エラーを表示。白画面とは別の段階。Driveの指定フォルダの表示用JSONは1個で、クラウドの内容を直接確認（11/9・00:21:30・9機種）。iPhoneに設定された自分用 /exec の検証候補用の応答は未確認。エラー本文だけの確認を利用者へ依頼した。
+- その後、自分用Apps Scriptの実応答は「検証候補のDrive連携が未設定です。」。利用者が閲覧用プロジェクトに指定のスクリプト プロパティを追加して「みえた」と報告。設定後のiPhone実機表示は利用者確認。復旧用コミットは公開していない。
+
+### 2026-11-09 P-STATION ジャグラーの翌日候補を全台の結果から学ぶ再検証（Codex）
+
+- 利用者は「比較するためだけの末尾と無作為の抽出」より、全体と比較して翌日候補の精度を上げることを指定。閲覧画面だけの変更案は取り下げた。本番の差分はこの記録のみ。基準は手元 1f596ed、既存の閲覧ページは 1bb7f2a。
+- ../outputs/pstation-learning-20261109/ に比較方法を先に固定し、前回の保存控え（127日・13,601台日）を使い、日ごとに過去の結果から合算・REG・稼働・暦の重みを推定。抽選はせず全台を比較基準に使う。比較期間は過去の確認期を再利用しているので探索。10/1〜11/7の38日は全台基準より+1.51順位ポイント、現行共通母集団では現行より+1.04（週単位95%区間−0.63〜+2.54）。暦追加分+0.20。取得元置換では全台基準との差+0.70、現行との差+0.26。固定条件を満たさず「改善未確認」。報告.md、計画.md、日別係数と比較CSVに根拠を保存。
+
+|要件|結果|証拠|
+|---|---|---|
+|同じ対象台・選択数で全台と現行を比較|済|learn.py の候補数・母集団照合。10/1〜11/7の38日で全母集団1,213枠、共通1,150枠|
+|翌日情報を使わず予測する|済|learn.py の切り落とし再計算。10/1、11/7で係数と866件の点数・候補が一致|
+|取得元の差を分ける|済|source_sensitivity.py で42日・4,489台日の同日同台入力のみを置換し、元の正解で再評価|
+|今後の予測精度|未確認|締切前に候補・全台・入力・係数を保存する独立した評価案を報告に記載|
+
+- 本番DB・採点・同期・公開と前向き検証v1原本は変更していない。サイト接続なし。再現コマンドは分析フォルダの報告.md。本番への採用・公開は行っていない。
+
+### 2026-11-09 P-STATION 学習版A・B・Cと現行の前向き検証 v2 の準備（Claude）
+
+- 依頼：利用者が `../outputs/pstation-history-window-20261109/Claudeへの指示プロンプト.md` を指定。11/10の朝9時前に、学習版A（7月以降・直近84暦日）・B（7月から全履歴）・C（6月から全履歴）と現行の候補、候補にできた全台、入力の時刻、係数を保存できるようにし、営業後は候補外も含む全台結果を保存する。既存のローカル記録だけを使い、サイトへの追加アクセス・本番変更・予約の追加・push はしない。基準は手元 main `1f596ed`。
+- 成果物は `../outputs/pstation-forward-20261110/`（Git の外）。`forward2.py` が 11/9 の再検証の計算（`compare.prepare/predict`・`learn.fit_data`・`evaluate.candidate_groups/attach/labels`）をそのまま呼ぶ。外部8ファイルとこのフォルダの計算コードのSHAを `records/study.json`（11/9 08:05 作成）に固定し、変わったら止まる。DBは `mode=ro`・`PRAGMA query_only=ON`。6/1〜7/28は保存HTMLの控え（17,864行）を固定、8/1以降はその朝のDB。
+- 毎朝：`朝の予測保存.cmd`（`forward2.py morning`）。当日分だけ、9時前に保存完了したものだけを主評価に入れる（受領票 `D.saved.json`）。9時以降・計算中の9時越え・前日の入力なしは `records/misses/` に理由を残す。同じ日の再実行は最初の保存を返す。後日の再現は `replay` で別枠。
+- 営業後：`collect`（`morning` も先に実行）。全台（全機種）を原機種名・出典・取得時刻・原行SHA付きで版として追記し、対象日の7日後以降の最初の版で確定。判定は2,000G以上・同機種有効3台以上の合算中間順位、理由は低稼働・欠測・機種変更・異常・比較不足に分ける。
+- 判定：評価期間 2026-11-10〜2027-01-04（56暦日）。`review` は 2027-01-12 以降に1回だけ（途中の成績は `status` にも出さない）。主比較 C−B、併記 B−A・C−A・全台基準・現行、週ブロック95%区間、月・機種・取得元別、判定不能率。ゴーゴー3（5・15・25日）と23日の下2桁23は別表。
+
+|要件|結果|証拠|
+|---|---|---|
+|既存の計算の再利用|済|`reproduce_check.json`：11/9の保存入力で10/1・11/7のA・B・C 1,299行の点数・選択・係数、現行候補、全台基準が一致|
+|対象日以降の行を消しても予測が同じ|済|同上、本番DB（読み取り専用）で11/1・11/8・11/9も一致（`live_check.json`）、DBのSHA前後一致|
+|方式間の母集団・選択数、上書きしない、締切、結果の版、判定の時期|済|`test_forward2.py` 9件成功（合成DB、約22秒）|
+|.cmd の動作|済|11/9に実行し「初回対象日より前」で保存なし・終了コード2|
+|11/10朝の初回保存|未実施|利用者が11/10の9時前に `朝の予測保存.cmd` を実行する|
+
+- 次の手順：11/10、前日分をいつもどおり取り込んだあと、9時前に `../outputs/pstation-forward-20261110/朝の予測保存.cmd`。v1（`../outputs/pstation-forward-20261108/毎朝実行.cmd`）は別の記録で、続けるなら両方押す。詳細は同フォルダの `使い方.md`・`引継ぎ.md`・`PLAN.md`。
+- この節は手元の記録のみで、コミット・push はしていない（同じファイルに、先に書かれた未コミットの 11/9「全台の結果から学ぶ再検証（Codex）」の節があるため、まとめて扱うかを利用者に確認する）。
+- 追記（11/9 08:20、利用者「手順を減らして」「自動化できる部分は組み込んで」）：v1 の `../outputs/pstation-forward-20261108/毎朝実行.cmd` に v2 の `forward2.py morning` を続けて実行する処理を足し、毎朝はこれを1回押すだけにした（v1の計算・記録・ハッシュ固定の対象は変更なし。v1が止まってもv2は動く。最後に「すべて保存しました。」か「止まったものがあります」を表示）。元の内容の控えは作業用の一時フォルダに置いただけ（v1の保存と表示用JSONの書き出しの2行）。11/9 08:15 に実行し、v1は11/9の保存済み予測を変えずに返し、表示用JSONを書き出し、v2は「初回対象日より前」で保存なし（終了コード2、想定どおり）。AGENTS.md の「今後の予定・約束」に v2 の判定日（2027-01-12以降に1回）を足した。Windowsの予約（自動実行）は登録していない（利用者に確認中）。
+- 利用者の回答（11/9）：毎朝8:30のWindowsの予約（自動実行）は「今はしない」。登録していない。毎朝の操作は v1 の `毎朝実行.cmd` を0時〜9時に1回押すだけのまま。
+- 追記（11/9 08:35、利用者「取り込み完了して取得ブラウザが閉じられたときのみ自動実行とかできる？」→「はいお願いします」）：PCアプリに自動実行を組み込んだ（本番のPCアプリの変更。利用者が承認）。
+  - `database/forward_validation.py`（新規）：取り込み窓が自分で閉じ、知らせが完了のとき（サイトセブンは完了の知らせがあるとき、P’s CUBEは `pscube_import.capture_complete`＝「すべて取り込みました」。403などで止まって閉じたときは除く）、かつ日本時間0:00〜8:59だけ、`毎朝実行.cmd` と同じ3手順（v1 `forward.py daily` → 成功かつ viewer-sync-dir.txt があれば `pscube_validation_export.py` → v2 `forward2.py morning`）を画面なしで裏で動かす。cmd を直接動かさないのは、出力を受け取る形で動かすと chcp 65001 の .cmd の日本語の行が崩れて実行された（11/9 実測、「'画面を閉じます。' is not recognized」）ため。同時に2つは動かさない。結果は `database/data/forward-validation.log` と errors.log（forward.auto）、ログ欄に1行。ファイルが無いPCでは何もしない。
+  - `database/app.py`：`watch_capture_window` の after_auto に、サイトセブンは `save_forward_after`、P’s CUBE は `after_pscube`（`save_forward_after` のあとに今までの `sleep_after_pscube`。5分後のスリープはそのまま）。時刻の外で完了したときはログ欄に「0時を過ぎてから毎朝実行.cmdを押して」と出す。
+  - `database/pscube_import.py`：完了の判定を `capture_complete` に切り出し、`capture_problems` も同じ関数を使う（判定は同じ）。
+  - 試験：`database/tests/test_forward_validation.py` 11件（日本時間の境目 23:59:59/0:00/8:59:59/9:00、UTC入力、完了/×/403/他店の取り込み、手順の並びが毎朝実行.cmdと同じ、v1失敗時は書き出しを飛ばしv2は動く、本物のPythonで日本語の出力、同時実行なし、app.pyのつなぎ）。本物の手順を画面なしで実行し、v1は11/9の保存済みを返し、書き出し成功、v2は「初回対象日より前」（想定どおり）、0.7秒。
+  - PCの全試験：`database/.venv/Scripts/python.exe -m unittest discover -s tests`（database で実行）959件成功（11/9、直したあとの版）。コミット・push・ビルドはしていない（変更は AGENTS.md・AI_COLLABORATION.md・database/app.py・database/pscube_import.py・新規 database/forward_validation.py・database/tests/test_forward_validation.py が手元にあるだけ）。PCアプリは次に `start.cmd` で起動したときから自動実行が効く（起動中のアプリには入っていない）。実際の取り込み完了→自動保存は11/10の朝に初めて起きる（未確認）。
 
 ## 2026-11-10 サイトセブン：500G未満は取り込まない・確定を23:30に・機種一覧の横に取り込み状況（Claude）
 
@@ -1837,3 +1884,4 @@
 - コミットは自分の変更だけ。`database/app.py`・`database/pscube_import.py`・`AGENTS.md`・`AI_COLLABORATION.md` には別の作業（前向き検証の自動実行）の未コミットの変更があるので、HEAD の内容に私の変更だけを当てたものを index に置いた（作業コピーの相手の変更はそのまま）。
 - 反映：同期スクリプト `pscube_cloud_sync.gs` は利用者の貼り替えが必要（設定行 `PSCUBE_HISTORY_VIEWER = true` は生成物のまま true）。Android は次のAPKから。
 - 送信（11/10 07:17）：`80c16e9` を `tools/push_ci.py` で正本（imakurudev-eng/database）へ1回送った。CI https://github.com/imakurudev-eng/database/actions/runs/42710578148 は確認時に実行中。APKは作っていない。同期スクリプトの貼り替えとPCアプリの起動し直しは利用者がする。
+- 送信（11/10、利用者「お願い」）：上の 11/9「取り込み完了で前向き検証を自動実行」（`database/forward_validation.py`・`database/tests/test_forward_validation.py`・`database/app.py`・`database/pscube_import.py` の `capture_complete`・AGENTS.md の予定の1行）と、11/9 の記録の節（Codex の再検証・Claude の v2 準備）を、まとめて1つのコミットにして送った。窓を2つ開けるようにした `80c16e9` の上でも、サイトセブンの窓が自動で閉じたときに `save_forward_after` が呼ばれる（作業コピーの app.py 1192行目）。試験：`database/.venv/Scripts/python.exe -m unittest tests.test_forward_validation` 11件成功（11/10）。PCの全試験は同じ作業コピーで962件成功（80c16e9 の作業中、11/10）。2つの窓が両方最後まで取り込むと自動実行は2回呼ばれるが、同時には動かず、v1 は2回目に保存済みの予測を返す。

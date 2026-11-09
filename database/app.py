@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
 import error_log
+import forward_validation
 import input_versions
 import power
 import pscube_import
@@ -1038,6 +1039,37 @@ def main():
 
         root.after(2000, check)
 
+    def save_forward_after(label, message):
+        """取り込みが最後まで終わって窓が自分で閉じたら、P-STATIONの前向き検証（研究用の記録）を裏で保存する
+        （2026-11-09 利用者「取り込み完了して取得ブラウザが閉じられたときのみ自動実行」、forward_validation.py）。
+        日本時間0〜9時だけ。結果はログ欄に1行出す。失敗しても取り込みには影響しない。"""
+        results = []
+        try:
+            why = forward_validation.start(label, message, DATA_DIR, results.append)
+        except Exception as error:  # noqa: BLE001 - 研究用の記録の失敗で画面を止めない
+            error_log.record(DATA_DIR, 'forward.auto', error)
+            return
+        if why:
+            if forward_validation.finished(label, message) and not why.startswith('前向き検証のファイル'):
+                logbox.insert('end', f'前向き検証（P-STATION）：{why}。必要なら0時を過ぎてから毎朝実行.cmdを押してください。\n')
+                logbox.see('end')
+            return
+        logbox.insert('end', '前向き検証（P-STATION）の保存を裏で始めました。\n')
+        logbox.see('end')
+
+        def poll():
+            if not results:
+                root.after(2000, poll)
+                return
+            logbox.insert('end', f'{results[0]}。\n')
+            logbox.see('end')
+
+        root.after(2000, poll)
+
+    def after_pscube(message, since):
+        save_forward_after('P’s CUBE', message)
+        sleep_after_pscube(message, since)
+
     def sleep_after_pscube(message, since):
         """P’s CUBEの自動取り込みが終わって窓が自分で閉じたら、結果を確かめて記録し、5分後にPCをスリープする
         （2026-11-06 利用者「取り込み後問題なかったか確認し、5分後にスリーブ」、power.py）。5分の間は取り消せる。"""
@@ -1157,6 +1189,7 @@ def main():
         # 自動取り込みが最後まで終わると窓は自分で閉じる（2026-11-07）。閉じたら結果をログ欄に出す（P’s CUBEと同じ）。
         import site777_browser
         watch_capture_window(process, 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR),
+                             after_auto=lambda message: save_forward_after('サイトセブン', message),
                              take_stop=lambda: site777_browser.take_stop_message(DATA_DIR))
         logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
                       'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')
@@ -1185,7 +1218,7 @@ def main():
             messagebox.showerror('起動できません', f'P’s CUBEを開始できません：{exc}', parent=root)
             return
         watch_capture_window(process, 'P’s CUBE', lambda: pscube_import.take_finished_message(DATA_DIR),
-                             after_auto=lambda message: sleep_after_pscube(message, since))
+                             after_auto=lambda message: after_pscube(message, since))
 
     def values():
         name, target = machine.get().strip(), day.get().strip()

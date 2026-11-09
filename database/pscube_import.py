@@ -2264,12 +2264,19 @@ PROBLEM_PLACES = ('pscube.save', 'pscube.read', 'pscube.net_missing', 'pscube.au
 DONE_PREFIXES = ('すべて取り込みました', )
 
 
+def capture_complete(message) -> bool:
+    """窓が自分で閉じたときの文が「最後まで取り込めた」か（403などで止まって閉じたときは False）。
+    取り込み後の確認（capture_problems）と前向き検証の自動保存（forward_validation）で同じ判定を使う。"""
+    text = str(message or '')
+    return bool(text.startswith(DONE_PREFIXES) or re.match(r'\d+/\d+の分をすべて取り込みました', text))
+
+
 def capture_problems(data_dir, message, since) -> list[str]:
     """自動取り込みが終わって窓が閉じたあとの確認。最後まで取り込めたか（完了の文）と、窓を開いてから（since、
     ISO形式の時刻）の errors.log の気になる記録を、利用者に見せる短い文の一覧にする。空なら問題なし。"""
     problems = []
     text = str(message or '')
-    if not (text.startswith(DONE_PREFIXES) or re.match(r'\d+/\d+の分をすべて取り込みました', text)):
+    if not capture_complete(text):
         problems.append('最後まで取り込めていません：' + text[:120])
     counts = {}
     try:
