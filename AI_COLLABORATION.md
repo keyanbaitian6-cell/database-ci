@@ -1956,3 +1956,8 @@
 - push_ci.pyの素の実行は末尾.gitなしURLで認証エラー。コマンド単位のgit insteadOf設定で両リポジトリを.git付きの同じ宛先へ解決するとdry-run成功。期間・祖先・送信直前のmain照会は既存スクリプトのまま。認証情報やコードを変えていない。
 
 - 全体ゲート `/workspace/work/perf-gate` は **ALL PASSED**。PC963件、UTCのイベント試験28件、Flutter826件、静的解析（エラー・警告なし）、新規Webビルド、viewer/share stage、JS・ブラウザ全試験が成功。重複起動した確認は停止し、本項の結果に混ぜていない。公開用stageは viewer `/workspace/work/perf-public-viewer`、share `/workspace/work/perf-public-share`（版e0cf62eb25f3）。閲覧ページのstageには今回の採点キャッシュと、既に正本へ反映済みの80c16e9のサイトセブン確定時刻23:30のWeb共通処理も含まれる。NOTICES差分はライセンスの順序・改行のみ。
+
+- 完了追記：実装コミット **76da7bfb21e1ecfc07f42227d6ce25c233919ebb** をpush_ci.pyで正本mainへ送信。全体ゲートはJS/画面 **83ファイル**を含めALL PASSED。CI https://github.com/imakurudev-eng/database/actions/runs/42812053376 は公開確認時点で実行中（手元の全体ゲート成功と区別）。
+- Web公開：閲覧ページ **875f94942f79b441869b133b93a5670f55cb5bb7**、共有カレンダー **fc10f3b**（版 **e0cf62eb25f3**）。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42812076735 と https://github.com/keyanbaitian6-cell/database-share/actions/runs/42812089713 は両方成功。公開URLのmain.dart.jsと共有index.htmlはstageとバイト一致。
+- 公開URLでtest_viewer_parts_browser.mjsが成功（メルヘン・P’s CUBE、閲覧・共有の両ページ、初回2日→更新1日→再読込0日、実IndexedDB・Googleだけ合成）。test_share_viewer_browser.mjsも公開URLで成功（320/393/1280px、カレンダー・日別・店舗・月・自分用保存保持）。初回の公開画面試験は環境のHTTPS中継証明書をChromiumが信頼せず失敗。通常の証明書検証が通るcurlで得た公開サイトの証明書の公開鍵だけをブラウザへ固定して再確認。証明書エラー全般の無効化や製品コードの変更は行っていない。
+- 上表の「全体回帰・新規ビルド・画面試験」「ソース送信・Web公開」は **済**。共有記録も正本へ反映。iPhone/Windows実機の体感速度は未確認。AndroidアプリのAPK作成・端末導入、Googleスクリプト更新・実データの同期・段階Bの移行は今回行っていない。PCのソースは更新済みだが、利用者のWindows側での取得・再起動は利用者側の操作。公開Webは読み込み直して確認できる。
