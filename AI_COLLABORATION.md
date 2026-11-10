@@ -1961,3 +1961,9 @@
 - Web公開：閲覧ページ **875f94942f79b441869b133b93a5670f55cb5bb7**、共有カレンダー **fc10f3b**（版 **e0cf62eb25f3**）。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42812076735 と https://github.com/keyanbaitian6-cell/database-share/actions/runs/42812089713 は両方成功。公開URLのmain.dart.jsと共有index.htmlはstageとバイト一致。
 - 公開URLでtest_viewer_parts_browser.mjsが成功（メルヘン・P’s CUBE、閲覧・共有の両ページ、初回2日→更新1日→再読込0日、実IndexedDB・Googleだけ合成）。test_share_viewer_browser.mjsも公開URLで成功（320/393/1280px、カレンダー・日別・店舗・月・自分用保存保持）。初回の公開画面試験は環境のHTTPS中継証明書をChromiumが信頼せず失敗。通常の証明書検証が通るcurlで得た公開サイトの証明書の公開鍵だけをブラウザへ固定して再確認。証明書エラー全般の無効化や製品コードの変更は行っていない。
 - 上表の「全体回帰・新規ビルド・画面試験」「ソース送信・Web公開」は **済**。共有記録も正本へ反映。iPhone/Windows実機の体感速度は未確認。AndroidアプリのAPK作成・端末導入、Googleスクリプト更新・実データの同期・段階Bの移行は今回行っていない。PCのソースは更新済みだが、利用者のWindows側での取得・再起動は利用者側の操作。公開Webは読み込み直して確認できる。
+
+### 2026-11-10 共有カレンダーの見やすさを利用者が確認（Codex）
+
+- 利用者が公開後に「確認した。みやすいよ」と報告。共有カレンダーの見やすさは利用者確認済み。確認端末・閲覧した版・速度やメモリの評価は申告されておらず、実機性能の検証済みとは扱わない。
+- 記録前に両mainをfetchし、正本d2418cdまでfast-forward。他AIの性能改善と公開記録を保持した。コード変更・試験・ビルド・再公開は行わない。
+- あわせて、先行修正52e8708のCI https://github.com/imakurudev-eng/database/actions/runs/42808670488 が完了・successであることをGitHubから確認。これは後続7e74cdc等のCI結果とは別。
