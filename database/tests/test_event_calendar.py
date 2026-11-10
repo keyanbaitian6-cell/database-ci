@@ -200,6 +200,36 @@ class PscubeCalendarTests(unittest.TestCase):
         self.store.import_page({'format': 'pscube-viewer', 'version': 1, 'source_url': url,
                                 'machines': machines, 'records': []}, url)
 
+    def test_calendar_decodes_only_requested_days_and_preserves_rates(self):
+        import json
+        from unittest.mock import patch
+        from event_calendar import PscubeEvents
+        for day in ['2026-09-30', '2026-10-01', '2026-10-31', '2026-11-01']:
+            for rate in ['5', '20']:
+                row = dict(store='c740601', day=day, rate=rate, rack=1,
+                           machine='試験機種', games=3000, bb=10, rb=5,
+                           net_medals=100 if rate == '20' else -50)
+                self.store.db.execute('INSERT INTO records VALUES (?,?)',
+                                      (day + rate, json.dumps(row)))
+        self.store.db.commit()
+        original = json.loads
+        decoded_days = []
+        def decode(text, *args, **kwargs):
+            value = original(text, *args, **kwargs)
+            if isinstance(value, dict) and 'net_medals' in value:
+                decoded_days.append(value['day'])
+            return value
+        with patch('event_calendar.json.loads', side_effect=decode):
+            nets = PscubeEvents(self.path).nets('pscube', '2026-10-01', '2026-10-31')
+            self.assertEqual(set(decoded_days), {'2026-10-01', '2026-10-31'})
+            self.assertEqual(len(decoded_days), 4)
+            decoded_days.clear()
+            rows = PscubeEvents(self.path).day_records('pscube', '2026-10-31')
+            self.assertEqual(decoded_days, ['2026-10-31'] * 2)
+        self.assertEqual(set(nets), {'2026-10-01', '2026-10-31'})
+        self.assertEqual([r['net'] for r in rows], [-50, 100])
+        self.assertEqual([r['machine'] for r in rows], ['5スロ 試験機種', '20スロ 試験機種'])
+
     def test_future_days_and_a_range_get_every_rate(self):
         self.store.set_date_event_days(['2026-10-20', '2026-10-21'], '周年', now=at('2026-10-08T12:00:00+09:00'))
         events = [e for e in self.store.date_events() if e['day'] == '2026-10-21']

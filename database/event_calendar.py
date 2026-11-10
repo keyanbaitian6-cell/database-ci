@@ -523,7 +523,9 @@ class PscubeEvents:
         import pscube_import
         store = pscube_import.PscubeStore(self.db_path)
         try:
-            records = [json.loads(row[0]) for row in store.db.execute('SELECT payload FROM records')]
+            records = [json.loads(row[0]) for row in store.db.execute(
+                "SELECT payload FROM records WHERE json_extract(payload, '$.day') BETWEEN ? AND ?",
+                (first, last))]
         finally:
             store.close()
         return pscube_day_nets(records, first, last)
@@ -535,8 +537,9 @@ class PscubeEvents:
         import pscube_import
         store = pscube_import.PscubeStore(self.db_path)
         try:
-            records = [r for r in (json.loads(row[0]) for row in store.db.execute('SELECT payload FROM records'))
-                       if r.get('day') == day]
+            records = [json.loads(row[0]) for row in store.db.execute(
+                "SELECT payload FROM records WHERE json_extract(payload, '$.day') = ?",
+                (day,))]
         finally:
             store.close()
         from pscube_report import net_value

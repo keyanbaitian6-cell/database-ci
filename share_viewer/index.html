@@ -43,6 +43,9 @@
     font-family: var(--font-text); font-size: 17px; line-height: 1.47; letter-spacing: -0.374px;
     font-feature-settings: "palt"; -webkit-font-smoothing: antialiased;
   }
+  /* 読み込み文の余白が上へ抜けず、本文の完成でフッターが画面内を横切らないようにする。 */
+  #app { display: flow-root; }
+  #app:has(> .status) { min-height: calc(100vh - 53px); }
   button { font: inherit; color: inherit; letter-spacing: inherit; }
   .num { font-variant-numeric: tabular-nums; }
   .plus { color: var(--color-apple-blue); }
