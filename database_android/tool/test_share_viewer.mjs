@@ -586,3 +586,18 @@ test('換算額：0・小額の正負・欠測、丸めない58枚単価',async(
   assert.equal(exchangeValue(81073,58),'約＋139.8万円');
   assert.equal(exchangeValue(58,58),'約＋1,000円');
 });
+
+
+test('推定差枚の説明は取得元別・混在に対応し、確定値に誤った推定説明を付けない',async()=>{
+ const {netEstimateNote}=await import('../../share_viewer/data.mjs');
+ const site={store:'pscube:c740601:20',source_site:'site777',estimated:true,net:1234};
+ assert.match(netEstimateNote([site]),/サイトセブン.*グラフ画像/);
+ assert.doesNotMatch(netEstimateNote([site]),/アナスロ|50枚/);
+ assert.match(netEstimateNote([site]),/1枚単位の精度を保証するものではありません/);
+ const a={...site,source_site:'anaslo'};
+ assert.match(netEstimateNote([a]),/アナスロ.*BB・RB・G数/);
+ assert.match(netEstimateNote([a,site]),/サイトセブン/);
+ assert.match(netEstimateNote([a,site]),/アナスロ/);
+ assert.equal(netEstimateNote([{...site,estimated:false}]),'');
+ assert.equal(netEstimateNote([{...site,net:null}]),'');
+});

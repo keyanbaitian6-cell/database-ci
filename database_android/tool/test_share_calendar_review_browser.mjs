@@ -71,12 +71,15 @@ const birthdays = {entries: [
 const responses = {'': meruhen, pscube, events: {format: 'database-events', version: 1, kind: 'meruhen', events: []}, 'pscube-events': shared};
 const id = 'AKfycbTEST' + 'x'.repeat(40);
 
+
+responses.rainbow = {marks:[]};
+responses['event-history'] = {format:'database-event-history',version:1,base:{version:2,store:'nagamachiminami',symbols:['😀'],weeks:[]}};
 const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
-async function setup(m,p,width=393){
- const ctx=await browser.newContext({viewport:{width,height:1100},serviceWorkers:'block'});let fail=false;
- await ctx.route('https://script.google.com/**',r=>{const f=new URL(r.request().url()).searchParams.get('file')??'';return r.fulfill({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(f===''?m:f==='pscube'?(fail?{error:'通信失敗'}:p):responses[f]??{error:'no'})});});
+async function setup(m,p,width=393,initialAux=[]){
+ const ctx=await browser.newContext({viewport:{width,height:1100},serviceWorkers:'block'});let fail=false, auxFailed=initialAux;
+ await ctx.route('https://script.google.com/**',r=>{const f=new URL(r.request().url()).searchParams.get('file')??'';return r.fulfill({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(f===''?m:f==='pscube'?(fail?{error:'通信失敗'}:p):auxFailed.includes('bad:'+f)?{marks:'不正',events:'不正',format:'不正'}:auxFailed.includes(f)?{error:'補助通信失敗'}:responses[f]??{error:'no'})});});
  const page=await ctx.newPage();await page.goto(`${pageUrl}#s=${id}`);await page.waitForFunction(()=>!document.querySelector('#reload').disabled && !document.querySelector('#reload').hidden);
- return {ctx,page,setFailure(v){fail=v}};
+ return {ctx,page,setFailure(v){fail=v},setAuxFailures(v){auxFailed=v}};
 }
 try{
  const m={...meruhen,exported_at:'2026-10-31T12:00:00+09:00'},p={...pscube,exported_at:'2026-10-20T12:00:00+09:00'};
@@ -90,11 +93,19 @@ try{
   a.setFailure(false);await a.page.locator('#reload').click();await a.page.waitForFunction(()=>!document.querySelector('#reload').disabled);
   assert.match(await a.page.locator('[data-source-status]').innerText(),/成功/);
   assert.equal(await a.page.locator('[role=status]').count(),0);
+  a.setAuxFailures(['pscube-events','rainbow','event-history']);
+  await a.page.locator('#reload').click();await a.page.waitForFunction(()=>!document.querySelector('#reload').disabled);
+  assert.match(await a.page.locator('[data-source-status]').innerText(),/成功/);
+  const aux=await a.page.locator('[data-aux-warning]').innerText();
+  assert.match(aux,/イベント：更新失敗・保存済み/);assert.match(aux,/🌈の印：更新失敗・保存済み/);assert.match(aux,/履歴・顔文字・末尾の印：更新失敗・保存済み/);
+  assert.match(await a.page.locator(`[data-open="${d2}"]`).innerText(),/末尾イベ/);
+  if(process.env.CALENDAR_PREVIEW_DIR) await a.page.screenshot({path:`${process.env.CALENDAR_PREVIEW_DIR}/aux-failure-${width}.png`});
+  a.setAuxFailures([]);await a.page.locator('#reload').click();await a.page.waitForFunction(()=>!document.querySelector('#reload').disabled);assert.equal(await a.page.locator('[data-aux-warning]').count(),0);
   await a.ctx.setOffline(true);await a.page.locator('#reload').click();assert.match(await a.page.locator('[data-source-status]').innerText(),/オフライン/);
   await a.ctx.setOffline(false);await a.page.locator('#reload').click();await a.page.waitForFunction(()=>!document.querySelector('#reload').disabled);
   await a.page.reload();await a.page.waitForSelector('.grid');assert.match(await a.page.locator('[data-source-status]').innerText(),/保存済み/);
   await a.page.locator('#reload').click();await a.page.waitForFunction(()=>!document.querySelector('#reload').disabled);
-  if(process.env.CALENDAR_PREVIEW_DIR) await a.page.screenshot({path:`${process.env.CALENDAR_PREVIEW_DIR}/pstation-${width}.png`});
+  if(process.env.CALENDAR_PREVIEW_DIR) { await a.page.screenshot({path:`${process.env.CALENDAR_PREVIEW_DIR}/pstation-${width}.png`}); if(width===393) await a.page.locator('.stage > div.card').screenshot({path:`${process.env.CALENDAR_PREVIEW_DIR}/calendar-grid.png`}); }
   await a.page.getByRole('button',{name:'幸町',exact:true}).click();
   assert.match(await a.page.locator('[data-month-net]').innerText(),/取得分 1日/);
   await a.page.locator('.exchange-info summary').click();assert.match(await a.page.locator('.exchange-info').innerText(),/過去月も現在指定/);
@@ -113,5 +124,15 @@ try{
  assert.match(await c.page.locator('[data-month-net]').innerText(),/—/);assert.match(await c.page.locator('[data-record-issues]').innerText(),/集計から除外/);if(process.env.CALENDAR_PREVIEW_DIR) await c.page.screenshot({path:`${process.env.CALENDAR_PREVIEW_DIR}/conflict.png`});await c.ctx.close();
  const d=await setup({...m,records:[]},{...p,records:[]});await d.page.waitForSelector('.grid');assert.match(await d.page.locator('[data-month-rate]').innerText(),/13%/);assert.match(await d.page.locator('[data-month-net]').innerText(),/—/);await d.ctx.close();
  const e=await setup({...m,records:[],day_summaries:[]},{...p,records:[]});await e.page.waitForSelector('[role=status]');assert.match(await e.page.locator('#app').innerText(),/表示できるデータがありません/);await e.ctx.close();
+ const missing=await setup(m,p,393,['rainbow']);await missing.page.waitForSelector('.grid');assert.match(await missing.page.locator('[data-aux-warning]').innerText(),/保存データなし/);await missing.ctx.close();
+ const malformed=await setup(m,p,393,['bad:rainbow','bad:event-history']);await malformed.page.waitForSelector('.grid');assert.match(await malformed.page.locator('[data-aux-warning]').innerText(),/保存データなし/);await malformed.ctx.close();
+ const estimatedP={...p,records:[...p.records,{store:'c740601',rate:'20',day:d2,machine:'サイトセブン補完',rack:3,games:6000,bb:20,rb:15,source_site:'site777',net_estimate:{value:1234,sure:true,method:'site777-axis-pixels-v2'}}]};
+ const source=await setup(m,estimatedP);await source.page.waitForSelector('.grid');await source.page.getByRole('button',{name:'P-STATION',exact:true}).click();
+ assert.match(await source.page.locator('[data-month-net]').innerText(),/推定含む/);
+ await source.page.locator(`[data-open="${d2}"]`).click();
+ const detail=await source.page.locator('.sheet').innerText();assert.match(detail,/サイトセブンの推定差枚.*グラフ画像/);assert.doesNotMatch(detail,/アナスロのグラフとBB/);
+ if(process.env.CALENDAR_PREVIEW_DIR) await source.page.locator('.sheet').evaluate(el=>el.scrollTop=el.scrollHeight);
+ if(process.env.CALENDAR_PREVIEW_DIR) await source.page.screenshot({path:`${process.env.CALENDAR_PREVIEW_DIR}/source-explanation.png`});
+ await source.ctx.close();
  console.log('PASS: 重複・競合・店舗日時・失敗復旧・保存済み復帰・集計のみ・全件空・文字拡大');
 }finally{await browser.close();server.close()}

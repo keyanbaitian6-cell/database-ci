@@ -71,6 +71,9 @@ const birthdays = {entries: [
 const responses = {'': meruhen, pscube, events: {format: 'database-events', version: 1, kind: 'meruhen', events: []}, 'pscube-events': shared};
 const id = 'AKfycbTEST' + 'x'.repeat(40);
 
+
+responses.rainbow = {marks:[]};
+responses['event-history'] = {format:'database-event-history',version:1,base:{version:2,store:'nagamachiminami',symbols:['😀'],weeks:[]}};
 const browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox']});
 try {
   for (const width of [320, 393, 1280]) {
@@ -319,12 +322,12 @@ try {
     failing = {pscube: {error: '閲覧用の日別ファイルが見つかりません。同期を再実行してください。'}};
     await page.locator('#reload').click();
     await page.waitForFunction(() => !document.querySelector('#reload').disabled);
-    assert.match(await page.locator('.data-warning[role="status"]').innerText(),
+    assert.match(await page.locator('.data-warning[role="status"]:not([data-aux-warning])').innerText(),
       /一部の更新に失敗しました（P-STATION：閲覧用の日別ファイルが見つかりません。同期を再実行してください。）/);
     failing = {'': 500, pscube: {error: '閲覧用が更新されました。もう一度読み込んでください。'}};
     await page.locator('#reload').click();
     await page.waitForFunction(() => !document.querySelector('#reload').disabled, null, {timeout: 30000});
-    assert.match(await page.locator('.data-warning[role="status"]').innerText(),
+    assert.match(await page.locator('.data-warning[role="status"]:not([data-aux-warning])').innerText(),
       /更新できませんでした（メルヘン：読み込めませんでした（500）、P-STATION：閲覧用が更新されました。もう一度読み込んでください。）/);
     await context.close();
   }
