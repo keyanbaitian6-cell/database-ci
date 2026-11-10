@@ -1791,6 +1791,34 @@ class RobustnessTests(unittest.TestCase):
             self.assertEqual(len(list(deleted_dir(data_dir).glob('*.json'))), 1)
             db.close()
 
+    def test_undo_and_deleted_copies_survive_a_failed_write(self):
+        """置き換えの直前で失敗しても、前回の取り消しの控えは壊れず、半端な削除の控え・一時ファイルも残らない。"""
+        from datetime import datetime
+        from unittest.mock import patch
+        from contextlib import closing
+        from core import UNDO_NAME, deleted_dir, keep_deleted, remember_for_undo, undo_last_save
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
+            data_dir = Path(folder)
+            with closing(Store(data_dir / 'test.db')) as db:
+                first = row(rack=1)
+                remember_for_undo(db, data_dir, '1回目', [first])
+                db.save([first])
+                before = (data_dir / UNDO_NAME).read_bytes()
+                with patch('file_io.os.replace', side_effect=OSError('disk full')):
+                    with self.assertRaises(OSError):
+                        remember_for_undo(db, data_dir, '2回目', [row(rack=2)])
+                    with self.assertRaises(OSError):
+                        keep_deleted(data_dir, 'x', [first], now=datetime(2026, 9, 13, 12, 0, 0))
+                self.assertEqual((data_dir / UNDO_NAME).read_bytes(), before)
+                self.assertEqual(list(deleted_dir(data_dir).iterdir()), [])
+                self.assertEqual(sorted(p.name for p in data_dir.iterdir() if p.suffix == '.tmp'), [])
+                self.assertEqual(undo_last_save(db, data_dir), '1回目')
+                self.assertEqual(db.rows(), [])
+                target = keep_deleted(data_dir, 'x', [first], now=datetime(2026, 9, 13, 12, 0, 0))
+                self.assertEqual([p.name for p in deleted_dir(data_dir).iterdir()], [target.name])
+                import_backup(db, target)
+                self.assertEqual([r['rack'] for r in db.rows()], [1])
+
     def test_browser_data_is_checked_against_the_real_page_url(self):
         from browser_import import page_mismatch
         list_url = 'https://meruhenworld.pt.teramoba2.com/saiwaichou/rack_info_kt/?kind_code=21&target_date=2026-09-25'

@@ -1992,3 +1992,12 @@
 - 利用者が公開後に「確認した。みやすいよ」と報告。共有カレンダーの見やすさは利用者確認済み。確認端末・閲覧した版・速度やメモリの評価は申告されておらず、実機性能の検証済みとは扱わない。
 - 記録前に両mainをfetchし、正本d2418cdまでfast-forward。他AIの性能改善と公開記録を保持した。コード変更・試験・ビルド・再公開は行わない。
 - あわせて、先行修正52e8708のCI https://github.com/imakurudev-eng/database/actions/runs/42808670488 が完了・successであることをGitHubから確認。これは後続7e74cdc等のCI結果とは別。
+
+## 2026-11-11 クラウド作業2件をWindowsのmainへ取り込み（Codex）
+
+- 依頼：クラウドで作業した内容のうちWindows側にない2件を取り込む。開始時のPC mainは `43b6387`、正本は `d9c081f`、`database-ci/main` は `7a9df13`（正本の祖先）。GitHub上の両mainは反映直前にも確認した。
+- 11/10の正本5コミット（共有カレンダーの取得元説明・部分更新と軽量化、PCのP’s CUBEカレンダーの日付絞り込み、閲覧ページの表示用採点キャッシュ、確認記録）を `d10cf52` で統合した。PC側のサイトセブン修正 `43b6387` と双方の作業記録を保持。P-STATION前向き検証v2の既存の未コミット追記7行は、元の場所に未コミットのまま戻した。
+- [11/5のClaude修正](https://github.com/imakurudev-eng/database/commit/3cdf38c55068ed873220210a1c8fcbb59fe209ce) から、PCの削除控えと保存取り消し控えを `atomic_writer` で保存する差分と、置き換え失敗時の回帰試験を現行コードへ反映した。ファイル名、JSONの項目、削除控えの7日保持は従来どおり。元コミットの未使用変数整理と生成済みの照合版差分は今回の取り込み範囲から外した。
+- Windowsの検証用コピーで `TZ=JST-9` のUTCオフセットが+09:00と確認し、`python -m unittest discover -s tests` を実行。967件中950件成功。Git Bashの起動制限と一時リポジトリへのGit接続で止まった17件は、実行制限のない環境で該当2ファイルを再実行し、`test_project_python.py` 12件と `test_push_ci.py` 15件が全件成功した。控えの回帰試験1件とPCカレンダー28件も個別に成功。
+- Flutter `test/viewer_data_test.dart` 12件、共有カレンダーのJS単体33件、Chromiumの画面試験4本（共有カレンダー3本、サイトセブン1本）が成功。検証用の空データと合成応答を使用。実サイト・実データ・Windows WebView2実機での動作確認は今回の範囲外。
+- 今回はWindowsのソース取り込みまで。GitHubへのpush、Web再公開、APK作成、Googleの同期処理は実施していない。

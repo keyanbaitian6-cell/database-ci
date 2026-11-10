@@ -2176,10 +2176,10 @@ def remember_for_undo(store, data_dir, label, rows, previous=None):
     if len(previous) != len(keys):
         raise ValueError('取り消し控えの件数が一致しません。')
     entries = [dict(key=list(k), previous=p) for k, p in zip(keys, previous)]
-    path = Path(data_dir) / UNDO_NAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(label=label, saved_at=datetime.now().astimezone().isoformat(),
-                                    entries=entries), ensure_ascii=False), encoding='utf-8')
+    # 書きかけで落ちても、前回の控えか今回の控えのどちらかが完全な形で残るようにする。
+    with atomic_writer(Path(data_dir) / UNDO_NAME) as out:
+        json.dump(dict(label=label, saved_at=datetime.now().astimezone().isoformat(),
+                       entries=entries), out, ensure_ascii=False)
 
 
 def delete_records(store, data_dir, day, location=None, machine=None, *, defer_outputs=False):
@@ -2228,7 +2228,10 @@ def keep_deleted(data_dir, label, payloads, now=None):
                              label=label), ensure_ascii=False)[:-1]
     body = ',\n'.join(json.dumps(p, ensure_ascii=False) for p in rows)
     target = folder / f'database-deleted-{now:%Y%m%d-%H%M%S}.json'
-    target.write_text(f'{header}, "records": [\n{body}\n]}}', encoding='utf-8')
+    # 削除の唯一の控えなので、途中で落ちても読めない半端なファイルを残さない（一時ファイルは
+    # `.` 始まりの `.tmp` で、下の掃除や「バックアップを読み込む」の対象にならない）。
+    with atomic_writer(target) as out:
+        out.write(f'{header}, "records": [\n{body}\n]}}')
     for old in folder.glob('database-deleted-*.json'):
         try:
             stamp = datetime.strptime(old.stem[len('database-deleted-'):], '%Y%m%d-%H%M%S')
