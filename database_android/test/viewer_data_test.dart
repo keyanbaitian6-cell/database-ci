@@ -22,6 +22,31 @@ Map<String, dynamic> raw(
 ).copyWith(rack: rack, machine: machine, games: games).toJson();
 
 void main() {
+  test('表示採点は同じ版で再利用し、訂正後の版で作り直す', () {
+    final data = ViewerData.parse(
+      jsonEncode({
+        'records': [raw(1), raw(2)],
+      }),
+    );
+    final record = data.records.first;
+    final first = data.displayScore(record);
+    expect(identical(first, data.displayScore(record)), isTrue);
+    expect(
+      first.total,
+      scoreRecord(record, data.records, sameDayForNew: true).total,
+    );
+    final next = ViewerData(records: [record, ...data.records.skip(1)]);
+    expect(identical(first, next.displayScore(record)), isFalse);
+    final corrected = record.copyWith(games: 0);
+    expect(data.displayScore(corrected).total, isNull);
+    // たくさんの日を開いた後も、再計算で同じ値を返す。
+    for (var i = 0; i < 1030; i++) {
+      data.displayScore(record.copyWith(rack: 1000 + i));
+    }
+    expect(identical(first, data.displayScore(record)), isFalse);
+    expect(data.displayScore(record).total, first.total);
+  });
+
   test('履歴の完成日一覧で消した古い日を復活させず、対象外の日は保持する', () {
     final stored = jsonEncode({
       'records': [

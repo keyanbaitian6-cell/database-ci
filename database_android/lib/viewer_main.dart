@@ -22,7 +22,6 @@ import 'pscube_validation_page.dart';
 import 'rack_suffix.dart';
 import 'rainbow_marks.dart';
 import 'remote_curve.dart';
-import 'scoring.dart';
 import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
@@ -1015,9 +1014,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     ];
     final key = (_dataVersion, store, day);
     if (_scoredFor != key) {
-      _digest = [
-        for (final r in dayRows) (r, scoreRecord(r, all, sameDayForNew: true)),
-      ];
+      _digest = [for (final r in dayRows) (r, data.displayScore(r))];
       _candidates = dayCandidates(dayRows, all, excludeNormal: true);
       _comment = day == null
           ? ''

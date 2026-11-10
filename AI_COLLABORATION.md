@@ -1910,3 +1910,85 @@
 - Windowsのブラウザ試験環境：`PYTHONUTF8=1`、`PLAYWRIGHT_MODULE=file:///C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs`、`PLAYWRIGHT_BROWSERS_PATH=C:\Users\keyan\AppData\Local\ms-playwright`。既存のPlaywright／Chromiumを使用。最初はモジュール未指定・サンドボックス別キャッシュで起動できず、既存パスを指定して権限拡張後に実行した。WebView2もローカルHTTPだけを使用して権限拡張で実行。
 - 変更ファイル：`database/assets/site777_capture.js`、`site777_overlay.js`、`database/site777_session.py`、`database/tests/test_site777_session.py`、`smoke_site777_session.py`、`database_android/tool/test_site777_capture_browser.mjs`、共有記録の今回の節。
 - 反映範囲：PCソースを修正しローカルコミットする。push承認は今回受けていないため送信しない。CI・全体ビルドゲート・EXE/APK/Webビルド・Web公開・Google同期は行っていない。取り込み窓を開き直して使う。既存データの削除・取り直しは実施していない。
+
+## 2026-11-10 共有カレンダー：取得元の説明・補助更新失敗・文字・重複整理の軽量化（Codex）
+
+- 依頼：取得元に合う差枚の説明を訂正、イベントや印の更新失敗の通知を導入、推定内訳はまず説明、文字を読みやすく、品質を落とさず可能な軽量化。着手前に完了条件と検証方法を提示した。
+- 両mainをfetchして正本526c009を基準にfast-forward。他AIの作業を保持。対象は共有カレンダーのみ。計算・記録の削除や保存方式、PC・Android・Flutter閲覧ページ・Googleスクリプトの変更なし。
+- 実装と根拠・測定方法は `SHARED_CALENDAR_UPDATE_20261110.md`。推定内訳は説明だけでUI未追加。取得元別の説明と混在、補助更新失敗時の保存分維持と上部表示、文字拡大を実装。
+- 軽量化はindexRecordsに限定。通常の一意な台の全内容文字列化を省き、重複したキーだけ従来と同じ全内容比較。合成30,040行・40問題グループで5回中央値370.76→33.81ms、結果と問題情報の指紋一致・入力保持。最大RSSは測定プロセス全体で351,208→239,864KiB。実Safari・ページ全体の改善率ではない。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 取得元に合う説明・混在・確定値と欠測に余計な推定説明を付けない | 済 | test_share_viewer.mjsの新規1件、test_share_calendar_review_browser.mjsのサイトセブンv2日別画面 |
+| 補助データの失敗・保存なし・形式不正・成功後の解除 | 済 | 同画面試験、台データ成功とイベント・虹・履歴失敗の混在を確認 |
+| 文字を大きくし既存操作を維持 | 済 | 320/393/1280pxの共有関連画面試験、calendar-grid.pngほか |
+| 集計品質を維持した軽量化 | 済 | measure_share_calendar.mjs、合成測定の結果指紋一致、既存集計試験 |
+| 推定内訳の説明 | 済 | 上記文書。要確認は推定の内数、未取得と別、取得値と最終確定は別。UIは未追加 |
+| 関連試験 | 済 | test_share_*.mjs 46件成功、構文とgit diff --check成功 |
+| 全体ゲート・公開・公開URL試験 | 実行中／未実施 | 完了後に追記 |
+
+- 通常表示・失敗時・差枚詳細の画像を作成。任意の撮影時だけ、カレンダーと取得状況の両方が.cardに一致して撮影が失敗したため、カレンダー本体を明示して撮り直した。製品や検証条件を弱めていない。
+- 利用者の導入依頼に沿い、関連試験後に全体ゲートを専用DISPLAY :105で実行中。サイト・実Drive・ユーザーデータへの読み書きはしていない。公開完了は後の追記で確定する。
+- 全体ゲートは **ALL PASSED**。今回の最終コードでPC962件・UTC27件、Flutter825件、analyze・検証用Webビルド・全JS/画面試験が成功。試験・ビルド対象は確認用のstage。実際の公開と公開URLでの試験はこの後に実施し、結果を追記する。
+- 公開完了：コード `52e8708a6c9a4939f819e5af89781fd516aed540` をpush_ci.pyで正本mainへ送信。CI https://github.com/imakurudev-eng/database/actions/runs/42808670488 は最終確認時点で実行中。ローカル全体ゲートはPC962件・UTC27件、Flutter825件、analyze・新規Web検証ビルド・JS/画面 **82ファイル**すべて成功（ALL PASSED）。
+- 旧作業環境の公開cloneが無かったため、新しく `../scratch/calendar-nov10-public` に公開repoをcloneし、最新公開906a6b0の履歴を保持してstage。公開コミット **5a43da1b0f4750d0c3dcef927d1cfb2a9b5a84e8**、公開版 **80e925e38917**。Pages https://github.com/keyanbaitian6-cell/database-share/actions/runs/42808763300 は成功。
+- 公開URL https://keyanbaitian6-cell.github.io/database-share/ のindex.html・app.mjs・data.mjsはstageとバイト一致。公開URLでtest_share_calendar_review_browser.mjsとtest_share_viewer_browser.mjs **画面2件成功**（取得元説明、補助失敗と復旧、保存なし・形式不正、既存操作、320/393/1280px）。新規の任意撮影を含む条件でも成功。
+- 上表の「全体ゲート・公開・公開URL試験」は **済** へ更新。取得元の説明・補助更新状態・文字・重複整理の変更を公開した。推定内訳のUIは説明依頼の範囲なので未追加。実iPhoneの速度・メモリ効果と実データでの確認は未実施。Google処理・日別保存移行・PC・APK・自分用閲覧サイトへの変更や公開はしていない。
+
+
+## 2026-11-10 database各ページの軽量化調査（Codex、実装変更なし）
+
+- 依頼：見た目・機能・情報量・操作・アクセシビリティ・公開範囲を維持した軽量化の調査と提案のみ。採点・候補の定義、保存期間、取り込み間隔、実データ、公開物は変更していない。
+- 調査基準：正本main `526c0092668b6109583dfdfa33e66447a68d0e11`。正本をfetchし、GitHub接続で確認したもう一方のmain `7a9df132001c1e80fdbd1d6d964ca695cd3b5a1c` が祖先であることを確認。手元HEADは `f1d2445` のまま。既存作業コピーを更新せず、git archiveで `/workspace/work/database-performance` に最新の調査用写しを作った。database-ciのCLI fetchは認証情報なしで失敗したため、接続済みGitHubツールで確認した。
+- 主な根拠：PC `database/event_calendar.py:522,533` はP’s CUBEの月・1日表示でも全recordsのJSONを解析。`database/pscube_report.py:42,54` は全履歴をローカルHTMLへ同梱。`database/core.py:3558` は表示14日でも最初に全件を取得し、グラフをHTMLへ埋め込む。Flutter `viewer_main.dart:1002` のホームと `viewer_pages.dart:218` の機種画面で採点を別に実行。ホームの候補はexcludeNormal:true、機種側は既定値なので、そのまま候補結果を共用してはいけない。`machine_sections.dart:632,801` の表・グラフは各項目を一括生成。共有 `app.mjs:103,197,531` の初回表示・画面全体の差し替えと `:864` 付近の全台一覧を確認。
+- 既存対策：AndroidのdayViewは6件キャッシュとcompute直列化、採点は店舗・機種索引、DBの画像分離・分割読み込み、Webの詳細線は日別取得・6日キャッシュ、日別集計・イベント履歴索引も既存。これらを未実装として提案しない。日別保存の段階Bは12月初め開始の既存予定を維持する。
+
+|要件|結果|証拠|
+|---|---|---|
+|全日読み直しの実測|済（合成）|最新ソースで `node database_android/tool/measure_viewer_day_store.mjs /workspace/work/day-measure-100.json 100`。Linux Chromium154、100日×770件、各条件1回。現行更新なし623ms・ヒープ観測最大217.8MiB・旧日100読取、新API21ms・18.6MiB・本文0読取。現行1日更新810ms・249.8MiB、新API46ms・81.6MiB。新API7日1店舗39ms・9.1MiB・2695件。Flutter統合・描画は含まない|
+|移行負荷を区別|済（合成）|同測定で新API初回保存3577ms（現行1198ms）、初回移行6372ms・399.4MiB。通常更新の速さを初回移行に転用しない|
+|PCクエリ改善の検討|済（合成）| `/workspace/work/measure_pc.py`、100日×295台、3回中央値。日別現行249.6ms、月現行763.9ms。SQL日付条件の取得・JSON解析62.0ms、合成DBの式索引あり3.3ms。月範囲＋索引＋同じ集計174.7ms。日・月の出力一致。現行と検討案は初期化等の計測範囲が完全一致ではないためUI全体の速度倍率と呼ばない。全件SCAN→式索引SEARCHをEXPLAINで確認。ローカルHTMLは5,888,440bytes、生成880ms。実DBに索引を作っていない|
+|共有画面計測|済（合成）| `/workspace/work/measure_share.mjs`、77,000件・100日・393/1280px、外部通信を合成応答へ差替・Service Worker無効・速度制限なし。完了した2幅測定で初回LCP1548/1536ms、初回CLS0.958/0.947、DOM269→全台4317、初回最長タスク608/581ms。別393pxの原因確認でMAINとFOOTERの位置変化を確認。月移動約20〜22ms、日別約26〜27ms、全台並べ替え約67〜70ms（Playwright操作時間込み）。公開サービス・iPhone実機の値ではない。合成クリックを使うため正式なINPは未測定|
+|共有画面の既存操作|済| `node database_android/tool/test_share_viewer_browser.mjs` PASS、320/393/1280px。カレンダー・日別・店舗・月・GETのみ・自分用保存を保持。今回の性能測定は最新ソースのローカル配信|
+|Flutter純粋計算の計測|済（VMのみ）| `/workspace/work/measure_dart.dart`。77,000件、当日385台の採点・候補180.7/67.0/70.5ms、ホーム集約・検索100回1260ms。Dart VM JITで、Web描画・Isolate転送・実機時間ではない|
+|公開JavaScript容量|済（HTTP取得）|公開database-viewerのmain.dart.js HTTP200。展開後3,205,115bytes、curl --compressedの転送961,605bytes。CanvasKit・フォント等を含む総転送量ではない。手元の古いbuild/webを現在版の根拠に使っていない|
+|実機・本番API・全ページINP|未確認|iPhone Safari、Android、Windows WebView2、実Google応答と通信時間、現行Flutterビルドのデータあり描画は未測定。未変更のため公開用ビルド・全体ゲートは実行していない|
+
+- 優先案：①PCの月・日付条件をSQLへ移す（まず条件絞り込み、式索引は保存コスト・互換性確認後）、②同一データ版・用途・日付・採点版の計算再利用と小さな索引（候補の除外設定を混ぜない）、③共有カレンダーの読み込み領域と上部高さを確保。続いて表・グラフの表示範囲生成、PC履歴の画像と本文分離。日別保存の画面接続は既存段階Bで別途。全ページ共通の巨大Worker複製、画像の一律減質、保存期間短縮、取り込み増速は提案しない。
+- 検証条件：差枚・推定・欠測と0・印の取消・日付・機種変更・候補を旧実装と一致確認。データ版更新時のキャッシュ無効化。320/393/1280px・文字拡大・キーボード・読み上げ・固定列とスクロール位置・オフライン・複数タブ・保存不足と中断再開。更新なし／1日更新／60・100・180・365日、初回／キャッシュありを分離し同端末で複数回比較。noindex,nofollowは維持。
+- 作業メモ：測定用スクリプトのみworkへ作成。ブラウザ計測器の「戻る前は閉じるが非表示」、カバレッジ戻り値の形式、合成DB再実行時の索引残存を修正して完走した値だけを採用。採用した生の値は `/workspace/work/share-results.json`、`share-layout-results.json`、`day-measure-100.json`、`dart-results.json`、`pc-perf/results.json`。重要な数値と再現条件は本節にも残した。
+- 変更はこの共有記録への追記のみ。調査用の合成DB・HTMLはwork内。ソースのコミット・push・Web公開・Google更新・同期・APK作成は行っていない。本節はこの環境内の記録であり、GitHub反映済みではない。
+
+
+## 2026-11-10 各ページの軽量化：優先3件の実装（Codex）
+
+- 利用者「では把握されてる状況で改善をお願いします」「続きをお願いします」。対象はPCのP’s CUBEカレンダー、Flutter閲覧ページのホーム・機種・台詳細、共有カレンダーの読み込み表示。完成後のデザイン・表示数値・候補条件・保存期間・通信間隔は維持。日別保存の段階Bは12月初めの予定を維持。
+- 基準：正本main c6a456f（52e8708の共有カレンダー部分更新・重複整理と526c009の前向き検証を含む）。もう一方のmain 7a9df13を含むことを確認。前の調査メモを保持してfast-forward。相手AIの変更を維持した。
+- 変更：database/event_calendar.pyは月・日をSQLの日付条件で絞り、対象外JSONのPython解析を省略。DBスキーマ・索引・集計ルールは変更しない。viewer_data.dartはViewerDataの版と記録オブジェクトに紐づく表示用採点キャッシュ（最大1024台・古い順に退避）を追加し、viewer_main.dart・viewer_pages.dartの3か所で共有。候補計算は従来のまま（ホームのexcludeNormal:trueと機種画面の条件を混ぜない）。share_viewer/index.htmlは本文の余白の相殺を止め、通信待ちの本文領域を画面高に確保。説明フッターは保持。
+- 関連確認：PCイベント試験28件成功（対象外日を解析しない、月の両端、貸玉の分離）。Flutter viewer_data_test 12件成功（同じ版で再利用、別版と訂正で再計算、1024台超過後も値一致）。静的解析はエラー・警告なし（情報32件）。新規test_share_loading_browser.mjsは通信を保留して320/393/1280pxの本文開始位置・フッター保持を確認、成功。
+- 合成計測：100日×295台のPC日別取得は前回249.6msから67.0ms、月集計763.9msから240.0ms（3回中央値、端末・CPU競合などの影響あり、実機の保証値ではない）。77,000件の表示採点385台はDart VMで初回42.6ms、同じ記録の再利用0.3ms（描画を含まない）。共有はc6a456fの同じソースを比較元として393pxでCLS 0.9602→0.00117。最新の他AIの集計改善と今回のCSSの効果を混同しない。
+- 作業中の確認器修正：試験でScoreResultの存在しないstatusを参照していたのでtotalの欠測判定へ修正。採点呼び出しの置換後に不要となったscoring.dartの2つのimportを除去し、静的解析を再確認してからFlutter全試験へ進んだ。最初の全体ゲートの親シェルに中断を送った後も子のゲートが継続していたため、重ねて起動した2つ目だけを停止。採用する全体結果は /workspace/work/perf-gate の一式だけとし、途中の /workspace/work/perf-gate-final を成功の根拠にしない。
+
+|要件|結果|証拠|
+|---|---|---|
+|PCの日付絞り込み・従来集計|済|test_event_calendar.py 28件、追加試験で月両端・2貸玉・対象外日の解析なし|
+|表示採点の再利用と版の更新|済|viewer_data_test.dart 12件、別版・訂正・1024台の上限後を確認|
+|読み込み時の位置と説明保持|済|test_share_loading_browser.mjs、320/393/1280px|
+|全体回帰・新規ビルド・画面試験|実行中|CHECK_JS_JOBS=2 CHECK_BUILD_WORK=/workspace/work/perf-gate bash database_android/tool/check_before_build.sh|
+|ソース送信・Web公開|未実施|全体ゲート完了後に追記|
+
+- push_ci.pyの素の実行は末尾.gitなしURLで認証エラー。コマンド単位のgit insteadOf設定で両リポジトリを.git付きの同じ宛先へ解決するとdry-run成功。期間・祖先・送信直前のmain照会は既存スクリプトのまま。認証情報やコードを変えていない。
+
+- 全体ゲート `/workspace/work/perf-gate` は **ALL PASSED**。PC963件、UTCのイベント試験28件、Flutter826件、静的解析（エラー・警告なし）、新規Webビルド、viewer/share stage、JS・ブラウザ全試験が成功。重複起動した確認は停止し、本項の結果に混ぜていない。公開用stageは viewer `/workspace/work/perf-public-viewer`、share `/workspace/work/perf-public-share`（版e0cf62eb25f3）。閲覧ページのstageには今回の採点キャッシュと、既に正本へ反映済みの80c16e9のサイトセブン確定時刻23:30のWeb共通処理も含まれる。NOTICES差分はライセンスの順序・改行のみ。
+
+- 完了追記：実装コミット **76da7bfb21e1ecfc07f42227d6ce25c233919ebb** をpush_ci.pyで正本mainへ送信。全体ゲートはJS/画面 **83ファイル**を含めALL PASSED。CI https://github.com/imakurudev-eng/database/actions/runs/42812053376 は公開確認時点で実行中（手元の全体ゲート成功と区別）。
+- Web公開：閲覧ページ **875f94942f79b441869b133b93a5670f55cb5bb7**、共有カレンダー **fc10f3b**（版 **e0cf62eb25f3**）。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/42812076735 と https://github.com/keyanbaitian6-cell/database-share/actions/runs/42812089713 は両方成功。公開URLのmain.dart.jsと共有index.htmlはstageとバイト一致。
+- 公開URLでtest_viewer_parts_browser.mjsが成功（メルヘン・P’s CUBE、閲覧・共有の両ページ、初回2日→更新1日→再読込0日、実IndexedDB・Googleだけ合成）。test_share_viewer_browser.mjsも公開URLで成功（320/393/1280px、カレンダー・日別・店舗・月・自分用保存保持）。初回の公開画面試験は環境のHTTPS中継証明書をChromiumが信頼せず失敗。通常の証明書検証が通るcurlで得た公開サイトの証明書の公開鍵だけをブラウザへ固定して再確認。証明書エラー全般の無効化や製品コードの変更は行っていない。
+- 上表の「全体回帰・新規ビルド・画面試験」「ソース送信・Web公開」は **済**。共有記録も正本へ反映。iPhone/Windows実機の体感速度は未確認。AndroidアプリのAPK作成・端末導入、Googleスクリプト更新・実データの同期・段階Bの移行は今回行っていない。PCのソースは更新済みだが、利用者のWindows側での取得・再起動は利用者側の操作。公開Webは読み込み直して確認できる。
+
+### 2026-11-10 共有カレンダーの見やすさを利用者が確認（Codex）
+
+- 利用者が公開後に「確認した。みやすいよ」と報告。共有カレンダーの見やすさは利用者確認済み。確認端末・閲覧した版・速度やメモリの評価は申告されておらず、実機性能の検証済みとは扱わない。
+- 記録前に両mainをfetchし、正本d2418cdまでfast-forward。他AIの性能改善と公開記録を保持した。コード変更・試験・ビルド・再公開は行わない。
+- あわせて、先行修正52e8708のCI https://github.com/imakurudev-eng/database/actions/runs/42808670488 が完了・successであることをGitHubから確認。これは後続7e74cdc等のCI結果とは別。

@@ -5,7 +5,6 @@ import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
 import 'rack_suffix.dart';
-import 'scoring.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
 import 'viewer_data.dart';
@@ -237,10 +236,7 @@ class _ViewerMachinePageState extends State<ViewerMachinePage> {
             r,
       ]..sort((a, b) => a.rack.compareTo(b.rack));
       _hasDayRecords = rows.isNotEmpty;
-      final grouped = [
-        for (final r in rows)
-          (r, scoreRecord(r, data.records, sameDayForNew: true)),
-      ];
+      final grouped = [for (final r in rows) (r, data.displayScore(r))];
       final search = RecordQuery(_query);
       _entries = !search.matchesMachine(widget.machine)
           ? [
@@ -642,7 +638,7 @@ class _ViewerRecordPageState extends State<ViewerRecordPage> {
     return SavedGraphPage(
       key: ValueKey(record.key),
       record: record,
-      score: scoreRecord(record, data.records, sameDayForNew: true),
+      score: data.displayScore(record),
       allRecords: data.records,
       dateNavigation: bar,
       scrollTopButton: true,

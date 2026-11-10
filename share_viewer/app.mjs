@@ -11,7 +11,7 @@ import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, histor
 import {fetchViewerDocument, readViewerHistory, rememberViewerHistory} from './viewer_parts.mjs';
 import {prepareOffline, readOfflineMetadata, saveOfflineMetadata} from './offline.mjs';
 import {
-  MERUHEN_STORES, exchangeValue, calendarDay, compactSigned, dayNet, daySummaries, daySummary, displayMachineName, eventLabel, indexRecords, lowGamesNote,
+  MERUHEN_STORES, netEstimateNote, exchangeValue, calendarDay, compactSigned, dayNet, daySummaries, daySummary, displayMachineName, eventLabel, indexRecords, lowGamesNote,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, signed, storeLabel, TOP_RACKS_OPEN, viewerNameFrom, winRateText,
   IDLE_DAY_CHOICES, IDLE_DEFAULT_DAYS, IDLE_DEFAULT_GAMES, IDLE_GAMES_CHOICES, idleVarietyRacks, storeDays,
   sharedRainbowCanBatch, storedRainbowMarks, sendRainbowBatches, RAINBOW, lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
@@ -105,6 +105,7 @@ async function load() {
   state.notice = '';
   if (globalThis.navigator?.onLine === false && state.model) {
     state.sources = {meruhen:'オフライン・保存済みデータ',pscube:'オフライン・保存済みデータ'};
+    state.auxStatus = {};
     state.notice = 'オフラインです。保存済みのデータを表示しています。'; render(); return;
   }
   state.loading = true;
@@ -125,23 +126,29 @@ async function load() {
   if (!m && !p) {
     state.loading = false; reload.disabled = false;
     const reason = [meruhen, pscube].map(r => (r.status === 'rejected' ? r.reason?.message : r.value?.error)).find(Boolean);
+    state.auxStatus = {};
     if (state.model) { state.notice = `更新できませんでした（${why}）。保存済みのデータを表示しています。`; render(); }
     else showSetup(`読み込めませんでした。リンクが正しいか、少し待ってからもう一度お試しください。${reason ? `（${reason}）` : ''}`);
     return;
   }
   const saved = await readOfflineMetadata(state.id).catch(() => ({}));
-  const metadata = {events: doc(events) || saved.events, pscubeEvents: doc(pscubeEvents) || saved.pscubeEvents,
-    rainbow: doc(rainbow) || saved.rainbow, eventHistory: saved.eventHistory};
+  const fresh = {events:doc(events), pscubeEvents:doc(pscubeEvents), rainbow:doc(rainbow), eventHistory:doc(history)};
+  for (const key of ['events','pscubeEvents']) if (!Array.isArray(fresh[key]?.events)) fresh[key] = null;
+  if (!Array.isArray(fresh.rainbow?.marks)) fresh.rainbow = null;
+  try { if (fresh.eventHistory) parsePrivateHistory(fresh.eventHistory); }
+  catch { fresh.eventHistory = null; }
+  const metadata = {};
+  state.auxStatus = {};
+  for (const key of ['events','pscubeEvents','rainbow','eventHistory']) {
+    metadata[key] = fresh[key] || saved[key];
+    state.auxStatus[key] = fresh[key] ? '' : saved[key] ? '更新失敗・保存済みデータを表示' : '更新失敗・保存データなし';
+  }
   const loadedAt=new Date().toISOString();
   metadata.health={...saved.health};
   for(const [site,value] of [['meruhen',m],['pscube',p]]) if(value) metadata.health[site]={
     loaded_at:loadedAt,exported_at:value.exported_at ?? value.header?.exported_at,
     sync_status:value.sync_status ?? value.header?.sync_status};
-  try {
-    const freshHistory = doc(history);
-    if (freshHistory) { parsePrivateHistory(freshHistory); metadata.eventHistory = freshHistory; }
-    state.historyNotice = freshHistory ? '' : '最新の履歴を取得できません。保存済みの履歴があれば表示します。Apps ScriptとPCの共有ファイルを確認してください。';
-  } catch (error) { state.historyNotice = `履歴を更新できません：${error.message}`; }
+  state.historyNotice = fresh.eventHistory ? '' : '最新の履歴を取得できません。保存済みの履歴があれば表示します。';
   // 旧Googleスクリプトの全件応答も、端末履歴へ初回移行できる。
   try {
     if (m) await rememberViewerHistory(base, 'meruhen', m, undefined, !m.history);
@@ -248,11 +255,12 @@ function render() {
       <h1 class="headline num">${state.year}年${state.month}月</h1>
       <div class="data-status" data-source-status><p>${esc(state.sources?.[site] ?? '保存済みデータを表示')}</p><p>元データ：${esc(exported || '書出日時不明')} ／ 最新営業日：${esc(days.at(-1) ?? 'なし')}</p></div>
       ${state.notice ? `<p class="data-warning" role="status">${esc(state.notice)}</p>` : ''}
+      ${auxWarning(site)}
       ${issues.length ? `<details class="data-warning" data-record-issues><summary>${conflicts.length ? `内容が異なる${conflicts.length}台分を集計から除外しています` : '同一記録の重複を1件として集計しています'}</summary>${issues.map(i => `<p>${esc(i.day)} ${i.rack}番 ${esc(displayMachineName(i.machine))}：${i.kind === 'conflict' ? '内容が競合・集計保留' : '同一内容の重複'}（${i.count}件）</p>`).join('')}<p>保存元の記録は削除していません。</p></details>` : ''}
       <div class="month-stats" aria-label="月間の集計">
         <div class="month-stat" data-month-rate><span class="stat-label">月間勝率</span><span class="stat-value num">${monthRate.judged ? winRateText(monthRate.won, monthRate.judged).replace('勝率', '') : '—'}</span><span class="stat-detail">${monthRate.judged ? `${monthRate.days}日分・${count(monthRate.won)} / ${count(monthRate.judged)}台プラス` : '勝率データなし'}</span></div>
         <div class="month-stat" data-month-net><span class="stat-label">月間差枚${!state.store.startsWith('pscube:') || monthNets.some(r => r.estimated) ? '（推定含む）' : ''}</span><span class="stat-value num ${monthNet == null ? '' : tone(monthNet)}">${monthNet == null ? '—' : signed(monthNet)}<small>${monthNet == null ? '' : '枚'}</small></span><span class="stat-detail">${monthNet == null ? '差枚データなし' : `取得分 ${netDays}日・延べ${count(monthNets.length)}台`}</span></div>
-        ${exchange ? `<div class="exchange-summary" data-month-exchange><div class="exchange-head"><span>交換額換算（参考）</span><strong class="exchange-value num">${exchangeAmount}</strong></div><p class="exchange-rate">${exchange.loan}枚貸し・${exchange.payout}枚交換 ／ 1枚${exchange.payout === 50 ? '20' : '約17.24'}円で換算</p><p class="exchange-note">取得できた差枚だけの参考額です。<br>実収支ではありません。</p><details class="exchange-info"><summary>換算について</summary><p>過去月も現在指定の交換条件で換算しています。貸出・交換の枚数はそれぞれ1,000円相当として計算。現金投資時の貸出・交換の差は含みません。現金投資か持ちメダル遊技かによって収支は変わります。${state.store.startsWith('pscube:') ? '' : '元の差枚が推定の場合、換算額にも誤差を含みます。'}差枚が分かる台だけの合計を換算し、差枚データがない月は「—」と表示します。</p></details></div>` : ''}
+        ${exchange ? `<div class="exchange-summary" data-month-exchange><div class="exchange-head"><span>交換額換算（参考）</span><strong class="exchange-value num">${exchangeAmount}</strong></div><p class="exchange-rate">${exchange.loan}枚貸し・${exchange.payout}枚交換 ／ 1枚${exchange.payout === 50 ? '20' : '約17.24'}円で換算</p><p class="exchange-note">取得できた差枚だけの参考額です。<br>実収支ではありません。</p><details class="exchange-info"><summary>換算について</summary><p>過去月も現在指定の交換条件で換算しています。貸出・交換の枚数はそれぞれ1,000円相当として計算。現金投資時の貸出・交換の差は含みません。現金投資か持ちメダル遊技かによって収支は変わります。${monthNets.some(r => r.estimated) ? '元の差枚に推定値があれば、換算額にもその誤差を含みます。' : ''}差枚が分かる台だけの合計を換算し、差枚データがない月は「—」と表示します。</p></details></div>` : ''}
       </div>
       ${comment ? `<div class="day-comment" data-day-comment><span class="stat-label">ひとこと</span><p>${esc(comment)}</p></div>` : ''}
       <p class="lede">日付を押すと、その日の差枚TOP50と強かった機種10選が見られます。</p>
@@ -281,7 +289,7 @@ function render() {
         <div class="grid">${cells}</div>
       </div>
       ${healthDetails()}
-      <p class="legend">差枚＝その日の総差枚（メルヘンは推定）。🎂＝キャラ誕生日（イベントとは別。押すと全員を「名前（作品）」で見られる）。差枚の分かる台が半分に満たない日（アナスロ補完の日など）は勝率＝プラスで終わった台の割合（グラフの終点で判定）。台のデータが無い日の勝率は、保存したアナスロのHTMLから数えたもの（押すと何台中何台プラスか）。＊＝前日までに入力した記録がないイベント。</p>
+      <p class="legend">差枚＝取得できた台の合計（推定値を含む場合があります）。🎂＝キャラ誕生日（イベントとは別。押すと全員を「名前（作品）」で見られる）。差枚の分かる台が半分に満たない日（アナスロ補完の日など）は勝率＝プラスで終わった台の割合（グラフの終点で判定）。台のデータが無い日の勝率は、保存したアナスロのHTMLから数えたもの（押すと何台中何台プラスか）。＊＝前日までに入力した記録がないイベント。</p>
     </section>`;
   fitMonthStats();
 }
@@ -303,6 +311,13 @@ function fitMonthStats() {
   };
   fit();
   if (globalThis.ResizeObserver) { statsObserver = new ResizeObserver(() => requestAnimationFrame(fit)); statsObserver.observe(stats); }
+}
+
+function auxWarning(site) {
+  const labels = {events:'イベント',pscubeEvents:'イベント',rainbow:'🌈の印',eventHistory:'履歴・顔文字・末尾の印'};
+  const keys = [site === 'pscube' ? 'pscubeEvents' : 'events', 'rainbow', 'eventHistory'];
+  const failed = keys.filter(key => state.auxStatus?.[key]);
+  return failed.length ? `<div class="data-warning" role="status" data-aux-warning><strong>一部の補助データを更新できませんでした</strong>${failed.map(key => `<p>${labels[key]}：${esc(state.auxStatus[key])}</p>`).join('')}<p>台データの更新状態とは別です。「最新を読む」で再試行できます。</p></div>` : '';
 }
 
 function healthDetails() {
@@ -388,7 +403,7 @@ function rackView({rack: r}) {
         <span class="value num ${r.net != null ? tone(r.net) : 'zero'}">${r.net != null ? `${signed(r.net)}${r.needsCheck ? '※' : ''}` : '—'}</span>
         ${r.net == null ? `<span class="sub">${name}はわかりません。</span>` : ''}</p>
       <dl class="stats">${stats.map(([k, v]) => `<div><dt>${k}</dt><dd class="num">${v}</dd></div>`).join('')}</dl>
-      ${r.estimated && r.net != null ? `<p class="note">推定差枚は${r.store?.startsWith('pscube:') ? 'アナスロのグラフとBB・RB・G数からの計算で、アナスロの集計時点の値です。閉店後とは前後50枚ほどずれることがあり' : 'グラフと最大持玉からの計算で'}、確定値ではありません${r.needsCheck ? '（※は要確認）' : ''}。</p>` : ''}`;
+      ${netEstimateNote([r]) ? `<p class="note">${esc(netEstimateNote([r]))}</p>` : ''}`;
 }
 
 /*
@@ -830,7 +845,7 @@ function openDay(first) {
       ${tapList([{lead: '', attrs: 'data-all-racks', main: '<span class="machine" style="display:block">全機種の台一覧を見る</span>',
         right: `<span class="small num">${new Set(others.map(r => r.machine)).size}機種・${others.length}台</span>`}])}` : '';
       })()}
-      ${estimated ? `<p class="note">推定差枚は${racks.some(x => x.store?.startsWith('pscube:')) ? 'アナスロのグラフとBB・RB・G数からの計算で、アナスロの集計時点の値です。閉店後とは前後50枚ほどずれることがあり' : 'グラフと最大持玉からの計算で'}、確定値ではありません（※は要確認）。</p>` : ''}`;
+      ${netEstimateNote(racks) ? `<p class="note">${esc(netEstimateNote(racks))}</p>` : ''}`;
   };
 
   const machineView = (view) => {
@@ -1328,6 +1343,7 @@ async function connect(id) {
     app.innerHTML='<p class="status">保存した記録を読み込んでいます…</p>';
   }
   state.loading = false; reload.disabled = false;
+  state.auxStatus = {};
   state.id = id;
   state.sources = {meruhen:'保存済みデータを表示', pscube:'保存済みデータを表示'};
   store.set(ID_KEY, id);

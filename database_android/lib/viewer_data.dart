@@ -7,6 +7,7 @@ import 'models.dart';
 import 'pscube_viewer_data.dart';
 import 'capture_health.dart';
 import 'rainbow_marks.dart';
+import 'scoring.dart';
 
 /// 閲覧ページで読んだバックアップ（画像を除いた軽い形）。
 ///
@@ -15,6 +16,11 @@ import 'rainbow_marks.dart';
 /// 台の一覧にする。採点・翌日候補は、Android版と同じ関数でその場で計算する。
 /// 当時の翌日候補の1台（[ViewerData.answerCandidates]）。
 typedef SavedCandidate = ({int rack, double index, bool variety});
+
+// データの版ごとに表示用の採点だけを共有する。候補の除外条件は画面ごとに保持する。
+final _displayScores = Expando<Map<SlotRecord, ScoreResult>>(
+  'viewerDisplayScores',
+);
 
 class ViewerData {
   const ViewerData({
@@ -43,6 +49,17 @@ class ViewerData {
   final List<Map<String, Object?>> curveParts;
 
   final List<SlotRecord> records;
+
+  /// 同じ版・同じ記録の表示用採点。日付を巡っても保持は最大1024台まで。
+  /// 新しいViewerDataや訂正された別の記録には、古い結果を流用しない。
+  ScoreResult displayScore(SlotRecord record) {
+    final cache = _displayScores[this] ??= <SlotRecord, ScoreResult>{};
+    final cached = cache.remove(record);
+    final result = cached ?? scoreRecord(record, records, sameDayForNew: true);
+    cache[record] = result;
+    if (cache.length > 1024) cache.remove(cache.keys.first);
+    return result;
+  }
 
   /// 未取り込み日の印も、数値の記録と別に保持する。
   final Map<String, RainbowMark> rainbowMarks;
