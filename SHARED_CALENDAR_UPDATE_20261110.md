@@ -38,3 +38,5 @@
 参考画像は作業環境内 `../outputs/calendar-20261110/` の `calendar-grid.png`、`aux-failure-393.png`、`source-explanation.png`。公開版は全体ゲート完了後に記録する。
 
 全体ゲートも最終コードでALL PASSED（PC962件・UTC27件、Flutter825件、analyze・検証用Webビルド・JS/画面試験）。公開版と公開URLでの確認結果は共同作業記録に追記する。
+
+公開完了：共有カレンダー5a43da1（版80e925e38917）。配信ファイルの一致と、公開URLで画面2件の試験が成功。ソース52e8708、ローカル全体ゲートはJS/画面82ファイルを含めALL PASSED。CIの実行URLと区別した状態はAI_COLLABORATION.mdに記録した。内訳のUIは未追加のまま。

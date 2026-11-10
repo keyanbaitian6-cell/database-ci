@@ -1906,3 +1906,7 @@
 - 通常表示・失敗時・差枚詳細の画像を作成。任意の撮影時だけ、カレンダーと取得状況の両方が.cardに一致して撮影が失敗したため、カレンダー本体を明示して撮り直した。製品や検証条件を弱めていない。
 - 利用者の導入依頼に沿い、関連試験後に全体ゲートを専用DISPLAY :105で実行中。サイト・実Drive・ユーザーデータへの読み書きはしていない。公開完了は後の追記で確定する。
 - 全体ゲートは **ALL PASSED**。今回の最終コードでPC962件・UTC27件、Flutter825件、analyze・検証用Webビルド・全JS/画面試験が成功。試験・ビルド対象は確認用のstage。実際の公開と公開URLでの試験はこの後に実施し、結果を追記する。
+- 公開完了：コード `52e8708a6c9a4939f819e5af89781fd516aed540` をpush_ci.pyで正本mainへ送信。CI https://github.com/imakurudev-eng/database/actions/runs/42808670488 は最終確認時点で実行中。ローカル全体ゲートはPC962件・UTC27件、Flutter825件、analyze・新規Web検証ビルド・JS/画面 **82ファイル**すべて成功（ALL PASSED）。
+- 旧作業環境の公開cloneが無かったため、新しく `../scratch/calendar-nov10-public` に公開repoをcloneし、最新公開906a6b0の履歴を保持してstage。公開コミット **5a43da1b0f4750d0c3dcef927d1cfb2a9b5a84e8**、公開版 **80e925e38917**。Pages https://github.com/keyanbaitian6-cell/database-share/actions/runs/42808763300 は成功。
+- 公開URL https://keyanbaitian6-cell.github.io/database-share/ のindex.html・app.mjs・data.mjsはstageとバイト一致。公開URLでtest_share_calendar_review_browser.mjsとtest_share_viewer_browser.mjs **画面2件成功**（取得元説明、補助失敗と復旧、保存なし・形式不正、既存操作、320/393/1280px）。新規の任意撮影を含む条件でも成功。
+- 上表の「全体ゲート・公開・公開URL試験」は **済** へ更新。取得元の説明・補助更新状態・文字・重複整理の変更を公開した。推定内訳のUIは説明依頼の範囲なので未追加。実iPhoneの速度・メモリ効果と実データでの確認は未実施。Google処理・日別保存移行・PC・APK・自分用閲覧サイトへの変更や公開はしていない。
