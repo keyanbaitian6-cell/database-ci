@@ -23,16 +23,63 @@ test('公開項目だけに限定し締切・形式を検査する',()=>{
     const night=fixture();night.days[0].saved_at=stamp;
     if(ok) assert.equal(context.projectDailyLearning(night).days[0].groups[0].saved_at,stamp);
     else assert.throws(()=>context.projectDailyLearning(night),undefined,stamp);
-    if(ok) assert.ok(dailyPanel(night,'nagamachiminami','2026-11-11').includes('101番'),stamp);
+    if(ok) assert.ok(text(dailyPanel(night,'nagamachiminami','2026-11-11')).includes('101番'),stamp);
     else assert.throws(()=>dailyPanel(night,'nagamachiminami','2026-11-11'),undefined,stamp);
   }
   assert.throws(()=>context.projectDailyLearning({}));
 });
+const text=html=>html.replace(/<[^>]+>/g,'');
 test('共有ページの対象日・方式・候補・欠測・文字を検査する',()=>{
   const html=dailyPanel(fixture(),'nagamachiminami','2026-11-11');
-  assert.ok(html.includes('従来方式')&&html.includes('101番'));
+  assert.ok(text(html).includes('採用中 従来方式')&&text(html).includes('101番'));
   assert.ok(html.includes('&lt;試験&gt;')&&!html.includes('<試験>'));
   assert.ok(dailyPanel(fixture(),'saiwaichou','2026-11-11').includes('保存済み候補はありません'));
+});
+// 2026-11-12：4画面で同じ順・意味にそろえた表示。保存済みの台と順番をそのまま出し、候補数は表示中の候補から数える。
+const many=()=>({format:'daily-learning',version:1,updated_at:'2026-11-12T00:30:00+09:00',
+  status:'長町南：11/12の事前予測は保存済みです／幸町：処理失敗（原本DBを読めません）。従来方式を使用してください／P-STATION：取り込み待ち：P-STATIONの確定前データが残っています／同期先未設定または利用不可',
+  days:[{target:'2026-11-12',input_day:'2026-11-11',saved_at:'2026-11-12T00:02:00+09:00',groups:[
+    {store:'nagamachiminami',name:'L MHRｻﾝﾌﾞﾚｲｸXA',active:'learned',status:'改善を確認して採用中',saved_at:'2026-11-12T00:02:00+09:00',
+      selected:[['nagamachiminami','','L MHRｻﾝﾌﾞﾚｲｸXA',1162],['nagamachiminami','','L MHRｻﾝﾌﾞﾚｲｸXA',1157]]},
+    {store:'nagamachiminami',name:'とても長い機種名の表示を確かめるための試験機・スーパーロングネームエディション',active:'current',status:'学習済み・将来成績を比較中',
+      selected:[['nagamachiminami','','とても長い機種名の表示を確かめるための試験機・スーパーロングネームエディション',7]]},
+    {store:'nagamachiminami',name:'バラエティ',active:'current',status:'学習データ不足・従来方式',
+      selected:[['nagamachiminami','','機種A',301],['nagamachiminami','','機種B',305]]},
+    {store:'saiwaichou',name:'試験機',active:'current',status:'x',selected:[['saiwaichou','','試験機',1]]}]}]});
+test('候補数・台の順番・採用方式・注意の振り分けが4画面の取り決めどおり',async()=>{
+  const {dailyView,dailyStatusParts,dailyDateLabel,dailyTime}=await import('../../share_viewer/daily_learning.mjs');
+  const now=Date.parse('2026-11-12T07:00:00+09:00');
+  const v=dailyView(many(),'nagamachiminami','2026-11-12',now);
+  assert.equal(v.count,5);
+  assert.equal(v.scope,'2機種とバラエティ');
+  assert.deepEqual(v.groups.map(g=>g.racks.map(r=>r.rack)),[[1162,1157],[7],[301,305]]);   // 保存した順のまま
+  assert.deepEqual(v.groups[2].racks.map(r=>r.machine),['機種A','機種B']);                     // バラエティだけ台ごとの機種名
+  assert.equal(v.groups[0].racks[0].machine,null);
+  assert.deepEqual(v.groups.map(g=>g.learned),[true,false,false]);
+  assert.deepEqual(v.alerts,['同期先未設定または利用不可']);                                      // ほかの店の失敗は、この店の注意にしない
+  assert.deepEqual(dailyStatusParts(many().status,'saiwaichou').mine,['処理失敗（原本DBを読めません）。従来方式を使用してください']);
+  assert.ok(dailyView(many(),'saiwaichou','2026-11-12',now).alerts[0].startsWith('処理失敗'));
+  const html=dailyPanel(many(),'nagamachiminami','2026-11-12',now,['nagamachiminami','saiwaichou']);
+  const plain=text(html);
+  assert.ok(plain.includes('5台')&&plain.includes('採用中 日次学習版')&&plain.includes('採用中 従来方式'));
+  assert.ok(plain.includes('L MHRサンブレイクXA'),'半角カナは全角にそろえる');
+  assert.ok(!plain.includes('ｻﾝﾌﾞﾚｲｸ'));
+  assert.ok(html.indexOf('data-learning-store')<html.indexOf('daily-alerts')&&html.indexOf('daily-alerts')<html.indexOf('daily-summary')
+    &&html.indexOf('daily-summary')<html.indexOf('daily-group')&&html.lastIndexOf('daily-group')<html.indexOf('処理状況・日次学習について'));
+  assert.ok(!html.includes('P-STATION</option>'),'共有ページで見られない店舗は選べない');
+  assert.ok(/<details class="more daily-more"><summary>採用方式の説明・保存時刻/.test(html));
+  assert.ok(!/<details[^>]*open/.test(html),'説明は閉じた状態');
+  assert.ok(!/class="data-warning[^"]*"[^>]*>[^]*<details/.test(html.slice(0,html.indexOf('daily-summary'))),'注意は折りたたまない');
+  assert.equal(dailyDateLabel('2026-11-12'),'11月12日（木）');
+  assert.equal(dailyTime('2026-11-11T15:02:00Z'),'11月12日 0:02');
+  // 過去日・未更新・候補なし
+  const later=Date.parse('2026-11-14T09:00:00+09:00');
+  const old=dailyView(many(),'nagamachiminami','2026-11-12',later).alerts.join('');
+  assert.ok(old.includes('過去の対象日')&&old.includes('本日の処理結果は届いていません'));
+  const none=dailyView(many(),'pscube:c740601:20','2026-11-12',now);
+  assert.equal(none.count,0);
+  assert.ok(none.alerts.some(a=>a.includes('取り込み待ち'))&&none.alerts.some(a=>a.includes('保存済み候補はありません')));
+  assert.ok(text(dailyPanel(many(),'pscube:c740601:20','2026-11-12',now)).includes('候補なし'));
 });
 test('最初に開く対象日は23:30から翌日、古い処理結果には注意を出す（2026-11-12）',()=>{
   const at=s=>Date.parse(s);

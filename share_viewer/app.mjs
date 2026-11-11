@@ -45,7 +45,8 @@ const app = document.getElementById('app');
 const reload = document.getElementById('reload');
 document.addEventListener('click',event=>{
   if(event.target.closest('[data-daily-learning]') && state.id) {
-    void openDailyLearning({store:state.store,target:defaultDailyTarget(),
+    // 店舗の切り替えは、この共有ページで見られる店舗だけ（ほかの店舗の候補は出さない）。
+    void openDailyLearning({store:state.store,target:defaultDailyTarget(),stores:state.model?.stores??[state.store],
       load:()=>getJson(`https://script.google.com/macros/s/${state.id}/exec?file=daily-learning`)});
   }
 });

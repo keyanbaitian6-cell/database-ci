@@ -31,10 +31,22 @@ Map<String, dynamic> fixture() => {
 
 void main() {
   test('最初に開く対象日は23:30から翌日（日本時間）', () {
-    expect(dailyDefaultTarget(DateTime.parse('2026-11-11T14:29:59Z')), '2026-11-11');
-    expect(dailyDefaultTarget(DateTime.parse('2026-11-11T14:30:00Z')), '2026-11-12');
-    expect(dailyDefaultTarget(DateTime.parse('2026-11-11T22:59:00Z')), '2026-11-12');
-    expect(dailyDefaultTarget(DateTime.parse('2026-12-31T14:45:00Z')), '2027-01-01');
+    expect(
+      dailyDefaultTarget(DateTime.parse('2026-11-11T14:29:59Z')),
+      '2026-11-11',
+    );
+    expect(
+      dailyDefaultTarget(DateTime.parse('2026-11-11T14:30:00Z')),
+      '2026-11-12',
+    );
+    expect(
+      dailyDefaultTarget(DateTime.parse('2026-11-11T22:59:00Z')),
+      '2026-11-12',
+    );
+    expect(
+      dailyDefaultTarget(DateTime.parse('2026-12-31T14:45:00Z')),
+      '2027-01-01',
+    );
   });
   test('日次学習の形式と締切を検査する', () {
     expect(parseDailyLearning(jsonEncode(fixture()))['days'], hasLength(1));
@@ -61,12 +73,28 @@ void main() {
         (g as Map).remove('saved_at');
       }
       if (ok) {
-        expect(parseDailyLearning(jsonEncode(raw))['days'], hasLength(1), reason: stamp);
+        expect(
+          parseDailyLearning(jsonEncode(raw))['days'],
+          hasLength(1),
+          reason: stamp,
+        );
       } else {
-        expect(() => parseDailyLearning(jsonEncode(raw)), throwsFormatException, reason: stamp);
+        expect(
+          () => parseDailyLearning(jsonEncode(raw)),
+          throwsFormatException,
+          reason: stamp,
+        );
       }
     }
   });
+  // 対象日の選択欄から日を選ぶ（過去日には「・過去日」が付く）。
+  Future<void> pickDay(WidgetTester tester, String label) async {
+    await tester.tap(find.byType(DropdownButton<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(label).last);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('店舗・対象日・従来方式・候補とエラーを表示する', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -75,13 +103,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('日次学習・採用中の候補'), findsOneWidget);
-    final dropdown = find.byType(DropdownButton<String>).last;
-    await tester.tap(dropdown);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('対象日 2026-11-11').last);
-    await tester.pumpAndSettle();
+    await pickDay(tester, '11月11日（水）・過去日');
     expect(find.text('採用中 従来方式'), findsOneWidget);
-    expect(find.text('101番 試験機'), findsOneWidget);
+    expect(find.text('101番'), findsOneWidget);
+    expect(find.text('1台'), findsWidgets);
+    expect(find.textContaining('過去の対象日です'), findsOneWidget);
     await tester.pumpWidget(
       MaterialApp(
         home: DailyLearningPage(
@@ -105,12 +131,141 @@ void main() {
       MaterialApp(home: DailyLearningPage(load: () async => jsonEncode(raw))),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButton<String>).last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('対象日 2026-11-11').last);
-    await tester.pumpAndSettle();
+    await pickDay(tester, '11月11日（水）・過去日');
     expect(find.text('L MHRサンブレイクXA'), findsOneWidget);
-    expect(find.text('1157番 L MHRサンブレイクXA'), findsOneWidget);
+    expect(find.text('1157番'), findsOneWidget);
     expect(find.textContaining('ｻﾝ'), findsNothing);
   });
+
+  // 2026-11-12：4画面で同じ順・意味にそろえた表示。
+  Map<String, dynamic> many() {
+    const long = 'とても長い機種名の表示を確かめるための試験機・スーパーロングネームエディションｻﾝﾌﾞﾚｲｸ';
+    return {
+      'format': 'daily-learning',
+      'version': 1,
+      'updated_at': '2026-11-11T07:30:00+09:00',
+      'status': '長町南：11/11の事前予測は保存済みです／幸町：処理失敗（原本DBを読めません）。従来方式を使用してください／同期先未設定または利用不可',
+      'days': [
+        {
+          'target': '2026-11-11',
+          'input_day': '2026-11-10',
+          'saved_at': '2026-11-11T00:30:00+09:00',
+          'groups': [
+            {
+              'store': 'nagamachiminami',
+              'name': long,
+              'active': 'learned',
+              'status': '改善を確認して採用中',
+              'selected': [
+                for (final n in [1162, 1157, 1203, 1204, 1205, 1206, 1207])
+                  ['nagamachiminami', '', long, n],
+              ],
+            },
+            {
+              'store': 'nagamachiminami',
+              'name': 'バラエティ',
+              'active': 'current',
+              'status': '学習データ不足・従来方式',
+              'selected': [
+                ['nagamachiminami', '', '機種A', 301],
+                ['nagamachiminami', '', 'ｷｼｭﾋﾞｰ', 305],
+              ],
+            },
+            {
+              'store': 'saiwaichou',
+              'name': '試験機',
+              'active': 'current',
+              'status': 'x',
+              'selected': [
+                ['saiwaichou', '', '試験機', 1],
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  test('候補数・台の順番・注意の振り分け', () {
+    final now = DateTime.parse('2026-11-11T07:00:00+09:00');
+    final v = DailyView(many(), 'nagamachiminami', '2026-11-11', now);
+    expect(v.count, 9);
+    expect(v.scope, '1機種とバラエティ');
+    expect(v.groups.map((g) => [for (final r in g.racks) r.rack]).toList(), [
+      [1162, 1157, 1203, 1204, 1205, 1206, 1207],
+      [301, 305],
+    ]);
+    expect(v.groups[1].racks.map((r) => r.machine).toList(), ['機種A', 'ｷｼｭﾋﾞｰ']);
+    expect(v.groups[0].racks.first.machine, isNull);
+    expect(v.alerts, ['同期先未設定または利用不可']);
+    final s = DailyView(many(), 'saiwaichou', '2026-11-11', now);
+    expect(s.alerts.first, startsWith('処理失敗'));
+    final none = DailyView(many(), 'pscube:c740601:20', '2026-11-11', now);
+    expect(none.count, 0);
+    expect(none.alerts.last, contains('保存済み候補はありません'));
+    final later = DailyView(
+      many(),
+      'nagamachiminami',
+      '2026-11-11',
+      DateTime.parse('2026-11-14T09:00:00+09:00'),
+    );
+    expect(
+      later.alerts.join(),
+      allOf(contains('過去の対象日'), contains('本日の処理結果は届いていません')),
+    );
+    expect(dailyDateLabel('2026-11-12'), '11月12日（木）');
+    expect(dailyTime('2026-11-11T15:02:00Z'), '11月12日 0:02');
+  });
+
+  for (final width in [320.0, 393.0, 1280.0]) {
+    testWidgets('幅${width.toInt()}で長い機種名・7台・バラエティでもはみ出さず、説明は開閉できる', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DailyLearningPage(load: () async => jsonEncode(many())),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await pickDay(tester, '11月11日（水）・過去日');
+      expect(
+        tester.takeException(),
+        isNull,
+      ); // はみ出し（RenderFlex overflowed）があると例外になる
+      expect(find.text('9台'), findsOneWidget);
+      expect(find.text('採用中 日次学習版'), findsOneWidget);
+      expect(find.text('採用中 従来方式'), findsOneWidget);
+      expect(find.textContaining('ｻﾝ'), findsNothing);
+      expect(find.textContaining('ｷｼｭ'), findsNothing);
+      expect(find.text('キシュビー'), findsOneWidget);
+      // 台は保存した順のまま。
+      final racks = tester
+          .widgetList<Text>(find.byType(Text))
+          .map((t) => t.textSpan?.toPlainText() ?? t.data ?? '')
+          .where((s) => RegExp(r'^\d+番$').hasMatch(s))
+          .toList();
+      expect(racks, [
+        '1162番',
+        '1157番',
+        '1203番',
+        '1204番',
+        '1205番',
+        '1206番',
+        '1207番',
+        '301番',
+        '305番', //
+      ]);
+      // 注意は開いたまま、説明は閉じている。
+      expect(find.textContaining('過去の対象日です'), findsOneWidget);
+      expect(find.text('改善を確認して採用中'), findsNothing);
+      await tester.tap(find.text('採用方式の説明・保存時刻').first);
+      await tester.pumpAndSettle();
+      expect(find.text('改善を確認して採用中'), findsOneWidget);
+      expect(find.text('保存 11月11日 0:30（日本時間）'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
