@@ -29,6 +29,7 @@ import 'pscube_day_upload.dart';
 import 'pscube_list_wait.dart';
 import 'pscube_store.dart';
 import 'pscube_viewer_data.dart' show pscubeDateEvents, pscubeViewerRecords;
+import 'daily_learning_page.dart';
 import 'theme.dart';
 import 'picked_file.dart';
 import 'youtube_request_block.dart';
@@ -1587,6 +1588,16 @@ class _PscubeImportPageState extends State<PscubeImportPage>
     appBar: AppBar(
       title: const Text('P’s CUBE 取り込み'),
       actions: [
+        IconButton(
+          tooltip: '日次学習・採用中の候補',
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  const DailyLearningPage(store: 'pscube:c740601:20'),
+            ),
+          ),
+          icon: const Icon(Icons.model_training),
+        ),
         IconButton(
           tooltip: 'サイトの記録を消してやり直す',
           onPressed: _busy || _opening || !_browserReady ? null : _resetSite,

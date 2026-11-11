@@ -17,6 +17,7 @@ import 'backup_service.dart';
 import 'backup_destination.dart';
 import 'data_checks.dart';
 import 'daily_net_page.dart';
+import 'daily_learning_page.dart';
 import 'date_events.dart';
 import 'event_calendar_page.dart';
 import 'event_history.dart';
@@ -256,6 +257,15 @@ class AppShell extends StatelessWidget {
           style: TextStyle(fontWeight: FontWeight.w800),
         ),
         actions: [
+          IconButton(
+            tooltip: '日次学習・採用中の候補',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const DailyLearningPage(),
+              ),
+            ),
+            icon: const Icon(Icons.model_training),
+          ),
           IconButton(
             tooltip: 'CSVを共有',
             onPressed: controller.records.isEmpty

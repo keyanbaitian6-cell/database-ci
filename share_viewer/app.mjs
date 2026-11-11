@@ -1,5 +1,6 @@
 import {RECOMMENDATION_TYPE, recommendationPlans, recommendationDays, recommendationRows, recommendationFace, RECOMMENDATION_FACES, recommendationResult, recommendationResultKey, mergeRecommendationResults, recommendationNotOlder, recommendationEditMs} from './recommendations.mjs';
 import {updateStatusLines,netHealth} from './capture_health.mjs';
+import {openDailyLearning} from './daily_learning.mjs';
 import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, historyCell, historyEditKey, mergeHistoryCells, newHistoryCell} from './event_history.mjs';
 // 閲覧専用の共有ページ（お試し、2026-10-09。EVENT_CALENDAR.md「閲覧専用の共有ページ」）。
 // 読むだけのApps Script（database_android/tool/viewer_drive_script_readonly.gs）からDriveのファイルを読み、
@@ -42,6 +43,12 @@ const TIMEOUT_MS = 30000;
 
 const app = document.getElementById('app');
 const reload = document.getElementById('reload');
+document.addEventListener('click',event=>{
+  if(event.target.closest('[data-daily-learning]') && state.id) {
+    void openDailyLearning({store:state.store,target:todayJst().day,
+      load:()=>getJson(`https://script.google.com/macros/s/${state.id}/exec?file=daily-learning`)});
+  }
+});
 let statsObserver;
 const state = {id: null, name: null, model: null, store: null, year: 0, month: 0, loading: false, notice: '',
   birthdays: new Map(), eventHistory: null, historyNotice: '', historyDocument:null, historyRedraw:null, historySaveNotice:''};
@@ -257,6 +264,7 @@ function render() {
       ${state.notice ? `<p class="data-warning" role="status">${esc(state.notice)}</p>` : ''}
       ${auxWarning(site)}
       ${issues.length ? `<details class="data-warning" data-record-issues><summary>${conflicts.length ? `内容が異なる${conflicts.length}台分を集計から除外しています` : '同一記録の重複を1件として集計しています'}</summary>${issues.map(i => `<p>${esc(i.day)} ${i.rack}番 ${esc(displayMachineName(i.machine))}：${i.kind === 'conflict' ? '内容が競合・集計保留' : '同一内容の重複'}（${i.count}件）</p>`).join('')}<p>保存元の記録は削除していません。</p></details>` : ''}
+      <button type="button" class="pill pill-outline" data-daily-learning>日次学習・採用中の候補</button>
       <div class="month-stats" aria-label="月間の集計">
         <div class="month-stat" data-month-rate><span class="stat-label">月間勝率</span><span class="stat-value num">${monthRate.judged ? winRateText(monthRate.won, monthRate.judged).replace('勝率', '') : '—'}</span><span class="stat-detail">${monthRate.judged ? `${monthRate.days}日分・${count(monthRate.won)} / ${count(monthRate.judged)}台プラス` : '勝率データなし'}</span></div>
         <div class="month-stat" data-month-net><span class="stat-label">月間差枚${!state.store.startsWith('pscube:') || monthNets.some(r => r.estimated) ? '（推定含む）' : ''}</span><span class="stat-value num ${monthNet == null ? '' : tone(monthNet)}">${monthNet == null ? '—' : signed(monthNet)}<small>${monthNet == null ? '' : '枚'}</small></span><span class="stat-detail">${monthNet == null ? '差枚データなし' : `取得分 ${netDays}日・延べ${count(monthNets.length)}台`}</span></div>

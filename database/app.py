@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
 import error_log
 import forward_validation
+import daily_learning_ui
 import input_versions
 import power
 import pscube_import
@@ -1036,6 +1037,8 @@ def main():
             logbox.see('end')
             if message and after_auto is not None:
                 after_auto(message)
+            if message:
+                daily_worker.start()
 
         root.after(2000, check)
 
@@ -1904,6 +1907,22 @@ def main():
 
     ttk.Button(results_buttons, text='直前の保存を取り消す', command=undo_last).pack(side='left')
 
+    daily_worker = daily_learning_ui.DailyLearningWorker(DATA_DIR)
+    ttk.Button(results_buttons, text='日次学習・採用中の候補',
+               command=lambda: daily_learning_ui.show(root, DATA_DIR)).pack(side='left', padx=8)
+    def daily_tick():
+        if closing[0]:
+            return
+        # 起動時と、保存できる時間帯（前日23:30〜当日8:00）の始まりと終わり際。既存の研究処理と別に、保存済みデータだけを使う。
+        from daily_learning import JST
+        now = datetime.now(JST)
+        if now.hour in (7, 23) and now.minute >= 30:
+            daily_worker.start()
+        while not daily_worker.results.empty():
+            tell(daily_worker.results.get_nowait() + '\n')
+        root.after(300_000, daily_tick)
+    root.after(60_000, daily_worker.start)
+    root.after(65_000, daily_tick)
     root.after(400, auto_sync_on_start)
     root.after(PSCUBE_SYNC_FIRST_MS, poll_pscube_from_sync)
     # 翌日候補の比較用の検証記録は、操作ごとに接続を閉じても起動中は送り続ける（input_versions.hold）。

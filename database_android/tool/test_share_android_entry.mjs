@@ -55,7 +55,7 @@ test('両入口・両manifest・共通モジュール・共用画像の参照に
 
 test('公開対象は許可した静的ファイルだけで、元写真・記録・接続情報を含めない', async () => {
   assert.deepEqual((await fs.readdir(temp)).sort(), ['.nojekyll', 'README.md', 'android.html', 'app.mjs',
-    'apple-touch-icon.png', 'capture_health.mjs', 'character_birthdays.json', 'data.mjs', 'event_history.mjs', 'favicon.png', 'icon-192.png', 'icon-512.png', 'index.html',
+    'apple-touch-icon.png', 'capture_health.mjs', 'character_birthdays.json', 'daily_learning.mjs', 'data.mjs', 'event_history.mjs', 'favicon.png', 'icon-192.png', 'icon-512.png', 'index.html',
     'manifest-android.json', 'manifest.json', 'net.mjs', 'offline.mjs', 'recommendations.mjs', 'sw.js', 'viewer_parts.mjs'].sort());
   // キャラ誕生日（2026-10-18）：PC・Flutterと同じアセット1つから作る。中身はアセットと同じで、記録・接続先は入らない。
   assert.ok(!(await fs.readdir(temp)).includes('event_history.json'));
