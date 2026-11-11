@@ -2267,3 +2267,4 @@
 |閲覧ページの画面試験|済|`flutter build web`→`stage_viewer.py`（`C:\w\cbw-kana\viewer`）に対して `test_daily_learning_browser`・`test_viewer_built_drive`・`test_pscube_browser`・`test_viewer_shared_calendar_browser` 成功。公開物の差分は `main.dart.js` だけ。全体ゲートは流していない（小さな修正）|
 |ソースの送信・閲覧ページの公開|下に追記|`20dacd5`|
 |iPhoneでの表示|未確認|利用者に再読み込みしてもらう|
+- 送信・公開の結果：`tools/push_ci.py` で正本へ `f2b5f21..564124e`（`20dacd5` を含む。CIは送信時点で実行中）。閲覧ページは `database-viewer` `5cb1da3`→`8863cee`、Pages 43103908477 成功、配信中の `main.dart.js` のSHA-256が公開したファイルと一致（`9801d87d…`）。
