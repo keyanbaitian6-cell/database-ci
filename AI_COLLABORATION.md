@@ -2073,6 +2073,9 @@
 |指数・採点・候補の計算を変えない|済|変更は注記の新規ファイルと `viewer_main.dart` の3行だけ|
 |静的解析|済|`flutter analyze --no-pub --no-fatal-infos`（3ファイル、問題なし）|
 |全体ゲート|1項目だけ失敗→その項目を流し直して成功|`CHECK_BUILD_WORK=/c/w/cbw-calnote bash database_android/tool/check_before_build.sh`。Flutter 835件、静的解析（エラー・警告なし）、UTCのイベント試験28件、閲覧ページのビルド、viewer/share stage、JS・画面の試験はすべて成功。`pc-tests` だけ967件中1件失敗（下の説明）。`python -m unittest discover -s tests` を流し直して967件成功|
-|ソースのpush・閲覧ページの公開・iPhone実機|未実施|利用者の承認待ち|
+|ソースのpush|済|利用者「送信して公開」。`tools/push_ci.py` で正本へ1回送信（`b35a73c..d4b3bf7`）。実装は `5b01b02`、正本の記録 `b35a73c` を取り込んだのが `d4b3bf7`。未送信だった `43b6387`・`d10cf52`・`a525b73` も一緒に入った|
+|閲覧ページの公開|済|`database-viewer` を `875f949` から `4e72b55` に非強制更新（全体ゲートの viewer stage の出力。変わったのは main.dart.js と NOTICES の改行だけ）。Pages の実行 42996430292 は成功。配信中の main.dart.js のSHA-256が公開したファイルと一致（`9c5f56a5…`）、注記の文と `pscube-calendar-note-` が入っていることを確認|
+|CI|実行中（送信時点）|https://github.com/imakurudev-eng/database/actions/runs/42996226327 （対象 `d4b3bf7`）。結果は未確認|
+|iPhone実機|未確認|注記が最初に出るのは 11/14 の記録を見たとき（翌日が11/15）。共有カレンダー・Android・PCは対象外で未変更|
 
 - ゲートで落ちた1件：`test_pscube_background_sync.test_broken_file_does_not_block_good_file_and_is_retried_after_repair`（壊れたAndroid同期ファイルを直したあとの再読込が、3回目の確認で入らなかった）。今回の変更は Dart のファイルだけで、Python には触れていない。この試験のファイルだけを4回流して4回とも成功、PC試験全体の流し直しも967件成功。混み合ったときだけ落ちる試験とみられるが、原因（直したファイルの読込みが一時的に失敗する理由）は特定していない。次に同じ失敗を見たら、そのときの画面の記録（logbox）の文を取って調べる。
