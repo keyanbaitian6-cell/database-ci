@@ -2253,3 +2253,17 @@
 |ソースの送信|済|`tools/push_ci.py` で正本へ `b7f7de1..b0bb501`（Codex の3件を含む）。CIは送信時点で実行中|
 |閲覧ページの公開|済|`database-viewer` `937aebb`→`5cb1da3`。配信中の `shared_events.mjs` が公開したファイルと一致（`4cdb2e71…`）|
 |iPhoneでの表示|未確認|利用者に再読み込みしてもらう|
+
+### 2026-11-12 朝 iPhoneの日次学習画面で半角カナの機種名が□になるのを修正（Claude）
+
+- 利用者がiPhoneの画面写真（6:26）で報告：「文字化けがすごいです」。P-STATIONの「日次学習・採用中の候補」で、機種名の半角カナ（例「ﾗ」以外の多くの字）が□になる。
+- 原因：データは正しい（`daily-learning.json` の機種名は半角カナのまま、例 `L MHRｻﾝﾌﾞﾚｲｸXA`）。閲覧ページ（Flutter）の字体に無い半角カナが□になる。ほかの画面は `list_views.dart` の `displayMachineName`（半角カナ→全角）を通しているが、Codexの `daily_learning_page.dart` は通していなかった。
+- 修正：日次学習画面の機種名（見出しと「n番 機種名」）を `displayMachineName` で表示。保存データ・PC・Googleスクリプトは変えていない。共有カレンダー（`share_viewer/daily_learning.mjs`、ふつうのHTMLで端末の字体を使う）は変えていない。
+- 試験を足した：`daily_learning_page_test.dart`「半角カナの機種名を全角にそろえて表示する」。
+
+|要件|結果|証拠|
+|---|---|---|
+|修正と再発の試験|済|`flutter test --no-pub` 全839件成功、`flutter analyze --no-pub --no-fatal-infos` 終了コード0（変えた2ファイルは指摘なし）|
+|閲覧ページの画面試験|済|`flutter build web`→`stage_viewer.py`（`C:\w\cbw-kana\viewer`）に対して `test_daily_learning_browser`・`test_viewer_built_drive`・`test_pscube_browser`・`test_viewer_shared_calendar_browser` 成功。公開物の差分は `main.dart.js` だけ。全体ゲートは流していない（小さな修正）|
+|ソースの送信・閲覧ページの公開|下に追記|`20dacd5`|
+|iPhoneでの表示|未確認|利用者に再読み込みしてもらう|
