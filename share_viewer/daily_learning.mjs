@@ -94,8 +94,9 @@ export async function openDailyLearning({load,store,target,stores}) {
   const dialog=document.createElement('dialog');
   dialog.className='daily-sheet';
   dialog.setAttribute('aria-labelledby','daily-title');
-  dialog.innerHTML='<div class="sheet-head"><div class="head-row"><span class="head-title" id="daily-title">日次学習・採用中の候補</span><button type="button" class="pill pill-outline" data-daily-close>閉じる</button></div></div>';
+  dialog.innerHTML='<div class="sheet-head"><div class="head-row"><span class="head-title" id="daily-title">日次学習・採用中の候補</span><button type="button" class="pill pill-outline" data-daily-close autofocus>閉じる</button></div></div>';
   const content=document.createElement('div'); content.className='daily-content'; content.textContent='日次学習を読み込んでいます';
+  content.tabIndex=0; content.setAttribute('role','region'); content.setAttribute('aria-label','日次学習の候補一覧');
   dialog.querySelector('[data-daily-close]').onclick=()=>dialog.close();
   dialog.append(content); document.body.append(dialog); dialog.showModal();
   dialog.addEventListener('close',()=>dialog.remove(),{once:true});

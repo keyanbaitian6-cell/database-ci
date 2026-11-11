@@ -3,7 +3,10 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');
+const engines=await import(process.env.PLAYWRIGHT_MODULE||'playwright');
+// 通常のゲートは従来どおりChromium。iPhone系の修正時は同じ試験をWebKitでも流せる。
+const engineName=process.env.DAILY_BROWSER||'chromium';
+assert.ok(['chromium','webkit'].includes(engineName));
 const root=path.resolve(process.env.SHARE_WEB_ROOT||fileURLToPath(new URL('../../share_viewer',import.meta.url)));
 const today=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
 const now=Date.now(), stamp=new Date(now+9*3600000), hhmm=stamp.getUTCHours()*60+stamp.getUTCMinutes();
@@ -17,6 +20,9 @@ const prediction={format:'daily-learning',version:1,status:'幸町：処理失�
     {store:'saiwaichou',name:longName,active:'learned',status:'改善を確認して採用中',
       selected:[1157,1162,1203,1204,1205,1206,1207].map(n=>['saiwaichou','',longName,n]),current:[],learned:[]},
     {store:'nagamachiminami',name:'別店舗の機種',active:'current',status:'x',selected:[['nagamachiminami','','別店舗の機種',9]],current:[],learned:[]}]}]};
+const longPrediction=structuredClone(prediction);
+for(let i=0;i<35;i++) longPrediction.days[0].groups.push({store:'saiwaichou',name:`スクロール確認機種${i+1}`,active:'current',
+  status:'学習データ不足・従来方式',selected:[['saiwaichou','',`スクロール確認機種${i+1}`,2000+i]]});
 const server=http.createServer(async(req,res)=>{
   try {
     const name=new URL(req.url,'http://x').pathname;
@@ -27,14 +33,14 @@ const server=http.createServer(async(req,res)=>{
   }catch{res.writeHead(404).end();}
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
-const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH||undefined});
+const browser=await engines[engineName].launch({headless:true,...(engineName==='chromium'?{executablePath:process.env.CHROMIUM_PATH||undefined}:{})});
 try{
   for(const width of [320,393,1280]){
-    const context=await browser.newContext({viewport:{width,height:852},serviceWorkers:'block'});
-    let fail=false;
+    const context=await browser.newContext({viewport:{width,height:852},hasTouch:width<800,isMobile:width<800,serviceWorkers:'block'});
+    let fail=false,many=false;
     await context.route('https://script.google.com/**',async route=>{
       const file=new URL(route.request().url()).searchParams.get('file');
-      if(file==='daily-learning'){await route.fulfill({json:fail?{error:'失敗'}:prediction});return;}
+      if(file==='daily-learning'){await route.fulfill({json:fail?{error:'失敗'}:many?longPrediction:prediction});return;}
       const json=!file?{format:'database-backup',version:1,records:[{store:'saiwaichou',day:today,machine:'試験',rack:1,games:3000,bb:20,rb:10,jo_net:100}]}:
         file==='pscube'?{format:'pscube-viewer',version:1,machines:[],records:[]}:{events:[],marks:[]};
       await route.fulfill({json});
@@ -68,6 +74,53 @@ try{
     const options=await dialog.locator('select[data-learning-day] option').allInnerTexts();
     assert.ok(options[0].includes('（'),options.join());
     await dialog.getByRole('button',{name:'閉じる',exact:true}).click();
+    // 実運用のように機種が多い日。末尾からも「閉じる」を自動スクロールなしで押せること。
+    many=true;
+    await page.locator('[data-daily-learning]').click();
+    await page.waitForFunction(()=>document.querySelectorAll('dialog .daily-group').length===37);
+    const list=dialog.locator('.daily-content'),close=dialog.getByRole('button',{name:'閉じる',exact:true});
+    assert.ok(await list.evaluate(e=>e.scrollHeight>e.clientHeight+1000),'候補一覧が長く、縦にスクロールできる');
+    async function closeStaysVisible(){
+      const visible=await close.evaluate(b=>{
+        const r=b.getBoundingClientRect(),viewport=window.visualViewport;
+        const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+        return r.top>=0&&r.bottom<=(viewport?.height??innerHeight)&&r.height>=44&&(hit===b||b.contains(hit));
+      });
+      assert.ok(visible,'末尾でも閉じるボタンが画面内に残り、指で押せる');
+    }
+    await list.evaluate(e=>{e.scrollTop=e.scrollHeight;});
+    await closeStaysVisible();
+    assert.ok(await dialog.locator('.daily-footer').isVisible());
+    if(engineName==='chromium'&&width<800){
+      // 末尾から上へ・先頭から下へ、両方向へ指で動かせること。scrollTopの代入だけで済ませない。
+      const cdp=await context.newCDPSession(page);
+      for(const bottom of [true,false]){
+        await list.evaluate((e,bottom)=>{e.scrollTop=bottom?e.scrollHeight:0;},bottom);
+        const before=await list.evaluate(e=>e.scrollTop),r=await list.boundingBox();
+        const x=r.x+r.width/2,y=r.y+r.height*(bottom?0.3:0.7),direction=bottom?1:-1;
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+        for(let step=1;step<=8;step++) await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+direction*r.height*.4*step/8}]});
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+        await page.waitForFunction(({before,bottom})=>{
+          const after=document.querySelector('.daily-content').scrollTop;
+          return bottom?after<before-30:after>before+30;
+        },{before,bottom});
+      }
+      await cdp.detach();
+    }
+    await list.evaluate(e=>{e.scrollTop=0;});
+    await closeStaysVisible();
+    assert.equal(await list.evaluate(e=>e.scrollTop),0);
+    // 横向き相当の低い画面でも閉じる帯を隠さない。
+    await page.setViewportSize({width,height:360});
+    await list.evaluate(e=>{e.scrollTop=e.scrollHeight;});
+    await closeStaysVisible();
+    if(process.env.DAILY_SHOTS) await page.screenshot({path:path.join(process.env.DAILY_SHOTS,`share-bottom-${engineName}-${width}.png`)});
+    await close.click();
+    await dialog.waitFor({state:'detached'});
+    assert.equal(await page.locator('dialog').count(),0);
+    assert.ok(await page.locator('[data-daily-learning]').isEnabled(),'閉じた後もカレンダーを操作できる');
+    await page.setViewportSize({width,height:852});
     fail=true;
     await page.locator('[data-daily-learning]').click();
     await page.getByText(/日次学習を読み込めません/).waitFor();
@@ -75,5 +128,5 @@ try{
     assert.deepEqual(errors,[]);
     await context.close();
   }
-  console.log('成功：日次学習の共有画面、320・393・1280px、台と順番・候補数・採用方式・注意・開閉・はみ出し・失敗表示');
+  console.log(`成功：日次学習の共有画面（${engineName}）、320・393・1280px、台と順番・候補数・採用方式・注意・開閉・はみ出し・失敗表示・37機種の末尾から閉じる・縦スクロール・高さ360px`);
 }finally{await browser.close();await new Promise(r=>server.close(r));}

@@ -2378,3 +2378,26 @@
 |学習量の変化|済|同上（幸町93→171日、P-STATION約40→171〜173日）|
 |予測が良くなるか|未確認|過去の分析では、履歴を足す効果は確認されていない|
 |実装|未着手|利用者の判断待ち|
+
+### 2026-11-12 iPhoneの共有カレンダー：日次学習の末尾でも閉じられるよう修正（Codex）
+
+- 依頼：利用者がiPhoneの画像（7:47）と「開いて下まで行ったら閉じれない、スワイプもできない」を報告。対象は共有カレンダーの日次学習だけ。画像は旧表示（箇条書き）で、手元は別セッションの4画面UI改善 `d410543` が既にコミット済みだった。起動時の未コミット変更なし。両mainを取得し、手元が正本mainを5コミット、database-ci/mainを220コミット含んで先行、どちらからも不足なしと確認した。
+- 完了条件：機種が多い日も末尾から「閉じる」が押せる／候補を上下へスクロールできる／閉じた後にカレンダーを再操作できる。候補・順位・学習・保存形式・実データは変更しない。
+- 変更：`share_viewer/index.html` の日次学習dialogを縦flexにし、閉じる帯を候補のスクロール領域から外した。候補本文だけを `min-height:0; overflow-y:auto` でスクロール。高さは92vhを旧ブラウザ用に残し92dvhを優先、下のsafe areaも維持。`daily_learning.mjs` は閉じるを初期フォーカスにし、本文をキーボードでもスクロールできる名前付きregionにした。共有カレンダーの通常の日別シート、PC・Flutterは変更しない。
+- 根拠：ヘッダーと本文の分離・本文のoverflowは https://web.dev/articles/building/a-dialog-component?hl=en 、動的viewport単位は https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/length 。今回のiPhone実機で固まった原因の完全な再現・特定はしていない。手元の構造を改善し、閉じる操作を常時使えるようにした。
+- 再発試験：`database_android/tool/test_daily_learning_browser.mjs` を拡張。37機種の長い候補、末尾の閉じるボタンの位置と実際のヒット対象、上下スクロール、低い画面、閉じた後の再操作を検査。通常ゲートは従来どおりChromium1回で、`DAILY_BROWSER=webkit` を指定すれば同じ試験をSafari系でも実行できる（CIジョブやマトリクスは追加しない）。Chromiumのモバイル幅ではCDPのtouchStart/move/endで両方向のスクロールを検査。WebKitはスクロール位置変更と末尾から閉じる操作までで、実機の指操作とは区別する。
+- 修正前のCSSを別フォルダーへ複製したものでは追加試験が「候補一覧が長く、縦にスクロールできる」で失敗。元ファイルを差し戻しての試験はしていない。最初の試験実装にはcloseイベントによるDOM除去を待たない誤りがあり、イベント完了を待つよう直してから両エンジンで成功を確認した。
+- 試験の出力と画像：`../outputs/share-daily-scroll-20261112/`。`stage_share_viewer.py` で作った `public-share`（19ファイル、版 `386ade7eb470`）に対しても試験済み。新しい版は未公開。
+- 別作業の保護：試験中に `database_android/tool/stage_share_viewer.py` に別作業の未コミット変更（daily_learning.mjsからdata.mjsへのimportの版付け）が入った。Codexはこのファイルを編集・コミットしていない。上のstageはその変更もある作業コピーから生成しているため、公開担当はこの変更も保持して再stageすること。ブラウザが出したdebug.logは今回の出力先へ退避。
+- 直前の全体ゲート（別セッション、`C:\w\cbw-dlui`）はPC1011件・Flutter844件・analyze・閲覧ビルド・stageが成功、JS85ファイル中84成功・1失敗。失敗は `test_share_viewer_browser` の日次学習からのdata.mjs読み込みに版が無い件。Codexは全体ゲートを再実行せず、上の版付け変更を含む新しいstageで、その失敗項目と今回関係する共有画面を再確認した。元ゲート全体をALL PASSEDだったとは扱わない。
+
+|要件|結果|証拠|
+|---|---|---|
+|末尾でも閉じる、上下スクロール、低い画面|済（架空データ）|Chromium・WebKitそれぞれ320/393/1280px、高さ852/360px、37機種。`staged-daily-chromium.log`・`staged-daily-webkit.log`|
+|候補・順番・方式・注意・文字・失敗表示|済|同じ画面試験。既存の確認を維持|
+|既存共有カレンダーの操作|済|新しいstageの `test_share_viewer_browser`（3幅、別ゲートの失敗項目も解消）・`test_share_android_browser`（2幅）・`test_share_loading_browser`（3幅）|
+|日次学習と共有の単体試験|済|`node database_android/tool/test_daily_learning.mjs` 6件、`test_share_viewer.mjs` 33件|
+|静的確認|済|JS2ファイルの `node --check`、`git diff --check`|
+|ソースpush・Web公開|未実施|既存のClaude公開作業と重複させないため、公開担当を利用者へ確認中。push承認前に実行しない|
+|iPhone実機での改善・Google応答|未確認|実サイトのデータや端末は操作していない。公開後に利用者の確認が必要|
+|APK・Googleスクリプト・PC再起動|不要・未実施|共有カレンダーの表示と操作だけの修正|
