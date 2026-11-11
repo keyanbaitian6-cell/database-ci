@@ -2302,3 +2302,4 @@
 
 - この節は未コミット・未push（依頼の指定）。改修（R1〜R9）は未着手。どれを進めるかは利用者が決める。
 - 利用者報告（11/12 朝）：iPhoneで日次学習画面の機種名の表示を「OK確認済み」（利用者の確認。AIは端末を直接見ていない）。
+- CIの確認（11/12 6:40）：`b0bb501`（11/12 0:50の送信）のCI https://github.com/imakurudev-eng/database/actions/runs/43052304274 は `full` だけ失敗、`pc` 2本は成功。失敗は試験より前、Playwright のブラウザに要るフォントを `apt` で入れる段階で `Temporary failure resolving 'security.ubuntu.com'`（GitHubの実行環境の名前解決の一時的な失敗）。コードの失敗ではない。再実行はしていない。`b0bb501` を含む `564124e` のCIは 6:40 時点で実行中で、これが通れば同じ内容の確認になる。
