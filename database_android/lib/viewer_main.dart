@@ -16,6 +16,7 @@ import 'date_events.dart';
 import 'event_calendar_page.dart';
 import 'event_history.dart';
 import 'event_name_dialog.dart';
+import 'pscube_calendar_note.dart';
 import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'pscube_suffix_page.dart';
 import 'pscube_validation_page.dart';
@@ -1340,6 +1341,8 @@ class _ViewerHomeState extends State<ViewerHome> {
             ),
             const SizedBox(height: 10),
           ],
+          // P-STATION【20】スロだけ：翌日が5・15・25日・23日のときの暦の注記（2026-11-11、閲覧ページだけ）。
+          ...pscubeCalendarNoteWidgets(store, day, dayRows),
           NextDayCandidatesCard(
             normalSeparated: true,
             store: store,
