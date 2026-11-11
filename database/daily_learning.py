@@ -11,8 +11,12 @@ from pathlib import Path
 import sqlite3
 import statistics
 
+from daily_learning_names import learning_key, learning_machine
+
 JST = timezone(timedelta(hours=9))
 # v2（2026-11-12、結果を見る前）：P’s CUBEの数値差枚 net_medals も符号に使う（仕様「取得差枚があればその符号」に合わせた）。
+# 同じv2（2026-11-12 朝、v2で保存した予測が無いうちに追加）：P-STATIONで取り込み元の切り替えで名前だけ変わった16機種を、
+# 学習では同じ機種として数える（daily_learning_names.py。利用者「vivy同じものとして数えて」）。
 VERSION = 'daily-plus-ridge-20261112-v2'
 # 採用・切り戻しの決まりの版（2026-11-12、結果を見る前に店舗単位・週の符号反転へ変更。DAILY_LEARNING.md）。
 RULE_VERSION = 'store-weekly-flip-20261112'
@@ -130,18 +134,30 @@ class History:
         self.by_id = defaultdict(list)
         self.by_day = {}
         self.racks = defaultdict(list)
+        # 学習では名前の変わり目をそろえた形（learning_key）で数える。保存の名前・候補の一覧は変えない。
         for r in self.rows:
-            key = identity(r)
-            if (r['day'], key) in self.by_day:
-                raise ValueError('同じ日・台・機種の重複入力があります')
+            key = learning_key(identity(r))
+            seen = self.by_day.get((r['day'], key))
+            if seen is not None:
+                if identity(seen) == identity(r):
+                    raise ValueError('同じ日・台・機種の重複入力があります')
+                # 古い名前と新しい名前で同じ日の台が2つあるときは、新しい名前のほうを使う。
+                if r['machine'] != key[2]:
+                    continue
+                self.by_id[key].remove(seen)
+                self.racks[(key[0], key[1], key[3])].remove(seen)
             self.by_id[key].append(r)
             self.by_day[(r['day'], key)] = r
             self.racks[(key[0], key[1], key[3])].append(r)
 
+    def get(self, day, ident):
+        """その日のその台の行。ident は保存の名前のままでよい（学習の名前にそろえて探す）。"""
+        return self.by_day.get((day, learning_key(tuple(ident))))
+
     def features(self, row):
-        day, key = row['day'], identity(row)
+        day, key = row['day'], learning_key(identity(row))
         changes = [r['day'] for r in self.racks[(key[0], key[1], key[3])]
-                   if r['day'] <= day and r['machine'] != row['machine']]
+                   if r['day'] <= day and learning_machine(key[0], r['machine']) != key[2]]
         start = max(changes, default='0001-01-01')
         past = [r for r in self.by_id[key] if start < r['day'] <= day and r['day'] >= shift(day, -27)]
         y = outcome(row)
@@ -185,9 +201,9 @@ def train(history, target):
         next_day = shift(row['day'], 1)
         if not first <= next_day <= last or not valid(row):
             continue
-        y = outcome(history.by_day.get((next_day, identity(row))))
+        y = outcome(history.get(next_day, identity(row)))
         if y is not None:
-            grouped[identity(row)[:3]].append((history.features(row), y, next_day))
+            grouped[learning_key(identity(row))[:3]].append((history.features(row), y, next_day))
     models = {}
     for key, examples in grouped.items():
         days = len({e[2] for e in examples})
@@ -214,7 +230,7 @@ def train(history, target):
 def rank_pool(pool, history, models):
     scores = []
     for row in pool:
-        model = models.get(identity(row)[:3])
+        model = models.get(learning_key(identity(row))[:3])
         if model is None:
             return None
         x = history.features(row)

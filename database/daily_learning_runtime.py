@@ -334,7 +334,7 @@ def record_outcomes(journal, rows, today, stores=None):
         for group in prediction['groups']:
             stats = dict(key=group['key'], day=target, trained=group['trained'], method=group.get('method', method))
             # 母集団全体の正解も残す。候補だけを学習・評価資料にしない。
-            found = {encoded(p['id']): history.by_day.get((target, tuple(p['id']))) for p in group['pool']}
+            found = {encoded(p['id']): history.get(target, p['id']) for p in group['pool']}
             labels = {k: outcome(r) for k, r in found.items()}
             for name in ('current', 'learned'):
                 observed = [labels[encoded(k)] for k in group[name] if labels[encoded(k)] is not None]
