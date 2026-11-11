@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from datetime import datetime, date, timedelta
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import statistics
@@ -15,13 +17,55 @@ import tempfile
 import time
 
 import core
-from daily_learning import (JST, VERSION, MATURITY, PERIOD, History, Journal, comparison,
-                            digest, encoded, identity, jst, outcome, period_days, prediction_target, rank_pool,
-                            shift, train)
+from daily_learning import (JST, VERSION, RULE_VERSION, MATURITY, PERIOD, STORE_COUNT, History, Journal, LateError,
+                            comparison, digest, encoded, identity, jst, outcome, outcome_source, period_days,
+                            prediction_target, rank_pool, rollback_needed, shift, store_day, train, valid)
 from file_io import atomic_writer
 
 FILE_NAME = 'daily-learning.json'
 STORES = ('nagamachiminami', 'saiwaichou', 'pscube:c740601:20')
+STORE_NAMES = {'nagamachiminami': '長町南', 'saiwaichou': '幸町', 'pscube:c740601:20': 'P-STATION'}
+SOURCES = {'nagamachiminami': 'meruhen', 'saiwaichou': 'meruhen', 'pscube:c740601:20': 'pscube'}
+SCORING_MJS = Path(__file__).parents[1] / 'database_android/web/pscube/scoring.mjs'
+# メルヘンの台は営業日の23:00以降に取ったものを閉店後の確定値とみなす（core.stale_capture_cutoff と同じ考え方）。
+MERUHEN_FINAL_HOUR = 23
+# 前日データのうち、符号が決まらない台（グラフ未取得など）がこれを超えたら取り込み待ち。
+UNKNOWN_LIMIT = .10
+
+
+def store_of(key):
+    return key.split('|', 1)[1] if '|' in key else None
+
+
+def method_signature(store):
+    """候補の作り方の版（学習の版＋従来候補の版）。期間の途中で変わったら、古い版の日を比べない。
+
+    ファイル全体の指紋は無関係な変更でも変わるので使わず、各方式が持つ版の定数を使う。"""
+    if SOURCES.get(store) == 'pscube':
+        found = re.findall(r"export const (SCORING_VERSION|NEXT_DAY_VERSION) = '([^']+)'",
+                           SCORING_MJS.read_text(encoding='utf-8'))
+        base = ','.join(f'{k}={v}' for k, v in sorted(found))
+    else:
+        import normal_next_day_model
+        base = (f'score={core.VERSION},next={core.NEXT_DAY_METHOD_VERSION},normal={normal_next_day_model.METHOD_VERSION},'
+                f'variety={core.candidate_method_version(store, core.VARIETY_GROUP_NAME)}')
+    return f'{VERSION}|{base}'
+
+
+def explain(error):
+    """画面に出す失敗の理由と直し方。型の名前だけを出さない。"""
+    text = str(error)
+    if isinstance(error, RuntimeError) and 'Node.js' in text:
+        return 'Node.jsが見つかりません。Node.jsを入れるか、database/start.cmd から開き直してください'
+    if isinstance(error, FileNotFoundError):
+        return f'{text}。データフォルダーを確認してください'
+    if isinstance(error, TimeoutError):
+        return '原本の読み取りが60秒で終わりませんでした。次の確認で読み直します'
+    if isinstance(error, sqlite3.Error):
+        return f'原本DBを読めません（{text}）。取り込み中なら、終わったあとに読み直します'
+    if isinstance(error, subprocess.TimeoutExpired):
+        return 'P-STATIONの従来候補の計算が3分で終わりませんでした'
+    return f'{type(error).__name__}: {text}'[:160]
 
 
 def compact(value):
@@ -34,8 +78,12 @@ def compact(value):
 
 
 def read_database(path, table):
-    """原本から短い単位でコピーを作り、行の解析中は原本のロックを持たない。"""
-    if table not in ('days', 'records', 'machines'):
+    return read_tables(path, (table,))[table]
+
+
+def read_tables(path, tables):
+    """原本から短い単位でコピーを作り、行の解析中は原本のロックを持たない。複数の表も1回のコピーで読む。"""
+    if not tables or any(t not in ('days', 'records', 'machines') for t in tables):
         raise ValueError('入力表が不正です')
     if not Path(path).is_file():
         raise FileNotFoundError(f'{Path(path).name} がありません')
@@ -55,7 +103,8 @@ def read_database(path, table):
             finally:
                 db.close()
             snapshot.execute('PRAGMA query_only=ON')
-            return [compact(json.loads(row[0])) for row in snapshot.execute(f'SELECT payload FROM {table}')]
+            return {table: [compact(json.loads(row[0])) for row in snapshot.execute(f'SELECT payload FROM {table}')]
+                    for table in tables}
         finally:
             snapshot.close()
 
@@ -71,17 +120,25 @@ class MemoryStore:
                 (not machine or r['machine'] == machine) and (not store or r['store'] == store)]
 
 
-def load_inputs(data_dir, target):
+def load_inputs(data_dir, target, sources=('meruhen', 'pscube')):
+    """必要な原本だけを読む（'meruhen'＝database.sqlite3、'pscube'＝pscube.sqlite3）。"""
+    data_dir = Path(data_dir)
     first, last = shift(target, -210), shift(target, -1)
-    meruhen = [r for r in read_database(data_dir / 'database.sqlite3', 'days')
-               if first <= r['day'] <= last and r['store'] in STORES and
-               not core.is_hidden_machine(r['store'], r['machine'])]
-    raw = [r for r in read_database(data_dir / 'pscube.sqlite3', 'records')
-           if first <= r['day'] <= last and str(r['store']) == 'c740601' and str(r['rate']) == '20']
-    machines = [m for m in read_database(data_dir / 'pscube.sqlite3', 'machines')
-                if str(m['store']) == 'c740601' and str(m['rate']) == '20']
-    normalized = [{**r, 'store': f"pscube:{r['store']}:{r['rate']}"} for r in raw]
-    rows = sorted(meruhen + normalized, key=lambda r: (r['day'], identity(r)))
+    rows, raw, machines = [], [], []
+    if 'meruhen' in sources:
+        rows += [r for r in read_database(data_dir / 'database.sqlite3', 'days')
+                 if first <= r['day'] <= last and r['store'] in STORES and
+                 not core.is_hidden_machine(r['store'], r['machine'])]
+    if 'pscube' in sources:
+        tables = read_tables(data_dir / 'pscube.sqlite3', ('records', 'machines'))
+        # 原本の並び（行の書き直しで変わる）に左右されないよう、決まった順にそろえてから計算・保存する。
+        raw = sorted((r for r in tables['records']
+                      if first <= r['day'] <= last and str(r['store']) == 'c740601' and str(r['rate']) == '20'),
+                     key=lambda r: (r['day'], str(r.get('rack')), encoded(r)))
+        machines = sorted((m for m in tables['machines'] if str(m['store']) == 'c740601' and str(m['rate']) == '20'),
+                          key=encoded)
+        rows += [{**r, 'store': f"pscube:{r['store']}:{r['rate']}"} for r in raw]
+    rows.sort(key=lambda r: (r['day'], identity(r)))
     return rows, {'records': raw, 'machines': machines}
 
 
@@ -163,15 +220,42 @@ def skipped_low_racks(data_dir, target):
     return out
 
 
+def _instant(value):
+    try:
+        moment = datetime.fromisoformat(str(value))
+        return moment.timestamp() if moment.tzinfo else None
+    except (TypeError, ValueError):
+        return None
+
+
+def closed_capture(row):
+    """閉店後に取った台か。時刻が読めない台（アナスロの保存ページなど）は確定として扱う。成績は見ない。"""
+    if str(row.get('store', '')).startswith('pscube:'):
+        if row.get('source_site') == 'site777':
+            from pscube_import import site777_final
+            return site777_final(row)
+        return True        # P’s CUBEは翌朝に前の日を取り込む運用（AGENTS.md）。時刻では見分けない
+    stamp = _instant(row.get('captured_at'))
+    if stamp is None:
+        return True
+    final = datetime.fromisoformat(f"{row['day']}T{MERUHEN_FINAL_HOUR:02d}:00:00+09:00").timestamp()
+    return stamp >= final
+
+
 def ready(rows, target, stores=STORES, low=None):
-    """部分取り込みを初回固定しない。判定は保存行数（とP-STATIONの500G未満の控え）だけで、成績を見ない。"""
+    """部分取り込み・閉店前の数値を初回固定しない。保存行の数・時刻・グラフの有無（とP-STATIONの500G未満の控え）
+    だけで判断し、成績は見ない。2026-11-12：数が90%以上でも、閉店前に取った台・前の日にあった機種の欠け・
+    符号が決まらない台の多さで待つようにした（以前は台数だけで、昼の数値や1機種の欠けを見逃した）。"""
     day, reasons = shift(target, -1), []
     for store in stores:
+        name = STORE_NAMES.get(store, store)
         racks = defaultdict(set)
+        machines = defaultdict(lambda: defaultdict(set))
         current = []
         for r in rows:
             if r['store'] == store and shift(day, -7) <= r['day'] <= day:
                 racks[r['day']].add(r['rack'])
+                machines[r['day']][r['machine']].add(r['rack'])
                 if r['day'] == day:
                     current.append(r)
         if store.startswith('pscube:'):
@@ -181,65 +265,124 @@ def ready(rows, target, stores=STORES, low=None):
         counts = {d: len(v) for d, v in racks.items()}
         previous = [n for d, n in counts.items() if d < day]
         if not current or (previous and counts[day] < .9 * statistics.median(previous)):
-            reasons.append(f'{store}の前日データが不足しています')
-        if store.startswith('pscube:'):
-            from pscube_import import site777_final
-            if any(r.get('source_site') == 'site777' and not site777_final(r) for r in current):
-                reasons.append('P-STATIONの確定前データが残っています')
+            reasons.append(f'{name}の前日データが不足しています')
+            continue
+        early = sum(1 for r in current if not closed_capture(r))
+        if early and store.startswith('pscube:'):
+            reasons.append('P-STATIONの確定前データが残っています')
+        elif early:
+            reasons.append(f'{name}の前日データに閉店前（{MERUHEN_FINAL_HOUR}時より前）に取った台が{early}台あります')
+        # 前の日にあった機種の台が、別の機種名も含めて1台も無い（入れ替えは台番号が残るので数えない）。
+        earlier = sorted(d for d in machines if d < day)
+        if earlier:
+            missing = [m for m, numbers in machines[earlier[-1]].items() if not numbers & racks[day]]
+            if missing:
+                reasons.append(f'{name}の前日データに「{missing[0]}」など{len(missing)}機種がありません')
+        usable = [r for r in current if valid(r)]
+        unknown = sum(1 for r in usable if outcome(r) is None)
+        if usable and unknown > max(3, UNKNOWN_LIMIT * len(usable)):
+            reasons.append(f'{name}の前日データでグラフ・差枚の無い台が{unknown}台あります')
     return reasons
 
 
 def build_prediction(rows, pscube, target, journal, node=None):
     history, groups = History(rows), baseline_groups(rows, pscube, shift(target, -1), node)
     models = train(history, target)
-    projected = []
+    projected, methods = [], {}
     for group in groups:
         key = group_key(group)
-        state = journal.get('state', 'method:' + key) or {'active': 'current', 'since': target}
+        method = methods.setdefault(group['store'], method_signature(group['store']))
+        # 採用は店舗単位（2026-11-12）。採用したときと方式が違えば、採用の根拠が無いので従来方式。
+        state = journal.get('state', 'store:' + group['store']) or {'active': 'current'}
+        adopted = state.get('active') == 'learned' and state.get('method') == method
         ordered = rank_pool(group['pool'], history, models)
         current = [list(k) for k in group['current']]
         learned = [list(identity(r)) for r in ordered[:len(current)]] if ordered is not None else current
-        active = state['active'] if ordered is not None else 'current'
+        active = 'learned' if adopted and ordered is not None else 'current'
         projected.append(dict(key=key, store=group['store'], name=group['name'], current=current,
                               learned=learned, selected=learned if active == 'learned' else current,
-                              active=active, trained=ordered is not None,
+                              active=active, trained=ordered is not None, method=method,
                               status=('改善を確認して採用中' if active == 'learned' else
                                       '学習済み・将来成績を比較中' if ordered is not None else '学習データ不足・従来方式'),
                               pool=[{'id': list(identity(r)), 'features': history.features(r)} for r in group['pool']]))
     sources = [Path(__file__), Path(__file__).with_name('daily_learning.py'), Path(core.__file__),
                Path(__file__).with_name('normal_next_day_model.py'),
-               Path(__file__).with_name('daily_learning_pscube.mjs'),
-               Path(__file__).parents[1] / 'database_android/web/pscube/scoring.mjs']
-    return dict(input_day=shift(target, -1), groups=projected,
+               Path(__file__).with_name('daily_learning_pscube.mjs'), SCORING_MJS,
+               SCORING_MJS.with_name('data.mjs')]
+    return dict(input_day=shift(target, -1), groups=projected, methods=methods,
                 models={encoded(k): v for k, v in models.items()},
-                source_sha256={p.name: __import__('hashlib').sha256(p.read_bytes()).hexdigest() for p in sources})
+                source_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources if p.is_file()})
 
 
-def record_outcomes(journal, rows, today):
+def due_outcomes(journal, today):
+    """結果が成熟した（対象日から8日たった）のに、まだ結果を記録していない予測の鍵。本文は読まない。"""
+    keys = journal.db.execute('SELECT key FROM predictions WHERE key NOT IN (SELECT key FROM outcomes) ORDER BY key')
+    return [k for (k,) in keys if k[:10] <= shift(today, -MATURITY)]
+
+
+def record_outcomes(journal, rows, today, stores=None):
+    """成熟した予測の結果を1回だけ記録する。stores を渡すと、その店舗の予測だけ（原本を読めた店舗だけ）。"""
     history = History(rows)
-    keys = [k for (k,) in journal.db.execute('SELECT key FROM predictions ORDER BY key')]
-    for key in keys:
+    for key in due_outcomes(journal, today):
+        store = store_of(key)
+        if stores is not None and store not in stores:
+            continue
         prediction, results = journal.get('predictions', key), []
         target = prediction['target']
-        if target > shift(today, -MATURITY) or journal.get('outcomes', key) is not None:
-            continue
+        # 2026-11-12より前の予測は方式の版を持たない。新しい版と混ぜない。
+        method = prediction.get('version', '') + '|legacy'
         for group in prediction['groups']:
-            stats = dict(key=group['key'], day=target, trained=group['trained'])
+            stats = dict(key=group['key'], day=target, trained=group['trained'], method=group.get('method', method))
             # 母集団全体の正解も残す。候補だけを学習・評価資料にしない。
-            labels = {encoded(p['id']): outcome(history.by_day.get((target, tuple(p['id'])))) for p in group['pool']}
-            for method in ('current', 'learned'):
-                observed = [labels[encoded(k)] for k in group[method] if labels[encoded(k)] is not None]
-                stats[method] = statistics.mean(observed) if observed else None
-                stats['n_' + method] = len(observed)
-                stats['missing_' + method] = 1 - len(observed) / len(group[method])
+            found = {encoded(p['id']): history.by_day.get((target, tuple(p['id']))) for p in group['pool']}
+            labels = {k: outcome(r) for k, r in found.items()}
+            for name in ('current', 'learned'):
+                observed = [labels[encoded(k)] for k in group[name] if labels[encoded(k)] is not None]
+                stats[name] = statistics.mean(observed) if observed else None
+                stats['n_' + name] = len(observed)
+                stats['k_' + name] = len(group[name])
+                stats['plus_' + name] = sum(observed)
+                stats['missing_' + name] = 1 - len(observed) / len(group[name]) if group[name] else 0.
             stats['labels'] = labels
+            # 符号の根拠（ゲーム数・何から決めたか・取り込んだ時刻）。後の訂正・遅い取り込みと見分けるため。
+            stats['evidence'] = {k: None if r is None else [r.get('games'), outcome_source(r),
+                                                            r.get('captured_at') or r.get('source_captured_at')
+                                                            or r.get('observed_at')]
+                                 for k, r in found.items()}
             results.append(stats)
         with journal.db:
-            journal.append('outcomes', key, dict(target=target, recorded_at=today, groups=results))
+            journal.append('outcomes', key, dict(target=target, recorded_at=today, store=store, groups=results))
+
+
+def store_days(journal, store, first, last):
+    """期間内のその店舗の日ごとの比較（daily_learning.store_day）。方式の版も付ける。"""
+    days = []
+    for (key,) in journal.db.execute('SELECT key FROM outcomes WHERE key>=? AND key<=? ORDER BY key', (first, last + '~')):
+        if store_of(key) != store:
+            continue
+        body = journal.get('outcomes', key)
+        groups = body['groups']
+        versions = {g.get('method') for g in groups if g.get('trained')}
+        day = store_day(body['target'], groups)
+        day['method'] = versions.pop() if len(versions) == 1 else ('混在' if versions else None)
+        days.append(day)
+    return days
+
+
+def latest_method(days):
+    """期間の最後の方式の日だけを使う（版で決め、成績では選ばない）。"""
+    known = [d for d in days if d['method'] not in (None, '混在')]
+    if not known:
+        return None, []
+    method = max(known, key=lambda d: d['day'])['method']
+    return method, [d for d in known if d['method'] == method]
 
 
 def decisions(journal, today):
-    """期間終了後に1度だけ検定。処理の再実行で判定回数を増やさない。"""
+    """期間終了後に1度だけ、店舗ごとに検定する。処理の再実行で判定回数を増やさない。
+
+    2026-11-12（結果を見る前）：機種ごと84組で有意水準を分けると16週中15週の勝ち越しが要り、
+    実際の差があってもほぼ採用されなかったので、採用・切り戻しを店舗単位にした（DAILY_LEARNING.md）。"""
     start = journal.get('state', 'start')
     if not start:
         return
@@ -252,45 +395,43 @@ def decisions(journal, today):
             break
         offset += length
         key = f'adoption:{epoch}'
-        if journal.get('decisions', key) is not None:
+        if journal.has('decisions', key):
             continue
-        groups = defaultdict(list)
-        for (target,) in journal.db.execute('SELECT key FROM outcomes WHERE key>=? AND key<=?', (first, last + '~')):
-            for g in journal.get('outcomes', target)['groups']:
-                if g['trained']:
-                    groups[g['key']].append(g)
-        alpha = .05 / (epoch * (epoch + 1) * max(len(groups), 1))
+        alpha = .05 / (epoch * (epoch + 1) * STORE_COUNT)
         results = {}
         with journal.db:
-            for group, days in groups.items():
-                state = journal.get('state', 'method:' + group) or {'active': 'current', 'since': start}
-                result = comparison(days, alpha)
-                # 切り戻した期間の成績を再採用に使わない。
-                if state['active'] == 'current' and first >= state['since'] and result['adopt']:
-                    state = {'active': 'learned', 'since': today}
-                    journal.state('method:' + group, state)
-                results[group] = result
-            journal.append('decisions', key, dict(first=first, last=last, at=today, results=results))
-    for key, body in journal.db.execute("SELECT key,body FROM state WHERE key LIKE 'method:%'").fetchall():
-        state, group = json.loads(body), key[len('method:'):]
-        if state['active'] != 'learned':
+            for store in STORES:
+                days = store_days(journal, store, first, last)
+                method, used = latest_method(days)
+                result = comparison(used, alpha, first) | dict(method=method, days=len(days),
+                                                               other_method_days=len(days) - len(used))
+                state = journal.get('state', 'store:' + store) or {'active': 'current', 'since': start}
+                # 切り戻した期間の成績を再採用に使わない（切り戻しのあとに始まった期間だけ）。
+                # 採用中でも方式の版が変わっていれば、その採用は今の方式の根拠にならないので判定し直す。
+                open_to = state['active'] == 'current' or state.get('method') != method
+                if open_to and first >= state['since'] and result['adopt']:
+                    journal.state('store:' + store, {'active': 'learned', 'since': today, 'method': method,
+                                                     'period': [first, last]})
+                results[store] = result
+            journal.append('decisions', key, dict(first=first, last=last, at=today, rule=RULE_VERSION,
+                                                  results=results))
+    for store in STORES:
+        state = journal.get('state', 'store:' + store)
+        if not state or state['active'] != 'learned':
             continue
         blocks = (date.fromisoformat(shift(today, -MATURITY)) - date.fromisoformat(state['since'])).days // 28
         for block in range(1, blocks + 1):
-            decision_key = f'rollback:{group}:{state["since"]}:{block}'
-            if journal.get('decisions', decision_key) is not None:
+            decision_key = f'rollback:{store}:{state["since"]}:{block}'
+            if journal.has('decisions', decision_key):
                 continue
             first, last = shift(state['since'], 28 * (block - 1)), shift(state['since'], 28 * block - 1)
-            values = []
-            for (target,) in journal.db.execute('SELECT key FROM outcomes WHERE key>=? AND key<=?', (first, last + '~')):
-                values.extend(g for g in journal.get('outcomes', target)['groups'] if g['key'] == group)
-            paired = [g for g in values if g['current'] is not None and g['learned'] is not None]
-            rollback = len(paired) >= 14 and (statistics.mean(g['learned'] - g['current'] for g in paired) <= -.05
-                       or statistics.mean(g['missing_learned'] - g['missing_current'] for g in values) > .05)
+            days = [d for d in store_days(journal, store, first, last) if d['method'] == state.get('method')]
+            rollback = rollback_needed(days)
             with journal.db:
-                journal.append('decisions', decision_key, dict(at=today, first=first, last=last, rollback=rollback))
+                journal.append('decisions', decision_key, dict(at=today, first=first, last=last, rollback=rollback,
+                                                               days=len(days), rule=RULE_VERSION))
                 if rollback:
-                    journal.state(key, {'active': 'current', 'since': today})
+                    journal.state('store:' + store, {'active': 'current', 'since': today})
             if rollback:
                 break
 
@@ -306,13 +447,17 @@ def export(journal, data_dir, status, now, sync_dir=None):
     days = [by_day[d] for d in sorted(by_day, reverse=True)[:31]]
     document = dict(format='daily-learning', version=1, updated_at=jst(now).isoformat(),
                     status=status, days=days, next_cutoff='08:00 JST', improvement='将来成績で確認するまで改善未確認')
-    with atomic_writer(data_dir / FILE_NAME) as f:
-        f.write(encoded(document))
     if sync_dir is not None:
-        if not Path(sync_dir).is_dir():
-            raise OSError('日次学習の同期先が見つかりません')
-        with atomic_writer(Path(sync_dir) / FILE_NAME) as f:
-            f.write(encoded(document))
+        # 同期先に書けなくても、PCの表示は更新する（どちらで止まったかを状態の文に残す）。
+        try:
+            if not Path(sync_dir).is_dir():
+                raise OSError('同期先のフォルダーが見つかりません')
+            with atomic_writer(Path(sync_dir) / FILE_NAME) as f:
+                f.write(encoded(document))
+        except OSError as error:
+            document['status'] += f'／同期先へ書けません（{error}）。Googleドライブの起動・同期先の設定を確認してください'
+    with atomic_writer(Path(data_dir) / FILE_NAME) as f:
+        f.write(encoded(document))
     return document
 
 
@@ -325,34 +470,70 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
     target = prediction_target(now)
     shown = target or today
     label = f'{int(shown[5:7])}/{int(shown[8:])}'
+    import error_log
     try:
-        rows, pscube = load_inputs(data_dir, shown)
-        record_outcomes(journal, rows, today)
+        # 2026-11-12：することがある店舗の原本だけを読む。保存済み・締切後で、記録すべき結果も無ければ原本を開かない
+        # （以前は毎回、原本2つ（509MB・67MB）を丸ごと一時コピーしていた）。読めない原本があっても、ほかの店は続ける。
+        saved = {s for s in STORES if journal.has('predictions', shown + '|' + s)}
+        due = due_outcomes(journal, today)
+        wanted = {s for s in STORES if s not in saved and target is not None}
+        wanted |= {store_of(k) for k in due if store_of(k) in STORES}
+        if any(store_of(k) not in STORES for k in due):
+            wanted |= set(STORES)
+        loaded, failed = {}, {}
+        for source in sorted({SOURCES[s] for s in wanted}):
+            try:
+                rows, pscube = load_inputs(data_dir, shown, (source,))
+                loaded[source] = ([r for r in rows if SOURCES.get(r['store']) == source], pscube)
+            except Exception as error:     # noqa: BLE001 - 店舗ごとに失敗を分ける
+                failed[source] = error
+                error_log.note(data_dir, 'daily-learning', f'{source}: {type(error).__name__}: {error}')
+        rows = [r for source in sorted(loaded) for r in loaded[source][0]]
+        pscube = loaded.get('pscube', (None, {'records': [], 'machines': []}))[1]
+        if due:
+            readable = {s for s in STORES if SOURCES[s] in loaded}
+            record_outcomes(journal, rows, today, readable if len(readable) < len(STORES) else None)
         decisions(journal, today)
         statuses = []
+        low = None
         for store in STORES:
-            status = f'{label}の事前予測は保存済みです'
-            if journal.get('predictions', shown + '|' + store) is not None:
-                statuses.append(store + '：' + status)
+            name = STORE_NAMES[store]
+            if store in saved:
+                statuses.append(f'{name}：{label}の事前予測は保存済みです')
                 continue
-            why = ready(rows, shown, (store,), skipped_low_racks(data_dir, shown))
             if target is None:
-                status = f'{label}は締切超過・事前予測なし。従来方式を表示してください（次に保存できるのは23:30以降）'
-            elif why:
-                status = '取り込み待ち：' + '／'.join(why)
-            else:
-                store_rows = [r for r in rows if r['store'] == store]
-                prediction = build_prediction(store_rows, pscube if store.startswith('pscube:') else
-                                              {'records': [], 'machines': []}, target, journal, node)
-                if not prediction['groups']:
-                    statuses.append(store + '：候補を選べるデータが不足しています')
+                statuses.append(f'{name}：{label}は締切超過・事前予測なし。従来方式を表示してください'
+                                '（次に保存できるのは23:30以降）')
+                continue
+            if SOURCES[store] in failed:
+                statuses.append(f'{name}：処理失敗（{explain(failed[SOURCES[store]])}）。従来方式を使用してください')
+                continue
+            try:
+                if low is None:
+                    low = skipped_low_racks(data_dir, shown)
+                why = ready(rows, shown, (store,), low)
+                if why:
+                    statuses.append(f'{name}：取り込み待ち：' + '／'.join(why))
                     continue
-                journal.freeze(target, prediction, store_rows, clock(), store=store)
+                store_rows = [r for r in rows if r['store'] == store]
+                ps = pscube if store.startswith('pscube:') else {'records': [], 'machines': []}
+                prediction = build_prediction(store_rows, ps, target, journal, node)
+                if not prediction['groups']:
+                    statuses.append(f'{name}：候補を選べるデータが不足しています')
+                    continue
+                inputs = {'rows': store_rows}
+                if store.startswith('pscube:'):
+                    inputs |= {'pscube_records': ps['records'], 'pscube_machines': ps['machines']}
+                journal.freeze(target, prediction, inputs, clock(), store=store)
                 with journal.db:
                     if journal.get('state', 'start') is None:
                         journal.state('start', target)
-                status = f'{label}の事前予測を固定保存しました'
-            statuses.append(store + '：' + status)
+                statuses.append(f'{name}：{label}の事前予測を固定保存しました')
+            except LateError:
+                statuses.append(f'{name}：計算中に8:00を過ぎたため、{label}の事前予測は保存していません（締切超過）')
+            except Exception as error:     # noqa: BLE001 - 1店舗の失敗でほかの店の保存・表示を止めない
+                error_log.note(data_dir, 'daily-learning', f'{store}: {type(error).__name__}: {error}')
+                statuses.append(f'{name}：処理失敗（{explain(error)}）。従来方式を使用してください')
         status = '／'.join(statuses)
         folder = core.resolve_sync_dir(data_dir) if sync else None
         if sync and folder is None:
@@ -360,8 +541,9 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
         return export(journal, data_dir, status, clock(), folder)
     except Exception as error:
         try:
-            export(journal, data_dir, f'処理失敗：{type(error).__name__}。従来方式を使用してください', clock())
-        except Exception:
+            export(journal, data_dir, f'処理失敗（{explain(error)}）。従来方式を使用してください', clock(),
+                   core.resolve_sync_dir(data_dir) if sync else None)
+        except Exception:      # noqa: BLE001 - 失敗の表示を書けないときも元の例外を伝える
             pass
         raise
     finally:
@@ -387,7 +569,7 @@ def main():
     except Exception as error:
         print(f'日次学習に失敗しました：{type(error).__name__}: {error}')
         return 1
-    return 0
+    return 1 if '処理失敗' in result['status'] else 0
 
 
 if __name__ == '__main__':

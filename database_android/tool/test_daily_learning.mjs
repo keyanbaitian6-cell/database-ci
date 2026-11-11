@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import test from 'node:test';
-import {dailyPanel} from '../../share_viewer/daily_learning.mjs';
+import {dailyPanel, defaultDailyTarget} from '../../share_viewer/daily_learning.mjs';
 
 const fixture=()=>({format:'daily-learning',version:1,status:'比較中',updated_at:'2026-11-11T07:30:00+09:00',
   inputs:{private:'公開しない'},models:{private:'公開しない'},days:[{target:'2026-11-11',input_day:'2026-11-10',
@@ -33,6 +33,16 @@ test('共有ページの対象日・方式・候補・欠測・文字を検査�
   assert.ok(html.includes('従来方式')&&html.includes('101番'));
   assert.ok(html.includes('&lt;試験&gt;')&&!html.includes('<試験>'));
   assert.ok(dailyPanel(fixture(),'saiwaichou','2026-11-11').includes('保存済み候補はありません'));
+});
+test('最初に開く対象日は23:30から翌日、古い処理結果には注意を出す（2026-11-12）',()=>{
+  const at=s=>Date.parse(s);
+  assert.equal(defaultDailyTarget(at('2026-11-11T23:29:59+09:00')),'2026-11-11');
+  assert.equal(defaultDailyTarget(at('2026-11-11T23:30:00+09:00')),'2026-11-12');
+  assert.equal(defaultDailyTarget(at('2026-11-12T07:59:00+09:00')),'2026-11-12');
+  assert.equal(defaultDailyTarget(at('2026-12-31T23:45:00+09:00')),'2027-01-01');
+  const doc=fixture();
+  assert.ok(dailyPanel(doc,'nagamachiminami','2026-11-11',at('2026-11-20T09:00:00+09:00')).includes('本日の処理結果は届いていません'));
+  assert.ok(!dailyPanel(doc,'nagamachiminami','2026-11-11',Date.parse(doc.updated_at)).includes('本日の処理結果は届いていません'));
 });
 test('両Googleスクリプトの生成物と元コードが一致する',()=>{
   for(const name of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {

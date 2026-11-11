@@ -1,10 +1,17 @@
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export function dailyPanel(doc, store, target) {
+// 最初に開く対象日（日本時間）。23:30以降は、その夜に保存される翌日の分（2026-11-12）。
+export function defaultDailyTarget(now=Date.now()) {
+  const local=new Date(now+9*3600000), minutes=local.getUTCHours()*60+local.getUTCMinutes();
+  return new Date(local.getTime()+(minutes>=1410?86400000:0)).toISOString().slice(0,10);
+}
+export function dailyPanel(doc, store, target, now=Date.now()) {
   if(doc?.format!=='daily-learning'||doc.version!==1||!Array.isArray(doc.days)) throw Error('日次学習の形式が不正です');
   const day=doc.days.find(d=>d.target===target);
   const groups=(day?.groups??[]).filter(g=>g.store===store);
   const dates=[...new Set([target,...doc.days.map(d=>d.target)])].sort().reverse();
-  return `<h2>日次学習・採用中の候補</h2><p>最終処理 ${esc(doc.updated_at)}</p><p>${esc(doc.status)}</p>
+  const today=new Date(now+9*3600000).toISOString().slice(0,10);
+  const stale=!String(doc.updated_at).startsWith(today)?'<p>本日の処理結果は届いていません。古い候補を本日の予測として使わないでください。</p>':'';
+  return `<h2>日次学習・採用中の候補</h2><p>最終処理 ${esc(doc.updated_at)}</p><p>${esc(doc.status)}</p>${stale}
     <p>PCで前日23:30〜当日8:00の間に固定した予測です。古い対象日の候補を本日の予測として使わないでください。</p>
     <label>対象日 <select data-learning-day>${dates.map(d=>`<option${d===target?' selected':''}>${esc(d)}</option>`).join('')}</select></label>
     ${groups.length?groups.map(g=>{

@@ -1013,13 +1013,23 @@ def main():
     for note in startup_notes:
         logbox.insert('end', note)
 
+    capture_windows = []
+
+    def capture_open():
+        """取り込み窓が開いているか。開いている間は、日次学習を定期確認・起動時に動かさない（途中の数値で固定しないため）。"""
+        capture_windows[:] = [p for p in capture_windows if p.poll() is None]
+        return bool(capture_windows)
+
     def watch_capture_window(process, label, take_message, after_auto=None, take_stop=None):
         """自動取り込みが全部終わると取り込み窓は自分で閉じる（2026-10-30、サイトへの接続を止めるため）。
         窓のプロセスが終わったら、その結果をログ欄に出す。自動で閉じたとき（結果の文がある）は after_auto も呼ぶ。"""
+        capture_windows.append(process)
+
         def check():
             if process.poll() is None:
                 root.after(2000, check)
                 return
+            capture_open()
             try:
                 message = take_message()
             except Exception:  # noqa: BLE001 - the notice is only a convenience
@@ -1916,12 +1926,21 @@ def main():
         # 起動時と、保存できる時間帯（前日23:30〜当日8:00）の始まりと終わり際。既存の研究処理と別に、保存済みデータだけを使う。
         from daily_learning import JST
         now = datetime.now(JST)
-        if now.hour in (7, 23) and now.minute >= 30:
+        # 取り込み窓が開いている間は動かさない。窓が自動で閉じたときに watch_capture_window が動かす。
+        if now.hour in (7, 23) and now.minute >= 30 and not capture_open():
             daily_worker.start()
         while not daily_worker.results.empty():
             tell(daily_worker.results.get_nowait() + '\n')
         root.after(300_000, daily_tick)
-    root.after(60_000, daily_worker.start)
+
+    def daily_on_start():
+        if closing[0]:
+            return
+        if capture_open():
+            root.after(300_000, daily_on_start)
+            return
+        daily_worker.start()
+    root.after(60_000, daily_on_start)
     root.after(65_000, daily_tick)
     root.after(400, auto_sync_on_start)
     root.after(PSCUBE_SYNC_FIRST_MS, poll_pscube_from_sync)

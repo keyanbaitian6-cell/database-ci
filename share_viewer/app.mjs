@@ -1,6 +1,6 @@
 import {RECOMMENDATION_TYPE, recommendationPlans, recommendationDays, recommendationRows, recommendationFace, RECOMMENDATION_FACES, recommendationResult, recommendationResultKey, mergeRecommendationResults, recommendationNotOlder, recommendationEditMs} from './recommendations.mjs';
 import {updateStatusLines,netHealth} from './capture_health.mjs';
-import {openDailyLearning} from './daily_learning.mjs';
+import {openDailyLearning, defaultDailyTarget} from './daily_learning.mjs';
 import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, historyCell, historyEditKey, mergeHistoryCells, newHistoryCell} from './event_history.mjs';
 // 閲覧専用の共有ページ（お試し、2026-10-09。EVENT_CALENDAR.md「閲覧専用の共有ページ」）。
 // 読むだけのApps Script（database_android/tool/viewer_drive_script_readonly.gs）からDriveのファイルを読み、
@@ -45,7 +45,7 @@ const app = document.getElementById('app');
 const reload = document.getElementById('reload');
 document.addEventListener('click',event=>{
   if(event.target.closest('[data-daily-learning]') && state.id) {
-    void openDailyLearning({store:state.store,target:todayJst().day,
+    void openDailyLearning({store:state.store,target:defaultDailyTarget(),
       load:()=>getJson(`https://script.google.com/macros/s/${state.id}/exec?file=daily-learning`)});
   }
 });

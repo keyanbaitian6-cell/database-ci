@@ -1,10 +1,10 @@
 """固定した事前予測だけを評価する日次学習。原本DB・既存研究には書き込まない。"""
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 import hashlib
-import itertools
 import json
 import math
 from pathlib import Path
@@ -12,9 +12,13 @@ import sqlite3
 import statistics
 
 JST = timezone(timedelta(hours=9))
-VERSION = 'daily-plus-ridge-20261111-v1'
+# v2（2026-11-12、結果を見る前）：P’s CUBEの数値差枚 net_medals も符号に使う（仕様「取得差枚があればその符号」に合わせた）。
+VERSION = 'daily-plus-ridge-20261112-v2'
+# 採用・切り戻しの決まりの版（2026-11-12、結果を見る前に店舗単位・週の符号反転へ変更。DAILY_LEARNING.md）。
+RULE_VERSION = 'store-weekly-flip-20261112'
 MATURITY = 8
 PERIOD = 112
+STORE_COUNT = 3        # 採用判定の比較群（店舗）の数。有意水準をこの数で分ける。
 FEATURES = ('constant', 'last_plus', 'last_missing', 'plus7', 'coverage7',
             'plus28', 'coverage28', 'games', 'weekday_sin', 'weekday_cos')
 
@@ -40,6 +44,10 @@ def jst(now):
     if now.tzinfo is None:
         raise ValueError('時刻にはタイムゾーンが必要です')
     return now.astimezone(JST)
+
+
+class LateError(ValueError):
+    """保存できる時間帯（前日23:30〜当日08:00）の外。処理の失敗ではなく締切超過として扱う。"""
 
 
 def prediction_target(now):
@@ -71,12 +79,31 @@ def valid(row):
     return row.get('source_site') != 'anaslo' or not str(row['store']).startswith('pscube:')
 
 
+def measured_net(row):
+    """取得した差枚（推定ではない）。ジャグラーオンラインの jo_net、無ければP’s CUBEの net_medals。MY・推定差枚は使わない。"""
+    for key in ('jo_net', 'net_medals'):
+        net = row.get(key)
+        if isinstance(net, (int, float)) and not isinstance(net, bool) and math.isfinite(net):
+            return key, net
+    return None, None
+
+
+def outcome_source(row):
+    """outcome の符号を何から決めたか（'jo_net'・'net_medals'・'graph'・None）。結果の記録に残す。"""
+    if not row or not valid(row):
+        return None
+    key, _ = measured_net(row)
+    if key:
+        return key
+    return 'graph' if outcome(row) is not None else None
+
+
 def outcome(row):
     """記録上の符号。取得差枚・グラフの由来を保持し、欠測を0にしない。"""
     if not row or not valid(row):
         return None
-    net = row.get('jo_net')
-    if isinstance(net, (int, float)) and not isinstance(net, bool) and math.isfinite(net):
+    _, net = measured_net(row)
+    if net is not None:
         return int(net > 0)
     m, g = row.get('graph_measurement'), row.get('graph')
     try:
@@ -196,29 +223,96 @@ def rank_pool(pool, history, models):
     return [r for _, r in sorted(scores, key=lambda v: (-round(v[0], 12), identity(v[1])))]
 
 
-def comparison(days, alpha):
-    """固定期間に1回。週の符号の二項検定と日等重みの効果量を両方使う。"""
-    paired = [d for d in days if d['current'] is not None and d['learned'] is not None]
+def _share(group, method, missing_as):
+    """候補のうちプラスの割合。判定不能の台を missing_as（0＝非プラス、1＝プラス）として数える感度分析用。"""
+    k = group.get('k_' + method)
+    if not k:
+        return None
+    plus = group.get('plus_' + method)
+    if plus is None:
+        plus = (group[method] or 0) * group['n_' + method]
+    return (plus + (k - group['n_' + method]) * missing_as) / k
+
+
+def store_day(day, groups):
+    """1店舗・1日の比較。学習済みの組を等しく重み付けして平均する（候補の多い組だけが効かないように）。"""
+    groups = [g for g in groups if g.get('trained')]
+    paired = [g for g in groups if g['current'] is not None and g['learned'] is not None]
+    def mean_of(values):
+        values = [v for v in values if v is not None]
+        return statistics.mean(values) if values else None
+    sens = {}
+    for name, missing_as in (('nonplus', 0), ('plus', 1)):
+        values = []
+        for g in groups:
+            a, b = _share(g, 'learned', missing_as), _share(g, 'current', missing_as)
+            values.append(None if a is None or b is None else a - b)
+        sens[name] = mean_of(values)
+    return dict(day=day, groups=len(groups), paired=len(paired),
+                diff=mean_of(g['learned'] - g['current'] for g in paired),
+                diff_nonplus=sens['nonplus'], diff_plus=sens['plus'],
+                missing=mean_of(g['missing_learned'] - g['missing_current'] for g in groups),
+                n_current=sum(g['n_current'] for g in groups), n_learned=sum(g['n_learned'] for g in groups))
+
+
+def flip_p(values):
+    """週ごとの差の符号を入れ替える検定（片側、全組合せの正確な値）。帰無仮説：各週の差の分布が0について対称。
+
+    S=Σ±v の 2^n 通りのうち、観測値以上になる割合。半分ずつの和を並べて数えるので n=30 でも速い。"""
+    values = [float(v) for v in values]
+    if not values:
+        return 1.
+    observed = sum(values)
+    half = len(values) // 2
+
+    def sums(part):
+        out = [0.]
+        for v in part:
+            out = [s + v for s in out] + [s - v for s in out]
+        return out
+    left, right = sums(values[:half]), sorted(sums(values[half:]))
+    count = sum(len(right) - bisect_left(right, observed - x - 1e-12) for x in left)
+    return count / 2 ** len(values)
+
+
+def comparison(days, alpha, first=None):
+    """固定期間に1回、店舗ごとに判定する。days は store_day の結果。
+
+    効果量は判定できた日の等重み平均（学習版−従来のプラス率）。検定は暦週ごとの差の合計に対する
+    符号反転（日・台を独立試行にしない）。欠測を非プラス・プラスとみなした感度分析の両方が正であることも求める。"""
+    paired = [d for d in days if d.get('diff') is not None]
     if not paired:
-        return dict(adopt=False, reason='判定可能な日がありません', n=0)
-    deltas = [d['learned'] - d['current'] for d in paired]
-    weeks = defaultdict(list)
-    first = min(d['day'] for d in days)
-    for d, diff in zip(paired, deltas):
-        weeks[(date.fromisoformat(d['day']) - date.fromisoformat(first)).days // 7].append(diff)
-    # 日等重みの効果量と、週単位の符号の一貫性を分ける。台を独立試行にしない。
-    blocks = [sum(v) / len(paired) for v in weeks.values()]
-    actual = sum(blocks)
-    signs = [v > 0 for v in blocks if abs(v) > 1e-12]
-    positives, n = sum(signs), len(signs)
-    p = sum(math.comb(n, k) for k in range(positives, n + 1)) / 2 ** n if n else 1.
-    missing = statistics.mean(d['missing_learned'] - d['missing_current'] for d in days)
+        return dict(adopt=False, reason='判定可能な日がありません', n=0, rule=RULE_VERSION)
+    first = first or min(d['day'] for d in days)
+    weeks = defaultdict(float)
+    for d in paired:
+        weeks[(date.fromisoformat(d['day']) - date.fromisoformat(first)).days // 7] += d['diff']
+    blocks = [weeks[k] for k in sorted(weeks)]
+    actual = sum(blocks) / len(paired)
+    p = flip_p(blocks)
+
+    def mean_key(key):
+        values = [d[key] for d in days if d.get(key) is not None]
+        return statistics.mean(values) if values else None
+    missing, nonplus, plus = mean_key('missing'), mean_key('diff_nonplus'), mean_key('diff_plus')
     counts = [sum(d[k] for d in days) for k in ('n_current', 'n_learned')]
     enough = len(paired) >= 80 and len(blocks) >= 14 and min(counts) >= 80
-    adopt = enough and actual >= .02 and missing <= .02 and p <= alpha
+    robust = nonplus is not None and plus is not None and nonplus > 0 and plus > 0
+    adopt = (enough and actual >= .02 and missing is not None and missing <= .02 and robust and p <= alpha)
     return dict(adopt=adopt, reason='改善を確認' if adopt else '改善未確認', n=len(paired),
-                weeks=len(blocks), difference=actual, median=statistics.median(deltas),
-                missing_difference=missing, p=p, alpha=alpha, counts=counts)
+                weeks=len(blocks), difference=actual, median=statistics.median(d['diff'] for d in paired),
+                missing_difference=missing, nonplus_difference=nonplus, plus_difference=plus,
+                p=p, alpha=alpha, counts=counts, rule=RULE_VERSION)
+
+
+def rollback_needed(days):
+    """採用後の28暦日のまとまりで、従来へ戻すか。店舗単位（採用と同じ単位）。安全側の運用基準で、悪化の証明ではない。"""
+    paired = [d for d in days if d.get('diff') is not None]
+    missing = [d['missing'] for d in days if d.get('missing') is not None]
+    if len(paired) < 14:
+        return False
+    return (statistics.mean(d['diff'] for d in paired) <= -.05
+            or (bool(missing) and statistics.mean(missing) > .05))
 
 
 class Journal:
@@ -238,6 +332,11 @@ class Journal:
 
     def close(self):
         self.db.close()
+
+    def has(self, table, key):
+        if table not in ('predictions', 'outcomes', 'decisions', 'inputs', 'state'):
+            raise ValueError('保存先が不正です')
+        return self.db.execute(f'SELECT 1 FROM {table} WHERE key=?', (key,)).fetchone() is not None
 
     def get(self, table, key):
         if table not in ('predictions', 'outcomes', 'decisions', 'inputs', 'state'):
@@ -259,19 +358,43 @@ class Journal:
     def state(self, key, body):
         self.db.execute('INSERT INTO state VALUES (?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body', (key, encoded(body)))
 
-    def freeze(self, target, prediction, rows, now, store=None):
+    def freeze(self, target, prediction, inputs, now, store=None):
+        """事前予測を1回だけ固定する。inputs は {名前: 行の一覧}（一覧だけなら 'rows'）。
+
+        入力は「店舗×日」の塊ごとに指紋を付けて保存し、同じ塊は2回保存しない（2026-11-12。以前は
+        210日分を毎晩まるごと保存し、1晩で約132MB増えていた）。予測には塊の指紋の一覧を持たせる。"""
         now = jst(now)
         if target != prediction_target(now):
-            raise ValueError('保存できる時間（対象日の前日23:30〜当日08:00）の外なので、事前予測を保存しません')
+            raise LateError('保存できる時間（対象日の前日23:30〜当日08:00）の外なので、事前予測を保存しません')
+        if not isinstance(inputs, dict):
+            inputs = {'rows': inputs}
         key = target + ('|' + store if store else '')
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
-            if self.get('predictions', key) is not None:
+            if self.has('predictions', key):
                 return False
-            stamp = digest(rows)
-            if self.get('inputs', stamp) is None:
-                self.append('inputs', stamp, rows)
-            prediction = {**prediction, 'target': target, 'saved_at': now.isoformat(),
-                          'input_sha256': stamp, 'version': VERSION}
+            manifest = {}
+            for name in sorted(inputs):
+                chunks = defaultdict(list)
+                for r in inputs[name]:
+                    chunks[(str(r.get('store', '')), str(r.get('day', '')))].append(r)
+                manifest[name] = []
+                for part in sorted(chunks):
+                    body = sorted(chunks[part], key=encoded)
+                    stamp = digest(body)
+                    if not self.has('inputs', stamp):
+                        self.append('inputs', stamp, body)
+                    manifest[name].append(stamp)
+            prediction = {**prediction, 'target': target, 'saved_at': now.isoformat(), 'inputs': manifest,
+                          'input_sha256': digest(manifest), 'version': VERSION}
             self.append('predictions', key, prediction)
         return True
+
+    def input_rows(self, prediction, name='rows'):
+        """固定した予測の入力を作り直す。2026-11-12より前の予測（1つの塊）にも対応する。"""
+        if 'inputs' not in prediction:
+            return self.get('inputs', prediction['input_sha256']) if name == 'rows' else []
+        rows = []
+        for stamp in prediction['inputs'].get(name, []):
+            rows.extend(self.get('inputs', stamp))
+        return rows

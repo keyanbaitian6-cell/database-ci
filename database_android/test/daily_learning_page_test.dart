@@ -30,6 +30,12 @@ Map<String, dynamic> fixture() => {
 };
 
 void main() {
+  test('最初に開く対象日は23:30から翌日（日本時間）', () {
+    expect(dailyDefaultTarget(DateTime.parse('2026-11-11T14:29:59Z')), '2026-11-11');
+    expect(dailyDefaultTarget(DateTime.parse('2026-11-11T14:30:00Z')), '2026-11-12');
+    expect(dailyDefaultTarget(DateTime.parse('2026-11-11T22:59:00Z')), '2026-11-12');
+    expect(dailyDefaultTarget(DateTime.parse('2026-12-31T14:45:00Z')), '2027-01-01');
+  });
   test('日次学習の形式と締切を検査する', () {
     expect(parseDailyLearning(jsonEncode(fixture()))['days'], hasLength(1));
     final raw = fixture();

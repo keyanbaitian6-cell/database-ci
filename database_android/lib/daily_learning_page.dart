@@ -69,6 +69,15 @@ Map<String, dynamic> parseDailyLearning(String text) {
   return Map<String, dynamic>.from(value);
 }
 
+/// 最初に開く対象日（日本時間）。23:30以降は、その夜に保存される翌日の分（2026-11-12）。
+String dailyDefaultTarget(DateTime now) {
+  final local = now.toUtc().add(const Duration(hours: 9));
+  final day = local.hour * 60 + local.minute >= 1410
+      ? local.add(const Duration(days: 1))
+      : local;
+  return day.toIso8601String().substring(0, 10);
+}
+
 /// 全端末でPCが固定した同じ候補を読む。画面側で再学習しない。
 class DailyLearningPage extends StatefulWidget {
   const DailyLearningPage({super.key, this.load, this.store});
@@ -163,11 +172,12 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
             .toIso8601String()
             .substring(0, 10);
         final days = data['days'] as List;
+        final initial = dailyDefaultTarget(DateTime.now());
         final dates = {
-          today,
+          initial,
           ...days.map((d) => d['target'] as String),
         }.toList()..sort((a, b) => b.compareTo(a));
-        final target = dates.contains(_target) ? _target! : today;
+        final target = dates.contains(_target) ? _target! : initial;
         final matching = days.where((d) => d['target'] == target).toList();
         final groups = matching
             .expand((d) => d['groups'] as List)

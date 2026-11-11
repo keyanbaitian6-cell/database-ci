@@ -47,7 +47,12 @@ def show(root, data_dir):
         text.delete('1.0', 'end')
         try:
             doc = json.loads((Path(data_dir) / FILE_NAME).read_text(encoding='utf-8'))
-            text.insert('end', f"最終処理 {doc['updated_at']}\n{doc['status']}\n\n")
+            text.insert('end', f"最終処理 {doc['updated_at']}\n{doc['status']}\n")
+            from datetime import datetime
+            from daily_learning import JST
+            if not str(doc['updated_at']).startswith(datetime.now(JST).date().isoformat()):
+                text.insert('end', '本日の処理結果はまだありません。古い候補を本日の予測として使わないでください。\n')
+            text.insert('end', '\n')
             for day in doc['days']:
                 text.insert('end', f"対象日 {day['target']}　元データ {day['input_day']}\n")
                 for g in day['groups']:
