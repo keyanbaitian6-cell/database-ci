@@ -4,6 +4,7 @@ param(
     [switch]$Preview
 )
 $ErrorActionPreference = 'Stop'
+if ((Get-TimeZone).Id -ne 'Tokyo Standard Time') { throw 'この登録は日本時間のWindows用です。時刻設定を確認してください。' }
 $taskPython = (Resolve-Path -LiteralPath $PythonPath).Path
 $taskScript = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'daily_learning_runtime.py')).Path
 $taskData = Join-Path $PSScriptRoot 'data'

@@ -1137,13 +1137,18 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => DailyLearningPage(store: widget.store),
-              )),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => DailyLearningPage(store: widget.store),
+                ),
+              ),
               icon: const Icon(Icons.model_training),
               label: const Text('日次学習・採用中の候補'),
             ),
-            const Text('この欄の★・☆は従来方式の参考です。日次学習の採用中の候補は上のボタンから確認できます。', style: note),
+            const Text(
+              'この欄の★・☆は従来方式の参考です。日次学習の採用中の候補は上のボタンから確認できます。',
+              style: note,
+            ),
             if (dayContext != null)
               NormalDayContextNote(contextInfo: dayContext),
             if (!widget.normalSeparated &&

@@ -76,10 +76,10 @@ class LearningTests(unittest.TestCase):
 
     def test_fixed_period_adoption(self):
         days = [dict(day=d.shift('2026-01-01', i), current=.2, learned=.8,
-                     missing_current=0., missing_learned=0., n_current=10, n_learned=10) for i in range(84)]
+                     missing_current=0., missing_learned=0., n_current=1, n_learned=1) for i in range(112)]
         result = d.comparison(days, .025)
         self.assertTrue(result['adopt'])
-        self.assertAlmostEqual(result['p'], 1 / 4096)
+        self.assertAlmostEqual(result['p'], 1 / 65536)
         self.assertFalse(d.comparison(days[:30], .025)['adopt'])
         self.assertFalse(d.comparison([x | {'missing_learned': .1} for x in days], .025)['adopt'])
         self.assertFalse(d.comparison([x | {'learned': .2} for x in days], .025)['adopt'])
@@ -157,8 +157,8 @@ class LearningTests(unittest.TestCase):
             try:
                 with j.db:
                     j.state('start', '2026-01-01')
-                add('2026-01-01', 84, .8)
-                now = d.shift('2026-01-01', 92)
+                add('2026-01-01', 112, .8)
+                now = d.shift('2026-01-01', 120)
                 runtime.decisions(j, now)
                 self.assertEqual(j.get('state', 'method:' + key)['active'], 'learned')
                 first = j.get('decisions', 'adoption:1')

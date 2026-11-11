@@ -14,7 +14,7 @@ import statistics
 JST = timezone(timedelta(hours=9))
 VERSION = 'daily-plus-ridge-20261111-v1'
 MATURITY = 8
-PERIOD = 84
+PERIOD = 112
 FEATURES = ('constant', 'last_plus', 'last_missing', 'plus7', 'coverage7',
             'plus28', 'coverage28', 'games', 'weekday_sin', 'weekday_cos')
 
@@ -29,6 +29,11 @@ def digest(value):
 
 def shift(day, n):
     return (date.fromisoformat(day) + timedelta(days=n)).isoformat()
+
+
+def period_days(epoch):
+    # 反復の有意水準が小さくなるのに対し、週の数も事前規則で増やす。
+    return PERIOD + 14 * math.ceil(math.log2(epoch))
 
 
 def jst(now):
@@ -178,7 +183,7 @@ def rank_pool(pool, history, models):
 
 
 def comparison(days, alpha):
-    """84日を固定してから1回。daysは日別の同一母集団・同数候補の結果。"""
+    """固定期間に1回。週の符号の二項検定と日等重みの効果量を両方使う。"""
     paired = [d for d in days if d['current'] is not None and d['learned'] is not None]
     if not paired:
         return dict(adopt=False, reason='判定可能な日がありません', n=0)
@@ -187,14 +192,15 @@ def comparison(days, alpha):
     first = min(d['day'] for d in days)
     for d, diff in zip(paired, deltas):
         weeks[(date.fromisoformat(d['day']) - date.fromisoformat(first)).days // 7].append(diff)
-    # 日等重みの平均を保った週ブロックの符号反転。
+    # 日等重みの効果量と、週単位の符号の一貫性を分ける。台を独立試行にしない。
     blocks = [sum(v) / len(paired) for v in weeks.values()]
     actual = sum(blocks)
-    p = (sum(sum(s * x for s, x in zip(signs, blocks)) >= actual - 1e-12
-             for signs in itertools.product((-1, 1), repeat=len(blocks))) / 2 ** len(blocks))
+    signs = [v > 0 for v in blocks if abs(v) > 1e-12]
+    positives, n = sum(signs), len(signs)
+    p = sum(math.comb(n, k) for k in range(positives, n + 1)) / 2 ** n if n else 1.
     missing = statistics.mean(d['missing_learned'] - d['missing_current'] for d in days)
     counts = [sum(d[k] for d in days) for k in ('n_current', 'n_learned')]
-    enough = len(paired) >= 60 and len(blocks) >= 10 and min(counts) >= 300
+    enough = len(paired) >= 80 and len(blocks) >= 14 and min(counts) >= 80
     adopt = enough and actual >= .02 and missing <= .02 and p <= alpha
     return dict(adopt=adopt, reason='改善を確認' if adopt else '改善未確認', n=len(paired),
                 weeks=len(blocks), difference=actual, median=statistics.median(deltas),

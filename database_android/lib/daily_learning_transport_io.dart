@@ -38,8 +38,9 @@ Future<String> loadDailyDocument() async {
     final bytes = <int>[];
     await for (final chunk in response.timeout(const Duration(seconds: 30))) {
       bytes.addAll(chunk);
-      if (bytes.length > 4 * 1024 * 1024)
+      if (bytes.length > 4 * 1024 * 1024) {
         throw const FormatException('日次学習が大きすぎます');
+      }
     }
     return utf8.decode(bytes);
   } finally {

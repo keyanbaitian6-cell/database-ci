@@ -106,10 +106,11 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
       await saveDailyUrl(url);
       _refresh();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('URLを確認してください。設定は変更していません。')),
         );
+      }
     }
   }
 
@@ -134,15 +135,17 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
     body: FutureBuilder<Map<String, dynamic>>(
       future: _data,
       builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done)
+        if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError)
+        }
+        if (snapshot.hasError) {
           return const Padding(
             padding: EdgeInsets.all(16),
             child: Text(
               '日次学習を読み込めません。PCの実行状況・同期先・閲覧用Googleスクリプトの更新を確認してください。従来候補は引き続き参考にできます。',
             ),
           );
+        }
         final data = snapshot.data!;
         final today = DateTime.now()
             .toUtc()

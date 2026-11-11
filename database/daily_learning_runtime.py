@@ -14,7 +14,7 @@ import subprocess
 
 import core
 from daily_learning import (JST, VERSION, MATURITY, PERIOD, History, Journal, comparison,
-                            digest, encoded, identity, jst, outcome, rank_pool, shift, train)
+                            digest, encoded, identity, jst, outcome, period_days, rank_pool, shift, train)
 from file_io import atomic_writer
 
 FILE_NAME = 'daily-learning.json'
@@ -183,12 +183,17 @@ def decisions(journal, today):
     start = journal.get('state', 'start')
     if not start:
         return
-    complete = (date.fromisoformat(shift(today, -MATURITY)) - date.fromisoformat(start)).days // PERIOD
-    for epoch in range(1, complete + 1):
+    offset, epoch = 0, 0
+    while True:
+        epoch += 1
+        length = period_days(epoch)
+        first, last = shift(start, offset), shift(start, offset + length - 1)
+        if last > shift(today, -MATURITY):
+            break
+        offset += length
         key = f'adoption:{epoch}'
         if journal.get('decisions', key) is not None:
             continue
-        first, last = shift(start, (epoch - 1) * PERIOD), shift(start, epoch * PERIOD - 1)
         groups = defaultdict(list)
         for (target,) in journal.db.execute('SELECT key FROM outcomes WHERE key>=? AND key<=?', (first, last + '~')):
             for g in journal.get('outcomes', target)['groups']:
