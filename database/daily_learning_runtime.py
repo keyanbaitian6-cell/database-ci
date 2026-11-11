@@ -11,6 +11,8 @@ import shutil
 import sqlite3
 import statistics
 import subprocess
+import tempfile
+import time
 
 import core
 from daily_learning import (JST, VERSION, MATURITY, PERIOD, History, Journal, comparison,
@@ -32,17 +34,30 @@ def compact(value):
 
 
 def read_database(path, table):
-    """Store初期化やinput_versionsの記録を行わない読み取り専用接続。"""
+    """原本から短い単位でコピーを作り、行の解析中は原本のロックを持たない。"""
     if table not in ('days', 'records', 'machines'):
         raise ValueError('入力表が不正です')
     if not Path(path).is_file():
         raise FileNotFoundError(f'{Path(path).name} がありません')
-    db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
-    try:
-        db.execute('PRAGMA query_only=ON')
-        return [compact(json.loads(row[0])) for row in db.execute(f'SELECT payload FROM {table}')]
-    finally:
-        db.close()
+    with tempfile.TemporaryDirectory(prefix='database-daily-read-') as temporary:
+        snapshot = sqlite3.connect(Path(temporary) / 'snapshot.sqlite3')
+        try:
+            db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
+            try:
+                db.execute('PRAGMA query_only=ON')
+                deadline = time.monotonic() + 60
+                def progress(status, remaining, total):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('学習用コピーの作成を中断しました。次回に再試行します')
+                # 原本のモードや検証記録は変えない。1回1MiBほどずつ読み、
+                # 書き込み側を長時間待たせず、一貫したコピーを完成させる。
+                db.backup(snapshot, pages=256, progress=progress, sleep=.05)
+            finally:
+                db.close()
+            snapshot.execute('PRAGMA query_only=ON')
+            return [compact(json.loads(row[0])) for row in snapshot.execute(f'SELECT payload FROM {table}')]
+        finally:
+            snapshot.close()
 
 
 class MemoryStore:

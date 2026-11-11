@@ -2199,3 +2199,23 @@
 - 利用者報告（11/11 20:20ごろ）：「スクリプト張り替えてインストールも終わりました」。閲覧用Googleスクリプト2本の貼り替えと、APK 0.5.56 の端末へのインストールは利用者が実施（AIは直接確認していない。Googleの `?file=daily-learning` の返事、端末の画面は未確認）。修正のコミット `ed5c831` は正本へ送信済み（CIは 20:22 時点で実行中、`e4d22af` のCIは成功）。
 - 利用者の質問「Windowsの予約は必須？取り込み後に自動実行は？」への回答（コードで確認）：予約は必須ではない（未登録のまま）。取り込み後の自動実行は入っている：`app.py` の `watch_capture_window` が、メルヘン・サイトセブン・P’s CUBE の取り込み窓が**自動で閉じて結果の知らせがあるとき**に `daily_worker.start()` を呼ぶ。ほかに、PCアプリの起動60秒後と、アプリが開いている間の 23:30〜24:00・7:30〜8:00（5分ごとの確認）。動かないのは、窓を×で閉じたとき（知らせが無い）と、PCアプリが閉じている・PCがスリープのとき。保存されるのは 23:30〜8:00 に動いたときだけ。20:22 時点でPCアプリは起動していない（次に `start.cmd` で起動すれば新しい版）。
 - 利用者報告（11/11 20:49）「今起動した」。AIの直接確認：PCアプリ（app.py）が 20:49:00 に起動、起動60秒後の日次学習が 20:50:12 に動き、`database/data/daily-learning.json` と同期先 `G:/マイドライブ/database共有/daily-learning.json` を更新（3店舗とも「11/11は締切超過…次に保存できるのは23:30以降」、errors.log に失敗なし）。新しい版で動いていることを確認。最初の予測の保存は今夜23:30以降の取り込み後（未確認）。
+
+### 2026-11-12 メルヘンの取り込み中の保存競合：日次学習の原本読み取りを短いコピーへ変更（Codex）
+
+- 依頼：取り込み中にエラーダイアログが出て窓が閉じ、start.cmdに `sqlite3.OperationalError: database is locked` と `window.pywebview._returnValuesCallbacks.progress.… is not a function` が出た画像を利用者が提示。
+- 基準は本体main `b7f7de1`。未コミット変更なし。正本main `b7f7de1` と database-ci/main `7a9df13` を取得し、後者を含む履歴上で作業。古い日次学習のscratchは使用しない。
+- 確認済み：`database/data/errors.log` の **2026-11-12 00:01:59** に `meruhen.save.unexpected OperationalError: database is locked input_versions.py:90 execute`。その行番号は実際のSQL実行ラッパーであり、競合相手の接続までは記録していない。後続00:03:12にはグラフ検出失敗も記録されている。日次学習の表示出力は00:02:21に更新済み、長町南の予測は00:02:11に保存されていた。
+- 再現した不具合：`daily_learning_runtime.read_database()` が原本SQLiteのSELECT cursorを開いたまま、全行のJSON解析と画像除去を行う。rollback journalでは読取接続が書込側のcommitを妨げる。架空DB4行で、最初の行の解析中に別接続からUPDATEとcommitを行う試験を追加し、修正前に `database is locked` を再現した。今回の実障害の競合相手がこの接続だったかは、完全なスタック・接続履歴が無いため未確定。
+- 修正：`database/daily_learning_runtime.py` は、原本を `mode=ro`・`query_only=ON` で開き、SQLite Online Backup APIで一時ファイルへ256ページずつコピーする。コピー完了後に原本接続を閉じ、JSON解析はコピーだけで行う。60秒でコピーを中断し次回の実行に任せる。成功・例外とも接続を閉じて一時ファイルを片付ける。原本のjournal_mode・スキーマ・検証記録・採点・候補・締切・同期先は変更しない。コピー中は短い読取ロックが残り、一切ロックしないという意味ではない。SQLite公式 https://www.sqlite.org/backup.html 。原本と同程度の一時ディスク容量を使用する。
+- 回帰試験：`database/tests/test_daily_learning.py::test_input_decoding_does_not_block_capture_commit`。解析中の保存成功と、学習側は一貫した変更前コピーを読むことの両方を確認。既存の原本ファイルのバイト不変・店舗分離・未来除外・採用・切り戻し・締切試験も含む18件が成功。
+- 実DBの保護確認：原本を読み取り専用で開き、小分けのOnline Backupで `../outputs/meruhen-lock-20261112/database-copy.sqlite3` へコピー（21.106秒）。コピーの `PRAGMA quick_check` は `ok`。11/11の保存行は長町南356・幸町456。この件数は全台取り込み完了や、エラーになった台の保存成功を証明しない。結果は `saved-db-check.json`、再現手順は `check_saved_db.py`。原本を修復・削除・巻き戻ししていない。控えは非公開でGitへ追加しない。
+- 画像のもう一方のエラー：pywebviewの `_call` はPython処理の返事をcallbackへ無条件に返しており、画面遷移後に応答先がなくなる経路がコード上にある。今回その理由だったかは未確認。ライブラリの書き換え・例外の一律抑制は行わない。
+
+|要件|結果|証拠|
+|---|---|---|
+|保存競合のローカル再現と修正|済|上記回帰試験。修正前失敗、修正後成功|
+|日次学習の関連試験|済|`TZ=JST-9 python -m unittest discover -s tests -p test_daily_learning.py -v` 18件|
+|PC全試験|済|`TZ=JST-9 python -m unittest discover -s tests` 990件成功（211.318秒）。`../outputs/meruhen-lock-20261112-pc-tests.log`|
+|保存済みDBの構造的整合性|済（コピー）|`saved-db-check.json` のquick_check=ok|
+|実サイトの取り込み再開・再発しないこと|未確認|サイトへの追加アクセス・アプリの強制再起動なし。取り込みを止めた状態でstart.cmdから再起動し、未取得分を継続する|
+|GitHub反映・配布物更新|未実施|手元のPCソース修正。EXE・APK・Web・Googleの更新なし|

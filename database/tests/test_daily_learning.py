@@ -133,6 +133,34 @@ class LearningTests(unittest.TestCase):
             self.assertEqual(runtime.read_database(path, 'days'), [row()])
             self.assertEqual(path.read_bytes(), before)
 
+    def test_input_decoding_does_not_block_capture_commit(self):
+        # 複数行を走査中のcursorはDELETE journalの読取ロックを持つ。
+        # JSON解析中も原本を読み続ける実装では、別接続の保存確定が失敗する。
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'input.db'
+            writer = sqlite3.connect(path, timeout=.05)
+            try:
+                writer.execute('CREATE TABLE days(payload TEXT)')
+                originals = [row(rack=i) for i in range(1, 5)]
+                writer.executemany('INSERT INTO days VALUES (?)', [(json.dumps(r),) for r in originals])
+                writer.commit()
+                original_compact = runtime.compact
+                committed = []
+                def compact_and_save(value):
+                    if not committed:
+                        changed = row(rack=1, win=False)
+                        with writer:
+                            writer.execute('UPDATE days SET payload=? WHERE rowid=1', (json.dumps(changed),))
+                        committed.append(True)
+                    return original_compact(value)
+                with patch.object(runtime, 'compact', side_effect=compact_and_save):
+                    result = runtime.read_database(path, 'days')
+                self.assertEqual(committed, [True])
+                self.assertEqual(result, originals)  # 一貫したコピーを読む。途中の更新は混ぜない。
+                self.assertEqual(json.loads(writer.execute('SELECT payload FROM days WHERE rowid=1').fetchone()[0])['jo_net'], -100)
+            finally:
+                writer.close()
+
     def test_baseline_same_candidates_and_pool(self):
         rows = [row(d.shift('2026-11-01', i), rack, rack % 2 == 0) for i in range(10) for rack in range(1, 9)]
         groups = runtime.baseline_groups(rows, {'records': [], 'machines': []}, '2026-11-10')
