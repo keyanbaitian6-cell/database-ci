@@ -12,6 +12,7 @@ import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
 import 'daily_net_page.dart';
+import 'daily_learning_page.dart';
 import 'date_events.dart';
 import 'event_calendar_page.dart';
 import 'event_history.dart';
@@ -1136,6 +1137,23 @@ class _ViewerHomeState extends State<ViewerHome> {
           ),
           const SizedBox(height: 8),
         ],
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => DailyLearningPage(
+                store: store,
+                load: () {
+                  final url = _remote;
+                  if (url == null) throw StateError('Driveの読み込み先を設定してください');
+                  return fetchSharedEvents(url, 'daily-learning');
+                },
+              ),
+            ),
+          ),
+          icon: const Icon(Icons.model_training),
+          label: const Text('日次学習・採用中の候補'),
+        ),
+        const SizedBox(height: 8),
         if (store == pscubeValidationStore) ...[
           OutlinedButton.icon(
             onPressed: () {

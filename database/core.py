@@ -3463,6 +3463,8 @@ def report(store, day, machine, folder, location='nagamachiminami'):
                           f'<p class="candidate-note">まだ判定できません。過去の実績から傾向を出せた台が'
                           f'{candidate_info["total"]}台中{candidate_info["eligible"]}台です（4台以上で表示）。'
                           '同じ台・同じ機種のデータが3日分たまると傾向を出せます。</p></section>')
+    from daily_learning_display import report_panel
+    candidate_html = report_panel(Path(store.path).parent, day, location, machine) + candidate_html
     text = f'''<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>database 結果</title>
 <style>
 :root{{--carbon:#1d1d1f;--frost:#f5f5f7;--ice:#f4f8fb;--ash:#707070;--mist:#858585;

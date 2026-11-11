@@ -12,6 +12,7 @@ import 'normal_next_day_model.dart';
 import 'normal_day_context_note.dart';
 import 'rack_suffix.dart';
 import 'remote_curve.dart';
+import 'daily_learning_page.dart';
 import 'scoring.dart';
 import 'setting_estimate.dart';
 import 'setting_estimate_presentation.dart';
@@ -1135,6 +1136,14 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
               ),
             ),
             const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => DailyLearningPage(store: widget.store),
+              )),
+              icon: const Icon(Icons.model_training),
+              label: const Text('日次学習・採用中の候補'),
+            ),
+            const Text('この欄の★・☆は従来方式の参考です。日次学習の採用中の候補は上のボタンから確認できます。', style: note),
             if (dayContext != null)
               NormalDayContextNote(contextInfo: dayContext),
             if (!widget.normalSeparated &&

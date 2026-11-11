@@ -15,7 +15,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 SOURCE = HERE.parent / 'share_viewer'
-SOURCE_TEXT_FILES = {'index.html', 'app.mjs', 'event_history.mjs', 'recommendations.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js', 'capture_health.mjs'}
+SOURCE_TEXT_FILES = {'index.html', 'app.mjs', 'daily_learning.mjs', 'event_history.mjs', 'recommendations.mjs', 'data.mjs', 'net.mjs', 'manifest.json', 'viewer_parts.mjs', 'offline.mjs', 'sw.js', 'capture_health.mjs'}
 SOURCE_FILES = SOURCE_TEXT_FILES | {'apple-touch-icon.png', 'favicon.png', 'icon-192.png', 'icon-512.png'}
 # Android入口は共通HTMLとmanifestから生成する。独立したUIやHTMLの二重管理はしない。
 GENERATED_FILES = {'android.html', 'manifest-android.json', 'character_birthdays.json'}
@@ -32,6 +32,7 @@ REFERENCES = (
     ('index.html', 'src="./app.mjs"'),
     ('app.mjs', "from './data.mjs'"),
     ('app.mjs', "from './capture_health.mjs'"),
+    ('app.mjs', "from './daily_learning.mjs'"),
     ('app.mjs', "from './viewer_parts.mjs'"),
     ('app.mjs', "from './offline.mjs'"),
     ('data.mjs', "from './net.mjs'"),
