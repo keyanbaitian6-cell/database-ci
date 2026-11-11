@@ -2236,3 +2236,19 @@
 - 既存の同期先 `G:/マイドライブ/database共有/daily-learning.json` が存在し、PC側出力とのSHA-256一致を読み取りで確認。実GoogleのHTTP応答・iPhoneやAndroid画面までは今回確認していない。
 - 再起動後のerrors.logに日次学習の新しい失敗は無く、直近は再起動前00:23:35のNode未検出。修正608d55cを含む版で、起動からの自動実行とP-STATIONの実予測保存・同期フォルダー出力が確認できた。取り込み中の保存競合が実サイトで再発しないことは別途未確認。
 - この追記は確認記録のみ。再試験・APK・Web・Google更新・GitHubへのpushなし。
+
+### 2026-11-12 0:50ごろ iPhoneの閲覧ページで「日次学習を読み込めません」を修正（Claude）
+
+- 利用者がiPhoneの画面写真（0:46）で報告：「日次学習・採用中の候補」が「日次学習を読み込めません。PCの実行状況・同期先・閲覧用Googleスクリプトの更新を確認してください」。
+- 調べた順：PCの書き出し（同期先 `G:/マイドライブ/database共有/daily-learning.json`、1日・105組）を `tool/daily_learning_projection.js`（Googleスクリプトと同じ検査）に通す → 通る。その出力を閲覧ページの `parseDailyLearning` に通す → 通る。データは正しい。
+- 原因：閲覧ページの問い合わせ部品 `database_android/web/shared_events.mjs` の `SHARED_FILES`（読んでよい名前の一覧）に `daily-learning` が無く、`fetchShared` がGoogleへ問い合わせる前に「読み込み先が不正です」で止めていた。Codex の実装（`5f2bb62`）は閲覧ページに `fetchSharedEvents(url, 'daily-learning')` を足したが一覧に足しておらず、Dart の画面の試験は読み込みを差し替えるので気づけなかった。共有カレンダー（`share_viewer/app.mjs` が直接 `?file=daily-learning` を読む）と Android（`daily_learning_transport_io.dart` の HttpClient）はこの一覧を通らないので影響なし。
+- 修正：一覧に `daily-learning` を足した。再発を捕まえる試験を `tool/test_daily_learning.mjs` に足した（`fetchShared(url,'daily-learning')` が問い合わせること、`lib/` で `fetchSharedEvents` に渡すすべての名前が一覧にあること）。直す前の状態でこの試験が落ちることを確認。
+- 試験：`test_daily_learning` 4件、`test_event_history` 8件、`test_share_viewer` 33件。閲覧ページをビルドし直し（`flutter build web`）、`stage_viewer.py` の出力に対して `test_viewer_built_drive`・`test_pscube_browser`・`test_viewer_shared_calendar_browser`・`test_viewer_event_history_browser` が成功。公開物の差分は `shared_events.mjs` の1ファイルだけ。全体ゲートは流していない（小さな修正）。
+- 一緒に正本へ送ったもの：Codex の未送信コミット `75a3911`（読み込み中に取り込みの書き込みを止めない）、`608d55c`（start.cmd から起動したPCアプリでも Node.js を見つける）、`804ffee`（再起動後の確認記録）。
+
+|要件|結果|証拠|
+|---|---|---|
+|原因の特定|済|上の手順。実データは両方の検査を通る|
+|修正と再発の試験|済|`test_daily_learning.mjs` 4件（直す前は1件失敗を確認）|
+|閲覧ページの公開|下に追記|`database-viewer`|
+|iPhoneでの表示|未確認|利用者に再読み込みしてもらう|

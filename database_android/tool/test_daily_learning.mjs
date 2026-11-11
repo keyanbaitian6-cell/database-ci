@@ -48,3 +48,21 @@ test('両Googleスクリプトの生成物と元コードが一致する',()=>{
   for(const tool of ['build_daily_learning.mjs','build_event_history_share.mjs'])
     execFileSync(process.execPath,[fileURLToPath(new URL(tool,import.meta.url)),'--check']);
 });
+test('iPhoneの閲覧ページが日次学習をGoogleへ問い合わせられる（読める一覧に入っている）',async()=>{
+  // 2026-11-12：shared_events.mjs の SHARED_FILES に 'daily-learning' が無く、iPhoneでは Google へ問い合わせる前に
+  // 「読み込み先が不正です」で止まり、画面は「日次学習を読み込めません」になった。Dart の画面の試験は読み込みを
+  // 差し替えるので気づけなかった。閲覧ページ（lib/）が fetchSharedEvents に渡す名前をすべて、ここで実際に通す。
+  const {fetchShared,SHARED_FILES}=await import('../web/shared_events.mjs');
+  const url='https://script.google.com/macros/s/AKfycbTEST/exec', calls=[];
+  const fake=async(u)=>{calls.push(u);return new Response('{"format":"daily-learning"}',{status:200});};
+  assert.equal(await fetchShared(url,'daily-learning',fake),'{"format":"daily-learning"}');
+  assert.equal(calls[0],url+'?file=daily-learning');
+  const lib=new URL('../lib/',import.meta.url);
+  const names=new Set();
+  for(const name of (await import('node:fs')).readdirSync(lib)) {
+    const text=readFileSync(new URL(name,lib),'utf8');
+    for(const m of text.matchAll(/fetchSharedEvents\(\s*[\w.]+,\s*'([\w-]+)'\s*\)/g)) names.add(m[1]);
+  }
+  assert.ok(names.has('daily-learning')&&names.size>=6,[...names].join(','));
+  for(const name of names) assert.ok(SHARED_FILES.includes(name),`${name} が SHARED_FILES に無い`);
+});
