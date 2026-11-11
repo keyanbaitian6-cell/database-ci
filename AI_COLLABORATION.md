@@ -2250,5 +2250,6 @@
 |---|---|---|
 |原因の特定|済|上の手順。実データは両方の検査を通る|
 |修正と再発の試験|済|`test_daily_learning.mjs` 4件（直す前は1件失敗を確認）|
-|閲覧ページの公開|下に追記|`database-viewer`|
+|ソースの送信|済|`tools/push_ci.py` で正本へ `b7f7de1..b0bb501`（Codex の3件を含む）。CIは送信時点で実行中|
+|閲覧ページの公開|済|`database-viewer` `937aebb`→`5cb1da3`。配信中の `shared_events.mjs` が公開したファイルと一致（`4cdb2e71…`）|
 |iPhoneでの表示|未確認|利用者に再読み込みしてもらう|
