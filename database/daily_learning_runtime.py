@@ -85,6 +85,25 @@ def load_inputs(data_dir, target):
     return rows, {'records': raw, 'machines': machines}
 
 
+def resolve_node(explicit=None, *, environ=None, home=None):
+    """start.cmdからはCodex用PATHを継承しないため、既存の実行環境も探す。"""
+    if explicit:
+        return str(explicit)
+    env = os.environ if environ is None else environ
+    if env.get('NODE'):
+        return env['NODE']
+    found = shutil.which('node', path=env.get('PATH', ''))
+    if found:
+        return found
+    user = Path.home() if home is None else Path(home)
+    executable = 'node.exe' if os.name == 'nt' else 'node'
+    candidates = [user / '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin' / executable]
+    if os.name == 'nt':
+        candidates.extend([Path(env.get('ProgramFiles', 'C:/Program Files')) / 'nodejs/node.exe',
+                           user / 'AppData/Local/Programs/nodejs/node.exe'])
+    return next((str(p) for p in candidates if p.is_file()), None)
+
+
 def baseline_groups(rows, pscube, day, node=None):
     groups, store = [], MemoryStore([r for r in rows if not r['store'].startswith('pscube:')])
     for location in STORES[:2]:
@@ -104,7 +123,7 @@ def baseline_groups(rows, pscube, day, node=None):
                 groups.append(dict(store=location, rate='', name='バラエティ', pool=pool,
                                    current=[identity(c['row']) for c in result['candidates']]))
     if pscube['records']:
-        binary = node or shutil.which('node')
+        binary = resolve_node(node)
         if not binary:
             raise RuntimeError('P-STATIONの従来候補を計算するNode.jsがありません')
         proc = subprocess.run([binary, str(Path(__file__).with_name('daily_learning_pscube.mjs'))],

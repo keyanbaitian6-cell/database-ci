@@ -2219,3 +2219,12 @@
 |保存済みDBの構造的整合性|済（コピー）|`saved-db-check.json` のquick_check=ok|
 |実サイトの取り込み再開・再発しないこと|未確認|サイトへの追加アクセス・アプリの強制再起動なし。取り込みを止めた状態でstart.cmdから再起動し、未取得分を継続する|
 |GitHub反映・配布物更新|未実施|手元のPCソース修正。EXE・APK・Web・Googleの更新なし|
+
+### 2026-11-12 日次学習の処理失敗：start.cmdからNode.jsを見つけられない経路を修正（Codex）
+
+- 利用者から「日次学習で処理失敗」の表示、続けて「開きなおすのわすれてた」と申告。再起動の案内だけで終わらず、直近ログも確認した。
+- 確認済み：errors.logの00:13:51はdatabase is locked、00:15:07と00:16:48は `RuntimeError: P-STATIONの従来候補を計算するNode.jsがありません`。後者は別原因。従来の探索はCLIの明示指定か `shutil.which('node')` だけで、通常のstart.cmdがCodex内のPATHを継承しないと失敗する。
+- `daily_learning_runtime.resolve_node()` を追加。明示指定→NODE環境変数→PATH→既存のユーザー用Codex runtime→Windowsの通常のNodeインストール先の順。新しいランタイムの導入やシステムPATH変更はしていない。予測の上書きや再計算・同期・サイト接続は実施しない。
+- `test_node_resolves_without_codex_path` を追加し、明示指定・設定・PATHの優先順と、PATHに無いときのキャッシュ探索を検査。日次学習関連19件成功。実際の既存runtimeでv24.22.1を確認し、PATHをWindows/System32だけ・NODE未指定とした別のPythonプロセスで、架空40台日のP-STATION候補計算が成功した。
+- PC全990件成功は直前75a3911の結果。今回の小さい探索修正については上記19件と実Node候補計算を追加実行し、991件全体成功とは表記しない。実際のstart.cmd再起動後の日次処理成功はまだ未確認。
+- 手元ソースを更新し、再起動を案内した。起動中の取り込みを終了させていない。GitHubへのpush・APK・Web公開・Google更新は未実施。

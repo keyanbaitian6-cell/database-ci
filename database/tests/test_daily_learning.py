@@ -18,6 +18,19 @@ def row(day='2026-11-10', rack=1, win=True, store='nagamachiminami', machine='è©
 
 
 class LearningTests(unittest.TestCase):
+    def test_node_resolves_without_codex_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            executable = 'node.exe' if runtime.os.name == 'nt' else 'node'
+            cached = Path(temp) / '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin' / executable
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(b'fixture')
+            with patch.object(runtime.shutil, 'which', return_value=None):
+                self.assertEqual(runtime.resolve_node(environ={'PATH': ''}, home=temp), str(cached))
+                self.assertEqual(runtime.resolve_node('explicit-node', environ={}, home=temp), 'explicit-node')
+                self.assertEqual(runtime.resolve_node(environ={'NODE': 'configured-node'}, home=temp), 'configured-node')
+            with patch.object(runtime.shutil, 'which', return_value='path-node'):
+                self.assertEqual(runtime.resolve_node(environ={'PATH': 'fixture'}, home=temp), 'path-node')
+
     def test_missing_zero_and_source(self):
         r = row()
         self.assertEqual(d.outcome(r), 1)
