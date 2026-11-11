@@ -109,19 +109,44 @@ def group_key(group):
     return encoded([group['store'], group.get('rate', ''), group['name']])
 
 
-def ready(rows, target, stores=STORES):
-    """部分取り込みを初回固定しない。判定は保存行数だけで、成績を見ない。"""
+def skipped_low_racks(data_dir, target):
+    """サイトセブンで取り込まなかった500G未満の台の控え（日 → 台番号の集合）。
+
+    2026-11-10 から、P-STATIONのサイトセブンの取り込みは500G未満の台を保存しない（AGENTS.md）。
+    保存台数だけを数えると、その日から「ふだんの90%未満」になって毎日「取り込み待ち」になる
+    （11/10は295台中258台、控え37台。2026-11-11 実データの複製で確認）。確定した日の控えは
+    `site777-staging/日付-low.json`（機種ごとの台番号）にあるので、そろったかを数えるときは済みに数える。
+    成績は見ない。読めない・無い日は空。
+    """
+    out = {}
+    for n in range(1, 9):
+        day = shift(target, -n)
+        try:
+            data = json.loads((Path(data_dir) / 'site777-staging' / f'{day}-low.json').read_text(encoding='utf-8'))
+            out[day] = {int(rack) for racks in data.values() for rack in racks}
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return out
+
+
+def ready(rows, target, stores=STORES, low=None):
+    """部分取り込みを初回固定しない。判定は保存行数（とP-STATIONの500G未満の控え）だけで、成績を見ない。"""
     day, reasons = shift(target, -1), []
     for store in stores:
-        counts = defaultdict(int)
+        racks = defaultdict(set)
         current = []
         for r in rows:
             if r['store'] == store and shift(day, -7) <= r['day'] <= day:
-                counts[r['day']] += 1
+                racks[r['day']].add(r['rack'])
                 if r['day'] == day:
                     current.append(r)
+        if store.startswith('pscube:'):
+            for low_day, skipped in (low or {}).items():
+                if low_day in racks:           # その日の取り込みがあるときだけ足す（控えだけの日を取り込み済みにしない）
+                    racks[low_day] |= skipped
+        counts = {d: len(v) for d, v in racks.items()}
         previous = [n for d, n in counts.items() if d < day]
-        if not current or (previous and len(current) < .9 * statistics.median(previous)):
+        if not current or (previous and counts[day] < .9 * statistics.median(previous)):
             reasons.append(f'{store}の前日データが不足しています')
         if store.startswith('pscube:'):
             from pscube_import import site777_final
@@ -276,7 +301,7 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
             if journal.get('predictions', shown + '|' + store) is not None:
                 statuses.append(store + '：' + status)
                 continue
-            why = ready(rows, shown, (store,))
+            why = ready(rows, shown, (store,), skipped_low_racks(data_dir, shown))
             if target is None:
                 status = f'{label}は締切超過・事前予測なし。従来方式を表示してください（次に保存できるのは23:30以降）'
             elif why:

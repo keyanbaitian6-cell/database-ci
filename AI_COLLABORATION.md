@@ -2168,3 +2168,30 @@
 |実データでの夜の保存・各端末の表示|未確認|本体へ取り込んで実際に動かしてから|
 
 - 次の手順（未実施）：複製の4コミット（`5f2bb62`・`a2bf644`・`4faec63`・`3728385`）を本体へ取り込む → GitHub反映 → Web公開（閲覧ページ・共有カレンダー）→ 閲覧用Googleスクリプト2本の貼り替え（利用者の操作）→ APK → 端末導入 → 実際の夜の保存の確認。
+
+### 2026-11-11 夜 全店舗の日次学習：本体へ取り込み・GitHub反映・Web公開・APK作成（Claude）
+
+- 依頼：利用者「取り込みなど全部お願いします」。直前の全体ゲートは複製 `../scratch/daily-learning-20261111` の `4faec63` で ALL PASSED。そのあとは時間帯の変更（`3728385`）と下の修正だけなので、全体ゲートは流していない（利用者の指示と AGENTS.md「全体ゲートのあとの小さな修正」）。
+- 本体へ取り込み：複製の `5f2bb62`・`a2bf644`・`4faec63`・`3728385`（とCodexの取り込みコミット）を `e4d22af` で本体 main へ（競合なし。コードは複製と同じで、差は `AI_COLLABORATION.md` だけ）。取り込み前に正本と `database-ci` を取得（正本は手元と同じ、`database-ci` は遅れているだけ）。
+- **見つけて直したもの**：P-STATIONは11/10から500G未満の台を保存しないので、保存台数が295台→258台になり、日次学習の「前日データがそろったか」（ふだんの90%以上）に引っかかって毎日「取り込み待ち」になる（実データの複製で確認）。`daily_learning_runtime.skipped_low_racks` が `site777-staging/日付-low.json`（取り込まなかった台の控え）を読み、`ready` がP-STATIONだけ、その日の取り込みがある日に限って台番号を足して数える（成績は見ない。保存済みの台と同じ番号は二重に数えない）。試験 `test_ready_counts_site777_racks_skipped_under_500_games` を足した。
+- 実データの複製での試し（`../outputs/daily-learning-20261111/trial-20261111`、時計は11/11 0:30・0:40・7:00・12:00の見立て、同期なし）：長町南35組（学習済み29）・幸町46組（学習済み40）・P-STATION 21組（学習済み14）で予測を固定。初回は約84秒、2回目以降は「保存済み」で作り直さない。12:00は「締切超過」。本物の記録・同期先には書いていない。
+- 本物のデータでの初回実行（20:15、`python daily_learning_runtime.py --data-dir data --node …`）：保存の時間帯の外なので3店舗とも「11/11は締切超過・事前予測なし…（次に保存できるのは23:30以降）」。`database/data/daily-learning/journal.sqlite3`（予測0件）と `database/data/daily-learning.json`、同期先 `G:/マイドライブ/database共有/daily-learning.json` ができた。
+
+|項目|結果|証拠|
+|---|---|---|
+|実装（本体 main）|済|`e4d22af`（取り込み）＋この節と同じコミット（500G未満の控えの修正）|
+|試験|済|PC `python -m unittest discover -s tests` 989件、`test_daily_learning.py` 17件。公開するファイルそのものに対する画面の試験5本（`test_share_viewer_browser`・`test_daily_learning_browser`・`test_pscube_browser`・`test_viewer_built_drive`・`test_viewer_shared_calendar_browser`）|
+|GitHub反映|済|`tools/push_ci.py` で正本へ `36db71a..e4d22af`。CIは送信時点で実行中（結果は未確認）。修正のコミットは下に追記|
+|Web公開（iPhone閲覧ページ）|済|`database-viewer` `4e72b55`→`937aebb`。Pages成功。配信中の main.dart.js が公開したファイルと一致|
+|Web公開（共有カレンダー）|済|`database-share` `fc10f3b`→`395fe44`（版 `32519bd6c370`）。Pages成功。配信中の app.mjs・daily_learning.mjs が一致|
+|APK作成|済|0.5.56：`database_android/build/releases/0.5.56/database-0.5.56-2026111101.apk`（`com.keyan.database_android`、SHA-256 `184b02a7…0445`）、`database-pscube-0.5.56-2026111102.apk`（`…pscube`、SHA-256 `e5592373…fc60`）。aapt2 で版・ID・表示名、apksigner で証明書（`4332fcb9…a047`、前と同じ）。0.5.55 の2本と `app-release.apk` はごみ箱へ|
+|端末導入|未実施|adb に端末がつながっていない。利用者がインストールする|
+|Googleスクリプト更新|未実施（利用者の操作）|貼り付け用の全文：`../outputs/daily-learning-20261111/google/1_自分用の閲覧スクリプト_全文.txt`・`2_共有カレンダー用スクリプト_全文.txt`（リポジトリの .gs と同じSHA）。既存デプロイを「新バージョン」で更新。同期用2本（meruhen・pscube）は変更なし|
+|PCアプリ|起動し直しが必要|起動中のアプリには入っていない。`start.cmd` で起動し直すと、取り込み窓が閉じたあと・23:30〜24:00・7:30〜8:00に動く|
+|Windowsの予約|登録していない|必須ではない（利用者の指摘で、取り込み後の保存を主にした）|
+|実運用での夜の保存・各端末の表示|未確認|最初に保存できるのは今夜23:30以降の取り込み後|
+
+- 版番号：`pubspec.yaml` は Codex が上げた `0.5.56+2026111101` のまま（P’s CUBE版は `--build-number 2026111102` で作った）。次にAPKを作るときは 2026111102 より大きくする。
+- 更新照合用の版（`release_info`、`722eadb1a018`、11/8の `07db41c` から据え置き）は作り直していない。作り直すと同期用スクリプト2本の `SCRIPT_RELEASE` も変わり、利用者の貼り替えが4本に増えるため。作り直すかは利用者と決める（11/8以降のコードの変更は、どのAIも作り直していなかった）。
+- 複製 `../scratch/daily-learning-20261111` は本体より古くなった（この節の修正が無い）。Codexが続けるときは、本体の main を取り込んでから。
+- 既存の前向き検証 v1・v2 の原本・コード・評価日は変えていない。途中の成績も見ていない。

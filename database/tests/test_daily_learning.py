@@ -146,6 +146,28 @@ class LearningTests(unittest.TestCase):
         self.assertEqual(runtime.ready(rows, '2026-11-11', ('nagamachiminami',)), [])
         self.assertTrue(runtime.ready(rows, '2026-11-11', ('saiwaichou',)))
 
+    def test_ready_counts_site777_racks_skipped_under_500_games(self):
+        # 2026-11-10 から P-STATION は500G未満の台を保存しない。控え（site777-staging/日付-low.json）を数えないと、
+        # 保存台数がふだんの90%未満になって、毎日「取り込み待ち」のままになる（11/10：295台中258台）。
+        store = 'pscube:c740601:20'
+        rows = [row(day=f'2026-11-0{n}', rack=rack, store=store) for n in range(3, 10) for rack in range(1, 101)]
+        rows += [row(day='2026-11-10', rack=rack, store=store) for rack in range(1, 88)]          # 87台だけ保存（13台は500G未満）
+        self.assertTrue(runtime.ready(rows, '2026-11-11', (store,)))
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / 'site777-staging'
+            folder.mkdir()
+            (folder / '2026-11-10-low.json').write_text(json.dumps({'120001': list(range(88, 95)), '120002': list(range(95, 101))}), encoding='utf-8')
+            (folder / '2026-11-09-low.json').write_text('{broken', encoding='utf-8')                    # 読めない控えは無視
+            (folder / '2026-11-11-low.json').write_text(json.dumps({'120001': [1]}), encoding='utf-8')  # 対象日より前の日だけ読む
+            low = runtime.skipped_low_racks(temp, '2026-11-11')
+            self.assertEqual(sorted(low), ['2026-11-10'])
+            self.assertEqual(len(low['2026-11-10']), 13)
+            self.assertEqual(runtime.ready(rows, '2026-11-11', (store,), low), [])
+            # 控えは P-STATION だけに足す。保存した台と同じ番号は二重に数えない。取り込みの無い日を取り込み済みにしない。
+            self.assertTrue(runtime.ready([dict(r, store='saiwaichou') for r in rows], '2026-11-11', ('saiwaichou',), low))
+            self.assertTrue(runtime.ready(rows, '2026-11-11', (store,), {'2026-11-10': set(range(1, 14))}))
+            self.assertTrue(runtime.ready([r for r in rows if r['day'] != '2026-11-10'], '2026-11-11', (store,), low))
+
     def test_failed_freeze_rolls_back_input(self):
         with tempfile.TemporaryDirectory() as temp:
             j = d.Journal(Path(temp) / 'journal.sqlite3')
