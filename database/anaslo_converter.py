@@ -341,11 +341,15 @@ def make_normal_analysis(staging, mapping=None):
     from core import normalize_machine_name
     if staging.get('format') != 'anaslo-hall-staging' or staging.get('version') != 1:
         raise ValueError('解析結果の形式が違います。')
+    names = {d['store']['source_name'] for d in staging['days']}
+    halls = [h for h in HALLS if h.source_name in names]
+    if len(names) != 1 or len(halls) != 1:
+        raise ValueError('ノーマルタイプの分析用は、幸町かP-STATIONの1店舗のHTMLだけに対応しています。')
+    hall = halls[0]
+    pstation = hall is P_STATION
     mapping = mapping or {}
     records, days, others = [], [], 0
     for d in staging['days']:
-        if d['store']['source_name'] != SAIWAICHOU.source_name:
-            raise ValueError('ノーマルタイプの分析用は、幸町のHTMLだけに対応しています。')
         days.append(d['day'])
         for source in d['records']:
             name = source['machine']
@@ -353,18 +357,29 @@ def make_normal_analysis(staging, mapping=None):
             if not (is_normal_type(name) or is_normal_type(target)):
                 others += 1
                 continue
-            record = {'store': MERUHEN_STORE, 'day': d['day'], 'rack': source['rack'],
+            record = {'store': hall.key, 'day': d['day'], 'rack': source['rack'],
                       'machine': normalize_machine_name(target) if isinstance(target, str) and target.strip() else name,
                       'source_machine': name, 'games': source['games'], 'bb': source['bb'], 'rb': source['rb'],
                       'source_probabilities': source['probabilities'],
                       'source_url': d['source']['url'], 'source_sha256': d['source']['sha256']}
-            measurement = graph_measurement_from_source(source['graph'])
-            if measurement:
-                record['graph_measurement'] = measurement
+            if pstation:
+                # P-STATION（2026-11-11）。P’s CUBEの実データがある日・台も除かない（分析には全台が要る）。
+                # 幸町と同じメルヘン座標の測定値にはしない：アナスロのグラフが「片側1000」の縮尺なのは幸町で
+                # 確かめた事実で、P-STATIONは台ごとの段で決まる（anaslo_net.py）。原グラフを残し、
+                # 推定差枚は補完用JSONと同じ式で付く台だけ付ける（確かでない台は sure=false）。
+                record.update({'rate': d['store'].get('rate'), 'at_art': source.get('at_art'),
+                               'source_site': 'anaslo', 'source_graph': source.get('graph')})
+                guess = anaslo_net.estimate(record)
+                if guess:
+                    record['net_estimate'] = guess
+            else:
+                measurement = graph_measurement_from_source(source['graph'])
+                if measurement:
+                    record['graph_measurement'] = measurement
             records.append(record)
     if not records:
         raise ValueError('ジャグラー・ハナハナの台がありませんでした。')
-    return {'format': NORMAL_ANALYSIS_FORMAT, 'version': 1, 'store': MERUHEN_STORE,
+    return {'format': NORMAL_ANALYSIS_FORMAT, 'version': 1, 'store': hall.key,
             'note': '分析用（ジャグラー・ハナハナだけ）。databaseには読み込まず、共有・採点・翌日候補には使わない。',
             'exported_at': datetime.now().astimezone().isoformat(timespec='seconds'),
             'days': sorted(days), 'records': records,
