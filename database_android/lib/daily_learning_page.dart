@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import 'daily_learning_transport.dart';
+import 'list_views.dart' show displayMachineName;
 
 const dailyStoreNames = {
   'nagamachiminami': '長町南',
@@ -210,7 +211,8 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        g['name'] as String,
+                        // 2026-11-12 iPhoneで半角カナの機種名が□になった（閲覧ページの字体に無い）。ほかの画面と同じく全角にそろえる。
+                        displayMachineName(g['name'] as String),
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       Text(
@@ -219,7 +221,7 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
                       Text(g['status'] as String),
                       Text('保存 ${g['saved_at'] ?? matching.first['saved_at']}'),
                       for (final id in g['selected'] as List)
-                        Text('${id[3]}番 ${id[2]}'),
+                        Text('${id[3]}番 ${displayMachineName('${id[2]}')}'),
                     ],
                   ),
                 ),

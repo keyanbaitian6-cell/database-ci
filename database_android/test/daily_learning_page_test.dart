@@ -87,4 +87,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('日次学習を読み込めません'), findsOneWidget);
   });
+  testWidgets('半角カナの機種名を全角にそろえて表示する', (tester) async {
+    // 2026-11-12 iPhoneの閲覧ページで半角カナ（例「ｻﾝﾌﾞﾚｲｸ」）が□になった。ほかの画面と同じ displayMachineName を通す。
+    final raw = fixture();
+    final g = ((raw['days'] as List).first['groups'] as List).first as Map;
+    g['name'] = 'L MHRｻﾝﾌﾞﾚｲｸXA';
+    g['selected'] = [
+      ['nagamachiminami', '', 'L MHRｻﾝﾌﾞﾚｲｸXA', 1157],
+    ];
+    await tester.pumpWidget(
+      MaterialApp(home: DailyLearningPage(load: () async => jsonEncode(raw))),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButton<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('対象日 2026-11-11').last);
+    await tester.pumpAndSettle();
+    expect(find.text('L MHRサンブレイクXA'), findsOneWidget);
+    expect(find.text('1157番 L MHRサンブレイクXA'), findsOneWidget);
+    expect(find.textContaining('ｻﾝ'), findsNothing);
+  });
 }
