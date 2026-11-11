@@ -67,6 +67,12 @@ void main() {
           initialData: ViewerData(records: records(pscube: pscube)),
         ),
       );
+      // 上のボタンが増えて検索欄が最初の画面の外になった（2026-11-11）。送ってから使う。
+      await tester.scrollUntilVisible(
+        find.byType(MachineSearchField),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.byType(MachineSearchField), findsOneWidget);
       await tester.enterText(find.byType(TextField), '#123');
       await tester.pumpAndSettle();

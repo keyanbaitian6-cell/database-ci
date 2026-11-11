@@ -122,7 +122,15 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(ViewerDateBar), findsOneWidget);
+      // 「日次学習・採用中の候補」のボタンが増え、翌日候補のカードは最初の画面の外になった（2026-11-11）。送ってから確かめる。
+      await tester.scrollUntilVisible(
+        find.byType(NextDayCandidatesCard),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.byType(NextDayCandidatesCard), findsOneWidget);
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, 5000));
+      await tester.pumpAndSettle();
       expect(find.text('database 閲覧'), findsOneWidget);
       expect(find.text('P’s CUBE（20スロ）'), findsOneWidget);
       expect(find.textContaining('準備版'), findsNothing);

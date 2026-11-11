@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import test from 'node:test';
 import {dailyPanel} from '../../share_viewer/daily_learning.mjs';
@@ -28,5 +30,12 @@ test('両Googleスクリプトの生成物と元コードが一致する',()=>{
     const text=readFileSync(new URL(name,import.meta.url),'utf8');
     assert.ok(text.includes(source.trim()));
     assert.ok(text.includes("if (key === 'daily-learning') return readDailyLearning();"));
+    // 日次学習の部分は、履歴・日別読み込みの生成範囲より前に置く（末尾に置くと、ほかの生成が消す。2026-11-11）。
+    const at=text.indexOf('// BEGIN DAILY_LEARNING');
+    assert.ok(at>0 && at<text.indexOf('// BEGIN EVENT_HISTORY_SHARED') && at<text.indexOf('// BEGIN GENERATED VIEWER PARTS'));
+    assert.equal(text.split('// BEGIN DAILY_LEARNING').length,2);
   }
+  // 3つの生成スクリプトのどれで作り直しても変わらない（片方が、もう片方の部分を消さない）。
+  for(const tool of ['build_daily_learning.mjs','build_event_history_share.mjs'])
+    execFileSync(process.execPath,[fileURLToPath(new URL(tool,import.meta.url)),'--check']);
 });
