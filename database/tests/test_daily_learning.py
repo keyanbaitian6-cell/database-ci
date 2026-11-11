@@ -428,7 +428,7 @@ class LearningTests(unittest.TestCase):
                 load(sources)
             return [row(day=d.shift(target, -1), store=s) for s in runtime.STORES], {'records': [], 'machines': []}
 
-        def fake_build(rows, pscube, target, journal, node=None):
+        def fake_build(rows, pscube, target, journal, node=None, history_rows=None):
             if build:
                 build(rows[0]['store'])
             group = dict(key='k', store=rows[0]['store'], name='試験機', current=[], learned=[], selected=[],
@@ -533,7 +533,7 @@ class LearningTests(unittest.TestCase):
             loaded.append(target)
             return [row(day=d.shift(target, -1), store=s) for s in runtime.STORES], {'records': [], 'machines': []}
 
-        def fake_build(rows, pscube, target, journal, node=None):
+        def fake_build(rows, pscube, target, journal, node=None, history_rows=None):
             built.append((target, rows[0]['store'], rows[0]['day']))
             group = dict(key='k', store=rows[0]['store'], name='試験機', current=[], learned=[], selected=[],
                          active='current', trained=False, status='学習データ不足・従来方式', pool=[])

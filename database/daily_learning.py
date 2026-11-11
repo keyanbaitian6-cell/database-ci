@@ -17,7 +17,9 @@ JST = timezone(timedelta(hours=9))
 # v2（2026-11-12、結果を見る前）：P’s CUBEの数値差枚 net_medals も符号に使う（仕様「取得差枚があればその符号」に合わせた）。
 # 同じv2（2026-11-12 朝、v2で保存した予測が無いうちに追加）：P-STATIONで取り込み元の切り替えで名前だけ変わった16機種を、
 # 学習では同じ機種として数える（daily_learning_names.py。利用者「vivy同じものとして数えて」）。
-VERSION = 'daily-plus-ridge-20261112-v2'
+# v3（2026-11-12、v2・v3で保存した予測が無いうちに）：アナスロの分析用JSON（幸町・P-STATIONのジャグラー・ハナハナ）を
+# 過去の学習・特徴に足す（daily_learning_archive.py。利用者が検討の「1」を選択）。従来候補・前日データには使わない。
+VERSION = 'daily-plus-ridge-20261112-v3'
 # 採用・切り戻しの決まりの版（2026-11-12、結果を見る前に店舗単位・週の符号反転へ変更。DAILY_LEARNING.md）。
 RULE_VERSION = 'store-weekly-flip-20261112'
 MATURITY = 8
@@ -80,7 +82,9 @@ def valid(row):
         v = row.get(key)
         if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= maximum):
             return False
-    return row.get('source_site') != 'anaslo' or not str(row['store']).startswith('pscube:')
+    # P-STATIONの原本DBのアナスロ行は使わない。分析用JSONの行（daily_learning_archive、符号の向きを監査済み）だけ使う。
+    return (row.get('source_site') != 'anaslo' or not str(row['store']).startswith('pscube:')
+            or row.get('archive') == 'normal-analysis')
 
 
 def measured_net(row):

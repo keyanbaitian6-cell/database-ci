@@ -17,6 +17,7 @@ import tempfile
 import time
 
 import core
+import daily_learning_archive
 from daily_learning import (JST, VERSION, RULE_VERSION, MATURITY, PERIOD, STORE_COUNT, History, Journal, LateError,
                             comparison, digest, encoded, identity, jst, outcome, outcome_source, period_days,
                             prediction_target, rank_pool, rollback_needed, shift, store_day, train, valid)
@@ -285,8 +286,9 @@ def ready(rows, target, stores=STORES, low=None):
     return reasons
 
 
-def build_prediction(rows, pscube, target, journal, node=None):
-    history, groups = History(rows), baseline_groups(rows, pscube, shift(target, -1), node)
+def build_prediction(rows, pscube, target, journal, node=None, history_rows=None):
+    """history_rows：学習・特徴に使う行（分析用JSONを足したもの）。従来候補（baseline）は原本DBの rows だけで作る。"""
+    history, groups = History(history_rows or rows), baseline_groups(rows, pscube, shift(target, -1), node)
     models = train(history, target)
     projected, methods = [], {}
     for group in groups:
@@ -517,11 +519,23 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                     continue
                 store_rows = [r for r in rows if r['store'] == store]
                 ps = pscube if store.startswith('pscube:') else {'records': [], 'machines': []}
-                prediction = build_prediction(store_rows, ps, target, journal, node)
+                # アナスロの分析用JSON（幸町・P-STATIONのジャグラー・ハナハナ）を過去の学習にだけ足す（daily_learning_archive.py）。
+                archive_note = {}
+                try:
+                    history_rows = daily_learning_archive.merge(store_rows, store, target)
+                    archive_note = {'archive_files': daily_learning_archive.fingerprints(store)}
+                except Exception as error:     # noqa: BLE001 - 分析用JSONが読めなくても、原本DBだけで予測する
+                    error_log.note(data_dir, 'daily-learning', f'{store}: 分析用JSON: {type(error).__name__}: {error}')
+                    history_rows, archive_note = store_rows, {'archive_error': f'{type(error).__name__}: {error}'[:200]}
+                prediction = build_prediction(store_rows, ps, target, journal, node, history_rows=history_rows)
                 if not prediction['groups']:
                     statuses.append(f'{name}：候補を選べるデータが不足しています')
                     continue
+                prediction |= archive_note
                 inputs = {'rows': store_rows}
+                archive_rows = [r for r in history_rows if r.get('archive')]
+                if archive_rows:
+                    inputs['archive_rows'] = archive_rows
                 if store.startswith('pscube:'):
                     inputs |= {'pscube_records': ps['records'], 'pscube_machines': ps['machines']}
                 journal.freeze(target, prediction, inputs, clock(), store=store)
