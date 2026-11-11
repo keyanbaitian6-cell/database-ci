@@ -99,6 +99,25 @@ class LearningTests(unittest.TestCase):
                     j.freeze('2026-11-11', {}, [], datetime.fromisoformat('2026-11-11T08:00:00+09:00'))
                 with self.assertRaises(ValueError):
                     j.freeze('2026-11-10', {}, [], now)
+                # 保存できるのは対象日の前日23:30〜当日08:00（2026-11-11 利用者「23時半～8時でいいよ」）。
+                at = datetime.fromisoformat
+                self.assertEqual(d.prediction_target(at('2026-11-11T23:29:59+09:00')), None)
+                self.assertEqual(d.prediction_target(at('2026-11-11T23:30:00+09:00')), '2026-11-12')
+                self.assertEqual(d.prediction_target(at('2026-11-12T00:00:00+09:00')), '2026-11-12')
+                self.assertEqual(d.prediction_target(at('2026-11-12T07:59:59+09:00')), '2026-11-12')
+                self.assertEqual(d.prediction_target(at('2026-11-12T08:00:00+09:00')), None)
+                self.assertEqual(d.prediction_target(at('2026-11-12T12:00:00+09:00')), None)
+                # PCの時刻設定ではなく日本時間で決める（UTCの14:30は日本時間の23:30）。
+                self.assertEqual(d.prediction_target(at('2026-11-11T14:30:00+00:00')), '2026-11-12')
+                with self.assertRaises(ValueError):          # 23:30より前は、翌日の分をまだ保存しない
+                    j.freeze('2026-11-12', {}, [], at('2026-11-11T23:29:59+09:00'))
+                with self.assertRaises(ValueError):          # 23:30以降は、今日の分は締切後
+                    j.freeze('2026-11-11', {'late': True}, [], at('2026-11-11T23:30:00+09:00'))
+                self.assertTrue(j.freeze('2026-11-12', {'groups': ['night']}, [row()], at('2026-11-11T23:30:00+09:00')))
+                # 前の晩に保存した予測は、翌朝に動いても上書きしない。
+                self.assertFalse(j.freeze('2026-11-12', {'groups': ['morning']}, [], at('2026-11-12T07:00:00+09:00')))
+                self.assertEqual(j.get('predictions', '2026-11-12')['groups'], ['night'])
+                self.assertTrue(j.get('predictions', '2026-11-12')['saved_at'].startswith('2026-11-11T23:30:00'))
             finally:
                 j.close()
 
@@ -211,6 +230,42 @@ class LearningTests(unittest.TestCase):
                 self.assertFalse(j.freeze('2026-11-11', {}, [], now, store=runtime.STORES[0]))
             finally:
                 j.close()
+
+    def test_run_saves_next_day_after_2330_and_nothing_in_daytime(self):
+        # 2026-11-11 利用者「23時半～8時でいいよ」。閉店後の取り込みが終わった時点（前日の夜）で翌日の分を保存する。
+        at = datetime.fromisoformat
+        built, loaded = [], []
+
+        def fake_load(data_dir, target):
+            loaded.append(target)
+            return [row(day=d.shift(target, -1), store=s) for s in runtime.STORES], {'records': [], 'machines': []}
+
+        def fake_build(rows, pscube, target, journal, node=None):
+            built.append((target, rows[0]['store'], rows[0]['day']))
+            group = dict(key='k', store=rows[0]['store'], name='試験機', current=[], learned=[], selected=[],
+                         active='current', trained=False, status='学習データ不足・従来方式', pool=[])
+            return dict(input_day=d.shift(target, -1), groups=[group], models={}, source_sha256={})
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(runtime, 'load_inputs', side_effect=fake_load), \
+                patch.object(runtime, 'ready', return_value=[]), patch.object(runtime, 'build_prediction', side_effect=fake_build):
+            run = lambda stamp: runtime._run(Path(temp), clock=lambda: at(stamp), sync=False)
+            doc = run('2026-11-11T12:00:00+09:00')              # 日中：今日の分は締切後、明日の分はまだ早い
+            self.assertEqual(built, [])
+            self.assertIn('11/11は締切超過・事前予測なし', doc['status'])
+            self.assertEqual(doc['days'], [])
+            doc = run('2026-11-11T23:29:00+09:00')              # 23:30の直前もまだ保存しない
+            self.assertEqual(built, [])
+            doc = run('2026-11-11T23:35:00+09:00')              # 23:30以降：対象日は明日、前日データは今日
+            self.assertEqual(loaded[-1], '2026-11-12')
+            self.assertEqual(built, [('2026-11-12', s, '2026-11-11') for s in runtime.STORES])
+            self.assertIn('11/12の事前予測を固定保存しました', doc['status'])
+            self.assertEqual([(x['target'], x['input_day']) for x in doc['days']], [('2026-11-12', '2026-11-11')])
+            self.assertTrue(doc['days'][0]['saved_at'].startswith('2026-11-11T23:35:00'))
+            for stamp in ['2026-11-12T00:10:00+09:00', '2026-11-12T07:40:00+09:00', '2026-11-12T09:00:00+09:00']:
+                doc = run(stamp)                                # 翌朝に動いても作り直さない。9時でも「保存済み」と出す
+                self.assertEqual(len(built), 3, stamp)
+                self.assertIn('11/12の事前予測は保存済みです', doc['status'], stamp)
+            self.assertTrue(doc['days'][0]['saved_at'].startswith('2026-11-11T23:35:00'))
 
 
 if __name__ == '__main__':

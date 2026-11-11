@@ -17,6 +17,15 @@ test('公開項目だけに限定し締切・形式を検査する',()=>{
   assert.ok(!JSON.stringify(out).includes('公開しない'));
   const raw=fixture();raw.days[0].saved_at='2026-11-11T08:00:00+09:00';
   assert.throws(()=>context.projectDailyLearning(raw));
+  // 保存できるのは対象日の前日23:30〜当日08:00（2026-11-11）。Googleスクリプトと共有ページで同じ判定。
+  for(const [stamp,ok] of [['2026-11-10T23:30:00+09:00',true],['2026-11-10T23:29:59+09:00',false],['2026-11-11T00:00:00+09:00',true],
+      ['2026-11-11T07:59:59+09:00',true],['2026-11-11T23:30:00+09:00',false],['2026-11-09T23:45:00+09:00',false],['2026-11-10T14:30:00Z',true]]) {
+    const night=fixture();night.days[0].saved_at=stamp;
+    if(ok) assert.equal(context.projectDailyLearning(night).days[0].groups[0].saved_at,stamp);
+    else assert.throws(()=>context.projectDailyLearning(night),undefined,stamp);
+    if(ok) assert.ok(dailyPanel(night,'nagamachiminami','2026-11-11').includes('101番'),stamp);
+    else assert.throws(()=>dailyPanel(night,'nagamachiminami','2026-11-11'),undefined,stamp);
+  }
   assert.throws(()=>context.projectDailyLearning({}));
 });
 test('共有ページの対象日・方式・候補・欠測・文字を検査する',()=>{

@@ -1913,10 +1913,10 @@ def main():
     def daily_tick():
         if closing[0]:
             return
-        # 起動時と朝の締切前。既存の研究処理と別に、保存済みデータだけを使う。
+        # 起動時と、保存できる時間帯（前日23:30〜当日8:00）の始まりと終わり際。既存の研究処理と別に、保存済みデータだけを使う。
         from daily_learning import JST
         now = datetime.now(JST)
-        if now.hour == 7 and now.minute >= 30:
+        if now.hour in (7, 23) and now.minute >= 30:
             daily_worker.start()
         while not daily_worker.results.empty():
             tell(daily_worker.results.get_nowait() + '\n')

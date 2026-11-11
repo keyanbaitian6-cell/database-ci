@@ -5,11 +5,13 @@ export function dailyPanel(doc, store, target) {
   const groups=(day?.groups??[]).filter(g=>g.store===store);
   const dates=[...new Set([target,...doc.days.map(d=>d.target)])].sort().reverse();
   return `<h2>日次学習・採用中の候補</h2><p>最終処理 ${esc(doc.updated_at)}</p><p>${esc(doc.status)}</p>
-    <p>PCで午前8時前に固定した予測です。古い対象日の候補を本日の予測として使わないでください。</p>
+    <p>PCで前日23:30〜当日8:00の間に固定した予測です。古い対象日の候補を本日の予測として使わないでください。</p>
     <label>対象日 <select data-learning-day>${dates.map(d=>`<option${d===target?' selected':''}>${esc(d)}</option>`).join('')}</select></label>
     ${groups.length?groups.map(g=>{
-      const at=Date.parse(g.saved_at??day.saved_at), saved=new Date(at+9*3600000);
-      if(!Number.isFinite(at)||saved.toISOString().slice(0,10)!==target||saved.getUTCHours()>=8||
+      const at=Date.parse(g.saved_at??day.saved_at), saved=new Date(at+9*3600000), minutes=saved.getUTCHours()*60+saved.getUTCMinutes();
+      const savedDay=saved.toISOString().slice(0,10), before=new Date(Date.parse(target+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+      const inWindow=(savedDay===target&&minutes<480)||(savedDay===before&&minutes>=1410);
+      if(!Number.isFinite(at)||!inWindow||
         !['current','learned'].includes(g.active)||!Array.isArray(g.selected)) throw Error('事前予測の確認に失敗しました');
       return `<section><h3>${esc(g.name)}</h3><p>採用中 ${g.active==='learned'?'日次学習版':'従来方式'}<br>${esc(g.status)}<br>保存 ${esc(g.saved_at??day.saved_at)}</p>
       <ul>${g.selected.map(id=>`<li>${esc(id[3])}番 ${esc(id[2])}</li>`).join('')}</ul></section>`;

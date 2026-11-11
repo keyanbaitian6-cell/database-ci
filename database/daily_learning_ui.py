@@ -56,7 +56,7 @@ def show(root, data_dir):
                     text.insert('end', '、'.join(f'{v[3]}番 {v[2]}' for v in g['selected']) + '\n\n')
             if not doc['days']:
                 text.insert('end', '保存済みの事前予測はまだありません。\n')
-            text.insert('end', '午前8時が締切です。古い対象日の候補を本日の予測に読み替えないでください。\n毎日学習しても毎日の改善を保証しません。点数は設定確率・収益性ではありません。')
+            text.insert('end', '保存できるのは対象日の前日23:30〜当日8:00です。古い対象日の候補を本日の予測に読み替えないでください。\n毎日学習しても毎日の改善を保証しません。点数は設定確率・収益性ではありません。')
         except (OSError, ValueError, KeyError):
             text.insert('end', '日次学習の記録を読めません。PCの自動処理・保存先を確認してください。従来候補は引き続き参考にできます。')
         text.configure(state='disabled')

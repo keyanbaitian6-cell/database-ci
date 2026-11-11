@@ -41,8 +41,17 @@ Map<String, dynamic> parseDailyLearning(String text) {
         throw const FormatException('保存時刻が不明です');
       }
       final saved = DateTime.parse(raw).toUtc().add(const Duration(hours: 9));
-      if (saved.toIso8601String().substring(0, 10) != day['target'] ||
-          saved.hour >= 8) {
+      // 保存できるのは対象日の前日23:30〜当日08:00（日本時間。2026-11-11）。
+      final savedDay = saved.toIso8601String().substring(0, 10);
+      final before = DateTime.parse('${day['target']}T00:00:00Z')
+          .subtract(const Duration(days: 1))
+          .toIso8601String()
+          .substring(0, 10);
+      final minutes = saved.hour * 60 + saved.minute;
+      final inWindow =
+          (savedDay == day['target'] && minutes < 480) ||
+          (savedDay == before && minutes >= 1410);
+      if (!inWindow) {
         throw const FormatException('締切前の予測ではありません');
       }
       for (final id in g['selected'] as List) {
@@ -166,7 +175,9 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text('PCで午前8時前に固定した予測です。毎日学習しても、毎日改善する保証はありません。'),
+            const Text(
+              'PCで前日23:30〜当日8:00の間に固定した予測です。毎日学習しても、毎日改善する保証はありません。',
+            ),
             Text('最終処理 ${data['updated_at']}'),
             Text(data['status'] as String),
             if (!(data['updated_at'] as String).startsWith(today))

@@ -14,7 +14,8 @@ import subprocess
 
 import core
 from daily_learning import (JST, VERSION, MATURITY, PERIOD, History, Journal, comparison,
-                            digest, encoded, identity, jst, outcome, period_days, rank_pool, shift, train)
+                            digest, encoded, identity, jst, outcome, period_days, prediction_target, rank_pool,
+                            shift, train)
 from file_io import atomic_writer
 
 FILE_NAME = 'daily-learning.json'
@@ -260,33 +261,38 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
     data_dir = Path(data_dir)
     now, journal = jst(clock()), Journal(data_dir / 'daily-learning' / 'journal.sqlite3')
     today = now.date().isoformat()
+    # 保存できるのは、対象日の前日23:30〜当日08:00（daily_learning.prediction_target）。
+    # 23:30以降は「明日」が対象日で、今日の取り込み済みの行が前日データになる。
+    target = prediction_target(now)
+    shown = target or today
+    label = f'{int(shown[5:7])}/{int(shown[8:])}'
     try:
-        rows, pscube = load_inputs(data_dir, today)
+        rows, pscube = load_inputs(data_dir, shown)
         record_outcomes(journal, rows, today)
         decisions(journal, today)
         statuses = []
         for store in STORES:
-            status = '本日の事前予測は保存済みです'
-            if journal.get('predictions', today + '|' + store) is not None:
+            status = f'{label}の事前予測は保存済みです'
+            if journal.get('predictions', shown + '|' + store) is not None:
                 statuses.append(store + '：' + status)
                 continue
-            why = ready(rows, today, (store,))
-            if now.hour >= 8:
-                status = '本日は締切超過・事前予測なし。従来方式を表示してください'
+            why = ready(rows, shown, (store,))
+            if target is None:
+                status = f'{label}は締切超過・事前予測なし。従来方式を表示してください（次に保存できるのは23:30以降）'
             elif why:
                 status = '取り込み待ち：' + '／'.join(why)
             else:
                 store_rows = [r for r in rows if r['store'] == store]
                 prediction = build_prediction(store_rows, pscube if store.startswith('pscube:') else
-                                              {'records': [], 'machines': []}, today, journal, node)
+                                              {'records': [], 'machines': []}, target, journal, node)
                 if not prediction['groups']:
                     statuses.append(store + '：候補を選べるデータが不足しています')
                     continue
-                journal.freeze(today, prediction, store_rows, clock(), store=store)
+                journal.freeze(target, prediction, store_rows, clock(), store=store)
                 with journal.db:
                     if journal.get('state', 'start') is None:
-                        journal.state('start', today)
-                status = '本日の事前予測を固定保存しました'
+                        journal.state('start', target)
+                status = f'{label}の事前予測を固定保存しました'
             statuses.append(store + '：' + status)
         status = '／'.join(statuses)
         folder = core.resolve_sync_dir(data_dir) if sync else None

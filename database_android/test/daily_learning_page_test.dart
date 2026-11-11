@@ -37,6 +37,30 @@ void main() {
     expect(() => parseDailyLearning(jsonEncode(raw)), throwsFormatException);
     expect(() => parseDailyLearning('{}'), throwsFormatException);
   });
+  test('保存時刻は対象日の前日23:30〜当日08:00だけ受け付ける', () {
+    // 2026-11-11 利用者「23時半～8時でいいよ」。PC・Googleスクリプト・共有ページと同じ判定。
+    for (final (stamp, ok) in [
+      ('2026-11-10T23:30:00+09:00', true),
+      ('2026-11-10T23:29:59+09:00', false),
+      ('2026-11-11T00:00:00+09:00', true),
+      ('2026-11-11T07:59:59+09:00', true),
+      ('2026-11-11T23:30:00+09:00', false),
+      ('2026-11-09T23:45:00+09:00', false),
+      ('2026-11-10T14:30:00Z', true),
+    ]) {
+      final raw = fixture();
+      final day = (raw['days'] as List).first as Map;
+      day['saved_at'] = stamp;
+      for (final g in day['groups'] as List) {
+        (g as Map).remove('saved_at');
+      }
+      if (ok) {
+        expect(parseDailyLearning(jsonEncode(raw))['days'], hasLength(1), reason: stamp);
+      } else {
+        expect(() => parseDailyLearning(jsonEncode(raw)), throwsFormatException, reason: stamp);
+      }
+    }
+  });
   testWidgets('店舗・対象日・従来方式・候補とエラーを表示する', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
