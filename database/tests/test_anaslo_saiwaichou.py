@@ -389,12 +389,19 @@ class NormalAnalysisTests(unittest.TestCase):
         self.assertTrue(all(is_normal_type(n) for n in ('ｷﾝｸﾞﾊﾅﾊﾅ-30', 'ゴーゴージャグラー3', 'SハナハナホウオウEX')))
         self.assertFalse(is_normal_type('沖ドキ!DUO アンコール'))
 
-    def test_only_saiwaichou(self):
+    def test_unknown_or_mixed_hall_is_refused(self):
+        # 2026-11-11：P-STATIONも対応した（test_anaslo_converter.PstationNormalAnalysisTests）。
+        # 知らない店舗・2店舗が混ざったHTMLは今までどおり作らない。
         from anaslo_converter import make_normal_analysis
         other = json.loads(json.dumps(self.staging))
-        other['days'][0]['store']['source_name'] = P_STATION.source_name
+        other['days'][0]['store']['source_name'] = '知らない店'
         with self.assertRaises(ValueError):
             make_normal_analysis(other)
+        mixed = json.loads(json.dumps(self.staging))
+        mixed['days'].append(json.loads(json.dumps(mixed['days'][0])))
+        mixed['days'][1]['store']['source_name'] = P_STATION.source_name
+        with self.assertRaises(ValueError):
+            make_normal_analysis(mixed)
 
     def test_saved_file_is_never_read_as_a_backup(self):
         from anaslo_converter import make_normal_analysis, save_normal_analysis

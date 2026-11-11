@@ -22,6 +22,8 @@ PENDING = '対応する機種を選択'
 # 幸町のジャグラー・ハナハナだけの分析用ファイル（databaseに読み込まない、2026-10-17）。
 NORMAL_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'normal_analysis'
 OTHER_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'other_analysis'
+# P-STATIONのジャグラー・ハナハナだけの分析用ファイル（2026-11-11。幸町のフォルダとは分ける）。
+PSTATION_ANALYSIS_DIR = Path(__file__).resolve().parent / 'data' / 'pstation_analysis'
 # 解析結果の控え（Git対象外。2026-11-06）。
 PARSE_CACHE_DIR = Path(__file__).resolve().parent / 'data' / 'parse_cache'
 # 補完用JSONの保存先の初期値。PC版の「バックアップを読み込む」も、保存から3時間はここを開く（2026-11-06）。
@@ -208,9 +210,10 @@ class Converter:
             return
         unresolved = sum(n not in self.mapping for n in self.names)
         self.save_button.configure(state='disabled' if unresolved else 'normal')
-        # 分析用は機種名の対応が済んでいなくても作れる（幸町だけ）。
+        # 分析用は機種名の対応が済んでいなくても作れる。ノーマルタイプ用は幸町とP-STATION（2026-11-11）、
+        # その他機種用は幸町だけ。
         meruhen = 'normal' if isinstance(self.target, MeruhenTarget) else 'disabled'
-        self.normal_button.configure(state=meruhen)
+        self.normal_button.configure(state='normal' if isinstance(self.target, (MeruhenTarget, PscubeTarget)) else 'disabled')
         self.other_button.configure(state=meruhen)
 
     def show_loaded(self, staging, target):
@@ -361,11 +364,14 @@ class Converter:
 
     def save_normal(self):
         """ジャグラー・ハナハナだけを分析用に保存する。databaseには読み込まないので、共有・採点・翌日候補に出ない。"""
-        if not self.staging or not isinstance(self.target, MeruhenTarget):
+        if not self.staging or not isinstance(self.target, (MeruhenTarget, PscubeTarget)):
             return
         try:
             payload = make_normal_analysis(self.staging, self.mapping)
-            path = save_normal_analysis(NORMAL_ANALYSIS_DIR / payload['store'], payload)
+            # P-STATIONは別のフォルダ（幸町の分析フォルダを読む既存の処理に混ざらないように）。
+            folder = (PSTATION_ANALYSIS_DIR if isinstance(self.target, PscubeTarget)
+                      else NORMAL_ANALYSIS_DIR / payload['store'])
+            path = save_normal_analysis(folder, payload)
         except Exception as exc:
             messagebox.showerror('保存できません', str(exc), parent=self.root)
             return

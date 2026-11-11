@@ -2079,3 +2079,25 @@
 |iPhone実機|未確認|注記が最初に出るのは 11/14 の記録を見たとき（翌日が11/15）。共有カレンダー・Android・PCは対象外で未変更|
 
 - ゲートで落ちた1件：`test_pscube_background_sync.test_broken_file_does_not_block_good_file_and_is_retried_after_repair`（壊れたAndroid同期ファイルを直したあとの再読込が、3回目の確認で入らなかった）。今回の変更は Dart のファイルだけで、Python には触れていない。この試験のファイルだけを4回流して4回とも成功、PC試験全体の流し直しも967件成功。混み合ったときだけ落ちる試験とみられるが、原因（直したファイルの読込みが一時的に失敗する理由）は特定していない。次に同じ失敗を見たら、そのときの画面の記録（logbox）の文を取って調べる。
+
+### 2026-11-11 変換アプリ：P-STATIONの「ノーマルタイプの分析用に保存」（Claude）
+
+- 依頼：利用者「ノーマルタイプ分析用JSONってP-statioin用でも使えるんだっけ？」（使えなかった：幸町専用）→「ジャグラーハナハナだけに絞って分析用JSON作ろう」。対象は変換アプリ（`html_converter`、PC）だけ。閲覧ページ・共有カレンダー・Android・採点・翌日候補には出ない別形式なので、表示画面の確認は対象外。基準は手元 main `9469e77`。
+- 完了の条件：P-STATIONのHTMLを読んだ変換画面で、ジャグラー・ハナハナの台だけを、databaseに取り込まない形式で保存できる。P’s CUBEの実データがある日・台も除かない。幸町の既存の出力（形式・フォルダ・ファイル名）は変えない。
+- 変更：
+  - `database/anaslo_converter.py` `make_normal_analysis`：店舗を `staging` の店名で決める（幸町かP-STATIONの1店舗。知らない店・2店舗混在は拒否）。P-STATIONの行には `rate`・`at_art`・`source_site`・原グラフ `source_graph` を付け、推定差枚（`anaslo_net.estimate`、補完用JSONと同じ式。付けられない・確かでない台は付かない／`sure` で区別）を `net_estimate` に入れる。幸町の行は従来どおり。`graph_measurement`（メルヘン座標の測定値）はP-STATIONには付けない（縮尺が「片側1000」だと確かめたのは幸町だけで、P-STATIONは台ごとの段で決まるため）。
+  - `html_converter/app.py`：P-STATIONでもボタンを押せる（その他機種用は幸町だけのまま）。保存先は `html_converter/data/pstation_analysis/normal-analysis-p-station-期間.json`（Git対象外）。幸町の `normal_analysis` フォルダと分けたのは、そのフォルダ全体を読む既存の処理（`research/.../frozen_analysis/audit.py` など）に混ざらないため。形式は幸町と同じ `database-normal-analysis`（`store` は `p-station`）で、「バックアップを読み込む」・同期フォルダの自動取り込みは断る。同じ期間は作り直し。
+- 保持した仕様：補完用JSONの出力（P’s CUBEの実データがある台を除く）・幸町の分析用・その他機種用は変えていない。
+
+|要件|結果|証拠|
+|---|---|---|
+|P-STATIONでジャグラー・ハナハナだけ取り出す|済|`test_anaslo_converter.PstationNormalAnalysisTests` 4件（機種名の対応が未確認でも作れる、ジャグラー以外は除く、ジャグラーが無ければエラー）|
+|P’s CUBEの実データがある日・台も残す|済|同 画面の試験（実データありの台も保存される）|
+|databaseに読み込めない|済|同（`import_backup` が ValueError、`is_pscube_backup` が False）|
+|幸町の出力は変えない|済|`test_anaslo_saiwaichou`（NormalAnalysisTests 4件。拒否の試験は「知らない店・2店舗混在」に書き換え）|
+|ボタンの状態・保存先|済|画面の試験（P-STATIONではノーマル用だけ有効、その他機種用は無効）|
+|PC試験全体|済|`database/.venv/Scripts/python.exe -m unittest discover -s tests`：972件成功|
+|実HTMLでの保存|未確認|試験は合成HTML。実際の1か月分のHTMLで押して、件数と推定差枚の付き方を見るのはこれから|
+|全体ゲート・push|未実施|PCの変換アプリだけの変更。push は利用者の指示待ち（コードの変更で CI が動く）|
+
+- 次の手順：変換アプリを起動し、P-STATIONのHTMLを読んで「ノーマルタイプの分析用に保存」を押す。保存先は上の `pstation_analysis`。

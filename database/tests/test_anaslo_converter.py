@@ -21,6 +21,94 @@ def html(day='2026/09/15', name='マイジャグラーV', games='3,000'):
             + '<script>var x_value = [0, 1];var y_value = [100, 80];document.getElementById("101");if(context.tick.value == 100){}</script>').encode('utf-8')
 
 
+class PstationNormalAnalysisTests(unittest.TestCase):
+    """P-STATIONのジャグラー・ハナハナだけの分析用JSON（2026-11-11 利用者「ジャグラーハナハナだけに絞って
+    分析用JSON作ろう」）。databaseには読み込まない別の形式。幸町の分析用とはフォルダも分ける。"""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.folder = Path(tmp.name)
+        a, b = self.folder / '2026_09_15.html', self.folder / '2026_09_16.html'
+        a.write_bytes(html('2026/09/15', 'マイジャグラーV'))
+        b.write_bytes(html('2026/09/16', 'ジャックポットアット'))
+        self.staging = analyze([a, b])
+
+    def test_only_juggler_and_hanahana_without_dropping_native_racks(self):
+        from anaslo_converter import make_normal_analysis
+        payload = make_normal_analysis(self.staging, {'マイジャグラーV': '#マイジャグラーV'})
+        self.assertEqual((payload['format'], payload['store'], payload['days']),
+                         ('database-normal-analysis', 'p-station', ['2026-09-15', '2026-09-16']))
+        self.assertEqual(payload['summary'], {'records': 1, 'days': 2, 'other_machines': 1})
+        row = payload['records'][0]
+        self.assertEqual((row['day'], row['rack'], row['source_machine'], row['games'], row['bb'], row['rb']),
+                         ('2026-09-15', 101, 'マイジャグラーV', 3000, 8, 4))
+        self.assertEqual((row['rate'], row['at_art'], row['source_site']), ('20', 0, 'anaslo'))
+        self.assertEqual(row['source_graph']['points'][-1], [1, 80])
+        self.assertNotIn('graph_measurement', row)  # メルヘン座標の測定値は幸町だけ
+        self.assertNotIn('my', row)
+        self.assertNotIn('net_medals', row)
+
+    def test_unresolved_names_are_allowed_and_non_juggler_is_dropped(self):
+        from anaslo_converter import make_normal_analysis
+        payload = make_normal_analysis(self.staging)
+        self.assertEqual([r['machine'] for r in payload['records']], ['マイジャグラーV'])
+
+    def test_saved_file_is_never_read_as_a_backup(self):
+        from anaslo_converter import make_normal_analysis, save_normal_analysis
+        payload = make_normal_analysis(self.staging)
+        path = save_normal_analysis(self.folder / 'out', payload)
+        self.assertEqual(path.name, 'normal-analysis-p-station-20260915-20260916.json')
+        self.assertEqual(save_normal_analysis(self.folder / 'out', payload), path)  # 作り直しは上書き
+        self.assertFalse(is_pscube_backup(path))
+        store = PscubeStore(self.folder / 'test.sqlite3')
+        self.addCleanup(store.close)
+        with self.assertRaises(ValueError):
+            store.import_backup(json.loads(path.read_text(encoding='utf-8')))
+        self.assertEqual(store.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
+
+    def test_converter_button_saves_into_its_own_folder(self):
+        import gc
+        import importlib.util
+        import sys
+        import tkinter as tk
+        from unittest.mock import patch
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(gc.collect)  # Tcl_AsyncDelete 対策（test_anaslo_saiwaichou と同じ）
+        self.addCleanup(root.destroy)
+        converter_dir = Path(__file__).resolve().parents[2] / 'html_converter'
+        if str(converter_dir) not in sys.path:
+            sys.path.append(str(converter_dir))
+        spec = importlib.util.spec_from_file_location('converter_pstation_normal_test', converter_dir / 'app.py')
+        ui = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ui)
+        converter = ui.Converter(root)
+        self.assertEqual(str(converter.normal_button['state']), 'disabled')
+        with patch('anaslo_converter.read_catalog', return_value=[]), \
+                patch('anaslo_converter.read_native_occupied', return_value=frozenset({('2026-09-15', 101)})), \
+                patch.object(ui.PscubeTarget, 'alias_file', str(self.folder / 'aliases.json')):
+            converter.load_paths([self.folder / '2026_09_15.html', self.folder / '2026_09_16.html'])
+        self.assertEqual(str(converter.save_button['state']), 'disabled')  # 機種名が未確認
+        self.assertEqual(str(converter.normal_button['state']), 'normal')
+        self.assertEqual(str(converter.other_button['state']), 'disabled')  # その他機種用は幸町だけ
+        with patch.object(ui, 'PSTATION_ANALYSIS_DIR', self.folder / 'pstation'), \
+                patch.object(ui.messagebox, 'showinfo') as shown:
+            converter.save_normal()
+        saved = self.folder / 'pstation' / 'normal-analysis-p-station-20260915-20260916.json'
+        rows = json.loads(saved.read_text(encoding='utf-8'))['records']
+        self.assertEqual([(r['day'], r['rack']) for r in rows], [('2026-09-15', 101)])  # P’s CUBEの実データがある台も残る
+        self.assertIn('databaseに読み込みません', shown.call_args.args[1])
+        self.assertFalse((self.folder / 'aliases.json').exists())  # 対応表は変えない
+
+    def test_no_juggler_is_an_error(self):
+        from anaslo_converter import make_normal_analysis
+        only_other = self.folder / '2026_09_17.html'
+        only_other.write_bytes(html('2026/09/17', 'ジャックポットアット'))
+        with self.assertRaises(ValueError):
+            make_normal_analysis(analyze([only_other]))
+
+
 class ConverterTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
