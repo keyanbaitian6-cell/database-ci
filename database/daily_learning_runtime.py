@@ -69,13 +69,25 @@ def explain(error):
     return f'{type(error).__name__}: {text}'[:160]
 
 
+DROPPED = ('preview_image', 'image_base64', 'screenshot', 'raw_html')
+
+
 def compact(value):
+    """画像などの項目を、どの深さでも取り除く。読み込みでは decode（同じ結果で速い）を使う。"""
     if isinstance(value, dict):
-        return {k: compact(v) for k, v in value.items() if k not in
-                ('preview_image', 'image_base64', 'screenshot', 'raw_html')}
+        return {k: compact(v) for k, v in value.items() if k not in DROPPED}
     if isinstance(value, list):
         return [compact(v) for v in value]
     return value
+
+
+def _drop(obj):
+    return {k: v for k, v in obj.items() if k not in DROPPED} if any(k in obj for k in DROPPED) else obj
+
+
+def decode(text):
+    """compact(json.loads(text)) と同じ結果を、JSONを読みながら作る（2026-11-12 軽量化D。全部の値をたどり直さない）。"""
+    return json.loads(text, object_hook=_drop)
 
 
 def read_database(path, table):
@@ -104,7 +116,7 @@ def read_tables(path, tables):
             finally:
                 db.close()
             snapshot.execute('PRAGMA query_only=ON')
-            return {table: [compact(json.loads(row[0])) for row in snapshot.execute(f'SELECT payload FROM {table}')]
+            return {table: [decode(row[0]) for row in snapshot.execute(f'SELECT payload FROM {table}')]
                     for table in tables}
         finally:
             snapshot.close()

@@ -218,16 +218,16 @@ class LearningTests(unittest.TestCase):
                 originals = [row(rack=i) for i in range(1, 5)]
                 writer.executemany('INSERT INTO days VALUES (?)', [(json.dumps(r),) for r in originals])
                 writer.commit()
-                original_compact = runtime.compact
+                original_decode = runtime.decode
                 committed = []
-                def compact_and_save(value):
+                def decode_and_save(value):
                     if not committed:
                         changed = row(rack=1, win=False)
                         with writer:
                             writer.execute('UPDATE days SET payload=? WHERE rowid=1', (json.dumps(changed),))
                         committed.append(True)
-                    return original_compact(value)
-                with patch.object(runtime, 'compact', side_effect=compact_and_save):
+                    return original_decode(value)
+                with patch.object(runtime, 'decode', side_effect=decode_and_save):
                     result = runtime.read_database(path, 'days')
                 self.assertEqual(committed, [True])
                 self.assertEqual(result, originals)  # 一貫したコピーを読む。途中の更新は混ぜない。

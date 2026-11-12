@@ -1,7 +1,7 @@
 """固定した事前予測だけを評価する日次学習。原本DB・既存研究には書き込まない。"""
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 import hashlib
@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 import sqlite3
 import statistics
+import zlib
 
 from daily_learning_names import learning_key, learning_machine
 
@@ -153,6 +154,24 @@ class History:
             self.by_id[key].append(r)
             self.by_day[(r['day'], key)] = r
             self.racks[(key[0], key[1], key[3])].append(r)
+        # 特徴を作るための索引（2026-11-12 軽量化A）。以前は1台・1日ごとにその台の全履歴をなめ直していた。
+        # 結果は以前の書き方（_features_by_scan、試験で照合）と同じ。
+        self._ids = {key: ([r['day'] for r in items], items) for key, items in self.by_id.items()}
+        self._racks = {}
+        for rack, items in self.racks.items():
+            names = [learning_machine(rack[0], r['machine']) for r in items]
+            # previous[i]：i より前で、i と学習の名前が違う一番近い位置（無ければ -1）。
+            previous = []
+            for i, name in enumerate(names):
+                previous.append(-1 if i == 0 else i - 1 if names[i - 1] != name else previous[i - 1])
+            self._racks[rack] = ([r['day'] for r in items], names, previous)
+        self._outcomes = {}
+
+    def _outcome(self, row):
+        found = self._outcomes.get(id(row))
+        if found is None and id(row) not in self._outcomes:
+            found = self._outcomes[id(row)] = outcome(row)
+        return found
 
     def get(self, day, ident):
         """その日のその台の行。ident は保存の名前のままでよい（学習の名前にそろえて探す）。"""
@@ -160,14 +179,32 @@ class History:
 
     def features(self, row):
         day, key = row['day'], learning_key(identity(row))
+        # 機種の入れ替え：その日までで、この台に別の機種（学習の名前）があった一番新しい日。
+        days, names, previous = self._racks.get((key[0], key[1], key[3]), ((), (), ()))
+        i = bisect_right(days, day) - 1
+        if i >= 0 and names[i] == key[2]:
+            i = previous[i]
+        start = days[i] if i >= 0 else '0001-01-01'
+        ids, items = self._ids.get(key, ((), ()))
+        past = items[max(bisect_right(ids, start), bisect_left(ids, shift(day, -27))):bisect_right(ids, day)]
+        return self._vector(row, day, past, self._outcome)
+
+    def _features_by_scan(self, row):
+        """以前の書き方（全履歴をなめる）。索引の結果が同じかを試験で照合するためだけに残す。"""
+        day, key = row['day'], learning_key(identity(row))
         changes = [r['day'] for r in self.racks[(key[0], key[1], key[3])]
                    if r['day'] <= day and learning_machine(key[0], r['machine']) != key[2]]
         start = max(changes, default='0001-01-01')
         past = [r for r in self.by_id[key] if start < r['day'] <= day and r['day'] >= shift(day, -27)]
+        return self._vector(row, day, past, outcome)
+
+    @staticmethod
+    def _vector(row, day, past, label):
         y = outcome(row)
         x = [1., (y - .5) if y is not None else 0., float(y is None)]
         for n in (7, 28):
-            ys = [outcome(r) for r in past if r['day'] >= shift(day, 1 - n)]
+            first = shift(day, 1 - n)
+            ys = [label(r) for r in past if r['day'] >= first]
             observed = [v for v in ys if v is not None]
             x.extend([(sum(observed) - .5 * len(observed)) / (len(observed) + 10), len(observed) / n])
         weekday = date.fromisoformat(shift(day, 1)).weekday()
@@ -365,15 +402,26 @@ class Journal:
         found = self.db.execute(f'SELECT {cols} FROM {table} WHERE key=?', (key,)).fetchone()
         if found is None:
             return None
-        body = json.loads(found[0])
-        if table != 'state' and digest(body) != found[1]:
+        text = found[0]
+        if isinstance(text, bytes):
+            # 2026-11-12 軽量化C：本文は圧縮して保存する。指紋は今までどおり圧縮前の文字（encoded）に対するもの。
+            text = zlib.decompress(text).decode('utf-8')
+        body = json.loads(text)
+        if (table != 'state' and hashlib.sha256(text.encode('utf-8')).hexdigest() != found[1]
+                and digest(body) != found[1]):
             raise ValueError('固定記録の指紋が一致しません')
         return body
 
     def append(self, table, key, body):
+        self.append_text(table, key, encoded(body))
+
+    def append_text(self, table, key, text):
+        """encoded() で作った本文の文字を、指紋を付けて圧縮して追記する（同じ行を何度も文字にしない。軽量化B・C）。"""
         if table not in ('predictions', 'outcomes', 'decisions', 'inputs'):
             raise ValueError('保存先が不正です')
-        self.db.execute(f'INSERT INTO {table} VALUES (?,?,?)', (key, encoded(body), digest(body)))
+        raw = text.encode('utf-8')
+        self.db.execute(f'INSERT INTO {table} VALUES (?,?,?)',
+                        (key, zlib.compress(raw, 6), hashlib.sha256(raw).hexdigest()))
 
     def state(self, key, body):
         self.db.execute('INSERT INTO state VALUES (?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body', (key, encoded(body)))
@@ -400,10 +448,11 @@ class Journal:
                     chunks[(str(r.get('store', '')), str(r.get('day', '')))].append(r)
                 manifest[name] = []
                 for part in sorted(chunks):
-                    body = sorted(chunks[part], key=encoded)
-                    stamp = digest(body)
+                    # 1行を文字にするのは1回だけ（軽量化B）。encoded(sorted(行, key=encoded)) と同じ文字・同じ指紋になる。
+                    text = '[' + ','.join(sorted(encoded(r) for r in chunks[part])) + ']'
+                    stamp = hashlib.sha256(text.encode('utf-8')).hexdigest()
                     if not self.has('inputs', stamp):
-                        self.append('inputs', stamp, body)
+                        self.append_text('inputs', stamp, text)
                     manifest[name].append(stamp)
             prediction = {**prediction, 'target': target, 'saved_at': now.isoformat(), 'inputs': manifest,
                           'input_sha256': digest(manifest), 'version': VERSION}
