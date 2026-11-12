@@ -78,6 +78,17 @@ String dailyDefaultTarget(DateTime now) {
   return day.toIso8601String().substring(0, 10);
 }
 
+/// 最初に開く対象日の保存時間帯（その前日の23:30から）に入ってから、PCの処理結果が1回も届いていないか。
+///
+/// 2026-11-12：以前は「最終処理の日付が今日でない」で見ていたので、前の晩の23:30台に保存した正しい候補にも、
+/// 0時を過ぎると「本日の処理結果は届いていません」と出ていた。
+bool dailyStale(String updated, DateTime now) {
+  final start = DateTime.parse('${dailyDefaultTarget(now)}T23:30:00+09:00')
+      .subtract(const Duration(days: 1));
+  final at = DateTime.tryParse(updated);
+  return at == null || at.isBefore(start);
+}
+
 const _dailyWeek = '日月火水木金土';
 
 /// 「11月12日（木）」。
@@ -170,16 +181,13 @@ class DailyView {
     mine = parts.mine;
     general = parts.general;
     updated = data['updated_at'] as String;
-    final today = now
-        .toUtc()
-        .add(const Duration(hours: 9))
-        .toIso8601String()
-        .substring(0, 10);
     final initial = dailyDefaultTarget(now);
     past = target.compareTo(initial) < 0;
     alerts.addAll([...mine, ...general].where(_dailyImportant.hasMatch));
-    if (!updated.startsWith(today)) {
-      alerts.add('本日の処理結果は届いていません。古い候補を本日の予測として使わないでください。');
+    if (dailyStale(updated, now)) {
+      alerts.add(
+        '${dailyDateLabel(initial)}の分の処理結果は届いていません。古い候補をこの日の予測として使わないでください。',
+      );
     }
     if (past) {
       alerts.add(

@@ -48,7 +48,24 @@ class ViewTests(unittest.TestCase):
         later = ' '.join(view.daily_view(doc(), 'nagamachiminami', '2026-11-12',
                                          datetime.fromisoformat('2026-11-14T09:00:00+09:00'))['alerts'])
         self.assertIn('過去の対象日', later)
-        self.assertIn('本日の処理結果は届いていません', later)
+        self.assertIn('11月14日（土）の分の処理結果は届いていません', later)
+
+    def test_stale_is_judged_by_the_save_window_not_by_the_calendar_day(self):
+        # 2026-11-12：前の晩の23:30台に保存した候補に、0時を過ぎると「本日の処理結果は届いていません」と出ていた。
+        at = datetime.fromisoformat
+        saved = '2026-11-12T23:40:00+09:00'
+        for now in ('2026-11-12T23:45:00+09:00', '2026-11-13T00:10:00+09:00', '2026-11-13T07:00:00+09:00',
+                    '2026-11-13T15:00:00+09:00', '2026-11-13T23:29:00+09:00'):
+            self.assertFalse(view.stale(saved, at(now)), now)
+        self.assertTrue(view.stale(saved, at('2026-11-13T23:30:00+09:00')))       # 次の晩の保存時間帯に入った
+        self.assertTrue(view.stale('2026-11-12T08:10:00+09:00', at('2026-11-13T06:00:00+09:00')))   # 前の晩に動いていない
+        self.assertTrue(view.stale('2026-11-12T23:29:59+09:00', at('2026-11-12T23:45:00+09:00')))
+        self.assertFalse(view.stale('2026-11-12T14:40:00+00:00', at('2026-11-13T06:00:00+09:00')))  # 日本時間で比べる
+        for broken in ('', None, 'x', '2026-11-12T23:40:00'):
+            self.assertTrue(view.stale(broken, at('2026-11-13T06:00:00+09:00')), broken)
+        fresh = doc() | {'updated_at': saved}
+        alerts = view.daily_view(fresh, 'nagamachiminami', '2026-11-13', at('2026-11-13T06:00:00+09:00'))['alerts']
+        self.assertFalse(any('届いていません' in a for a in alerts))
 
     def test_default_target_switches_at_2330(self):
         at = datetime.fromisoformat

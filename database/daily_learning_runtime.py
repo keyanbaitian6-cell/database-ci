@@ -32,6 +32,8 @@ SCORING_MJS = Path(__file__).parents[1] / 'database_android/web/pscube/scoring.m
 MERUHEN_FINAL_HOUR = 23
 # 前日データのうち、符号が決まらない台（グラフ未取得など）がこれを超えたら取り込み待ち。
 UNKNOWN_LIMIT = .10
+# 分析用JSON（daily_learning_archive）を使えずに保存した予測に付ける注意。「読めません」は各画面で重要な注意として出る。
+ARCHIVE_NOTE = '（過去の学習に足す分析用JSONを読めません。原本DBだけで学習しました）'
 
 
 def store_of(key):
@@ -335,37 +337,61 @@ def due_outcomes(journal, today):
 
 
 def record_outcomes(journal, rows, today, stores=None):
-    """成熟した予測の結果を1回だけ記録する。stores を渡すと、その店舗の予測だけ（原本を読めた店舗だけ）。"""
-    history = History(rows)
+    """成熟した予測の結果を1回だけ記録する。stores を渡すと、その店舗の予測だけ（原本を読めた店舗だけ）。
+
+    記録できなかった予測の（鍵, 例外）を返す（2026-11-12）。1件の失敗で、ほかの予測の記録やその晩の予測の保存を
+    止めない。失敗した分は未記録のまま残り、次の実行でやり直す。未記録がある期間は採用・切り戻しを判定しない（decisions）。"""
+    histories, failed = {}, []
     for key in due_outcomes(journal, today):
         store = store_of(key)
         if stores is not None and store not in stores:
             continue
-        prediction, results = journal.get('predictions', key), []
-        target = prediction['target']
-        # 2026-11-12より前の予測は方式の版を持たない。新しい版と混ぜない。
-        method = prediction.get('version', '') + '|legacy'
-        for group in prediction['groups']:
-            stats = dict(key=group['key'], day=target, trained=group['trained'], method=group.get('method', method))
-            # 母集団全体の正解も残す。候補だけを学習・評価資料にしない。
-            found = {encoded(p['id']): history.get(target, p['id']) for p in group['pool']}
-            labels = {k: outcome(r) for k, r in found.items()}
-            for name in ('current', 'learned'):
-                observed = [labels[encoded(k)] for k in group[name] if labels[encoded(k)] is not None]
-                stats[name] = statistics.mean(observed) if observed else None
-                stats['n_' + name] = len(observed)
-                stats['k_' + name] = len(group[name])
-                stats['plus_' + name] = sum(observed)
-                stats['missing_' + name] = 1 - len(observed) / len(group[name]) if group[name] else 0.
-            stats['labels'] = labels
-            # 符号の根拠（ゲーム数・何から決めたか・取り込んだ時刻）。後の訂正・遅い取り込みと見分けるため。
-            stats['evidence'] = {k: None if r is None else [r.get('games'), outcome_source(r),
-                                                            r.get('captured_at') or r.get('source_captured_at')
-                                                            or r.get('observed_at')]
-                                 for k, r in found.items()}
-            results.append(stats)
-        with journal.db:
-            journal.append('outcomes', key, dict(target=target, recorded_at=today, store=store, groups=results))
+        try:
+            if store not in histories:
+                try:
+                    histories[store] = History(rows if store is None else [r for r in rows if r['store'] == store])
+                except Exception as error:     # noqa: BLE001 - この店舗の行を読めない理由を、同じ店舗の鍵で使い回す
+                    histories[store] = error
+            history = histories[store]
+            if isinstance(history, Exception):
+                raise history
+            prediction, results = journal.get('predictions', key), []
+            target = prediction['target']
+            # 2026-11-12より前の予測は方式の版を持たない。新しい版と混ぜない。
+            method = prediction.get('version', '') + '|legacy'
+            for group in prediction['groups']:
+                stats = dict(key=group['key'], day=target, trained=group['trained'], method=group.get('method', method))
+                # 母集団全体の正解も残す。候補だけを学習・評価資料にしない。
+                # 候補は母集団の中から選ぶが、万一外の台があっても落とさず同じように正解を引く。
+                ids = [p['id'] for p in group['pool']] + list(group['current']) + list(group['learned'])
+                found = {encoded(i): history.get(target, i) for i in ids}
+                labels = {k: outcome(r) for k, r in found.items()}
+                for name in ('current', 'learned'):
+                    observed = [labels[encoded(k)] for k in group[name] if labels[encoded(k)] is not None]
+                    stats[name] = statistics.mean(observed) if observed else None
+                    stats['n_' + name] = len(observed)
+                    stats['k_' + name] = len(group[name])
+                    stats['plus_' + name] = sum(observed)
+                    stats['missing_' + name] = 1 - len(observed) / len(group[name]) if group[name] else 0.
+                stats['labels'] = labels
+                # 符号の根拠（ゲーム数・何から決めたか・取り込んだ時刻）。後の訂正・遅い取り込みと見分けるため。
+                stats['evidence'] = {k: None if r is None else [r.get('games'), outcome_source(r),
+                                                                r.get('captured_at') or r.get('source_captured_at')
+                                                                or r.get('observed_at')]
+                                     for k, r in found.items()}
+                results.append(stats)
+            with journal.db:
+                journal.append('outcomes', key, dict(target=target, recorded_at=today, store=store, groups=results))
+        except Exception as error:     # noqa: BLE001 - 1件の失敗でほかの記録を止めない
+            failed.append((key, error))
+    return failed
+
+
+def pending_outcomes(journal, first, last, store=None):
+    """期間内の予測のうち、まだ結果を記録していないものがあるか（原本を読めなかった晩・記録の失敗）。本文は読まない。"""
+    keys = journal.db.execute('SELECT key FROM predictions WHERE key>=? AND key<=? AND key NOT IN (SELECT key FROM outcomes)',
+                              (first, last + '~'))
+    return any(store is None or store_of(k) == store for (k,) in keys)
 
 
 def store_days(journal, store, first, last):
@@ -411,6 +437,10 @@ def decisions(journal, today):
         key = f'adoption:{epoch}'
         if journal.has('decisions', key):
             continue
+        # 判定は1回きりなので、期間内の予測の結果がそろうまで待つ（2026-11-12。原本を読めなかった晩に、
+        # 記録前の日を欠いたまま判定を確定させない）。後の期間も順番を守って待つ。
+        if pending_outcomes(journal, first, last):
+            break
         alpha = .05 / (epoch * (epoch + 1) * STORE_COUNT)
         results = {}
         with journal.db:
@@ -439,7 +469,9 @@ def decisions(journal, today):
             if journal.has('decisions', decision_key):
                 continue
             first, last = shift(state['since'], 28 * (block - 1)), shift(state['since'], 28 * block - 1)
-            days = [d for d in store_days(journal, store, first, last) if d['method'] == state.get('method')]
+            if pending_outcomes(journal, first, last, store):
+                break                                  # この店舗の結果がそろってから判定する
+            days =[d for d in store_days(journal, store, first, last) if d['method'] == state.get('method')]
             rollback = rollback_needed(days)
             with journal.db:
                 journal.append('decisions', decision_key, dict(at=today, first=first, last=last, rollback=rollback,
@@ -504,16 +536,30 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                 error_log.note(data_dir, 'daily-learning', f'{source}: {type(error).__name__}: {error}')
         rows = [r for source in sorted(loaded) for r in loaded[source][0]]
         pscube = loaded.get('pscube', (None, {'records': [], 'machines': []}))[1]
+        # 結果の記録・採用判定の失敗では、その晩の予測の保存を止めない（2026-11-12。以前は1件の失敗で、
+        # 直すまで毎晩すべての店舗の予測が保存されなくなった）。失敗は状態の文と errors.log に出す。
+        problems = []
         if due:
             readable = {s for s in STORES if SOURCES[s] in loaded}
-            record_outcomes(journal, rows, today, readable if len(readable) < len(STORES) else None)
-        decisions(journal, today)
+            unrecorded = record_outcomes(journal, rows, today, readable if len(readable) < len(STORES) else None)
+            for key, error in unrecorded:
+                error_log.note(data_dir, 'daily-learning', f'結果の記録 {key}: {type(error).__name__}: {error}')
+            if unrecorded:
+                problems.append(f'結果の記録で処理失敗（{len(unrecorded)}件。{explain(unrecorded[0][1])}）。'
+                                '次の実行でやり直し、そろうまで採用判定を待ちます')
+        try:
+            decisions(journal, today)
+        except Exception as error:     # noqa: BLE001 - 判定は次の実行でやり直せる（確定前の書き込みは取り消される）
+            error_log.note(data_dir, 'daily-learning', f'採用判定: {type(error).__name__}: {error}')
+            problems.append(f'採用判定で処理失敗（{explain(error)}）。採用の状態は変えていません')
         statuses = []
         low = None
         for store in STORES:
             name = STORE_NAMES[store]
             if store in saved:
-                statuses.append(f'{name}：{label}の事前予測は保存済みです')
+                # 分析用JSONを読めずに保存した晩は、あとの実行でも分かるように出し続ける。
+                note = (journal.get('predictions', shown + '|' + store) or {}).get('archive_error')
+                statuses.append(f'{name}：{label}の事前予測は保存済みです' + (ARCHIVE_NOTE if note else ''))
                 continue
             if target is None:
                 statuses.append(f'{name}：{label}は締切超過・事前予測なし。従来方式を表示してください'
@@ -536,6 +582,9 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                 try:
                     history_rows = daily_learning_archive.merge(store_rows, store, target)
                     archive_note = {'archive_files': daily_learning_archive.fingerprints(store)}
+                    if store in daily_learning_archive.FOLDERS and not archive_note['archive_files']:
+                        # フォルダーごと無い・空のときも黙って学習量を減らさない（2026-11-12。予測は原本DBだけで続ける）。
+                        archive_note['archive_error'] = '分析用JSONのファイルがありません'
                 except Exception as error:     # noqa: BLE001 - 分析用JSONが読めなくても、原本DBだけで予測する
                     error_log.note(data_dir, 'daily-learning', f'{store}: 分析用JSON: {type(error).__name__}: {error}')
                     history_rows, archive_note = store_rows, {'archive_error': f'{type(error).__name__}: {error}'[:200]}
@@ -554,13 +603,14 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                 with journal.db:
                     if journal.get('state', 'start') is None:
                         journal.state('start', target)
-                statuses.append(f'{name}：{label}の事前予測を固定保存しました')
+                statuses.append(f'{name}：{label}の事前予測を固定保存しました'
+                                + (ARCHIVE_NOTE if 'archive_error' in archive_note else ''))
             except LateError:
                 statuses.append(f'{name}：計算中に8:00を過ぎたため、{label}の事前予測は保存していません（締切超過）')
             except Exception as error:     # noqa: BLE001 - 1店舗の失敗でほかの店の保存・表示を止めない
                 error_log.note(data_dir, 'daily-learning', f'{store}: {type(error).__name__}: {error}')
                 statuses.append(f'{name}：処理失敗（{explain(error)}）。従来方式を使用してください')
-        status = '／'.join(statuses)
+        status = '／'.join(statuses + problems)
         folder = core.resolve_sync_dir(data_dir) if sync else None
         if sync and folder is None:
             status += '／同期先未設定または利用不可'

@@ -211,7 +211,43 @@ void main() {
     );
     expect(
       later.alerts.join(),
-      allOf(contains('過去の対象日'), contains('本日の処理結果は届いていません')),
+      allOf(contains('過去の対象日'), contains('11月14日（土）の分の処理結果は届いていません')),
+    );
+    // 2026-11-12：前の晩の23:30台に保存した候補に、0時を過ぎると「本日の処理結果は届いていません」と出ていた。
+    const saved = '2026-11-12T23:40:00+09:00';
+    DateTime at(String s) => DateTime.parse(s);
+    for (final t in [
+      '2026-11-12T23:45:00+09:00',
+      '2026-11-13T00:10:00+09:00',
+      '2026-11-13T07:00:00+09:00',
+      '2026-11-13T15:00:00+09:00',
+      '2026-11-13T23:29:00+09:00',
+    ]) {
+      expect(dailyStale(saved, at(t)), isFalse, reason: t);
+    }
+    expect(dailyStale(saved, at('2026-11-13T23:30:00+09:00')), isTrue);
+    expect(
+      dailyStale('2026-11-12T08:10:00+09:00', at('2026-11-13T06:00:00+09:00')),
+      isTrue,
+    );
+    expect(
+      dailyStale('2026-11-12T23:29:59+09:00', at('2026-11-12T23:45:00+09:00')),
+      isTrue,
+    );
+    expect(
+      dailyStale('2026-11-12T14:40:00Z', at('2026-11-13T06:00:00+09:00')),
+      isFalse,
+    );
+    expect(dailyStale('x', at('2026-11-13T06:00:00+09:00')), isTrue);
+    final night = many()..['updated_at'] = saved;
+    expect(
+      DailyView(
+        night,
+        'nagamachiminami',
+        '2026-11-11',
+        at('2026-11-13T06:00:00+09:00'),
+      ).alerts.join(),
+      isNot(contains('届いていません')),
     );
     expect(dailyDateLabel('2026-11-12'), '11月12日（木）');
     expect(dailyTime('2026-11-11T15:02:00Z'), '11月12日 0:02');

@@ -1047,7 +1047,10 @@ def main():
             logbox.see('end')
             if message and after_auto is not None:
                 after_auto(message)
-            if message:
+            # 自動で閉じたときに加え、手で閉じたときも、ほかに取り込み窓が無ければ日次学習を動かす（2026-11-12。
+            # 0時〜7時半に取り込みを終えて×で閉じ、朝7:30より前にPCを消すと、その日の予測が保存されなかった）。
+            # 途中で閉じたデータは、台数・取り込み時刻の確認（ready）が「取り込み待ち」にする。
+            if not capture_open():
                 daily_worker.start()
 
         root.after(2000, check)

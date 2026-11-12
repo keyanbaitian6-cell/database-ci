@@ -242,6 +242,8 @@ def train(history, target):
         next_day = shift(row['day'], 1)
         if not first <= next_day <= last or not valid(row):
             continue
+        if history.get(row['day'], identity(row)) is not row:
+            continue      # 同じ日に古い名前と新しい名前の両方がある台は、新しい名前の行だけを数える（二重に数えない）
         y = outcome(history.get(next_day, identity(row)))
         if y is not None:
             grouped[learning_key(identity(row))[:3]].append((history.features(row), y, next_day))

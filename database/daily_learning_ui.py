@@ -18,18 +18,34 @@ class DailyLearningWorker:
         self.data_dir = Path(data_dir)
         self.thread = None
         self.results = queue.Queue()
+        self.lock = threading.Lock()
+        self.running = self.again = False
 
     def start(self):
-        if self.thread is not None and self.thread.is_alive():
-            return False
+        """動いていなければ始める。動いている間に頼まれたら、終わったあとに1回だけやり直す（2026-11-12）。
+
+        以前は動いている間の依頼を捨てていた。取り込み窓が続けて閉じると、先の実行が読んだ原本の複製に
+        あとの取り込みの最後の台が入らず「取り込み待ち」になり、次の定期確認（朝7:30）まで保存されなかった。"""
+        with self.lock:
+            if self.running:
+                self.again = True
+                return False
+            self.running = True
+
         def work():
-            try:
-                result = run(self.data_dir)
-                self.results.put(result['status'])
-            except Exception as error:
-                import error_log
-                error_log.note(self.data_dir, 'daily-learning', f'{type(error).__name__}: {error}')
-                self.results.put('日次学習で処理失敗。従来候補を利用できます。日次学習画面を確認してください。')
+            while True:
+                try:
+                    result = run(self.data_dir)
+                    self.results.put(result['status'])
+                except Exception as error:
+                    import error_log
+                    error_log.note(self.data_dir, 'daily-learning', f'{type(error).__name__}: {error}')
+                    self.results.put('日次学習で処理失敗。従来候補を利用できます。日次学習画面を確認してください。')
+                with self.lock:
+                    if not self.again:
+                        self.running = False
+                        return
+                    self.again = False
         self.thread = threading.Thread(target=work, name='daily-learning', daemon=True)
         self.thread.start()
         return True

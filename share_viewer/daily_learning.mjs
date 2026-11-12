@@ -4,7 +4,13 @@ import {displayMachineName} from './data.mjs';
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const DAILY_STORE_NAMES={nagamachiminami:'長町南',saiwaichou:'幸町','pscube:c740601:20':'P-STATION'};
 const WEEK='日月火水木金土';
-const jstDay=ms=>new Date(ms+9*3600000).toISOString().slice(0,10);
+// 最初に開く対象日の保存時間帯（その前日の23:30から）に入ってから、PCの処理結果が1回も届いていないか。
+// 2026-11-12：以前は「最終処理の日付が今日でない」で見ていたので、前の晩の23:30台に保存した正しい候補にも、
+// 0時を過ぎると「本日の処理結果は届いていません」と出ていた。
+export function dailyStale(updated, now=Date.now()) {
+  const start=Date.parse(defaultDailyTarget(now)+'T23:30:00+09:00')-86400000, at=Date.parse(updated);
+  return !Number.isFinite(at)||at<start;
+}
 // 最初に開く対象日（日本時間）。23:30以降は、その夜に保存される翌日の分（2026-11-12）。
 export function defaultDailyTarget(now=Date.now()) {
   const local=new Date(now+9*3600000), minutes=local.getUTCHours()*60+local.getUTCMinutes();
@@ -50,7 +56,7 @@ export function dailyView(doc, store, target, now=Date.now()) {
     racks:g.selected.map(id=>({rack:id[3],machine:id[2]!==g.name?id[2]:null}))}));
   const {mine,general}=dailyStatusParts(doc.status,store);
   const alerts=[...mine,...general].filter(s=>IMPORTANT.test(s));
-  if(!String(doc.updated_at).startsWith(jstDay(now))) alerts.push('本日の処理結果は届いていません。古い候補を本日の予測として使わないでください。');
+  if(dailyStale(doc.updated_at,now)) alerts.push(`${dailyDateLabel(defaultDailyTarget(now))}の分の処理結果は届いていません。古い候補をこの日の予測として使わないでください。`);
   if(target<defaultDailyTarget(now)) alerts.push(`${dailyDateLabel(target)}は過去の対象日です。記録として表示しています。次の営業日の候補として使わないでください。`);
   if(!groups.length) alerts.push('この日の保存済み候補はありません。データ不足・締切超過・PC停止などを確認してください。');
   const count=groups.reduce((n,g)=>n+g.racks.length,0);

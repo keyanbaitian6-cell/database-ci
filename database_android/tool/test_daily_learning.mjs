@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import test from 'node:test';
-import {dailyPanel, defaultDailyTarget} from '../../share_viewer/daily_learning.mjs';
+import {dailyPanel, dailyStale, defaultDailyTarget} from '../../share_viewer/daily_learning.mjs';
 
 const fixture=()=>({format:'daily-learning',version:1,status:'比較中',updated_at:'2026-11-11T07:30:00+09:00',
   inputs:{private:'公開しない'},models:{private:'公開しない'},days:[{target:'2026-11-11',input_day:'2026-11-10',
@@ -75,7 +75,7 @@ test('候補数・台の順番・採用方式・注意の振り分けが4画面�
   // 過去日・未更新・候補なし
   const later=Date.parse('2026-11-14T09:00:00+09:00');
   const old=dailyView(many(),'nagamachiminami','2026-11-12',later).alerts.join('');
-  assert.ok(old.includes('過去の対象日')&&old.includes('本日の処理結果は届いていません'));
+  assert.ok(old.includes('過去の対象日')&&old.includes('11月14日（土）の分の処理結果は届いていません'));
   const none=dailyView(many(),'pscube:c740601:20','2026-11-12',now);
   assert.equal(none.count,0);
   assert.ok(none.alerts.some(a=>a.includes('取り込み待ち'))&&none.alerts.some(a=>a.includes('保存済み候補はありません')));
@@ -88,8 +88,20 @@ test('最初に開く対象日は23:30から翌日、古い処理結果には注
   assert.equal(defaultDailyTarget(at('2026-11-12T07:59:00+09:00')),'2026-11-12');
   assert.equal(defaultDailyTarget(at('2026-12-31T23:45:00+09:00')),'2027-01-01');
   const doc=fixture();
-  assert.ok(dailyPanel(doc,'nagamachiminami','2026-11-11',at('2026-11-20T09:00:00+09:00')).includes('本日の処理結果は届いていません'));
-  assert.ok(!dailyPanel(doc,'nagamachiminami','2026-11-11',Date.parse(doc.updated_at)).includes('本日の処理結果は届いていません'));
+  assert.ok(dailyPanel(doc,'nagamachiminami','2026-11-11',at('2026-11-20T09:00:00+09:00')).includes('11月20日（金）の分の処理結果は届いていません'));
+  assert.ok(!dailyPanel(doc,'nagamachiminami','2026-11-11',Date.parse(doc.updated_at)).includes('処理結果は届いていません'));
+  // 2026-11-12：前の晩の23:30台に保存した候補に、0時を過ぎると「本日の処理結果は届いていません」と出ていた。
+  // 最終処理の「日付」ではなく、最初に開く対象日の保存時間帯（その前日の23:30から）に入ってから届いたかで決める。
+  const saved='2026-11-12T23:40:00+09:00';
+  for(const now of ['2026-11-12T23:45:00+09:00','2026-11-13T00:10:00+09:00','2026-11-13T07:00:00+09:00','2026-11-13T15:00:00+09:00','2026-11-13T23:29:00+09:00'])
+    assert.equal(dailyStale(saved,at(now)),false,now);
+  assert.equal(dailyStale(saved,at('2026-11-13T23:30:00+09:00')),true);
+  assert.equal(dailyStale('2026-11-12T08:10:00+09:00',at('2026-11-13T06:00:00+09:00')),true);
+  assert.equal(dailyStale('2026-11-12T23:29:59+09:00',at('2026-11-12T23:45:00+09:00')),true);
+  assert.equal(dailyStale('2026-11-12T14:40:00Z',at('2026-11-13T06:00:00+09:00')),false);
+  for(const broken of ['',null,undefined,'x']) assert.equal(dailyStale(broken,at('2026-11-13T06:00:00+09:00')),true);
+  const night=fixture();night.updated_at=saved;night.days[0].target='2026-11-13';night.days[0].saved_at=saved;
+  assert.ok(!dailyPanel(night,'nagamachiminami','2026-11-13',at('2026-11-13T06:00:00+09:00')).includes('届いていません'));
 });
 test('両Googleスクリプトの生成物と元コードが一致する',()=>{
   for(const name of ['viewer_drive_script.gs','viewer_drive_script_readonly.gs']) {

@@ -24,6 +24,19 @@ def default_target(now):
     return day.date().isoformat()
 
 
+def stale(updated, now):
+    """最初に開く対象日の保存時間帯（その前日の23:30から）に入ってから、PCの処理結果が1回も届いていないか。
+
+    2026-11-12：以前は「最終処理の日付が今日でない」で見ていたので、前の晩の23:30台に保存した正しい候補にも、
+    0時を過ぎると「本日の処理結果は届いていません」と出ていた（朝にPCを動かさない日は一日中）。"""
+    start = datetime.fromisoformat(f'{default_target(now)}T23:30:00+09:00') - timedelta(days=1)
+    try:
+        at = datetime.fromisoformat(str(updated))
+        return at.tzinfo is None or at < start
+    except ValueError:
+        return True
+
+
 def date_label(day):
     d = date.fromisoformat(day)
     return f'{d.month}月{d.day}日（{WEEK[d.weekday()]}）'
@@ -67,8 +80,8 @@ def daily_view(doc, store, target, now):
     alerts = [s for s in mine + general if IMPORTANT.search(s)]
     now = now.astimezone(JST)
     initial = default_target(now)
-    if not str(doc['updated_at']).startswith(now.date().isoformat()):
-        alerts.append('本日の処理結果は届いていません。古い候補を本日の予測として使わないでください。')
+    if stale(doc['updated_at'], now):
+        alerts.append(f'{date_label(initial)}の分の処理結果は届いていません。古い候補をこの日の予測として使わないでください。')
     if target < initial:
         alerts.append(f'{date_label(target)}は過去の対象日です。記録として表示しています。次の営業日の候補として使わないでください。')
     if not groups:
