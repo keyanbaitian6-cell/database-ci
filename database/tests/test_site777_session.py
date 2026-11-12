@@ -580,6 +580,31 @@ class SessionTest(unittest.TestCase):
             index['machines'][0]['count']=count
             self.assertEqual(self.cycle(index)['action']['url'],source_url(url('D2300'),'model'))
 
+    def test_next_machine_skips_machines_the_other_window_saved_meanwhile(self):
+        # 2026-11-13 利用者「今全部取り込んでたのに自動取り込み終わってなかった」：上から・下からの2つの窓が出会ったあと、
+        # 相手が済ませた機種を1つずつ開いて（機種・表の2ページ）確かめていた。機種を移るときにも保存済みを飛ばす。
+        from test_pscube_sync import machine, record, put
+        other=url('D2300',model='456')
+        index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
+               'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2},
+                           {'name':'別の機種','model_id':'456','url':other,'count':1}]}
+        self.assertEqual(self.cycle(index)['action']['url'],source_url(url('D2300'),'model'))
+        self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)     # この間に、もう1つの窓が「別の機種」を保存した
+        try:
+            m=machine('別の機種');put(store,m,[record(m,201,'2026-11-06')])
+        finally:store.close()
+        result=self.cycle(graph(2))
+        self.assertNotIn('action',result,'相手が保存した機種は開かない')
+        self.assertFalse(result['state']['enabled'],'その日の取り込みを終える')
+        self.assertEqual(self.log('machines_skipped')[-1]['skipped'],1)
+        # 台が足りない機種（相手がまだ途中）は、今までどおり開く。
+        self.session=self.new_session();self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        index['machines'][1]['count']=2
+        self.cycle(index)
+        self.session._done.add('123')
+        self.assertEqual(self.session._next(),{'action':{'type':'listed','url':source_url(other,'model')}})
+
     def test_index_skips_machine_saved_from_pscube_by_name_like_meruhen(self):
         # メルヘンと同じく、保存済みの台を機種名ごとに数える（P’s CUBEで取った台の機種も開かない）。
         from test_pscube_sync import machine, record, put

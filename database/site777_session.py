@@ -603,7 +603,7 @@ class Session(Bridge):
         # アナスロで補った台・確定前のサイトセブンの台は数えない（取り直して置き換えるため、2026-11-07・11-08）。
         return {r['rack'] for r in rows if not is_excluded_machine(r.get('machine')) and self._counts_as_saved(r)}
 
-    def _skip_saved_machines(self):
+    def _skip_saved_machines(self, keep_status=False):
         """機種一覧の台数（[31] など）だけ、その機種のサイトセブンの台がその日に保存済みなら、機種ページを開かずに済みにする
         （2026-11-07 利用者「機種一覧で取り込んでってやったら未取り込みに飛べばよくない？なんでまたゴーゴージャグラーからいくの？」。
         開き直すと済んだ機種の覚えが消え、先頭の機種から1つずつ開いて確かめていた）。
@@ -622,7 +622,9 @@ class Session(Bridge):
         if skipped:
             self._log.write('machines_skipped', day=self._day, skipped=skipped)
             left = sum(1 for key in self._models if key not in self._done)
-            self._status = f'保存済みの{skipped}機種は開かずに飛ばしました。残り{left}機種を取り込みます。'
+            text = f'保存済みの{skipped}機種は開かずに飛ばしました。残り{left}機種を取り込みます。'
+            # 機種を保存した直後（_next から）は、その機種の結果の文を残して後ろに足す。
+            self._status = f'{self._status} {text}' if keep_status and self._status else text
         return None
 
     def _covered_models(self):
@@ -736,6 +738,11 @@ class Session(Bridge):
                 self._status = f'{finished}。次は{self._day}を確かめます。'
 
     def _next(self, index_url=None):
+        # 次の機種を開く前に、ほかの窓が保存し終えた機種を飛ばす（2026-11-13 利用者「今全部取り込んでたのに自動取り込み
+        # 終わってなかった」。上からと下からの2つの窓が出会ったあと、相手が済ませた機種を1つずつ開いて（機種・表の2ページ）
+        # 確かめていた。今までは機種一覧に戻ったときだけ飛ばしていた）。DB は読むだけ。
+        if self._models:
+            self._skip_saved_machines(keep_status=True)
         remaining = [m for key, m in self._models.items() if key not in self._done]
         if remaining:
             # 「下から」なら一覧の下から（メルヘンの direction='bottom' と同じ）。
