@@ -79,6 +79,16 @@ try{
     await page.locator('[data-daily-learning]').click();
     await page.waitForFunction(()=>document.querySelectorAll('dialog .daily-group').length===37);
     const list=dialog.locator('.daily-content'),close=dialog.getByRole('button',{name:'閉じる',exact:true});
+    // スクロール位置が250ms変わらなくなるまで待つ（最大5秒）。慣性スクロールの途中で比べない。
+    async function settle(){
+      let last=await list.evaluate(e=>e.scrollTop);
+      for(let i=0;i<20;i++){
+        await page.waitForTimeout(250);
+        const now=await list.evaluate(e=>e.scrollTop);
+        if(now===last) return;
+        last=now;
+      }
+    }
     assert.ok(await list.evaluate(e=>e.scrollHeight>e.clientHeight+1000),'候補一覧が長く、縦にスクロールできる');
     async function closeStaysVisible(){
       const visible=await close.evaluate(b=>{
@@ -105,10 +115,14 @@ try{
           const after=document.querySelector('.daily-content').scrollTop;
           return bottom?after<before-30:after>before+30;
         },{before,bottom});
+        await settle();
       }
       await cdp.detach();
     }
+    // 指を離したあとの慣性スクロールが止まってから先頭へ戻す（2026-11-12 CIで、戻した後も慣性で47px進んで落ちた）。
+    await settle();
     await list.evaluate(e=>{e.scrollTop=0;});
+    await settle();
     await closeStaysVisible();
     assert.equal(await list.evaluate(e=>e.scrollTop),0);
     // 横向き相当の低い画面でも閉じる帯を隠さない。
