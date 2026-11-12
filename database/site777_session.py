@@ -47,6 +47,10 @@ STAGING_KEEP_DAYS = 14
 # この回転数に満たない台（0Gを含む）は取り込まない（2026-11-10 利用者「0ゲーム、500g未満の台については取り込まない」）。
 # 採点の下限（core.MIN_SCORED_GAMES、P’s CUBE の RACK_PAGE_MIN_GAMES）と同じ500G。500Gちょうどは取り込む。
 MIN_SAVED_GAMES = 500
+# 読み込み直してもグラフが出ない台を、グラフなしで保存して進めてよい台数（1機種につき。2026-11-13 利用者）。
+MAX_GRAPHLESS = 1
+# 同じDB（pscube.sqlite3）へほかの窓・PC本体が書いている間、待つ秒数（既定の5秒から延ばした。2026-11-13）。
+DB_WAIT = 30.0
 RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
                        'graph_retry_limit', 'graph_retry_storage', 'card_error', 'overlay_failed',
                        'range_unknown'})
@@ -77,12 +81,13 @@ DIRECTIONS = ('top', 'bottom')
 
 
 class Session(Bridge):
-    def __init__(self, data_dir, log, *, now=None, store_factory=PscubeStore):
+    def __init__(self, data_dir, log, *, now=None, store_factory=None):
         super().__init__(log)
         self._folder = Path(data_dir)
         self._db_path = self._folder / 'pscube.sqlite3'
         self._now = now or (lambda: datetime.now(source.JST))
-        self._store_factory = store_factory
+        # 2つの窓が同時に保存すると、既定の5秒では待ちきれず「database is locked」で止まった（2026-11-13 1:39）。
+        self._store_factory = store_factory or (lambda path: PscubeStore(path, timeout=DB_WAIT))
         self._window = None
         self._state_lock = threading.Lock()
         self._work_lock = threading.Lock()
@@ -482,6 +487,31 @@ class Session(Bridge):
             detail = f'HTTP {status}' if type(status) is int and status else str(error or '不明')[:60]
             self.pause(f'ページを読み込めませんでした（{detail}）。', 'navigation_failed')
 
+    def skip_graph(self, rack, epoch):
+        """自動取り込みで、1分ごとの読み込み直し（3回）でもグラフが出ない台を、グラフなしで保存して先へ進む
+        （2026-11-13 利用者「グラフなしで進めるようにお願いね」。11/13 1:15〜1:40、ゴーゴージャグラー3の1286番台
+        だけ仮の画像のままで、3分後の再開を繰り返していた）。グラフなしにできるのは1機種につき1台まで。
+        2台目が出ないときはサイト側の不調とみて、今までどおり止める（呼ぶ側がそのまま停止する）。
+        グラフなしの台は「グラフ不明」として保存する（表の数値は保存する。あとで取り込み直しても保存済みの台は飛ばす）。"""
+        with self._state_lock:
+            job = self._job
+            ok = (self._enabled and epoch == self._epoch and job is not None and type(rack) is int
+                  and self._stage == 'graphs')
+            if ok:
+                skipped = job.setdefault('no_graph', [])
+                ok = (rack in {r['rack'] for r in job['rows']} and str(rack) not in job['graphs']
+                      and rack not in skipped and len(skipped) < MAX_GRAPHLESS)
+            if ok:
+                skipped.append(rack)
+                model, day = job['table']['model_id'], self._day
+                self._status = (f'{job["table"]["machine"]}：{rack}番台のグラフが出ないため、この台はグラフなしで'
+                                '保存して続けます。')
+        if not ok:
+            return {'ok': False, 'state': self.state()}
+        self._write(self._job_path(model), job)
+        self._log.write('graph_skipped', day=day, model=model, rack=rack)
+        return {'ok': True, 'state': self.state()}
+
     def save_overlay_layout(self, raw):
         value = clean_overlay_layout(json.loads(raw))
         if value is not None:
@@ -555,7 +585,7 @@ class Session(Bridge):
         if not self._db_path.is_file():
             return set()
         # アナスロで補った台と確定前のサイトセブンの台はまだ無いものとして数える（取り直して置き換えるため、2026-11-07・11-08）。
-        with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+        with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True, timeout=DB_WAIT)) as db:
             return {r['rack'] for r in (json.loads(row[0]) for row in db.execute(
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
@@ -565,7 +595,7 @@ class Session(Bridge):
         """その日の保存済みの台番号（取り込まない機種＝is_excluded_machine と、アナスロで補った台は数えない）。DB は読むだけ。"""
         if not self._db_path.is_file():
             return set()
-        with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+        with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True, timeout=DB_WAIT)) as db:
             rows = [json.loads(r[0]) for r in db.execute(
                 "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                 "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
@@ -629,7 +659,7 @@ class Session(Bridge):
         サイトセブンの台は出典URLの機種コードで合わせる）と、確定した日に500G未満で取り込まなかった台。DB は読むだけ。"""
         rows = []
         if self._db_path.is_file():
-            with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+            with closing(sqlite3.connect(self._db_path.resolve().as_uri()+'?mode=ro', uri=True, timeout=DB_WAIT)) as db:
                 rows = [json.loads(r[0]) for r in db.execute(
                     "SELECT payload FROM records WHERE json_extract(payload,'$.store')=? "
                     "AND json_extract(payload,'$.rate')='20' AND json_extract(payload,'$.day')=?",
@@ -874,9 +904,10 @@ class Session(Bridge):
             self._job = {'table': payload, 'rows': wanted, 'all_racks': [r['rack'] for r in rows],
                          'all_my': {str(r['rack']): r['my'] for r in rows},
                          'graphs': old.get('graphs', {}) if old.get('table_sha') == digest else {},
-                         'pages': old.get('pages', []) if old.get('table_sha') == digest else [], 'table_sha': digest}
+                         'pages': old.get('pages', []) if old.get('table_sha') == digest else [], 'table_sha': digest,
+                         'no_graph': old.get('no_graph', []) if old.get('table_sha') == digest else []}
             self._write(self._job_path(model), self._job)
-            if {r['rack'] for r in wanted} <= {int(k) for k in self._job['graphs']}:
+            if {r['rack'] for r in wanted} <= {int(k) for k in self._job['graphs']} | set(self._job['no_graph']):
                 return self._finish(self._job, epoch, payload.get('index_url'))
             self._status = f'{payload["machine"]}：表{len(rows)}台、未保存{len(wanted)}台のグラフを読みます。'
             return {'action': {'type': 'link', 'url': source.source_url(payload.get('graph_url'), 'graphs')}}
@@ -900,7 +931,7 @@ class Session(Bridge):
             raise ValueError('表とグラフ一覧の表示台数が違います。')
         if source.day_from_label(payload.get('selected_md'), self._now()) != self._day or payload.get('model_id') != model:
             raise ValueError('グラフの機種・日付が全台一覧と一致しません。')
-        needed = {r['rack'] for r in job['rows']}
+        needed = {r['rack'] for r in job['rows']} - set(job.get('no_graph', []))   # グラフなしにした台は待たない
         remaining = needed - {int(k) for k in job['graphs']}
         # 画像を読む前に表示中の台番を検証する。500G未満・保存済みの台は、同じページでも画像を待たない。
         page_racks = payload.get('graph_racks')
@@ -935,7 +966,7 @@ class Session(Bridge):
         self._save_source(payload)
         self._check(epoch)
         self._write(self._job_path(model), job)
-        needed = {r['rack'] for r in job['rows']}
+        needed = {r['rack'] for r in job['rows']} - set(job.get('no_graph', []))
         present = {int(r) for r in job['graphs']}
         if not needed <= present:
             for other in payload.get('pages', []):
@@ -949,8 +980,10 @@ class Session(Bridge):
         catalog = read_catalog(self._db_path)
         name = job['table']['machine']
         name = suggestions(name, catalog)['automatic'] or name
-        backup = source.make_backup(job['table'], job['rows'], {int(k): v for k,v in job['graphs'].items()},
-                                    self._day, name, catalog, self._now())
+        graphs = {int(k): v for k,v in job['graphs'].items()}
+        for rack in job.get('no_graph', []):
+            graphs.setdefault(rack, source.missing_graph())      # グラフなしで進めた台（skip_graph）
+        backup = source.make_backup(job['table'], job['rows'], graphs, self._day, name, catalog, self._now())
         self._check(epoch)
         store = self._store_factory(self._db_path)
         try:

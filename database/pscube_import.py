@@ -836,11 +836,12 @@ class PscubeIndexRetry(ValueError):
 
 
 class PscubeStore:
-    def __init__(self, path, *, recording=True, index_confirmation=None):
+    def __init__(self, path, *, recording=True, index_confirmation=None, timeout=5.0):
         self.index_confirmation = index_confirmation
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = input_versions.connect(self.path, recording=recording)
+        # timeout：ほかのプロセスの書き込みを待つ秒数（既定は sqlite3 と同じ5秒。サイトセブンの窓は長く待つ）。
+        self.db = input_versions.connect(self.path, recording=recording, timeout=timeout)
         self.db.execute('CREATE TABLE IF NOT EXISTS machines (key TEXT PRIMARY KEY, payload TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, payload TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS rack_captures (key TEXT PRIMARY KEY)')

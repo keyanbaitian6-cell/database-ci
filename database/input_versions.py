@@ -92,8 +92,8 @@ class Connection(sqlite3.Connection):
         return result
 
 
-def connect(path, *, recording=True):
-    db = sqlite3.connect(path, factory=Connection)
+def connect(path, *, recording=True, timeout=5.0):
+    db = sqlite3.connect(path, factory=Connection, timeout=timeout)
     db.recording_allowed = recording
     return db
 

@@ -270,6 +270,24 @@ try {
   await review.click('#database-site777-auto');
   await review.waitForFunction(()=>window.__calls.some(c=>c[0]==='pause'));
   assert.deepEqual(await review.evaluate(()=>window.__calls.find(c=>c[0]==='pause')),['pause',null,'user_stop',null]);
+  // 3回読み込み直しても出ない台は、PCが認めればグラフなしで進める（止めない）。PCが断ったら（2台目など）今までどおり止める
+  // （2026-11-13 利用者「グラフなしで進めるようにお願いね」）。開始ボタンは回数を0に戻すので、ONは状態で与える。
+  await review.evaluate(()=>{
+    sessionStorage.setItem('database-site777-retries',JSON.stringify({[location.href]:3}));
+    window.__calls.length=0;window.__allow=true;
+    window.databaseSite777.prepare=async()=>{throw Object.assign(new Error('試験'),{stalled:true,
+      graph_wait:{rack:101,complete:true,width:260,image_kind:'placeholder',visible:true}});};
+    window.pywebview.api.note=async()=>{};
+    window.pywebview.api.skip_graph=async(rack,epoch)=>{window.__calls.push(['skip_graph',rack,epoch]);
+      const ok=window.__allow;window.__allow=false;return {ok,state:structuredClone(window.__s)};};
+    Object.assign(window.__s,{enabled:true,ready:true,navigating:false});
+  });
+  await review.waitForFunction(()=>window.__calls.some(c=>c[0]==='pause'));
+  const skipping=await review.evaluate(()=>window.__calls.filter(c=>c[0]!=='capture'));
+  assert.deepEqual(skipping.map(c=>c[0]),['skip_graph','skip_graph','pause'],'1回目は進み、断られた2回目で止まる');
+  assert.equal(skipping[0][1],101);
+  assert.equal(skipping[0][2],await review.evaluate(()=>window.__s.epoch),'今の実行番号を渡す');
+  assert.equal(skipping[2][2],'graph_retry_limit');
   // 回数を残せない（sessionStorage が使えない）ときは、読み込み直さずに止め、「3回読み込み直しても」とは書かない。
   await review.evaluate(()=>{
     Storage.prototype.getItem=()=>{throw new Error('blocked');};
@@ -341,5 +359,5 @@ try {
   await listing.waitForFunction(()=>window.__asked.length===2);
   assert.equal(await listing.evaluate(()=>document.querySelectorAll('.database-site777-badge').length),4,'付け直しても重ならない');
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：表31台・遅延グラフ20+11台・必要な台だけの画像待ち・非表示の複製除外・不足画像の診断記録・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・移動中の読み直しなし・開始し直しで回数を戻す（自動の再開では戻さない）・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内・機種一覧の取り込み状況：成功');
+  console.log('サイトセブン：表31台・遅延グラフ20+11台・必要な台だけの画像待ち・非表示の複製除外・不足画像の診断記録・停止・番号リンク・追加取得なし・グラフが出ないときの1分後の読み込み直し（3回まで）・それでも出ない1台はグラフなしで進む（2台目は停止）・移動中の読み直しなし・開始し直しで回数を戻す（自動の再開では戻さない）・停止の理由コード・自動の再開待ちの表示と取り消し・前回の案内・機種一覧の取り込み状況：成功');
 } finally {await browser.close();}

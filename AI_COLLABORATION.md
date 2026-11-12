@@ -2649,3 +2649,26 @@
   - 古い記録（`site777-browser.log.1`、〜11/11）には `graph_wait` は1件も無い。今回が初めて。同じ時間にほかの機種（120168・120230・120244）はグラフまで取れている（staging が 1:37〜1:38 に書かれた）ので、サイト全体ではなく、この台（またはこのページ）のグラフがサイト側で出ていないと見ている。サイト側の理由は確かめていない（サイトを開いていない）。
   - 1:36:30に2つ目の窓が開き（`site777_browser.py` が2組動いている：1:13:54開始と1:36:30開始）、1:39:01に `capture_stopped`（`OperationalError`）→ `auto_off reason=capture_error message="database is locked"`。本体DB（485MB）は `journal_mode=delete`、書き込みの接続は `input_versions.connect` の既定の待ち5秒。**2つの窓が同じDBへ保存（とその後のバックアップ出力の読み取り）を重ねて、5秒を超えて待ったため**と見ている（どの処理と重なったかは、記録に残る形が無く確かめていない）。`capture_error` は3分後に自動で再開する種類なので、そのまま続く。
 - 未確認・次の手順：利用者に「グラフが出ない台が1台だけのとき、その台はグラフなしで保存して次の機種へ進むか」と、「保存の待ち時間を5秒から延ばす（2つの窓の同時保存で止まらないように。サイトへのアクセスは増えない）」を相談中。決まるまでコードは変えない。
+
+## 2026-11-13 2:00ごろ：サイトセブンで、グラフが出ない1台はグラフなしで保存して進む・保存の待ちを30秒に（実装）
+
+- 依頼：利用者「手動でこの画面を取り込むおしたら取り込めてるみたい。なぜ？」「あと、グラフなしで進めるようにお願いね」（上の節の相談への答え）。基準 `bf68331`。
+- 手動で取れた理由（記録で確認）：手動の「この画面を取り込む」と自動は、同じ読み取り（`site777_overlay.js` の `cycle`・`site777_capture.js` の `prepare`、1台12秒待つ）を使う。違いは時刻だけ。自動の最後の失敗は 1:40:57（1286番台はまだ仮の画像）、手動は 1:43:38 にゴーゴージャグラー3の1ページ目を取り、staging（`2026-11-12-120141.json`）に1286番台を含む30台のグラフと pages 1,2 が入った。**1:41〜1:43の間にサイトが1286番台のグラフを出すようになった**と見ている（サイト側の理由は確かめていない）。
+- 訂正：上の節で「本体DB（485MB）は journal_mode=delete」と書いたが、サイトセブンの保存先は `pscube.sqlite3`（63MB、これも journal_mode=delete）。結論（2つの窓の保存が重なって既定の5秒を超えた）は変わらない。
+- 変更：
+  - `database/site777_session.py`：`skip_graph(rack, epoch)` を追加（ページから呼べる）。自動取り込みON・今の実行番号・グラフ一覧の段階・表で取り込む台・まだグラフが無い台のときだけ、その台を `job['no_graph']` に入れて途中の記録に書く。**1機種につき1台まで**（`MAX_GRAPHLESS = 1`）。2台目は断り、ページ側が今までどおり `graph_retry_limit` で止まる（サイト側の不調とみる）。グラフ一覧の「必要な台」から外し、`_finish` で `site777_import.missing_graph()` を入れて保存。窓を開き直しても同じ表なら覚えている。ログ `graph_skipped`（日・機種番号・台番だけ）。
+  - `database/site777_import.py`：`missing_graph()`。**今の「グラフ不明」と同じ形**（`graph: None`、`source_graph.error: curve_unknown`、format・260×226 はそのまま、`image_sha256` は空のデータのsha256）に `missing: image_not_loaded` を足した。PC `validate_record`・Android `pscube_viewer_data.dart`・閲覧ページ `data.mjs`・同期スクリプト `pscube_cloud_sync.gs`・Android `pscube_capture.js` の確認をどれも変えずに通る（Googleの貼り替え・APKは不要）。表の数値（G数・BB・RB・MY）は保存する。保存済みの台は次の取り込みで飛ばすので、あとでグラフが出ても自動では取り直さない。
+  - `database/assets/site777_overlay.js`：グラフ待ちで読み込み直しが上限（3回）に達したとき、止める前に `skip_graph` を呼び、認められたら止めずに次の読み取りへ。読み込み直しの回数・待ち時間・再開の決まりは変えていない（サイトへのアクセスは減る方向だけ）。
+  - DBの待ち：`input_versions.connect` と `PscubeStore` に `timeout`（既定は今までの5秒のまま）。サイトセブンの窓だけ `DB_WAIT = 30` 秒（保存の `PscubeStore` と読み取り専用の3か所）。PC本体の待ちは変えていない。
+- 確認：
+
+|要件|結果|証拠|
+|---|---|---|
+|出ない1台はグラフなしで保存して進む|済|`test_one_rack_whose_graph_never_loads_is_saved_without_a_graph`（101番台がgraph None・missing付きで保存、102番台はグラフあり、両方 `validate_record` を通る、状態に「グラフ不明1台」）|
+|1機種1台まで・古い実行番号・OFF・段階違い・表に無い台は断る|済|同上と `test_graph_skip_needs_auto_capture_on_and_is_kept_when_the_window_reopens`|
+|ページ側：認められたら止めない、断られたら graph_retry_limit で止まる|済|`database_android/tool/test_site777_capture_browser.mjs`（skip_graph→skip_graph→pause の順、実行番号を渡す）成功|
+|既存の動き|済|`test_site777*.py` 90件・`test_pscube_import.py` 39件・`test_input_versions.py` 6件 OK。PC全試験は下に追記|
+|実サイトで1台をグラフなしで保存|未確認|次にグラフが出ない台が出たとき。動いている窓は古いコードのまま（開き直すと新しいコード）|
+
+- 未確認・次の手順：実サイトでの動き。全体ゲート（Flutter・閲覧ページ）はそのコードを変えていないので流していない（ビルドもしない）。閲覧ページ・共有カレンダーの表示は変わらない（グラフ不明の台は前からある）ので公開しない。
+- 追記：PC全試験 `python -m unittest discover -s tests`（`database/`）1035件 OK（前回1033件＋新規2件）、取り込みカードの画面試験（Node・Playwright）成功。

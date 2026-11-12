@@ -38,7 +38,7 @@ def graph(page=1, metadata=False):
 
 class SessionTest(unittest.TestCase):
     def test_page_api_does_not_expose_file_paths_store_factories_or_native_window(self):
-        allowed={'note','state','configure','pause','save_overlay_layout','capture','machine_status'}
+        allowed={'note','state','configure','pause','save_overlay_layout','capture','machine_status','skip_graph'}
         public={name for name in dir(self.session) if not name.startswith('_')}
         self.assertEqual(public,allowed)
 
@@ -838,6 +838,46 @@ class SessionTest(unittest.TestCase):
                 full=graph();full.update(graph_racks=racks,graphs=images)
                 self.assertIn('error',self.session.capture(json.dumps(full),self.epoch))
                 self.assertEqual(self.saved(),{})
+
+    def test_one_rack_whose_graph_never_loads_is_saved_without_a_graph(self):
+        # 2026-11-13 1:15〜1:40、ゴーゴージャグラー3の1286番台だけグラフが仮の画像のままで、3分後の再開を繰り返した。
+        # 利用者「グラフなしで進めるようにお願いね」：その台は「グラフ不明」で保存して進む。1機種につき1台まで。
+        from site777_import import validate_record
+        self.assertFalse(self.session.skip_graph(101,self.epoch)['ok'],'グラフ一覧の前は断る')
+        self.cycle(table());self.assertTrue(self.cycle(graph(metadata=True))['prepare_graphs'])
+        self.assertFalse(self.session.skip_graph(101,self.epoch+1)['ok'],'古い実行番号は断る')
+        self.assertFalse(self.session.skip_graph(999,self.epoch)['ok'],'表に無い台は断る')
+        self.assertFalse(self.session.skip_graph('101',self.epoch)['ok'])
+        self.assertTrue(self.session.skip_graph(101,self.epoch)['ok'])
+        self.assertFalse(self.session.skip_graph(102,self.epoch)['ok'],'2台目は断る（呼ぶ側が今までどおり止める）')
+        self.assertEqual([(r['rack'],r['day']) for r in self.log('graph_skipped')],[(101,'2026-11-06')])
+        # 同じページの読み直し：101の画像は待たない。
+        meta=graph(metadata=True);meta['graph_racks']=[101]
+        self.assertEqual(self.cycle(meta)['wanted_racks'],[102])
+        full=graph();full.update(graph_racks=[101],graphs=[])
+        self.assertEqual(self.cycle(full)['action'],{'type':'page','number':2})
+        self.cycle(graph(2))
+        store=PscubeStore(self.root/'pscube.sqlite3',recording=False)
+        try:records={r['rack']:r for r in store.export_payload()['records']}
+        finally:store.close()
+        self.assertEqual({k:r['games'] for k,r in records.items()},{101:3000,102:2800},'表の数値は保存する')
+        self.assertIsNone(records[101]['graph'])
+        self.assertEqual(records[101]['source_graph']['missing'],'image_not_loaded')
+        self.assertIsNotNone(records[102]['graph'])
+        for record in records.values():validate_record(record)          # 別の端末・閲覧ページと同じ形の確認を通る
+        self.assertIn('グラフ不明1台',self.session.state()['status'])
+
+    def test_graph_skip_needs_auto_capture_on_and_is_kept_when_the_window_reopens(self):
+        self.cycle(table());self.cycle(graph(metadata=True))
+        self.assertTrue(self.session.skip_graph(101,self.epoch)['ok'])
+        # 窓を開き直して同じ表を読んでも、グラフなしにした台は覚えている（もう一度待たない）。
+        self.session=self.new_session();self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.cycle(table())
+        meta=graph(metadata=True);meta['graph_racks']=[101]
+        self.assertEqual(self.cycle(meta)['wanted_racks'],[102])
+        self.assertFalse(self.session.skip_graph(102,self.epoch)['ok'],'開き直しても1機種1台まで')
+        self.session.configure(False)
+        self.assertFalse(self.session.skip_graph(102,self.epoch)['ok'],'自動取り込みがOFFなら断る')
 
     def test_racks_under_500_games_are_not_saved_and_count_as_done(self):
         # 2026-11-10 利用者「サイトセブンの取り込みについて、0ゲーム、500g未満の台については取り込まなく定位」。

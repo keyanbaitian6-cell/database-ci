@@ -173,6 +173,15 @@ def graph_records(payload, target_day, model_id, expected_racks, now=None):
     return result
 
 
+def missing_graph():
+    """読み込み直してもサイトがグラフを出さなかった台（2026-11-13 利用者「グラフなしで進める」）。
+    今の「グラフ不明」（graph=None・error=curve_unknown）と同じ形にして、PC・Android・閲覧ページ・同期の
+    確認をそのまま通す。画像は無いので image_sha256 は空のデータのもの、missing で区別できるようにする。"""
+    return {'graph': None, 'source_graph': {'format': 'site777-yellow-pixels-v1', 'width': 260, 'height': 226,
+                                            'image_sha256': hashlib.sha256(b'').hexdigest(),
+                                            'error': 'curve_unknown', 'missing': 'image_not_loaded'}}
+
+
 def make_backup(table, rows, graphs, target_day, machine, catalog=(), now=None):
     """出典を保持し、既存P’s CUBEインポートへ渡す補完バックアップを作る。"""
     now = now or datetime.now(JST)

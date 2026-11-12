@@ -176,6 +176,13 @@
         let retried='storage';
         try{retried=await retryLater(mine,epoch);}catch(_){}
         if(retried===true)return;
+        // 3回読み込み直しても出ない台は、1機種につき1台までグラフなしで保存して続ける（2026-11-13 利用者
+        // 「グラフなしで進めるようにお願いね」）。PCが断ったら（2台目など）今までどおり止める。
+        if(retried==='limit'&&Number.isInteger(error.graph_wait?.rack)&&alive&&token===mine){
+          let skipped=null;
+          try{skipped=await api().skip_graph?.(error.graph_wait.rack,epoch);}catch(_){}
+          if(skipped?.ok&&alive&&token===mine){if(skipped.state)render(skipped.state);return;}
+        }
         // 表示の回数を実際に読み込み直した回数に合わせる（回数を残せず読み込み直していないのに「3回」と出していた）。
         if(alive&&token===mine)await (retried==='limit'
           ?stop(`${MAX_RETRIES}回読み込み直してもグラフが表示されないため停止しました。画面を確認してください。`,'graph_retry_limit',MAX_RETRIES)
