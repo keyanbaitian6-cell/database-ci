@@ -2404,3 +2404,26 @@
 
 - 利用者報告（2026-11-12、この修正の完了報告への返信）：「動作確認OK」。直前に報告されたiPhoneの共有カレンダーの日次学習画面の操作不具合について、利用者による動作確認済みとして記録する。AIが端末を直接操作した確認ではない。確認したURL・配信版・個別操作の内訳は報告されていないため、特定の配信版が公開済みであることや、全項目の実機試験成功までは断定しない。上表の「iPhone実機での改善」は利用者報告として確認済みへ更新し、Google応答・公開担当・ソースpush／公開版の対応は別途未確認のままとする。
 - この追記は共有記録だけの変更。実装・試験入力・ビルド・公開処理に変更がないため、試験・ビルドは繰り返さない。ソースpushの追加承認は受けていないため、ローカル保存・コミットまでとし、別作業の `database_android/tool/stage_share_viewer.py` は変更・コミットしない。
+
+### 2026-11-12 日次学習の「翌日候補」画面を4画面でそろえて公開／分析用JSONを学習に追加（v3）（Claude）
+
+- 依頼：利用者「日次学習の『翌日候補』ページを、PC・Android・iPhone閲覧ページ・共有カレンダーの4画面で見やすく改善し、閲覧ページと共有カレンダーを公開」（Codexの見本 `C:\Users\keyan\.codex\visualizations\2026\11\11\01a1cca2-…\daily-candidates-preview.html` は架空データ。見本の機種名・台番号・採用状態は製品に入れていない）。あわせて利用者「1両方にいれるで」（上の検討の案1：幸町・P-STATIONの分析用JSONを学習に入れる）。今回の改善のコミット・push・公開は利用者が許可。
+- 基準：開始時の手元 `ebbb927`（正本 `277643c` を含み、database-ci `7a9df13` も含む）。途中でCodexが共有カレンダーの「末尾でも閉じられる」修正 `c7a3d59`・記録 `d97355d` を私のコミットの上に足していたので、上書きせずそのまま公開に含めた。
+- 4画面の表示（同じ順・意味）：①店舗・対象日の切り替え（対象日は「11月12日（木）」、過去日に「・過去日」）②折りたたまない重要な注意（この店舗の処理失敗・取り込み待ち・締切超過、同期先、未更新、過去の対象日、候補なし、読み込み失敗）③候補数（表示中の保存済み候補の台数と「n機種とバラエティ」）と最終処理の時刻 ④機種ごとのカード（台番号を大きく、保存した順のまま。バラエティは台ごとに機種名。「採用中 日次学習版／従来方式」を文字付きのラベル）⑤開閉式「採用方式の説明・保存時刻」⑥開閉式「処理状況・日次学習について」⑦注意書き。状態の文は店舗名で分け、ほかの店の失敗をこの店の注意にしない。共有カレンダーの店舗の切り替えは、その共有ページで見られる店舗だけ。半角カナは各画面の既存の関数で全角に（PCのTkは元の文字のまま。□にならないことを画面写真で確認）。
+- 変更ファイル：PC `database/daily_learning_view.py`（新規、Tkに依らない表示内容）・`daily_learning_ui.py`（窓の作り直し）・`daily_learning_display.py`（結果ページの欄）、Flutter（Android両版・iPhone閲覧ページ共通）`database_android/lib/daily_learning_page.dart`、共有カレンダー `share_viewer/daily_learning.mjs`・`app.mjs`・`index.html`、公開処理 `database_android/tool/stage_share_viewer.py`（daily_learning.mjs → data.mjs の読み込みに版を付ける）、試験。変えていないもの：候補の選び方・順位・採用判断・学習条件・保存の締切・初期対象日の規則・保存形式（daily-learning.json）・同期先・Googleスクリプト。
+- 分析用JSON（v3、`database/daily_learning_archive.py`）：幸町 `html_converter/data/normal_analysis/saiwaichou/`・P-STATION `html_converter/data/pstation_analysis/` のジャグラー・ハナハナを、学習（History・train）と過去の特徴にだけ足す。従来候補・母集団・前日データ・完全性の判定には使わない。同じ台・日は原本DBの有効な行を優先。足した行は入力の塊 `archive_rows` として固定保存、ファイルの指紋を予測に残す。読めないときは原本DBだけで予測。版 `daily-plus-ridge-20261112-v3`（v2・v3の予測はまだ0件）。仕様は `DAILY_LEARNING.md`。
+
+|要件|結果|証拠|
+|---|---|---|
+|保存済み候補の台・順番が変わらない|済|本物の `database/data/daily-learning.json`（1日・105組・262台）をPC・共有カレンダー・Flutterの表示部分に通し、3つとも不一致0（読み取りだけ。Flutterは一時の試験で照合し、ファイルは消した）|
+|切り替え・候補と採用方式・説明の開閉・候補なし・過去日・未更新・処理失敗・読み込み失敗|済|PC `tests/test_daily_learning_view.py` 4件、Flutter `test/daily_learning_page_test.dart` 9件、JS `tool/test_daily_learning.mjs` 6件、共有の画面試験 `tool/test_daily_learning_browser.mjs`|
+|320・393px・PC幅で横はみ出しなし、長い機種名・半角カナ・7台|済|Flutterの3幅の試験（はみ出しは例外で落ちる）、共有の画面試験（320・393・1280px）、画面写真（共有3幅、閲覧ページ320・393、PCの窓）。320pxで「採用中 日次学習版」が2行に折れたのを直し、1行を確かめる試験を足した（直す前は落ちることを確認）|
+|分析用JSON：従来候補・母集団が変わらない|済|実データの複製で11/12分を作り直し、3店舗105組すべて一致。学習済みの組 P-STATION 16→22（機種名の統一と合わせて）、幸町39→39（学習日数が増える）。最初の晩117秒・約195MB（以後1晩約2MB）。試験 `tests/test_daily_learning_archive.py` 3件|
+|全体ゲート|済|`C:\w\cbw-dlui2`（取り込み後の `606c6c6`）ALL PASSED：PC 1014件、Flutter 844件、analyze（エラー・警告なし）、閲覧ページのビルド、viewer/share stage、JS・画面の全試験。その前の `C:\w\cbw-dlui`（`d410543`）は `test_share_viewer_browser` だけ失敗（data.mjsの読み込みに版が無い）→ stage処理を直した|
+|GitHub反映|済|`tools/push_ci.py` で正本へ `277643c..606c6c6`（Codex・別セッションの未送信分 `4e04cd7`・`eb32422`・`c7a3d59` などを含む）。CI https://github.com/imakurudev-eng/database/actions/runs/43143382108 は送信時点で実行中|
+|閲覧ページの公開|済|`database-viewer` `8863cee`→`6c3854c`（差分は main.dart.js だけ）。Pages 43143430163 成功。配信中の main.dart.js のSHA-256が公開したファイルと一致（`4632fa6c…`）。https://keyanbaitian6-cell.github.io/database-viewer/|
+|共有カレンダーの公開|済|`database-share` `395fe44`→`5507716`（版 `386ade7eb470`、Codexの閉じる修正を含む）。Pages 43143436435 成功。配信中の daily_learning.mjs・index.html・app.mjs が一致。https://keyanbaitian6-cell.github.io/database-share/|
+|Android両版|未実施|画面のコードは同じ `daily_learning_page.dart`。端末に出すにはAPKの作成・導入が要る（今回は許可の範囲外として作っていない）|
+|Googleスクリプト|不要|保存形式・`?file=daily-learning` の返事は変えていない|
+|PCアプリ|開き直しが必要|起動中のアプリは古いコードのまま。`start.cmd` で開き直すと新しい窓と v2/v3 の学習になる。今夜23:30より前に開き直さないと、今夜も旧版で約132MB増える|
+|実機（iPhone・Android・PC）での見た目|未確認|利用者に見てもらう|
