@@ -238,6 +238,8 @@ void main() {
       expect(find.text('9台'), findsOneWidget);
       expect(find.text('採用中 日次学習版'), findsOneWidget);
       expect(find.text('採用中 従来方式'), findsOneWidget);
+      // ラベルは1行（2026-11-12、320px幅で2行に折れていた）。13pxの文字1行分の高さ。
+      expect(tester.getSize(find.text('採用中 日次学習版')).height, lessThan(20));
       expect(find.textContaining('ｻﾝ'), findsNothing);
       expect(find.textContaining('ｷｼｭ'), findsNothing);
       expect(find.text('キシュビー'), findsOneWidget);

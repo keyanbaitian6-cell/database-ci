@@ -503,33 +503,37 @@ class _DailyGroupCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
+            // ラベルは1行のまま左に置き、台数は右端（以前は Flexible と Spacer で幅を半分ずつ取り、320px幅でラベルが2行に折れた）。
             Row(
               children: [
-                Flexible(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: learned
-                          ? const Color(0xFFE8F1FD)
-                          : const Color(0xFFE6E6E8),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '採用中 ${learned ? '日次学習版' : '従来方式'}',
-                      style: TextStyle(
-                        fontSize: 13,
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
                         color: learned
-                            ? const Color(0xFF0066CC)
-                            : const Color(0xFF1D1D1F),
-                        fontWeight: learned ? FontWeight.w600 : null,
+                            ? const Color(0xFFE8F1FD)
+                            : const Color(0xFFE6E6E8),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '採用中 ${learned ? '日次学習版' : '従来方式'}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: learned
+                              ? const Color(0xFF0066CC)
+                              : const Color(0xFF1D1D1F),
+                          fontWeight: learned ? FontWeight.w600 : null,
+                        ),
                       ),
                     ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 Text('${group.racks.length}台', style: muted),
               ],
             ),

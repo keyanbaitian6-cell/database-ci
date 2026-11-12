@@ -33,6 +33,7 @@ REFERENCES = (
     ('app.mjs', "from './data.mjs'"),
     ('app.mjs', "from './capture_health.mjs'"),
     ('app.mjs', "from './daily_learning.mjs'"),
+    ('daily_learning.mjs', "from './data.mjs'"),
     ('app.mjs', "from './viewer_parts.mjs'"),
     ('app.mjs', "from './offline.mjs'"),
     ('data.mjs', "from './net.mjs'"),
