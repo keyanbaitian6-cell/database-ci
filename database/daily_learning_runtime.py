@@ -18,9 +18,9 @@ import time
 
 import core
 import daily_learning_archive
-from daily_learning import (JST, VERSION, RULE_VERSION, MATURITY, PERIOD, STORE_COUNT, History, Journal, LateError,
-                            comparison, digest, encoded, identity, jst, outcome, outcome_source, period_days,
-                            prediction_target, rank_pool, rollback_needed, shift, store_day, train, valid)
+from daily_learning import (JST, VERSION, RULE_VERSION, MATURITY, PERIOD, STORE_COUNT, STORE_MODEL, VARIETY_MODEL, History,
+                            Journal, LateError, comparison, digest, encoded, identity, jst, outcome, outcome_source, period_days,
+                            prediction_target, rank_by, rank_pool, rollback_needed, shift, store_day, train, valid)
 from file_io import atomic_writer
 
 FILE_NAME = 'daily-learning.json'
@@ -311,16 +311,27 @@ def build_prediction(rows, pscube, target, journal, node=None, history_rows=None
         # 採用は店舗単位（2026-11-12）。採用したときと方式が違えば、採用の根拠が無いので従来方式。
         state = journal.get('state', 'store:' + group['store']) or {'active': 'current'}
         adopted = state.get('active') == 'learned' and state.get('method') == method
-        ordered = rank_pool(group['pool'], history, models)
+        # v4：バラエティは台ごとに独立に見る（機種ごとの係数で機種どうしを比べない）ので、バラエティ専用の係数だけで並べる。
+        # それ以外は機種ごとの係数（v3と同じ）、無い機種（新台など）は店舗共通の係数。
+        if group['name'] == core.VARIETY_GROUP_NAME:
+            kind = 'variety'
+            ordered = rank_by(group['pool'], history, models.get((group['store'], group.get('rate', ''), VARIETY_MODEL)), kind)
+        else:
+            kind, ordered = 'machine', rank_pool(group['pool'], history, models)
+            if ordered is None:
+                kind = 'store'
+                ordered = rank_by(group['pool'], history, models.get((group['store'], group.get('rate', ''), STORE_MODEL)), kind)
         current = [list(k) for k in group['current']]
         learned = [list(identity(r)) for r in ordered[:len(current)]] if ordered is not None else current
         active = 'learned' if adopted and ordered is not None else 'current'
         projected.append(dict(key=key, store=group['store'], name=group['name'], current=current,
                               learned=learned, selected=learned if active == 'learned' else current,
                               active=active, trained=ordered is not None, method=method,
+                              model=kind if ordered is not None else None,
                               status=('改善を確認して採用中' if active == 'learned' else
                                       '学習済み・将来成績を比較中' if ordered is not None else '学習データ不足・従来方式'),
-                              pool=[{'id': list(identity(r)), 'features': history.features(r)} for r in group['pool']]))
+                              pool=[{'id': list(identity(r)), 'features': history.model_features(r, kind if ordered is not None else 'machine')}
+                                    for r in group['pool']]))
     sources = [Path(__file__), Path(__file__).with_name('daily_learning.py'), Path(core.__file__),
                Path(__file__).with_name('normal_next_day_model.py'),
                Path(__file__).with_name('daily_learning_pscube.mjs'), SCORING_MJS,

@@ -41,7 +41,9 @@ class LearningNameTests(unittest.TestCase):
         x = dict(zip(d.FEATURES, history.features(today)))
         self.assertEqual(x['coverage28'], 1.0)                                          # 名前の変わり目で過去が途切れない
         models = d.train(history, '2026-11-16')
-        self.assertEqual(list(models), [(PS, '20', NEW)])
+        # 機種ごとの係数は新しい名前の1つだけ（v4から、店舗共通の係数 STORE_MODEL も並ぶ）。
+        self.assertEqual([k for k in models if not k[2].startswith('#')], [(PS, '20', NEW)])
+        self.assertEqual(sorted(k for k in models if k[2].startswith('#')), [(PS, '20', d.STORE_MODEL)])
         # 9/2〜11/8 の結果の68日。古い名前の日と、変わり目（11/5の台→11/6の結果）を含む。分かれていたら新しい名前は2日だけ。
         self.assertEqual(models[(PS, '20', NEW)]['days'], 68)
         pool = [r for r in history.rows if r['day'] == '2026-11-09']

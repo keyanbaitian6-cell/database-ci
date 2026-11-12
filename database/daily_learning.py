@@ -20,7 +20,10 @@ JST = timezone(timedelta(hours=9))
 # 学習では同じ機種として数える（daily_learning_names.py。利用者「vivy同じものとして数えて」）。
 # v3（2026-11-12、v2・v3で保存した予測が無いうちに）：アナスロの分析用JSON（幸町・P-STATIONのジャグラー・ハナハナ）を
 # 過去の学習・特徴に足す（daily_learning_archive.py。利用者が検討の「1」を選択）。従来候補・前日データには使わない。
-VERSION = 'daily-plus-ridge-20261112-v3'
+# v4（2026-11-12 夜、最初の結果の記録（11/20）より前。利用者「すぐ本番」）：機種ごとの係数が無い組にも学習版の順位を付ける。
+# 4台以上の機種の組は「店舗共通の係数」（導入からの日数の印つき）、バラエティは「バラエティ専用の係数」（台ごとに独立。
+# プラスでない日が続いた数つき。利用者の見立て「ローテーションのように設定が入る」）。機種ごとの係数・特徴はv3と同じ。
+VERSION = 'daily-plus-ridge-20261112-v4'
 # 採用・切り戻しの決まりの版（2026-11-12、結果を見る前に店舗単位・週の符号反転へ変更。DAILY_LEARNING.md）。
 RULE_VERSION = 'store-weekly-flip-20261112'
 MATURITY = 8
@@ -28,6 +31,12 @@ PERIOD = 112
 STORE_COUNT = 3        # 採用判定の比較群（店舗）の数。有意水準をこの数で分ける。
 FEATURES = ('constant', 'last_plus', 'last_missing', 'plus7', 'coverage7',
             'plus28', 'coverage28', 'games', 'weekday_sin', 'weekday_cos')
+# v4：係数の鍵（店舗・貸玉・この名前）。機種名とぶつからないよう # で始める。
+STORE_MODEL, VARIETY_MODEL = '#店舗共通', '#バラエティ'
+STORE_FEATURES = FEATURES + ('fresh7', 'fresh28')       # 今の機種が入ってから7日以内／8〜28日
+VARIETY_FEATURES = FEATURES + ('dry_streak',)            # プラスでない日が続いた数（直近28日、判定できない日は飛ばす）/28
+KIND_FEATURES = {'machine': FEATURES, 'store': STORE_FEATURES, 'variety': VARIETY_FEATURES}
+VARIETY_STORES = ('nagamachiminami', 'saiwaichou')       # バラエティの組があるのはメルヘンの2店舗
 
 
 def encoded(value):
@@ -177,7 +186,8 @@ class History:
         """その日のその台の行。ident は保存の名前のままでよい（学習の名前にそろえて探す）。"""
         return self.by_day.get((day, learning_key(tuple(ident))))
 
-    def features(self, row):
+    def _past(self, row):
+        """（機種が替わった日、または None、その台のこの機種の日の一覧、直近28日の行（当日を含む））。"""
         day, key = row['day'], learning_key(identity(row))
         # 機種の入れ替え：その日までで、この台に別の機種（学習の名前）があった一番新しい日。
         days, names, previous = self._racks.get((key[0], key[1], key[3]), ((), (), ()))
@@ -187,7 +197,38 @@ class History:
         start = days[i] if i >= 0 else '0001-01-01'
         ids, items = self._ids.get(key, ((), ()))
         past = items[max(bisect_right(ids, start), bisect_left(ids, shift(day, -27))):bisect_right(ids, day)]
-        return self._vector(row, day, past, self._outcome)
+        return (start if i >= 0 else None), ids, past
+
+    def features(self, row):
+        _, _, past = self._past(row)
+        return self._vector(row, row['day'], past, self._outcome)
+
+    def model_features(self, row, kind='machine'):
+        """係数の種類（KIND_FEATURES）に合わせた特徴。'machine' は features と同じ。"""
+        return self.features(row) + self.extras(row, kind)
+
+    def extras(self, row, kind):
+        """'store'・'variety' の係数で、今の10個の特徴の後ろに足す分。"""
+        if kind == 'machine':
+            return []
+        start, ids, past = self._past(row)
+        if kind == 'variety':
+            streak = 0
+            for r in reversed(past):
+                y = self._outcome(r)
+                if y is None:
+                    continue
+                if y:
+                    break
+                streak += 1
+            return [streak / 28]
+        if kind == 'store':
+            if start is None:
+                return [0., 0.]       # データの初めより前からある台は、入った日が分からない
+            installed = ids[bisect_right(ids, start)]
+            n = (date.fromisoformat(row['day']) - date.fromisoformat(installed)).days + 1
+            return [float(n <= 7), float(8 <= n <= 28)]
+        raise ValueError(f'係数の種類が不正です：{kind}')
 
     def _features_by_scan(self, row):
         """以前の書き方（全履歴をなめる）。索引の結果が同じかを試験で照合するためだけに残す。"""
@@ -234,10 +275,47 @@ def solve(matrix, vector):
     return result
 
 
+def _fit(examples):
+    """固定罰則100のリッジ回帰。1日を等重みにする（多数台の日の比重だけが増えるのを防ぐ）。"""
+    days = len({e[2] for e in examples})
+    n = len(examples[0][0])
+    matrix = [[100. * (i == k) if i else 0. for k in range(n)] for i in range(n)]
+    vector = [0.] * n
+    counts = defaultdict(int)
+    for _, _, d in examples:
+        counts[d] += 1
+    for x, y, d in examples:
+        w = len(examples) / (days * counts[d])
+        for i in range(n):
+            vector[i] += w * x[i] * (y - .5)
+            for k in range(n):
+                matrix[i][k] += w * x[i] * x[k]
+    return solve(matrix, vector), days
+
+
+def variety_rows(rows):
+    """その日その店でバラエティ（1〜2台・1〜3台）の機種の行の id。原本DBの行だけで決める（分析用JSONの行は数えない）。"""
+    from core import variety_machines
+    daily = defaultdict(list)
+    for r in rows:
+        if r['store'] in VARIETY_STORES and not r.get('archive'):
+            daily[(r['store'], r['day'])].append(r)
+    found = set()
+    for items in daily.values():
+        names = variety_machines(items)
+        found.update(id(r) for r in items if r['machine'] in names)
+    return found
+
+
 def train(history, target):
-    """候補内外の全有効台を学習。対象日の8日前までの翌日正解だけ使う。"""
+    """候補内外の全有効台を学習。対象日の8日前までの翌日正解だけ使う。
+
+    v4：機種ごとの係数（v3と同じ）に加え、店舗ごとの共通の係数（STORE_MODEL）と、メルヘン2店舗の
+    バラエティ専用の係数（VARIETY_MODEL）を同じ行から作る。どれも100件・20日以上のときだけ。"""
     grouped = defaultdict(list)
+    kinds = {}
     last, first = shift(target, -MATURITY), shift(target, -180)
+    variety = variety_rows(history.rows)
     for row in history.rows:
         next_day = shift(row['day'], 1)
         if not first <= next_day <= last or not valid(row):
@@ -245,32 +323,34 @@ def train(history, target):
         if history.get(row['day'], identity(row)) is not row:
             continue      # 同じ日に古い名前と新しい名前の両方がある台は、新しい名前の行だけを数える（二重に数えない）
         y = outcome(history.get(next_day, identity(row)))
-        if y is not None:
-            grouped[learning_key(identity(row))[:3]].append((history.features(row), y, next_day))
+        if y is None:
+            continue
+        key, x = learning_key(identity(row)), history.features(row)
+        grouped[key[:3]].append((x, y, next_day))
+        kinds[key[:3]] = 'machine'
+        common = (key[0], key[1], STORE_MODEL)
+        grouped[common].append((x + history.extras(row, 'store'), y, next_day))
+        kinds[common] = 'store'
+        if id(row) in variety:
+            own = (key[0], key[1], VARIETY_MODEL)
+            grouped[own].append((x + history.extras(row, 'variety'), y, next_day))
+            kinds[own] = 'variety'
     models = {}
     for key, examples in grouped.items():
-        days = len({e[2] for e in examples})
-        if len(examples) < 100 or days < 20:
+        if len(examples) < 100 or len({e[2] for e in examples}) < 20:
             continue
-        n = len(FEATURES)
-        matrix = [[100. * (i == k) if i else 0. for k in range(n)] for i in range(n)]
-        vector = [0.] * n
-        # 1日を等重みにする。多数台の日の比重だけが増えるのを防ぐ。
-        counts = defaultdict(int)
-        for _, _, d in examples:
-            counts[d] += 1
-        for x, y, d in examples:
-            w = len(examples) / (days * counts[d])
-            for i in range(n):
-                vector[i] += w * x[i] * (y - .5)
-                for k in range(n):
-                    matrix[i][k] += w * x[i] * x[k]
-        models[key] = dict(weights=solve(matrix, vector), n=len(examples), days=days,
-                           first=first, last=last, features=FEATURES, version=VERSION)
+        weights, days = _fit(examples)
+        models[key] = dict(weights=weights, n=len(examples), days=days, first=first, last=last,
+                           features=KIND_FEATURES[kinds[key]], kind=kinds[key], version=VERSION)
     return models
 
 
+def _ordered(scores):
+    return [r for _, r in sorted(scores, key=lambda v: (-round(v[0], 12), identity(v[1])))]
+
+
 def rank_pool(pool, history, models):
+    """機種ごとの係数で並べる。1台でも係数の無い機種があれば None。"""
     scores = []
     for row in pool:
         model = models.get(learning_key(identity(row))[:3])
@@ -279,7 +359,14 @@ def rank_pool(pool, history, models):
         x = history.features(row)
         score = sum(a * b for a, b in zip(x, model['weights']))
         scores.append((score, row))
-    return [r for _, r in sorted(scores, key=lambda v: (-round(v[0], 12), identity(v[1])))]
+    return _ordered(scores)
+
+
+def rank_by(pool, history, model, kind):
+    """1つの係数（店舗共通・バラエティ専用）で並べる（v4）。係数が無ければ None。同点の並びは rank_pool と同じ。"""
+    if model is None:
+        return None
+    return _ordered([(sum(a * b for a, b in zip(history.model_features(r, kind), model['weights'])), r) for r in pool])
 
 
 def _share(group, method, missing_as):

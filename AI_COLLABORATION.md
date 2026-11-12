@@ -2624,3 +2624,19 @@
 - **実データの複製での比べ方**（scratchpad は消える可能性があるので手順を書く）：`database/data` の `database.sqlite3`・`pscube.sqlite3`・`site777-staging/` を一時フォルダーへコピー（`daily-learning/` は入れない）。v3 のコードは `git archive 714be9d database database_android/web | tar -x -C <一時>`（`database_android/web/capture_health.mjs` が要る）。各コードで `daily_learning_runtime._run(<コピー>, clock=lambda: datetime.fromisoformat('2026-11-12T00:30:00+09:00'), node=<node.exe>, sync=False)` を実行し（`daily_learning_archive.FOLDERS` は本物の `html_converter/data/...` を指す）、できた `daily-learning/journal.sqlite3` の `predictions` と `inputs` だけを比べる（**`outcomes`・`decisions` は開かない**）。終わったら一時コピーを消す。
 - **守ること**：記録DBの `outcomes`・`decisions` を開かない・集計しない（AGENTS.md）。バラエティ・通常機種の 10/26〜11/24 の成績を見ない（店舗別比較の評価期間）。コミットは変えたファイルだけ `git add <ファイル>`。push は `python tools/push_ci.py`（JST で送り先を決める。11/16 以降は `database-ci`）。APK は作らない（利用者の「今は作らない」のまま）。
 - **今の進み具合**：この節を書いて送ったところ。Claudeは続けてここで実装する。実装・試験・照合・push が済んだら、この下に「結果」の節を足す。**この下に結果の節が無ければ、実装は未完了**（作業コピーに途中のファイルがあるかを `git status` で確かめてから続ける）。
+
+### 結果：日次学習 v4 を実装した（同日夜、Claude）
+
+- 変更ファイル：`database/daily_learning.py`（VERSION v4、`STORE_MODEL`・`VARIETY_MODEL`・`STORE_FEATURES`・`VARIETY_FEATURES`・`KIND_FEATURES`・`VARIETY_STORES`、`History._past`・`model_features`・`extras`、`_fit`・`variety_rows`・`train`・`rank_by`）、`database/daily_learning_runtime.py`（`build_prediction` の振り分けと組の `model`）、試験 `database/tests/test_daily_learning_v4.py`（新規7件）・`test_daily_learning_names.py`（係数の一覧に `#店舗共通` が増えたのに合わせた。機種の係数が1つという意図は同じ）、文書 `DAILY_LEARNING.md`（「結果を見る前の変更（v4）」）。設計は上の引き継ぎのとおり（違いなし）。画面・同期・Android・閲覧ページ・共有カレンダーのコードは変えていない。
+
+|要件|結果|証拠|
+|---|---|---|
+|1 バラエティに専用の係数で順位|済|実データの複製（11/12 0:30の時刻）で、長町南・幸町のバラエティの組が trained・`model: variety`。係数の材料 2,370件（44日）・7,978件（93日）。試験 `test_groups_get_the_right_model`（機種ごとの係数があっても使わない）|
+|2 新台などに店舗共通の係数で順位|済|同じ複製で、候補のある組すべてに順位（長町南 36/36・幸町 45/45・P-STATION 24/24。店舗共通 6・5・2組）。材料 11,904件（55日）・56,257件（171日）・26,255件（173日）|
+|3 今までの組・係数は v3 と同じ|済|v3（`714be9d` を取り出したもの）と同じ複製・同じ時刻で比べた（scratchpad `compare_v4.py`。`predictions`・`inputs` だけ）：入力645塊が同じ。v3で順位が付いていた29・39・22組は learned・母集団の特徴・`model: machine` がすべて同じ。機種の係数（重み・件数・日数・期間・特徴）がすべて同じ。従来候補・selected・active・母集団の台も全組で同じ。違う項目は groups・methods・models・source_sha256・version（版と追加分）だけ|
+|4 版を v4 に上げて文書に固定|済|`daily-plus-ridge-20261112-v4`、`DAILY_LEARNING.md`|
+|試験|済|`python -m unittest discover -s tests -p "test_daily_learning*.py"` 61件 OK。PC全試験 `python -m unittest discover -s tests`（`database/`）1033件 OK（前回1026件＋新規7件）|
+|処理時間|済|1晩・3店舗 33.9秒→37.9秒（複製）|
+|成績を見ない|済|記録DBの `outcomes`・`decisions` は開いていない。比べたのは予測の中身だけ|
+
+- 未確認：PCアプリでの実際の晩の保存（次に `start.cmd` で開いた晩の23:30以降）。新しい係数で選ぶ台が良いかは分からない（改善未確認）。全体ゲート（Flutter・JS・画面）は、そのコードを変えていないので流していない。
