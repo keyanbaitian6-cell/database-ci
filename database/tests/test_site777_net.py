@@ -55,6 +55,10 @@ def data_uri(raw):
 
 DOWN = [(9, 111), (40, 118), (80, 126), (120, 140)]
 UP = [(9, 111), (60, 90), (120, 70), (180, 60)]
+# 見切れ（2026-11-13）：上の端に触れて中に戻る・上の端のまま終わる・下の端のまま終わる。
+TOP_RETURN = [(9, 111), (60, 40), (100, 16), (140, 60)]
+TOP_END = [(9, 111), (60, 60), (100, 16), (140, 16)]
+BOTTOM_END = [(9, 111), (60, 170), (100, 206), (140, 206)]
 FLAT = [(9, 111), (30, 100), (100, 125), (106, 108), (115, 109)]
 
 
@@ -87,7 +91,7 @@ class EstimateTest(unittest.TestCase):
 
     def test_held_or_unreadable_images_get_no_estimate(self):
         cases = {
-            'boundary_contact': png([(9, 111), (60, 40), (100, 16), (140, 60)]),
+            'boundary_contact': png(BOTTOM_END),
             'right_edge_contact': png([(9, 111), (20, 100), (120, 96), (243, 90)]),
             'short_curve': png([(9, 111), (14, 115)]),
             'axis_labels_unknown': png(DOWN, labels=False),
@@ -101,6 +105,27 @@ class EstimateTest(unittest.TestCase):
                 self.assertEqual(result['reason'], reason, result)
                 self.assertIsNone(site777_net.net_estimate(raw))
         self.assertEqual(site777_net.analyze(b'not a png')['reason'], 'image_unreadable')
+
+    def test_top_edge_racks_read_the_endpoint_or_take_my(self):
+        # 2026-11-13 利用者「両方直す」「myそのままでいい」：上の端（+5,000）に触れた大勝ちの台が推定なしになり、
+        # 店の合計から抜けて毎日負けて見えていた。
+        back = site777_net.analyze(png(TOP_RETURN))
+        self.assertEqual(back['status'], 'candidate', back)                      # 中に戻ったら終点から読む
+        self.assertLessEqual(abs(back['estimate'] - (111 - back['endpoint'][1]) * 10000 / 192), .5)
+        self.assertGreater(back['estimate'], 2000)
+        self.assertEqual(site777_net.net_estimate(png(TOP_RETURN), 9999)['value'], back['estimate'], 'MYは使わない')
+        top = site777_net.analyze(png(TOP_END))
+        self.assertEqual((top['status'], top['reason']), ('clipped_top', 'boundary_contact'))
+        self.assertIsNone(site777_net.net_estimate(png(TOP_END)), 'MYが無ければ付けない')
+        self.assertIsNone(site777_net.net_estimate(png(TOP_END), 4999), 'MYが5,000未満は付けない')
+        self.assertIsNone(site777_net.net_estimate(png(TOP_END), '6915'))
+        estimate = site777_net.net_estimate(png(TOP_END), 6915)
+        self.assertEqual(estimate, {'value': 6915, 'sure': True, 'method': site777_net.METHOD})
+        self.assertTrue(site777_net.valid(estimate))
+        self.assertIsNone(site777_net.net_estimate(png(BOTTOM_END), 6915), '下の端のまま終わった台は今までどおり保留')
+        # 端の外を通って描かれない区間があっても、両側が端に接していれば途切れとは見なさない。
+        hidden = png(TOP_END, extra=lambda d: d.rectangle([(110, 14), (116, 19)], fill=(24, 28, 24)))
+        self.assertEqual(site777_net.analyze(hidden)['status'], 'clipped_top')
 
     def test_only_the_site777_form_is_valid(self):
         good = {'value': -573, 'sure': True, 'method': site777_net.METHOD}
@@ -126,7 +151,7 @@ class ImportTest(unittest.TestCase):
         return capture.make_backup(table, rows, graphs, '2026-11-06', '試験ジャグラー3', now=NOW)
 
     def test_capture_adds_the_estimate_only_where_it_can_be_read(self):
-        backup = self.backup({101: png(DOWN), 102: png([(9, 111), (60, 40), (100, 16), (140, 60)])})
+        backup = self.backup({101: png(DOWN), 102: png(BOTTOM_END)})
         by_rack = {r['rack']: r for r in backup['records']}
         self.assertEqual(by_rack[101]['net_estimate']['method'], site777_net.METHOD)
         self.assertIsNone(by_rack[101]['net_medals'])
@@ -136,6 +161,20 @@ class ImportTest(unittest.TestCase):
             capture.validate_record(record)
         with self.assertRaises(ValueError):
             capture.validate_record({**by_rack[101], 'net_estimate': {'value': -700, 'sure': True, 'method': 'anaslo-graph-v1'}})
+
+    def test_capture_takes_my_for_a_rack_ending_on_the_top_edge(self):
+        table = self.table()
+        table['rows'][1][5] = '6,915'
+        rows = capture.table_records(table, '2026-11-06', NOW)
+        payload = {'url': URL.replace('D3300', 'D4300'), 'model_id': '123', 'selected_md': '11/6',
+                   'graphs': [{'rack': 101, 'png': data_uri(png(DOWN))}, {'rack': 102, 'png': data_uri(png(TOP_END))}]}
+        graphs = capture.graph_records(payload, '2026-11-06', '123', {r['rack']: r['my'] for r in rows}, NOW)
+        backup = capture.make_backup(table, rows, graphs, '2026-11-06', '試験ジャグラー3', now=NOW)
+        by_rack = {r['rack']: r for r in backup['records']}
+        self.assertEqual(by_rack[102]['net_estimate'], {'value': 6915, 'sure': True, 'method': site777_net.METHOD})
+        self.assertEqual(by_rack[102]['my'], 6915)
+        for record in backup['records']:
+            capture.validate_record(record)
 
     def test_store_accepts_it_and_moves_a_later_estimate_onto_the_same_image_only(self):
         from pscube_import import PscubeStore, _record_key
@@ -198,7 +237,7 @@ class BackfillTest(unittest.TestCase):
             root = Path(tmp)
             db_path, sources = root / 'pscube.sqlite3', root / 'sources'
             sources.mkdir()
-            images = {101: png(DOWN), 102: png([(9, 111), (60, 40), (100, 16), (140, 60)])}
+            images = {101: png(DOWN), 102: png(BOTTOM_END)}
             backup = ImportTest().backup(images)
             plain = {**backup, 'records': [{k: v for k, v in r.items() if k != 'net_estimate'} for r in backup['records']]}
             store = PscubeStore(db_path, recording=False)

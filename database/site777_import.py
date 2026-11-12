@@ -167,7 +167,9 @@ def graph_records(payload, target_day, model_id, expected_racks, now=None):
         curve, source = trace_graph(item.get('png'))
         result[rack] = {'graph': curve, 'source_graph': source}
         # 画像の目盛りから読んだ推定差枚（site777_net.py、2026-11-07）。読めない・保留の台には付けない。
-        estimate = site777_net.net_estimate(base64.b64decode(item['png'].split(',', 1)[1])) if curve else None
+        # 上の端のまま終わった（見切れの）台は、表の最高出玉（MY）を差枚にする（2026-11-13、site777_net.net_estimate_from）。
+        my = expected_racks.get(rack) if isinstance(expected_racks, dict) else None
+        estimate = site777_net.net_estimate(base64.b64decode(item['png'].split(',', 1)[1]), my) if curve else None
         if estimate is not None:
             result[rack]['net_estimate'] = estimate
     return result

@@ -6,10 +6,11 @@
 
 - 推定差枚として保存する（net_medals には入れない）。終点から換算した値を1枚単位に丸める。
 - 目盛りの文字（+5,000・-5,000）が確かめた形と同じ画像だけを読む。違う大きさ・目盛りは推測で通さない。
-- 上下の端に触れた（見切れ）、右端に届いた、線が途切れた、終点が分かれた、色の閾値で終点が動く、
+- 上下の端に触れた（見切れ）台は、終点が目盛りの中に戻っていれば終点から読み、上の端のまま終わったらMYを差枚にする
+  （2026-11-13。それまでは推定なしで、大勝ちの台ばかり店の合計から抜けていた）。下の端のまま終わった台、右端に届いた、線が途切れた、終点が分かれた、色の閾値で終点が動く、
   線が短い（10画素未満）ときは推定を付けない（保留）。理由は status で返す。
 - 読み取りの幅が0をまたぐ台は sure=False（画面では「※」。勝ち負けを言い切らない）。
-- MY・最大値・BB/RB は使わない。
+- BB/RB は使わない。MY は上の端のまま終わった台だけに使う。
 
 記録に付ける形はアナスロの推定差枚と同じ {'value', 'sure', 'method'}（method だけ違う）。
 """
@@ -98,15 +99,26 @@ def analyze(raw: bytes) -> dict:
     if len(points) < 3 or points[0][0] > 14:
         return reject('curve_start_unknown')
     rows = np.nonzero(mask)[0]
-    if rows.min() <= TOP + 2 or rows.max() >= BOTTOM - 2:
-        return reject('boundary_contact')
+    # 上下の端（±5,000枚の目盛り）に触れた（見切れ）台（2026-11-13 利用者「両方直す」「myそのままでいい」）：
+    # 終点が端から離れて目盛りの中に戻っていれば、ふつうどおり終点から読む（縮尺は目盛りの文字・線で確かめ済み）。
+    # 上の端のまま終わった台は 'clipped_top' を返し、net_estimate_from が MY（最高出玉）をそのまま差枚にする
+    # （MYはグラフの最高点より中央で約500枚大きく、終点は最高点より中央で約290枚下がるので、約800枚多めになりうる）。
+    # 下の端のまま終わった台は今までどおり保留。
+    touched = rows.min() <= TOP + 2 or rows.max() >= BOTTOM - 2
+    near_edge = lambda y: y <= TOP + 4 or y >= BOTTOM - 4
     # 白いゼロ線が黄色い線の上に描かれ、y=111〜112 を隠すことがある。ゼロ付近の2列以内の欠けだけ許す。
+    # 見切れた台は、端の外を通った区間が描かれないことがあるので、両側が端に接した欠けも許す。
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         gap = x1 - x0
-        if gap > 1 and not (gap <= 3 and abs(y0 - ZERO) <= 4 and abs(y1 - ZERO) <= 4):
+        if (gap > 1 and not (gap <= 3 and abs(y0 - ZERO) <= 4 and abs(y1 - ZERO) <= 4)
+                and not (touched and near_edge(y0) and near_edge(y1))):
             return reject('curve_gap')
     if points[-1][0] >= 243:
         return reject('right_edge_contact')
+    if touched and near_edge(points[-1][1]):
+        if points[-1][1] <= TOP + 4:
+            return {**result, 'status': 'clipped_top', 'reason': 'boundary_contact', 'endpoint': list(points[-1])}
+        return reject('boundary_contact')
     for x, _ in points[-2:]:
         ys = np.flatnonzero(mask[:, x])
         for first, last in zip(ys, ys[1:]):
@@ -137,13 +149,20 @@ def analyze(raw: bytes) -> dict:
             'sign_uncertain': low <= 0 <= high, 'endpoint': [points[-1][0], points[-1][1]]}
 
 
-def net_estimate_from(result: dict):
-    """analyze の結果から、記録に付ける推定差枚。付けられなければ None（保留・判定不能）。"""
+def net_estimate_from(result: dict, my=None):
+    """analyze の結果から、記録に付ける推定差枚。付けられなければ None（保留・判定不能）。
+    上の端のまま終わった台（clipped_top）は、MY（表の最高出玉）が5,000枚以上ならMYをそのまま差枚にする
+    （2026-11-13 利用者「myそのままでいい」）。形は同じなので、PC・Android・閲覧ページ・同期の確認はそのまま通る。
+    見分けるときは「value が MY と同じで5,000以上」。"""
+    if result['status'] == 'clipped_top':
+        if type(my) is int and my >= 5000:
+            return {'value': my, 'sure': True, 'method': METHOD}
+        return None
     if result['status'] != 'candidate':
         return None
     return {'value': result['estimate'], 'sure': not result['sign_uncertain'], 'method': METHOD}
 
 
-def net_estimate(raw: bytes):
-    """記録に付ける推定差枚。付けられなければ None（保留・判定不能）。"""
-    return net_estimate_from(analyze(raw))
+def net_estimate(raw: bytes, my=None):
+    """記録に付ける推定差枚。付けられなければ None（保留・判定不能）。my は表の最高出玉（見切れの台だけ使う）。"""
+    return net_estimate_from(analyze(raw), my)

@@ -7,7 +7,8 @@
   既存の PscubeStore.import_backup（_merge：同じ表・同じ画像のときだけ推定差枚を移す）で行う。
 - 出力は推定差枚を付けられた台だけ。数値・出典・MY は保存済みのまま（推定差枚以外を変えない）。
 - 既に推定差枚がある台は通常は対象外。--upgrade では50枚刻みの旧方式を同じ画像から再計算する。
-- 画像が見つからない台、保留（見切れ・短い線など）の台は入れない。
+- 画像が見つからない台、保留（下の端のまま終わった見切れ・短い線など）の台は入れない。
+  上の端に触れた台は、終点が中に戻っていれば終点から、上の端のまま終わったら記録のMYを差枚にする（2026-11-13）。
 - サイトには接続しない。
 
 使い方（database フォルダーで）：
@@ -78,11 +79,12 @@ def build(db_path, sources_dir, *, upgrade=False):
         if result is None:
             summary['画像なし'] += 1
             continue
-        estimate = site777_net.net_estimate_from(result)
+        estimate = site777_net.net_estimate_from(result, r.get('my'))
         if estimate is None:
             summary[f"保留：{result['reason']}"] += 1
             continue
-        summary['推定を更新する' if is_upgrade else '推定を付ける'] += 1
+        summary['推定を更新する' if is_upgrade else
+                'MYを差枚にする（上の端のまま終わった台）' if result['status'] == 'clipped_top' else '推定を付ける'] += 1
         out.append({**r, 'net_estimate': estimate})
         keys.add(_machine_key(r))
     if not out:
