@@ -2753,3 +2753,30 @@
 |既存の試験|済|`test_site777_net.py` 13件、PC全試験1042件 OK（別の作業中の試験を含む）|
 |保存済みの台の付け直し|済|updated 47、もう一度数えて0|
 |iPhone・共有カレンダーでの表示|未確認|次の同期のあと|
+
+## 2026-11-13 7:15ごろ：サイトセブンの停止対策3件を実装（Codex、実サイトは開いていない）
+
+- 依頼：先の調査に対して利用者「そのまま直してもらえればいいので今回に関しては報告書なくていいです」「続きをお願いします」。上位3案をPC版の現在の作業コピーへ実装。新しい報告書は作らず、既存の調査報告はそのまま保持した。
+- 基準：着手時 `e8f9185`。作業中にClaudeの `e1ece08`・`71914a5`・`c25ebf1`（上端のMY・終点による差枚）が入ったため、履歴と共有記録を再確認して保持。相手の `site777_net.py`・`site777_import.py`・`site777_backfill.py` は変更していない。下記の97件は `c25ebf1` と今回の修正を合わせた試験結果。
+- 読んだもの：AGENTS.md、CAPTURE_APP_DEVELOPMENT.md、CAPTURE_HEALTH.md、SITE777_CAPTURE_REVIEW_20261108.md、DEVELOPMENT_CHECKS.md、今月と過去月の共有記録、session/browser/import/net/history、capture/overlay、既存のsite777試験。停止ログの全件分類と原因の証拠は上の調査節・既存報告を参照。DOM置換が実際の停止を起こした、という実サイトの証拠はない（ローカル再現で分かった弱点）。
+- 変更：
+  - `database/assets/site777_capture.js`：画像待ち中は最初に掴んだimgではなく、台番号に対応する現在のbox/imgを見る。置換・一時的な要素欠落も元の12秒の範囲で待つ。`readyRacks` は表示済み状態の確認だけで、スクロール・src設定・追加通信なし。背景画像の保存拒否、台番号の検証、非表示複製・対象外台の除外は維持。
+  - `database/assets/site777_overlay.js`：待機開始時・待機中・既定reload直前に、止まった台の回復を確認する。回復したら回数を消費せず通常の準備へ戻り、未表示の後続台を順に読む。失敗ページでも、読めている必要台だけ `partial_graphs` で退避。途中保存失敗・停止・古いepochをグラフ待ちで上書きしない。
+  - `database/site777_session.py`：途中保存は日付・機種・台・MY・ページ・epochを既存処理で検証し、必要かつ未取得の台だけステージングへ保存（`graphs_staged`）。ページ完了・機種完了・本体DB保存とは扱わない。表のSHAが変われば既存仕様どおり破棄する。全画像を保持した後のDB保存失敗は、再開後に `_finish` をやり直し、「未完了のグラフページがありません」で再停止しない。
+- 保持：3分後／連続5回、対象外移動・ログイン・利用者停止は再開しない、グラフreloadは1分ごと3回・自動再開で回数を戻さない、再開時のnative reload1回、23:30確定、500G未満除外。今回より前に利用者が承認した1機種1台のグラフなし継続も維持。追加巡回・失敗台の別ページ再訪・追加の画像要求は導入していない。
+- アクセスへの影響：通常成功時は同じ。回復を検出できた待機では予定していたページ再取得を1回省ける（関連画像の再要求も省ける可能性があるがキャッシュ次第）。一晩の削減量は回復頻度がログに無いため不明。ページのreloadが必要な場合には、ブラウザ自身が既読画像を再要求する可能性は残る。途中保存は再取得後の読み取り・解析の重複を減らすもので、あらゆる通信の再発を防ぐわけではない。
+- 再発試験：`test_site777_session.py` に4件追加（保存失敗後の再開、途中保存から窓を開き直して完了、台/MY/ページ/epochの拒否、表変更で破棄）。`database_android/tool/test_site777_stall_browser.mjs` を追加（img/box置換、途中保存、待機中回復、まだ表示していない後続台、停止、保存失敗、要求数）。既存 `run_js_checks.mjs` のファイル列挙で自動対象になる。ジョブ・マトリクス・scheduleの追加なし。`smoke_site777_session.py --graph-recovery` を追加して実WebView2でも確認。
+- 試験で見つけた修正点：最初の合成再現では古いimg参照と保存工程への復帰が失敗し、修正後に成功。新ブラウザ試験の初回は `/f/` の件数へ背景PNGまで数えていたため、ページURLに限定して正した。実WebView2は制限環境ではlocalhostへ届かず `ConnectionAborted`（サーバー要求0件）になり、通常環境で再実行。通常環境の初回で「止まった台が回復しても未スクロールの全台まで待つ」不備を検出し、止まった台の回復を条件に直した。後続台を含むブラウザ回帰を追加し、WebView2も成功した。
+
+|要件|結果|証拠|
+|---|---|---|
+|保存失敗後の再開・途中保存・既存の安全条件|済|`database/.venv/Scripts/python.exe -m unittest discover -s database/tests -p test_site777*.py`：97件成功（6.623秒）。PYTHONUTF8=1、TZ=JST-9、試験起動前にUTCオフセット+09:00を確認|
+|DOM置換・部分回復・余分なreloadなし・停止保護|済|`node database_android/tool/test_site777_stall_browser.mjs` 成功。2台と後続3台の条件でページ各1回、画像各台1回、元の再試行数2を維持|
+|既存のブラウザ回帰|済|`node database_android/tool/test_site777_capture_browser.mjs` 成功。対象台だけの準備、画像欠落、reload上限、自動再開で回数維持、グラフなし上限、利用者停止等|
+|実WebView2で途中保存から復帰|済|`database/.venv/Scripts/python.exe database/tests/smoke_site777_session.py --graph-recovery`：32台保存、停止したページ1要求、グラフ32要求・重複0、最後に自動OFF|
+|実WebView2で不要画像を待たない|済|同 `--mixed-graphs`：31台保存、499Gの102台・非表示複製を除外、グラフ31要求・重複0、最後に自動OFF|
+|実サイトの長時間・背景・スリープ・メモリ・サイト側制限|未確認|実サイトを開かず、全ブラウザ試験は合成応答またはlocalhost。実運用での停止削減率はわからない|
+|データ保護・反映範囲|済|今回の修正作業では本番DB・Cookie・設定・保存済み資料を変更せず、試験は一時DB。日次学習の記録DBは未接続。ソースのみ反映、ビルド・公開・push・Google操作なし|
+
+- ブラウザ試験の環境：`PLAYWRIGHT_MODULE=file:///C:/Users/keyan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs`、`PLAYWRIGHT_BROWSERS_PATH=C:\Users\keyan\AppData\Local\ms-playwright`、`PYTHONUTF8=1`。WebView2のprofile・DB・待機時間変更は試験専用で本番へ混ぜていない。
+- 次の手順：普段の `database/start.cmd` 起動ではソースを使うためEXE再作成は不要。既存の取り込みを中断せず、次に取り込み窓を開き直したときに反映。Claudeが待っている「上端に触れた台の報告」は今回の対象外で、sessionの今回の差分を保持したうえで次の別作業へ進める。作業フォルダーの未追跡 `debug.log` はブラウザ実行時の警告を含むが、今回の変更として追加・削除しない。

@@ -36,7 +36,7 @@
     } catch (_) {}
   };
   // 表と同様に非表示の複製を除く。台番を先に読むことで、画像の無い対象外の台も識別できる。
-  const graphBoxes = () => {
+  const graphBoxes = (allowEmpty=false) => {
     const boxes = Array.from(document.querySelectorAll('.lite-graph .graph-box')).filter(visible);
     const racks = new Set();
     const result = boxes.map(box => {
@@ -47,9 +47,14 @@
       racks.add(rack);
       return {box, rack};
     });
-    if (!result.length || result.length > 20) throw new Error('表示中のグラフ一覧の台数を確認できません。');
+    if ((!allowEmpty && !result.length) || result.length > 20) throw new Error('表示中のグラフ一覧の台数を確認できません。');
     return result;
   };
+  const imageReady = img => !!img && img.complete && img.naturalWidth > 0 &&
+    new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do';
+  // 表示済みの状態を調べるだけ。スクロール・srcの設定・追加取得をしない。
+  const readyRacks = (wantedRacks=null) => graphBoxes().filter(({box,rack}) =>
+    (wantedRacks === null || wantedRacks.includes(rack)) && imageReady(box.querySelector('img'))).map(g=>g.rack);
   const read = (metadataOnly=false, wantedRacks=null) => {
     const sourceUrl = location.href;
     const url = clean(sourceUrl);
@@ -115,8 +120,7 @@
       }
       result.graphs = boxes.filter(g => wantedRacks === null || wantedRacks.includes(g.rack)).map(({box, rack}) => {
         const img = box.querySelector('img');
-        if (!rack || !img || !img.complete || !img.naturalWidth ||
-            new URL(img.currentSrc || img.src, location.href).pathname !== '/chart/RequestSPDedamaTransitionChartForPortal.do')
+        if (!rack || !imageReady(img))
           throw new Error('グラフの読み込み完了を待ってください。仮の背景は保存しません。');
         const canvas = document.createElement('canvas');
         canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
@@ -156,10 +160,10 @@
     for (const {box, rack} of graphBoxes()) {
       if (cancelled()) throw new Error('停止しました。');
       if (wantedRacks !== null && !wantedRacks.includes(rack)) continue;
-      const img = box.querySelector('img');
-      if (!img) throw new Error('グラフの画像がありません。');
-      const ready = () => img.complete && img.naturalWidth > 0 &&
-        new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do';
+      // 遅延読み込みでimgや親boxが置き換わる場合も、同じ台の現在の要素を調べる。
+      // 一時的に要素が消えても既存の12秒の中で待つ。重複・不明台の拒否は維持する。
+      const current = () => graphBoxes(true).find(g=>g.rack===rack);
+      const ready = () => imageReady(current()?.box.querySelector('img'));
       if (ready()) continue;
       box.scrollIntoView({block:'center', behavior:'instant'});
       const until = Date.now() + (window.__site777GraphWaitMs || 12000);
@@ -172,12 +176,13 @@
         const error = new Error('グラフが読み込まれないため停止しました。');
         error.stalled = true;
         // URLや画像・会員情報は記録せず、次回は止まった台と画像の状態を区別できるようにする。
-        error.graph_wait = {rack, complete:img.complete, width:img.naturalWidth,
-          image_kind:new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do'
-            ? 'chart' : 'placeholder', visible:visible(box)};
+        const latest=current(), img=latest?.box.querySelector('img');
+        error.graph_wait = {rack, complete:!!img?.complete, width:img?.naturalWidth||0,
+          image_kind:!img ? 'missing' : new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do'
+            ? 'chart' : 'placeholder', visible:!!latest&&visible(latest.box)};
         throw error;
       }
     }
   };
-  window.databaseSite777 = {read, go, prepare, samePage};
+  window.databaseSite777 = {read, go, prepare, samePage, readyRacks};
 })();

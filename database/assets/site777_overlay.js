@@ -104,22 +104,40 @@
   // 同じページで3回まで。回数はページを読み込み直しても残るよう sessionStorage に置き、残せないときは読み込み直さずに止める。
   // 回数は、利用者が自動取り込みを新しく開始したときだけ0に戻す（2026-11-08 Codexのレビュー：同じ窓で止めて開始し直しても
   // 前の3回が残り、次にグラフが出ないとすぐOFFになっていた）。自動の読み込み直しの間は残す。
-  // 戻り値：読み込み直した（または古い処理で何もしない）は true、上限は 'limit'、回数を残せないときは 'storage'。
+  // 戻り値：読み込み直した（または古い処理で何もしない）は true、回復は 'recovered'、上限は 'limit'、回数を残せないときは 'storage'。
   const MAX_RETRIES=3, retryKey='database-site777-retries';
   const retryCounts=()=>{try{const v=JSON.parse(sessionStorage.getItem(retryKey)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:null;}catch(_){return null;}};
-  const retryLater=async(mine,epoch)=>{
-    const url=databaseSite777.read(true).url, counts=retryCounts();
+  const retryLater=async(mine,epoch,wanted,stalledRack)=>{
+    const meta=databaseSite777.read(true), url=meta.url, counts=retryCounts();
+    const targets=meta.graph_racks?.filter(r=>wanted===null||wanted.includes(r));
+    const recovered=()=>{
+      if(!targets||!databaseSite777.readyRacks)return false;
+      const current=databaseSite777.read(true);
+      if(!databaseSite777.samePage(current.url,url)||current.graph_racks?.join()!==meta.graph_racks.join())return false;
+      const ready=databaseSite777.readyRacks(targets);
+      // 止まった台より先はまだスクロールしていない。全台の表示をここで待たず、通常の準備へ戻す。
+      if(Number.isInteger(stalledRack)&&meta.graph_racks.includes(stalledRack))
+        return !targets.includes(stalledRack)||ready.includes(stalledRack);
+      return targets.every(r=>ready.includes(r));
+    };
+    const stillCurrent=async()=>{
+      const s=await api().state();
+      return alive&&token===mine&&s.enabled&&s.epoch===epoch;
+    };
+    // 待つ間に実画像が出たら、通常の取り込みへ戻す。回数は消費・初期化しない。
+    if(recovered())return await stillCurrent()?'recovered':true;
     if(!counts)return 'storage';
     const count=(Number(counts[url])||0)+1;
     if(count>MAX_RETRIES)return 'limit';
     const until=Date.now()+(window.__site777RetryMs||60000);
     while(Date.now()<until){
       if(!alive||token!==mine)return true;
+      if(recovered())return await stillCurrent()?'recovered':true;
       status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後にこのページを読み込み直して続けます（${count}/${MAX_RETRIES}回目）。`;
       await new Promise(resolve=>setTimeout(resolve,Math.min(1000,Math.max(0,until-Date.now()))));
     }
-    const s=await api().state();
-    if(!alive||token!==mine||!s.enabled||s.epoch!==epoch)return true;
+    if(!await stillCurrent())return true;
+    if(recovered())return 'recovered';
     try{
       sessionStorage.setItem(retryKey,JSON.stringify({...counts,[url]:count}));
       if(Number(retryCounts()?.[url])!==count)return 'storage';
@@ -137,7 +155,7 @@
     if(busy||!alive)return;
     busy=true;
     const mine=token;
-    let epoch=null;
+    let epoch=null,wanted=null;
     try{
       const s=await api().state();render(s);
       if(automatic&&!s.enabled)return;
@@ -145,7 +163,7 @@
       let result=await api().capture(JSON.stringify(databaseSite777.read(true)),epoch);
       if(result.prepare_graphs){
         status.textContent='表示されていないグラフを順に読み込んでいます…';
-        const wanted=result.wanted_racks??null;
+        wanted=result.wanted_racks??null;
         await databaseSite777.prepare(()=>!alive||token!==mine,wanted);
         if(!alive||token!==mine)return;
         result=await api().capture(JSON.stringify(databaseSite777.read(false,wanted)),epoch);
@@ -173,9 +191,27 @@
           day:current?.day,page:Number(new URL(location.href).searchParams.get('pan')||1)}));}catch(_){}
       }
       if(error?.stalled&&automatic&&alive&&token===mine){
+        // 失敗したページでも、既に読める必要台だけを検証して途中保存する。
+        // 正常時の保存回数は増やさず、同じページの再試行で既読画像を読み直さない。
+        try{
+          const ready=databaseSite777.readyRacks?.(wanted)||[];
+          if(ready.length){
+            const payload=databaseSite777.read(false,ready);
+            payload.partial_graphs=true;
+            const staged=await api().capture(JSON.stringify(payload),epoch);
+            if(!alive||token!==mine)return;
+            if(staged.state)render(staged.state);
+            if(staged.error||staged.stale)return;
+            if(!staged.partial_saved)throw new Error('グラフの途中保存を確認できませんでした。');
+            if(wanted!==null)wanted=wanted.filter(r=>!ready.includes(r));
+          }
+        }catch(failure){
+          if(alive&&token===mine)await stop(failure.message||String(failure),'card_error');
+          return;
+        }
         let retried='storage';
-        try{retried=await retryLater(mine,epoch);}catch(_){}
-        if(retried===true)return;
+        try{retried=await retryLater(mine,epoch,wanted,error.graph_wait?.rack);}catch(_){}
+        if(retried===true||retried==='recovered')return;
         // 3回読み込み直しても出ない台は、1機種につき1台までグラフなしで保存して続ける（2026-11-13 利用者
         // 「グラフなしで進めるようにお願いね」）。PCが断ったら（2台目など）今までどおり止める。
         if(retried==='limit'&&Number.isInteger(error.graph_wait?.rack)&&alive&&token===mine){

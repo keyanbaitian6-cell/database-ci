@@ -843,6 +843,76 @@ class SessionTest(unittest.TestCase):
         self.cycle(full)
         self.assertEqual(self.saved(),{101:3000})
 
+    def test_resume_retries_saving_when_all_graph_pages_are_already_staged(self):
+        import sqlite3
+        from unittest.mock import patch
+        self.cycle(table());self.cycle(graph())
+        with patch.object(self.session,'_store_factory',side_effect=sqlite3.OperationalError('database is locked')):
+            failed=self.session.capture(json.dumps(graph(2)),self.epoch)
+        self.assertIn('database is locked',failed['error'])
+        self.assertEqual(self.session._job['pages'],[1,2])
+        self.assertEqual(self.saved(),{})
+        self.session._window=type('Window',(),{'get_current_url':lambda _:url('D4300',page=2)})()
+        self.session._resume_at=0
+        self.assertEqual(self.session._resume_if_due(),url('D4300',page=2))
+        self.epoch=self.session._epoch
+        with patch('site777_session.auto_backup',return_value='バックアップ済み'):
+            self.cycle(graph(2,metadata=True))
+        self.assertEqual(self.saved(),{101:3000,102:2800})
+        self.assertEqual(self.session._added,2)
+
+    def test_partial_graphs_survive_reopen_without_finishing_the_page_or_machine(self):
+        from unittest.mock import patch
+        self.cycle(table())
+        partial=graph();partial.update(partial_graphs=True,graph_racks=[101,102],pages=[{'number':1}])
+        result=self.cycle(partial)
+        self.assertTrue(result['partial_saved'])
+        self.assertNotIn('action',result)
+        self.assertEqual(self.session._job['pages'],[])
+        self.assertEqual(set(self.session._job['graphs']),{'101'})
+        self.assertEqual(self.saved(),{})
+        self.session=self.new_session();self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.cycle(table())
+        meta=graph(metadata=True);meta.update(graph_racks=[101,102],pages=[{'number':1}])
+        self.assertEqual(self.cycle(meta)['wanted_racks'],[102])
+        remaining=graph();remaining.update(graph_racks=[101,102],pages=[{'number':1}])
+        remaining['graphs'][0]['rack']=102
+        with patch('site777_session.auto_backup',return_value='バックアップ済み'):
+            self.cycle(remaining)
+        self.assertEqual(self.saved(),{101:3000,102:2800})
+
+    def test_partial_graphs_keep_scope_my_epoch_and_missing_rack_guards(self):
+        from copy import deepcopy
+        self.cycle(table())
+        valid=graph();valid.update(partial_graphs=True,graph_racks=[101,102])
+        cases=[]
+        bad=deepcopy(valid);bad['graphs'][0]['rack']=999;cases.append(bad)
+        bad=deepcopy(valid);bad['graphs'][0]['my_label']='901枚';cases.append(bad)
+        bad=deepcopy(valid);bad['graph_racks']=[102];cases.append(bad)
+        bad=deepcopy(valid);bad.pop('graph_racks');cases.append(bad)
+        for bad in cases:
+            with self.subTest(payload=bad):
+                self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+                self.assertIn('error',self.session.capture(json.dumps(bad),self.epoch))
+                self.assertEqual(self.session._job['graphs'],{})
+                self.assertEqual(self.session._job['pages'],[])
+        old=self.epoch
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.assertTrue(self.session.capture(json.dumps(valid),old)['stale'])
+        self.cycle(valid)
+        self.assertIn('error',self.session.capture(json.dumps(valid),self.epoch),'既存の台を部分保存で上書きしない')
+        self.assertEqual(set(self.session._job['graphs']),{'101'})
+        self.assertEqual(self.saved(),{})
+
+    def test_partial_graphs_are_discarded_when_the_table_changes(self):
+        self.cycle(table())
+        partial=graph();partial.update(partial_graphs=True,graph_racks=[101,102])
+        self.cycle(partial)
+        changed=table();changed['rows'][0][2]='3100'
+        self.cycle(changed)
+        self.assertEqual(self.session._job['graphs'],{})
+        self.assertEqual(self.session._job['pages'],[])
+
     def test_graph_page_with_only_unneeded_racks_advances_without_images(self):
         payload=table();payload['rows'][0][2]='0'
         self.cycle(payload)

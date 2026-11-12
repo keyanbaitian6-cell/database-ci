@@ -948,6 +948,10 @@ class Session(Bridge):
                     or len(set(page_racks)) != len(page_racks)):
                 raise ValueError('グラフ一覧の台番号が不明・重複、または全台一覧と一致しません。')
         if payload.get('deferred_images'):
+            # 全画像を保持した後のDB保存失敗では、再開後も同じページへ戻る。
+            # 「未完了ページなし」で再停止せず、検証済み資料の保存からやり直す。
+            if not remaining:
+                return self._finish(job, epoch, payload.get('index_url'))
             if payload['page'] in job['pages']:
                 for other in payload.get('pages', []):
                     if other['number'] not in job['pages']:
@@ -959,6 +963,19 @@ class Session(Bridge):
             got = {}  # 対象外だけのページ。画像不要でも、ページ確認と次ページへの移動は行う。
         else:
             got = source.graph_records(payload, self._day, model, expected, self._now())
+        if payload.get('partial_graphs') is True:
+            # 画像待ちの失敗時だけ、現在のページで読めた必要台を退避する。
+            # 未取得台を完了扱いせず、ページ完了・本体DBへの保存は後の通常処理へ残す。
+            if (page_racks is None or not got or not set(got) <= remaining & set(page_racks)
+                    or payload['page'] in job['pages']):
+                raise ValueError('途中保存の台が必要な台・表示中のページと一致しません。')
+            staged = {**job, 'graphs': {**job['graphs'], **{str(r): g for r, g in got.items()}}}
+            self._save_source(payload)
+            self._check(epoch)
+            self._write(self._job_path(model), staged)
+            self._job = staged
+            self._log.write('graphs_staged', day=self._day, model=model, page=payload['page'], racks=sorted(got))
+            return {'partial_saved': True}
         if page_racks is not None and (not set(got) <= set(page_racks)
                                       or not (remaining & set(page_racks)) <= set(got)):
             raise ValueError('表示中の必要な台のグラフがそろっていません。完了とは扱いません。')

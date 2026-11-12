@@ -1,7 +1,8 @@
 """オーバーレイ→機種一覧2ページ→31台＋1台の保存をローカルだけで通す。
 
 --failed-load（2026-11-08）：台の表のページを1回だけ HTTP 403 にし、読み込みの失敗で止まり（navigation_failed）、
-自動の再開（待ち時間は2秒に縮める）で表示中のページを1回だけ読み込み直して最後まで取り込むことを、実 WebView2 で確かめる。"""
+自動の再開（待ち時間は2秒に縮める）で表示中のページを1回だけ読み込み直して最後まで取り込むことを、実 WebView2 で確かめる。
+--graph-recovery：102台だけ画像待ちにし、成功分の途中保存後に画像を置換して回復。ページ再取得なしで完了する。"""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -36,6 +37,7 @@ def main():
     ranged='--range' in sys.argv
     failed_load='--failed-load' in sys.argv
     mixed_graphs='--mixed-graphs' in sys.argv
+    graph_recovery='--graph-recovery' in sys.argv
     expected_count=31 if mixed_graphs else 32
     if failed_load:site777_session.RESUME_DELAY=2
     refused=[]
@@ -71,6 +73,8 @@ def main():
                 else:
                     kind='table' if u.path.endswith('D3300.do') else 'graphs'
                     text=fixture(kind,page,model).decode('utf-8')
+                    if graph_recovery and kind=='graphs' and model=='123':
+                        text=text.replace('data-graph="/chart/RequestSPDedamaTransitionChartForPortal.do?rack=102"','')
                     if mixed_graphs and model=='123':
                         if kind=='table':
                             text=text.replace('>102</a></td><td>3000</td>', '>102</a></td><td>499</td>')
@@ -137,6 +141,8 @@ def main():
                 reader=reader.replace('const sourceUrl = location.href;','const sourceUrl = '+mapped+';')
                 reader=reader.replace('samePage(sourceUrl, location.href)','samePage(sourceUrl, '+mapped+')')
                 overlay=(ROOT/'assets/site777_overlay.js').read_text(encoding='utf-8').replace('const u=new URL(location.href);','const u=new URL('+mapped+');')
+                if graph_recovery:
+                    window.evaluate_js('window.__site777GraphWaitMs=1200;')
                 window.evaluate_js(CARD_JS+'\n;'+reader+'\n;'+overlay)
                 ready.set()
             except Exception:result.update(ok=False,error=traceback.format_exc());ready.set()
@@ -149,9 +155,19 @@ def main():
                     time.sleep(1.5)
                     assert (session.state()['day'],session.state()['queue'])==('2026-11-05',['2026-11-06']),session.state()
                 window.evaluate_js("document.querySelector('#database-site777-auto').click()")
+                recovered=False
                 deadline=time.monotonic()+(140 if ranged else 65)
                 while time.monotonic()<deadline:
                     state=session.state()
+                    if graph_recovery and not recovered and log.path.exists():
+                        rows=[json.loads(line) for line in log.path.read_text(encoding='utf-8').splitlines()]
+                        staged=[r for r in rows if r['kind']=='graphs_staged']
+                        if staged:
+                            assert 101 in staged[0]['racks'] and 102 not in staged[0]['racks'],staged
+                            window.evaluate_js('''const box=[...document.querySelectorAll('.graph-box')].find(b=>b.querySelector('span')?.textContent==='[102]');
+                              const img=box.querySelector('img'),fresh=img.cloneNode();img.replaceWith(fresh);
+                              fresh.src='/chart/RequestSPDedamaTransitionChartForPortal.do?rack=102';''')
+                            recovered=True
                     if redirected:
                         foreign=any('pmc=23170004' in r for r in requests)
                         if without_guard and foreign:break
@@ -218,6 +234,15 @@ def main():
                     return
                 charts=[r for r in requests if r.startswith('/chart/')]
                 assert len(charts)==len(set(charts))==32,'同じグラフを再取得しています'
+                if graph_recovery:
+                    assert recovered,'画像待ちと途中保存を通りませんでした'
+                    pages=[r for r in requests if urlsplit(r).path=='/f/D4300.do'
+                           and parse_qs(urlsplit(r).query).get('mdc')==['123']
+                           and parse_qs(urlsplit(r).query).get('pan')==['1']]
+                    assert len(pages)==1,('回復したページを再取得しています',pages)
+                    result.update(ok=True,records=32,partial_saved_then_recovered=True,
+                                  stalled_page_requests=1,graph_requests=32,auto_off_at_end=True)
+                    return
                 result.update(ok=True,records=32,machines=2,index_pages=2,graph_requests=32,auto_off_at_end=True)
             except Exception:
                 tail=[]
