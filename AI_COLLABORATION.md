@@ -2872,3 +2872,25 @@
 | ブラウザ目視・実機・APK・Web再公開 | 未実施 | データ変更に関係する既存試験5件だけを実行。プログラム自体は直近の成功後に変更していないため、不変の処理の試験は繰り返していない |
 
 - 今回はローカルで追加してコミットする範囲。push・APK作成・Web公開なし。PCは再起動後に読む。配布済みAndroidは次のAPK更新、公開済みiPhone閲覧・共有カレンダーは次の公開で反映。前回19名分もこの時点で未pushのまま。利用者の承認なしにCIを動かすpushはしない。
+
+## 2026-11-13：610名の誕生日をWeb公開、CI #154の試験判定を修正（Codex）
+
+- 依頼：「web公開お願いします」。対象はiPhoneの自分用閲覧ページ（database-viewer）と共有カレンダー（database-share）。ソース基準 `f852b1d`（19名＋18名追加済み、610件）。本番DB・Cookie・Googleの設定／スクリプト・APKは変更していない。
+- 利用者が途中で送った画像「エラーは誕生日関連？」は、実際には `imakurudev-eng/database` のRegression checks #154（`f7a07a1`、GitHub APIのeventはpush）。実行 https://github.com/imakurudev-eng/database/actions/runs/43363598452 のfullが、`test_viewer_shared_calendar_browser.mjs:151` の `shared event in calendar` 判定で失敗していた。PCのUbuntu・Windowsは成功。
+- 原因を手元の全体ゲートでも再現：10/24に島田愛里寿を追加したため、画面のラベルは「24／ほかの端末で入力／🎂 島田愛里寿」。試験の正規表現が「日付＋イベント名」だけで終わることを要求していた。診断に共有イベントの保存・画面表示があり、JavaScriptのpageerrorはなし。この失敗はアプリのイベント同期失敗ではなく、誕生日の行を考慮しない試験側の見落とし。
+- 修正ファイルは `database_android/tool/test_viewer_shared_calendar_browser.mjs` の3行だけ。既存BIRTHDAYパターンを使い、日付24・共有イベント名・末尾の厳密な照合を保持しつつ、誕生日の行を許す。アプリの動作・待ち時間は変更せず、失敗したCIの再実行もしていない。
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| 公開前の全体ゲート | 最初は1件失敗 | `database_android/build/check-birthdays-20261113/`。PC 1043件・UTCのイベント試験28件・Flutter 844件成功、analyzeはエラー警告なし／info32件、viewer-build・viewer-stage・share-stage成功。JSは86ファイル中85成功・1失敗・未実行0 |
+| 上記の失敗の修正後確認 | 済 | `test_viewer_shared_calendar_browser-fixed.log`：同じゲートで作ったviewerを指定して `node --test tool/test_viewer_shared_calendar_browser.mjs`：1件成功。共有ファイル取り込み、時刻付き保存とPOST、P’s CUBEの日別表示まで成功。ゲート後に変えたのはこの試験判定だけのため、AGENTS.mdの小さな修正の例外に従い全体を流し直していない。元ゲートの失敗ログは保持し、ALL PASSEDと書き換えていない |
+| 実アーカイブの例外 | 未確認 | test_pscube_capture.log：PSCUBE_ARCHIVE_DIR未指定で実保存ページ3件の試験1件がSKIP。通常の取り込み試験とは区別 |
+| ステージとデータ保護 | 済 | stage_viewer.py・stage_share_viewer.pyを使用。両方とも実記録の文字列90種が該当なし、共有側はスクリプトID検査も該当なし。公開先で削除される未知のファイルなし |
+| 閲覧ページの公開 | 済 | `database-viewer` `e57ee16`→`b43a25e`。差分はassets/assets/character_birthdays.jsonだけ。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/43366167503 成功。https://keyanbaitian6-cell.github.io/database-viewer/ |
+| 共有カレンダーの公開 | 済 | `database-share` `53a22fb`→`032f556`、版 `6d3093da15c8`。誕生日JSON以外は旧版番号23de423576ccからの置換だけと照合。Pages https://github.com/keyanbaitian6-cell/database-share/actions/runs/43366174039 成功。https://keyanbaitian6-cell.github.io/database-share/ |
+| 配信ファイル・610件の照合 | 済 | `../outputs/birthday-web-20261113/deployed-verification.json`。viewer58ファイル・share21ファイルすべて、ステージ・公開Gitコミット・実際のHTTP配信のSHA-256一致。両方の誕生日JSONが手元の全610件と辞書一致 |
+| 機密ファイル用URLの404 | 済 | 両サイトのseed、event_history、元画像、pscube.sqlite3、Apps Scriptソース等8パスずつが404。最初のevent_history.json確認は一時的503で止まったため、503等だけ最大3回まで間を空けて再確認し全件404を取得 |
+| 利用者端末での確認 | 未確認 | 実iPhoneのキャッシュ更新・表示は未確認。公開内容は隔離したブラウザ試験と配信照合まで |
+
+- 公開用クローンと照合用スクリプト：`../outputs/birthday-web-20261113/`。全体ゲートではWindowsの試験プロセスのUTCオフセット+09:00を直接確認（TZ=JST-9）。公開テキストはGitと同じLFへ正規化し、内容不変を確認して改行だけの大きな差分を避けた。専用公開クローンのGit設定だけcore.autocrlf=falseとした。両クローンはコミット・公開後に差分なし。
+- Web公開の依頼に基づき公開リポジトリ2つへのpushのみ実施。正本／CI用リポジトリへのソースpushは未実施。今回の試験修正・この記録は手元のソースへコミットする。過去の失敗実行 #154 の赤い表示は履歴として残る。次のソースpushで修正を含める必要がある（利用者の明示承認後、期間内のpush先へ1回にまとめる）。

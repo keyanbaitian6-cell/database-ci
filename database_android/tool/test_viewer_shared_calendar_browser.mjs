@@ -148,7 +148,9 @@ try {
   await page.getByRole('button',{name:'イベントカレンダー',exact:true}).click();
   const now=new Date();
   for(let i=(now.getFullYear()*12+now.getMonth())-(2026*12+9);i>0;i--)await page.getByRole('button',{name:'前の月',exact:true}).click();
-  await waitFor(async()=>(await labels()).some(l=>/^24\s*ほかの端末で入力＊?$/.test(l)),'shared event in calendar');
+  // 10/24にも誕生日が追加された（島田愛里寿、2026-11-13）。日付・共有イベント名は厳密に照合し、誕生日の行も許す。
+  const sharedEventDay=new RegExp(`^24\\s*ほかの端末で入力＊?${BIRTHDAY}$`);
+  await waitFor(async()=>(await labels()).some(l=>sharedEventDay.test(l)),'shared event in calendar');
   // 入力画面は開いたときの誕生日を出すので、誕生日を読み終わってから押す（CIで先に押して時間切れになった）。
   await waitFor(async()=>(await labels()).some(l=>/^7\s[\s\S]*🎂 キリト/.test(l)),'character birthdays in meruhen calendar');
 
