@@ -28,6 +28,13 @@
     },
     {
       "month": 1,
+      "day": 1,
+      "name": "四宮かぐや",
+      "work": "かぐや様は告らせたい",
+      "source": "https://kaguya.love/news/?id=59588"
+    },
+    {
+      "month": 1,
       "day": 2,
       "name": "西条節子",
       "work": "ツインエンジェルシリーズ"
@@ -189,6 +196,13 @@
       "name": "カチューシャ",
       "work": "ガールズ＆パンツァー",
       "source": "https://girls-und-panzer-finale.jp/goods/birthday-sweets-kachusya-20241220/"
+    },
+    {
+      "month": 1,
+      "day": 31,
+      "name": "霞ヶ丘詩羽",
+      "work": "冴えない彼女の育てかた",
+      "source": "https://www.saenai.tv/1st/sp/character/"
     },
     {
       "month": 2,
@@ -510,6 +524,20 @@
     },
     {
       "month": 3,
+      "day": 3,
+      "name": "藤原千花",
+      "work": "かぐや様は告らせたい",
+      "source": "https://kaguya.love/3rd/special/birth0303/"
+    },
+    {
+      "month": 3,
+      "day": 3,
+      "name": "石上優",
+      "work": "かぐや様は告らせたい",
+      "source": "https://kaguya.love/3rd/special/birth0303/"
+    },
+    {
+      "month": 3,
       "day": 5,
       "name": "アストンマーチャン",
       "work": "ウマ娘"
@@ -765,6 +793,13 @@
       "day": 19,
       "name": "天立星ドリュアスのルコ",
       "work": "聖闘士星矢"
+    },
+    {
+      "month": 3,
+      "day": 20,
+      "name": "澤村・スペンサー・英梨々",
+      "work": "冴えない彼女の育てかた",
+      "source": "https://www.saenai.tv/1st/sp/character/"
     },
     {
       "month": 3,
@@ -1084,6 +1119,13 @@
       "day": 6,
       "name": "ツルマルツヨシ",
       "work": "ウマ娘"
+    },
+    {
+      "month": 4,
+      "day": 6,
+      "name": "ダクネス",
+      "work": "この素晴らしい世界に祝福を！",
+      "source": "https://static.konosubafd.jp/webview/news/detail/1585896469.html"
     },
     {
       "month": 4,
@@ -1538,6 +1580,13 @@
     },
     {
       "month": 4,
+      "day": 29,
+      "name": "ランカ・リー",
+      "work": "マクロスF",
+      "source": "https://macross.jp/contents/913866"
+    },
+    {
+      "month": 4,
       "day": 30,
       "name": "ケフェウス星座のダイダロス",
       "work": "聖闘士星矢"
@@ -1656,6 +1705,20 @@
       "name": "河嶋桃",
       "work": "ガールズ＆パンツァー",
       "source": "https://girls-und-panzer-finale.jp/goods/birthday-sweets-momo-20250404/"
+    },
+    {
+      "month": 5,
+      "day": 5,
+      "name": "波島出海",
+      "work": "冴えない彼女の育てかた",
+      "source": "https://www.saenai.tv/1st/sp/character/"
+    },
+    {
+      "month": 5,
+      "day": 5,
+      "name": "伊井野ミコ",
+      "work": "かぐや様は告らせたい",
+      "source": "https://kaguya.love/3rd/special/birth0505/"
     },
     {
       "month": 5,
@@ -2419,6 +2482,20 @@
     },
     {
       "month": 7,
+      "day": 25,
+      "name": "牧瀬紅莉栖",
+      "work": "STEINS;GATE",
+      "source": "https://steinsgate.jp/elite/hooinkyoma/novel/5/"
+    },
+    {
+      "month": 7,
+      "day": 27,
+      "name": "早乙女アルト",
+      "work": "マクロスF",
+      "source": "https://macross.jp/contents/967693"
+    },
+    {
+      "month": 7,
       "day": 28,
       "name": "天羽奏",
       "work": "戦姫絶唱シンフォギア"
@@ -2452,6 +2529,13 @@
       "day": 1,
       "name": "富良太志",
       "work": "東京喰種"
+    },
+    {
+      "month": 8,
+      "day": 1,
+      "name": "アクア",
+      "work": "この素晴らしい世界に祝福を！",
+      "source": "https://static.konosubafd.jp/webview/news/detail/1627614454.html"
     },
     {
       "month": 8,
@@ -2896,6 +2980,13 @@
     },
     {
       "month": 9,
+      "day": 23,
+      "name": "加藤恵",
+      "work": "冴えない彼女の育てかた",
+      "source": "https://www.saenai.tv/1st/sp/character/"
+    },
+    {
+      "month": 9,
       "day": 24,
       "name": "春川 フキ",
       "work": "リコリス・リコイル"
@@ -3324,6 +3415,13 @@
     },
     {
       "month": 11,
+      "day": 23,
+      "name": "シェリル・ノーム",
+      "work": "マクロスF",
+      "source": "https://macross.jp/contents/913866"
+    },
+    {
+      "month": 11,
       "day": 24,
       "name": "ニール・ペニーウォート",
       "work": "ゴッドイーター"
@@ -3409,6 +3507,13 @@
     },
     {
       "month": 12,
+      "day": 4,
+      "name": "めぐみん",
+      "work": "この素晴らしい世界に祝福を！",
+      "source": "https://static.konosubafd.jp/webview/news/detail/1701140166.html"
+    },
+    {
+      "month": 12,
       "day": 5,
       "name": "ティア",
       "work": "ソードアート・オンライン"
@@ -3471,6 +3576,13 @@
     },
     {
       "month": 12,
+      "day": 14,
+      "name": "岡部倫太郎",
+      "work": "STEINS;GATE",
+      "source": "https://steinsgate.jp/elite/hooinkyoma/"
+    },
+    {
+      "month": 12,
       "day": 16,
       "name": "クルミ",
       "work": "リコリス・リコイル"
@@ -3487,6 +3599,20 @@
       "day": 17,
       "name": "シエル・アランソン",
       "work": "ゴッドイーター"
+    },
+    {
+      "month": 12,
+      "day": 18,
+      "name": "安芸倫也",
+      "work": "冴えない彼女の育てかた",
+      "source": "https://www.saenai.tv/1st/sp/character/"
+    },
+    {
+      "month": 12,
+      "day": 18,
+      "name": "氷堂美智留",
+      "work": "冴えない彼女の育てかた",
+      "source": "https://www.saenai.tv/1st/sp/character/"
     },
     {
       "month": 12,

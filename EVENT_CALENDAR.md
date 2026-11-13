@@ -58,6 +58,39 @@ P’s CUBE のイベント（`database/PSCUBE_SYNC.md` の `date_events`）と�
 | ガールズ＆パンツァー | 西絹代 | 12/8 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-kinuyo-20241108/) |
 | ガールズ＆パンツァー | 五十鈴華 | 12/16 | [公式サイト](https://girls-und-panzer-finale.jp/201811-article_9-html/) |
 
+## 別題材の誕生日追加（2026-11-13、続き）
+
+- 利用者「ほかのスロットになってる題材のキャラも検討してみてね」。前節までの592件を保持し、スロット化と誕生日を公式出典で確認できた別の5作品から18件を追加、合計610件。以下は確認できたキャラだけの追加で、作品内全員の一覧ではない。月日を確認できないキャラは推測で補わない。
+- スロット化の公式根拠：
+  - [冴えない彼女の育てかた（大都技研）](https://www.daitogiken.com/contents/product/slot/saenai/)
+  - [マクロスF／Lパチスロ マクロスフロンティア4（SANKYO）](https://www.sankyo-fever.jp/products/machine_list/slb/)
+  - [この素晴らしい世界に祝福を！（サミー）](https://www.sammy.co.jp/japanese/news/detail/?id=33)
+  - [かぐや様は告らせたい（SANKYO）](https://www.sankyo-fever.jp/products/machine_list/sri/)
+  - [STEINS;GATE（ユニバーサルエンターテインメント、2022年製品一覧）](https://www.universal-777.com/product/slot/2022/)
+- 誕生日は下表の公式キャラクター紹介・公式誕生日企画・公式ゲーム内告知・公式ショートストーリーで確認。商品や企画の実施日だけからは推定しない。『このすば』の3件の出典は公式ゲーム『ファンタスティックデイズ』で誕生日と明記された月日。
+- 『五等分の花嫁』は今回スロット化の公式根拠を確認できず保留（スロット化されていないと断定したものではない）。PC・Android・iPhone閲覧ページ・共有カレンダーの共通アセットへ追加する方式、公開済みWeb／配布済みAPKへの反映条件は前節と同じ。
+
+| 作品 | キャラ | 月日 | 誕生日の公式出典 |
+| --- | --- | --- | --- |
+| 冴えない彼女の育てかた | 安芸倫也 | 12/18 | [公式サイト](https://www.saenai.tv/1st/sp/character/) |
+| 冴えない彼女の育てかた | 加藤恵 | 9/23 | [公式サイト](https://www.saenai.tv/1st/sp/character/) |
+| 冴えない彼女の育てかた | 澤村・スペンサー・英梨々 | 3/20 | [公式サイト](https://www.saenai.tv/1st/sp/character/) |
+| 冴えない彼女の育てかた | 霞ヶ丘詩羽 | 1/31 | [公式サイト](https://www.saenai.tv/1st/sp/character/) |
+| 冴えない彼女の育てかた | 波島出海 | 5/5 | [公式サイト](https://www.saenai.tv/1st/sp/character/) |
+| 冴えない彼女の育てかた | 氷堂美智留 | 12/18 | [公式サイト](https://www.saenai.tv/1st/sp/character/) |
+| マクロスF | シェリル・ノーム | 11/23 | [公式サイト](https://macross.jp/contents/913866) |
+| マクロスF | ランカ・リー | 4/29 | [公式サイト](https://macross.jp/contents/913866) |
+| マクロスF | 早乙女アルト | 7/27 | [公式サイト](https://macross.jp/contents/967693) |
+| この素晴らしい世界に祝福を！ | アクア | 8/1 | [公式サイト](https://static.konosubafd.jp/webview/news/detail/1627614454.html) |
+| この素晴らしい世界に祝福を！ | めぐみん | 12/4 | [公式サイト](https://static.konosubafd.jp/webview/news/detail/1701140166.html) |
+| この素晴らしい世界に祝福を！ | ダクネス | 4/6 | [公式サイト](https://static.konosubafd.jp/webview/news/detail/1585896469.html) |
+| かぐや様は告らせたい | 四宮かぐや | 1/1 | [公式サイト](https://kaguya.love/news/?id=59588) |
+| かぐや様は告らせたい | 藤原千花 | 3/3 | [公式サイト](https://kaguya.love/3rd/special/birth0303/) |
+| かぐや様は告らせたい | 石上優 | 3/3 | [公式サイト](https://kaguya.love/3rd/special/birth0303/) |
+| かぐや様は告らせたい | 伊井野ミコ | 5/5 | [公式サイト](https://kaguya.love/3rd/special/birth0505/) |
+| STEINS;GATE | 岡部倫太郎 | 12/14 | [公式サイト](https://steinsgate.jp/elite/hooinkyoma/) |
+| STEINS;GATE | 牧瀬紅莉栖 | 7/25 | [公式サイト](https://steinsgate.jp/elite/hooinkyoma/novel/5/) |
+
 ## 統合の規則（PC `core.merge_date_events`・Android `mergeDateEvents`・閲覧ページ共通）
 
 同じ店舗・日付が両方にあるとき：
