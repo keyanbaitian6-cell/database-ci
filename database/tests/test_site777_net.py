@@ -59,6 +59,7 @@ UP = [(9, 111), (60, 90), (120, 70), (180, 60)]
 TOP_RETURN = [(9, 111), (60, 40), (100, 16), (140, 60)]
 TOP_END = [(9, 111), (60, 60), (100, 16), (140, 16)]
 BOTTOM_END = [(9, 111), (60, 170), (100, 206), (140, 206)]
+SHORT = [(9, 111), (14, 115)]
 FLAT = [(9, 111), (30, 100), (100, 125), (106, 108), (115, 109)]
 
 
@@ -91,8 +92,6 @@ class EstimateTest(unittest.TestCase):
 
     def test_held_or_unreadable_images_get_no_estimate(self):
         cases = {
-            'boundary_contact': png(BOTTOM_END),
-            'right_edge_contact': png([(9, 111), (20, 100), (120, 96), (243, 90)]),
             'short_curve': png([(9, 111), (14, 115)]),
             'axis_labels_unknown': png(DOWN, labels=False),
             'unsupported_size': png(DOWN, size=(300, 226)),
@@ -122,10 +121,54 @@ class EstimateTest(unittest.TestCase):
         estimate = site777_net.net_estimate(png(TOP_END), 6915)
         self.assertEqual(estimate, {'value': 6915, 'sure': True, 'method': site777_net.METHOD})
         self.assertTrue(site777_net.valid(estimate))
-        self.assertIsNone(site777_net.net_estimate(png(BOTTOM_END), 6915), '下の端のまま終わった台は今までどおり保留')
+        self.assertEqual(site777_net.net_estimate(png(BOTTOM_END), 6915), {'value': -5000, 'sure': True, 'method': site777_net.METHOD},
+                         '下の端のまま終わった台は -5,000（MYは使わない）')
         # 端の外を通って描かれない区間があっても、両側が端に接していれば途切れとは見なさない。
         hidden = png(TOP_END, extra=lambda d: d.rectangle([(110, 14), (116, 19)], fill=(24, 28, 24)))
         self.assertEqual(site777_net.analyze(hidden)['status'], 'clipped_top')
+
+    def test_right_edge_unsteady_endpoint_and_overlapped_labels_are_read(self):
+        # 2026-11-13 利用者「四つとも治して」：まだ読めていなかった台（勝ち台に偏っていた）を読む。
+        # 右端に届いた台は右端の値。
+        right = site777_net.analyze(png([(9, 111), (20, 100), (120, 96), (243, 90)]))
+        self.assertEqual(right['status'], 'candidate', right)
+        self.assertTrue(right['right_edge'])
+        self.assertLessEqual(abs(right['estimate'] - (111 - right['endpoint'][1]) * 10000 / 192), .5)
+        # 線の先の色が薄く、色の閾値で終点が2.5画素ほど動く台（前は2画素を超えると保留）。
+        faint = lambda d: d.line([(150, 102), (150, 106)], fill=(140, 140, 30))
+        unsteady = site777_net.analyze(png([(9, 111), (20, 104), (150, 100)], extra=faint))
+        self.assertEqual(unsteady['status'], 'candidate', unsteady)
+        self.assertGreater(unsteady['spread'], 2 * site777_net.SCALE)
+        self.assertLessEqual(unsteady['spread'], site777_net.UNSTABLE_PIXELS * site777_net.SCALE)
+        self.assertLessEqual(unsteady['interval'][0], unsteady['estimate'])
+        # 動く幅が5画素を超える台は今までどおり保留。
+        wide = lambda d: d.line([(150, 101), (150, 125)], fill=(140, 140, 30))
+        self.assertEqual(site777_net.analyze(png([(9, 111), (20, 104), (150, 100)], extra=wide))['status'], 'unavailable')
+        # 黄色い線が「5,000」の文字に重なった台：重なっていない画素で文字を確かめて読む。
+        crossing = [(9, 111), (25, 40), (36, 15), (60, 15), (100, 60)]
+
+        def over_labels(curve, labels=True):
+            image = Image.open(BytesIO(png(curve, labels=labels))).convert('RGB')
+            ImageDraw.Draw(image).line(curve, fill=(250, 230, 30), width=2)
+            stream = BytesIO()
+            image.save(stream, 'PNG')
+            return stream.getvalue()
+
+        overlapped = site777_net.analyze(over_labels(crossing))
+        self.assertEqual(overlapped['status'], 'candidate', overlapped)
+        self.assertEqual(site777_net.analyze(over_labels(crossing, labels=False))['reason'], 'axis_labels_unknown',
+                         '文字が無い画像は、線が重なっていても読まない')
+        # 違う文字（目盛りの数字が違う画像）は、線が重なっていても読まない。
+        other = Image.open(BytesIO(over_labels(crossing))).convert('RGB')
+        ImageDraw.Draw(other).rectangle([(40, 10), (52, 20)], fill=(255, 255, 255))
+        stream = BytesIO()
+        other.save(stream, 'PNG')
+        self.assertEqual(site777_net.analyze(stream.getvalue())['reason'], 'axis_labels_unknown')
+        # 文字の形の元（ビット）と、照合に使うハッシュが同じ形を指していること。
+        import hashlib
+        for rows, cols, bits, digest in site777_net.LABEL_BOXES:
+            shape = np.unpackbits(np.frombuffer(bytes.fromhex(bits), dtype=np.uint8))[:12 * 37].reshape(12, 37).astype(bool)
+            self.assertEqual(hashlib.sha256(shape.tobytes()).hexdigest(), digest)
 
     def test_only_the_site777_form_is_valid(self):
         good = {'value': -573, 'sure': True, 'method': site777_net.METHOD}
@@ -151,11 +194,11 @@ class ImportTest(unittest.TestCase):
         return capture.make_backup(table, rows, graphs, '2026-11-06', '試験ジャグラー3', now=NOW)
 
     def test_capture_adds_the_estimate_only_where_it_can_be_read(self):
-        backup = self.backup({101: png(DOWN), 102: png(BOTTOM_END)})
+        backup = self.backup({101: png(DOWN), 102: png(SHORT)})
         by_rack = {r['rack']: r for r in backup['records']}
         self.assertEqual(by_rack[101]['net_estimate']['method'], site777_net.METHOD)
         self.assertIsNone(by_rack[101]['net_medals'])
-        self.assertNotIn('net_estimate', by_rack[102])  # 見切れ：推定なし。MYはそのまま
+        self.assertNotIn('net_estimate', by_rack[102])  # 線が短い：推定なし。MYはそのまま
         self.assertEqual(by_rack[102]['my'], 1234)
         for record in backup['records']:
             capture.validate_record(record)
@@ -237,7 +280,7 @@ class BackfillTest(unittest.TestCase):
             root = Path(tmp)
             db_path, sources = root / 'pscube.sqlite3', root / 'sources'
             sources.mkdir()
-            images = {101: png(DOWN), 102: png(BOTTOM_END)}
+            images = {101: png(DOWN), 102: png(SHORT)}
             backup = ImportTest().backup(images)
             plain = {**backup, 'records': [{k: v for k, v in r.items() if k != 'net_estimate'} for r in backup['records']]}
             store = PscubeStore(db_path, recording=False)
@@ -251,7 +294,7 @@ class BackfillTest(unittest.TestCase):
             result, summary = site777_backfill.build(db_path, sources)
             self.assertEqual(db_path.read_bytes(), before, '件数を見るだけではDBを変えない')
             self.assertEqual(summary['推定を付ける'], 1)
-            self.assertEqual(summary['保留：boundary_contact'], 1)
+            self.assertEqual(summary['保留：short_curve'], 1)
             self.assertEqual([r['rack'] for r in result['records']], [101])
             self.assertEqual({k: v for k, v in result['records'][0].items() if k != 'net_estimate'}, plain['records'][0])
             store = PscubeStore(db_path, recording=False)

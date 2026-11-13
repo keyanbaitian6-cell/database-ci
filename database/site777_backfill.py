@@ -84,7 +84,8 @@ def build(db_path, sources_dir, *, upgrade=False):
             summary[f"保留：{result['reason']}"] += 1
             continue
         summary['推定を更新する' if is_upgrade else
-                'MYを差枚にする（上の端のまま終わった台）' if result['status'] == 'clipped_top' else '推定を付ける'] += 1
+                'MYを差枚にする（上の端のまま終わった台）' if result['status'] == 'clipped_top' else
+                '-5,000を差枚にする（下の端のまま終わった台）' if result['status'] == 'clipped_bottom' else '推定を付ける'] += 1
         out.append({**r, 'net_estimate': estimate})
         keys.add(_machine_key(r))
     if not out:
