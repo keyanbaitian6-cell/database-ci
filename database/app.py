@@ -8,6 +8,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import tkinter.font as tkfont
@@ -1051,7 +1052,7 @@ def main():
             # 0時〜7時半に取り込みを終えて×で閉じ、朝7:30より前にPCを消すと、その日の予測が保存されなかった）。
             # 途中で閉じたデータは、台数・取り込み時刻の確認（ready）が「取り込み待ち」にする。
             if not capture_open():
-                daily_worker.start()
+                start_daily()
 
         root.after(2000, check)
 
@@ -1923,14 +1924,34 @@ def main():
     daily_worker = daily_learning_ui.DailyLearningWorker(DATA_DIR)
     ttk.Button(results_buttons, text='日次学習・採用中の候補',
                command=lambda: daily_learning_ui.show(root, DATA_DIR)).pack(side='left', padx=8)
+    daily_last = [None]
+
+    def start_daily():
+        """日次学習を動かし、そのときの原本の印を覚える（5分ごとの確認が同じ原本で動き直さないように）。"""
+        from daily_learning import JST
+        from daily_learning_runtime import run_due
+        try:
+            due, mark = run_due(DATA_DIR, datetime.now(JST), None, on_close=True)
+            if due:
+                daily_last[0] = mark
+        except Exception:  # noqa: BLE001 - 印を覚えられなくても動かす
+            pass
+        daily_worker.start()
+
     def daily_tick():
         if closing[0]:
             return
-        # 起動時と、保存できる時間帯（前日23:30〜当日8:00）の始まりと終わり際。既存の研究処理と別に、保存済みデータだけを使う。
+        # 保存できる時間帯（前日23:30〜当日8:00）は5分ごとに、まだ保存していない店の原本DBが10分書かれていなければ動かす
+        # （2026-11-14 利用者「取り込みが終了したら勝手にやってくれるはずなのになぜかうまくいってない」。今までは23:30台・
+        # 7:30台だけ、しかも取り込み窓が開いていると動かず、窓を朝まで開いたままだと保存されなかった）。
+        # 同じ原本で「取り込み待ち」になったら、原本が変わるまで読み直さない（daily_learning_runtime.run_due）。
         from daily_learning import JST
-        now = datetime.now(JST)
-        # 取り込み窓が開いている間は動かさない。窓が自動で閉じたときに watch_capture_window が動かす。
-        if now.hour in (7, 23) and now.minute >= 30 and not capture_open():
+        from daily_learning_runtime import run_due
+        try:
+            due, daily_last[0] = run_due(DATA_DIR, datetime.now(JST), daily_last[0])
+        except Exception:  # noqa: BLE001 - 確認に失敗しても次の5分で確かめ直す
+            due = False
+        if due:
             daily_worker.start()
         while not daily_worker.results.empty():
             tell(daily_worker.results.get_nowait() + '\n')
@@ -1942,7 +1963,7 @@ def main():
         if capture_open():
             root.after(300_000, daily_on_start)
             return
-        daily_worker.start()
+        start_daily()
     root.after(60_000, daily_on_start)
     root.after(65_000, daily_tick)
     root.after(400, auto_sync_on_start)
@@ -1951,9 +1972,38 @@ def main():
     recording_paths = (DATA_DIR / 'database.sqlite3', DATA_DIR / 'pscube.sqlite3')
     for path in recording_paths:
         input_versions.hold(path)
+    daily_closing = [False]
+
     def close_app():
         if closing[0]:
             return
+        # 保存できる時間帯（前日23:30〜当日8:00）に閉じるとき、まだ保存していない店があれば、日次学習を済ませてから閉じる
+        # （2026-11-14 利用者「2つとも進める」。11/12・11/13の夜は、取り込みのあとPC本体を閉じて予測が保存されなかった）。
+        # 待っている間にもう一度×を押すと、待たずに閉じる。3分たっても終わらなければ閉じる。
+        if not daily_closing[0]:
+            daily_closing[0] = True
+            from daily_learning import JST
+            from daily_learning_runtime import run_due
+            try:
+                due, mark = run_due(DATA_DIR, datetime.now(JST), daily_last[0], on_close=True)
+            except Exception:  # noqa: BLE001 - 確かめられなければ、いつもどおり閉じる
+                due = False
+            if due or daily_worker.running:
+                if due:
+                    daily_last[0] = mark
+                    daily_worker.start()
+                tell('日次学習の予測を保存してから閉じます（1分ほど。待たずに閉じるときは、もう一度×を押してください）。\n')
+                limit = time.monotonic() + 180
+
+                def wait_daily():
+                    if daily_worker.running and time.monotonic() < limit:
+                        root.after(1000, wait_daily)
+                        return
+                    while not daily_worker.results.empty():
+                        tell(daily_worker.results.get_nowait() + '\n')
+                    close_app()
+                root.after(1000, wait_daily)
+                return
         for child in root.winfo_children():
             if hasattr(child, 'flush_history'):
                 child.flush_history()

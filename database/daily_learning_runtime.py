@@ -40,6 +40,59 @@ def store_of(key):
     return key.split('|', 1)[1] if '|' in key else None
 
 
+# 取り込みが終わったかを、窓の開け閉めではなく原本DBの書き込みで判断する（2026-11-14 利用者「取り込みが終了したら
+# 勝手にやってくれるはずなのになぜかうまくいってない」）。11/13夜は、メルヘンの取り込み窓が朝まで開いたままで
+# 「最後の窓が閉じたら」「窓が開いていなければ7:30に」のどちらも動かず、PC本体を閉じて予測が保存されなかった。
+DB_FILES = {'meruhen': 'database.sqlite3', 'pscube': 'pscube.sqlite3'}
+# 原本DBにこの秒数だけ書き込みが無ければ、その店の取り込みは一区切りとみなす（途中の数値で固定しないため）。
+QUIET_SECONDS = 600
+
+
+def unsaved_stores(data_dir, target):
+    """対象日の事前予測をまだ保存していない店舗。記録DBの predictions の鍵だけを読む（成績の表は開かない）。"""
+    path = Path(data_dir) / 'daily-learning' / 'journal.sqlite3'
+    if not path.exists():
+        return list(STORES)
+    try:
+        db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
+        try:
+            return [s for s in STORES
+                    if db.execute('SELECT 1 FROM predictions WHERE key=?', (f'{target}|{s}',)).fetchone() is None]
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return list(STORES)
+
+
+def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS):
+    """今、日次学習を動かすか。(動かすか, 入力の印)。入力の印は、前に試したときと同じなら動かさないために使う
+    （データがそろわず「取り込み待ち」になった晩に、同じ原本で5分ごとに読み直さない）。
+    - 保存できる時間帯（前日23:30〜当日8:00）で、まだ保存していない店があるときだけ。
+    - その店の原本DBが前に試したときから変わっていること。
+    - 定期確認では、原本DBの最後の書き込みから quiet 秒たっていること（取り込み中は待つ）。PC本体を閉じるとき
+      （on_close）は待たない（閉じる＝取り込みは終わった、とみる。そろっていなければ ready が取り込み待ちにする）。
+    原本DBは開かない（ファイルの更新時刻だけ）。"""
+    target = prediction_target(now)
+    if target is None:
+        return False, last
+    stores = unsaved_stores(data_dir, target)
+    if not stores:
+        return False, last
+    stamps = {}
+    for source in sorted({SOURCES[s] for s in stores}):
+        try:
+            stamps[source] = os.stat(Path(data_dir) / DB_FILES[source]).st_mtime
+        except OSError:
+            stamps[source] = None
+    # 前に試したときと同じ対象日で、残っている店の原本DBがどれも変わっていなければ動かさない。
+    before = last[1] if last and last[0] == target else {}
+    if all(source in before and before[source] == t for source, t in stamps.items()):
+        return False, last
+    if not on_close and any(t is not None and jst(now).timestamp() - t < quiet for t in stamps.values()):
+        return False, last
+    return True, (target, {**before, **stamps})
+
+
 def method_signature(store):
     """候補の作り方の版（学習の版＋従来候補の版）。期間の途中で変わったら、古い版の日を比べない。
 

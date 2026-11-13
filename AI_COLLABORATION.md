@@ -2902,3 +2902,24 @@
 - AIが 6:58 に `start.cmd` を起動（11/13 夜の利用者「今開いていいよ」と同じ扱い。8:00の締切のため）→ 7:00:06 に3店舗とも「11/14の事前予測を固定保存しました」。予測は版 v4、組数／学習済み 長町南 36/36（機種30・店舗共通5・バラエティ1）、幸町 46/46（40・5・1）、P-STATION 25/25（23・2）、採用は全組 current。PC本体は開いたまま。
 - CI：`f7a07a1` の回（`43363598452`）は `pc`（Windows・Ubuntu）は成功、`full` が失敗。失敗は `test_viewer_shared_calendar_browser` の「shared event in calendar」のタイムアウトで、カレンダーに誕生日の表示が増えたため（`d527df8` 誕生日の追加）。差枚の直し（Python）の試験は通っている。直しの `a26a625`（と `f852b1d`）は手元の main にだけあり、正本へはまだ送られていない（別の作業。Claudeは送っていない）。
 - 気づいたこと（未調査）：`errors.log` に 11/13 23:42 `meruhen.overlay` の `window.pywebview.api.get_auto_capture is not a function`（`get_auto_capture` は `browser_import.py:1385` にある）。11/13分のメルヘンの台はそろっている。
+
+## 2026-11-14 7:30ごろ：日次学習を「取り込みが終わったら」確実に動かす（5分ごとの確認・閉じるときの保存）
+
+- 依頼：利用者「日次学習の自動実行があまり理にかなってないタイミングだよね。自動取り込みなど取り込みが終了したら勝手にやってくれるはずなのになぜかうまくいってない」→ AIの案に「2つとも進める」。
+- 原因（記録で確認）：11/13夜、メルヘンは 11/13 23時台〜11/14 0時台に取り込み（`captured_at`）、サイトセブンは 0:06:37 に最後まで終わって窓が閉じた。日次学習は「最後の取り込み窓が閉じたとき」だけ動く作りで、そのときメルヘンの取り込み窓が開いていたので動かなかった。メルヘンの窓は朝まで開いたまま（幸町の3台を6時台に取り込み、`database.sqlite3` の更新 6:54:45）。7:30の定期確認も「窓が開いていない」が条件。6:55ごろPC本体を閉じ、一度も動かなかった。
+- 変更：
+  - `database/daily_learning_runtime.py`：`run_due(data_dir, now, last, on_close=False)` と `unsaved_stores`。保存できる時間帯で、まだ保存していない店の原本DB（`DB_FILES`）の更新時刻が、前に試したときから変わっていて、最後の書き込みから `QUIET_SECONDS`＝600秒たっていれば動かす。`on_close` は10分を待たない。記録DBは `predictions` の鍵だけを読む（outcomes・decisions は開かない）。原本DBはファイルの時刻だけ。
+  - `database/app.py`：定期確認（5分ごと）を `run_due` にした（取り込み窓が開いていても動く。23:30台・7:30台だけの条件と `capture_open` の条件をやめた）。起動時・取り込み窓が閉じたときは `start_daily()`（動かすと同時に原本の印を覚え、5分ごとの確認が同じ原本で動き直さない）。`close_app` は、23:30〜8:00に閉じるとき `run_due(on_close=True)` が真なら日次学習を動かし、終わるまで（最大3分）待ってから閉じる。待っている間にもう一度×で待たずに閉じる。`import time` を足した。
+  - `DAILY_LEARNING_OPERATION.md`：起動の時刻と経緯。
+  - 取り込みのファイル（`site777_*`・`browser_import.py`）は触っていない。
+- 気をつける点：取り込みを10分以上止めてから再開すると、その間に「取り込み待ち」の判定（`ready`）を通れば途中の数値で固定されうる（台数9割以上・前日の機種がそろう・閉店後の取り込み・グラフの無い台が少ない、のすべてを満たしたときだけ）。日次学習が原本DBを一時コピーする数秒の間に取り込みが保存すると「database is locked」になりうる（11/12 0:01 に一度記録あり。サイトセブンの窓は30秒待つ）。
+
+|要件|結果|証拠|
+|---|---|---|
+|窓が開いていても、取り込みの10分後に動く|済|`test_daily_learning_schedule.py` の `test_runs_once_the_capture_has_been_quiet_for_ten_minutes_even_with_windows_open`|
+|取り込みの途中（10分以内）は動かない|済|同上|
+|同じ原本で何度も動かない（一部保存のあとも）|済|`test_a_partial_save_does_not_rerun_the_same_inputs` など|
+|閉じるときに保存する|済（試験）|`test_closing_the_app_does_not_wait_for_ten_minutes`、`app.py` の配線の試験|
+|保存できる時間帯の外では動かない|済|`test_outside_the_saving_hours_it_never_runs`|
+|既存の試験|済|PC全試験 1050件 OK、`py_compile app.py` OK|
+|実際のPC本体での動き|未確認|今開いているPC本体は古いコード（6:58起動）。次に開いたときから|
