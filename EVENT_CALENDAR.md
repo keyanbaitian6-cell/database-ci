@@ -29,6 +29,35 @@ P’s CUBE のイベント（`database/PSCUBE_SYNC.md` の `date_events`）と�
   - 共有ページ（読むだけ）：台のある日は日別まとめ、HTMLの集計だけの日は勝率の内訳に誕生日を出す。台も集計も無い日でも、誕生日があれば押して「キャラ誕生日」のシートで全員を見られる。
 - 誕生日ファイルが無い・壊れている・形が違うときは誕生日を出さないだけで、カレンダー・イベント入力・PCアプリの起動は止めない。
 
+## スロット関連作品の誕生日追加（2026-11-13）
+
+- 利用者「他にもスロットに出てくるキャラの誕生日追加できそうな人いたら追加しておいてね」。既存573件を保持し、公式サイトで誕生日を確認した19件を追加、合計592件。作品内の全キャラクターを網羅する追加ではない。
+- 追加分には項目ごとの `source`（誕生日の出典URL）を付けた。先頭の `source` は従来573件の保存HTMLの出典として保持。表示側は従来どおり月・日・名前・作品だけを読む。
+- スロット化の根拠：[サミー「パチスロ コードギアス 反逆のルルーシュ」発売](https://www.sammy.co.jp/japanese/news/2012/115.html)、[平和「Lパチスロガールズ＆パンツァー 最終章」発売](https://azcms.ir-service.net/DATA/6412/ir/12517012143999999999_b4f90371-3beb-400b-ab8c-29425964b816.pdf)。以下の誕生日はキャラクター本人の月日で、商品の発売日・上映日・担当声優の誕生日は採用しない。
+- 同じ一覧を使うPC・Android・iPhone閲覧ページ・共有カレンダーが対象。PCは再起動後、配布済みAPK・公開中のWebは次のビルド／公開後に反映する。今回データを編集したことだけで公開済みとは扱わない。
+
+| 作品 | キャラ | 月日 | 誕生日の公式出典 |
+| --- | --- | --- | --- |
+| コードギアス 反逆のルルーシュ | 紅月カレン | 3/29 | [公式サイト](https://geass.jp/news/archives/1639) |
+| コードギアス 反逆のルルーシュ | 枢木スザク | 7/10 | [公式サイト](https://geass.jp/news/archives/1639) |
+| コードギアス 反逆のルルーシュ | ルルーシュ・ランペルージ | 12/5 | [公式サイト](https://geass.jp/news/archives/1639) |
+| ガールズ＆パンツァー | 角谷杏 | 1/1 | [公式サイト](https://girls-und-panzer-finale.jp/202412-article-1/) |
+| ガールズ＆パンツァー | ケイ | 1/17 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-kei-20241213/) |
+| ガールズ＆パンツァー | カチューシャ | 1/31 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-kachusya-20241220/) |
+| ガールズ＆パンツァー | マリー | 4/20 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-mary-20250328/) |
+| ガールズ＆パンツァー | 河嶋桃 | 5/5 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-momo-20250404/) |
+| ガールズ＆パンツァー | 秋山優花里 | 6/6 | [公式サイト](https://girls-und-panzer-finale.jp/202505-article-1/) |
+| ガールズ＆パンツァー | 武部沙織 | 6/22 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-saori-20250523/) |
+| ガールズ＆パンツァー | 西住まほ | 7/1 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-maho-20250606/) |
+| ガールズ＆パンツァー | 冷泉麻子 | 9/1 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-mako-20250801/) |
+| ガールズ＆パンツァー | ダージリン | 9/17 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-darjilin-20250808/) |
+| ガールズ＆パンツァー | アンチョビ | 9/23 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-anchovy-20250822/) |
+| ガールズ＆パンツァー | 西住みほ | 10/23 | [公式サイト](https://girls-und-panzer-finale.jp/201210-article_21-html/) |
+| ガールズ＆パンツァー | 島田愛里寿 | 10/24 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-arisu-20241004/) |
+| ガールズ＆パンツァー | ミカ | 11/30 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-mika-20241101/) |
+| ガールズ＆パンツァー | 西絹代 | 12/8 | [公式サイト](https://girls-und-panzer-finale.jp/goods/birthday-sweets-kinuyo-20241108/) |
+| ガールズ＆パンツァー | 五十鈴華 | 12/16 | [公式サイト](https://girls-und-panzer-finale.jp/201811-article_9-html/) |
+
 ## 統合の規則（PC `core.merge_date_events`・Android `mergeDateEvents`・閲覧ページ共通）
 
 同じ店舗・日付が両方にあるとき：

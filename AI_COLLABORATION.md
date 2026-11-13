@@ -2807,3 +2807,25 @@
   - `right_edge_contact` 2台（+4,141・+4,401。右端に届いている）。
   - 下の端・右端を除いて読むと、日ごとに足される差枚：11/4 +0.1万、11/5 +0.1万、11/6 +0.5万、11/7 +2.4万、11/8 +1.8万、11/9 −0.05万、11/10 +1.1万、11/11 +1.0万、11/12 +1.3万。まだ読めていない台も勝ち側に偏っている。
 - 案（利用者に相談中）：①終点が閾値で少し動く台も基準の値で読む（動く幅が約260枚までなら読み、幅が0をまたぐ台だけ「※」）、②目盛りの文字に線が重なった台は、重なっていない部分で目盛りを確かめる、③下の端のまま終わった台は −5,000 を差枚にする（それ以上の負けは分からない）、④右端に届いた台は右端の値を差枚にする。500G未満の台は取り込まない決まり（11/10〜）なので合計に入らない（小さな負けが多いので、合計は少し良く見える側）。
+
+## 2026-11-13：スロット関連作品の誕生日を19名追加（Codex）
+
+- 依頼：「他にもスロットに出てくるキャラの誕生日追加できそうな人いたら追加しておいてね」。基準は `bad6880`。両リポジトリのmainを取得し、手元HEAD＝origin/main、database-ci/mainを253コミット先まで含むことを確認した。
+- 対象：PC・Android・iPhone閲覧ページ・共有カレンダーが読む共通アセット `database_android/assets/character_birthdays.json`。公式サイトで誕生日を確認できたコードギアス3名・ガールズ＆パンツァー16名を追加し、573→592件。名前・月日・URLの全一覧とスロット化のメーカー根拠は `EVENT_CALENDAR.md` の「スロット関連作品の誕生日追加（2026-11-13）」に保存。
+- 追加項目ごとに `source` を付けた。既存573件と先頭の従来出典は保持。各表示処理は余分なフィールドを無視して従来の月・日・名前・作品で読む。イベント保存・同期・DBは変更しない。公式企画の開催日や声優の誕生日をキャラクターの誕生日として足さない（コードギアス公式の9/28はR2最終話記念でありC.C.の誕生日としては不採用）。今回は確認済み19件の追加で、全作品・全員を網羅した調査ではない。
+- 変更：上記JSON・`EVENT_CALENDAR.md`・本節。作業中に別AIの `database/site777_backfill.py`・`database/site777_net.py` の差分が増えたため対象外として保持。未追跡 `debug.log` にも触れていない。
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| 既存573件の内容・相対順序を保持、重複なし | 済 | HEADのJSONとの比較と全592件の月日・名前・作品のキー検査 |
+| 追加19件に公式誕生日出典 | 済 | JSONの各source、EVENT_CALENDAR.mdの19行の一覧（メーカー根拠も併記） |
+| PCの既存誕生日処理 | 済 | databaseで `.venv/Scripts/python.exe -m unittest discover -s tests -p test_character_birthdays.py -v`：8件成功 |
+| 共有ページの誕生日処理 | 済 | database_androidで `node --test --test-name-pattern='キャラ誕生日' tool/test_share_viewer.mjs`：3件成功 |
+| Flutterの読み込み・イベント入力画面 | 済 | `flutter_tools.snapshot test --no-pub --reporter expanded test/event_calendar_test.dart --plain-name 'キャラ誕生日'`：6件成功。実行ファイルは既存Flutter SDKのdart.exe、packagesも同SDKのflutter_tools指定 |
+| 共有公開用ファイルも同じ592件 | 済 | stage_share_viewer.pyのpublication_files()をメモリ上だけで呼び、生成JSONとアセットの辞書一致を確認（公開先への書き込みなし） |
+| 差分の形式 | 済 | `git diff --check -- EVENT_CALENDAR.md database_android/assets/character_birthdays.json`：指摘なし |
+| 実機・ブラウザでの追加19名の目視 | 未確認 | 今回はJSONと説明だけの変更。既存のFlutter画面試験6件に含まれる表示・操作確認まで |
+| APK・Web公開・push | 未実施 | ローカルのソース追加のみ。PCは再起動で読む。Androidは次のAPK、iPhone閲覧・共有カレンダーは次の公開で反映 |
+
+- 実行環境の経緯：通常のpythonコマンドはWindowsAppsの実体なしエイリアス、ルートの.venvも無しだったため、既存の `database/.venv/Scripts/python.exe` を使用。Flutterバッチ経由は出力なく待機したためその実行だけを中断し、直接snapshot経由へ変更。最初はSDKのlockfileの書き込み制限で止まり、許可された実行で上記6件が成功。Flutterの更新・依存関係の更新はしていない。
+- ビルド・公開を行わないデータ追加のため、全体ゲート・APK作成・Web再ビルドは実施していない。対象試験合計17件のみを一度ずつ成功させた。pushは利用者の明示承認待ち（本依頼はデータ追加）。
