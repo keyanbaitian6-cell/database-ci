@@ -83,7 +83,7 @@ class AppShutdownTests(unittest.TestCase):
                 return root
 
             try:
-                with patch.object(app, 'ROOT', folder), patch.object(app, 'DATA_DIR', data), \
+                with patch.object(app, 'ROOT', folder), patch.object(app, 'DATA_DIR', data), patch('daily_learning_runtime.run_due', return_value=(False, None)), \
                         patch.object(app.tk, 'Tk', make_root), patch.object(app, 'OutputWorker', make_worker):
                     app.main()
                 self.assertEqual(errors, [])
@@ -171,7 +171,7 @@ class AppShutdownTests(unittest.TestCase):
                 return root
 
             try:
-                with patch.object(app, 'ROOT', folder), patch.object(app, 'DATA_DIR', data),                         patch.object(app.tk, 'Tk', make_root), patch.object(app, 'OutputWorker', make_worker),                         patch.object(core, 'scored_rows', slow_scored):
+                with patch.object(app, 'ROOT', folder), patch.object(app, 'DATA_DIR', data), patch('daily_learning_runtime.run_due', return_value=(False, None)),                         patch.object(app.tk, 'Tk', make_root), patch.object(app, 'OutputWorker', make_worker),                         patch.object(core, 'scored_rows', slow_scored):
                     app.main()
                 self.assertEqual(errors, [])
                 self.assertTrue(workers[0].finished)

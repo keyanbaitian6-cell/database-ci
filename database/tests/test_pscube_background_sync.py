@@ -44,7 +44,7 @@ class BackgroundPscubeSyncTests(unittest.TestCase):
                 root.mainloop=lambda: callback(base,data,sync,put,callbacks[0])
                 return root
             try:
-                with patch.object(app,'ROOT',base),patch.object(app,'DATA_DIR',data),patch.object(app.tk,'Tk',make_root):
+                with patch.object(app,'ROOT',base),patch.object(app,'DATA_DIR',data),patch('daily_learning_runtime.run_due',return_value=(False,None)),patch.object(app.tk,'Tk',make_root):
                     app.main()
             finally:
                 for root in roots:root.destroy()

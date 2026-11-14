@@ -61,7 +61,7 @@ class AppStartupTests(unittest.TestCase):
                 return root
 
             try:
-                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), \
+                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), patch('daily_learning_runtime.run_due', return_value=(False, None)), \
                      patch.object(app.tk, 'Tk', make_root), patch.object(app, 'build_variety_tab', side_effect=build) as builder:
                     app.main()
             finally:
@@ -121,7 +121,7 @@ class AppStartupTests(unittest.TestCase):
                 return root
 
             try:
-                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), \
+                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), patch('daily_learning_runtime.run_due', return_value=(False, None)), \
                      patch.object(app.tk, 'Tk', make_root), patch.object(app, 'SYNC_BANNER_INTERVAL_MS', 500), \
                      patch.object(app.messagebox, 'showwarning', side_effect=lambda *a, **k: warned.append(a)):
                     app.main()
@@ -189,7 +189,7 @@ class AppStartupTests(unittest.TestCase):
                 return root
 
             try:
-                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), \
+                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), patch('daily_learning_runtime.run_due', return_value=(False, None)), \
                      patch.object(app.tk, 'Tk', make_root):
                     app.main()
             finally:

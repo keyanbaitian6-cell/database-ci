@@ -116,7 +116,7 @@ class LocalReportTests(unittest.TestCase):
                 return root
 
             try:
-                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), \
+                with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), patch('daily_learning_runtime.run_due', return_value=(False, None)), \
                      patch.object(app.tk, 'Tk', make_root), \
                      patch.object(app.os, 'startfile') as start, \
                      patch('webbrowser.open') as browser, \

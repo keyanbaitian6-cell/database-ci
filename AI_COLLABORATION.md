@@ -2924,3 +2924,11 @@
 |既存の試験|済|PC全試験 1050件 OK、`py_compile app.py` OK|
 |実際のPC本体での動き|未確認|今開いているPC本体は古いコード（6:58起動）。次に開いたときから|
 - 送信：利用者「一緒に送る」→ 2026-11-14 7:12（日本時間）に `tools/push_ci.py` で正本へ（`f7a07a1..8dd9bc0`。別の作業の `f852b1d`・`a26a625` と、Claudeの `95a9166`・`8dd9bc0`）。CIが1回動く。結果はまだ見ていない。
+
+## 2026-11-14 17:00ごろ：CI（8dd9bc0）が Windows の PC試験で落ちた件の直し
+
+- 利用者「このCI落ちてない？」。実行 https://github.com/imakurudev-eng/database/actions/runs/43517415319 は `full`・`pc (ubuntu)` が成功、`pc (windows-latest, UTC)` が失敗。`test_app_shutdown.AppShutdownTests.test_close_waits_for_output_and_delivers_completion` で、一時フォルダの `data/daily-learning/backup-output-meruhen.lock` を消せない（`PermissionError: WinError 32`）。
+- 原因：`8dd9bc0` で「23:30〜8:00にPC本体を閉じるとき日次学習を済ませる」を足したため、PC本体を起動して閉じる試験が、本物の時計で保存できる時間帯（CIは日本時間7:15）に流れると、閉じるときに日次学習が動き、終わる前に試験が一時フォルダを片付けようとして落ちた。手元の全試験（7:05ごろ）は通っていた（手元の方が速く、終わってから片付けた）。
+- 直し：PC本体を起動する試験7ファイル（`test_app_output_worker.py`・`test_app_shutdown.py`・`test_app_startup.py`・`test_pscube_local_report.py`・`test_rainbow_pending_review.py`・`test_shared_output_ui.py`・`test_pscube_background_sync.py`）の `patch.object(app, 'DATA_DIR', data)` の横に `patch('daily_learning_runtime.run_due', return_value=(False, None))` を足し、時刻に関係なく日次学習を動かさないようにした（10か所）。日次学習をいつ動かすかは `test_daily_learning_schedule.py` が確かめる。アプリのコードは変えていない。
+- 確認：7ファイルとも OK（16:56、保存できる時間帯の外。夜の条件そのものの再現はしていないが、直した試験は日次学習の確認を必ず「動かさない」にするので時刻によらない）。失敗したCIは再実行していない。
+- 作業コピーにある別の作業の変更（`share_viewer/daily_learning.mjs`・`share_viewer/index.html`・`database_android/tool/test_daily_learning.mjs`）には触っていない。
