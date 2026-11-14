@@ -3007,3 +3007,29 @@
 |PCの試験全体|済|`python -m unittest discover -s tests`（`database/`）1057件 OK|
 |実サイトで転送のあと自動で再開する|未確認|次にサイトセブンを取り込むときに、PCアプリを起動し直してから（新しいコードは起動し直しで効く）利用者が見る|
 - 利用者の報告（2026-11-15 朝）：「再起動した」（PCアプリを新しいコード `1289c1b` で起動し直した。転送のあとの自動再開は、次の取り込みで確かめる）。また「サイトセブンは2つ同時でも問題ない。注意喚起しなくていいよ」→ `AGENTS.md` のサイトセブンの節に、窓が2つ同時でも注意しないと足した（上の記録の「窓が2つ同時に開いていた…1つにするよう伝えた」は、この決定で取り消し）。
+
+## 2026-11-15 8:30ごろ：P’s CUBEの「差枚取得済み」の表示を全画面から消した（実装・Web公開済み）
+
+- 依頼：利用者「P'SCUBEはよほどのことがないともう取り込まないと思うので、P’s CUBE（20スロ） 2026-11-14：289台中0台差枚取得済み（0枚0台）・未取得289台　この表記をすべてからなくしてほしい」。
+- 変更（`461e6a3`）：「○台中○台差枚取得済み（0枚○台）・未取得○台」と、続く未取得の台の一覧（「1286番 機種：未取得の理由」）を消した。
+  - PC：`database/backup_status_ui.py`（「共有用ファイルの更新状況」の詳細の「PC内の最新日の差枚取得状況」）。それを作る `sync_health.local_net_lines` を削除。
+  - Android・iPhone閲覧ページ：`database_android/lib/capture_health_ui.dart`（「更新・差枚の取得状況」）から `netStatusLines` の行を外し、`capture_health.dart` の `netStatusLines` を削除。`showCaptureHealth` の `pscube` 引数は呼び出し元のため残した（今は表示を変えない）。
+  - 共有カレンダー：`share_viewer/app.mjs` の `healthDetails`（「更新・差枚の取得状況」）。
+  - 台ごとのラベルの関数（PC `net_capture_label`、Dart `netCaptureLabel`、JS `netCaptureLabel`・`netHealth`）は、取り込みの試験で使うので残した。見出し「更新・差枚の取得状況」はそのまま。
+- 試験：PC `test_pc_status_window_no_longer_shows_the_pscube_net_summary`（`test_pscube_health.py`）、Flutter `capture_health_ui_test.dart`（出ないこと）、JS `test_capture_health_browser.mjs`（閲覧ページ・共有カレンダーで出ないこと）。
+- 全体ゲート：作業コピーに別の作業の途中の変更（`site777_session.py` など）があったので、`461e6a3` を別の作業ツリー（`C:\w\cbw-pscube-hide`、ゲートの記録 `C:\w\cbw-gate-pscube`）に取り出して流した。**ALL PASSED**：PC 1056件・UTCのイベント28件・Flutter 844件・analyze エラー警告なし（info 32件）・JS 86ファイル成功（失敗・未実行0）・viewer-build・share-stage 成功。
+- Web公開：`stage_viewer.py`・`stage_share_viewer.py`（記録の文字列90種・スクリプトID の検査は該当なし）。改行だけ違うファイルは戻し、変更は公開先と同じLF。
+  - 閲覧ページ `database-viewer` `b43a25e`→`75ec97f`（差分は `main.dart.js` だけ）。Pages 43651921852 成功。配信中の `main.dart.js` のSHA-256先頭 `a313ae02c4b18060` が公開物と一致、「台取得済み（0枚」は0件。
+  - 共有カレンダー `database-share` `210b24b`→`eebf2c7`（版 `c8cc83ca5844`→`0eb496f1f5ca`。差分は今回の削除と版の文字だけ、8ファイル）。Pages 43651927068 成功。配信中の `app.mjs` が新しい版で、「取得済み（0枚」は0件。公開元の `6ce6d8b`（別の作業の日次学習の台リンク）は `461e6a3` に含まれる。
+- ソースの送信：`461e6a3` は、別の作業が上に重ねた `1289c1b`・`05a47d1` と一緒に正本へ送られていた（Claudeの `push_ci.py` は「既にこのコミット」で送る物なし）。
+- 未：Androidアプリには次にAPKを作ったときに入る（APKは作っていない）。
+
+|要件|結果|証拠|
+|---|---|---|
+|PCで出ない|済|`test_pc_status_window_no_longer_shows_the_pscube_net_summary`、ゲートのPC 1056件|
+|Android・閲覧ページで出ない|済（試験・閲覧ページの配信）|`capture_health_ui_test.dart`、`test_capture_health_browser.mjs`、配信中の main.dart.js に該当文字なし|
+|共有カレンダーで出ない|済|`test_capture_health_browser.mjs`、配信中の app.mjs に該当文字なし|
+|ほかの行は今のまま|済|同じ試験（スマホ補完・保存の診断の行が出る）|
+|全体ゲート ALL PASSED|済|`C:\w\cbw-gate-pscube`|
+|Androidアプリ|未|APK未作成|
+|iPhoneでの見た目|未確認|AIは端末で見ていない|
