@@ -35,6 +35,28 @@ test('共有ページの対象日・方式・候補・欠測・文字を検査�
   assert.ok(html.includes('&lt;試験&gt;')&&!html.includes('<試験>'));
   assert.ok(dailyPanel(fixture(),'saiwaichou','2026-11-11').includes('保存済み候補はありません'));
 });
+// 2026-11-14 利用者「各台番号をタップした際に当日のデータへ飛ぶように」：台番号はサイトのその台・対象日のページを別タブで開く。
+test('台番号はサイトのその台・対象日のページへのリンク',async()=>{
+  const {dailyRackUrl}=await import('../../share_viewer/daily_learning.mjs');
+  const now=Date.parse('2026-11-14T10:00:00+09:00');
+  assert.equal(dailyRackUrl('nagamachiminami',1162,'2026-11-14',now),'https://meruhenworld.pt.teramoba2.com/nagamachiminami/standgraph/?rack_no=1162&target_date=2026-11-14');
+  assert.equal(dailyRackUrl('saiwaichou','710','2026-11-13',now),'https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph/?rack_no=710&target_date=2026-11-13');
+  // P’s CUBE：過去の日は#に履歴の日付、今日・翌日は#なし（本日のタブ）。日本時間で決める（UTCではまだ前日の時刻）。
+  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-13',now),'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261113');
+  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-14',now),'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526');
+  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-14',Date.parse('2026-11-14T00:10:00+09:00')).includes('#'),false);
+  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-15',now).includes('#'),false);
+  for(const [store,rack,day] of [['unknown',1,'2026-11-14'],['saiwaichou',0,'2026-11-14'],['saiwaichou','1"x','2026-11-14'],['saiwaichou',1.5,'2026-11-14'],['saiwaichou',1,'11/14']])
+    assert.equal(dailyRackUrl(store,rack,day,now),null,`${store} ${rack} ${day}`);
+  const html=dailyPanel(fixture(),'nagamachiminami','2026-11-11',now);
+  // 四角全体を押せるよう、リンクのある台は li の余白をリンク側へ移す（2026-11-14 利用者「おしやすいように」）。
+  assert.ok(html.includes('<li class="daily-rack-linked"><a class="daily-rack-link" href="https://meruhenworld.pt.teramoba2.com/nagamachiminami/standgraph/?rack_no=101&amp;target_date=2026-11-11" target="_blank" rel="noopener noreferrer"'));
+  assert.ok(text(html).includes('101番'));
+  // 知らない店舗の候補はリンクにせず、台番号だけ出す。
+  const other=fixture();other.days[0].groups[0].store='other';other.days[0].groups[0].selected=[['other','','<試験>',5]];
+  const plain=dailyPanel(other,'other','2026-11-11',now);
+  assert.ok(text(plain).includes('5番')&&!plain.includes('daily-rack-link'));
+});
 // 2026-11-12：4画面で同じ順・意味にそろえた表示。保存済みの台と順番をそのまま出し、候補数は表示中の候補から数える。
 const many=()=>({format:'daily-learning',version:1,updated_at:'2026-11-12T00:30:00+09:00',
   status:'長町南：11/12の事前予測は保存済みです／幸町：処理失敗（原本DBを読めません）。従来方式を使用してください／P-STATION：取り込み待ち：P-STATIONの確定前データが残っています／同期先未設定または利用不可',
