@@ -50,10 +50,11 @@ try{
       await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});
       const placeholder=page.locator('flt-semantics-placeholder');if(await placeholder.count())await placeholder.evaluate(e=>e.click());
       await page.getByRole('button',{name:'更新・差枚の取得状況',exact:true}).click({timeout:60000});
-      await page.getByText(/差枚：2台中1台取得済み（0枚1台）・未取得1台/).waitFor();
+      await page.getByText(/スマホ補完：反映 1件/).waitFor();
       const text=await page.locator('flt-semantics').allTextContents();
-      assert.ok(text.join('\n').includes('1番 診断試験機種：差枚の通信失敗'));
-      assert.ok(text.join('\n').includes('スマホ補完：反映 1件'));
+      // P’s CUBEの差枚の取得状況（○台中○台…・未取得の台の一覧）は出さない（2026-11-15 利用者「この表記をすべてからなくしてほしい」）。
+      assert.ok(!text.join('\n').includes('取得済み（0枚'));
+      assert.ok(!text.join('\n').includes('1番 診断試験機種'));
       // 保存の診断（2026-10-31）：P’s CUBEのページも本体の大きさと読み込みの回数を出す。
       assert.match(text.join('\n'),/本体（前に読み込んだ内容・P’s CUBE）：約[\d.]+MB/);
       assert.match(text.join('\n'),/P’s CUBEの保存先：\d+項目/);
@@ -62,9 +63,8 @@ try{
     }else{
       await page.goto(`${origin}/share/index.html#s=${id}`);await page.locator('.grid').waitFor();
       await page.locator('[data-health] summary').click();
-      const health=page.locator('[data-health]');await health.getByText(/差枚：2台中1台取得済み（0枚1台）・未取得1台/).waitFor();
-      assert.match(await health.innerText(),/1番 診断試験機種：差枚の通信失敗/);
-      assert.match(await health.innerText(),/スマホ補完：反映 1件/);
+      const health=page.locator('[data-health]');await health.getByText(/スマホ補完：反映 1件/).waitFor();
+      assert.doesNotMatch(await health.innerText(),/取得済み（0枚|1番 診断試験機種/,'P’s CUBEの差枚の取得状況は出さない（2026-11-15）');
       await page.locator('[data-health-day]').selectOption(older);
       assert.equal(await page.locator('[data-health]').evaluate(e=>e.open),true);
       await page.reload();await page.locator('.grid').waitFor();await page.locator('[data-health] summary').click();

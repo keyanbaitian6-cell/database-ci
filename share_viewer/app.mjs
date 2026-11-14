@@ -1,5 +1,5 @@
 import {RECOMMENDATION_TYPE, recommendationPlans, recommendationDays, recommendationRows, recommendationFace, RECOMMENDATION_FACES, recommendationResult, recommendationResultKey, mergeRecommendationResults, recommendationNotOlder, recommendationEditMs} from './recommendations.mjs';
-import {updateStatusLines,netHealth} from './capture_health.mjs';
+import {updateStatusLines} from './capture_health.mjs';
 import {openDailyLearning, defaultDailyTarget} from './daily_learning.mjs';
 import {HISTORY_TYPES, parsePrivateHistory, historyDay, historySavedName, historyCell, historyEditKey, mergeHistoryCells, newHistoryCell} from './event_history.mjs';
 // 閲覧専用の共有ページ（お試し、2026-10-09。EVENT_CALENDAR.md「閲覧専用の共有ページ」）。
@@ -337,10 +337,8 @@ function healthDetails() {
   let lines;
   try {lines=updateStatusLines(meta.sync_status,{exportedAt:meta.exported_at,loadedAt:meta.loaded_at});}
   catch {lines=['更新工程の情報を読めません。台の記録は表示を続けます。'];}
-  const h=netHealth(records);
+  // P’s CUBEの「○台中○台差枚取得済み・未取得○台」と未取得の台の一覧は出さない（2026-11-15 利用者「この表記をすべてからなくしてほしい」）。
   const report=[`端末内の最新営業日：${days[0] || '記録なし'}`,
-    ...(site==='pscube' ? [`差枚：${h.total}台中${h.known}台取得済み（0枚${h.zero}台）・未取得${h.missing.length}台`,
-      ...h.missing.map(r=>`${r.rack}番 ${r.machine}：${r.reason}`)] : []),
     '書き出しただけではDriveへのアップロードや他の端末の読み込みは確認できません。'];
   return `<details class="card" data-health><summary>更新・差枚の取得状況</summary>
     <p>${esc(storeLabel(state.store))}</p>

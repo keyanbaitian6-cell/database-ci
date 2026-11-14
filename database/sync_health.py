@@ -61,31 +61,5 @@ def synced_status(folder, site):
         return None
 
 
-def local_net_lines(data_dir):
-    """最新日の台だけを読む。取得・DB初期化・既存データの変更はしない。"""
-    import sqlite3
-    from contextlib import closing
-    from pscube_health import net_capture_label
-    path = Path(data_dir) / 'pscube.sqlite3'
-    if not path.is_file():
-        return ['P’s CUBE：PC内の記録ファイルなし']
-    try:
-        with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=0.2)) as db:
-            rows = db.execute('''WITH days AS (
-                SELECT json_extract(payload,'$.store') AS store,json_extract(payload,'$.rate') AS rate,
-                       MAX(json_extract(payload,'$.day')) AS day FROM records GROUP BY store,rate)
-                SELECT r.payload FROM records r JOIN days d ON json_extract(r.payload,'$.store')=d.store
-                  AND json_extract(r.payload,'$.rate')=d.rate AND json_extract(r.payload,'$.day')=d.day''').fetchall()
-        records = [json.loads(r[0]) for r in rows]
-        groups = {}
-        for r in records:
-            groups.setdefault((r['store'], r['rate'], r['day']), []).append(r)
-        lines = []
-        for (store, rate, day), values in sorted(groups.items()):
-            missing = [r for r in values if type(r.get('net_medals')) is not int]
-            zero = sum(r.get('net_medals') == 0 for r in values)
-            lines.append(f'P’s CUBE（{rate}スロ） {day}：{len(values)}台中{len(values)-len(missing)}台差枚取得済み（0枚{zero}台）・未取得{len(missing)}台')
-            lines.extend(f'{r["rack"]}番 {r["machine"]}：{net_capture_label(r)}' for r in sorted(missing, key=lambda r: r['rack']))
-        return lines or ['P’s CUBE：保存済みの台なし']
-    except (sqlite3.Error, ValueError, KeyError):
-        return ['P’s CUBE：取得状況を読めませんでした（取り込み中なら、少し待って読み直してください）。']
+# P’s CUBEの「最新日の差枚取得状況」（local_net_lines）は 2026-11-15 に消した（利用者「P'SCUBEはよほどのことがないと
+# もう取り込まないと思うので…この表記をすべてからなくしてほしい」。PC・Android・閲覧ページ・共有カレンダーとも）。

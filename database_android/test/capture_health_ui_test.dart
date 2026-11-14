@@ -55,8 +55,9 @@ void main() {
           ),
         )
         .data!;
-    expect(text, contains('2台中1台取得済み（0枚1台）・未取得1台'));
-    expect(text, contains('2番 試験機種：差枚の通信失敗'));
+    // P’s CUBEの差枚の取得状況（○台中○台…・未取得の台の一覧）は出さない（2026-11-15 利用者「この表記をすべてからなくしてほしい」）。
+    expect(text, isNot(contains('取得済み（0枚')));
+    expect(text, isNot(contains('2番 試験機種')));
     expect(text, isNot(contains('3番')));
     expect(text, contains('Google側の処理：未確認'));
     expect(text, contains('この端末の読み込み：未確認'));

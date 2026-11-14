@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pscube_health import validate_net_capture, trim_net_probes, net_capture_label, viewer_net_capture
 from pscube_import import PscubeStore
-from sync_health import sync_status_lines, local_net_lines
+from sync_health import sync_status_lines
 
 
 def fixture():
@@ -57,20 +57,13 @@ class PscubeHealthTests(unittest.TestCase):
         self.assertIsNone(row['net_medals'])
         self.assertEqual(net_capture_label({**row, 'net_medals': 0}), '取得済み（0枚）')
 
-    def test_local_summary_reads_latest_day_without_altering_or_creating_database(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path=Path(tmp)/'pscube.sqlite3'
-            self.assertIn('記録ファイルなし',local_net_lines(tmp)[0])
-            self.assertFalse(path.exists())
-            with closing(PscubeStore(path)) as store:
-                data=fixture()
-                data['records'].append({**copy.deepcopy(data['records'][0]),'day':'2026-09-30','net_capture':None,'net_medals':0,'detail_url':data['records'][0]['detail_url'].replace('20261001','20260930')})
-                store.import_backup(data)
-            before=path.read_bytes()
-            lines=local_net_lines(tmp)
-            self.assertIn('1台中0台差枚取得済み',lines[0])
-            self.assertTrue(any('応答の形式不正' in line for line in lines))
-            self.assertEqual(path.read_bytes(),before)
+    def test_pc_status_window_no_longer_shows_the_pscube_net_summary(self):
+        # 2026-11-15 利用者「P’s CUBE（20スロ） 2026-11-14：289台中0台差枚取得済み…この表記をすべてからなくしてほしい」。
+        import sync_health
+        self.assertFalse(hasattr(sync_health, 'local_net_lines'))
+        source = (Path(sync_health.__file__).parent / 'backup_status_ui.py').read_text(encoding='utf-8')
+        self.assertNotIn('差枚取得状況', source)
+        self.assertNotIn('local_net_lines', source)
 
     def test_unknown_cloud_progress_is_not_reported_as_success(self):
         lines = sync_status_lines(None)

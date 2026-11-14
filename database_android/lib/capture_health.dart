@@ -453,18 +453,3 @@ List<String> updateStatusLines(
   }
   return lines;
 }
-
-/// 取り込み画面と閲覧画面で同じ区別を使う。欠測を0枚として数えない。
-List<String> netStatusLines(List<Map<String, dynamic>> records) {
-  final known = records.where((r) => r['net_medals'] is int).length;
-  final zero = records.where((r) => r['net_medals'] == 0).length;
-  final missing = records.where((r) => r['net_medals'] is! int).toList();
-  return [
-    '差枚：${records.length}台中$known台取得済み（0枚$zero台）・未取得${missing.length}台',
-    for (final r in missing)
-      '${r['rack']}番 ${r['machine']}：${netCaptureLabel(r)}',
-    if (missing.length > 200) '残り${missing.length - 200}台は別の日・機種の表示で確認してください。',
-    if (missing.isNotEmpty)
-      '元数値を受信できていれば再解析できます。元数値自体が無い場合は、更新した取得アプリでの再取得が必要です。',
-  ];
-}
