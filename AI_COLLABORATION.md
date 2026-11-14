@@ -2953,3 +2953,4 @@
 |全体ゲート|済|`check_before_build.sh` ALL PASSED（94項目）。ゲートの途中で押しやすさのCSS・liの印を足したため、`test_daily_learning`（7件）・`test_daily_learning_browser`・`test_share_viewer`（33件）・`test_share_viewer_browser` を流し直して合格|
 |共有カレンダーを公開|済|`database-share` `210b24b`（source `6ce6d8b`、版 `c8cc83ca5844`）、Pages の公開処理 `43573868561`|
 |実サイトで開くページ|未確認|利用者の操作で確認|
+- 利用者の報告（2026-11-14、公開のあと）：「開けました」。台番号のリンクから、サイトのページが開くことを利用者が確認（AIは直接確かめていない。どの店舗で試したかは聞いていない）。
