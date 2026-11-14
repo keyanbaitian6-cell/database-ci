@@ -2932,3 +2932,24 @@
 - 直し：PC本体を起動する試験7ファイル（`test_app_output_worker.py`・`test_app_shutdown.py`・`test_app_startup.py`・`test_pscube_local_report.py`・`test_rainbow_pending_review.py`・`test_shared_output_ui.py`・`test_pscube_background_sync.py`）の `patch.object(app, 'DATA_DIR', data)` の横に `patch('daily_learning_runtime.run_due', return_value=(False, None))` を足し、時刻に関係なく日次学習を動かさないようにした（10か所）。日次学習をいつ動かすかは `test_daily_learning_schedule.py` が確かめる。アプリのコードは変えていない。
 - 確認：7ファイルとも OK（16:56、保存できる時間帯の外。夜の条件そのものの再現はしていないが、直した試験は日次学習の確認を必ず「動かさない」にするので時刻によらない）。失敗したCIは再実行していない。
 - 作業コピーにある別の作業の変更（`share_viewer/daily_learning.mjs`・`share_viewer/index.html`・`database_android/tool/test_daily_learning.mjs`）には触っていない。
+
+## 2026-11-14 夕方：共有カレンダーの日次学習の候補で、台番号を押すとサイトのその台のページを開く（Claude）
+
+- 依頼：利用者「共有カレンダーに翌日候補が今出てるようになってるが、各台番号をタップした際に当日のデータへ飛ぶようにしてもらいたい。最初は認証が出ると思うが当然人が押すので問題はないです」→ AIが飛び先・対象画面・完了の条件を示し、利用者「その形でよい」。そのあと「台番タップはおしやすいようにね」「公開までお願いしますね」。
+- 対象：共有カレンダー（`share_viewer/`）の「日次学習・採用中の候補」だけ。PC・Android・iPhone閲覧ページの候補一覧は変えていない（利用者の選択）。基準コミット `e4817f4`（正本・`database-ci` の main はどちらも手元に含まれていた）。
+- 変更：
+  - `share_viewer/daily_learning.mjs`：`dailyRackUrl(store, rack, day, now)` を足し、台番号の四角を `<a target="_blank" rel="noopener noreferrer">` にした。飛び先は、ダイアログで選んでいる対象日。
+    - 長町南・幸町（メルヘン）：`https://meruhenworld.pt.teramoba2.com/<店>/standgraph/?rack_no=<台>&target_date=<YYYY-MM-DD>`（取り込みが読む台のグラフと同じ形）。
+    - P-STATION（`pscube:c740601:20`）：`https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=<台>`。対象日が今日（日本時間）より前なら `#YYYYMMDD`（取り込みの `detail_url` と同じ履歴の日付）、今日以降は#なし（本日）。
+    - 知らない店舗・不正な台番号・日付はリンクにしない（台番号だけ出す）。押したときだけ開く（先読みなし、サイトへのアクセスは増えない）。
+  - `share_viewer/index.html`：押しやすさ。リンクのある `li`（`daily-rack-linked`）の余白をリンク側へ移し、四角全体が押せる。高さ48px以上、押した瞬間に背景色、数字は青。
+  - `database_android/tool/test_daily_learning.mjs`：試験「台番号はサイトのその台・対象日のページへのリンク」を追加。
+- 未確認：実サイトでそのURLが期待どおりのページ（特にメルヘンの当日 `target_date`、P’s CUBE の#なしで「本日」）を開くかは、AIは開いていない（サイトへのアクセスを増やさない決まり）。利用者がiPhoneで押して確かめる。確認画面は利用者が押す。
+
+|要件|結果|証拠|
+|---|---|---|
+|3店舗とも台番号が正しいURLのリンク|済|`test_daily_learning.mjs` 7件合格（URL・P’s CUBEの#の有無・日本時間の境目・不正値はリンクなし・知らない店舗）|
+|四角全体が押せる・押しやすい大きさ|済|スマホ幅375pxで確認用ページを描き、リンクの大きさ＝四角の大きさ（76〜96px × 48〜60px）、`target=_blank`|
+|全体ゲート|済|`check_before_build.sh` ALL PASSED（94項目）。ゲートの途中で押しやすさのCSS・liの印を足したため、`test_daily_learning`（7件）・`test_daily_learning_browser`・`test_share_viewer`（33件）・`test_share_viewer_browser` を流し直して合格|
+|共有カレンダーを公開|済|`database-share` `210b24b`（source `6ce6d8b`、版 `c8cc83ca5844`）、Pages の公開処理 `43573868561`|
+|実サイトで開くページ|未確認|利用者の操作で確認|
