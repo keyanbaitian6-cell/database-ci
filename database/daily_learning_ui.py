@@ -9,8 +9,8 @@ import tkinter as tk
 
 from daily_learning import JST
 from daily_learning_runtime import run, FILE_NAME
-from daily_learning_view import (LOAD_ERROR, METHOD_TEXT, NAMES, daily_view, date_label, default_target,  # noqa: F401
-                                 status_parts, time_label)
+from daily_learning_view import (CHECKUP_NOTES, LOAD_ERROR, METHOD_TEXT, NAMES, checkup_view, daily_view,  # noqa: F401
+                                 date_label, default_target, status_parts, time_label)
 
 
 class DailyLearningWorker:
@@ -117,6 +117,32 @@ def show(root, data_dir, *, clock=None):
             if widget.winfo_exists():
                 widget.configure(wraplength=width)
 
+    def checkup_card(parent, name, view):
+        """点検（2026-11-14 利用者「やってみよう」）：直近14晩、予測を保存できたかと判定不能の割合。成績は出さない。"""
+        card = tk.Frame(parent, background='#ffffff', highlightbackground=line, highlightthickness=1)
+        card.pack(fill='x', padx=16, pady=6)
+        pad = tk.Frame(card, background='#ffffff')
+        pad.pack(fill='x', padx=14, pady=(10, 6))
+        label(pad, f'点検：{name}の直近{view["nights"] if view else 14}晩', 13, ink, True)
+        if view is None:
+            label(pad, '点検は、次に日次学習が動いたあとに出ます。', 10, muted, pady=(4, 6))
+            return
+        label(pad, view['summary'], 11, '#b3261e' if view['missed'] else ink, pady=(4, 6))
+        grid = tk.Frame(pad, background='#ffffff')
+        grid.pack(fill='x', anchor='w')
+        columns = 7
+        for index, cell in enumerate(view['cells']):
+            bad = cell['state'] == 'missed'
+            bg = '#fdecea' if bad else '#f2f2f4'
+            chip = tk.Frame(grid, background=bg, padx=6, pady=3)
+            chip.grid(row=index // columns, column=index % columns, sticky='nsew', padx=(0, 6), pady=(0, 6))
+            tk.Label(chip, text=cell['day'], font=(base, 9), fg=muted, bg=bg).pack()
+            tk.Label(chip, text=cell['mark'], font=(base, 14, 'bold'), fg='#b3261e' if bad else ink, bg=bg).pack()
+            tk.Label(chip, text=cell['rate'] or ' ', font=(base, 9), fg=muted, bg=bg).pack()
+        for column in range(columns):
+            grid.columnconfigure(column, minsize=64)
+        more(pad, '点検について', CHECKUP_NOTES)
+
     def render():
         for child in body.winfo_children():
             child.destroy()
@@ -179,6 +205,7 @@ def show(root, data_dir, *, clock=None):
             more(pad, '採用方式の説明・保存時刻',
                  [group['status'], METHOD_TEXT[learned], f"保存 {time_label(group['saved'])}（日本時間）"])
         name = NAMES[state['store']]
+        checkup_card(body, name, checkup_view(doc, state['store']))
         more(body, '処理状況・日次学習について',
              [f'{name}：{s}' for s in view['mine']] + view['general'] +
              ([] if view['mine'] or view['general'] else ['処理状況の記録はありません。']) +

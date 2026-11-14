@@ -2963,3 +2963,24 @@
 - 改善点として利用者に返したこと：①自由な自然言語の質問は多重比較・後付けの温床で、記録DBの成績を読むと事前登録の研究を壊す → 読める範囲を原本DBに限り、見つけた傾向は前向き検証として登録してから使う。②データは約100〜210日・3店舗で、LightGBM・StatsForecast・River・Ollama の効果は見込みが薄い。③Streamlit等の別画面は既存UIを継承する決まりと衝突。④「精度が上がった」を何で測るかが無い（日次学習の採用条件を使う）。⑤依頼文の「ファイル追加禁止」は共有記録の決まりと衝突。
 - コード・データは変えていない。
 - 追記（同日）：利用者「デメリットがないかを慎重に判断して問題なければ追加」→ `AGENTS.md` に「データの傾向を答えるときは、根拠・件数・偶然の可能性を添える」を足した。考えたデメリットと対処：①返事が長くなる → 一行に限り、対象をデータの傾向・仮説・採点や候補の良し悪しの答えだけにした（作業報告・取り込み状況には使わない）。②確かめるために見てはいけない成績を開きたくなる → 記録DBの `outcomes`・`decisions` と評価日前の研究の成績は開かない決まりが優先、と明記。③見かけの厳密さ（何度も聞いた中の偶然の「有意」）→ 何通りも比べた中の1つならそう書き、探索の結果は前向き検証の計画を固定するまで採点・候補に使わない、と明記。④サイトへのアクセス → 保存済みのデータだけ。コード・試験への影響なし（.md だけ、CIは動かない）。
+
+## 2026-11-14 夜：日次学習の「点検」をPCの窓に足した（Claude）
+
+- 依頼：利用者「学習の質を上げる方法ってあるの？」→ Claudeが、モデルを変えずに材料と保存を見張る「点検」（店舗ごと、直近14晩、予測を保存できたか ○× と、使った前日データの判定不能の割合）を提案 → 利用者「やってみよう」。出す画面は「pcだけでも質が変わらないならpcだけ」→ PCの窓だけ。成績（プラス率など）は出さない。
+- 基準コミット：`b703e09`。モデル・予測・採用判定は変えていない（版 `daily-plus-ridge-20261112-v4` のまま）。
+- 変更ファイルと方針：
+  - `database/daily_learning_runtime.py`：`checkup(journal, now)`・`input_day_rows`・`sign_counts`（`CHECKUP_NIGHTS = 14`）。各晩の状態は saved／missed（始めたあとで保存なし）／pending（今夜の保存時間帯、`prediction_target(now)` の晩）／before（`state` の start より前）。saved の晩は、その予測の入力のうち前日（`input_day`）の行だけを読み（11/12以降の分割形式は新しい塊から逆に読み、前日を見つけたら止める。古い形式は `input_sha256` の1塊）、`valid` の台数と `outcome` が None の台数を数え、記録DBの `state`（`checkup|対象日|店舗`）に控える。`export` で `document['checkup']` に入れ、失敗したら `checkup_error` に理由を書いて書き出しは続ける。
+  - `database/daily_learning_view.py`：`checkup_view(doc, store)`、`CHECKUP_MARKS`・`CHECKUP_NOTES`。上の一行「保存 n/m晩　判定不能 x%（有効な台 a台のうち b台）」（m は before と pending を除いた晩数）。形が違う・無いときは None。
+  - `database/daily_learning_ui.py`：候補カードのあと・「処理状況」の前に「点検：店舗名の直近14晩」のカード（7列×2段、×は赤、開閉式の「点検について」）。点検が無いときは「点検は、次に日次学習が動いたあとに出ます。」
+  - `database/tests/test_daily_learning_checkup.py`（新規6件）：saved／missed／before と前日だけの数え方、23:45 の今夜は待ち、`outcomes`・`decisions` を開かないことと2回目は控えを使う、新しい塊だけを読む、`export` に入り点検が壊れても書き出しは続く、画面の一行・印・割合。
+  - `DAILY_LEARNING_OPERATION.md`：「画面」に「点検（PCの窓だけ）」の節。
+- 記録DBの `outcomes`・`decisions` は開いていない（試験で `get` を見張って確かめた）。Googleの射影（`daily_learning_projection.js`・`viewer_drive_script.gs`）は決まった項目だけを作り直すので `checkup` は iPhone・Android・共有カレンダーに届かない（Google側の変更・貼替は不要）。
+
+|要件|結果|証拠|
+|---|---|---|
+|直近14晩の○×・待ち・—と判定不能の割合を数える|済|`test_daily_learning_checkup` 6件合格（`database/.venv/Scripts/python.exe -m unittest tests.test_daily_learning_checkup`）|
+|成績を開かない|済|同試験の `test_never_opens_outcomes_or_decisions_and_counts_once`|
+|PCの窓に出る|済|見本データ（8晩保存・2晩×）で `daily_learning_ui.show` を描いて写真で確認（スクラッチの見本、実データではない）|
+|PCの試験全体|済|`python -m unittest discover -s tests`（`database/`）1056件 OK。1回目は `test_rainbow_pending_review.test_failed_import_is_not_remembered_and_a_good_one_is` が1件落ち（起動時の同期の試験、日次学習と無関係）、流し直しの2回とも通った|
+|全体ゲート|対象外|APK・bin・Webのビルドはしないため流していない|
+|実際のPCの窓での表示|未確認|PCアプリが新しいコードで日次学習を1回動かしたあと（次の23:30〜8:00の保存か、取り込み窓を閉じたとき）に出る。利用者がPCで開いて確かめる|

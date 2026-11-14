@@ -546,8 +546,67 @@ def decisions(journal, today):
                 break
 
 
+# 点検（PCの日次学習の窓）：直近何晩を並べるか。
+CHECKUP_NIGHTS = 14
+
+
+def sign_counts(rows, store, day):
+    """その店・その日の有効な台の数と、符号が決まらない台（差枚もグラフも無い）の数。取り込み待ち（ready）と同じ数え方。
+    プラスかどうかは数えない（成績は出さない）。"""
+    usable = [r for r in rows if r.get('store') == store and r.get('day') == day and valid(r)]
+    return {'racks': len(usable), 'unknown': sum(1 for r in usable if outcome(r) is None)}
+
+
+def input_day_rows(journal, prediction, day):
+    """固定した入力のうち、ある日の行だけを読む。塊は（店舗, 日）の順に並ぶので、後ろ（新しい日）から探して
+    その日より古い塊に来たら止める（210日分を全部ほどかない）。2026-11-12より前の1つの塊の形にも対応する。"""
+    if 'inputs' not in prediction:
+        return [r for r in journal.get('inputs', prediction['input_sha256']) or [] if r.get('day') == day]
+    for stamp in reversed(prediction['inputs'].get('rows', [])):
+        rows = journal.get('inputs', stamp) or []
+        found = [r for r in rows if r.get('day') == day]
+        if found:
+            return found
+        if rows and str(rows[0].get('day', '')) < day:
+            break
+    return []
+
+
+def checkup(journal, now, nights=CHECKUP_NIGHTS):
+    """点検（2026-11-14 利用者「やってみよう」。学習の質はデータの質で決まるため）。店舗ごとに直近の晩について、
+    予測を保存できたか（saved・missed・pending＝まだ保存できる時間内・before＝日次学習を始める前）と、その予測に使った
+    前日データの有効な台・符号が決まらない台の数を返す。予測（predictions）と固定した入力（inputs）だけを読み、
+    成績（outcomes・decisions）は開かない。数えた結果は state に控え、同じ晩を何度も数えない。"""
+    now = jst(now)
+    open_target = prediction_target(now)
+    latest = open_target or now.date().isoformat()
+    start = journal.get('state', 'start')
+    targets = [shift(latest, -n) for n in range(nights - 1, -1, -1)]
+    stores = {}
+    for store in STORES:
+        cells = []
+        for target in targets:
+            key = target + '|' + store
+            if journal.has('predictions', key):
+                counts = journal.get('state', 'checkup|' + key)
+                if counts is None:
+                    day = shift(target, -1)
+                    counts = sign_counts(input_day_rows(journal, journal.get('predictions', key), day), store, day)
+                    with journal.db:
+                        journal.state('checkup|' + key, counts)
+                cells.append({'target': target, 'state': 'saved', **counts})
+            elif start is None or target < start:
+                cells.append({'target': target, 'state': 'before'})
+            elif target == open_target:
+                cells.append({'target': target, 'state': 'pending'})
+            else:
+                cells.append({'target': target, 'state': 'missed'})
+        stores[store] = cells
+    return {'nights': nights, 'latest': latest, 'stores': stores}
+
+
 def export(journal, data_dir, status, now, sync_dir=None):
-    targets = [k for (k,) in journal.db.execute('SELECT key FROM predictions ORDER BY key DESC LIMIT 93')]
+    targets =[k for (k,) in journal.db.execute('SELECT key FROM predictions ORDER BY key DESC LIMIT 93')]
     by_day = {}
     for target in targets:
         p = journal.get('predictions', target)
@@ -557,6 +616,11 @@ def export(journal, data_dir, status, now, sync_dir=None):
     days = [by_day[d] for d in sorted(by_day, reverse=True)[:31]]
     document = dict(format='daily-learning', version=1, updated_at=jst(now).isoformat(),
                     status=status, days=days, next_cutoff='08:00 JST', improvement='将来成績で確認するまで改善未確認')
+    # 点検はPCの窓だけで使う（GoogleのスクリプトはこれをiPhone・共有へ渡さない）。数えられなくても保存・表示は続ける。
+    try:
+        document['checkup'] = checkup(journal, now)
+    except Exception as error:     # noqa: BLE001 - 点検の失敗で予測の表示を止めない
+        document['checkup_error'] = f'{type(error).__name__}: {error}'[:200]
     if sync_dir is not None:
         # 同期先に書けなくても、PCの表示は更新する（どちらで止まったかを状態の文に残す）。
         try:

@@ -92,3 +92,43 @@ def daily_view(doc, store, target, now):
     dates = sorted({initial, target, *(d['target'] for d in doc['days'])}, reverse=True)
     return dict(groups=groups, count=sum(len(g['racks']) for g in groups), scope=scope, alerts=alerts,
                 mine=mine, general=general, updated=doc['updated_at'], dates=dates, initial=initial)
+
+
+CHECKUP_MARKS = {'saved': '○', 'missed': '×', 'pending': '待ち', 'before': '—'}
+CHECKUP_NOTES = (
+    '○＝その晩に予測を保存できた。×＝保存できなかった（PCが止まっていた・取り込み待ちのまま8:00を過ぎた など）。'
+    '待ち＝まだ保存できる時間内。—＝日次学習を始める前。',
+    '判定不能＝その晩に使った前日データで、差枚もグラフも無く、プラスかどうか決まらない台（有効な台のうち）。'
+    '学習の正解に使えない台です。取りこぼしが減るほど、学習に使えるデータが増えます。',
+    '予測と固定した入力だけで数えます。成績（プラス率）はここでは出しません。')
+
+
+def checkup_view(doc, store):
+    """PCの窓の「点検」（2026-11-14）。daily_learning_runtime.checkup の結果を、古い晩→新しい晩の順に並べる。
+    点検が無い・形が違うときは None（窓には「次の実行後に出ます」と出す）。"""
+    data = doc.get('checkup')
+    cells = (data or {}).get('stores', {}).get(store) if isinstance(data, dict) else None
+    if not isinstance(cells, list) or not cells:
+        return None
+    out, saved, expected, racks, unknown, missed = [], 0, 0, 0, 0, []
+    for c in cells:
+        state = c.get('state')
+        if state not in CHECKUP_MARKS:
+            return None
+        target = str(c.get('target', ''))
+        rate = ''
+        if state == 'saved':
+            saved += 1
+            n, u = int(c.get('racks') or 0), int(c.get('unknown') or 0)
+            racks, unknown = racks + n, unknown + u
+            rate = f'{round(100 * u / n)}%' if n else '—'
+        if state in ('saved', 'missed'):
+            expected += 1
+        if state == 'missed':
+            missed.append(target)
+        out.append(dict(day=f'{int(target[5:7])}/{int(target[8:10])}', mark=CHECKUP_MARKS[state], state=state, rate=rate))
+    summary = f'保存 {saved}/{expected}晩' if expected else '保存の記録はまだありません'
+    if racks:
+        summary += f'　判定不能 {round(100 * unknown / racks)}%（有効な台 {racks}台のうち {unknown}台）'
+    return dict(cells=out, summary=summary, saved=saved, expected=expected, racks=racks, unknown=unknown,
+                missed=missed, nights=len(out))
