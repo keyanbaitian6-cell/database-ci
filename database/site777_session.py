@@ -29,13 +29,18 @@ BACKUP_OK = 'バックアップ済み'
 # （利用者「連続5回まで」。直らない原因で3分ごとにサイトへアクセスし続けないため）。
 RESUME_DELAY = 180
 RESUME_LIMIT = 5
+# サイトが取り込み中のページを別の店（同じ機種）へ転送したとき（site_redirect）は、移動は止めたまま3分後に自動で再開する
+# （2026-11-15 利用者「移動先が別の店判定で自動停止がよくわからん。その状態で取り込むボタンおしたら普通に動き出したし。
+# 修正して」。11/15 7:36・7:44・7:45、出玉推移一覧を開くとサイトが 08009027・07014026・47005007 の店へ転送し、
+# そのたびに止まった。押し直すと普通に進んだので、転送はその場限り）。画面のリンク・利用者の操作で別の店へ移るとき
+# （転送でない移動）は、今までどおり navigation_blocked で止めたまま再開しない。
 # 停止の理由コードの呼び名（ホームのログ欄・前回の案内・カードに出す。2026-11-08 Codexの提案「画像待ちの上限」
 # 「移動失敗」「認証の確認が必要」などを区別し、PCホームにも残す）。
 REASON_LABELS = {
     'graph_retry_limit': '画像待ちの上限', 'graph_retry_storage': '画像待ち',
     'not_moved': '移動失敗（リンクで移動しない）', 'navigation_timeout': '移動失敗（読み込みが終わらない）',
     'navigation_failed': '移動失敗（ページを読み込めない）', 'login_required': 'ログインの確認が必要',
-    'navigation_blocked': '対象外のページへの移動', 'capture_error': '読み取りの失敗',
+    'navigation_blocked': '対象外のページへの移動', 'site_redirect': 'サイトが別の店へ転送', 'capture_error': '読み取りの失敗',
     'card_error': '取り込みカードの失敗', 'overlay_failed': '取り込みカードを出せない',
     'range_unknown': '次の日の機種一覧が分からない', 'user_stop': '停止ボタン', 'stopped': '停止',
 }
@@ -53,7 +58,7 @@ MAX_GRAPHLESS = 1
 DB_WAIT = 30.0
 RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
                        'graph_retry_limit', 'graph_retry_storage', 'card_error', 'overlay_failed',
-                       'range_unknown'})
+                       'range_unknown', 'site_redirect'})
 
 
 class StaleRun(ValueError):
@@ -121,6 +126,9 @@ class Session(Bridge):
         self._pending_navigation = False
         self._pending_since = 0.0
         self._blocked_navigation = False
+        # 止めた移動のURL。同じ移動の文書の読み込み（_document_allowed）で、もう一度止め直さない（止め直すと、
+        # 待っている自動の再開が取り消され、理由も「対象外のページへの移動」に上書きされていた。2026-11-15）。
+        self._blocked_url = None
         # 今の工程（読み取ったページの種類）。停止の記録に残す。
         self._stage = None
         # バックアップ・同期フォルダーへの書き出しがうまくいかなかったときの文（DBには保存済み）。完了の文に添える。
@@ -401,6 +409,7 @@ class Session(Bridge):
                 self._resume_count = 0
             self._pending_navigation = False
             self._blocked_navigation = False
+            self._blocked_url = None
             self._pace.configure(enabled, 15)
             self._epoch += 1
             self._status = '自動取り込みを開始します。' if enabled else '停止しました。'
@@ -422,6 +431,10 @@ class Session(Bridge):
             source.source_url(raw)
             return True
         except (TypeError, ValueError):
+            with self._state_lock:
+                repeat = self._blocked_navigation and raw == self._blocked_url
+            if repeat:
+                return False
             # ログイン・会員の画面（/f/P… 、ログインが切れたときにサイトが移す先）なら「ログインの確認が必要」と分けて出す
             # （2026-11-08 Codexの提案）。どちらも自動では再開しない（利用者「navigation_blocked これ以外は全て3分後」）。
             try:
@@ -436,11 +449,15 @@ class Session(Bridge):
                 # 利用者がこのあとログイン画面を開けるよう、別店舗のときの「止めたあとも守る」（_blocked_navigation）は付けない。
                 self._log.write('navigation_blocked', redirected=bool(redirected), login=True)
                 return False
+            elif redirected:
+                self.pause('サイトが別の店のページへ転送したため、移動を止めました（別の店のデータは取り込みません）。',
+                           'site_redirect')
             else:
                 self.pause('P-STATIONの20円スロット以外への移動を止めました。'
                            '対象店の画面を確認してから再開してください。自動の再取得は行いません。', 'navigation_blocked')
             with self._state_lock:
                 self._blocked_navigation = True
+                self._blocked_url = raw
             # 認証用の問い合わせは記録せず、公開の店舗・貸玉・機種コードだけ残す。
             try:
                 query = dict(source.parse_qsl(source.urlsplit(raw).query))

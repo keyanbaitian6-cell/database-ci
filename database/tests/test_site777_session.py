@@ -202,9 +202,10 @@ class SessionTest(unittest.TestCase):
                 self.epoch=self.session.configure(True,'2026-11-06')['epoch']
                 self.session.pause('止まりました。',reason)
                 self.assertIsNone(self.session.state()['resume_at'])
-        # 別店舗への移動を止めたとき（実際の守りの経路）も再開しない。
+        # 別店舗への移動を止めたとき（実際の守りの経路）も再開しない。サイトの転送（redirected）は除く
+        # （2026-11-15 利用者「修正して」。test_a_site_redirect_to_another_hall_resumes_but_a_link_there_does_not）。
         self.epoch=self.session.configure(True,'2026-11-06')['epoch']
-        self.assertFalse(self.session._navigation_starting(url('D4300').replace('04034001','23170004'),True))
+        self.assertFalse(self.session._navigation_starting(url('D4300').replace('04034001','23170004'),False))
         self.assertIsNone(self.session.state()['resume_at'])
         # 手動の取り込み（OFF）の失敗は再開しない。読み取りの失敗（ON）は再開する。
         bad=table();bad['days']=[]
@@ -435,6 +436,48 @@ class SessionTest(unittest.TestCase):
         # 利用者が明示的にOFFへ切り替えたら、通常の手動閲覧へ戻れる。
         self.session.configure(False)
         self.assertTrue(self.session._navigation_starting(bad,False))
+
+    def test_a_site_redirect_to_another_hall_resumes_but_a_link_there_does_not(self):
+        # 2026-11-15 7:36・7:44・7:45：出玉推移一覧を開くと、サイトが別の店（同じ機種）へ転送し、そのたびに
+        # 「対象外のページへの移動」で止まって自動で再開しなかった。押し直すと普通に進んだ。転送は3分後に再開する。
+        from types import SimpleNamespace
+        here,good=url('D3300'),url('D4300')
+        bad=good.replace('04034001','08009027')
+        self.session._window=SimpleNamespace(get_current_url=lambda:here)
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.assertTrue(self.session._navigation_starting(good,False))
+        self.assertFalse(self.session._navigation_starting(bad,True))
+        state=self.session.state()
+        self.assertFalse(state['enabled'])
+        self.assertIn('サイトが別の店のページへ転送',state['status'])
+        self.assertIn('自動で再開します（1/5回目',state['status'])
+        # 同じ移動の文書の読み込みも止める。止め直して再開を取り消したり、理由を上書きしたりしない。
+        self.assertFalse(self.session._document_allowed(bad))
+        self.assertFalse(self.session._navigation_starting(bad,False))
+        self.assertIsNotNone(self.session.state()['resume_at'])
+        stops=[r['reason'] for r in self.log('auto_off')]
+        self.assertEqual(stops[-1],'site_redirect')
+        self.assertEqual(stops.count('site_redirect'),1)
+        self.assertNotIn('navigation_blocked',stops)
+        self.assertFalse((self.root/'pscube.sqlite3').exists(),'別の店のデータは保存しない')
+        # 3分後に、表示中のページ（対象店）を読み込み直して続ける。守りも元に戻る。
+        self.assertEqual(self.due(),here)
+        self.assertTrue(self.session.state()['enabled'])
+        self.assertEqual(self.log('auto_resume')[-1]['reason'],'site_redirect')
+        self.assertTrue(self.session._navigation_starting(good,False))
+        self.assertFalse(self.session._navigation_starting(bad,True),'再開のあとの転送も止める')
+        self.assertIn('2/5回目',self.session.state()['status'])
+        # 転送でない移動（画面のリンク・利用者の操作）で別の店へ行くときは、今までどおり止めたまま再開しない。
+        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
+        self.assertFalse(self.session._navigation_starting(bad,False))
+        self.assertIsNone(self.session.state()['resume_at'])
+        self.assertEqual(self.log('auto_off')[-1]['reason'],'navigation_blocked')
+        # 手動の取り込み（OFF）で転送されたときは止めるだけで、自動では始めない。
+        self.epoch=self.session.configure(False)['epoch']
+        self.cycle(table())
+        self.assertFalse(self.session._navigation_starting(bad,True))
+        self.assertIsNone(self.session.state()['resume_at'])
+        self.assertFalse(self.session.state()['enabled'])
 
     def test_manual_capture_action_also_protects_its_pending_navigation(self):
         self.epoch=self.session.configure(False)['epoch']
