@@ -1,7 +1,10 @@
 import 'package:database_android/answer_check.dart';
 import 'package:database_android/list_views.dart';
+import 'package:database_android/machine_sections.dart';
 import 'package:database_android/models.dart';
 import 'package:database_android/scoring.dart';
+import 'package:database_android/viewer_bridge.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 SlotRecord rec(String day, int rack, {int bb = 10, String machine = 'A'}) =>
@@ -143,5 +146,104 @@ void main() {
       scores.where((t) => t >= answerCheckThreshold).length,
     );
     expect(result.baseHits, greaterThanOrEqualTo(result.hits.length));
+  });
+
+  // 2026-11-15 利用者「採点結果しか出てなくてタップしないとデータがわかりづらいので、機種一覧から開いたような
+  // …データ一覧を見せて欲しい」。並べる台は「前日の候補の全台」（外れた台も）。
+  test('日ごとの表には、前の日の候補のうちその日に記録がある全台を台番号順に入れる', () {
+    final saved = answerCheckFor(
+      all,
+      'nagamachiminami',
+      '2026-09-24',
+      saved: {
+        'nagamachiminami|2026-09-23': [
+          (rack: 3, index: 58.0, variety: false),
+          (rack: 1, index: 70.0, variety: false),
+          (rack: 2, index: 61.5, variety: false),
+        ],
+      },
+    )!;
+    expect(saved.rows.map((e) => e.$1.rack), [1, 2, 3], reason: '外れた2・3番台も入れる');
+    expect(saved.rows.every((e) => e.$1.day == '2026-09-24'), isTrue);
+    for (final (record, score) in saved.rows) {
+      expect(score.total, scoreRecord(record, all).total);
+    }
+    // 機種が入れ替わった台・その日に記録が無い台は、表に入れない（数字が無い）。
+    final swapped = [
+      ...history,
+      rec('2026-09-24', 1, bb: 40, machine: 'B'),
+      for (var rack = 3; rack <= 8; rack++) rec('2026-09-24', rack),
+    ];
+    final none = answerCheckFor(swapped, 'nagamachiminami', '2026-09-24')!;
+    expect((none.candidates, none.rows.length), (2, 0));
+  });
+
+  testWidgets('日ごとのカードに機種一覧と同じ表を出し、60点以上に◎、行を押すと台を開く', (tester) async {
+    tester.view.physicalSize = const Size(1200, 5000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final opened = <SlotRecord>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AnswerCheckPage(
+          records: all,
+          store: 'nagamachiminami',
+          onOpen: (record, _) => opened.add(record),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final tables = tester
+        .widgetList<MachineDataTable>(find.byType(MachineDataTable))
+        .toList();
+    final latest = tables.firstWhere(
+      (t) => t.entries.first.$1.day == '2026-09-24',
+    );
+    expect(latest.entries.map((e) => e.$1.rack), [1, 2]);
+    expect(latest.markedRacks, {1});
+    expect(latest.showMachine, isTrue);
+    expect(find.text('候補の台のこの日のデータ（台番号順・2台）'), findsWidgets);
+    expect(find.textContaining('◎＝合計60点以上'), findsWidgets);
+    final mark = find.text(' ◎').first;
+    await tester.ensureVisible(mark);
+    await tester.tap(mark);
+    expect(opened.map((r) => (r.day, r.rack)), [('2026-09-24', 1)]);
+    expect(tester.takeException(), isNull);
+  });
+
+  // 2026-11-15 利用者「並べ方もプルダウンで選べるように」。機種一覧と同じ選択肢・同じ並べ方で、全部の日の表に効く。
+  testWidgets('並べ方のプルダウンで、日ごとの表を並べ替える', (tester) async {
+    tester.view.physicalSize = const Size(1200, 5000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    addTearDown(() => saveViewerSetting(answerSortSetting, 'rack'));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AnswerCheckPage(
+          records: all,
+          store: 'nagamachiminami',
+          onOpen: (_, _) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    List<int> latestRacks() => tester
+        .widgetList<MachineDataTable>(find.byType(MachineDataTable))
+        .firstWhere((t) => t.entries.first.$1.day == '2026-09-24')
+        .entries
+        .map((e) => e.$1.rack)
+        .toList();
+    expect(latestRacks(), [1, 2]);
+    await tester.tap(find.byKey(const ValueKey('answer-check-sort')));
+    await tester.pumpAndSettle();
+    for (final label in ['台番号順', '回転数の多い順', '点数の低い順', '機種順']) {
+      expect(find.text(label), findsWidgets, reason: label);
+    }
+    await tester.tap(find.text('点数の低い順').last);
+    await tester.pumpAndSettle();
+    expect(latestRacks(), [2, 1], reason: '2番台（外れ）が先');
+    expect(find.text('候補の台のこの日のデータ（点数の低い順・2台）'), findsWidgets);
+    expect(loadViewerSetting(answerSortSetting), 'score-asc');
+    expect(tester.takeException(), isNull);
   });
 }

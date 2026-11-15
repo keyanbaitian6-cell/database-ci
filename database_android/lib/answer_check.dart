@@ -4,6 +4,9 @@ import 'viewer_pages.dart';
 
 import 'data_checks.dart';
 import 'list_views.dart';
+import 'machine_sections.dart'
+    show MachineDataTable, machineSorts, sortMachineEntries;
+import 'viewer_bridge.dart' show loadViewerSetting, saveViewerSetting;
 import 'models.dart';
 import 'scoring.dart';
 import 'shared_widgets.dart';
@@ -35,6 +38,12 @@ typedef AnswerCheckDay = ({
 
   /// 合計点の高い順。
   List<AnswerCheckHit> hits,
+
+  /// 前の日の候補のうち、この日に同じ台・同じ機種の記録がある台の、この日の記録と点数（台番号順。
+  /// 採点しなかった台も含む）。日ごとのカードに機種一覧と同じ表で出す（2026-11-15 利用者「採点結果しか
+  /// 出てなくてタップしないとデータがわかりづらいので、機種一覧から開いたような…データ一覧を見せて欲しい」、
+  /// 並べる台は「前日の候補の全台」）。
+  List<(SlotRecord, ScoreResult)> rows,
 
   /// 当時保存した候補で照らしたか（false なら、今の計算式で計算し直した候補）。
   bool saved,
@@ -116,10 +125,12 @@ AnswerCheckDay? answerCheckFor(
   }
   var scored = 0;
   final hits = <AnswerCheckHit>[];
+  final rows = <(SlotRecord, ScoreResult)>[];
   for (final c in candidates) {
     final result = results[(c.record.machine, c.record.rack)];
     if (result == null) continue;
     final score = scoreRecord(result, all);
+    rows.add((result, score));
     final total = score.total;
     if (total == null) continue;
     scored++;
@@ -131,12 +142,14 @@ AnswerCheckDay? answerCheckFor(
     final byScore = b.score.total!.compareTo(a.score.total!);
     return byScore != 0 ? byScore : a.result.rack.compareTo(b.result.rack);
   });
+  rows.sort((a, b) => a.$1.rack.compareTo(b.$1.rack));
   return (
     day: day,
     predictedOn: before,
     candidates: candidates.length,
     scored: scored,
     hits: hits,
+    rows: rows,
     saved: kept != null,
     baseScored: baseScored,
     baseHits: baseHits,
@@ -169,8 +182,29 @@ class AnswerCheckPage extends StatefulWidget {
   State<AnswerCheckPage> createState() => _AnswerCheckPageState();
 }
 
+/// 答え合わせの表の並べ方を覚える名前（機種一覧の 'machine-sort' とは別に覚える）。
+const answerSortSetting = 'answer-check-sort';
+
+/// 答え合わせの表の並べ方の呼び名。機種一覧と同じ（候補は機種が混ざるので機種順も出す）。
+/// 差枚の呼び名は記録に合わせる（メルヘンは推定差枚、P’s CUBEは差枚）。
+Map<String, String> answerSortLabels(List<(SlotRecord, ScoreResult)> rows) {
+  final netLabel = rows.firstOrNull?.$1.netLabel ?? '差枚';
+  return {
+    for (final e in machineSorts.entries)
+      e.key: e.value.replaceFirst('差枚', netLabel),
+  };
+}
+
 class _AnswerCheckPageState extends State<AnswerCheckPage> {
   late String _store = widget.store;
+
+  /// 表の並べ方（2026-11-15 利用者「並べ方もプルダウンで選べるように」）。全部の日のカードで共通。
+  /// 選んだ並べ方は端末に覚える（機種一覧と同じ。閲覧ページはブラウザ）。
+  String get _sort {
+    final saved = loadViewerSetting(answerSortSetting);
+    return saved != null && machineSorts.containsKey(saved) ? saved : 'rack';
+  }
+
   var _days = <String>[];
   final _results = <AnswerCheckDay>[];
   var _run = 0;
@@ -293,6 +327,27 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
                 savedDays: savedDays,
               ),
               const SizedBox(height: 14),
+              // 日ごとの表の並べ方（機種一覧と同じプルダウン）。
+              DropdownButtonFormField<String>(
+                key: const ValueKey('answer-check-sort'),
+                initialValue: _sort,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: '並べ方',
+                  isDense: true,
+                ),
+                items: [
+                  for (final e in answerSortLabels(
+                    _results.firstOrNull?.rows ?? const [],
+                  ).entries)
+                    DropdownMenuItem(value: e.key, child: Text(e.value)),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => saveViewerSetting(answerSortSetting, value));
+                },
+              ),
+              const SizedBox(height: 12),
               if (_selectedDay != null &&
                   !_results.any((d) => d.day == _selectedDay))
                 const Padding(
@@ -302,7 +357,7 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
               for (final day in _results.where(
                 (d) => _selectedDay == null || d.day == _selectedDay,
               )) ...[
-                _DayCard(result: day, onOpen: widget.onOpen),
+                _DayCard(result: day, onOpen: widget.onOpen, sort: _sort),
                 const SizedBox(height: 12),
               ],
             ],
@@ -369,8 +424,15 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
 }
 
 class _DayCard extends StatelessWidget {
-  const _DayCard({required this.result, required this.onOpen});
+  const _DayCard({
+    required this.result,
+    required this.onOpen,
+    this.sort = 'rack',
+  });
   final AnswerCheckDay result;
+
+  /// 表の並べ方（[machineSorts] の鍵）。
+  final String sort;
   final void Function(SlotRecord record, ScoreResult score) onOpen;
 
   @override
@@ -455,6 +517,35 @@ class _DayCard extends StatelessWidget {
                       const Icon(Icons.chevron_right, color: AppColors.mist),
                     ],
                   ),
+                ),
+              ),
+            // 候補の全台のこの日の数字を、機種一覧と同じ表で出す（2026-11-15 利用者「タップしないとデータが
+            // わかりづらいので、機種一覧から開いたような…データ一覧を見せて欲しい」「前日の候補の全台」）。
+            if (result.rows.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                '候補の台のこの日のデータ（${answerSortLabels(result.rows)[sort] ?? '台番号順'}・${result.rows.length}台）',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              MachineDataTable(
+                entries: sortMachineEntries(result.rows, sort),
+                onTap: onOpen,
+                showMachine: true,
+                markedRacks: {for (final hit in hits) hit.result.rack},
+                markLegend: '合計${answerCheckThreshold ~/ 1}点以上',
+              ),
+            ],
+            if (result.candidates > result.rows.length)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'この日の記録が無い候補${result.candidates - result.rows.length}台は表にありません'
+                  '（取り込んでいない台・機種が入れ替わった台）。',
+                  style: const TextStyle(fontSize: 11, color: AppColors.ash),
                 ),
               ),
           ],

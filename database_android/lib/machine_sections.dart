@@ -417,8 +417,15 @@ class MachineDataTable extends StatelessWidget {
     this.longTrendRacks = const {},
     this.showMachine = false,
     this.suffixDigit,
+    this.markedRacks = const {},
+    this.markLegend,
   });
   final List<(SlotRecord, ScoreResult)> entries;
+
+  /// 台番号に ◎ を付ける台と、その説明（答え合わせの表の「合計60点以上」。2026-11-15）。
+  /// ★☆（翌日候補の印）とは別の意味なので、別の印にする。
+  final Set<int> markedRacks;
+  final String? markLegend;
   final void Function(SlotRecord record, ScoreResult score) onTap;
   final void Function(SlotRecord record)? onLongPress;
   final Set<int> candidateRacks;
@@ -590,6 +597,11 @@ class MachineDataTable extends StatelessWidget {
                       candidateRacks.contains(entries[i].$1.rack) ? ' ★' : ' ☆',
                       style: TextStyle(color: AppColors.linkBlue, fontSize: 13),
                     ),
+                  if (markedRacks.contains(entries[i].$1.rack))
+                    Text(
+                      ' ◎',
+                      style: TextStyle(color: AppColors.linkBlue, fontSize: 13),
+                    ),
                   if (suffixDigit != null &&
                       rackSuffix(entries[i].$1.rack) == suffixDigit)
                     SuffixMark(suffixDigit!),
@@ -755,6 +767,7 @@ class MachineDataTable extends StatelessWidget {
               '※＝グラフだけでは縦軸の目盛りを決めきれず、回転数から選び直した推定（要確認）',
             if (candidateRacks.isNotEmpty || longTrendRacks.isNotEmpty)
               '★＝$referenceCandidateLegend',
+            if (markedRacks.isNotEmpty && markLegend != null) '◎＝$markLegend',
           ].join('・'),
           style: const TextStyle(fontSize: 11, color: AppColors.ash),
         ),
