@@ -59,11 +59,21 @@ class PscubeHealthTests(unittest.TestCase):
 
     def test_pc_status_window_no_longer_shows_the_pscube_net_summary(self):
         # 2026-11-15 利用者「P’s CUBE（20スロ） 2026-11-14：289台中0台差枚取得済み…この表記をすべてからなくしてほしい」。
+        # ソースの文字ではなく、窓に出す文そのもので確かめる（2026-11-15 レビュー）。差枚が未取得の台を保存してあっても出さない。
         import sync_health
+        from types import SimpleNamespace
+        from backup_status_ui import BackupStatusPanel
         self.assertFalse(hasattr(sync_health, 'local_net_lines'))
-        source = (Path(sync_health.__file__).parent / 'backup_status_ui.py').read_text(encoding='utf-8')
-        self.assertNotIn('差枚取得状況', source)
-        self.assertNotIn('local_net_lines', source)
+        with tempfile.TemporaryDirectory() as tmp:
+            with closing(PscubeStore(Path(tmp) / 'pscube.sqlite3')) as store:
+                store.import_backup(fixture())
+            panel = SimpleNamespace(_busy=False, folder=lambda: None, data_dir=tmp,
+                                    source_text=lambda source: f'{source}の書き出し：試験')
+            text = BackupStatusPanel.details_text(panel)
+        self.assertIn('pscubeの書き出し：試験', text)
+        self.assertIn('同期フォルダ：未設定', text)
+        for gone in ('差枚取得状況', '差枚取得済み', '未取得', '応答の形式不正'):
+            self.assertNotIn(gone, text)
 
     def test_unknown_cloud_progress_is_not_reported_as_success(self):
         lines = sync_status_lines(None)

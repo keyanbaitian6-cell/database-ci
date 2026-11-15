@@ -1067,7 +1067,6 @@ class _ViewerHomeState extends State<ViewerHome> {
                 checkedAt: _checkedAt?.toIso8601String(),
                 store: store,
                 day: day,
-                pscube: data.source == 'pscube',
                 deviceLines: [
                   '表示中の記録：${data.records.length}件・'
                       '${{for (final r in data.records) r.day}.length}日分',

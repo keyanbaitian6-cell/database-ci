@@ -38,7 +38,6 @@ void main() {
                 records: records,
                 store: 'pscube:c740601:20',
                 day: '2026-10-23',
-                pscube: true,
               ),
               child: const Text('開く'),
             ),

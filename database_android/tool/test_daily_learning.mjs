@@ -50,7 +50,11 @@ test('台番号はサイトのその台・対象日のページへのリンク',
   assert.equal(site777('2026-11-15'),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=0&dn=1286','翌日の分は今日の分を開く');
   assert.equal(site777('2026-11-13',Date.parse('2026-11-14T02:30:00+09:00')),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=0&dn=1286','3時までは前の営業日');
   assert.equal(site777('2026-11-08'),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=6&dn=1286');
-  assert.equal(site777('2026-11-07'),null,'サイトが見せる7日分より古い日はリンクにしない');
+  // サイトが見せるのは8日分（0〜7日前。2026-11-07 に利用者の窓で 10/30〜11/6 を確認。PCの取り込みと同じ）。2026-11-15 レビューで7日分から直した。
+  assert.equal(site777('2026-11-07'),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=7&dn=1286');
+  assert.equal(site777('2026-11-06'),null,'サイトが見せる8日分より古い日はリンクにしない');
+  // 形だけ合う実在しない日は、dtdd=NaN のリンクにしない（2026-11-15 レビュー）。
+  for(const day of ['2026-13-01','2026-11-00','2026-00-10']) assert.equal(site777(day),null,day);
   assert.equal(dailyRackUrl('pscube:c740601:20',1287,'2026-11-14',now,models),null,'機種の番号が分からない台はリンクにしない');
   assert.equal(dailyRackUrl('pscube:c740601:20',1286,'2026-11-14',now),null);
   assert.ok(!site777('2026-11-14').includes('pscube.jp'),'P’s CUBEへは飛ばさない');
@@ -68,6 +72,16 @@ test('台番号はサイトのその台・対象日のページへのリンク',
   const pstation=fixture();pstation.days[0].groups[0].store='pscube:c740601:20';pstation.days[0].groups[0].selected=[['pscube:c740601:20','20','試験',1286]];
   const linked=dailyPanel(pstation,'pscube:c740601:20','2026-11-11',now,undefined,[{store:'pscube:c740601:20',rack:1286,day:'2026-11-12',model_code:'120141'}]);
   assert.ok(linked.includes('href="https://m.site777.jp/f/D4000.do?pmc=04034001&amp;mdc=120141&amp;dtdd=3&amp;dn=1286"'),linked);
+  assert.ok(linked.includes('aria-label="1286番の11月11日（水）のデータをサイトで開く"'),linked);
+  // 翌日候補（対象日が今日より先）は今日の分を開くので、読み上げの文も今日の日付にする（2026-11-15 レビュー）。
+  Object.assign(pstation.days[0],{target:'2026-11-15',input_day:'2026-11-14',saved_at:'2026-11-14T23:45:00+09:00'});
+  const tomorrow=dailyPanel(pstation,'pscube:c740601:20','2026-11-15',now,undefined,[{store:'pscube:c740601:20',rack:1286,day:'2026-11-12',model_code:'120141'}]);
+  assert.ok(tomorrow.includes('dtdd=0&amp;dn=1286'),tomorrow);
+  assert.ok(tomorrow.includes('aria-label="1286番の11月14日（土）のデータをサイトで開く"'),tomorrow);
+  const {dailyRackLinkDay}=await import('../../share_viewer/daily_learning.mjs');
+  assert.equal(dailyRackLinkDay('pscube:c740601:20','2026-11-15',now),'2026-11-14');
+  assert.equal(dailyRackLinkDay('pscube:c740601:20','2026-11-12',now),'2026-11-12');
+  assert.equal(dailyRackLinkDay('saiwaichou','2026-11-15',now),'2026-11-15','メルヘンは対象日のページを開く');
   for(const [store,rack,day] of [['unknown',1,'2026-11-14'],['saiwaichou',0,'2026-11-14'],['saiwaichou','1"x','2026-11-14'],['saiwaichou',1.5,'2026-11-14'],['saiwaichou',1,'11/14']])
     assert.equal(dailyRackUrl(store,rack,day,now),null,`${store} ${rack} ${day}`);
   const html=dailyPanel(fixture(),'nagamachiminami','2026-11-11',now);

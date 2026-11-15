@@ -477,6 +477,17 @@ class Session(Bridge):
             return False
         if uri.hostname != 'm.site777.jp' or uri.path not in source.PATHS:
             return True
+        with self._state_lock:
+            blocked = self._blocked_navigation
+        if blocked:
+            # すでに止めてあるときは、読み込みを通さないだけで止め直さない（2026-11-15 レビュー）。文書の読み込みのURLは
+            # 画面の移動（NavigationStarting）のURLと文字が一致する保証がなく、止め直すと待っている自動の再開が取り消され、
+            # 理由も「対象外のページへの移動」に上書きされる。止める理由は画面の移動の側だけで決める。
+            try:
+                source.source_url(raw)
+                return True
+            except (TypeError, ValueError):
+                return False
         return self._navigation_starting(raw)
 
     def pause(self, message=None, reason=None, retries=None):

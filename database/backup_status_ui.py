@@ -46,6 +46,21 @@ class BackupStatusPanel(ttk.Frame):
         # 別プロセスの取り込みブラウザが出した結果も、DBを開き直さず読む。
         self._job = self._timer_root.after(1000, self.refresh)
 
+    def details_text(self):
+        """「共有用ファイルの更新状況」の窓の文（試験で中身を確かめられるよう、窓から分けた。2026-11-15 レビュー）。"""
+        # P’s CUBEの最新日の差枚の取得状況（○台中○台…）は出さない（2026-11-15 利用者「P'SCUBEはよほどのことがないと
+        # もう取り込まないと思うので…この表記をすべてからなくしてほしい」）。
+        return (('共有用ファイルの更新待ち・書き出し中です。以下は前回までの結果です。\n\n' if self._busy else '') +
+                'PCから共有フォルダへの書き出しと、同期フォルダに届いたGoogle側の処理情報を分けて表示します。\n'
+                'Googleドライブへのアップロード完了や、iPhoneでの読み込み完了は確認していません。\n\n'
+                f'同期フォルダ：{self.folder() or "未設定"}\n\n' +
+                '\n\n'.join(self.source_text(source) for source in ('meruhen', 'pscube')) +
+                '\n\nGoogle側の状況（同期フォルダに届いた情報。最新とは限りません）\n' +
+                '\n\n'.join(('長町南・幸町' if source == 'meruhen' else 'P’s CUBE') + '\n' +
+                            '\n'.join(sync_status_lines(synced_status(self.folder(), source)))
+                            for source in ('meruhen', 'pscube')) +
+                '\n\n' + '\n'.join(recording_status_lines(self.data_dir)))
+
     def show_details(self):
         window = tk.Toplevel(self)
         window.title('共有用ファイルの更新状況')
@@ -55,17 +70,7 @@ class BackupStatusPanel(ttk.Frame):
         def read_details():
             text.configure(state='normal')
             text.delete('1.0', 'end')
-            text.insert('end', ('共有用ファイルの更新待ち・書き出し中です。以下は前回までの結果です。\n\n' if self._busy else '') +
-                        'PCから共有フォルダへの書き出しと、同期フォルダに届いたGoogle側の処理情報を分けて表示します。\n'
-                        'Googleドライブへのアップロード完了や、iPhoneでの読み込み完了は確認していません。\n\n'
-                        f'同期フォルダ：{self.folder() or "未設定"}\n\n' +
-                        '\n\n'.join(self.source_text(source) for source in ('meruhen', 'pscube')) +
-                        '\n\nGoogle側の状況（同期フォルダに届いた情報。最新とは限りません）\n' +
-                        '\n\n'.join(('長町南・幸町' if source=='meruhen' else 'P’s CUBE')+'\n'+
-                          '\n'.join(sync_status_lines(synced_status(self.folder(),source))) for source in ('meruhen','pscube')) +
-                        '\n\n'+ '\n'.join(recording_status_lines(self.data_dir)))
-            # P’s CUBEの最新日の差枚の取得状況（○台中○台…）は出さない（2026-11-15 利用者「P'SCUBEはよほどのことがないと
-            # もう取り込まないと思うので…この表記をすべてからなくしてほしい」）。
+            text.insert('end', self.details_text())
             text.configure(state='disabled')
         read_details()
         buttons = ttk.Frame(window)

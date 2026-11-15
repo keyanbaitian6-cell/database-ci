@@ -455,6 +455,11 @@ class SessionTest(unittest.TestCase):
         self.assertFalse(self.session._document_allowed(bad))
         self.assertFalse(self.session._navigation_starting(bad,False))
         self.assertIsNotNone(self.session.state()['resume_at'])
+        # 文書の読み込みのURLが画面の移動のURLと文字で違っても（#・%の書き方・問い合わせの順）、止め直さない（2026-11-15 レビュー）。
+        for variant in (bad+'#x',bad.replace('dtdd=','%64tdd='),bad.replace('pmc=08009027&','')+'&pmc=08009027'):
+            self.assertFalse(self.session._document_allowed(variant),variant)
+        self.assertTrue(self.session._document_allowed(good),'止めている間も対象店の文書は通す')
+        self.assertIsNotNone(self.session.state()['resume_at'])
         stops=[r['reason'] for r in self.log('auto_off')]
         self.assertEqual(stops[-1],'site_redirect')
         self.assertEqual(stops.count('site_redirect'),1)

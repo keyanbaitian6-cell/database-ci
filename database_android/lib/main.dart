@@ -296,7 +296,6 @@ class AppShell extends StatelessWidget {
                           },
                         ],
                       },
-                pscube: false,
               ),
               'storage' => Navigator.of(context).push(
                 MaterialPageRoute<void>(

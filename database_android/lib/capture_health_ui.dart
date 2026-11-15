@@ -21,9 +21,7 @@ Future<void> showCaptureHealth(
   String? checkedAt,
   String? store,
   String? day,
-  // P’s CUBEの画面から開いたとき。2026-11-15から差枚の取得状況の行を出さなくなったので、今は表示を変えない
-  // （呼び出し元はそのまま渡してよい）。
-  bool pscube = false,
+  // 以前の pscube（P’s CUBEの画面から開いたときだけ差枚の取得状況を出す）は、その行を 2026-11-15 に消したので外した。
   // 閲覧ページだけ：この端末の保存の診断（viewer_main.dart）。Androidアプリでは空。
   List<String> deviceLines = const [],
 }) async {

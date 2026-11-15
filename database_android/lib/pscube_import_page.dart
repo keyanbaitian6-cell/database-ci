@@ -1352,7 +1352,6 @@ class _PscubeImportPageState extends State<PscubeImportPage>
         records: rows,
         syncStatus: status,
         day: rows.isEmpty ? _targetDay : rows.first['day'] as String,
-        pscube: true,
       );
     } catch (error) {
       if (mounted) setState(() => _status = '取得状況を読めませんでした：$error');
