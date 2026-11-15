@@ -1021,7 +1021,7 @@ def main():
         capture_windows[:] = [p for p in capture_windows if p.poll() is None]
         return bool(capture_windows)
 
-    def watch_capture_window(process, label, take_message, after_auto=None, take_stop=None):
+    def watch_capture_window(process, label, take_message, after_auto=None, take_stop=None, after_close=None):
         """自動取り込みが全部終わると取り込み窓は自分で閉じる（2026-10-30、サイトへの接続を止めるため）。
         窓のプロセスが終わったら、その結果をログ欄に出す。自動で閉じたとき（結果の文がある）は after_auto も呼ぶ。"""
         capture_windows.append(process)
@@ -1048,6 +1048,8 @@ def main():
             logbox.see('end')
             if message and after_auto is not None:
                 after_auto(message)
+            if after_close is not None:
+                after_close()
             # 自動で閉じたときに加え、手で閉じたときも、ほかに取り込み窓が無ければ日次学習を動かす（2026-11-12。
             # 0時〜7時半に取り込みを終えて×で閉じ、朝7:30より前にPCを消すと、その日の予測が保存されなかった）。
             # 途中で閉じたデータは、台数・取り込み時刻の確認（ready）が「取り込み待ち」にする。
@@ -1147,6 +1149,7 @@ def main():
             else:
                 command = [sys.executable, str(ROOT / 'browser_import.py'),
                            str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports')]
+            since = datetime.now().astimezone().isoformat(timespec='seconds')
             process = subprocess.Popen(
                 command,
                 cwd=str(ROOT))
@@ -1163,7 +1166,19 @@ def main():
             import browser_import
             return browser_import.take_finished_message(DATA_DIR)
 
-        watch_capture_window(process, 'メルヘン', meruhen_message)
+        def meruhen_forward_note():
+            # メルヘンの前向き検証（店舗別の候補比較）の記録の様子を1行出す。自動で閉じても×で閉じても出す（2026-11-16 利用者
+            # 「ちょっときになるからメルヘンも出すようにして」）。研究用の確認なので、失敗しても取り込みの画面は止めない。
+            try:
+                note = forward_validation.meruhen_note(DATA_DIR, since)
+            except Exception as error:  # noqa: BLE001 - the notice is only a convenience
+                error_log.record(DATA_DIR, 'forward.meruhen_note', error)
+                return
+            if note:
+                logbox.insert('end', note + '\n')
+                logbox.see('end')
+
+        watch_capture_window(process, 'メルヘン', meruhen_message, after_close=meruhen_forward_note)
 
     anaslo_process = [None]
 

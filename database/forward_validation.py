@@ -141,3 +141,82 @@ def start(label, message, data_dir, report, *, outputs=None, python=None, now=No
                     name='forward-validation', daemon=True)
     worker.start()
     return None
+
+
+MERUHEN_STORES = (('nagamachiminami', '長町南'), ('saiwaichou', '幸町'))
+SHADOW_CUTOFF_HOUR = 8
+
+
+def _read_only(path: Path):
+    import sqlite3
+    return sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True, timeout=1)
+
+
+def meruhen_note(data_dir, since: str, now: dt.datetime | None = None) -> str | None:
+    """メルヘンの取り込み窓が閉じたとき、記録欄に出す1行（2026-11-16 利用者「ちょっときになるからメルヘンも出すようにして」）。
+
+    メルヘン（長町南・幸町）が入る前向き検証は、店舗別の候補比較（NEXT_DAY_SHADOW_PLAN_20261025.md）の入力の版の記録で、
+    PCがDBを開いている間に自動でたまる（input_versions.py）。この窓で取り込んだ日（since 以降に版が記録された日）ごとに、
+    締切（翌日の朝8時、日本時間）より前に版がある台の数を、その日の台数と並べて出す。成績は読まない。
+    取り込んだ日が無ければ None。読めないときは理由の文。"""
+    import contextlib
+    import sqlite3
+    data_dir = Path(data_dir)
+    now = (now or dt.datetime.now(JST)).astimezone(JST)
+    main, log = data_dir / 'database.sqlite3', data_dir / 'input_versions.sqlite3'
+    try:
+        keys: dict[str, dict[str, str]] = {}   # 日 → {台のキー: いちばん早い記録の時刻}
+        touched = set()
+        # 取り込む日はサイトが見せる範囲（メルヘンは数日）なので、窓を開いた日の60日前より古い日は見ない（日の索引で速く引く）。
+        oldest = (dt.datetime.fromisoformat(since).date() - dt.timedelta(days=60)).isoformat()
+        sources = []
+        if log.is_file():
+            sources.append((log, "SELECT key,day,saved_at FROM versions WHERE source='meruhen' AND day IN ({days})",
+                            "SELECT DISTINCT day FROM versions WHERE source='meruhen' AND day>=? AND saved_at>=?"))
+        if main.is_file():
+            sources.append((main, "SELECT key,day,saved_at FROM iv_outbox WHERE key<>'' AND day IN ({days})",
+                            "SELECT DISTINCT day FROM iv_outbox WHERE key<>'' AND day>=? AND saved_at>=?"))
+        for path, _rows, recent in sources:
+            with contextlib.closing(_read_only(path)) as db:
+                try:
+                    touched |= {r[0] for r in db.execute(recent, (oldest, since))}
+                except sqlite3.OperationalError:
+                    continue   # 記録をまだ始めていないDB（iv_outbox が無い）
+        if not touched:
+            return None
+        days = sorted(touched)[-3:]
+        marks = ','.join('?' * len(days))
+        for path, rows, _recent in sources:
+            with contextlib.closing(_read_only(path)) as db:
+                try:
+                    for key, day, saved in db.execute(rows.format(days=marks), days):
+                        first = keys.setdefault(day, {})
+                        if key not in first or saved < first[key]:
+                            first[key] = saved
+                except sqlite3.OperationalError:
+                    continue
+        totals = {}
+        if main.is_file():
+            with contextlib.closing(_read_only(main)) as db:
+                for store, day, count in db.execute(
+                        f'SELECT store,day,COUNT(*) FROM days WHERE day IN ({marks}) GROUP BY store,day', days):
+                    totals[(store, day)] = count
+    except (sqlite3.Error, OSError) as error:
+        return f'前向き検証（メルヘン）：記録を確かめられませんでした（{type(error).__name__}）'
+    parts = []
+    for day in days:
+        cutoff = dt.datetime.fromisoformat(day).replace(tzinfo=JST) + dt.timedelta(days=1, hours=SHADOW_CUTOFF_HOUR)
+        stores = []
+        for store, label in MERUHEN_STORES:
+            total = totals.get((store, day), 0)
+            if not total:
+                continue
+            done = sum(1 for key, saved in keys.get(day, {}).items()
+                       if key.startswith(store + '\t') and dt.datetime.fromisoformat(saved) < cutoff)
+            stores.append(f'{label} {done}/{total}台')
+        when = f'{cutoff.month}/{cutoff.day} {cutoff.hour}:00'
+        state = (f'締切（{when}）より前に記録' if now < cutoff else
+                 f'締切（{when}）までに記録した台だけが比較に入ります')
+        stamp = f'{int(day[5:7])}/{int(day[8:10])}分'
+        parts.append(f'{stamp}：' + ('・'.join(stores) or '台の記録なし') + f'（{state}）')
+    return '前向き検証（メルヘン・店舗別の候補比較）：' + ' / '.join(parts)

@@ -1,4 +1,5 @@
 """取り込みが最後まで終わって窓が自分で閉じたときだけ、P-STATIONの前向き検証を自動で保存する（2026-11-09 利用者）。"""
+import contextlib
 import datetime as dt
 import subprocess
 import sys
@@ -171,6 +172,64 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn("after_auto=lambda message: save_forward_after('サイトセブン', message)", source)
         self.assertIn("after_auto=lambda message: after_pscube(message, since)", source)
         self.assertIn("save_forward_after('P’s CUBE', message)\n        sleep_after_pscube(message, since)", source)
+
+    def test_app_shows_the_meruhen_note_when_the_meruhen_window_closes(self):
+        source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
+        self.assertIn("watch_capture_window(process, 'メルヘン', meruhen_message, after_close=meruhen_forward_note)", source)
+        self.assertIn('note = forward_validation.meruhen_note(DATA_DIR, since)', source)
+        self.assertIn('if after_close is not None:\n                after_close()', source)
+
+
+class MeruhenNoteTest(unittest.TestCase):
+    """メルヘンの取り込み窓が閉じたら、店舗別の候補比較の記録の様子を1行出す（2026-11-16 利用者「メルヘンも出すようにして」）。"""
+
+    def setUp(self):
+        import sqlite3
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        with contextlib.closing(sqlite3.connect(self.dir / 'database.sqlite3')) as db, db:
+            db.execute('CREATE TABLE days (store TEXT, day TEXT, machine TEXT, rack INTEGER, payload TEXT, PRIMARY KEY(store,day,machine,rack))')
+            db.execute('CREATE TABLE iv_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, day TEXT, saved_at TEXT NOT NULL, confirmed_at TEXT, kind TEXT NOT NULL, content TEXT)')
+            for store, rack in (('nagamachiminami', 1), ('nagamachiminami', 2), ('saiwaichou', 7)):
+                db.execute("INSERT INTO days VALUES(?, '2026-11-15', 'A', ?, '{}')", (store, rack))
+        with contextlib.closing(sqlite3.connect(self.dir / 'input_versions.sqlite3')) as db, db:
+            db.execute('CREATE TABLE versions (id INTEGER PRIMARY KEY, source TEXT NOT NULL, key TEXT NOT NULL, day TEXT, saved_at TEXT NOT NULL, kind TEXT NOT NULL, content TEXT)')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def put(self, table, store, rack, saved, source='meruhen'):
+        import sqlite3
+        key = f'{store}\t2026-11-15\tA\t{rack}'
+        with contextlib.closing(sqlite3.connect(self.dir / table[0])) as db, db:
+            if table[1] == 'versions':
+                db.execute("INSERT INTO versions(source,key,day,saved_at,kind) VALUES(?,?,'2026-11-15',?,'write')", (source, key, saved))
+            else:
+                db.execute("INSERT INTO iv_outbox(key,day,saved_at,kind) VALUES(?,'2026-11-15',?,'write')", (key, saved))
+
+    LOG, OUTBOX = ('input_versions.sqlite3', 'versions'), ('database.sqlite3', 'iv_outbox')
+
+    def test_counts_racks_recorded_before_the_8am_cutoff_from_the_log_and_the_pending_rows(self):
+        self.put(self.LOG, 'nagamachiminami', 1, '2026-11-15T23:36:30.874548+09:00')
+        self.put(self.LOG, 'nagamachiminami', 1, '2026-11-16T00:01:00.000000+09:00')   # 同じ台の2回目は1台
+        self.put(self.OUTBOX, 'nagamachiminami', 2, '2026-11-15T23:40:00.000000+09:00')  # まだ転送前の行も数える
+        self.put(self.LOG, 'saiwaichou', 7, '2026-11-15T23:50:00.000000+09:00')
+        self.put(self.LOG, 'saiwaichou', 7, '2026-11-15T23:50:00.000000+09:00', source='pscube')  # P’s CUBEの記録は見ない
+        note = fv.meruhen_note(self.dir, '2026-11-15T23:30:00+09:00', at(0, 30, day=16))
+        self.assertEqual(note, '前向き検証（メルヘン・店舗別の候補比較）：11/15分：長町南 2/2台・幸町 1/1台（締切（11/16 8:00）より前に記録）')
+
+    def test_after_the_cutoff_only_racks_recorded_in_time_count(self):
+        self.put(self.LOG, 'nagamachiminami', 1, '2026-11-16T07:59:59.000000+09:00')
+        self.put(self.LOG, 'nagamachiminami', 2, '2026-11-16T08:00:00.000000+09:00')
+        note = fv.meruhen_note(self.dir, '2026-11-16T07:00:00+09:00', at(8, 5, day=16))
+        self.assertEqual(note, '前向き検証（メルヘン・店舗別の候補比較）：11/15分：長町南 1/2台・幸町 0/1台（締切（11/16 8:00）までに記録した台だけが比較に入ります）')
+
+    def test_nothing_recorded_while_the_window_was_open_shows_nothing(self):
+        self.put(self.LOG, 'nagamachiminami', 1, '2026-11-15T23:36:30+09:00')
+        self.assertIsNone(fv.meruhen_note(self.dir, '2026-11-16T01:00:00+09:00', at(1, 5, day=16)))
+
+    def test_missing_files_show_nothing(self):
+        self.assertIsNone(fv.meruhen_note(self.dir / 'none', '2026-11-16T01:00:00+09:00', at(1, 5, day=16)))
 
 
 if __name__ == '__main__':
