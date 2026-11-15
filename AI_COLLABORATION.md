@@ -3146,3 +3146,10 @@
 | 実際のPC画面に出るか | 未確認 | 次にメルヘンの取り込み窓を閉じたときに、利用者の画面で確かめる |
 
 - 全体ゲートは流していない（PCのPythonだけの小さな変更なので、決まりどおりPCの試験の全体だけ）。PCは `start.cmd` から起動し直すと反映される。
+
+## 2026-11-16 0時台：片付け（`debug.log`・古い作業ツリー `C:\w\s777wt`）（Claude）
+
+- 利用者「７はかたづけていいよ」（直前に Claude が「気になること」の7番として挙げた2つ）。
+- `debug.log`（作業フォルダの直下、未追跡、11/13 の3KB）：WebView2・Chromium の警告（DNS設定・Vulkan）だけだったので、Windowsのごみ箱へ移した（元に戻せる）。
+- `C:\w\s777wt`（`deada68` の切り離した作業ツリー）：コミットしていない変更が8ファイルにあった（`AGENTS.md`・`database/assets/site777_overlay.js`・`database/site777_browser.py`・`database/site777_session.py`・`database/tests/smoke_site777_session.py`・`database/tests/test_site777_browser.py`・`database/tests/test_site777_session.py`・`database_android/tool/test_site777_capture_browser.mjs`）。中身は 11/8 の「今の営業日（営業中）を取り込むときは確認する」（`today`・`today_ok`）の途中の版で、足した行（30文字以上）268行のうち234行は今の main にそのまま有る。無い34行はこの確認の古い文言と作りで、main には後の形（`unfinished_from`・`_today_ok`、「確定前の日」、23:30の規則）で入っている。消す前に、変更全体を `../outputs/cleanup-20261116/s777wt-uncommitted-on-deada68.patch`（712行、`deada68` に当てる差分）に残し、`git worktree remove --force` で外した。
+- 残した作業ツリー：`database-net777`（ブランチ `site777-net`）と `outputs/share-android-release-20261014/source` は、今回の対象外なので触っていない。
