@@ -3058,3 +3058,32 @@
 
 - **ソース `7ea8a2b` とこの記録のコミットは、手元の main にあり未送信**。同じ時間に別のClaudeの会話（上の節「11/15のコード変更3件のレビューと、指摘6件の修正」）が `7ea8a2b` を含む3件を直しており（作業コピーに未コミット）、その修正を送るときに `tools/push_ci.py` が一緒に送る。CIを2回動かさないため、こちらからは送っていない。
 - その修正（`dtdd=NaN`・8日分・読み上げの文・WeakMap など）は共有ページの表示に関わるので、送るときに共有カレンダーをもう一度公開する（今の公開 `85f23cc` はレビュー前の `7ea8a2b` の版）。
+
+## 2026-11-15 夕方：11/15のコード変更3件のレビューと、指摘6件の修正（Claude）
+
+- 依頼：利用者が最近の変更のレビューを依頼（バグ・セキュリティ・性能・保守性・運用の5つの観点）。Claudeが `1289c1b`（サイトセブンの転送で自動再開）・`7ea8a2b`（共有カレンダーのP-STATIONの台番→サイトセブン）・`461e6a3`（P’s CUBEの差枚取得状況の表示を削除）を読み、中1件・低5件を報告。利用者「全部直して」。基準は手元 main の `7ea8a2b`（正本 `469fc0a`・database-ci `7a9df13` はどちらも含まれる）。
+- 同じ時間に、別の作業（`C:\w\cbw-s777link` の作業ツリー、`7ea8a2b`、ゲートの記録 `C:\w\cbw-gate-s777`）が `7ea8a2b` のゲートを流していた。そのゲートは `test_share_viewer_suffix_browser` が `.grid` 待ちの30秒の時間切れで落ちていた（2つのゲートが同時に動いていた時間帯。相手の作業の連絡によると、変更なしで2回流し直して2回とも合格。こちらのゲートでも合格）。この節の修正は手元の作業コピー（database-main）で行い、別の作業のファイルには触れていない。
+- 直したこと：
+  1. **中：サイトの転送で止まったあと、文書の読み込みの確認が止め直して再開を取り消すおそれ**（`database/site777_session.py` `_document_allowed`）。`1289c1b` は「止めた移動のURLと文字が完全に同じ」ときだけ止め直さない作りで、画面の移動（NavigationStarting）と文書の読み込み（WebResourceRequested）のURLが#・%の書き方などで違うと、2回目の `pause`（理由 `navigation_blocked`）が待っている再開を取り消す。AGENTS.md の「URLを直接比べない」にも外れていた。11/15 7:36・7:44・7:45 のログで、順番は「移動（redirected=true）→文書（false）」と確認（URLの値はログで伏せてあり、一致は確かめられない）。直し：すでに止めてある（`_blocked_navigation`）ときは、文書の確認は通す・通さないだけ決め、止め直さない。止める理由は画面の移動の側だけで決める。試験 `test_a_site_redirect_to_another_hall_resumes_but_a_link_there_does_not` に、#付き・%の書き方違い・問い合わせの順違いの文書でも `resume_at` が残ること、止めている間も対象店の文書は通すことを足した。
+  2. **低：`dailyRackUrl` の `dtdd=NaN`**（`share_viewer/daily_learning.mjs`）。形だけ合う実在しない日（`2026-13-01` など。Node で `Date.parse` が NaN を返すのを確認）で `dtdd=NaN` のリンクを作っていた。`Number.isFinite` で外す。
+  3. **低：サイトセブンが見せる日数が PC と共有ページで違った**。PC（`site777_session.py`、`recent_business_days(count=8)`）は8日分、共有ページは7日分（0〜6日前）。根拠は 2026-11-07 の記録（利用者の窓で 10/30〜11/6 の8日分を確認）なので、共有ページを8日分（0〜7日前、`SITE777_DAYS=8`）に直した。`7ea8a2b` のコミットの文の「seven days」は誤り。
+  4. **低：読み上げの文（aria-label）と開く日の食い違い**。翌日候補（対象日が今日より先）は今日の分（dtdd=0）を開くのに、文が対象日のままだった。`dailyRackLinkDay` を足し、サイトセブンでは開く日（今日）を出す。メルヘンは対象日のまま。
+  5. **低（性能）：描き直すたびに店の全記録をたどる**。`openDailyLearning` で店ごとの記録を1回だけ集め、`dailyPanel` は同じ記録の配列からの台→機種の番号を WeakMap で覚える。
+  6. **低（保守性）：使われないコードと、ソースの文字を検索する試験**。共有ページの `share_viewer/capture_health.mjs` の `netHealth` を削除（`database_android/web/capture_health.mjs` の同名の関数は、取り込みカード・Googleの同期スクリプトの生成物の元なので残した。消すと .gs の貼り替えが要る）。Dart `showCaptureHealth` の使われない `pscube` 引数を外し、呼び出し3か所（`main.dart`・`pscube_import_page.dart`・`viewer_main.dart`）と試験を直した。PC は窓の文を `BackupStatusPanel.details_text()` に分け、試験 `test_pc_status_window_no_longer_shows_the_pscube_net_summary` を、差枚が未取得の台を保存した状態で窓の文そのものに「差枚取得済み・未取得」などが出ないかを見る形に変えた。
+- 指摘のうち直さなかったこと：`pause()` の中の `configure(False)` が止めた印を消してから付け直すまでの一瞬、守りが外れる件。WebView2 の通知は同じ流れで順に来るため、実害の可能性は低いとして据え置き。
+- コミット：`fc94ae5`（コードと試験の12ファイル）。相手の作業の `7ea8a2b`・`2597a87`（未送信だった）と一緒に、`tools/push_ci.py` で正本へ1回で送る（11/15は月の前半）。
+- 全体ゲート（`fc94ae5` の内容の作業コピーで、`bash database_android/tool/check_before_build.sh`、記録 `C:\w\cbw-review1115`・`C:\w\gate-review1115.log`）：**ALL PASSED**。PC 1057件・PC日本時間外 28件・Flutter 844件・flutter analyze（info のみ、今回触っていない箇所）・JS 94本。先に流したもの：サイトセブンの試験 99件、`test_pscube_health.py` 5件、`test_daily_learning.mjs` 7件、`capture_health_ui_test.dart` 1件。
+- 共有カレンダーの公開：`stage_share_viewer.py`（19ファイル、版 `2797e9aa94de`、記録の文字列90種・スクリプトIDの検査は該当なし）。公開物はゲートの `share` と改行を除いて同じことを9ファイルで確認。`database-share` `85f23cc`→`74afa98`（9ファイル、59行追加・39行削除。版の文字と今回の直し）。Pages 43689455257 成功。配信中の `app.mjs` が `daily_learning.mjs?v=2797e9aa94de` を読み、配信中の `daily_learning.mjs` に `SITE777_DAYS=8`・`dailyRackLinkDay`・`Number.isFinite(back)` があることを確認。
+- 閲覧ページ（`database-viewer`）は公開していない：今回の Dart の変更は使われない引数を外しただけで、表示は変わらない。Androidアプリは次にAPKを作ったときに入る（APKは作っていない）。
+
+|要件|結果|証拠|
+|---|---|---|
+|転送で止まったあと、文書の確認で再開が取り消されない|済（試験）|`test_a_site_redirect_to_another_hall_resumes_but_a_link_there_does_not`（#・%・順違いの3通り）|
+|実サイトで転送のあと自動で再開する|未確認|PCアプリを起動し直してから、次にサイトセブンを取り込むときに利用者が見る|
+|`dtdd=NaN` のリンクを作らない|済|`test_daily_learning.mjs`（2026-13-01 など3通り）|
+|サイトセブンのリンクは8日分（0〜7日前）|済|同（11/7 は dtdd=7、11/6 はリンクなし）。8日分の根拠は 2026-11-07 の記録|
+|読み上げの文が開く日を言う|済|同（翌日の対象日で「11月14日（土）」）|
+|描き直しで全記録をたどらない|済（コードを見て確認）|`openDailyLearning` の店ごとの覚え、`cachedModelCodes`。時間は測っていない|
+|使われないコードの整理・窓の文で確かめる試験|済|PC 1057件・Flutter 844件|
+|共有カレンダーの公開|済|`database-share` `74afa98`、Pages 43689455257 成功、配信中のファイルを確認|
+|iPhone・PCでの見た目|未確認|AIは端末で見ていない|
