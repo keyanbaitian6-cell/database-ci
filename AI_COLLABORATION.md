@@ -3113,3 +3113,8 @@
 - 閲覧ページの公開：並べ方を足したあとの `345539b` の作業コピーで `flutter build web`（ゲートと同じ引数）→ `stage_viewer.py C:\w\vw-sort`（記録の文字列90種は該当なし）。その公開物に対して `test_viewer_built_drive`・`test_viewer_shared_calendar_browser`・`test_pscube_browser`・`test_viewer_history_browser`（共有ページの試験。`SHARE_WEB_ROOT` にゲートの `share` を渡して）が成功。`database-viewer` `75ec97f`→`5b28186`（差分は `main.dart.js` だけ）。Pages 43693801452 成功。配信中の `main.dart.js` に `answer-check-sort` があることを確認。
 - ソースの送信：`345539b` とこの記録のコミットを `tools/push_ci.py` で正本へ1回で送る（11/15は月の前半）。Androidアプリには答え合わせのページが無いのでAPKは作っていない。
 - 利用者の報告（2026-11-15 夕方）：「動作良好です」。公開した閲覧ページ（`database-viewer` `5b28186`、ソース `345539b`）の答え合わせの表と並べ方のプルダウンについて。上の表の「iPhoneでの見た目」は、利用者の確認で済（AIは端末で見ていない）。
+
+## 2026-11-15 夕方：利用者の報告：共有カレンダーのP-STATIONの台番→サイトセブンのリンクが動いた（Claude）
+
+- 利用者「問題なく動いてる」（2026-11-15）。対象は上の節「共有カレンダーの翌日候補で、P-STATIONの台番からサイトセブンの台のページを開く」と、レビューの修正入りで公開し直した共有カレンダー（`database-share` `74afa98`、版 `2797e9aa94de`）。これは利用者の報告で、AIの直接確認ではない。
+- ソース `7ea8a2b`・`2597a87` は、レビューの会話が修正 `fc94ae5`・記録 `d59a8c5` と一緒に正本へ送った（`469fc0a..d59a8c5`、CI 43689599176）。手元で正本のmainに含まれることを確認した。CIの結果は、この節では確かめていない。
