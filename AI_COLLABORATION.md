@@ -3033,3 +3033,28 @@
 |全体ゲート ALL PASSED|済|`C:\w\cbw-gate-pscube`|
 |Androidアプリ|未|APK未作成|
 |iPhoneでの見た目|未確認|AIは端末で見ていない|
+
+## 2026-11-15 夕方：共有カレンダーの翌日候補で、P-STATIONの台番からサイトセブンの台のページを開く（Claude）
+
+- 依頼：利用者「翌日候補から台番で飛ばせるようになってるけど、P-statioinのリンクはP'SCUBEではなくサイトセブンにしてほしい。というかPscubeはcookieの問題でアクセス権限与えるのがめんどくさすぎる」。対象は共有カレンダー（`share_viewer/`）だけ。台番のリンクがあるのはこの画面だけ。
+- サイトセブンの台のページのURLは、利用者の取り込み窓のページ見本（`database/data/site777-samples.enabled` で30分だけ保存。確認後に印は消した）で確かめた：`https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=<機種の番号>&dtdd=<何日前>&dn=<台番>`。`dn` は台番そのもの。AIはサイトにアクセスしていない。
+- 作り（コミット `7ea8a2b`）：
+  - `share_viewer/data.mjs` `site777ModelCode`：サイトセブンの記録の `source_url`（`https://m.site777.jp` のものだけ）から `mdc` を取り、台の記録に `model_code` として持たせる。
+  - `share_viewer/daily_learning.mjs` `dailyRackUrl`：P-STATION（`pscube:c740601:20` → 店の番号 `04034001`）は、機種の番号が分かる台だけサイトセブンへのリンク。`dtdd` は営業日（日本時間・3時区切り）の今日から何日前か。先の日（翌日候補）は0。見られる範囲を超える日・機種の番号が無い台はリンクを出さない。P’s CUBEへのリンク（`PSCUBE_ROOTS`）は削除。メルヘン2店は今までどおり。
+  - `rackModelCodes`：台ごとに、いちばん新しい日の機種の番号を使う。`share_viewer/app.mjs` が読み込み済みの店の記録を渡す。
+  - 共有カレンダーへ届く日ごとのファイル（`pscube_cloud_sync.gs` `vhDayParts`）は、整えた記録をそのまま入れるので `source_url` が残る（手元の `pscube-viewer-drive.json` のサイトセブンの2,986件すべてに有り）。Googleの同期スクリプトの貼り替えは不要。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| P-STATIONの台番がサイトセブンの台のページを開く | 済 | `tool/test_daily_learning.mjs` 7/7（`dailyPanel` が `D4000.do?pmc=04034001&mdc=120141&dtdd=3&dn=1286` を出す） |
+| P’s CUBEのリンクを出さない | 済 | 同試験（`pscube.jp` を含まない）・配信中の `daily_learning.mjs` に `pscube.jp` 0件（curl） |
+| 何日前・3時区切り・範囲外・機種の番号なし | 済 | 同試験 |
+| 共有ページの他の動き | 済 | `tool/test_share_viewer.mjs` 33/33 |
+| 全体ゲート | 1項目だけ時間切れ→流し直しで合格 | 作業ツリー `C:\w\cbw-s777link`（`7ea8a2b`）、記録 `C:\w\cbw-gate-s777`。落ちたのは `test_share_viewer_suffix_browser`（`.grid` 待ち30秒の時間切れ。同じ時間にレビューの会話のゲートも動いていた）。変更なしで同じ試験を2回流し直し、2回とも pass 1 / fail 0 |
+| 共有カレンダーの公開 | 済 | `database-share` `85f23cc`（版 `8b0876c9eeef`）、Pages の実行 43688319317 success、配信中の `index.html` が新しい版を読む（curl） |
+| 利用者のiPhoneでリンクが開くか | 未確認 | |
+| ソースのpush | 保留 | 下記 |
+
+- **ソース `7ea8a2b` とこの記録のコミットは、手元の main にあり未送信**。同じ時間に別のClaudeの会話（上の節「11/15のコード変更3件のレビューと、指摘6件の修正」）が `7ea8a2b` を含む3件を直しており（作業コピーに未コミット）、その修正を送るときに `tools/push_ci.py` が一緒に送る。CIを2回動かさないため、こちらからは送っていない。
+- その修正（`dtdd=NaN`・8日分・読み上げの文・WeakMap など）は共有ページの表示に関わるので、送るときに共有カレンダーをもう一度公開する（今の公開 `85f23cc` はレビュー前の `7ea8a2b` の版）。
