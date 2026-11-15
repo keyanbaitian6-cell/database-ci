@@ -3110,3 +3110,5 @@
 |全体ゲート|済|ALL PASSED（上の件数）＋関係する試験27件|
 |閲覧ページの公開|下に記す|—|
 |iPhoneでの見た目|未確認|AIは端末で見ていない。利用者が閲覧ページを読み込み直して見る|
+- 閲覧ページの公開：並べ方を足したあとの `345539b` の作業コピーで `flutter build web`（ゲートと同じ引数）→ `stage_viewer.py C:\w\vw-sort`（記録の文字列90種は該当なし）。その公開物に対して `test_viewer_built_drive`・`test_viewer_shared_calendar_browser`・`test_pscube_browser`・`test_viewer_history_browser`（共有ページの試験。`SHARE_WEB_ROOT` にゲートの `share` を渡して）が成功。`database-viewer` `75ec97f`→`5b28186`（差分は `main.dart.js` だけ）。Pages 43693801452 成功。配信中の `main.dart.js` に `answer-check-sort` があることを確認。
+- ソースの送信：`345539b` とこの記録のコミットを `tools/push_ci.py` で正本へ1回で送る（11/15は月の前半）。Androidアプリには答え合わせのページが無いのでAPKは作っていない。
