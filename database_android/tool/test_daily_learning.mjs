@@ -41,11 +41,33 @@ test('台番号はサイトのその台・対象日のページへのリンク',
   const now=Date.parse('2026-11-14T10:00:00+09:00');
   assert.equal(dailyRackUrl('nagamachiminami',1162,'2026-11-14',now),'https://meruhenworld.pt.teramoba2.com/nagamachiminami/standgraph/?rack_no=1162&target_date=2026-11-14');
   assert.equal(dailyRackUrl('saiwaichou','710','2026-11-13',now),'https://meruhenworld.pt.teramoba2.com/saiwaichou/standgraph/?rack_no=710&target_date=2026-11-13');
-  // P’s CUBE：過去の日は#に履歴の日付、今日・翌日は#なし（本日のタブ）。日本時間で決める（UTCではまだ前日の時刻）。
-  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-13',now),'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526#20261113');
-  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-14',now),'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/nc-v06-001.php?cd_dai=1526');
-  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-14',Date.parse('2026-11-14T00:10:00+09:00')).includes('#'),false);
-  assert.equal(dailyRackUrl('pscube:c740601:20',1526,'2026-11-15',now).includes('#'),false);
+  // P-STATION：サイトセブンの台の「出玉詳細」（2026-11-15 利用者「P-STATIONのリンクはP'SCUBEではなくサイトセブンにしてほしい」）。
+  // 形は利用者の窓の大当り一覧の控え（D4000.do?pmc=04034001&mdc=120141&dtdd=0&dn=1286）と同じ。dtdd は日本時間3時切り替えの何日前。
+  const models=new Map([[1286,'120141']]);
+  const site777=(day,at=now)=>dailyRackUrl('pscube:c740601:20',1286,day,at,models);
+  assert.equal(site777('2026-11-14'),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=0&dn=1286');
+  assert.equal(site777('2026-11-13'),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=1&dn=1286');
+  assert.equal(site777('2026-11-15'),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=0&dn=1286','翌日の分は今日の分を開く');
+  assert.equal(site777('2026-11-13',Date.parse('2026-11-14T02:30:00+09:00')),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=0&dn=1286','3時までは前の営業日');
+  assert.equal(site777('2026-11-08'),'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=120141&dtdd=6&dn=1286');
+  assert.equal(site777('2026-11-07'),null,'サイトが見せる7日分より古い日はリンクにしない');
+  assert.equal(dailyRackUrl('pscube:c740601:20',1287,'2026-11-14',now,models),null,'機種の番号が分からない台はリンクにしない');
+  assert.equal(dailyRackUrl('pscube:c740601:20',1286,'2026-11-14',now),null);
+  assert.ok(!site777('2026-11-14').includes('pscube.jp'),'P’s CUBEへは飛ばさない');
+  // 機種の番号は、その台のいちばん新しいサイトセブンの記録の出典URLから引く（入れ替えた台は新しい機種）。
+  const {site777ModelCode}=await import('../../share_viewer/data.mjs');
+  const src=mdc=>`https://m.site777.jp/f/D3300.do?pmc=04034001&urt=2000&mdc=${mdc}&bn=1&soc=1&sw=1&pan=1&dtdd=0`;
+  assert.equal(site777ModelCode({source_site:'site777',source_url:src('120141')}),'120141');
+  for(const raw of [{source_site:'anaslo',source_url:src('1')},{source_site:'site777',source_url:'https://example.com/?mdc=1'},{source_site:'site777',source_url:src('1x')},{}])
+    assert.equal(site777ModelCode(raw),null);
+  const {rackModelCodes}=await import('../../share_viewer/daily_learning.mjs');
+  const rows=[{store:'pscube:c740601:20',rack:1286,day:'2026-11-10',model_code:'111'},{store:'pscube:c740601:20',rack:1286,day:'2026-11-12',model_code:'120141'},
+    {store:'pscube:c740601:20',rack:1286,day:'2026-11-11',model_code:'222'},{store:'pscube:c740601:20',rack:1300,day:'2026-11-12',model_code:null},
+    {store:'saiwaichou',rack:1286,day:'2026-11-13',model_code:'999'}];
+  assert.deepEqual([...rackModelCodes(rows,'pscube:c740601:20')],[[1286,'120141']]);
+  const pstation=fixture();pstation.days[0].groups[0].store='pscube:c740601:20';pstation.days[0].groups[0].selected=[['pscube:c740601:20','20','試験',1286]];
+  const linked=dailyPanel(pstation,'pscube:c740601:20','2026-11-11',now,undefined,[{store:'pscube:c740601:20',rack:1286,day:'2026-11-12',model_code:'120141'}]);
+  assert.ok(linked.includes('href="https://m.site777.jp/f/D4000.do?pmc=04034001&amp;mdc=120141&amp;dtdd=3&amp;dn=1286"'),linked);
   for(const [store,rack,day] of [['unknown',1,'2026-11-14'],['saiwaichou',0,'2026-11-14'],['saiwaichou','1"x','2026-11-14'],['saiwaichou',1.5,'2026-11-14'],['saiwaichou',1,'11/14']])
     assert.equal(dailyRackUrl(store,rack,day,now),null,`${store} ${rack} ${day}`);
   const html=dailyPanel(fixture(),'nagamachiminami','2026-11-11',now);

@@ -136,6 +136,16 @@ export function pscubeNetEstimate(raw) {
   return {value: e.value, sure: e.sure};
 }
 
+/** サイトセブンの台の出典URL（大当り一覧 D3300）の機種の番号。サイトセブン以外・形が違うときは null。 */
+export function site777ModelCode(raw) {
+  if (raw?.source_site !== 'site777' || typeof raw.source_url !== 'string') return null;
+  try {
+    const u = new URL(raw.source_url);
+    const mdc = u.searchParams.get('mdc');
+    return u.origin === 'https://m.site777.jp' && /^\d{1,10}$/.test(mdc ?? '') ? mdc : null;
+  } catch { return null; }
+}
+
 export function pscubeRecords(doc) {
   if (!doc || doc.format !== 'pscube-viewer' || !Array.isArray(doc.records)) return [];
   const result = [];
@@ -152,6 +162,9 @@ export function pscubeRecords(doc) {
       games: int(raw.games) ?? 0, bb: int(raw.bb) ?? 0, rb: int(raw.rb) ?? 0, output: int(raw.my),
       net: int(raw.net_medals) ?? estimate?.value ?? null, needsCheck: estimate ? !estimate.sure : false, estimated: !!estimate,
       net_capture:raw.net_capture ?? null,source_site:raw.source_site,
+      // サイトセブンで取り込んだ台の機種の番号（出典URLの mdc）。翌日候補の台番から、サイトセブンのその台のページを
+      // 開くのに使う（2026-11-15 利用者「P-STATIONのリンクはP'SCUBEではなくサイトセブンにしてほしい」）。
+      model_code: site777ModelCode(raw),
     });
   }
   return result;

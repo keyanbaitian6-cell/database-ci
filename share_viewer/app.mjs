@@ -47,7 +47,9 @@ document.addEventListener('click',event=>{
   if(event.target.closest('[data-daily-learning]') && state.id) {
     // 店舗の切り替えは、この共有ページで見られる店舗だけ（ほかの店舗の候補は出さない）。
     void openDailyLearning({store:state.store,target:defaultDailyTarget(),stores:state.model?.stores??[state.store],
-      load:()=>getJson(`https://script.google.com/macros/s/${state.id}/exec?file=daily-learning`)});
+      load:()=>getJson(`https://script.google.com/macros/s/${state.id}/exec?file=daily-learning`),
+      // P-STATIONの台番のリンク（サイトセブン）に使う機種の番号を、読み込み済みの台の記録から引く（2026-11-15）。
+      records:s=>[...(state.model?.byDay??new Map())].filter(([key])=>key.startsWith(`${s}|`)).flatMap(([,rows])=>rows)});
   }
 });
 let statsObserver;
