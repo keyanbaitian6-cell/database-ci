@@ -3153,3 +3153,11 @@
 - `debug.log`（作業フォルダの直下、未追跡、11/13 の3KB）：WebView2・Chromium の警告（DNS設定・Vulkan）だけだったので、Windowsのごみ箱へ移した（元に戻せる）。
 - `C:\w\s777wt`（`deada68` の切り離した作業ツリー）：コミットしていない変更が8ファイルにあった（`AGENTS.md`・`database/assets/site777_overlay.js`・`database/site777_browser.py`・`database/site777_session.py`・`database/tests/smoke_site777_session.py`・`database/tests/test_site777_browser.py`・`database/tests/test_site777_session.py`・`database_android/tool/test_site777_capture_browser.mjs`）。中身は 11/8 の「今の営業日（営業中）を取り込むときは確認する」（`today`・`today_ok`）の途中の版で、足した行（30文字以上）268行のうち234行は今の main にそのまま有る。無い34行はこの確認の古い文言と作りで、main には後の形（`unfinished_from`・`_today_ok`、「確定前の日」、23:30の規則）で入っている。消す前に、変更全体を `../outputs/cleanup-20261116/s777wt-uncommitted-on-deada68.patch`（712行、`deada68` に当てる差分）に残し、`git worktree remove --force` で外した。
 - 残した作業ツリー：`database-net777`（ブランチ `site777-net`）と `outputs/share-android-release-20261014/source` は、今回の対象外なので触っていない。
+
+## 2026-11-16：翌日候補の改善を Fable に検討させる依頼文を作った（Claude）
+
+- 依頼：利用者「databaseの翌日候補を向上させるためにfableを全力で思考させたいんだけど、どのようなプロンプトがいいか考えて」→ 案を見せたあと「保存して記録」。
+- 保存先：`FABLE_NEXT_DAY_PROMPT_20261116.md`（依頼文・使い方・この形にした理由）。依頼文は、読む資料（AGENTS.md・`NEXT_DAY_ACCURACY_REVIEW_20261112.md`・`../outputs/normal-reassessment-20261023/`・各計画書・候補のコード）、守ること（分析と提案だけ、新しい成績は計算しない、日次学習の記録DBの `outcomes`・`decisions` と評価日前の研究の途中成績は開かない、サイトにアクセスしない、何通り比べたかを書く）、考えること（11/12の結論への反論、未検証の伸びしろ、案ごとの検出力と手間の表、上位案の固定した計画、やらないこと）を書いた。
+- 使い方：新しいセッションで Fable 5.2・推論の強さ最大・プランモードで貼る。Codex でも同じ文でよい。評価日が過ぎた研究は「見てはいけない成績」から外してよい（AGENTS.md の予定と照らす）。
+- 状態：まだ使っていない。成績・データ・コードは見ていない・変えていない（作るときに読んだのは 11/12 の検討の文書と、計画書のファイル名だけ）。
+- 次：利用者が使ったら、Fable の答え（特に案と固定した計画）を共有記録に書き、実装するかは利用者が決める。
