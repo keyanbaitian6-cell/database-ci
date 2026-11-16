@@ -31,7 +31,9 @@ class NormalDayContextTests(unittest.TestCase):
         self.assertIn('normal-day-context', text)
         self.assertIn('曜日傾向の根拠と限界', text)
         self.assertIn('候補の点数・順位には反映していません', text)
-        self.assertIn('混雑で長く打たれる台が増えるためか', text)
+        self.assertIn('平日の0.994倍', text)
+        self.assertIn('大部分は、土日に悪い台も長く打たれる影響とみられます', text)
+        self.assertNotIn('混雑で長く打たれる台が増えるためか', text)
         self.assertEqual(normal_day_context_html('saiwaichou', '2026-10-23', ['沖ドキ']), '')
 
     def test_android_uses_the_same_rule_and_text(self):

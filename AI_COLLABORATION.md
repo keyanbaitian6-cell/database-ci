@@ -3228,3 +3228,13 @@
 
 - 利用者「変わってるのはなかった」。`../outputs/new-machine-forward-20261116/names-past.txt`（45機種）に、名前だけ替わった機種は無かった（P-STATION 9/25「沖ドキ!GOLD-30」を含む）。したがって `renamed.json` は作らない（空のまま）。
 - 次：案Aの過去の確認 `review.py past` は 2026-12-01以降に1回だけ。前向きの `review.py forward` の前には、`review.py names --period forward` の一覧をもう一度見てもらう（2027-03-29以降）。
+
+## 2026-11-17：幸町の曜日傾向の注記に、土日の切り分けの結果を足した（Claude Sonnet 5.5、コードのコミットのみ・未push・未公開）
+
+- 依頼：利用者「足していいよ」→ 出す画面は「文だけ案を見たい」→ 文を見せて「文章はそのままでいいからコードだけかえる？」（案の文のまま、コードを変える）。基準 `ff08500`。
+- 変更：注記の根拠の文（「土日に設定が低いのか、混雑で長く打たれる台が増えるためかは、閉店後の数値だけではわかりません」）を、`WEEKEND_SETTING_PLAN_20261116.md` の結果（0.994倍、95%区間 0.989〜1.000倍、確率表のある6機種・47,506台日、差の大部分は打たれ方、設定の差があっても約0.6%）に置き換えた。ほかの文・タイトル・本文・採点・候補は変えていない。
+  - `database/normal_day_context.py`（`EVIDENCE`）、`database_android/lib/normal_day_context.dart`（`normalDayContextEvidence`。PCの文と同じ文字列にそろえる決まりで、試験が照合する）。
+  - 試験：`database/tests/test_normal_day_context.py`・`database_android/test/normal_day_context_test.dart`（旧文の一部を確かめていたので、新文の「平日の0.994倍」「大部分は、土日に悪い台も長く打たれる影響とみられます」を確かめ、旧文が無いことも確かめる）。
+- 確認：`TZ=JST-9 python -m unittest tests.test_normal_day_context`（database）4件 OK、`flutter test --no-pub test/normal_day_context_test.dart` 3件 OK、`flutter analyze` 該当2ファイル No issues。**全体ゲートは流していない**（ビルド・公開をしないため。公開・APKの前に流す）。
+- 出す画面：PC（レポート・まとめのHTML）とAndroid・iPhone閲覧ページ（Flutter共通）。共有カレンダー（`share_viewer`）には元からこの注記が無く、足していない。
+- **未反映**：①pushしていない（コードの変更はCIが約23分動くので、次のコードの変更と一緒に送る）。②iPhone閲覧ページは**未公開**（`tool/stage_viewer.py` を通すWeb公開が要る）。③AndroidはAPKを作るまで旧文。④PCは `start.cmd` で起動し直すと新文。

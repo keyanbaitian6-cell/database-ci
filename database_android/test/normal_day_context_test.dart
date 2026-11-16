@@ -81,7 +81,12 @@ void main() {
       expect(normalDayContext('saiwaichou', bad, ['SマイジャグラーVKD']), isNull);
     }
     expect(normalDayContextEvidence, contains('候補の点数・順位には反映していません'));
-    expect(normalDayContextEvidence, contains('混雑で長く打たれる台が増えるためか'));
+    expect(normalDayContextEvidence, contains('平日の0.994倍'));
+    expect(
+      normalDayContextEvidence,
+      contains('大部分は、土日に悪い台も長く打たれる影響とみられます'),
+    );
+    expect(normalDayContextEvidence, isNot(contains('混雑で長く打たれる台が増えるためか')));
   });
 
   Widget card(String store, String machine) {
