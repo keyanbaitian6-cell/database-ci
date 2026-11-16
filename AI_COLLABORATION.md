@@ -3223,3 +3223,8 @@
 |B：合成データの試験|済|`synthetic.json`（passed）|
 |B：実データで1回|済（判断保留）|`result-real.txt`、計画書の「結果」|
 |B：注記の文を直すか|未（利用者が決める）|—|
+
+## 2026-11-17：案Aの過去の一覧（names-past.txt）の確認（利用者）
+
+- 利用者「変わってるのはなかった」。`../outputs/new-machine-forward-20261116/names-past.txt`（45機種）に、名前だけ替わった機種は無かった（P-STATION 9/25「沖ドキ!GOLD-30」を含む）。したがって `renamed.json` は作らない（空のまま）。
+- 次：案Aの過去の確認 `review.py past` は 2026-12-01以降に1回だけ。前向きの `review.py forward` の前には、`review.py names --period forward` の一覧をもう一度見てもらう（2027-03-29以降）。
