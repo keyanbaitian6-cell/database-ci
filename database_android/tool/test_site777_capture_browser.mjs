@@ -139,7 +139,7 @@ try {
   await page.waitForFunction(()=>window.__configured.length===3);
   assert.deepEqual(await page.evaluate(()=>window.__configured[2]),[true,'2026-11-04','2026-11-06','bottom']);
   await page.waitForFunction(()=>document.querySelector('#database-site777-bottom').getAttribute('aria-pressed')==='true');
-  assert.match(await page.locator('#database-site777').innerText(),/間隔：5〜7秒ランダム/);
+  assert.match(await page.locator('#database-site777').innerText(),/間隔：3〜5秒ランダム/);
   // まだ確定していない日（その日の23:30より前、2026-11-10）を取り込むときは確かめる（2026-11-08）：やめたら何も変えず、OKなら確認済みを渡す。
   // 確定した日だけなら確かめない。手動の「この画面を取り込む」でも同じ。
   const dialogs=[];

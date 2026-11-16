@@ -77,9 +77,10 @@ def reason_code(value, default):
 
 
 class Site777RandomCapture(PscubeRandomCapture):
-    """サイトセブンの間隔：5〜7秒のランダム（2026-11-07 利用者「取り込み間隔も10秒程度じゃなくて5～7秒程度にしよう」）。
+    """サイトセブンの間隔：3〜5秒のランダム（2026-11-07 利用者「取り込み間隔も10秒程度じゃなくて5～7秒程度にしよう」→
+    2026-11-17 利用者「サイトセブン優しいから３～5秒で作りなおしたらいい」）。
     P’s CUBE（PscubeRandomCapture の10〜20秒）は変えない。"""
-    LOW, HIGH = 5, 7
+    LOW, HIGH = 3, 5
 
 
 DIRECTIONS = ('top', 'bottom')

@@ -26,7 +26,7 @@
   untilLabel.textContent='（まで）';until.id='database-site777-until';until.setAttribute('aria-label','取り込む日付（まで）');
   until.style.cssText='width:100%;padding:5px;margin-top:4px';untilLabel.append(until);
   const progress=document.createElement('div');progress.id='database-site777-range';progress.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere';
-  const interval=document.createElement('div');interval.textContent='間隔：5〜7秒ランダム';interval.style.fontSize='11px';
+  const interval=document.createElement('div');interval.textContent='間隔：3〜5秒ランダム';interval.style.fontSize='11px';
   const status=document.createElement('div');status.id='database-site777-status';status.style.cssText='font-size:11px;white-space:normal;overflow-wrap:anywhere';
   // 前回の取り込みの範囲・済んだ日・止まった理由（2026-11-08）。窓を開き直したとき、開始するまで出す。
   const previous=document.createElement('div');previous.id='database-site777-previous';
