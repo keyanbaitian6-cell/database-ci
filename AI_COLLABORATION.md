@@ -3238,3 +3238,12 @@
 - 確認：`TZ=JST-9 python -m unittest tests.test_normal_day_context`（database）4件 OK、`flutter test --no-pub test/normal_day_context_test.dart` 3件 OK、`flutter analyze` 該当2ファイル No issues。**全体ゲートは流していない**（ビルド・公開をしないため。公開・APKの前に流す）。
 - 出す画面：PC（レポート・まとめのHTML）とAndroid・iPhone閲覧ページ（Flutter共通）。共有カレンダー（`share_viewer`）には元からこの注記が無く、足していない。
 - **未反映**：①pushしていない（コードの変更はCIが約23分動くので、次のコードの変更と一緒に送る）。②iPhone閲覧ページは**未公開**（`tool/stage_viewer.py` を通すWeb公開が要る）。③AndroidはAPKを作るまで旧文。④PCは `start.cmd` で起動し直すと新文。
+
+### 2026-11-17 続き：曜日傾向の注記を iPhone閲覧ページへ公開した（Claude）
+
+- 依頼：利用者「今すぐ公開」。ソース `094ffeb`（前回の公開 `345539b` からの Flutter 側の差分は `normal_day_context.dart` の1ファイルだけと確認）。
+- 全体ゲート（`bash database_android/tool/check_before_build.sh`、作業 `C:\w\cbw-weekend-note`、記録 `C:\w\gate-weekend-note.log`）：**ALL PASSED**。
+- 公開：ゲートの `build/web` から `stage_viewer.py C:\w\vw-note`（記録の文字列90種は該当なし）。`database-viewer` `5b28186`→`350bdfb`（差分は `main.dart.js` だけ）。Pages https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/43962302778 成功。配信中の `main.dart.js` のSHA-256先頭 `5a10fcc651514cac` が公開物と一致、「0.994」を含む。
+- 共有カレンダー（`database-share`）は元から注記が無いので公開していない。Androidアプリは次にAPKを作るまで旧文（APKは作っていない）。PCは `start.cmd` で起動し直すと新文。
+- iPhoneでの見た目：未確認（AIは端末で見ていない。閲覧ページを読み込み直して、台の詳細・翌日候補の「曜日傾向の根拠と限界」を開くと新しい文が出る）。
+- ソースの送信：`094ffeb` とこの記録を `tools/push_ci.py` で1回で送る。
