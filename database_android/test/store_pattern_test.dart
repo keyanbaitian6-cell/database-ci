@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:database_android/models.dart';
@@ -224,5 +227,73 @@ void main() {
     expect(find.byType(StorePatternPage), findsOneWidget);
     expect(find.textContaining('いちばん長い並び：103〜107番（5台）'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  test('PC（database/store_pattern.py）と同じ数字になる（共通の試験データ）', () {
+    // 2026-11-18 利用者「PCでも表示させてほしい」。正解は PC の計算で作った test/fixtures/store_pattern_cases.json。
+    final doc = jsonDecode(
+      File('test/fixtures/store_pattern_cases.json').readAsStringSync(),
+    ) as Map<String, dynamic>;
+    for (final c in doc['cases'] as List) {
+      final rows = [
+        for (final r in c['rows'] as List)
+          SlotRecord(
+            store: r['store'],
+            day: r['day'],
+            machine: r['machine'],
+            rack: r['rack'],
+            games: r['games'],
+            bb: r['bb'],
+            rb: r['rb'],
+            extra: {
+              for (final k in [
+                'jo_net',
+                'source',
+                'my',
+                'rate',
+                'machine_type',
+                'net_medals',
+              ])
+                if ((r as Map).containsKey(k)) k: r[k],
+            },
+          ),
+      ];
+      final got = storePatternDay(c['store'], c['day'], rows);
+      final e = c['expected'] as Map<String, dynamic>;
+      final where = '${c['store']} ${c['day']}';
+      expect(
+        [got.plus, got.total, got.played, got.excluded, got.usable],
+        [e['plus'], e['total'], e['played'], e['excluded'], e['usable']],
+        reason: where,
+      );
+      void groups(List<PatternGroup> actual, List expected, String kind) {
+        expect(actual.length, expected.length, reason: '$where $kind');
+        for (var i = 0; i < actual.length; i++) {
+          final g = actual[i], x = expected[i] as List;
+          expect(
+            [g.label, g.plus, g.total, g.compared, g.chance.label],
+            [x[0], x[1], x[2], x[3], x[5]],
+            reason: '$where $kind $i',
+          );
+          expect(g.p, closeTo((x[4] as num).toDouble(), 1e-9));
+        }
+      }
+
+      groups(got.machines, e['machines'] as List, '機種');
+      groups(got.suffixes, e['suffixes'] as List, '末尾');
+      if (e['run'] == null) {
+        expect(got.run, isNull, reason: where);
+      } else {
+        final x = e['run'] as List;
+        expect(got.run!.racks, x[0], reason: where);
+        expect(
+          got.run!.p,
+          closeTo((x[1] as num).toDouble(), 1e-12),
+          reason: '$where 並びの並べ替え',
+        );
+        expect(got.run!.chance.label, x[2]);
+      }
+      expect(got.highlights, e['highlights'], reason: where);
+    }
   });
 }

@@ -15,6 +15,7 @@ import tkinter.font as tkfont
 import error_log
 import forward_validation
 import daily_learning_ui
+import store_pattern_ui
 import input_versions
 import power
 import pscube_import
@@ -1939,6 +1940,9 @@ def main():
     daily_worker = daily_learning_ui.DailyLearningWorker(DATA_DIR)
     ttk.Button(results_buttons, text='日次学習・採用中の候補',
                command=lambda: daily_learning_ui.show(root, DATA_DIR)).pack(side='left', padx=8)
+    # 店の入れ方のふり返り（全台系・末尾・並び。2026-11-18 利用者「PCでも表示させてほしい」。閲覧ページと同じ計算）。
+    ttk.Button(results_buttons, text='店の入れ方のふり返り',
+               command=lambda: store_pattern_ui.show(root, DATA_DIR)).pack(side='left')
     daily_last = [None]
 
     def start_daily():

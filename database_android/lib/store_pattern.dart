@@ -19,12 +19,20 @@ import 'setting_estimate.dart' show foldHalfWidthKana;
 /// その機種の台数をランダムに選んだとき、これ以上プラスが多くなる確率）に、比べた数を掛けて割り引く
 /// （ボンフェローニ。何通りも比べた中の一番は偶然でも出やすいため）。
 /// 並びは、プラスの印を台に配り直す並べ替えを [runTrials] 回行い、いちばん長い並びがこれ以上になる割合。
+/// 乱数は Park–Miller（48271 を掛けて 2147483647 で割った余り）。かけ算が 2^53 を超えないので、スマホのブラウザ
+/// （JavaScript の数）・Dart VM・PC（Python `database/store_pattern.py`）で同じ値になる（2026-11-18 PC版を作るときに
+/// そろえた。それまでの FNV-1a と Dart の Random は、ブラウザと VM で値がずれうる）。
+/// PC版と同じ数字かは、共通の試験データ `test/fixtures/store_pattern_cases.json` で確かめる。変えるときは両方。
 
 /// 比べる組（機種・末尾）に要る台数。2台以下では偏りを言えない。
 const patternMinGroup = 3;
 
 /// その日を判定するのに要る台数。
 const patternMinRacks = 10;
+
+/// プラスかどうか分かる台が、稼働した台（500G超）のこの割合に届かない日は判定しない（2026-11-18。P-STATIONの
+/// アナスロ補完の日は、分かる台が約25%だけで、一部の機種に偏るため）。
+const patternKnownShare = .7;
 
 /// 並びの並べ替えの回数。
 const runTrials = 1000;
@@ -90,6 +98,7 @@ class StorePatternDay {
     required this.plus,
     required this.total,
     required this.excluded,
+    this.played = 0,
     required this.machines,
     required this.suffixes,
     required this.run,
@@ -98,6 +107,9 @@ class StorePatternDay {
 
   /// 判定に使った台（プラスの台・全体）と、除いた台。
   final int plus, total, excluded;
+
+  /// 稼働した台（500G超。プラスか分からない台を含む）。
+  final int played;
 
   /// 機種ごと（[patternMinGroup]台以上）。割り引いたあとの確率の小さい順。
   final List<PatternGroup> machines;
@@ -109,7 +121,11 @@ class StorePatternDay {
   final PatternRun? run;
 
   /// 判定できる日か（台が少ない・全部プラス・全部マイナスの日は偏りを言えない）。
-  bool get usable => total >= patternMinRacks && plus > 0 && plus < total;
+  bool get usable =>
+      total >= patternMinRacks &&
+      plus > 0 &&
+      plus < total &&
+      total >= patternKnownShare * played;
   double get rate => total == 0 ? 0 : plus / total;
 
   /// 偶然では出にくい偏り（履歴の一覧に出す）。
@@ -143,6 +159,7 @@ StorePatternDay storePatternDay(
   for (final r in rows) {
     byRack[r.rack] = r;
   }
+  final played = byRack.values.where((r) => r.games > minScoredGames).length;
   final usable = [
     for (final r in byRack.values)
       if (patternUsable(r)) r,
@@ -181,7 +198,9 @@ StorePatternDay storePatternDay(
   final machines = groups(byMachine)
     ..sort((a, b) {
       final c = a.adjusted.compareTo(b.adjusted);
-      return c != 0 ? c : b.rate.compareTo(a.rate);
+      if (c != 0) return c;
+      final r = b.rate.compareTo(a.rate);
+      return r != 0 ? r : a.label.compareTo(b.label);
     });
   final bySuffix = <String, List<SlotRecord>>{};
   final order = suffixesFor(store);
@@ -201,7 +220,7 @@ StorePatternDay storePatternDay(
     final best = _longestRun(racks, labels);
     var count = 0;
     if (plus < total) {
-      final random = math.Random(_seed('$store|$day'));
+      final random = _ParkMiller(_seed('$store|$day'));
       final shuffled = [...labels];
       for (var t = 0; t < trials; t++) {
         for (var i = shuffled.length - 1; i > 0; i--) {
@@ -224,6 +243,7 @@ StorePatternDay storePatternDay(
     plus: plus,
     total: total,
     excluded: byRack.length - total,
+    played: played,
     machines: machines,
     suffixes: suffixes,
     run: run,
@@ -259,14 +279,23 @@ int _longestRunLength(List<int> racks, List<bool> plus) {
   return best;
 }
 
-/// 端末（Dart VM・ブラウザ）によらず同じ値になる種（FNV-1a）。同じ日なら毎回同じ結果にするため。
+/// 店・日からの種（PC `store_pattern.seed` と同じ。UTF-16 の単位で数える）。
 int _seed(String text) {
-  var hash = 0x811c9dc5;
+  var value = 0;
   for (final unit in text.codeUnits) {
-    hash ^= unit;
-    hash = (hash * 0x01000193) & 0xffffffff;
+    value = (value * 31 + unit) % 2147483647;
   }
-  return hash & 0x7fffffff;
+  return value == 0 ? 1 : value;
+}
+
+class _ParkMiller {
+  _ParkMiller(int seed)
+    : _state = seed % 2147483647 == 0 ? 1 : seed % 2147483647;
+  int _state;
+  int nextInt(int n) {
+    _state = _state * 48271 % 2147483647;
+    return _state % n;
+  }
 }
 
 class _LogFactorials {
