@@ -3278,3 +3278,15 @@
 - 全体ゲート `check_before_build.sh`（`/c/w/cbw-resume`、記録 `/c/w/gate-resume.log`）：pc-tests 以外の93項目 OK（Flutter test・analyze、閲覧ページ・共有ページの画面試験、`test_viewer_parts`・`test_viewer_history_browser`・`test_viewer_storage_report` を含む）。pc-tests は1062件中1件失敗（`test_pscube_background_sync` の修復後の再取込み。10月にも混み合ったときだけ落ちると記録のあるもの）。単独で5回成功。PC全体の流し直し1回目は別の1件（`test_rainbow_pending_review.test_failed_import_is_not_remembered_and_a_good_one_is`、単独で3回成功）が失敗、2回目は1062件 OK。Python は今回触っていない。どちらもPCアプリの裏の取り込みの試験で、混み合ったときに落ちる原因は未特定（次に見たら調べる）。
 - 公開：閲覧ページ `stage_viewer.py C:\w\vw-note` → `database-viewer` `350bdfb`→`bc34cd9`（差分は `viewer_parts.mjs`・`storage_report.mjs` だけ、ゲートの `viewer` と一致）、Pages 44011123417 成功。共有カレンダー `stage_share_viewer.py ../outputs/resume-parts-20261117/public-share`（版 `d1e1345efa1f`、記録の文字列90種・スクリプトIDは該当なし）→ `database-share` `74afa98`→`981e57d`（版の文字と `viewer_parts.mjs` だけ、ゲートの `share` と一致）、Pages 44011160153 成功。配信中の両方の `viewer_parts.mjs` に `database-viewer-parts-pending-v1` があることを curl で確認。
 - 未確認：実際のiPhone・遅い回線で、途中で失敗したあとに続きから読めるか（試験は合成データと模擬の通信）。Androidアプリは閲覧ページの部品を使わないので変わらない。
+
+## 2026-11-17：「勝ちにこだわる目線で、あったらいい機能を5つ」（Claude、提案だけ）
+
+- 依頼：利用者「今databaseを構築していて勝ちにこだわる人間目線で何かこの機能があればいいなという機能を5つ挙げていって」。コード・データは変えていない。
+- 重ならないよう確かめたもの：`SETTING_ESTIMATION.md`（設定推測はサイトのBB/RBだけ、小役・単独/重複REG・ランプは「観測できないので入れない」）、`SUFFIX_SUMMARY.md`（末尾まとめ）、`EVENT_RANGE_PLAN_20261112.md`（イベントの機種範囲の前向き研究）、`ADDITIONS_20261104.md`（候補の答え合わせ・通知・ウィジェット）、`STORE_EVENTS.md`（どの日にどの台番へ高設定が入ったかを覚えて次に活かす）、`NEXT_DAY_STAR_INDEPENDENT_REVIEW_20260930.md`（全台系・並びなどの種類の記録が課題）、`DATABASE_REVIEW_20261105.md`。Codexが作業中の「狙い台一覧」（`database_android/lib/candidate_list_page.dart`、未コミット）とは重ねていない。`ai_collaboration/overview-2026-09.md` に、ある道具の目的を「設定示唆」と「実戦結果」のどちらに寄せるか聞いて「設定示唆」と答えた経緯がある。
+- 提案した5つ（どれもサイトへのアクセスは増えない。保存済みのデータと利用者の入力だけ）：
+  1. 打った台の実戦メモ（ぶどう・チェリー、REGの単独/重複、ハナハナのランプ、示唆・確定演出）→ その台の設定推測に足し、続行・ヤメの目安と「高設定が入った台」の確かな記録にする。
+  2. 店の入れ方の振り返り：取り込み後に、全台系・並び・末尾・角台の偏りを「偶然でも出る程度か」と一緒に毎日判定し、イベントの日ごとに履歴を残す（探索の結果。候補に使うなら前向きの計画を固定してから）。
+  3. 自分の読みを前日に登録（時刻で固定）→ 翌日に自動で答え合わせし、読みの種類ごとの成績表を作る。研究と同じ中身の読みは、その研究の評価日まで集計しない。
+  4. 明日の店選び：3店舗の、イベント・曜日・過去の同じイベントの日の結果（日数・プラス台の割合・平均差枚）・候補の数を1画面で比べる。前向きの研究の評価期間中の結果は、評価日まで出さない。
+  5. 運を除いた成績：打った台・時間・投資・回収を記録し、実際の収支と、設定推測×設定ごとの機械割から計算した期待値の収支を並べる（機械割の表をメーカー資料から足す必要あり）。
+- Claudeのおすすめの順：2 → 3 → 1（2は入力の手間がなく保存済みのデータだけでできる、3は小さく作れる、1は効果が大きいが入力の手間がある）。利用者の返事待ち。
