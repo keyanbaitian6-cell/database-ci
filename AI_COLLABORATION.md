@@ -3358,3 +3358,14 @@
 - 修正：`database/daily_learning_runtime.py` の `ready()`。欠けた機種の台の合計が前の日の台数の1%（`MISSING_RACK_LIMIT`）を超えるときだけ待つ（幸町約5台・長町南約3台・P-STATION約2台までは保存）。待つときの文に台数を足した（「…など1機種（n台）がありません」）。台数の90%の確認・閉店前の台・符号の決まらない台の確認は変えていない。モデル・予測の版は変えていない。`DAILY_LEARNING_OPERATION.md` を直した。
 - 試験：`tests/test_daily_learning.py` の `test_ready_waits_for_closed_complete_capture` に、1台の機種の欠けでは待たない・2台（100台の1%超）では待つ、を足した。`test_daily_learning*.py` 74件、PC全体 `python -m unittest discover -s tests` 1062件 OK。
 - 11/17 の幸町は締切（8:00）を過ぎたので取り戻さない（決まりどおり）。今夜の 11/18 の分は 11/17 のデータを 11/16 と比べるので、863番ではもう止まらない。新しい判定はPCアプリを起動し直したあとに効く。
+
+## 2026-11-17 夜：長町南の4台構成の週表をPCで作れるようにし、11/16の週と月曜の結果を入れた（Claude）
+
+- 依頼：利用者「長町南が今週4台構成の日なんだけどイベント履歴に追加するのってどうしてたっけ」→ 調べると、4台構成・半列は画像から書き写した元データ（`database_android/assets/event_history.json`、4台構成の最後は 2026-10-05〜11）だけで、PCで足せるのはバラエティだけだった。利用者「PCで作れるように」。
+- 完了の条件（着手時に利用者へ提示）：PCに「4台構成の週表を作成」（分類日に設置ちょうど4台の機種、取りこぼし・取り込み不足は作る前に確認、1週に1種類）／顔文字の自動挿入・共有カレンダーでの顔文字の選択が使える／iPhone閲覧ページ・共有カレンダーに出る（公開）／Androidは新しいAPKまで出ない／PC・Dart・JSの試験と全体ゲート。
+- 変更（ソース `f19ff96`）：PC `database/event_history_data.py`（`FOUR_RACKS`・`creatable_kinds`・`week_machines_fit`、`clean_edits` が長町南の4台構成の週を受け付ける＝台数ちょうど4・同じ週は同じ種類だけ、`variety_week_lineup(..., kind='4台構成')` は設置4台の機種と「周辺の日に4台あったのに分類日は3台以下」の疑い）、`database/event_history.py`（ボタン「4台構成の週表を作成」、確認の文）。Dart `database_android/lib/event_history_model.dart`（`creatableHistoryTypes`）。JS `share_viewer/event_history.mjs`（`creatableHistoryTypes`）と、それを埋め込む Google スクリプト `database_android/tool/viewer_drive_script.gs`・`viewer_drive_script_readonly.gs`（`build_event_history_share.mjs` で作り直し。手元はCRLFに戻した）。共通の試験データ `database_android/test/fixtures/event_history_cases.json` に4台構成の例（正しい週・3台の機種・バラエティと同じ週）を足し、PCの結果を正解にした。`EVENT_HISTORY.md` に手順。半列は今も作れない。
+- 試験：PC `test_event_history*.py` 35件（新規 `test_four_rack_week_is_created_on_pc_and_shown`）、Dart `event_history_test`・`history_variety_test`・`saiwaichou_history_test` 22件、JS `test_event_history.mjs`。全体ゲート `C:\w\cbw-four` は92項目成功・2項目失敗（`test_daily_learning`・`test_event_history_shared`、どちらも「Googleスクリプトを再生成してください」）→ スクリプトを作り直し、改行をCRLFに戻して、その2項目を流し直して成功（7件・14件）。
+- 実データ（台数だけ、成績は見ていない）：11/16 を分類日に設置4台の機種20、疑い・取り込み不足なし。利用者が貼った店の表（「前日のオススメ 差枚が好調だった機種」）の20機種と一致。
+- 入力（Claude、利用者「入れて」）：PCアプリ（23:06 起動、新しいコード）が動いたまま、`Store.merge_history_edits`（書き込みの順番待ちあり）で 2026-11-16 の4台構成の週（分類日 11/16、20機種）と、店の表の月曜の結果20件（😍・😀・😌・🥶 各5件）を保存。変更21件・不一致0・除外0。
+- 公開：閲覧ページ `database-viewer` `9ac513b`→`6c5f76e`（ゲートの `viewer` と同一）、Pages 44102086113 成功、配信中の `main.dart.js` が公開物と一致。共有カレンダー `stage_share_viewer.py ../outputs/four-rack-20261117/public-share`（版 `602f83cea213`、差分は版の文字と `event_history.mjs`、ゲートの `share` と同一）→ `database-share` `981e57d`→`e30ae29`、Pages 44102158719 成功、配信中の `event_history.mjs` に新しい規則があることを確認。
+- 未完了・未確認：①PCの「共有へ反映」（利用者が押す。押すまで iPhone・共有カレンダーに 11/16 の週は届かない）②Googleスクリプト2本の貼り替え（利用者。共有カレンダーで4台構成の週の顔文字を選んで保存するのに必要）③AndroidはAPKを作っていない（作るまで出ない）④実画面での表示は未確認。
