@@ -87,6 +87,19 @@ Future<void> markViewerPhase(String name, {required bool done}) async {
   }
 }
 
+@JS('databaseViewer.autoUpdateHold')
+external JSPromise<JSString?> _autoUpdateHold();
+
+/// 前回のGoogleドライブの更新が途中で終わっていたら、起動時の自動更新を止めている期限（ISO）。
+/// 止めていない・調べられないときは null（その場合は今までどおり自動で更新する）。
+Future<String?> autoUpdateHeldUntil() async {
+  try {
+    return (await _autoUpdateHold().toDart)?.toDart;
+  } on Object {
+    return null;
+  }
+}
+
 /// 本体と別に置いた🌈の印（JSONの配列）。無ければ null。
 Future<String?> loadRainbowMarks() async => (await _loadMarks().toDart)?.toDart;
 

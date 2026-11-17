@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import {DIAG_KEY, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
+import {DIAG_KEY, DRIVE_HOLD_MS, driveHold, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
 
 function memoryStorage(initial = {}) {
   const items = new Map(Object.entries(initial));
@@ -119,4 +119,43 @@ test('実際のIndexedDBで、本体を読まず・無い保存先を作らず�
     assert.match(text, /Googleドライブの更新：最後まで終わった0回・途中で終わった1回（最後：.+に始めた分）/);
     assert.deepEqual(result.report.failed, []);
   } finally { await browser.close(); await new Promise(r => server.close(r)); }
+});
+
+test('更新の途中で終わっていたら、そこから6時間は起動時の自動更新を止める印を出す（2026-11-18）', () => {
+  const storage = memoryStorage();
+  assert.equal(driveHold({storage, now: at('2026-11-18T00:00:00Z')}), null, '記録なしは止めない');
+  phaseStarted('drive', {storage, now: at('2026-11-18T00:27:00Z')});
+  // ここでSafariが落ちた。次に開く（起動時の読み込みを始める）。
+  phaseStarted('open', {storage, now: at('2026-11-18T00:30:00Z')});
+  const until = '2026-11-18T06:27:00.000Z';
+  assert.equal(driveHold({storage, now: at('2026-11-18T00:30:00Z')}), until);
+  assert.equal(driveHold({storage, now: at('2026-11-18T06:26:59Z')}), until, '6時間たつ直前まで止める');
+  assert.equal(driveHold({storage, now: at('2026-11-18T06:27:00Z')}), null, '6時間たったら止めない');
+  assert.equal(DRIVE_HOLD_MS, 6 * 3600 * 1000);
+  // 起動時の読み込みだけが落ちた（更新の途中ではない）のでは、止める印は出ない。
+  const other = memoryStorage();
+  phaseStarted('open', {storage: other, now: at('2026-11-18T00:00:00Z')});
+  phaseStarted('open', {storage: other, now: at('2026-11-18T00:05:00Z')});
+  assert.equal(driveHold({storage: other, now: at('2026-11-18T00:06:00Z')}), null);
+  // 更新が最後まで終わったら印は消える。途中の回数・時間の記録は残る。
+  phaseFinished('open', {storage, now: at('2026-11-18T00:30:01Z')});
+  phaseStarted('drive', {storage, now: at('2026-11-18T00:31:00Z')});
+  assert.equal(driveHold({storage, now: at('2026-11-18T00:31:00Z')}), until, '更新が終わるまでは印のまま');
+  phaseFinished('drive', {storage, now: at('2026-11-18T00:31:30Z')});
+  assert.equal(driveHold({storage, now: at('2026-11-18T00:32:00Z')}), null);
+  const log = JSON.parse(storage.getItem(DIAG_KEY));
+  assert.equal(log.drive_halt, undefined);
+  assert.equal(log.phases.drive.unfinished, 1);
+  assert.equal(log.phases.drive.count, 1);
+});
+
+test('止める印は、壊れた記録・書けない保存・大きく戻った時計では、止め続けない', () => {
+  const broken = memoryStorage({[DIAG_KEY]: '{壊れた'});
+  assert.equal(driveHold({storage: broken}), null);
+  const denied = {getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }};
+  assert.equal(driveHold({storage: denied}), null);
+  const badTime = memoryStorage({[DIAG_KEY]: JSON.stringify({version: 1, running: null, phases: {}, drive_halt: {at: '不明'}})});
+  assert.equal(driveHold({storage: badTime}), null);
+  const future = memoryStorage({[DIAG_KEY]: JSON.stringify({version: 1, running: null, phases: {}, drive_halt: {at: '2030-01-01T00:00:00Z'}})});
+  assert.equal(driveHold({storage: future, now: at('2026-11-18T00:00:00Z')}), null, '時計が6時間より大きく戻っていたら信じない');
 });

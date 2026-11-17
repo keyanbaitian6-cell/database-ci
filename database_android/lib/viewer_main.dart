@@ -162,7 +162,18 @@ class _ViewerHomeState extends State<ViewerHome> {
     if (mounted) setState(() => _loading = false);
     // 前の内容をすぐ出してから、Driveの最新を読みに行く。
     if (_remote != null && Uri.base.queryParameters['load'] == null) {
-      await _refreshFromDrive();
+      // 前回の更新が途中で止まっていたら、しばらく自動では更新しない（落ち続けて開けなくなるのを防ぐ）。
+      // 手動の更新ボタンは、いつでも使える。
+      if (await autoUpdateHeldUntil() != null) {
+        if (mounted) {
+          setState(() {
+            const hold = '前回の更新が途中で止まったため、自動更新を止めています（更新ボタンで試せます）。';
+            _error = _error == null ? hold : '$_error\n$hold';
+          });
+        }
+      } else {
+        await _refreshFromDrive();
+      }
     }
   }
 
