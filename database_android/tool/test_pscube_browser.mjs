@@ -134,7 +134,8 @@ try {
   assert.equal(await page.getByText('準備版',{exact:true}).count(),0);
   await page.screenshot({path:process.env.PSCUBE_SCREENSHOT || '/tmp/pscube-shared-home.png'});
   await page.mouse.move(200,700);
-  await page.mouse.wheel(0,1800);
+  // 一覧の上に「狙い台一覧」ボタンが増えた分（2026-11-17）、押す機種が画面の端に寄らないよう多めに送る。
+  await page.mouse.wheel(0,2400);
   await page.waitForTimeout(500);
   await page.screenshot({path:'/tmp/pscube-scrolled.png'});
 

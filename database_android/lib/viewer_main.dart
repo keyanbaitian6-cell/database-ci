@@ -5,6 +5,7 @@ import 'capture_health_ui.dart';
 import 'package:flutter/material.dart';
 
 import 'answer_check.dart';
+import 'candidate_list_page.dart';
 import 'day_comment.dart';
 import 'data_checks.dart';
 import 'exploratory_page.dart';
@@ -1340,6 +1341,23 @@ class _ViewerHomeState extends State<ViewerHome> {
             body: '別の店舗を選ぶか、新しいバックアップを読み込んでください。',
           )
         else ...[
+          // 狙い台一覧（台番号順。2026-11-17 利用者の希望、閲覧ページだけ。メルヘン系・P’s CUBEの全店）。
+          FilledButton.icon(
+            key: const ValueKey('open-candidate-list'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => CandidateListPage(
+                  store: store,
+                  day: day,
+                  records: all,
+                  onPick: (record) => _openRecord(record, null),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.format_list_numbered),
+            label: const Text('狙い台一覧（台番号順）'),
+          ),
+          const SizedBox(height: 10),
           if (hasNormalRecommendations(store)) ...[
             FilledButton.tonalIcon(
               key: const ValueKey('open-normal-recommendations'),

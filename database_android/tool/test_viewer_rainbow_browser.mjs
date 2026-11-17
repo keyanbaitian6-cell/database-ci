@@ -82,13 +82,22 @@ try {
     await page.getByText('database 閲覧', {exact: true}).waitFor({timeout: 60000});
   }
   async function rack(number) {
-    await page.mouse.move(200, 700); await page.mouse.wheel(0, 2200); await page.waitForTimeout(300);
-    const button = page.getByRole('button', {name: /^化物語/}).last();
+    // 機種一覧のボタン（「化物語 4台・最高…」）だけを押す。上のまとめカードの「化物語 1088番台」の行ではない。
+    // 一覧は見えているところしか作られないので、固定量ではなく、ボタンが出るまで少しずつ送る
+    // （一覧の上にボタンが増えるたびに位置がずれて、試験が壊れていた。2026-11-17）。
+    const button = page.getByRole('button', {name: /^化物語\s*\d+台・最高/}).last();
+    await page.mouse.move(200, 700);
+    for (let i = 0; i < 30 && !(await button.count()); i++) { await page.mouse.wheel(0, 500); await page.waitForTimeout(250); }
     await button.scrollIntoViewIfNeeded(); await button.click();
     await page.getByText('データ表示', {exact: true}).waitFor();
     // 🌈の付いた台は「1085🌈」と出るので、台番号で始まる文字で探す。
     await page.getByText(new RegExp(`^${number}`)).first().click();
   }
+  await home();
+  // 狙い台一覧（台番号順）のボタンが閲覧ページに出て、開ける（2026-11-17）。この試験の記録は判定できる機種がないので、
+  // 「不調を意味しません」の説明が出る。開いたあとは読み込み直して元の画面から続ける。
+  await page.getByRole('button', {name: '狙い台一覧（台番号順）'}).click();
+  await page.getByText('不調を意味しません', {exact: false}).waitFor();
   await home();
   // ほかの端末の🌈（共有ファイル）が端末の内容に入る。
   for (let i = 0; i < 60 && !((await stored()).rainbow_marks || []).length; i++) await page.waitForTimeout(250);
