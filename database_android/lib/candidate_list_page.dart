@@ -4,7 +4,9 @@ import 'data_checks.dart';
 import 'list_views.dart';
 import 'machine_sections.dart';
 import 'models.dart';
+import 'rack_site_link.dart';
 import 'theme.dart';
+import 'viewer_bridge.dart' show openExternalUrl;
 
 /// 狙い台一覧（台番号順）の1行の種類。
 enum CandidateKind { focus, longTrend, normal, variety }
@@ -28,7 +30,11 @@ List<CandidateListRow> candidateListRows(
       if (r.store == store && r.day == day) r,
   ];
   final rows = <CandidateListRow>[];
-  for (final c in dayCandidates(dayRows, records, excludeNormal: true).candidates) {
+  for (final c in dayCandidates(
+    dayRows,
+    records,
+    excludeNormal: true,
+  ).candidates) {
     rows.add((
       kind: c.variety
           ? CandidateKind.variety
@@ -95,10 +101,18 @@ class CandidateListPage extends StatefulWidget {
     required this.day,
     required this.records,
     required this.onPick,
+    this.openSite,
+    this.now,
   });
   final String store, day;
   final List<SlotRecord> records;
   final void Function(SlotRecord record) onPick;
+
+  /// 台番号を押したときにサイトのページを開く（試験用に差し替える。null は別のタブで開く）。開けたら true。
+  final bool Function(String url)? openSite;
+
+  /// 今の時刻（試験用。null は端末の時刻）。サイトセブンの何日前を数えるのに使う。
+  final DateTime Function()? now;
 
   @override
   State<CandidateListPage> createState() => _CandidateListPageState();
@@ -111,6 +125,30 @@ class _CandidateListPageState extends State<CandidateListPage> {
     widget.day,
     widget.records,
   );
+  // 台番号→サイトセブンの機種の番号（P-STATIONの台番号のリンクに使う。1回だけ作る）。
+  late final Map<int, String> _models = rackModelCodes(
+    widget.records,
+    widget.store,
+  );
+
+  /// 候補が向けている日（選択日の翌日）。台番号はこの日のページを開く（共有カレンダーの翌日候補と同じ）。
+  late final String _target = () {
+    final day = DateTime.tryParse('${widget.day}T00:00:00Z');
+    return day == null
+        ? widget.day
+        : day.add(const Duration(days: 1)).toIso8601String().substring(0, 10);
+  }();
+
+  void _openSite(int rack, String url) {
+    final opened = (widget.openSite ?? openExternalUrl)(url);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$rack番のサイトのページを開けませんでした（ブラウザがポップアップを止めた可能性があります）。'),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -184,6 +222,49 @@ class _CandidateListPageState extends State<CandidateListPage> {
     );
   }
 
+  /// 台番号。サイトのページへ飛べる台は青い押せる四角（押しやすいよう高さ48以上）、飛べない台は数字だけ。
+  Widget _rackNumber(int rack) {
+    final url = rackSiteUrl(
+      widget.store,
+      rack,
+      _target,
+      (widget.now ?? DateTime.now)(),
+      models: _models,
+    );
+    const size = TextStyle(fontSize: 24, fontWeight: FontWeight.w800);
+    if (url == null) {
+      return SizedBox(
+        width: 72,
+        child: Text('$rack', textAlign: TextAlign.right, style: size),
+      );
+    }
+    return SizedBox(
+      width: 72,
+      child: Semantics(
+        link: true,
+        label: '$rack番のデータをサイトで開く',
+        child: Material(
+          color: const Color(0xFFEAF1FB),
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            key: ValueKey('candidate-site-$rack'),
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => _openSite(rack, url),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Center(
+                child: Text(
+                  '$rack',
+                  style: size.copyWith(color: const Color(0xFF0066CC)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _row(CandidateListRow row) {
     final c = row.candidate;
     return InkWell(
@@ -193,14 +274,7 @@ class _CandidateListPageState extends State<CandidateListPage> {
         padding: const EdgeInsets.symmetric(vertical: 9),
         child: Row(
           children: [
-            SizedBox(
-              width: 62,
-              child: Text(
-                '${c.record.rack}',
-                textAlign: TextAlign.right,
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-              ),
-            ),
+            _rackNumber(c.record.rack),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

@@ -65,3 +65,6 @@ final _settings = <String, String>{};
 String? loadViewerSetting(String key) => _settings[key];
 
 void saveViewerSetting(String key, String value) => _settings[key] = value;
+
+/// 別のタブでサイトのページを開く（Web以外・テストでは開かない）。
+bool openExternalUrl(String url) => false;

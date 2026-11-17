@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 @JS('databaseViewer.pick')
 external JSPromise<JSString?> _pick();
@@ -211,4 +212,23 @@ void saveViewerSetting(String key, String value) {
   try {
     _settingSet(key.toJS, value.toJS);
   } catch (_) {}
+}
+
+@JS('window.open')
+external JSObject? _windowOpen(JSString url, JSString target);
+
+/// 別のタブでサイトのページを開く（狙い台一覧の台番号、2026-11-17）。開いたタブから閲覧ページを
+/// 操作されないよう opener を外す（noopener を指定すると開けたかどうかが分からなくなるため、開いたあとで外す）。
+/// 開けなかった（ポップアップを止められた）ら false。
+bool openExternalUrl(String url) {
+  try {
+    final opened = _windowOpen(url.toJS, '_blank'.toJS);
+    if (opened == null) return false;
+    try {
+      opened.setProperty('opener'.toJS, null);
+    } catch (_) {}
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
