@@ -3328,3 +3328,17 @@
 |全体ゲート|済|`check_before_build.sh` ALL PASSED（94項目、作業フォルダー `C:\w\cbw-pattern`、HEAD `f96ac5b`＋この変更）|
 |閲覧ページの公開|済|`stage_viewer.py C:\w\vw-note`（記録の文字列90種は該当なし、ゲートの `viewer` と同一）→ `database-viewer` `6aaa053`→`5eb60db`（差分は `main.dart.js` と `MaterialIcons-Regular.otf`）、Pages 44071789301 成功。配信中の `main.dart.js` を取得して公開物と完全一致（`open-store-pattern`・`candidate-list` の両方を含む）|
 |iPhoneでの見た目・速さ（実データ）|未確認|利用者がiPhoneで開いて確かめる。AIは前向きの研究の評価期間（11/13〜）の実データでの結果は見ていない|
+
+## 2026-11-17 夜：閲覧ページの狙い台一覧の台番号から、データサイトのその台へ（Claude）
+
+- 依頼：利用者「狙い台一覧からはピーステはサイトセブン、メルヘンは取得元のデータサイトへその台番へ飛べるようにして。共有カレンダーの翌日候補と同じだね」。対象は閲覧ページの狙い台一覧（Codexの `candidate_list_page.dart`、`4fd81f3`）。
+- 規則は共有カレンダーの `share_viewer/daily_learning.mjs` `dailyRackUrl`（11/15 にサイトセブン行きへ変わったもの）と同じにして、Dart に移した（`database_android/lib/rack_site_link.dart`。**変えるときは両方**）。メルヘン：`standgraph/?rack_no=&target_date=`。P-STATION：サイトセブン `D4000.do?pmc=04034001&mdc=&dtdd=&dn=`（mdc はその台のいちばん新しいサイトセブンの記録の出典URL `source_url` から、dtdd は日本時間3時切り替えの何日前、先の日は0、8日分より古い日・機種の番号が分からない台・ほかの店はリンクなし）。開く日は候補が向けている日（選択日の翌日）。
+- 画面：台番号を青い押せる四角（高さ48以上、key `candidate-site-<台番>`）にし、押すと別のタブで開く（`viewer_bridge_web.dart` `openExternalUrl`：`window.open(url,'_blank')` のあと opener を外す。開けなかったら「開けませんでした（ポップアップを止めた可能性）」を出す）。行のほかの所を押すと今までどおり台の詳細。リンクにならない台は数字だけ。押したときだけ開く（サイトへのアクセスは増えない）。AIはサイトを開いていない。
+- ソース `2c2aa82`。試験 `test/rack_site_link_test.dart`（共有カレンダーの試験と同じ値：dtdd 0/1/6/7、3時切り替え、8日より古い・実在しない日・機種の番号なし・ほかの店はなし、機種の番号はいちばん新しい記録、一覧で台番号→サイト・行→詳細・開けないときの知らせ）。
+
+|要件|結果|証拠|
+|---|---|---|
+|URLの規則が共有カレンダーと同じ|済|`flutter test test/rack_site_link_test.dart test/candidate_list_page_test.dart` 10件合格|
+|全体ゲート|済|`check_before_build.sh` ALL PASSED（94項目、`C:\w\cbw-racklink2`）|
+|閲覧ページの公開|済|`stage_viewer.py C:\w\vw-note`（記録の文字列は該当なし、ゲートの `viewer` と同一）→ `database-viewer` `5eb60db`→`7ebe354`、Pages 44075812804 成功、配信中の `main.dart.js` が公開物と完全一致（店の入れ方のふり返りも入ったまま）|
+|iPhoneで押してサイトの台が開く|未確認|利用者が確かめる（サイトセブン・メルヘンの確認画面は利用者が押す）|
