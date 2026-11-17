@@ -3267,3 +3267,14 @@
 - 次：利用者に、その人の画面のいちばん上の文と、最近開いていたか（初めてか）を聞く。直す案は、途中まで読んだ部品を保存して続きから読む・P-STATIONが失敗したときもボタンを出して理由と再試行を示す、など（大きな作業なので完了の条件を見せてから）。
 - 結果（利用者の報告）：利用者本人の端末ではP-STATIONが見えていた。消えた人には「最新を読む」・回線の良いところで待つ・LINEならSafariで開き直す、を案内し、利用者「無事見れたようです」。どの手順で直ったか、画面上部の失敗の文は未確認。コードは変えていない。途中から続きを読む・失敗してもボタンを残す改善は、利用者が頼んだら行う（未着手）。
 - 追記：利用者「読み込み直しただけ」。その人は「最新を読む」（読み込み直し）だけで見られるようになった。端末の保存が壊れていたのではなく、1回目の読み込みが途中で失敗していたとみられる（画面上部の文は未確認）。
+
+## 2026-11-17 昼：Googleの部品の読み込みを「途中で失敗しても続きから」にした（Claude、実装・Web公開済み）
+
+- 依頼：利用者「続きから読めるようにすることで起こる不具合を考えられる？無いならばそうしてほしいかも」（上の節の、共有カレンダーでP-STATIONが出なかった件の対策）。
+- 原因（上の節）：初めて開く端末・保存が消えた端末は、P-STATIONの約35MB（136部品）を8部品ずつ読む。1回でも失敗すると、それまでに読んだ分を捨てて、次も最初から読んでいた。
+- 考えた不具合と防ぎ方（利用者に見せた表）：①古い・壊れた読みかけを使う → 一覧のハッシュ・バイト数と照合したものだけ使う ②途中までの分で表示され日が抜ける → 全部そろうまで表示用の履歴に入れない（従来どおり）③容量が一時的に増える（最大 約35MB＋約37MB）→ そろったら消す。履歴の保存に失敗したら読みかけを消してもう1回だけ保存 ④Google側の更新で要らなくなった読みかけが残る → 次に読むとき一覧に無い分を消す ⑤同じ配信元の古い版のページを壊す → 既存の保存先 `database-viewer-parts-v1` の版（2）は上げず、別の保存先 `database-viewer-parts-pending-v1`（store `parts`、キーは「接続先|サイト|ハッシュ」）を作る ⑥診断の件数がずれる → 診断画面に「読みかけの部品」の行を足した（保存先があるときだけ）。読みかけの保存先が使えなくても、読み込みは今までどおり最初から進む。
+- 変更（コミット `de1536a`）：`database_android/tool/viewer_parts_client.js`（`vpPendingStore`、`fetchViewerParts` で読みかけの取り出し・8部品ごとの保存・そろったら消す・保存失敗時の再試行）→ 生成物 `database_android/web/viewer_parts.mjs`・`share_viewer/viewer_parts.mjs`（`node tool/build_viewer_parts.mjs`。生成で `share_viewer/capture_health.mjs`（11/15に手で netHealth を外した分）と .gs 2本（改行だけ）も書き換わったので元に戻した。生成元と食い違っている点は未整理）、`database_android/web/storage_report.mjs`（診断の行）。Googleのスクリプト（.gs）は変わらない（貼り替え不要）。
+- 再発試験：`tool/test_viewer_parts.mjs` に2件（2回目の通信で打ち切り→読みかけ8件・履歴は空のまま→次は残り12部品だけ＋壊した読みかけ1つを読み直す→そろったら0件→一覧に無い読みかけを消す／読みかけの保存先が全部失敗しても最初から読める）、`tool/test_viewer_history_browser.mjs` に実Chromium・実IndexedDBで同じ流れ（読みかけ8件→残り12部品だけ→0件、既存の保存先は版2のまま）。
+- 全体ゲート `check_before_build.sh`（`/c/w/cbw-resume`、記録 `/c/w/gate-resume.log`）：pc-tests 以外の93項目 OK（Flutter test・analyze、閲覧ページ・共有ページの画面試験、`test_viewer_parts`・`test_viewer_history_browser`・`test_viewer_storage_report` を含む）。pc-tests は1062件中1件失敗（`test_pscube_background_sync` の修復後の再取込み。10月にも混み合ったときだけ落ちると記録のあるもの）。単独で5回成功。PC全体の流し直し1回目は別の1件（`test_rainbow_pending_review.test_failed_import_is_not_remembered_and_a_good_one_is`、単独で3回成功）が失敗、2回目は1062件 OK。Python は今回触っていない。どちらもPCアプリの裏の取り込みの試験で、混み合ったときに落ちる原因は未特定（次に見たら調べる）。
+- 公開：閲覧ページ `stage_viewer.py C:\w\vw-note` → `database-viewer` `350bdfb`→`bc34cd9`（差分は `viewer_parts.mjs`・`storage_report.mjs` だけ、ゲートの `viewer` と一致）、Pages 44011123417 成功。共有カレンダー `stage_share_viewer.py ../outputs/resume-parts-20261117/public-share`（版 `d1e1345efa1f`、記録の文字列90種・スクリプトIDは該当なし）→ `database-share` `74afa98`→`981e57d`（版の文字と `viewer_parts.mjs` だけ、ゲートの `share` と一致）、Pages 44011160153 成功。配信中の両方の `viewer_parts.mjs` に `database-viewer-parts-pending-v1` があることを curl で確認。
+- 未確認：実際のiPhone・遅い回線で、途中で失敗したあとに続きから読めるか（試験は合成データと模擬の通信）。Androidアプリは閲覧ページの部品を使わないので変わらない。
