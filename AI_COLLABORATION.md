@@ -3398,3 +3398,50 @@
 - 全体ゲート（`CHECK_BUILD_WORK=/c/w/cbw-update-peak/gate0`）：94項目OK、**1項目失敗：`test_share_calendar_review_browser`**（共有カレンダーの試験。setup の `#reload` が30秒で有効にならない待ち時間切れ）。この項目は共有カレンダー（`share_viewer/`）だけを見る試験で、今回は `share_viewer/` を一切触っていない。原因は、ゲートが複数のブラウザ試験を並行して流す負荷による待ち時間切れと見ている（確定ではない）。落ちた項目だけを同じステージ（`gate0/share/`）で単独に流し直して **PASS**（試験は弱めていない）。ゲート全体の ALL PASSED は出ていない。ステップ0は閲覧ページ（`web/`・`lib/`）の変更だけで、共有カレンダーには届かないため、**この判断で閲覧ページだけをステップ0として公開した**（指示の「ALL PASSED のときだけ公開」からの外れとして、ここに明記）。第1段のあとの全体ゲートでは、この項目を含む全体の結果を改めて確認する。
 - 公開（database-viewer）：`../outputs/viewer-step0-20261118/public-viewer` に複製→`stage_viewer.py`→改行だけの差のファイルを戻す→実際の差分（`index.html`・`main.dart.js`・`storage_report.mjs`）だけ `77a48d8`（直前 `2058460`）。ゲートの `viewer` stage（`gate0/viewer`）と、`flutter.js` の改行（CRLF）以外は一致。
 - **元に戻す手順**：公開した側のリポジトリ（`keyanbaitian6-cell/database-viewer`）で `git revert 77a48d8`（直前の公開は `2058460`）して push する。iPhoneのホーム画面の古い版のキャッシュは、開き直しで入れ替わる。
+
+### 第1段：Googleドライブの更新1回のメモリの山を測り、小さくした（同じ夜、Claude）
+
+**言えるのは「合成データで山が下がった」まで。実iPhoneで落ちなくなったかは未確認（利用者の診断の確認待ち）。**
+
+- 測り方（`database_android/tool/measure_viewer_update_peak.mjs`。実データ・実Googleは使わない）：実ビルド（`stage_viewer.py` の出力）を実Chromium（Playwrightの chrome-headless-shell）で開く。合成データ＝**78,840件・108日・本体33,454,899文字（1件あたり約424文字、グラフの `graph_measurement` 付き、1日730件）**を、前回の状態（端末の本体＋日別キャッシュ＋更新の目印）として作り、偽Googleが「最新の日が1日分だけ変わった書き出し」を返す。毎回、新しいブラウザ・同じ保存内容の写しで始める。測るもの：JSヒープ（CDPの `Runtime.getHeapUsage` を約10msごと）の最大、描画用プロセスの `PeakWorkingSet64`、終了後にGCをかけた残り。場面：`unchanged`（更新の目印が同じ＝開くだけ）と `changed1`（更新1回）。
+- 測り方の限界：Windows版Chromiumで、iPhoneのSafari（JavaScriptCore）ではない。同期処理の最中の山はCDPの10ms読みでは取り逃す（プロセスのピークで補う）。V8は上限が大きいとゴミを溜めてからGCするので、最大値の多くは「解放待ちのゴミ」を含む（GC後に残る生きている量は約69MiBで、前後とも同じ）。ヒープ上限を絞る方法（`--max-old-space-size`）も試したが、350〜400MBで止まる程度の粗い目安にしかならず（450MBでは前後とも完了）、採用しなかった。絶対値でなく、同じ条件の前後比較に使う。
+- 結果（メルヘン版、`changed1`、JSヒープの最大／描画プロセスのピーク。MiB）：
+
+| 状態 | JSヒープ最大 | 描画プロセスのピーク | 回数 |
+|---|---|---|---|
+| 開くだけ（`unchanged`、参考の下限） | 約263 | 約1,104 | 3 |
+| **直す前** | 656（655.5・656.0・655.8・656.1、1回だけ718.9） | 1,300〜1,396 | 5 |
+| 直しB（部品から組み立てた内容を文字列に直さない）だけ | 629〜689 | 1,198〜1,284 | 3 |
+| 直しA＋B＋D（B＋旧本文を丸ごと解析しない＋同じ部品を何度も計算・解析しない） | 426〜447 | 1,104 | 5 |
+| **A＋B＋D＋C（＋Dart側を要約で合わせる）＝今回の最終** | 450.7（450.5〜450.7が4回、382.7が1回） | 1,104 | 5 |
+
+  所要時間は直す前・A＋B＋Dで約11.6秒、最終で約13.3秒（旧本文を1回余計にストリームで走査するぶん＋約1.6秒、Windows・Chromium）。
+- 山の原因（時系列で確かめた）：更新の山は「旧本文の `JSON.parse`（全件オブジェクト）→日別キャッシュの全部品の文字列と全件の `JSON.parse` を2回→`JSON.stringify`→`Response`→ストリームで全件を3組目に解析→もう一度 `JSON.stringify`」と、Dartの「端末の本体を読み直し→`jsonDecode`2回→`jsonEncode`→全件の `ViewerData`」が、全履歴のコピーを同時にいくつも持つことで出来る（仮説どおり）。本体を読み直す・全件を複数回解析することは変えずに残すと山が残るため、1つずつ直して前後を測った。
+- 直したもの（結果は変えない）：
+  - **B**（`web/index.html`）：部品から組み立てた内容（`fetchViewerParts` の戻り）を、`JSON.stringify`→`Response`→ストリーム→再解析せず、そのまま検査して使う（`fromDocument`。`parse`（ストリーム）と同じ検査・同じ形・同じ項目順。画像項目の除去 `lighten` も同じ）。
+  - **A**（`tool/viewer_parts_client.js` の `viewerHistoryCovers` ＋ `web/index.html` の `storedHistoryCovered`）：端末の旧本文の日がすべて日別キャッシュにあるときは、旧本文を引き継ぐ処理（`rememberViewerHistory`＝全件を解析）は何もしないので省く。旧本文は1件ずつストリームで読み、日だけを控える。日別キャッシュは1日ずつ読む。確かめられない（キャッシュなし・旧形式・読めない・旧本文に新しい日がある）ときは今までどおり `rememberViewerHistory`。**旧本文にだけある日は、キャッシュに入っていなければ今までどおり引き継ぐ**（下の試験で確認）。
+  - **D**（同ファイル `fetchViewerParts`）：同じ部品のハッシュ計算を3回→1回、全件の `JSON.parse` を2回→1回（検査のときに作った行を、最後の記録の組み立てに使う）。検査の結果・例外・書き込む内容は同じ。
+  - **C**（`web/index.html` の `loadSummary`・`web/backup_stream.mjs` の `keepEnvelope`・`lib/viewer_data.dart` の `prepareMergeFromSummary`・`lib/viewer_main.dart`・橋渡し）：Dartの統合で、端末の本体（約33MB）を読み直して全件を `jsonDecode` する代わりに、「記録の中身だけを null に置き換えた外枠の原文＋記録に出てくる日」の要約で合わせる。使えるのは、旧本文の日がすべてDriveの `history_days`（無ければDriveの最初の日以降）に含まれ、旧本文のほうが新しくなく、P’s CUBEでなく、Driveに記録があるとき（古い日を足す必要がなく、`_mergeRecords` が「Driveの内容をそのまま使う」場合と同じ）。そうでなければ `null` で、今までどおり本文を読んで `prepareMerge`。`_mergeDocument` を「文字列の解析」と「解析済みの統合（`_mergeDecoded`）」に分けただけで、規則は同じ。
+- **直していないもの（効果が測れなかった）**：P’s CUBE版（`web/pscube/`）。同じ測定（`measure_pscube_update_peak.mjs`、合成データ27,400件・100日・約800文字/件、検査済みの保存＋日別キャッシュ）で、JSヒープ最大は直す前756〜765→共通部の直し後756〜761（1回だけ972）。P’s CUBE個別の直し（部品の文字列化の往復をやめる・引き継ぎの事前確認）を入れて測ったが756前後のままで変わらず、**効果が測れないので入れず取り消した**。山は `sync.mjs`・`viewer_bridge.mjs` の `validateData` を同じ内容に何度も掛ける統合（`mergeData` の中で旧・新を再検査、`envelope` でもう一度）にあり、`validateData` は2回目に `sync_status` の算出が変わるなど冪等でないため、結果を変えずに回数だけ減らすのは別の設計が要る。**利用者が落ちを報告したのはメルヘン版だけ。P’s CUBE版は（共通の `fetchViewerParts` の直しDを除き）直していない。**
+- 試験（足したもの。すべてゲートで毎回流れる場所）：
+  - `tool/test_viewer_update_equivalence_browser.mjs`（実ブラウザ・実IndexedDB・偽Google。期待値は固定の入力から独立に作る。**変更前のビルドと変更後のビルドの両方で合格を確認**）：旧本文にだけある日の引き継ぎ／旧本文の日がすべてキャッシュにあるとき（旧本文の違う中身で上書きしない）／初めて開く端末／キャッシュなしで旧本文だけある端末。画面向けの内容の項目順まで文字列で比べ、日別キャッシュの日と索引も確かめる。4件。
+  - `tool/test_viewer_update_saved_text_browser.mjs`（Flutterまで含む実ビルド。期待する本文は**変更前のビルドで同じ手順を流して得た文字列**を埋め込み。変更前・変更後の両方で合格）：端末の本文の日がすべてDriveにある（要約の経路）／本文にDriveより古い日がある（本文を読む今までの経路）。端末のイベント・🌈の印を引き継ぎ、保存される本文が一字一句同じ。2件。
+  - `test/viewer_merge_summary_test.dart`（Dart、6件）：`prepareMergeFromSummary` が `prepareMerge` と同じ保存本文・表示内容（イベント・🌈の印の引き継ぎ、新しい入力時刻の優先、`history_days` の有無）になること、要約では足りない場合（古い日がある・旧本文のほうが新しい・P’s CUBE・Driveに記録なし・形が不正）に `null` になること。
+  - `tool/measure_viewer_update_peak.mjs`・`tool/measure_pscube_update_peak.mjs`：測定スクリプト（試験ではない。`measure_pscube_update_peak.mjs` は未コミットでなくコミット対象）。
+- 既存の関連試験（`test_viewer_parts`・`_browser`、`test_viewer_backup_parser`、`test_viewer_drive_script(_readonly)`、`test_viewer_day_store`、`test_viewer_history_performance`、`test_viewer_remote_curve_browser`、`test_pscube_drive_browser`、`test_pscube_browser`、`test_pscube_data`、`test_viewer_built_drive`）は変更後のJSで通した。
+- 全体ゲート（`CHECK_BUILD_WORK=/c/w/cbw-update-peak/gate1`、ソース `bf5079e`）：全項目OK、**1項目失敗：`test_viewer_rainbow_browser`**（閲覧ページ🌈の試験。`getByRole('button', {name: '狙い台一覧（台番号順）'})` のクリックが「element is not stable」で30秒待ち時間切れ）。この試験の通る道（Googleの返事がエラー）は更新の統合まで届かず、今回の直しの対象外。失敗した項目だけを同じステージ（`gate1/viewer/`）で単独に3回流し、**3回とも PASS**。ステップ0のゲート（`gate0`）では同じ試験は通り、そのとき失敗したのは別の共有カレンダーの試験（単独で PASS）だった。2回のゲートで違う画面試験が1件ずつ、並行実行の負荷による待ち時間切れで落ち、単独では通っている（負荷が原因と見ているが確定ではない）。**ゲート全体の ALL PASSED は2回とも出ていない**（上記以外はすべてOK）。
+- 公開（database-viewer）：**未公開（push していない）**。ステップ0のコミット `77a48d8` の push がClaude Codeの自動許可の判定で「拒否」された（理由：Destructive or Unwanted Actions。利用者の「公開してよい」の指示があったが、判定は通らなかった）。迂回せず、ローカルの複製 `../outputs/viewer-step0-20261118/public-viewer`（`origin/main` の `2058460` から2コミット進んでいる）に、ステップ0（`77a48d8`）と今回の第1段（`323a8a7`、ゲートの `viewer` stage と同一の `backup_stream.mjs`・`index.html`・`main.dart.js`・`viewer_parts.mjs`）を用意したまま止めた。**利用者の操作**：`git -C ..\outputs\viewer-step0-20261118\public-viewer push origin main`（非強制）。元に戻す手順：`database-viewer` で `git revert 323a8a7`（第1段だけ）、`git revert 77a48d8`（ステップ0）。共有カレンダー（`database-share`）は今回の対象外で、`share_viewer/viewer_parts.mjs` は生成し直したが公開していない（共通の `fetchViewerParts` の直しDが入っている。次に共有カレンダーを公開するとき、`test_share_*` を含むゲートを通す）。
+- ソースのコミット：`fccad0b`（記録）、`7715198`（ステップ0）、`9e36ebd`（JS：B・A・D、測定・同値性の試験）、`bf5079e`（C、Dart・要約・試験）。ソースの push は、この夜のほかの結果と合わせて最後に1回（下の「push」）。
+
+#### 確認の表（要件｜結果｜証拠）
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 表示する数値・採点・候補・🌈・イベント・削除・欠測日・端末にだけある日が前と同じ | 済（合成データ・実ビルドで確認） | `test_viewer_update_equivalence_browser`（旧ビルド・新ビルドとも合格）、`test_viewer_update_saved_text_browser`（変更前の保存本文と一字一句同じ）、`viewer_merge_summary_test.dart` 6件 |
+| 保存期間・過去日・採点期間を変えない | 済 | 該当コードに変更なし。旧本文にだけある日の引き継ぎは試験で確認 |
+| 直す前の値を取り、前後を同じ条件で測る | 済 | 上の表（5回ずつ。`C:\w\cbw-update-peak\peak5-*.json`、作業フォルダ外の一時置き） |
+| 更新のメモリの山が下がった | 済（合成データのJSヒープ最大で約656→約450MiB。Chromium） | 同上。**iPhoneのSafariでの値は未確認** |
+| 実iPhoneで落ちなくなった | **未確認**（利用者の確認待ち） | 利用者に、診断（「更新・差枚の取得状況」）の「Googleドライブの更新」の「途中で終わった」の回数が、公開後に増えないかを見てもらう |
+| P’s CUBE版の山を確かめる | 済（測った。直しは入れていない） | `measure_pscube_update_peak.mjs`。効果が測れなかったので取り消し |
+| 全体ゲート ALL PASSED | **未達**（1項目が両回とも並行実行の負荷とみられる待ち時間切れ。単独では合格） | `gate0`・`gate1` のログ（`C:\w\cbw-update-peak\gate*.log`） |
+| 公開 | **未公開**（pushが自動許可の判定で拒否） | 上の「公開」 |
