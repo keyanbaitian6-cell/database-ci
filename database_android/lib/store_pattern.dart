@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'models.dart';
 import 'pscube_suffix.dart' show suffixesFor;
 import 'scoring.dart' show minScoredGames;
+import 'setting_estimate.dart' show foldHalfWidthKana;
 
 /// 店の入れ方のふり返り（2026-11-17 利用者「２だけ作る。iPhoneブラウザ版の2種類のみで」。
 /// 提案は共有記録 2026-11-17「勝ちにこだわる目線で、あったらいい機能を5つ」の2）。
@@ -173,7 +174,9 @@ StorePatternDay storePatternDay(
 
   final byMachine = <String, List<SlotRecord>>{};
   for (final r in usable) {
-    byMachine.putIfAbsent(r.machine, () => []).add(r);
+    // 画面に出す名前でまとめる（半角カナの機種名は全角にそろえる。そのままだと閲覧ページの字体に無く□になる。
+    // 2026-11-17 利用者「文字化けしすぎ」）。保存している名前は変えない。
+    byMachine.putIfAbsent(foldHalfWidthKana(r.machine), () => []).add(r);
   }
   final machines = groups(byMachine)
     ..sort((a, b) {
