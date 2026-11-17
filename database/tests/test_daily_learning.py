@@ -409,6 +409,14 @@ class LearningTests(unittest.TestCase):
         self.assertIn('閉店前', ''.join(runtime.ready(base + early, target, ('nagamachiminami',))))
         partial = rows_for('2026-11-11', '2026-11-11T23:20:00+09:00', machines=range(9))
         self.assertIn('機種9', ''.join(runtime.ready(base + partial, target, ('nagamachiminami',))))
+        # 1台だけの機種の取りこぼしくらいでは待たない（2026-11-17 利用者「1台の取りこぼしくらいで動かなくなるのやめてよね」）。
+        # 前の日の台数の1%（この試験は100台なので1台）を超えて欠けたときだけ待つ。
+        single = [r | {'machine': '1台の機種'} if r['rack'] == 9 else r for r in base]
+        one_lost = [r for r in good if r['rack'] != 9]
+        self.assertEqual(runtime.ready(single + one_lost, target, ('nagamachiminami',)), [])
+        two_lost = [r for r in good if r['rack'] not in (9, 19)]
+        two = [r | {'machine': '1台の機種'} if r['rack'] in (9, 19) else r for r in base]
+        self.assertIn('（2台）', ''.join(runtime.ready(two + two_lost, target, ('nagamachiminami',))))
         # 入れ替え（同じ台番号に別の機種）は欠けと数えない。
         replaced = [r | {'machine': '新台'} if r['rack'] % 10 == 9 else r for r in good]
         self.assertEqual(runtime.ready(base + replaced, target, ('nagamachiminami',)), [])

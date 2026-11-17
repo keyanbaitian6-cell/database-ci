@@ -32,6 +32,10 @@ SCORING_MJS = Path(__file__).parents[1] / 'database_android/web/pscube/scoring.m
 MERUHEN_FINAL_HOUR = 23
 # 前日データのうち、符号が決まらない台（グラフ未取得など）がこれを超えたら取り込み待ち。
 UNKNOWN_LIMIT = .10
+# 前の日にあった機種が丸ごと無いとき、待つのは欠けた台が前の日の台数のこの割合を超えるときだけ（2026-11-17 利用者
+# 「1台の取りこぼしくらいで動かなくなるのやめてよね」。11/16 幸町の863番（1台だけの機種）を取りこぼし、11/17 の
+# 幸町の予測が保存されなかった）。幸町約530台なら5台まで、長町南約360台なら3台まで、P-STATION約280台なら2台までは保存する。
+MISSING_RACK_LIMIT = .01
 # 分析用JSON（daily_learning_archive）を使えずに保存した予測に付ける注意。「読めません」は各画面で重要な注意として出る。
 ARCHIVE_NOTE = '（過去の学習に足す分析用JSONを読めません。原本DBだけで学習しました）'
 
@@ -343,9 +347,11 @@ def ready(rows, target, stores=STORES, low=None):
         # 前の日にあった機種の台が、別の機種名も含めて1台も無い（入れ替えは台番号が残るので数えない）。
         earlier = sorted(d for d in machines if d < day)
         if earlier:
-            missing = [m for m, numbers in machines[earlier[-1]].items() if not numbers & racks[day]]
-            if missing:
-                reasons.append(f'{name}の前日データに「{missing[0]}」など{len(missing)}機種がありません')
+            before = machines[earlier[-1]]
+            missing = [m for m, numbers in before.items() if not numbers & racks[day]]
+            lost = sum(len(before[m]) for m in missing)
+            if missing and lost > MISSING_RACK_LIMIT * len(racks[earlier[-1]]):
+                reasons.append(f'{name}の前日データに「{missing[0]}」など{len(missing)}機種（{lost}台）がありません')
         usable = [r for r in current if valid(r)]
         unknown = sum(1 for r in usable if outcome(r) is None)
         if usable and unknown > max(3, UNKNOWN_LIMIT * len(usable)):
