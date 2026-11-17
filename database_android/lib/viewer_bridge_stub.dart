@@ -9,6 +9,8 @@ Future<void> saveViewerData(String text, {bool meruhen = false}) async {}
 
 Future<String?> loadViewerData() async => null;
 
+Future<String?> loadViewerSummary() async => null;
+
 Future<String?> loadRainbowMarks() async => null;
 
 Future<void> saveRainbowMarks(String text) async {}

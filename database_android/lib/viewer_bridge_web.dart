@@ -52,6 +52,19 @@ Future<void> saveViewerData(String text, {bool meruhen = false}) async {
 
 Future<String?> loadViewerData() async => (await _load().toDart)?.toDart;
 
+@JS('databaseViewer.loadSummary')
+external JSPromise<JSString?> _loadSummary();
+
+/// 端末に保存した本文の要約（`{envelope, days}` のJSON）。記録の中身は読み込まない。無い・読めない・
+/// 調べられないときは null（その場合は [loadViewerData] で本文を読む）。
+Future<String?> loadViewerSummary() async {
+  try {
+    return (await _loadSummary().toDart)?.toDart;
+  } on Object {
+    return null;
+  }
+}
+
 @JS('databaseViewer.loadMarks')
 external JSPromise<JSString?> _loadMarks();
 

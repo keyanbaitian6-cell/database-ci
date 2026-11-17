@@ -513,6 +513,24 @@ class ViewerData {
     if (fresh == null) {
       throw const FormatException('databaseのバックアップファイルではありません。');
     }
+    final merged = _mergeDecoded(old, fresh);
+    final doc = merged.document;
+    return (
+      document: doc,
+      note: merged.note,
+      text: identical(doc, old)
+          ? stored!
+          : identical(doc, fresh)
+          ? incoming
+          : jsonEncode(doc),
+    );
+  }
+
+  /// [_mergeDocument] の、解析済みの2つを合わせる部分（文字列にする前まで）。
+  static ({Map<String, dynamic> document, String? note}) _mergeDecoded(
+    Map<String, dynamic>? old,
+    Map<String, dynamic> fresh,
+  ) {
     final result = _mergeRecords(old, fresh);
     var doc = result.document;
     final keptStored = identical(doc, old);
@@ -544,14 +562,75 @@ class ViewerData {
         };
       }
     }
+    return (document: doc, note: result.note);
+  }
+
+  /// 端末の旧本文の要約 [summary]（`{envelope, days}`。[envelope] は旧本文の記録の中身だけを null に置き換えた
+  /// JSON、[days] は旧本文の記録に出てくる日）と、Driveから読んだ内容 [incoming] を合わせる。結果は
+  /// [prepareMerge] と同じ。旧本文の記録（数十MB）を読み込み・解析しないので、更新1回のメモリの山が小さい。
+  ///
+  /// 旧本文の記録がDriveの内容に全部含まれる日だけのとき（古い日を足す必要がなく、旧本文のほうが新しい場合でもない）
+  /// に使える。そうでなければ null（呼び出し側は旧本文を読んで [prepareMerge] を使う）。
+  static ({String text, String? note, ViewerData data})? prepareMergeFromSummary(
+    String summary,
+    String incoming,
+  ) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(summary);
+    } on FormatException {
+      return null;
+    }
+    if (decoded is! Map ||
+        decoded['envelope'] is! String ||
+        decoded['days'] is! List) {
+      return null;
+    }
+    final old = _decodeDocument(decoded['envelope'] as String);
+    final fresh = _decodeDocument(incoming);
+    if (old == null || fresh == null) return null;
+    // この要約で足りるのは、[_mergeRecords] が「Driveの内容をそのまま使う」場合だけ（古い日が無い）。
+    if (fresh['format'] == 'pscube-viewer' || old['format'] == 'pscube-viewer') {
+      return null;
+    }
+    DateTime? exportedAt(Map<String, dynamic> doc) {
+      final header = doc['header'];
+      return header is Map
+          ? DateTime.tryParse(header['exported_at'] as String? ?? '')
+          : null;
+    }
+
+    final oldAt = exportedAt(old);
+    final freshAt = exportedAt(fresh);
+    if (oldAt != null && freshAt != null && oldAt.isAfter(freshAt)) return null;
+    final freshDays = [
+      for (final item in fresh['records'] as List)
+        if (item is Map &&
+            item['day'] is String &&
+            isValidRecordDay(item['day'] as String))
+          item['day'] as String,
+    ];
+    if (freshDays.isEmpty) return null;
+    final first = freshDays.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+    final completeDays = fresh['history_days'] is List
+        ? (fresh['history_days'] as List).whereType<String>().toSet()
+        : null;
+    for (final day in (decoded['days'] as List).whereType<String>()) {
+      if (!isValidRecordDay(day)) continue;
+      final older = completeDays != null
+          ? !completeDays.contains(day)
+          : day.compareTo(first) < 0;
+      if (older) return null;
+    }
+    // 要約の記録の位置には null が入っている。古い日が無いので、記録の中身は使わない。
+    old['records'] = const <Object?>[];
+    final merged = _mergeDecoded(old, fresh);
+    final doc = merged.document;
+    if (identical(doc, old)) return null;
     return (
-      document: doc,
-      note: result.note,
-      text: identical(doc, old)
-          ? stored!
-          : identical(doc, fresh)
-          ? incoming
-          : jsonEncode(doc),
+      text: identical(doc, fresh) ? incoming : jsonEncode(doc),
+      note: merged.note,
+      data: _parseDocument(doc),
     );
   }
 

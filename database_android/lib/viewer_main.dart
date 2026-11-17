@@ -213,15 +213,30 @@ class _ViewerHomeState extends State<ViewerHome> {
         }
       } else {
         // 前に読み込んだ内容と合わせる（新しい方を使い、Driveに無い古い日は残す）。
+        // 端末の本文の記録の日がすべてDriveの内容に含まれるときは、本文の記録（数十MB）を読み込まず、要約だけで
+        // 合わせる（更新1回のメモリの山を下げる）。そうでなければ、今までどおり本文を読んで合わせる。
         String? stored;
+        var summarized = false;
+        ({String text, String? note, ViewerData data})? merged;
         try {
-          stored = await loadViewerData();
+          final summary = await loadViewerSummary();
+          if (summary != null) {
+            merged = ViewerData.prepareMergeFromSummary(summary, text);
+            summarized = merged != null;
+          }
         } on Object {
-          stored = null;
+          merged = null;
         }
-        final merged = ViewerData.prepareMerge(stored, text);
+        if (merged == null) {
+          try {
+            stored = await loadViewerData();
+          } on Object {
+            stored = null;
+          }
+          merged = ViewerData.prepareMerge(stored, text);
+        }
         final data = merged.data;
-        if (merged.text != stored) {
+        if (summarized || merged.text != stored) {
           await saveViewerData(merged.text, meruhen: data.source != 'pscube');
         }
         if (!mounted) return;

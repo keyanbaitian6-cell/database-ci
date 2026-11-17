@@ -360,6 +360,25 @@
         const diag = await import('./storage_report.mjs');
         (done ? diag.phaseFinished : diag.phaseStarted)(name);
       },
+      // 端末に保存した本文の要約（Googleドライブの更新で、古い日を足す必要がないか調べるため）。記録の中身は
+      // 読み込まず、記録を除いた外枠の原文（envelope）と、記録に出てくる日（days）だけを返す。JSON。
+      // 無い・読めない・P’s CUBEのときは null（呼び出し側は、本文を読む今までの方法を使う）。
+      async loadSummary() {
+        if (await pscubeActive()) return null;
+        try {
+          let text = await readStored();
+          if (!text) return null;
+          const days = new Set();
+          const stream = new Blob([text]).stream();
+          text = null;
+          const parser = window.databaseBackupStream || await import('./backup_stream.mjs');
+          const result = await parser.readBackupJson(stream, {keepEnvelope: true, record: row => {
+            if (row && typeof row === 'object' && !Array.isArray(row) && typeof row.day === 'string') days.add(row.day);
+            return null;
+          }});
+          return JSON.stringify({envelope: result.envelope, days: [...days]});
+        } catch { return null; }
+      },
       // 前回のGoogleドライブの更新が途中で終わっていたら、起動時の自動更新を止めている期限（ISO）。無ければ null。
       async autoUpdateHold() {
         const diag = await import('./storage_report.mjs');
