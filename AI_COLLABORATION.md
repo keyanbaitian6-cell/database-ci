@@ -3370,3 +3370,16 @@
 - 公開：閲覧ページ `database-viewer` `9ac513b`→`6c5f76e`（ゲートの `viewer` と同一）、Pages 44102086113 成功、配信中の `main.dart.js` が公開物と一致。共有カレンダー `stage_share_viewer.py ../outputs/four-rack-20261117/public-share`（版 `602f83cea213`、差分は版の文字と `event_history.mjs`、ゲートの `share` と同一）→ `database-share` `981e57d`→`e30ae29`、Pages 44102158719 成功、配信中の `event_history.mjs` に新しい規則があることを確認。
 - 未完了・未確認：①PCの「共有へ反映」（利用者が押す。押すまで iPhone・共有カレンダーに 11/16 の週は届かない）②Googleスクリプト2本の貼り替え（利用者。共有カレンダーで4台構成の週の顔文字を選んで保存するのに必要）③AndroidはAPKを作っていない（作るまで出ない）④実画面での表示は未確認。
 - 利用者の報告（2026-11-17 23:3x）：「共有へ反映し、スクリプトを張り替えた」（Googleスクリプト2本の貼り替えは利用者の報告。AIは版を確かめていない）。Claudeの確認：Googleドライブの `database-event-history.json`（23:34 更新）に 2026-11-16 の4台構成の週（20機種・分類日 11/16）と、その週の結果21件があり、除外（rejected）0。iPhone・共有カレンダーの実画面は未確認。
+
+## 2026-11-18：店の入れ方のふり返りをPCにも出し、閲覧ページと同じ数字にそろえた（Claude）
+
+- 依頼：利用者「今日追加した店の入れ方の振り返りなんだけど、PCでも表示させてほしい」「出来が思ったよりも良かった。かつ、PCだと保存している履歴も多いからより高い精度で分析してくれる気がする」「アナスロの分あわせたらもっといくのでは？」。
+- 利用者へ答えたこと：1日ごとの判定の確かさはその日の台数で決まり、日数では変わらない。PCで増えるのは履歴の長さ（PCの保存：長町南71日・幸町108日、閲覧ページは約60日）。P-STATIONのアナスロ補完は 2026-01-01〜09-27 の86日・1日約295台と店のほぼ全台だが、500G超の台のうち差枚（推定を含む）が分かるのは約25%（アナスロ 5,348／21,426台、P’s CUBE 10,120／10,760、サイトセブン 3,544／3,594。原本DBの台数だけを数えた）で、分かる台は一部の機種に偏るため、そのままでは使わない。幸町のアナスロ分析用データはジャグラー・ハナハナだけで、店全体の判定には使えない。
+- 完了の条件（着手時に提示）：PCに窓（長町南・幸町・P-STATION、日の選択、全台系・末尾・並び、日ごとの履歴・イベント名・イベントの日だけ）／閲覧ページと同じ数字（乱数をそろえ、共通の試験データで確かめる）／「プラスかどうか分かる台が稼働した台（500G超）の7割に届かない日は判定しない」を両方に／試験・全体ゲート・閲覧ページの再公開。
+- 変更（ソース `63e6c0f`）：
+  - PC `database/store_pattern.py`（計算。Dart と同じ規則）、`database/store_pattern_ui.py`（窓。DBは読むだけ＝読み取り専用で開く。メルヘンは `days` の行と `core.rack_won`、`core.is_hidden_machine` で隠す機種は除く、イベント名は app_state の date_events。P-STATIONは `pscube.sqlite3` の records（店 c740601・20スロ、rowid 順で同じ台は後の記録）と `pscube_won`＝確定差枚、無ければ `anaslo_net.valid`／`site777_net.valid` を通った推定差枚の符号、イベント名は state の date_events）。入口は `database/app.py` の結果欄「店の入れ方のふり返り」（日次学習の隣）。履歴は1日ずつ計算（1日500台余りで約0.2秒、幸町108日で約20秒）。
+  - 閲覧ページ `database_android/lib/store_pattern.dart`：乱数を Park–Miller（×48271 mod 2147483647、種は店|日の UTF-16 から ×31 の多項式 mod 2147483647）に変えた。前の FNV-1a と Dart の Random は、ブラウザ（JavaScript の数）では 2^53 を超えるかけ算で値がずれうるため。`patternKnownShare = .7`・`played` を足した。機種の並びの同順位は名前の順で決める。
+  - 共通の試験データ `database_android/test/fixtures/store_pattern_cases.json`（`database/tests/make_store_pattern_cases.py` でPCの計算から作る。長町南・幸町・P-STATION・台の少ない日・分かる台が少ない日の5例）。Dart の試験が同じ値（並びの確率まで1e-12以内）になることを確かめる。
+- 試験：PC `tests/test_store_pattern.py` 6件（超幾何・並び・7割の決まり・全角化・共通データ・窓に長町南とP-STATIONが出る）、Dart `store_pattern_test.dart`（共通データを含む）と `half_width_kana_screens_test.dart` 11件。全体ゲート ALL PASSED（94項目、`C:\w\cbw-sppc`）。
+- 公開：閲覧ページ `stage_viewer.py C:\w\vw-note`（ゲートの `viewer` と同一）→ `database-viewer` `6c5f76e`→`2058460`、Pages 44114980567 成功、配信中の `main.dart.js` が公開物と一致。乱数を変えたので、閲覧ページの「並び」の確率は前の版と少し違う値になる（判定の呼び方が変わる日もありうる）。
+- AIは実データでこの画面の結果（どの機種・末尾が偏ったか）を見ていない（前向きの研究の評価期間と重なるため）。PCの窓は、PCアプリを起動し直すと出る。実画面は未確認。
