@@ -3445,3 +3445,4 @@
 | P’s CUBE版の山を確かめる | 済（測った。直しは入れていない） | `measure_pscube_update_peak.mjs`。効果が測れなかったので取り消し |
 | 全体ゲート ALL PASSED | **未達**（1項目が両回とも並行実行の負荷とみられる待ち時間切れ。単独では合格） | `gate0`・`gate1` のログ（`C:\w\cbw-update-peak\gate*.log`） |
 | 公開 | **未公開**（pushが自動許可の判定で拒否） | 上の「公開」 |
+- push（2026-11-18 02:41 JST）：`tools/push_ci.py` で `keyanbaitian6-cell/database-ci` の `main` に `08c45e3..3998552` を非強制で1回送った（CIが1回動く。失敗しても原因を調べずに再実行しない）。公開（database-viewer）は上のとおり未公開。**朝の最初の手順**：①利用者が公開用の複製で `git push origin main`（上）②公開後、利用者のiPhoneで診断の「Googleドライブの更新」の「途中で終わった」の回数を見てもらう（増えなければ効果あり、増えれば `git revert`）③段階B0に進んでよいかを利用者に確認（`VIEWER_DAY_STORE.md`「段階B本体の計画」）。
