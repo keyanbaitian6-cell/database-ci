@@ -27,6 +27,7 @@ import 'rainbow_marks.dart';
 import 'remote_curve.dart';
 import 'setting_estimate_presentation.dart';
 import 'shared_widgets.dart';
+import 'store_pattern_page.dart';
 import 'theme.dart';
 import 'variety_idle.dart';
 import 'variety_week.dart';
@@ -1331,6 +1332,26 @@ class _ViewerHomeState extends State<ViewerHome> {
             ),
             icon: const Icon(Icons.hourglass_empty),
             label: const Text('バラエティの回っていない台（期間・ゲーム数を選べる）'),
+          ),
+        ],
+        // 店の入れ方のふり返り（全台系・末尾・並び。2026-11-17 利用者「２だけ作る。iPhoneブラウザ版の2種類のみで」。
+        // 閲覧ページだけ、全店。計算は store_pattern.dart、探索の結果で候補・採点には使わない）。
+        if (day != null) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const ValueKey('open-store-pattern'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => StorePatternPage(
+                  data: data,
+                  store: store,
+                  day: day,
+                  onDayChanged: (changed) => setState(() => _day = changed),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.insights_outlined),
+            label: const Text('店の入れ方のふり返り（全台系・末尾・並び）'),
           ),
         ],
         const SizedBox(height: 14),
