@@ -165,5 +165,42 @@ try {
     assert.deepEqual(result, [2, 2, true], '全体を読んだ後も、時刻の古い日別一覧を保存できる');
     await ctx.close();
   }
+  {
+    // 2026-11-17 共有カレンダーでP-STATIONが出なかった人がいた（読み込み直しで出た）：途中で通信に失敗しても、
+    // 読み終えた部品は実IndexedDBの読みかけの保存先に残し、次は続きから読む。そろったら消す。既存の保存先の版は上げない。
+    const ctx = await browser.newContext(), pg = await ctx.newPage();
+    await pg.goto(origin + 'index.html');
+    const days = Array.from({length: 20}, (_, i) => `2025-02-${String(i + 1).padStart(2, '0')}`);
+    const texts = days.map(day => JSON.stringify([{store: 'c740601', kind_code: 21, rate: '20', day, rack: 537, machine: '続き試験', games: 3000}]));
+    const parts = texts.map((text, i) => ({hash: hash(text), day: days[i], count: 1, bytes: Buffer.byteLength(text)}));
+    const m = {format: 'database-viewer-parts', version: 2, site: 'pscube', days, revision: hash(JSON.stringify(parts)),
+      header: snapshot('pscube').m.header, parts, count: parts.length};
+    const result = await pg.evaluate(async ({endpoint, m, texts}) => {
+      const {fetchViewerParts} = await import('./viewer_parts.mjs');
+      const asked = []; let calls = 0, failAt = 2;
+      const getJson = async url => {
+        const hashes = new URL(url).searchParams.get('parts').split(','); calls++;
+        if (calls === failAt) throw new Error('通信の打ち切り');
+        asked.push(...hashes);
+        return {format: m.format, revision: m.revision, parts: hashes.map(h => ({hash: h, text: texts[m.parts.findIndex(p => p.hash === h)]}))};
+      };
+      const count = () => new Promise((resolve, reject) => {
+        const request = indexedDB.open('database-viewer-parts-pending-v1');
+        request.onsuccess = () => { const db = request.result, tx = db.transaction('parts'), c = tx.objectStore('parts').count();
+          tx.oncomplete = () => { db.close(); resolve(c.result); }; tx.onerror = () => reject(tx.error); };
+        request.onerror = () => reject(request.error);
+      });
+      const version = () => new Promise(resolve => { const r = indexedDB.open('database-viewer-parts-v1'); r.onsuccess = () => { const v = r.result.version; r.result.close(); resolve(v); }; });
+      let first = '';
+      try { await fetchViewerParts(endpoint, 'pscube', m, getJson); } catch (e) { first = e.message; }
+      const afterFail = await count();
+      asked.length = 0; calls = 0; failAt = -1;
+      const doc = await fetchViewerParts(endpoint, 'pscube', m, getJson);
+      return {first, afterFail, second: asked.length, records: doc.records.length, afterDone: await count(), version: await version()};
+    }, {endpoint, m, texts});
+    assert.deepEqual(result, {first: '通信の打ち切り', afterFail: 8, second: 12, records: 20, afterDone: 0, version: 2},
+      '読み終えた8部品は読み直さず、そろったら読みかけを消す・既存の保存先は版2のまま');
+    await ctx.close();
+  }
   console.log('PASS: 旧DB移行・起動時通信0・完全オフライン再起動・手動差分・日削除・破損通信時の保存保持');
 } finally { await browser.close(); await new Promise(r => server.close(r)); }

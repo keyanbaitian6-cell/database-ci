@@ -197,3 +197,47 @@ test('失敗時の旧一覧保持・未使用パーツ再利用・生成物修�
   assert.equal(f.context.vpPrune(f.folder, 'meruhen'), 1);
   assert.equal(old.trashed, true); assert.equal(backup.trashed, false); assert.equal(f.base.trashed, false);
 });
+
+// 2026-11-17：途中で通信に失敗しても、次の読み込みは読み終えた部品の続きから読む（共有カレンダーでP-STATIONが出なかった件）。
+const pendingStore = () => {
+  const map = new Map();
+  return {map,
+    async take(key, keep) { const found = new Map(); for (const [k, v] of [...map]) if (k.startsWith(key + '|')) {
+      const h = k.slice(key.length + 1); if (keep.has(h)) found.set(h, v); else map.delete(k);
+    } return found; },
+    async put(key, entries) { for (const [h, t] of entries) map.set(key + '|' + h, t); },
+    async clear(key) { for (const k of [...map.keys()]) if (k.startsWith(key + '|')) map.delete(k); }};
+};
+test('途中で失敗しても、次は読み終えた部品の続きから読む・壊れた読みかけは使わない・そろったら消す', async () => {
+  const f = fixture(); f.publish(Array.from({length: 20}, (_, i) => ({...row('2026-10-02', i + 1), payload: '界'.repeat(190000)})));
+  const m = f.get({check: '1'}).parts; assert.ok(m.parts.length > 16, '3回以上に分けて読む大きさ');
+  const cache = {...storage(), pending: pendingStore()}, url = 'https://a.test/exec';
+  const asked = [];
+  let fail = 2;
+  const flaky = req => { const hashes = new URL(req).searchParams.get('parts')?.split(',') ?? []; asked.push(...hashes);
+    if (hashes.length && --fail === 0) throw new Error('通信の打ち切り'); return f.read(req); };
+  await assert.rejects(fetchViewerParts(url, 'meruhen', m, flaky, cache), /打ち切り/);
+  assert.equal(cache.map.size, 0, '途中までの分は表示用の履歴に入れない');
+  assert.equal(cache.pending.map.size, 8, '1回目に読み終えた8部品を残す');
+  const firstBatch = asked.slice(0, 8); asked.length = 0; fail = -1;
+  // 読みかけの1つが壊れていたら、それだけ読み直す。
+  const brokenKey = [...cache.pending.map.keys()][0]; cache.pending.map.set(brokenKey, '[]');
+  const doc = await fetchViewerParts(url, 'meruhen', m, flaky, cache);
+  assert.equal(doc.records.length, 20);
+  assert.equal(asked.length, m.parts.length - 7, '読み終えた部品（壊れた1つを除く）は読み直さない');
+  assert.ok(asked.includes(brokenKey.split('|').at(-1)));
+  assert.ok(firstBatch.slice(1).every(h => !asked.includes(h) || h === brokenKey.split('|').at(-1)));
+  assert.equal(cache.pending.map.size, 0, 'そろって保存したら読みかけは消す');
+  // 一覧から外れた読みかけは、次に読むときに消す。
+  cache.pending.map.set(url + '|meruhen|' + 'f'.repeat(64), '[]');
+  f.publish([row('2026-10-02', 1, 5)]);
+  await fetchViewerParts(url, 'meruhen', f.get({check: '1'}).parts, f.read, cache);
+  assert.equal(cache.pending.map.size, 0);
+});
+
+test('読みかけの保存先が使えなくても、今までどおり最初から読める', async () => {
+  const f = fixture(); f.publish([row('2026-10-02'), row('2026-10-03')]);
+  const broken = {take: async () => { throw new Error('blocked'); }, put: async () => { throw new Error('quota'); }, clear: async () => { throw new Error('x'); }};
+  const doc = await fetchViewerParts('https://a.test/exec', 'meruhen', f.get({check: '1'}).parts, f.read, {...storage(), pending: broken});
+  assert.equal(doc.records.length, 2);
+});
