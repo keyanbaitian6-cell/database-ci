@@ -11,6 +11,20 @@ STORE = 'nagamachiminami'
 SAIWAI_STORE = 'saiwaichou'
 VARIETY_KEY = 'saiwaichou_variety'
 KINDS = ('4台構成', '半列', 'バラエティ')
+# PCで作れる週表の種類（2026-11-17 利用者「PCで作れるように」。今までは長町南の4台構成・半列は画像から書き写した
+# 元データ（2026-10-11の週まで）だけで、PCで足せるのはバラエティだけだった）。4台構成は設置ちょうど4台の機種。
+FOUR_RACKS = '4台構成'
+
+
+def creatable_kinds(location):
+    return ('バラエティ',) if location == SAIWAI_STORE else ('バラエティ', FOUR_RACKS)
+
+
+def week_machines_fit(kind, machines, location):
+    """PCで作った週表の機種の台数が、その種類に合うか。"""
+    if kind == FOUR_RACKS:
+        return all(m['count'] == 4 for m in machines)
+    return all(m['count'] <= (2 if location == SAIWAI_STORE else 3) for m in machines)
 ASSET = Path(__file__).resolve().parents[1] / 'database_android/assets/event_history.json'
 FILE_NAME = 'database-event-history.json'
 FORMAT = 'database-event-history'
@@ -135,7 +149,6 @@ def validate_envelope(raw, *, nested=False):
 def clean_edits(raw, base, rejected_items=None):
     validate_envelope(raw)
     location = base['store']
-    max_racks = 2 if location == SAIWAI_STORE else 3
     out, rejected = empty_edits(), 0
     def reject(group, value):
         nonlocal rejected
@@ -146,25 +159,27 @@ def clean_edits(raw, base, rejected_items=None):
     occupied = {w['from']: w['type'] for w in base['weeks']}
     for w in raw.get('weeks', []):
         try:
-            if w.get('store') != location or w.get('type') != 'バラエティ' or type(w.get('removed', False)) is not bool:
+            kind = w.get('type')
+            if w.get('store') != location or kind not in creatable_kinds(location) or type(w.get('removed', False)) is not bool:
                 raise ValueError()
             first, lineup = day(w.get('week')), day(w.get('lineup_day'))
             stamp(w.get('updated_at'))
-            if first.weekday() or not 0 <= (lineup - first).days <= 6 or occupied.get(w['week'], 'バラエティ') != 'バラエティ':
+            # 同じ週に別の種類の表は作れない（1週に1種類）。
+            if first.weekday() or not 0 <= (lineup - first).days <= 6 or occupied.get(w['week'], kind) != kind:
                 raise ValueError()
             machines = [machine(m, base['symbols'], False) for m in w['machines']]
-            if not machines or any(m['count'] > max_racks for m in machines) or len({m['name'] for m in machines}) != len(machines):
+            if not machines or not week_machines_fit(kind, machines, location) or len({m['name'] for m in machines}) != len(machines):
                 raise ValueError()
-            entry = dict(store=location, type='バラエティ', week=w['week'], lineup_day=w['lineup_day'],
+            entry = dict(store=location, type=kind, week=w['week'], lineup_day=w['lineup_day'],
                          machines=machines, updated_at=w['updated_at'], removed=w.get('removed', False))
-            key = ('バラエティ', w['week'])
-            prior = next((v for v in out['weeks'] if v['week'] == w['week']), None)
+            key = (kind, w['week'])
+            prior = next((v for v in out['weeks'] if v['week'] == w['week'] and v['type'] == kind), None)
             if prior is not None:
                 if stamp(entry['updated_at']) < stamp(prior['updated_at']):
                     continue
                 out['weeks'].remove(prior)
             out['weeks'].append(entry)
-            occupied[w['week']] = 'バラエティ'
+            occupied[w['week']] = kind
             weeks[key] = dict(machines=machines)
         except (AttributeError, KeyError, TypeError, ValueError):
             reject('weeks', w)
@@ -334,8 +349,9 @@ def machine_candidates(name, names):
     return sorted(names, key=lambda n: (loose(n) != loose(name), n))
 
 
-def variety_week_lineup(records, monday, location=STORE):
-    """対象週とその前13暦日で最多台数の8割以上ある、週内の最初の日を選ぶ。"""
+def variety_week_lineup(records, monday, location=STORE, kind='バラエティ'):
+    """対象週とその前13暦日で最多台数の8割以上ある、週内の最初の日を選ぶ。
+    kind が4台構成なら、その日に設置ちょうど4台の機種（doubtful は、周辺の日に4台あったのにその日は3台以下＝取りこぼしの疑い）。"""
     first = day(monday)
     if first.weekday():
         raise ValueError('週開始日は月曜日を選んでください。')
@@ -352,9 +368,14 @@ def variety_week_lineup(records, monday, location=STORE):
     for r in indexed[candidates[0]].values():
         counts[r['machine']] = counts.get(r['machine'], 0) + 1
     max_racks = 2 if location == SAIWAI_STORE else 3
-    machines = [dict(name=n, record_name=n, count=c) for n, c in sorted(counts.items()) if c <= max_racks]
-    if not machines:
-        raise ValueError('対象日にバラエティの機種がありません。')
+    if kind == FOUR_RACKS:
+        machines = [dict(name=n, record_name=n, count=c) for n, c in sorted(counts.items()) if c == 4]
+        if not machines:
+            raise ValueError('対象日に設置4台の機種がありません。')
+    else:
+        machines = [dict(name=n, record_name=n, count=c) for n, c in sorted(counts.items()) if c <= max_racks]
+        if not machines:
+            raise ValueError('対象日にバラエティの機種がありません。')
     peak = {}
     for rows in indexed.values():
         per_day = {}
@@ -362,7 +383,10 @@ def variety_week_lineup(records, monday, location=STORE):
             per_day[name] = per_day.get(name, 0) + 1
         for name, count in per_day.items():
             peak[name] = max(peak.get(name, 0), count)
-    doubtful = [m['name'] for m in machines if peak.get(m['name'], 0) > max_racks]
+    if kind == FOUR_RACKS:
+        doubtful = [n for n, c in sorted(counts.items()) if c < 4 and peak.get(n, 0) == 4]
+    else:
+        doubtful = [m['name'] for m in machines if peak.get(m['name'], 0) > max_racks]
     return candidates[0], machines, doubtful
 
 

@@ -14,6 +14,14 @@ const historyFormat = 'database-event-history';
 List<String> historyTypesForStore(String store) =>
     store == saiwaichouHistoryStore ? ['バラエティ'] : historyTypes;
 
+/// PCで作れる週表の種類（PC `event_history_data.creatable_kinds` と同じ。2026-11-17 利用者「PCで作れるように」で
+/// 長町南の4台構成を足した。4台構成は設置ちょうど4台の機種）。
+const fourRackHistoryType = '4台構成';
+List<String> creatableHistoryTypes(String store) =>
+    store == saiwaichouHistoryStore
+    ? const ['バラエティ']
+    : const ['バラエティ', fourRackHistoryType];
+
 Map<String, dynamic> saiwaichouHistoryBase() => {
   'version': 2,
   'store': saiwaichouHistoryStore,
@@ -384,18 +392,20 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
     try {
       if (w is! Map ||
           w['store'] != store ||
-          w['type'] != 'バラエティ' ||
+          !creatableHistoryTypes(store).contains(w['type']) ||
           (w.containsKey('removed') && w['removed'] is! bool) ||
           w['machines'] is! List) {
         throw const FormatException();
       }
+      final kind = w['type'] as String;
       final first = historyDate(w['week']),
           lineup = historyDate(w['lineup_day']);
       historyStamp(w['updated_at']);
+      // 同じ週に別の種類の表は作れない（1週に1種類）。
       if (first.weekday != 1 ||
           lineup.difference(first).inDays < 0 ||
           lineup.difference(first).inDays > 6 ||
-          (occupied[w['week']] ?? 'バラエティ') != 'バラエティ') {
+          (occupied[w['week']] ?? kind) != kind) {
         throw const FormatException();
       }
       final machines = [
@@ -403,20 +413,24 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
           _machine(m, base['symbols'] as List, results: false),
       ];
       if (machines.isEmpty ||
-          machines.any((m) => m['count'] > maxRacks) ||
+          machines.any(
+            (m) => kind == fourRackHistoryType
+                ? m['count'] != 4
+                : m['count'] > maxRacks,
+          ) ||
           machines.map((m) => m['name']).toSet().length != machines.length) {
         throw const FormatException();
       }
       final entry = <String, dynamic>{
         'store': store,
-        'type': 'バラエティ',
+        'type': kind,
         'week': w['week'],
         'lineup_day': w['lineup_day'],
         'machines': machines,
         'updated_at': w['updated_at'],
         'removed': w['removed'] ?? false,
       };
-      final key = 'バラエティ|${w['week']}', prior = definitions[key];
+      final key = '$kind|${w['week']}', prior = definitions[key];
       if (prior != null &&
           historyStamp(entry['updated_at'])
               .isBefore(historyStamp(prior['updated_at']))) {
@@ -424,7 +438,7 @@ cleanHistoryEdits(dynamic raw, Map<String, dynamic> base) {
       }
       definitions[key] = entry;
       weeks[key] = {'machines': machines};
-      occupied[w['week'] as String] = 'バラエティ';
+      occupied[w['week'] as String] = kind;
     } on Object {
       reject('weeks', w);
     }

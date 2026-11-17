@@ -8,7 +8,7 @@ from unittest.mock import patch
 from core import Store, export_backup, import_backup, auto_backup, save_settings
 from event_history_data import (load_base, validate_base, empty_edits, merge_edits,
     materialize, saved_name, variety_week_lineup, capture_shortfall, FILE_NAME,
-    net_face, auto_faces, machine_day_nets)
+    net_face, auto_faces, machine_day_nets, clean_edits, saiwaichou_base)
 
 
 def cell(base, value='😀', at='2026-10-19T00:00:00Z', device='android'):
@@ -109,6 +109,44 @@ class HistoryTests(unittest.TestCase):
         week = next(w for w in materialize(self.base, merged)[0] if w['type']=='バラエティ')
         self.assertEqual(week['lineup_day'], lineup)
         self.assertEqual(week['machines'][0]['results'][1], '😀')
+
+    def test_four_rack_week_is_created_on_pc_and_shown(self):
+        # 2026-11-17 利用者「PCで作れるように」：長町南の4台構成の週表をPCで作る。分類日に設置ちょうど4台の機種だけ。
+        def rows(d, layout):
+            out, rack = [], 1
+            for name, n in layout:
+                for _ in range(n):
+                    out.append(dict(store='nagamachiminami', day=d, machine=name, rack=rack)); rack += 1
+            return out
+        usual = [('四台A', 4), ('四台B', 4), ('三台', 3), ('五台', 5), ('欠けた四台', 4)]
+        records = rows('2026-11-15', usual) + rows('2026-11-16', [('四台A', 4), ('四台B', 4), ('三台', 3), ('五台', 5), ('欠けた四台', 3)])
+        lineup, machines, doubtful = variety_week_lineup(records, '2026-11-16', kind='4台構成')
+        self.assertEqual(lineup, '2026-11-16')
+        self.assertEqual([m['name'] for m in machines], ['四台A', '四台B'])
+        self.assertTrue(all(m['count'] == 4 for m in machines))
+        self.assertEqual(doubtful, ['欠けた四台'], '周辺の日に4台あったのに3台以下の機種は、作る前に知らせる')
+        week = dict(store='nagamachiminami', type='4台構成', week='2026-11-16', lineup_day=lineup, machines=machines,
+                    updated_at='2026-11-17T00:00:00Z', removed=False)
+        incoming = empty_edits(); incoming['weeks'] = [week]
+        incoming['cells'] = [dict(cell(self.base), type='4台構成', week='2026-11-16', machine='四台A', day='2026-11-18')]
+        merged, _, _, bad, _ = merge_edits(empty_edits(), incoming, self.base)
+        self.assertEqual(bad, 0)
+        shown = next(w for w in materialize(self.base, merged)[0] if w['from'] == '2026-11-16')
+        self.assertEqual((shown['type'], shown['to'], shown['lineup_day']), ('4台構成', '2026-11-22', '2026-11-16'))
+        self.assertEqual(shown['machines'][0]['results'][2], '😀')
+        # 台数が4でない機種・同じ週の別の種類・幸町の4台構成は受け付けない。
+        for bad_week in (dict(week, machines=[dict(machines[0], count=3)]),
+                         dict(week, week='2026-10-05'),                     # 元データの4台構成の週と重なる
+                         dict(week, week='2026-09-28')):                    # 元データの半列の週
+            other = empty_edits(); other['weeks'] = [bad_week]
+            self.assertEqual(clean_edits(other, self.base)[1], 1, bad_week)
+        variety_then_four = empty_edits()
+        variety_then_four['weeks'] = [dict(week, type='バラエティ', machines=[dict(name='三台', record_name='三台', count=3)]), week]
+        cleaned, rejected = clean_edits(variety_then_four, self.base)
+        self.assertEqual((len(cleaned['weeks']), rejected), (1, 1), '1週に1種類')
+        saiwai = dict(saiwaichou_base()); saiwai_edits = empty_edits()
+        saiwai_edits['weeks'] = [dict(week, store='saiwaichou')]
+        self.assertEqual(clean_edits(saiwai_edits, saiwai)[1], 1)
 
     def test_backup_round_trip_and_private_export(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -8,7 +8,7 @@ from tkinter import ttk, messagebox, simpledialog
 
 import recommendations as rec
 
-from event_history_data import (ASSET, KINDS, STORE, load_base, empty_edits, materialize,
+from event_history_data import (ASSET, KINDS, STORE, FOUR_RACKS, load_base, empty_edits, materialize,
     clean_edits, edit_key, saved_name, machine_candidates, variety_week_lineup, capture_shortfall, stamp,
     SHORTFALL_DAYS, machine_day_nets, auto_faces, SAIWAI_STORE, VARIETY_KEY,
     saiwaichou_base, store_edits, store_kinds, net_face, machine_day_totals, auto_grades,
@@ -358,26 +358,31 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
                     command=lambda n=name,d=d:on_pick(n,d)).pack(side='left')
         if rejected: status.set(f'形式が合わない編集{rejected}件を表示していません。')
 
-    def create_week():
-        value=simpledialog.askstring('バラエティの週表を作成','週開始日（月曜日、例：2026-10-12）',parent=window)
+    def create_week(week_kind='バラエティ'):
+        # 4台構成（設置ちょうど4台の機種）も同じ流れで作る（2026-11-17 利用者「PCで作れるように」）。
+        four=week_kind==FOUR_RACKS
+        value=simpledialog.askstring(f'{week_kind}の週表を作成','週開始日（月曜日、例：2026-10-12）',parent=window)
         if not value: return
         try:
             all_weeks,_=materialize(base,edits[0])
-            if any(w['from']==value for w in all_weeks): raise ValueError('この週のイベント表は既にあります。')
-            lineup,machines,doubtful=variety_week_lineup(records,value,location)
+            if any(w['from']==value for w in all_weeks): raise ValueError('この週のイベント表は既にあります（1週に1種類）。')
+            lineup,machines,doubtful=variety_week_lineup(records,value,location,week_kind)
             notes=[]
             shortfall=capture_shortfall(records,lineup,location)
             if shortfall:
                 notes.append(f'分類日（{lineup}）の保存台数は{shortfall[0]}台で、前後{SHORTFALL_DAYS}日で最も多い日（{shortfall[1]}台）の8割に届きません。'
-                             + ('この時期は取り込みが少なく、3台以上の機種が1〜2台に見えている可能性があります。' if saiwaichou else
+                             + ('この時期は取り込みが少なく、4台の機種が3台以下に見えている可能性があります。' if four else
+                                'この時期は取り込みが少なく、3台以上の機種が1〜2台に見えている可能性があります。' if saiwaichou else
                                 'この時期は取り込みが少なく、4台以上の機種が1〜3台に見えている可能性があります。'))
-            if doubtful:
+            if doubtful and four:
+                notes.append(f'次の機種は周辺の日に4台ありましたが、分類日（{lineup}）は3台以下で、この週表に入りません（取り込み不足の可能性）。\n' + '\n'.join(doubtful))
+            elif doubtful:
                 notes.append(f'次の機種は周辺の日に{3 if saiwaichou else 4}台以上あり、取り込み不足の可能性があります。\n' + '\n'.join(doubtful))
             if notes and not messagebox.askyesno('機種台数の確認',
                     '\n\n'.join(notes) + '\n\nこの構成で週表を作成しますか？', parent=window):
                 return
-            save('weeks',dict(store=location,type='バラエティ',week=value,lineup_day=lineup,machines=machines,removed=False))
-            kind.set('バラエティ'); chosen.set(f"{value}〜{(date.fromisoformat(value)+timedelta(days=6)).isoformat()}")
+            save('weeks',dict(store=location,type=week_kind,week=value,lineup_day=lineup,machines=machines,removed=False))
+            kind.set(week_kind); chosen.set(f"{value}〜{(date.fromisoformat(value)+timedelta(days=6)).isoformat()}")
             render()
         except Exception as error: messagebox.showerror('週表を作成できません',str(error),parent=window)
 
@@ -419,6 +424,7 @@ def open_event_history(parent, on_pick, *, db_path, on_changed=None, path=HISTOR
         publish(); window.destroy()
     ttk.Button(controls,text='バラエティの週表を作成',command=create_week).pack(side='left')
     if not saiwaichou:
+        ttk.Button(controls,text='4台構成の週表を作成',command=lambda:create_week(FOUR_RACKS)).pack(side='left',padx=4)
         ttk.Button(controls,text='4大オススメの週を追加',command=create_recommendation_week).pack(side='left',padx=4)
     ttk.Button(footer,text='共有へ反映',command=publish).pack(side='right')
     ttk.Button(footer,text='閉じる',command=close).pack(side='right',padx=8)

@@ -50,6 +50,51 @@
       ],
       "updated_at": "2026-10-19T00:00:00.123456Z",
       "removed": false
+    },
+    {
+      "store": "nagamachiminami",
+      "type": "4台構成",
+      "week": "2026-10-19",
+      "lineup_day": "2026-10-19",
+      "machines": [
+        {
+          "name": "機種B",
+          "record_name": null,
+          "count": 4
+        }
+      ],
+      "updated_at": "2026-11-17T00:00:00Z",
+      "removed": false
+    },
+    {
+      "store": "nagamachiminami",
+      "type": "4台構成",
+      "week": "2026-10-26",
+      "lineup_day": "2026-10-26",
+      "machines": [
+        {
+          "name": "機種B",
+          "record_name": null,
+          "count": 3
+        }
+      ],
+      "updated_at": "2026-11-17T00:00:00Z",
+      "removed": false
+    },
+    {
+      "store": "nagamachiminami",
+      "type": "4台構成",
+      "week": "2026-10-12",
+      "lineup_day": "2026-10-12",
+      "machines": [
+        {
+          "name": "機種B",
+          "record_name": null,
+          "count": 4
+        }
+      ],
+      "updated_at": "2026-11-17T00:00:00Z",
+      "removed": false
     }
   ],
   "cells": [
@@ -80,6 +125,15 @@
       "machine": "機種A",
       "value": "×",
       "updated_at": "2026-10-19T09:00:00.123456+09:00"
+    },
+    {
+      "store": "nagamachiminami",
+      "type": "4台構成",
+      "week": "2026-10-19",
+      "day": "2026-10-21",
+      "machine": "機種B",
+      "value": "😍",
+      "updated_at": "2026-11-17T01:00:00Z"
     }
   ],
   "links": [
@@ -111,8 +165,26 @@
     }
   ],
   "expected": {
-    "rejected": 5,
+    "rejected": 7,
     "weeks": [
+      {
+        "type": "4台構成",
+        "from": "2026-10-19",
+        "results": [
+          [
+            "",
+            "",
+            "😍",
+            "",
+            "",
+            "",
+            ""
+          ]
+        ],
+        "links": [
+          null
+        ]
+      },
       {
         "type": "バラエティ",
         "from": "2026-10-12",
