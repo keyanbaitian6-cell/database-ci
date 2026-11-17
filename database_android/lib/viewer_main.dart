@@ -191,6 +191,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     });
     // 保存の診断：Driveの内容を読み・合わせ・保存する間（メモリの山）にページが終わったら数える。
     await markViewerPhase('drive', done: false);
+    var saved = false;
     try {
       final current = _data;
       final text = await backupFromRemote(
@@ -238,6 +239,7 @@ class _ViewerHomeState extends State<ViewerHome> {
         final data = merged.data;
         if (summarized || merged.text != stored) {
           await saveViewerData(merged.text, meruhen: data.source != 'pscube');
+          saved = true;
         }
         if (!mounted) return;
         _show(data);
@@ -259,6 +261,9 @@ class _ViewerHomeState extends State<ViewerHome> {
     }
     // 共有カレンダー：Driveの中身が変わっていなくても、ほかの端末で入れたイベントは取り込む。
     await _pullShared(url);
+    // 段階B0（VIEWER_DAY_STORE.md）：本体を保存し直したら、日別キャッシュと日ごとに同じかを照合して診断に控える。
+    // 読むだけで表示は変えない。更新と重ならないよう、更新中の印（_syncing）を外す前に行う。
+    if (saved) await checkViewerDayCache();
     if (mounted) setState(() => _syncing = false);
   }
 

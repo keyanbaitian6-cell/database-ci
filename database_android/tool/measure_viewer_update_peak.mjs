@@ -141,10 +141,15 @@ async function run(scenario, index) {
   const started = Date.now(), timer = setInterval(sample, 10);
   await page.goto(origin + prefix);
   // 「Googleドライブの更新」の区切りが最後まで終わったら（診断の記録）、1回分が終わったとする。
-  let finished = false;
+  // 段階B0（2026-11-18）からは、更新のあとに日別キャッシュとの照合が続くので、その結果が控えられるまで待つ
+  // （照合の無い古いビルドは、更新が終わって8秒たったら終わりとする）。
+  let finished = false, driveDoneAt = null, checkMs = null;
   for (let i = 0; i < 1200 && !finished && !crashed; i++) {
     await page.waitForTimeout(250);
-    finished = await page.evaluate(() => { try { const log = JSON.parse(localStorage.getItem('database-viewer-diag')); return !!log?.phases?.drive?.count && !log.running; } catch { return false; } }).catch(() => false);
+    const state = await page.evaluate(() => { try { const log = JSON.parse(localStorage.getItem('database-viewer-diag')); return {drive: !!log?.phases?.drive?.count && !log.running, check: !!log?.check && !log.running, checkMs: log?.phases?.check?.last_ms ?? null}; } catch { return {}; } }).catch(() => ({}));
+    if (state.drive && driveDoneAt == null) driveDoneAt = Date.now();
+    checkMs = state.checkMs ?? checkMs;
+    finished = !!state.check || (driveDoneAt != null && Date.now() - driveDoneAt > 8000);
   }
   const elapsedMs = Date.now() - started;
   if (process.env.DETAIL) {
@@ -168,7 +173,8 @@ async function run(scenario, index) {
   });
   // 描画用プロセスのピークは、ブラウザを閉じる前に読む。このページの描画用プロセスは、いちばん大きいもの。
   const peaks = processPeaks(dir), top = peaks.reduce((a, b) => b.peakWorkingSet > (a?.peakWorkingSet ?? 0) ? b : a, null);
-  const row = {scenario, run: index, elapsedMs, unfinished, errors, requests: requests.length, heapPeakMiB: +(heapPeak / 1048576).toFixed(1), heapTotalPeakMiB: +(totalPeak / 1048576).toFixed(1), retainedAfterGcMiB: +(retained / 1048576).toFixed(1), samples,
+  const check = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag'))?.check ?? null; } catch { return null; } }).catch(() => null);
+  const row = {scenario, run: index, elapsedMs, unfinished, errors, check: check?.status ?? null, checkMs, requests: requests.length, heapPeakMiB: +(heapPeak / 1048576).toFixed(1), heapTotalPeakMiB: +(totalPeak / 1048576).toFixed(1), retainedAfterGcMiB: +(retained / 1048576).toFixed(1), samples,
     rendererPeakWorkingSetMiB: top ? +(top.peakWorkingSet / 1048576).toFixed(1) : null, rendererPeakCommitMiB: top ? +(top.peakCommit / 1048576).toFixed(1) : null, rendererCount: peaks.length, stored};
   await context.close();
   return row;

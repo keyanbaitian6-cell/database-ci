@@ -21,6 +21,8 @@ Future<void> markViewerPhase(String name, {required bool done}) async {}
 
 Future<String?> autoUpdateHeldUntil() async => null;
 
+Future<String?> checkViewerDayCache() async => null;
+
 Future<String?> backupFromRemote(
   String url, {
   String? unlessExportedAt,

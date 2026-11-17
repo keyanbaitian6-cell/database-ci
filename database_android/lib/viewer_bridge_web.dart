@@ -113,6 +113,19 @@ Future<String?> autoUpdateHeldUntil() async {
   }
 }
 
+@JS('databaseViewer.checkDayCache')
+external JSPromise<JSString?> _checkDayCache();
+
+/// 段階B0：端末の本体と日別キャッシュを日ごとに照合し、結果を診断に控える（読むだけ。表示・保存は変えない）。
+/// 結果の状態（`match`・`mismatch` など）。照合しなかった・失敗したときは null。
+Future<String?> checkViewerDayCache() async {
+  try {
+    return (await _checkDayCache().toDart)?.toDart;
+  } on Object {
+    return null;
+  }
+}
+
 /// 本体と別に置いた🌈の印（JSONの配列）。無ければ null。
 Future<String?> loadRainbowMarks() async => (await _loadMarks().toDart)?.toDart;
 

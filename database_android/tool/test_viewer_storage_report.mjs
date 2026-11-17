@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import {DIAG_KEY, DRIVE_HOLD_MS, driveHold, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
+import {DIAG_KEY, DRIVE_HOLD_MS, CHECK_HOLD_MS, driveHold, checkHold, recordCheck, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
 
 function memoryStorage(initial = {}) {
   const items = new Map(Object.entries(initial));
@@ -158,4 +158,32 @@ test('止める印は、壊れた記録・書けない保存・大きく戻っ�
   assert.equal(driveHold({storage: badTime}), null);
   const future = memoryStorage({[DIAG_KEY]: JSON.stringify({version: 1, running: null, phases: {}, drive_halt: {at: '2030-01-01T00:00:00Z'}})});
   assert.equal(driveHold({storage: future, now: at('2026-11-18T00:00:00Z')}), null, '時計が6時間より大きく戻っていたら信じない');
+});
+
+test('段階B0の照合：途中で終わったら24時間は照合だけを止め、結果を控えて画面に出す（2026-11-18）', () => {
+  const storage = memoryStorage();
+  // 照合の記録が無いうちは行を出さない（P’s CUBEのページなど、照合しないページ）。
+  assert.ok(!storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY) || '{"version":1,"phases":{}}'), databases: null}).some(l => l.includes('照合')));
+  phaseStarted('check', {storage, now: at('2026-11-18T07:00:00Z')});
+  // ここでSafariが落ちた。次に開く。
+  phaseStarted('open', {storage, now: at('2026-11-18T07:10:00Z')});
+  assert.equal(checkHold({storage, now: at('2026-11-18T07:10:00Z')}), '2026-11-19T07:00:00.000Z');
+  assert.equal(checkHold({storage, now: at('2026-11-19T07:00:00Z')}), null, '24時間たったら止めない');
+  assert.equal(driveHold({storage, now: at('2026-11-18T07:10:00Z')}), null, 'Googleの更新は止めない');
+  assert.equal(CHECK_HOLD_MS, 24 * 3600 * 1000);
+  phaseFinished('open', {storage});
+  phaseStarted('check', {storage, now: at('2026-11-19T08:00:00Z')});
+  phaseFinished('check', {storage, now: at('2026-11-19T08:00:03Z')});
+  assert.equal(checkHold({storage, now: at('2026-11-19T08:00:04Z')}), null, '最後まで終わったら印は消える');
+  recordCheck({status: 'match', bodyDays: 108, bodyRecords: 78817, bodySkipped: 0, cacheDays: 108, cacheRecords: 78817, mismatchedDays: 0, examples: [], extra: 'x'},
+    {storage, now: at('2026-11-19T08:00:04Z')});
+  let log = JSON.parse(storage.getItem(DIAG_KEY));
+  assert.equal(log.check.extra, undefined, '決まった項目だけを控える');
+  let lines = storageReportLines({log, databases: null});
+  assert.ok(lines.some(l => l.startsWith('日別キャッシュと本体：一致（108日・78,817件）')), lines.join('\n'));
+  assert.ok(lines.some(l => l.startsWith('日別キャッシュと本体の照合：最後まで終わった1回・前回3秒・最長3秒・途中で終わった1回')), lines.join('\n'));
+  recordCheck({status: 'error', message: '保存した履歴が破損しています。'}, {storage});
+  log = JSON.parse(storage.getItem(DIAG_KEY));
+  lines = storageReportLines({log, databases: null});
+  assert.ok(lines.some(l => l.startsWith('日別キャッシュと本体：照合できませんでした（保存した履歴が破損しています。）')), lines.join('\n'));
 });

@@ -10,7 +10,7 @@ export const partsPublisher = () => partsDrive() + '\n' + read('./viewer_parts_p
   read('./viewer_history_cloud.js') + '\n' + read('./viewer_history_adapters.js') + '\n' +
   read('./viewer_curves_split.js') + '\n' + netModule();
 export const partsClient = () => '// 生成元: tool/build_viewer_parts.mjs\n' + partsCore() + '\n' + read('./viewer_parts_client.js') + '\n' + read('./viewer_day_store.js') +
-  '\nexport {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, viewerHistoryCovers, readViewerHistory, createViewerDayStore};\n';
+  '\nexport {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, viewerHistoryCovers, compareViewerHistory, readViewerHistory, createViewerDayStore};\n';
 const marker = '\n// BEGIN GENERATED VIEWER PARTS\n';
 export function buildPartsFiles() {
   for (const name of ['viewer_drive_script.gs', 'viewer_drive_script_readonly.gs', 'meruhen_cloud_sync.gs']) {
