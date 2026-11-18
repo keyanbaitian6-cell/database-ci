@@ -90,13 +90,18 @@ try {
     await page.getByRole('button', {name: 'Googleドライブの最新を読み込む'}).click();
     await updated(page).waitFor({timeout: 60000});
     assert.ok(requests.some(url => url.includes('check=1')), '手動の更新は通信する');
+    // 知らせのあとも、共有の取り込みと日別キャッシュの照合（B0〜B2、`running` が calendar・scores など）が続く。
+    // それが終わってから確かめる（2026-11-18、知らせの直後に calendar の途中で落ちた）。
+    for (let i = 0; i < 80 && (await diag()).running !== null; i++) await page.waitForTimeout(250);
     const done = await diag();
     assert.equal(done.drive_halt, undefined, '手動の更新が最後まで終わったら印を消す');
     assert.equal(done.running, null);
     // 次に開いたときは、また自動で更新する。
     requests.length = 0;
     await home();
-    for (let i = 0; i < 40 && !requests.length; i++) await page.waitForTimeout(250);
+    // 前のページの共有の取り込み（?file=events・?file=rainbow）が、ここで数え直したあとに届くことがある。
+    // 「何か通信したか」ではなく、更新の確認（check=1）が来るまで待つ（2026-11-18、CIの遅い機械で落ちた）。
+    for (let i = 0; i < 40 && !requests.some(url => url.includes('check=1')); i++) await page.waitForTimeout(250);
     assert.ok(requests.some(url => url.includes('check=1')), '印が消えたあとは自動更新を呼ぶ');
   });
 

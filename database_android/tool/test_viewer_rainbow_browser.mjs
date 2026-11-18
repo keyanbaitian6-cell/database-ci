@@ -100,10 +100,15 @@ try {
   // Flutterの画面を押せず、30秒で時間切れになることがあった（2026-11-18、同じビルドで9回中4回）。
   // 更新が終わるのを待ち、ボタンが画面の中に入るまでホイールで送ってから押す。
   await page.waitForFunction(() => { try { const l = JSON.parse(localStorage.getItem('database-viewer-diag')); return l?.phases?.drive?.count >= 1 && !l.running; } catch { return false; } }, null, {timeout: 60000});
+  // 更新が終わったあとに、共有の🌈（1086番台）を取り込んで画面を組み直す。組み直しの最中にボタンの位置を
+  // 測ると、ボタンが消えて30秒で時間切れになった（2026-11-18、CIの遅い機械）。🌈が端末に入るまで待ってから測る。
+  for (let i = 0; i < 60 && !((await stored()).rainbow_marks || []).length; i++) await page.waitForTimeout(250);
+  await page.waitForTimeout(500);
   const targets = page.getByRole('button', {name: '狙い台一覧（台番号順）'});
   await page.mouse.move(200, 600);
   for (let i = 0; i < 40; i++) {
-    const box = await targets.count() ? await targets.first().boundingBox() : null;
+    // 送っている間にボタンが画面の外へ出て消えることがあるので、測るのは短く待つだけにする（消えたら次の送りへ）。
+    const box = await targets.count() ? await targets.first().boundingBox({timeout: 1000}).catch(() => null) : null;
     if (box && box.y > 120 && box.y + box.height < 800) break;
     await page.mouse.wheel(0, box && box.y <= 120 ? -200 : 200);
     await page.waitForTimeout(250);

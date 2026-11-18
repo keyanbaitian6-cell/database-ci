@@ -3690,3 +3690,14 @@
   - GitHub への送信（`python tools/push_ci.py`）は、両方の非公開リポジトリにアクセスできる PC（Windows）側で行う。
   - 期間と参照リポジトリのずれなど、問題がありそうなときは作業前に AI から注意する（`AGENTS.md` にも追記）。
   - Antigravity 側は11/15時点の正本しか見えていなかったため、履歴の枝分かれを防ぐため Antigravity からは push せず、PC側の最新 `main` から反映。
+
+## 2026-11-18 Claude：`a74fd7f` のCIで落ちた画面試験2件の直し（試験の待ち方だけ。画面・アプリの動きは変えない）
+
+- 依頼：利用者がGeminiの調べた結果を貼った。CI `keyanbaitian6-cell/database-ci` の実行 44237392512（`a74fd7f`）で、`pc` の2ジョブは成功、`full` ジョブのゲートで `test_viewer_drive_hold_browser`・`test_viewer_rainbow_browser` の2件が落ちた（ログで確認。再実行はしていない）。
+- 原因（Geminiの見立てをClaudeがコードで確かめ、手元でもう1つ見つけた）：どれも、Googleの更新の区切り（`drive`）が終わったあとに続く処理（`_pullShared` の共有のイベント・🌈の取り込みと、B0〜B2の照合）と、試験の待ち方がぶつかっていた。アプリの不具合ではない。
+  1. `test_viewer_drive_hold_browser.mjs:99-100`：数え直したあとに前のページの `?file=events`・`?file=rainbow` が届き、「何か通信したか」の待ちがすぐ抜けて `check=1` を見る前に確かめていた（Geminiの見立てどおり）。
+  2. 同じ試験の `:95`（手元で10回中1回落ちて見つけた）：手動の更新の知らせのあとも、B1の照合が動いていて、`running` が `{phase: 'calendar'}` のままだった。B1・B2を足してから起きるようになった。
+  3. `test_viewer_rainbow_browser.mjs:106`：更新が終わった直後に共有の🌈を取り込んで画面を組み直し、`boundingBox()` がボタンの消えた状態で30秒待った（Geminiの見立てどおり）。
+- 直したこと（試験だけ。確かめる中身は弱めていない）：①は `check=1` が来るまで待つ。②は `running` が空になるまで待ってから、同じく `running === null` を確かめる。③は共有の🌈が端末に入るまで待ってからボタンを探し、`boundingBox` は1秒だけ待つ（消えたら次の送りへ）。
+- 確かめたこと（Claudeが手元で直接）：`a74fd7f` の閲覧ページを作り直した（`flutter build web --no-pub -t lib/viewer_main.dart --release --base-href /database-viewer/`、`tool/stage_viewer.py C:\w\cbw-ci2\viewer`、`VIEWER_WEB_ROOT` で指定）。直す前の段階で drive_hold が5回中1回落ちた（上の②）。直したあと、drive_hold 10/10、rainbow 5/5。負荷をかけた状態（2つの試験を3組ずつ同時に、2回）でも12/12。ゲートの例外「落ちた項目だけの流し直し」（CIのゲートで落ちたのは2項目、変えたのはその2つの試験ファイルだけ）。
+- 送信：`tools/push_ci.py` で `database-ci` へ1回（CIが1回動く）。CIの結果はこの時点で未確認。
