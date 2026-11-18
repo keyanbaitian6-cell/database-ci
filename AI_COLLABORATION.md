@@ -3541,3 +3541,22 @@
 - ソースの push（2026-11-18 10:56 JST）：`tools/push_ci.py` で `keyanbaitian6-cell/database-ci` の `main` へ `b4af032..3cc1926`（B1、18ファイル）を非強制で1回送った（CIが1回動く。失敗しても原因を調べずに再実行しない）。CIの結果は未確認（この時点では実行中）。閲覧ページ（database-viewer）は未公開のまま。
 - CIの結果（2026-11-18 11:2x JST、利用者がGitHubのメールで「エラーが来た」と報告）：`keyanbaitian6-cell/database-ci` の実行 44219603741（`3cc1926`、B1）は **failure**。`full` ジョブ（Ubuntu・日本時間、17分31秒）だけが落ち、`pc`（Ubuntu・UTC／Windows・UTC）は成功。ログ（`gh api .../jobs/134517896787/logs`）で落ちたのは **`test_viewer_replacement_browser` の1件だけ**（`locator.waitFor: Timeout 30000ms exceeded`、`getByText('データ表示')` が30秒以内に出ない。`machine()` で機種のボタンを押したあと、47.8秒で終了）。ほかの試験・B1の新しい試験 `test_viewer_calendar_check_browser`・`test_viewer_storage_report` は同じジョブで OK。
   - 原因の見立て（確かめた範囲）：①この試験は `remote` を設定せず、Driveの更新が無いのでB1の経路（`_refreshFromDrive` の `saved`）は通らない。②手元の全体ゲート（Windows）では OK、同じビルド（`/c/w/cbw-b1/gate1/viewer`）で3回流し直して3回とも OK（22〜25秒）。③過去の失敗CI（正本 `imakurudev-eng/database` の 11/8〜11/13 の5回）にも、画面操作の試験が時々だけ落ちたもの（`test_viewer_shared_calendar_browser`・`test_daily_learning_browser`）があり、Linuxの共有ランナーでFlutterの画面が遅いと30秒の待ちを超える型の失敗に見える。**B1が原因でない可能性が高いが、CIで同じ試験が通ることはまだ確かめていない（未確認）。** 再実行はしていない（利用者に確認する）。
+
+## 2026-11-18 Claude：Gemini（Antigravity）の改善提案2点への見立て（相談の回答のみ・コード変更なし）
+
+- 依頼：利用者「今日からGemini（Antigravity）も設計・実装・レビューに加わる」。Geminiの提案2点（①閲覧ページのイベント本体分離とB7前倒し、②前向き検証の23:30〜0:00取りこぼし防止と記録DBの自動控え）の妥当性・注意点・段階B2以降との兼ね合い・分担を聞かれた。基準：手元 main `dec2af6`＋B2の未コミット変更（Claude）。コード・DB・成績は変えていない・開いていない（`outcomes`・`decisions` は見ていない。前向き検証スクリプトは日付と上書きの扱いだけ grep）。
+- 確かめたこと（コード）：
+  - 提案1-①は正しい。さらに重い：`_pullShared`（`viewer_main.dart:317-342`）と iPhoneでのイベント編集 `_saveMeruhenEvents`（`:817-835`）は、本体 `loadViewerData` → Dart の `jsonDecode`/`jsonEncode`（`viewer_data.dart:371` `withSharedEvents`・`:418` `setEvents`）→ `saveViewerData(text)` を **`meruhen:` なしで** 呼ぶため、JS側の `save` が `JSON.parse(text)` で本体全体をもう一度解析する（`web/index.html:359`）→ `ViewerData.parse`。`_pullShared` は `markViewerPhase('drive')` の `finally`（`viewer_main.dart:261-263`）の外なので、ここで落ちても「途中で終わった」に数えられず、6時間の自動更新停止も効かない。本体を読むのは共有のイベントが表示中と違うとき（`sharedEventsChange`）だけ＝共有カレンダー等でイベントを足し、PCの書き出しに入る前に開いたとき。
+  - 提案1-②：B0〜B2の照合は `saved` のときだけ直列に動く（`viewer_main.dart:268-273`）。読むだけで保存は壊さないが、裏に回されて落ちると診断に何も残らない。B7前倒しは方向として妥当。ただし今の計画（`VIEWER_DAY_STORE.md`「切り替える順番」）は「B1〜B6が全部一致してから最後にB7」なので、変えるなら利用者の決定が要る。全期間を使う画面（B6の候補検証など）を「押したときに読む」にしても、本体を丸ごと読む方式ならその画面で同じ山が出る。日ごとに流して集計する作りが要る。イベント・機種の種別など本体の記録以外の部分も、B7の前にどこかへ分ける必要がある（＝提案1-①はB7の前提）。
+  - 提案2-①は正しい：`forward_validation.in_window`（`:60-64`）は0:00〜8:59だけ、`app.py:1062-1078` の `save_forward_after` は窓が自分で閉じたときだけ。23:30〜23:59に完了した晩は「0時を過ぎてから毎朝実行.cmdを押して」と出すだけ。23:4x に流しても、v1・v2は対象日＝今日で、9時の締切後として止まる（`forward.py:122`、`forward2.py:428`）ので、0時を過ぎてから流すのが正しい。v1・v2とも既存ファイルを上書きしない（`forward.py:32`、`forward2.py:104・720`）ので、二重に流しても記録は壊れない（ただし v1 の2回目が「停止」と出て失敗表示になるかは `forward.py:126` 付近を要確認）。
+  - **×で閉じた晩を自動実行に入れるのは勧めない**：入力が途中でも、その晩の実予測が上書きされない形で残る（今の「最後まで取り込めたときだけ」は利用者の11/9の決定）。
+  - 提案2-②：**既存の決まりと食い違う**。`DAILY_LEARNING_OPERATION.md:14`「入力原本・学習係数・データベースはGoogleや公開リポジトリへ出力しない」（`a2bf644`、2026-11-11、Codexの追記。利用者の発言が元かは未確認）。Googleドライブへ置くなら利用者の決定が要る。大きさ（2026-11-18）：`input_versions.sqlite3` 約487MB、`journal.sqlite3` 約169MB（WALあり）、`../outputs/pstation-forward-20261108/` 約363MB。毎晩の丸ごとの控えは重いので、世代の数・置き場所（別ドライブ・USBの案も）を決める。控えは SQLite のバックアップAPI（WALを含めて一貫した複製）で取り、検査は `PRAGMA integrity_check` だけにして成績の表は読まない。
+- Claudeの見立て（順番と分担。利用者の決定待ち）：
+  1. Claude：B2のコミット・B1/B2の公開（B0の一致をiPhoneで確かめてから、の既定どおり）。
+  2. Claude（閲覧ページのファイル。B2と同じファイルなので並行させない）：小さな直し2つ ─ `_pullShared` を独自の区切り（`markViewerPhase('events')` など）で囲み、落ちたら保険が効くようにする／更新1回で動かす照合を1つに絞り、順に回す。
+  3. Claude：提案1-①のイベント分離（🌈と同じ形。端末の別キー＋表示の差し替え、マージ規則は今の `withOtherEvents` と同じ）。B3の前に。Geminiはレビュー。
+  4. 並行してGemini（PCのPython、閲覧ページと別のファイル）：提案2-①。0:01のタイマーより、今の `daily_tick`（5分ごと）と同じ形で「前日23:30以降に自分で閉じて完了した記録があり、今日の分をまだ流していない」なら0:00〜8:59に流す方を勧める（PCを再起動しても効くよう、完了の印をファイルに残す）。研究スクリプトは触らない。
+  5. 提案2-②は、利用者が「Googleへ出さない」の決まりを変えるか・置き場所を決めてから（Gemini担当で可）。
+  6. B3・B4のあと、B7の前倒し（日常の画面だけ先に切り替え、全期間の画面は押したときに日ごとに流して集計）を利用者が決める。
+- 3つ目のAIが入るので：作業を始める前に、この共有記録に「担当のファイル」を書いてから触る（同じファイルを2つのAIが同時に直さない）。AGENTS.md の共同作業の節（今はCodexとClaude）にGeminiを足すかは利用者に確かめる（AGENTS.md は今、別の未コミットの変更がある）。
+- 次の手順：利用者が順番・分担と、提案2-②の置き場所の可否を決める。
