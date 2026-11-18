@@ -3677,3 +3677,16 @@
 - 再レビュー（Claudeが直接確認）：`e9d303d..30266c5` の `forward_validation.py`・`app.py` の差分を読んだ。取り込み完了の経路（`start`、0:00〜8:59）は今までどおり毎回流す。0時以降の印の経路（`start_pending`）は `used_target` を書いてから1回だけ流す。`done_target` は `run()` が全部成功したときだけ付く。前回の後戻り（0:05の失敗のあと、7:00の完了で流れない）を再現した手元の試験（スクラッチの `repro.py`、偽の研究スクリプトと失敗する runner）で、7:00に流れることを確かめた。`test_forward_validation.py` 24件 OK（0.970秒）、PC全体 `database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,077件 OK（225.951秒）。いずれも `30266c5` で実行。
 - 送信：利用者「まとめて送る」。`36d2bc2..` の上の3コミット（Gemini `e9d303d`、別のClaudeセッションの段階B2 `f91e069`、Gemini `30266c5`）と、この記録をまとめて `tools/push_ci.py` で `database-ci` へ1回だけ送る。B2の全体ゲートは、そのセッションの記録どおり（OK 99件・落ちた1件は試験を直してその1件だけ流し直し）で、このセッションでは流し直していない。閲覧ページの公開はしない（B0 `00c97f4` のまま）。
 - 未確認：CIの結果（送ったあとに見る）。実際に23:30〜23:59に取り込みが終わった晩の、0時以降の自動実行（PCアプリを `start.cmd` で起動し直してから）。
+
+## 2026-11-18 昼：Google Antigravity のGitHub連携設定と、非公開リポジトリの1所有者制限の確認（Antigravity・PC反映）
+
+- 依頼：利用者から `git remote -v` で `imakurudev-eng/database` と `keyanbaitian6-cell/database-ci` の両方が登録されているかの確認・追加と、Antigravity からの権限設定の依頼。
+- 実施・確認したこと：
+  - Antigravity の作業コピー（`/home/antigravity/imakurudev-eng/database`、正本 `2ba855e3`）に `git remote add database-ci https://github.com/keyanbaitian6-cell/database-ci` を追加し、`origin` と `database-ci` の両方が登録されたことを確認。
+  - `keyanbaitian6-cell` アカウント側に GitHub App `Antigravity for GitHub`（導入ID `183183626`）を導入し、`database-ci`・`database-viewer`・`database-share` の3リポジトリが認識されることを確認。
+  - Antigravity のプロジェクト `database` の `Resources` に公開リポジトリ2つ（`keyanbaitian6-cell/database-share`・`keyanbaitian6-cell/database-viewer`）を追加。
+  - `keyanbaitian6-cell/database-ci` だけは `Resources` 追加画面で鍵マークが付き、`A project's private resources must all belong to one owner (imakurudev-eng).`（1つのプロジェクトの非公開リポジトリはすべて1人の所有者に属していなければならない）という Antigravity 側の制限により、`imakurudev-eng/database` と同時には登録できないことを確認。
+- 利用者の決定：
+  - GitHub への送信（`python tools/push_ci.py`）は、両方の非公開リポジトリにアクセスできる PC（Windows）側で行う。
+  - 期間と参照リポジトリのずれなど、問題がありそうなときは作業前に AI から注意する（`AGENTS.md` にも追記）。
+  - Antigravity 側は11/15時点の正本しか見えていなかったため、履歴の枝分かれを防ぐため Antigravity からは push せず、PC側の最新 `main` から反映。
