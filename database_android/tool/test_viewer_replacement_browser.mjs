@@ -54,7 +54,15 @@ for(const source of ['meruhen','pscube']) {
   },{source,data:source==='pscube'?pscube:meruhen});
   const url=baseUrl+prefix+(source==='pscube'?'pscube/':'');
   async function home(){await page.goto(url);await page.waitForSelector('flt-glass-pane',{state:'attached',timeout:60000});const p=page.locator('flt-semantics-placeholder');if(await p.count())await p.evaluate(e=>e.click());await page.getByText('database 閲覧',{exact:true}).waitFor({timeout:60000});}
-  async function machine(name){await page.mouse.move(200,700);await page.mouse.wheel(0,2200);await page.waitForTimeout(300);const button=page.getByRole('button',{name:new RegExp('^'+name)}).last();await button.scrollIntoViewIfNeeded();await button.click();await page.getByText('データ表示',{exact:true}).waitFor();}
+  // 機種一覧のボタン（「化物語 4台・最高…」）だけを押す。上のまとめの「化物語 1088番台」の行ではない。一覧は見えている
+  // ところしか作られないので、固定量ではなく、ボタンが出るまで少しずつ送る（日の画面にボタンが増えるたびに位置がずれ、
+  // 11/18〜19 の CI で3回時間切れになった。test_viewer_rainbow_browser と同じ直し方、2026-11-17）。
+  async function machine(name){
+    const button=page.getByRole('button',{name:new RegExp('^'+name+'\\s*\\d+台・')}).last();
+    await page.mouse.move(200,700);
+    for(let i=0;i<40&&!(await button.count());i++){await page.mouse.wheel(0,500);await page.waitForTimeout(250);}
+    await button.scrollIntoViewIfNeeded();await button.click();await page.getByText('データ表示',{exact:true}).waitFor();
+  }
   await home();
   await page.mouse.move(200,700);await page.mouse.wheel(0,2200);await page.waitForTimeout(300);
   await page.getByText('この日の機種一覧　2機種・8台',{exact:true}).scrollIntoViewIfNeeded();
