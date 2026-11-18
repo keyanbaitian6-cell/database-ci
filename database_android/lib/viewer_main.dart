@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'answer_check.dart';
 import 'calendar_day_net.dart';
 import 'candidate_list_page.dart';
+import 'day_score_check.dart';
 import 'day_comment.dart';
 import 'data_checks.dart';
 import 'exploratory_page.dart';
@@ -268,7 +269,37 @@ class _ViewerHomeState extends State<ViewerHome> {
     // 段階B1（VIEWER_DAY_STORE.md）：カレンダーの日ごとの差枚を日別キャッシュから1日ずつ計算し、今の計算と
     // 照合して診断に控える。カレンダーに出す値は今までの計算のまま（読み先はまだ切り替えない）。
     if (saved) await _checkCalendarFromCache();
+    // 段階B2：日・機種一覧の台の点数を、日別キャッシュの「その日と前30暦日」だけから計算して照合する（表示は変えない）。
+    if (saved) await _checkScoresFromCache();
     if (mounted) setState(() => _syncing = false);
+  }
+
+  Future<void> _checkScoresFromCache() async {
+    final data = _data;
+    if (data == null || data.source == 'pscube') return;
+    // 1回の更新で比べるのは1店の、最新の日と順に回す1日だけ（採点は1日730台で数秒かかり、窓の記録がメモリを
+    // 使う。day_score_check.dart）。店は更新のたびに交互にし、両方の店が済んだら次の日へ進む。
+    const key = 'database-viewer-b2-cursor', storeKey = 'database-viewer-b2-store';
+    final stores = {for (final r in data.records) r.store}.toList()..sort();
+    if (stores.isEmpty) return;
+    final storeAt = (int.tryParse(loadViewerSetting(storeKey) ?? '') ?? 0) % stores.length;
+    final store = stores[storeAt];
+    final pick = pickScoreDays(
+      {for (final r in data.records) if (r.store == store) r.day},
+      int.tryParse(loadViewerSetting(key) ?? '') ?? 0,
+      rotating: 1,
+    );
+    final check = DayScoreCheck(data.records, pick.targets, store: store);
+    final status = await checkViewerScores(
+      onDay: (rowsJson) => check.addDay(jsonDecode(rowsJson) as List),
+      finish: () => jsonEncode(check.finish()),
+      from: check.from,
+    );
+    if (status == 'match' || status == 'mismatch') {
+      final nextStore = (storeAt + 1) % stores.length;
+      saveViewerSetting(storeKey, '$nextStore');
+      if (nextStore == 0) saveViewerSetting(key, '${pick.next}');
+    }
   }
 
   Future<void> _checkCalendarFromCache() async {

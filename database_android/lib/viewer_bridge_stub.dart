@@ -28,6 +28,12 @@ Future<String?> checkViewerCalendar({
   required String Function() finish,
 }) async => null;
 
+Future<String?> checkViewerScores({
+  required void Function(String rowsJson) onDay,
+  required String Function() finish,
+  String? from,
+}) async => null;
+
 Future<String?> backupFromRemote(
   String url, {
   String? unlessExportedAt,

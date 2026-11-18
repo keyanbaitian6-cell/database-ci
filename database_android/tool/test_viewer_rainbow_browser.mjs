@@ -96,7 +96,20 @@ try {
   await home();
   // 狙い台一覧（台番号順）のボタンが閲覧ページに出て、開ける（2026-11-17）。この試験の記録は判定できる機種がないので、
   // 「不調を意味しません」の説明が出る。開いたあとは読み込み直して元の画面から続ける。
-  await page.getByRole('button', {name: '狙い台一覧（台番号順）'}).click();
+  // 起動時のGoogleの更新と共有の取り込みが終わってから押す。このボタンは画面の外（下）にあり、画面の外のままでは
+  // Flutterの画面を押せず、30秒で時間切れになることがあった（2026-11-18、同じビルドで9回中4回）。
+  // 更新が終わるのを待ち、ボタンが画面の中に入るまでホイールで送ってから押す。
+  await page.waitForFunction(() => { try { const l = JSON.parse(localStorage.getItem('database-viewer-diag')); return l?.phases?.drive?.count >= 1 && !l.running; } catch { return false; } }, null, {timeout: 60000});
+  const targets = page.getByRole('button', {name: '狙い台一覧（台番号順）'});
+  await page.mouse.move(200, 600);
+  for (let i = 0; i < 40; i++) {
+    const box = await targets.count() ? await targets.first().boundingBox() : null;
+    if (box && box.y > 120 && box.y + box.height < 800) break;
+    await page.mouse.wheel(0, box && box.y <= 120 ? -200 : 200);
+    await page.waitForTimeout(250);
+  }
+  await page.waitForTimeout(300);
+  await targets.first().click();
   await page.getByText('不調を意味しません', {exact: false}).waitFor();
   await home();
   // ほかの端末の🌈（共有ファイル）が端末の内容に入る。

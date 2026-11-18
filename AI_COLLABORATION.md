@@ -3617,3 +3617,27 @@
 - **状態**：手元で変更ファイル4つのみコミット済み・**未push**（Claudeのレビュー後、`py -3 tools/push_ci.py` で送信予定）。
 
 
+
+## 2026-11-18 Claude（Opus 5.5）：保存失敗の手がかり・段階B2（日・機種一覧の採点の照合）・P’s CUBE版のメモリの見立て（ソース実装・未公開）
+
+- 依頼：利用者「全部」（Claudeの提案3つ：①保存に失敗したときの本当のエラー名を診断に出す、②B2の準備、③P’s CUBE版のメモリ）。完了の条件は着手前に利用者へ示した（①保存の動きは変えずに種類を控える、②B1と同じ形で照合だけ・画面と採点は変えない、③測って、表示・保存の内容を変えずに直せないなら報告で止める）。基準：`dec2af6`。作業中に別のセッションが `4b393f1`・`36d2bc2`（Gemini の加入・提案への見立て。文書だけ）をコミットした。その記録の「Claudeの段階B（B2のコミット・B1/B2の公開）はもとからの予定どおり」に沿い、保留中の提案（照合を1つに絞る・`_pullShared` を区切る等）には触れていない。
+- ①保存失敗の手がかり：`web/index.html` の `databaseViewer.save` が失敗したら、`storage_report.mjs` の `recordSaveFailure` で回数と最後の1回（open／write、error／abort、エラー名・説明、文字数、画面が裏か）を控え、診断に「端末への保存の失敗：n回（最後：…）」と出す。元の失敗はそのまま返す（文言・動きは同じ）。11/18朝の「端末に保存できませんでした」は、保存先がエラーを返さずに書き込みを取り消した（abort）ときの文言だと分かった。試験：新規 `tool/test_viewer_save_failure_browser.mjs`（エラーの無い中断・保存先のエラー・開けない・前の本体は変わらない・成功は数えない）、`test_viewer_storage_report` に1件。
+- ②段階B2（`VIEWER_DAY_STORE.md`「段階B2」）：新規 `lib/day_score_check.dart`（`DayScoreCheck`・`pickScoreDays`・`scoreText`）。日・機種一覧に出す点数（`scoreRecord(..., sameDayForNew: true)`）を、日別キャッシュの「その日と前30暦日」の窓だけで採点し、本体の同じ窓で採点した点数と全項目で比べて診断に出す。画面・採点は変えない。橋渡し `databaseViewer.checkScores(onDay, finish, from)`（B1と共通の `dayCheck` にまとめた）・`checkViewerScores`、`readViewerDays` に `from`（それより前の日は解析しない）、診断の区切り `scores`（`recordScores`・`scoresHold`）。`_refreshFromDrive` の `saved` のとき、B1のあとに呼ぶ。
+  - 途中で方針を2回変えた（測定による）：(a) 全日・全台を毎回、全記録の採点と比べると、全記録の側が台数のほぼ2乗の手間になり、合成108日でデスクトップのChromiumでも200秒を超えてページが落ちた → 1回の更新で照合する日を「最新の1日＋順に回す1日」にし、本体の側も同じ31日分だけで採点する（全記録で採点しても同じ点数になることは、Dartの試験 `fullCurrent: true` で全日・全台について確かめる）。(b) 2店まとめた窓だと、180日で更新1回の上限つき境界がB0・B1より上がった（560MiBで終わらず600で終わる）→ 1回の更新で照合する店を1つにし、更新のたびに長町南・幸町を交互にする（localStorage `database-viewer-b2-store`、両方済んだら日の位置 `database-viewer-b2-cursor` を進める）。
+  - 試験：新規 `test/day_score_check_test.dart` 7件（合成108・180日で全日・全台一致＝全記録の採点とも本番の窓の形とも、新台の扱いの台を含む／窓の日の欠け・1台の数値の違いを検出／対象の日の決め方と一巡／対象の日だけ・`from`／1店だけ）。`tool/test_viewer_calendar_check_browser.mjs` に実ビルドの B2 の確認（更新後に一致・長町南の最新の日と順に回す1日・次は幸町）と、橋渡しの `checkScores`（1日ずつ・止めている間はB2だけ・P’s CUBE）を足した。`test_viewer_storage_report` に1件（計11件）。B0の試験と、B1の試験の待ち方を「照合がすべて終わるまで」に直した（照合が直列に3つになったため）。
+  - 測定（合成・Windows版Chromium・上限つき。iPhoneではない）：B2込み（1回1店）で、108日は370MiBで終了・340で終わらない、180日は560MiBで終了、80日は280MiBで終了（2店まとめた版で測定）。B0・B1と同じ境界。B2の照合はデスクトップで約3.2秒（1店・2日・約740台）。B0約2秒＋B1約1.2秒と合わせ、更新後に約6秒の照合が続く。
+- ③P’s CUBE版のメモリ：**直していない（報告で止めた）**。B0〜B2は P’s CUBE の端末では動かないので、前の測定（`measure_pscube_update_peak.mjs`、合成27,400件・100日で JSヒープ最大約756MiB）がそのまま当てはまる。山は `web/pscube/viewer_bridge.mjs` の `write`（`mergeData(validateData(current.result), data)` → `validateData({...latest, ...})`）と `data.mjs` の `mergeData`（中でも旧・新を `validateData`）で、同じ内容への `validateData` が何度も重なるところにある。`validateData` は2回目に `sync_status` の算出が変わる（冪等でない）ので、回数を減らすと保存内容が変わる恐れがあり、前回の直し（文字列化の往復をやめる等）も効果が測れずに取り消している。直すなら、`validateData` を「検査だけ」と「整え」に分ける設計が要る（利用者の判断待ち。P’s CUBE版で落ちた報告は今のところ無い）。
+- 全体ゲート（`CHECK_BUILD_WORK=/c/w/cbw-b1/gate2`）：OK 99件・**FAIL 1件 `test_viewer_rainbow_browser`**。原因：試験が「狙い台一覧（台番号順）」のボタンを、画面が組み上がる前の位置で押していた（ボタンは画面の外にあり、組み上がった後は押せず30秒で時間切れ）。押す時刻しだいで落ちる試験で、同じビルドで9回中4回落ち、B1のビルドでは5回とも通った（この試験ではDriveの更新が起きず、B2の照合は動かない）。試験を、更新が終わるのを待ってボタンが画面に入るまで送ってから押す形に直した（同じ試験の `rack()` と同じやり方。弱めていない）。直した後、同じビルドで8回とも・B1のビルドで3回とも通過。ゲートのあとに変えたのはこの試験ファイルだけなので、AGENTS.md の「落ちた項目だけの流し直し」の例外で、全体は流し直していない（直す前に1回目・2回目の直しを試し、2回目は逆に悪化したので取り消した。3回目で直った）。
+- 確認の表：
+
+|要件|結果|証拠|
+|---|---|---|
+|保存失敗の種類を控えて出す（動きは同じ）|済（Chromium）|`test_viewer_save_failure_browser` 1件・`test_viewer_storage_report` 11件|
+|B2：窓だけの採点が全記録の採点と全日・全台一致|済（合成）|`day_score_check_test` 7件|
+|B2：実ビルドで更新後に照合・一致・通信を増やさない|済（Chromium）|`test_viewer_calendar_check_browser`|
+|B2：メモリの境界がB0・B1と同じ|済（合成・Chromium）|上の測定。`C:\w\cbw-update-peak\limit-b2s-*.json`・`limit-b2x-*.json`|
+|全体ゲート|1件落ち→試験を直して、その試験だけ流し直し（例外の手順）|上の記録|
+|P’s CUBE版のメモリ|直していない（設計が要る）|上の③|
+|実iPhoneで保存失敗の行・B1・B2の一致・照合の時間|**未確認**（未公開）|公開後、次の取り込み・同期のあとに診断で確認|
+
+- 公開：**未公開**（閲覧ページは `00c97f4`＝B0のまま）。B0の一致をiPhoneで確かめてから、B1・B2・保存失敗の手がかりをまとめて公開するかを利用者が決める。元に戻す手順は、公開するときに書く。

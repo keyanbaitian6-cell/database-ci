@@ -323,11 +323,13 @@ async function compareViewerHistory(url, site, readBody, normalize = row => row,
 // 段階B1（VIEWER_DAY_STORE.md、2026-11-18）：日別キャッシュを1日ずつ読み、その日の記録の一覧（表示前と同じ整え
 // normalize を掛けたもの）を onDay(day, rows) に渡す。書き込みはしない。1日ずつ渡すので、全日の記録を同時には持たない
 // （onDay が受け取ったあと、この関数は日の記録を持たない）。日別キャッシュが無ければ {status: 'no-cache'}。
-async function readViewerDays(url, site, onDay, normalize = row => row, cache = vpCache()) {
+// from（'YYYY-MM-DD'）を渡すと、それより前の日は解析せず渡さない（段階B2：採点に要る「対象の日と前30日」だけを読む）。
+async function readViewerDays(url, site, onDay, normalize = row => row, cache = vpCache(), from = null) {
   if (!cache.stream) return {status: 'unavailable'};
   let header = false, days = 0, records = 0;
   for await (const value of cache.stream(vpEndpointKey(url, site))) {
     if (value.header) { header = true; continue; }
+    if (from && value.day < from) continue;
     const rows = [];
     for (const text of Object.values(value.parts || {})) {
       const part = JSON.parse(text);

@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import {DIAG_KEY, DRIVE_HOLD_MS, CHECK_HOLD_MS, CALENDAR_HOLD_MS, driveHold, checkHold, calendarHold, recordCheck, recordCalendar, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
+import {DIAG_KEY, DRIVE_HOLD_MS, CHECK_HOLD_MS, CALENDAR_HOLD_MS, driveHold, checkHold, calendarHold, recordCheck, recordCalendar, recordSaveFailure, recordScores, scoresHold, SCORES_HOLD_MS, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
 
 function memoryStorage(initial = {}) {
   const items = new Map(Object.entries(initial));
@@ -226,4 +226,44 @@ test('段階B1のカレンダー照合：途中で終わったら24時間は止�
   recordCalendar({status: 'error', message: '保存した履歴が破損しています。'}, {storage});
   lines = storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY)), databases: null});
   assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算：照合できませんでした（保存した履歴が破損しています。）')), lines.join('\n'));
+});
+
+test('保存の失敗：回数と最後の1回の種類だけを控え、画面に出す（2026-11-18）', () => {
+  const storage = memoryStorage();
+  const lines = () => storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY) || '{"version":1,"phases":{}}'), databases: null});
+  assert.ok(!lines().some(l => l.startsWith('端末への保存の失敗')), '失敗が無ければ行を出さない');
+  recordSaveFailure({stage: 'write', event: 'abort', name: 'Error', message: '端末に保存できませんでした。', chars: 36274573, hidden: true, text: 'x'.repeat(10)},
+    {storage, now: at('2026-11-18T06:19:00+09:00')});
+  recordSaveFailure({stage: 'write', event: 'error', name: 'QuotaExceededError', message: 'q'.repeat(500), chars: 100, hidden: false},
+    {storage, now: at('2026-11-18T07:00:00+09:00')});
+  const log = JSON.parse(storage.getItem(DIAG_KEY));
+  assert.equal(log.save_fail.count, 2);
+  assert.equal(log.save_fail.text, undefined, '保存しようとした内容は控えない');
+  assert.equal(log.save_fail.message.length, 200, '長い説明は切る');
+  assert.ok(lines().some(l => l.startsWith('端末への保存の失敗：2回（最後：') && l.includes('書き込みのエラー・QuotaExceededError') && l.includes('・100文字・画面は表）')), lines().join(' | '));
+  recordSaveFailure({stage: 'open', name: 'UnknownError', hidden: false}, {storage});
+  assert.ok(lines().some(l => l.startsWith('端末への保存の失敗：3回') && l.includes('保存先を開けない・UnknownError')), lines().join(' | '));
+});
+
+test('段階B2の採点照合：B1とは別に止め・控え、画面に出す（2026-11-18）', () => {
+  const storage = memoryStorage();
+  const lines = () => storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY) || '{"version":1,"phases":{}}'), databases: null});
+  assert.ok(!lines().some(l => l.includes('日・機種一覧')), '記録が無いうちは行を出さない');
+  phaseStarted('scores', {storage, now: at('2026-11-18T07:00:00Z')});
+  phaseStarted('open', {storage, now: at('2026-11-18T07:10:00Z')});
+  assert.equal(scoresHold({storage, now: at('2026-11-18T07:10:00Z')}), '2026-11-19T07:00:00.000Z');
+  assert.equal(calendarHold({storage, now: at('2026-11-18T07:10:00Z')}), null, 'B1は止めない');
+  assert.equal(SCORES_HOLD_MS, 24 * 3600 * 1000);
+  phaseFinished('open', {storage});
+  phaseStarted('scores', {storage, now: at('2026-11-19T08:00:00Z')});
+  phaseFinished('scores', {storage, now: at('2026-11-19T08:00:05Z')});
+  assert.equal(scoresHold({storage, now: at('2026-11-19T08:00:06Z')}), null);
+  recordScores({status: 'match', days: 108, records: 78817, racks: 78817, mismatched: 0, examples: [], extra: 1}, {storage, now: at('2026-11-19T08:00:06Z')});
+  assert.equal(JSON.parse(storage.getItem(DIAG_KEY)).scores.extra, undefined);
+  assert.ok(lines().some(l => l.startsWith('日・機種一覧の日別採点：一致（108日・78,817台）')), lines().join(' | '));
+  assert.ok(lines().some(l => l.startsWith('日・機種一覧の日別採点と照合：最後まで終わった1回・前回5秒・最長5秒・途中で終わった1回')), lines().join(' | '));
+  recordScores({status: 'match', days: 31, store: 'saiwaichou', targets: ['2026-11-17', '2026-10-02'], racks: 912, mismatched: 0, examples: []}, {storage});
+  assert.ok(lines().some(l => l.startsWith('日・機種一覧の日別採点：一致（幸町・11/17・10/02の2日・912台）')), lines().join(' | '));
+  recordScores({status: 'mismatch', days: 108, racks: 78817, mismatched: 4, examples: [{store: 'saiwaichou', day: '2026-11-03', machine: 'ハナハナ', rack: '12', old: '合計50', next: '台無し'}]}, {storage});
+  assert.ok(lines().some(l => l.startsWith('日・機種一覧の日別採点：一致しない台 4件（108日・78,817台。例：saiwaichou 11/03 ハナハナ 12番 今の計算［合計50］・日別［台無し］）')), lines().join(' | '));
 });

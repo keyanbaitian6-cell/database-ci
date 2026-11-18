@@ -100,7 +100,7 @@ const helpers = () => {
   await page.goto(origin + '/database-viewer/');
   await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
   let log = null;
-  for (let i = 0; i < 160 && !log?.calendar; i++) {
+  for (let i = 0; i < 160 && !(log?.calendar && !log.running); i++) {
     await page.waitForTimeout(250);
     log = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag')); } catch { return null; } });
   }
@@ -112,6 +112,12 @@ const helpers = () => {
   assert.equal(log.phases.calendar.count, 1); assert.equal(log.phases.calendar.unfinished, 0);
   assert.equal(log.phases.drive.count, 1);
   assert.equal(log.check?.status, 'match', 'B0の本体と日別キャッシュの照合も、これまでどおり動く');
+  // 段階B2：日・機種一覧の台の点数も、日別キャッシュの「その日と前30日」だけから計算して一致する
+  // （1回1店。初回は長町南の、最新の日11/10と順に回す1日＝11/09の4台。窓のために11/08も読むので days は3）。
+  assert.equal(log.scores?.status, 'match', JSON.stringify(log.scores));
+  assert.equal(log.scores.store, 'nagamachiminami');
+  assert.equal(log.scores.days, 3); assert.equal(log.scores.racks, 4); assert.equal(log.scores.mismatched, 0);
+  assert.equal(log.phases.scores.count, 1); assert.equal(log.phases.scores.unfinished, 0);
   assert.equal(log.running, null);
   assert.deepEqual(errors, []);
   // 照合のための通信はしない（一覧と部品だけ）。
@@ -119,6 +125,12 @@ const helpers = () => {
   const lines = await page.evaluate(async () => JSON.parse(await window.databaseViewer.storageReport()));
   assert.ok(lines.some(l => /^カレンダーの日別計算：一致（3日・6マス）/.test(l)), lines.join('\n'));
   assert.ok(lines.some(l => /^カレンダーの日別計算と照合：最後まで終わった1回/.test(l)), lines.join('\n'));
+  assert.deepEqual(log.scores.targets, ['2026-11-09', '2026-11-10']);
+  assert.ok(lines.some(l => l.startsWith('日・機種一覧の日別採点：一致（長町南・11/09・11/10の2日・4台）')), lines.join('\n'));
+  // 次の更新では幸町の同じ日。両方の店が済んでから、次の日（11/08）へ進む。
+  assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-store')), '1');
+  assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-cursor')), null);
+  assert.ok(lines.some(l => /^日・機種一覧の日別採点と照合：最後まで終わった1回/.test(l)), lines.join('\n'));
   await context.close();
 }
 
@@ -210,6 +222,23 @@ const helpers = () => {
   });
   r = await run();
   assert.equal(r.status, null); assert.deepEqual(r.days, []); assert.equal(r.finishCalls, 0);
+  assert.equal(await page.evaluate(() => window.databaseViewer.checkScores(() => {}, () => '{}')), null, 'B2の照合もP’s CUBEでは動かない');
+  // B2の照合：同じ形で1日ずつ渡し、結果を別の項目に控える。止めている間（scores_halt）はB2だけ止まる。
+  await page.evaluate(async () => {
+    const kv = await window.__open('database-viewer', 1, ['kv']);
+    await new Promise((res, rej) => { const tx = kv.transaction('kv', 'readwrite'); tx.objectStore('kv').put('meruhen', 'active_source'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); kv.close();
+  });
+  const scores = await page.evaluate(async () => {
+    const days = [];
+    const status = await window.databaseViewer.checkScores((day, json) => days.push(day), () => JSON.stringify({status: 'match', racks: 6, mismatched: 0, examples: []}));
+    return {status, days, diag: window.__diag().scores};
+  });
+  assert.equal(scores.status, 'match');
+  assert.deepEqual(scores.days, ['2026-11-07', '2026-11-08', '2026-11-09']);
+  assert.deepEqual({status: scores.diag.status, days: scores.diag.days, racks: scores.diag.racks}, {status: 'match', days: 3, racks: 6});
+  await page.evaluate(() => { const log = window.__diag(); log.scores_halt = {at: new Date().toISOString()}; localStorage.setItem('database-viewer-diag', JSON.stringify(log)); });
+  assert.equal(await page.evaluate(() => window.databaseViewer.checkScores(() => {}, () => '{}')), null, 'B2を止めている間はB2だけ動かない');
+  assert.notEqual(await page.evaluate(() => window.databaseViewer.checkCalendar(() => {}, () => JSON.stringify({status: 'match', cells: 0, mismatched: 0, examples: []}))), null, 'B1は止まらない');
   await context.close();
 }
 await browser.close(); server.close();

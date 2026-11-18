@@ -144,13 +144,13 @@ async function run(scenario, index) {
   // 段階B0（2026-11-18）からは、更新のあとに日別キャッシュとの照合が続くので、その結果が控えられるまで待つ
   // 段階B1（2026-11-18）からは、そのあとにカレンダーの日別計算の照合も続く。WAIT_CALENDAR=1 のときは、その結果が控えられるまで待つ。
   // （照合の無い古いビルドは、更新が終わって8秒たったら終わりとする）。
-  let finished = false, driveDoneAt = null, checkMs = null, calendarMs = null;
+  let finished = false, driveDoneAt = null, checkMs = null, calendarMs = null, scoresMs = null;
   for (let i = 0; i < 1200 && !finished && !crashed; i++) {
     await page.waitForTimeout(250);
-    const state = await page.evaluate(() => { try { const log = JSON.parse(localStorage.getItem('database-viewer-diag')); return {drive: !!log?.phases?.drive?.count && !log.running, check: !!log?.check && !log.running, calendar: !!log?.calendar && !log.running, checkMs: log?.phases?.check?.last_ms ?? null, calendarMs: log?.phases?.calendar?.last_ms ?? null}; } catch { return {}; } }).catch(() => ({}));
+    const state = await page.evaluate(() => { try { const log = JSON.parse(localStorage.getItem('database-viewer-diag')); return {drive: !!log?.phases?.drive?.count && !log.running, check: !!log?.check && !log.running, calendar: !!log?.calendar && !log.running, scores: !!log?.scores && !log.running, scoresMs: log?.phases?.scores?.last_ms ?? null, checkMs: log?.phases?.check?.last_ms ?? null, calendarMs: log?.phases?.calendar?.last_ms ?? null}; } catch { return {}; } }).catch(() => ({}));
     if (state.drive && driveDoneAt == null) driveDoneAt = Date.now();
-    checkMs = state.checkMs ?? checkMs; calendarMs = state.calendarMs ?? calendarMs;
-    finished = (process.env.WAIT_CALENDAR ? !!state.calendar : !!state.check) || (driveDoneAt != null && Date.now() - driveDoneAt > 8000);
+    checkMs = state.checkMs ?? checkMs; calendarMs = state.calendarMs ?? calendarMs; scoresMs = state.scoresMs ?? scoresMs;
+    finished = (process.env.WAIT_SCORES ? !!state.scores : process.env.WAIT_CALENDAR ? !!state.calendar : !!state.check) || (driveDoneAt != null && Date.now() - driveDoneAt > Number(process.env.FALLBACK_MS || 8000));
   }
   const elapsedMs = Date.now() - started;
   if (process.env.DETAIL) {
@@ -176,7 +176,8 @@ async function run(scenario, index) {
   const peaks = processPeaks(dir), top = peaks.reduce((a, b) => b.peakWorkingSet > (a?.peakWorkingSet ?? 0) ? b : a, null);
   const check = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag'))?.check ?? null; } catch { return null; } }).catch(() => null);
   const calendar = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag'))?.calendar ?? null; } catch { return null; } }).catch(() => null);
-  const row = {scenario, run: index, elapsedMs, unfinished, errors, check: check?.status ?? null, checkMs, calendar: calendar?.status ?? null, calendarCells: calendar?.cells ?? null, calendarMs, requests: requests.length, heapPeakMiB: +(heapPeak / 1048576).toFixed(1), heapTotalPeakMiB: +(totalPeak / 1048576).toFixed(1), retainedAfterGcMiB: +(retained / 1048576).toFixed(1), samples,
+  const scores = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag'))?.scores ?? null; } catch { return null; } }).catch(() => null);
+  const row = {scenario, run: index, elapsedMs, unfinished, errors, check: check?.status ?? null, checkMs, calendar: calendar?.status ?? null, calendarCells: calendar?.cells ?? null, calendarMs, scores: scores?.status ?? null, scoresRacks: scores?.racks ?? null, scoresMs, requests: requests.length, heapPeakMiB: +(heapPeak / 1048576).toFixed(1), heapTotalPeakMiB: +(totalPeak / 1048576).toFixed(1), retainedAfterGcMiB: +(retained / 1048576).toFixed(1), samples,
     rendererPeakWorkingSetMiB: top ? +(top.peakWorkingSet / 1048576).toFixed(1) : null, rendererPeakCommitMiB: top ? +(top.peakCommit / 1048576).toFixed(1) : null, rendererCount: peaks.length, stored};
   await context.close();
   return row;

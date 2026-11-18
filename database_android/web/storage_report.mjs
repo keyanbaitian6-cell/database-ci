@@ -4,9 +4,9 @@
 // 分かった大きさだけを使う。読み込みの記録は localStorage の小さな1項目（DIAG_KEY）だけに書く。
 
 export const DIAG_KEY = 'database-viewer-diag';
-const PHASES = {open: '起動時の読み込み', drive: 'Googleドライブの更新', check: '日別キャッシュと本体の照合', calendar: 'カレンダーの日別計算と照合'};
+const PHASES = {open: '起動時の読み込み', drive: 'Googleドライブの更新', check: '日別キャッシュと本体の照合', calendar: 'カレンダーの日別計算と照合', scores: '日・機種一覧の日別採点と照合'};
 // 照合（段階B0・B1、2026-11-18）は、記録があるときだけ行を出す（P’s CUBEの閲覧ページなど、照合しないページに出さない）。
-const OPTIONAL = new Set(['check', 'calendar']);
+const OPTIONAL = new Set(['check', 'calendar', 'scores']);
 // このページが使う保存先。ほかの名前（同じ配信元の共有カレンダーなど）は名前だけ数える。
 const KNOWN = ['database-viewer', 'database-pscube-viewer', 'database-viewer-parts-v1', 'database-viewer-parts-pending-v1', 'database-viewer-days-v1'];
 
@@ -40,6 +40,8 @@ export function phaseStarted(phase, {storage = globalThis.localStorage, now = ()
     if (log.running.phase === 'check') log.check_halt = {at: log.running.at};
     // カレンダーの照合（段階B1）の最中に終わっていたら、そちらも同じく24時間止める（calendarHold）。
     if (log.running.phase === 'calendar') log.calendar_halt = {at: log.running.at};
+    // 日・機種一覧の採点の照合（段階B2）も同じ（scoresHold）。
+    if (log.running.phase === 'scores') log.scores_halt = {at: log.running.at};
   }
   log.running = {phase, at: now().toISOString()};
   writeLog(storage, log);
@@ -96,6 +98,37 @@ export function recordCalendar(result, {storage = globalThis.localStorage, now =
   writeLog(storage, log);
 }
 
+// 日・機種一覧の採点の照合（段階B2）も、途中で終わっていたらこの時間は止める。
+export const SCORES_HOLD_MS = 24 * 60 * 60 * 1000;
+
+/** 日・機種一覧の採点の照合を止めている間は、止めている期限（ISO）。止めていなければ null。 */
+export function scoresHold({storage = globalThis.localStorage, now = () => new Date()} = {}) {
+  return holdUntil(readLog(storage).scores_halt, SCORES_HOLD_MS, now);
+}
+
+/** 日・機種一覧の採点の照合結果（{status, days, records, racks, mismatched, examples, message}）を控える。前の結果は置き換える。 */
+export function recordScores(result, {storage = globalThis.localStorage, now = () => new Date()} = {}) {
+  const log = readLog(storage);
+  const pick = ({status, days, records, store, targets, racks, mismatched, examples, message}) =>
+    ({status, days, records, store, targets: Array.isArray(targets) ? targets.slice(0, 10) : undefined, racks, mismatched, examples, message});
+  log.scores = {...pick(result || {status: 'error'}), at: now().toISOString()};
+  writeLog(storage, log);
+}
+
+/**
+ * 本体の保存に失敗したときの手がかり（2026-11-18）。回数と、最後の1回の種類だけを控える（保存した内容は控えない）。
+ * stage：open（保存先を開けない）／write（書き込み）、event：error／abort（中断）、name・message：保存先が返したエラー
+ * （エラーが無い中断は、閲覧ページの決まった文言）、chars：保存しようとした大きさ（文字数）、hidden：そのとき画面が裏だったか。
+ */
+export function recordSaveFailure(info, {storage = globalThis.localStorage, now = () => new Date()} = {}) {
+  const log = readLog(storage);
+  const text = v => typeof v === 'string' ? v.slice(0, 200) : null;
+  const prev = log.save_fail && Number.isFinite(log.save_fail.count) ? log.save_fail.count : 0;
+  log.save_fail = {count: prev + 1, at: now().toISOString(), stage: text(info?.stage), event: text(info?.event), name: text(info?.name),
+    message: text(info?.message), chars: Number.isFinite(info?.chars) ? info.chars : null, hidden: info?.hidden === true};
+  writeLog(storage, log);
+}
+
 /** 読み込みが終わったら（成功・失敗どちらでも）呼ぶ。始めていない区切りは数えない。 */
 export function phaseFinished(phase, {storage = globalThis.localStorage, now = () => new Date()} = {}) {
   const log = readLog(storage);
@@ -109,6 +142,7 @@ export function phaseFinished(phase, {storage = globalThis.localStorage, now = (
   if (phase === 'drive') delete log.drive_halt; // 最後まで終わった（成功も、通信の失敗も）ので、自動更新を止める印は消す。
   if (phase === 'check') delete log.check_halt;
   if (phase === 'calendar') delete log.calendar_halt;
+  if (phase === 'scores') delete log.scores_halt;
   log.running = null;
   writeLog(storage, log);
 }
@@ -193,6 +227,7 @@ const seconds = ms => `${(ms / 1000).toLocaleString('ja-JP', {maximumFractionDig
 const when = s => Number.isFinite(Date.parse(s)) ? new Date(s).toLocaleString('ja-JP') : '不明';
 
 const short = day => typeof day === 'string' ? day.slice(5).replace('-', '/') : '?';
+const STORE_NAMES = {nagamachiminami: '長町南', saiwaichou: '幸町'};
 function checkLine(c) {
   const at = `（${when(c.at)}）`;
   if (c.status === 'match') return `日別キャッシュと本体：一致（${count(c.bodyDays)}日・${count(c.bodyRecords)}件）${at}`;
@@ -214,6 +249,19 @@ function calendarLine(c) {
   }
   if (c.status === 'no-cache') return `カレンダーの日別計算：日別キャッシュが無いので照合していません${at}`;
   return `カレンダーの日別計算：照合できませんでした（${c.message || c.status}）${at}`;
+}
+
+function scoresLine(c) {
+  const at = `（${when(c.at)}）`;
+  const on = (c.store ? `${STORE_NAMES[c.store] || c.store}・` : '')
+    + (Array.isArray(c.targets) && c.targets.length ? `${c.targets.map(short).join('・')}の${count(c.targets.length)}日` : `${count(c.days)}日`);
+  if (c.status === 'match') return `日・機種一覧の日別採点：一致（${on}・${count(c.racks)}台）${at}`;
+  if (c.status === 'mismatch') {
+    const ex = (c.examples || []).map(e => `${e.store} ${short(e.day)} ${e.machine} ${e.rack}番 今の計算［${e.old}］・日別［${e.next}］`).join('、');
+    return `日・機種一覧の日別採点：一致しない台 ${count(c.mismatched)}件（${on}・${count(c.racks)}台。例：${ex}）${at}`;
+  }
+  if (c.status === 'no-cache') return `日・機種一覧の日別採点：日別キャッシュが無いので照合していません${at}`;
+  return `日・機種一覧の日別採点：照合できませんでした（${c.message || c.status}）${at}`;
 }
 
 /** 画面（「更新・差枚の取得状況」）に出す行。 */
@@ -267,6 +315,14 @@ export function storageReportLines(report) {
   if (c) lines.push(checkLine(c));
   const cal = report.log.calendar;
   if (cal) lines.push(calendarLine(cal));
+  const sc = report.log.scores;
+  if (sc) lines.push(scoresLine(sc));
+  const f = report.log.save_fail;
+  if (f) {
+    const where = f.stage === 'open' ? '保存先を開けない' : f.event === 'abort' ? '書き込みの途中で中断' : '書き込みのエラー';
+    lines.push(`端末への保存の失敗：${count(f.count)}回（最後：${when(f.at)}・${where}・${f.name || '名前なし'}`
+      + `${f.message ? `「${f.message}」` : ''}${f.chars != null ? `・${count(f.chars)}文字` : ''}・画面は${f.hidden ? '裏' : '表'}）`);
+  }
   if (report.log.running && Object.hasOwn(PHASES, report.log.running.phase)) {
     lines.push(`いま${PHASES[report.log.running.phase]}の途中です（${when(report.log.running.at)}から）`);
   }

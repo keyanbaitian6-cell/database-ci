@@ -147,6 +147,32 @@ Future<String?> checkViewerCalendar({
   }
 }
 
+@JS('databaseViewer.checkScores')
+external JSPromise<JSString?> _checkScores(
+  JSFunction onDay,
+  JSFunction finish,
+  JSString? from,
+);
+
+/// 段階B2：[checkViewerCalendar] と同じ形で、日・機種一覧の採点を日別キャッシュから照合し、診断に控える。
+/// [from] より前の日は読まない（採点の対象の日と前30日だけ）。
+Future<String?> checkViewerScores({
+  required void Function(String rowsJson) onDay,
+  required String Function() finish,
+  String? from,
+}) async {
+  try {
+    final result = await _checkScores(
+      ((JSString day, JSString rows) => onDay(rows.toDart)).toJS,
+      (() => finish().toJS).toJS,
+      from?.toJS,
+    ).toDart;
+    return result?.toDart;
+  } on Object {
+    return null;
+  }
+}
+
 /// 本体と別に置いた🌈の印（JSONの配列）。無ければ null。
 Future<String?> loadRainbowMarks() async => (await _loadMarks().toDart)?.toDart;
 

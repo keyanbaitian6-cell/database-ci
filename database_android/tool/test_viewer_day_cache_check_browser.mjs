@@ -96,7 +96,7 @@ const helpers = () => {
   await page.goto(origin + '/database-viewer/');
   await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
   let log = null;
-  for (let i = 0; i < 160 && !log?.check; i++) {
+  for (let i = 0; i < 160 && !(log?.check && !log.running); i++) {
     await page.waitForTimeout(250);
     log = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag')); } catch { return null; } });
   }
