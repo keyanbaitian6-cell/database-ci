@@ -86,18 +86,20 @@ def _read_state(data_dir: Path) -> dict:
         return {}
 
 
-def _write_state(data_dir: Path, state: dict) -> None:
+def _write_state(data_dir: Path, state: dict) -> bool:
     folder = Path(data_dir)
     try:
         folder.mkdir(parents=True, exist_ok=True)
         tmp = folder / f'{STATE_NAME}.tmp'
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         tmp.replace(folder / STATE_NAME)
-    except OSError:
-        pass
+        return True
+    except OSError as error:
+        error_log.record(folder, 'forward.state', error)
+        return False
 
 
-def record_pending(data_dir: Path, label: str, now: dt.datetime) -> str:
+def record_pending(data_dir: Path, label: str, now: dt.datetime) -> bool:
     """23:30〜23:59に窓が自分で閉じて完了したとき、翌日分の対象日を印として残す。"""
     local = now.astimezone(JST)
     target = (local.date() + dt.timedelta(days=1)).isoformat()
@@ -106,8 +108,18 @@ def record_pending(data_dir: Path, label: str, now: dt.datetime) -> str:
         state['pending_target'] = target
         state['pending_label'] = label
         state['pending_at'] = local.isoformat(timespec='seconds')
+        return _write_state(data_dir, state)
+
+
+def _record_done(data_dir: Path, now: dt.datetime) -> None:
+    """run() がすべて成功（終了コード0）したときだけ、その日の成功を記録する。"""
+    local = now.astimezone(JST)
+    target = local.date().isoformat()
+    with _state_lock:
+        state = _read_state(data_dir)
+        state['done_target'] = target
+        state['done_at'] = local.isoformat(timespec='seconds')
         _write_state(data_dir, state)
-    return target
 
 
 def finished(label: str, message) -> bool:
@@ -137,7 +149,8 @@ def run(plan, data_dir: Path, *, runner=subprocess.run, now=None) -> tuple[bool,
     """手順を画面を出さずに順に動かす。(すべて成功か, 画面に出す短い文)。同時に2つは動かさない。"""
     if not _running.acquire(blocking=False):
         return False, '前向き検証の保存はすでに動いています'
-    started = (now or dt.datetime.now(JST)).isoformat(timespec='seconds')
+    current = (now or dt.datetime.now(JST)).astimezone(JST)
+    started = current.isoformat(timespec='seconds')
     try:
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         codes, outs = {}, []
@@ -156,6 +169,8 @@ def run(plan, data_dir: Path, *, runner=subprocess.run, now=None) -> tuple[bool,
         stops = [line.strip() for text in outs for line in text.splitlines() if line.strip().startswith('停止:')]
         failed = [name for name, code in codes.items() if code != 0]
         ok = not failed
+        if ok:
+            _record_done(Path(data_dir), current)
         text = ('前向き検証を自動で保存しました' if ok else
                 '前向き検証の自動保存で止まったものがあります：' +
                 (' / '.join(stops) or '終了コード ' + ', '.join(f'{n}={codes[n]}' for n in failed)))
@@ -174,46 +189,34 @@ def _append_log(data_dir, started, outs):
         pass  # 記録の失敗で取り込みの画面を止めない
 
 
-def _launch(plan, data_dir: Path, target: str, now: dt.datetime, report, thread, runner) -> str | None:
-    with _state_lock:
-        state = _read_state(data_dir)
-        if state.get('done_target') == target:
-            return '本日の前向き検証はすでに自動保存済みです'
-        if _running.locked():
-            return '前向き検証の保存はすでに動いています'
-        state['done_target'] = target
-        state['done_at'] = now.astimezone(JST).isoformat(timespec='seconds')
-        _write_state(data_dir, state)
-    worker = thread(target=lambda: report(run(plan, data_dir, runner=runner, now=now)[1]),
-                    name='forward-validation', daemon=True)
-    worker.start()
-    return None
-
-
 def start(label, message, data_dir, report, *, outputs=None, python=None, now=None,
           thread=threading.Thread, runner=subprocess.run):
     """取り込み窓が自分で閉じたときに app.py から呼ぶ。条件に合えば裏で動かし、終わったら report(文) を呼ぶ
     （report は別のスレッドから呼ばれる。画面へは app.py 側が root.after で渡す）。
-    23:30〜23:59に完了したときは翌0時以降に流す印を残す。動かさないときは理由を返す。"""
+    23:30〜23:59に完了したときは翌0時以降に流す印を残す。0:00〜8:59に完了したときは印があっても止めず毎回動かす。
+    動かさないときは理由を返す。"""
     plan = steps(Path(outputs or outputs_dir()), Path(python or analysis_python()))
     now = now or dt.datetime.now(JST)
     data_dir = Path(data_dir)
     if finished(label, message) and in_evening_window(now):
         if isinstance(plan, str):
             return plan
-        record_pending(data_dir, label, now)
-        return '0時〜9時の間に自動で保存します（23:30以降の取り込み完了を記録しました）'
+        if record_pending(data_dir, label, now):
+            return '0時〜9時の間に自動で保存します（23:30以降の取り込み完了を記録しました）'
+        return '23:30以降の取り込み完了を記録できませんでした'
     why = decide(label, message, now, plan)
     if why:
         return why
-    target = now.astimezone(JST).date().isoformat()
-    return _launch(plan, data_dir, target, now, report, thread, runner)
+    worker = thread(target=lambda: report(run(plan, data_dir, runner=runner, now=now)[1]),
+                    name='forward-validation', daemon=True)
+    worker.start()
+    return None
 
 
 def start_pending(data_dir, report, *, outputs=None, python=None, now=None,
                   thread=threading.Thread, runner=subprocess.run) -> str | None:
-    """前夜23:30〜23:59に取り込み完了の印があり、0:00〜8:59で当日の前向き検証をまだ流していなければ裏で1回動かす。
-    動かしたときは None、動かさないときはその理由を返す。"""
+    """前夜23:30〜23:59に取り込み完了の印があり、0:00〜8:59で当日の成功記録がまだ無ければ、
+    印を「使った」と書いてから裏で1回だけ動かす。動かしたときは None、動かさないときはその理由を返す。"""
     now = now or dt.datetime.now(JST)
     if not in_window(now):
         return '0時〜9時の間だけ動かします（その日の分は9時が締切）'
@@ -221,13 +224,26 @@ def start_pending(data_dir, report, *, outputs=None, python=None, now=None,
     if isinstance(plan, str):
         return plan
     data_dir = Path(data_dir)
-    target = now.astimezone(JST).date().isoformat()
-    state = _read_state(data_dir)
-    if state.get('done_target') == target:
-        return '本日の前向き検証はすでに自動保存済みです'
-    if state.get('pending_target') != target:
-        return '前夜23:30以降の取り込み完了の記録がありません'
-    return _launch(plan, data_dir, target, now, report, thread, runner)
+    local = now.astimezone(JST)
+    target = local.date().isoformat()
+    with _state_lock:
+        state = _read_state(data_dir)
+        if state.get('done_target') == target:
+            return '本日の前向き検証はすでに自動保存済みです'
+        if state.get('pending_target') != target:
+            return '前夜23:30以降の取り込み完了の記録がありません'
+        if state.get('used_target') == target:
+            return '前夜23:30以降の取り込み完了の印はすでに実行済みです'
+        if _running.locked():
+            return '前向き検証の保存はすでに動いています'
+        state['used_target'] = target
+        state['used_at'] = local.isoformat(timespec='seconds')
+        if not _write_state(data_dir, state):
+            return '前向き検証の印を更新できませんでした'
+    worker = thread(target=lambda: report(run(plan, data_dir, runner=runner, now=now)[1]),
+                    name='forward-validation', daemon=True)
+    worker.start()
+    return None
 
 
 MERUHEN_STORES = (('nagamachiminami', '長町南'), ('saiwaichou', '幸町'))

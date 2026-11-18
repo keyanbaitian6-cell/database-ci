@@ -1095,7 +1095,7 @@ def main():
             return
         if why:
             if forward_validation.finished(label, message) and not why.startswith('前向き検証のファイル'):
-                if why.startswith(('0時〜9時の間に自動で保存します', '本日の前向き検証は')):
+                if why.startswith('0時〜9時の間に自動で保存します'):
                     logbox.insert('end', f'前向き検証（P-STATION）：{why}。\n')
                 else:
                     logbox.insert('end', f'前向き検証（P-STATION）：{why}。必要なら0時を過ぎてから毎朝実行.cmdを押してください。\n')

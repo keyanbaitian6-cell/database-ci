@@ -246,22 +246,65 @@ class ForwardValidationTests(unittest.TestCase):
         reports, calls = [], []
         kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
                   runner=lambda args, **k: (calls.append(args), Result(0))[1])
-        # ① 0:30 に自分で閉じて完了（今までの経路） → 1回流れ、その後の定期確認や2回目の完了では流れない
+        # ① 前夜23:45に印があっても、0:30 に取り込み完了の経路（start）で成功すれば、0:35 の印の確認（start_pending）では流れない
+        fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(23, 45, day=9), **kw)
+        self.assertEqual(calls, [])
         self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(0, 30, day=10), **kw))
         self.assertEqual(len(calls), 2)
-        self.assertIsNotNone(fv.start_pending(self.dir, reports.append, now=at(0, 35, day=10), **kw))
-        self.assertIsNotNone(fv.start('P’s CUBE', DONE_PSCUBE, self.dir, reports.append, now=at(0, 40, day=10), **kw))
+        why_pending = fv.start_pending(self.dir, reports.append, now=at(0, 35, day=10), **kw)
+        self.assertIsNotNone(why_pending)
+        self.assertIn('すでに自動保存済み', why_pending)
         self.assertEqual(len(calls), 2)
-        # ② 逆に前夜23:45の印で 0:05 に流れたあと、0:30 に窓が自分で閉じても二重に流れない
-        dir2 = self.dir / 'case2'
-        dir2.mkdir()
-        fv.start('サイトセブン', DONE_SITE777, dir2, reports.append, now=at(23, 45, day=9), **kw)
-        self.assertIsNone(fv.start_pending(dir2, reports.append, now=at(0, 5, day=10), **kw))
+        # ② 取り込み完了の経路（start、0:00〜8:59に窓が自分で閉じたとき）は印や成功記録があっても止めず、毎回流す
+        self.assertIsNone(fv.start('P’s CUBE', DONE_PSCUBE, self.dir, reports.append, now=at(0, 40, day=10), **kw))
         self.assertEqual(len(calls), 4)
-        why = fv.start('サイトセブン', DONE_SITE777, dir2, reports.append, now=at(0, 30, day=10), **kw)
-        self.assertIsNotNone(why)
-        self.assertIn('すでに自動保存済み', why)
+
+    def test_failed_pending_run_at_0005_does_not_repeat_at_0010_and_still_runs_on_0700_capture(self):
+        reports, calls = [], []
+        code = [2]
+
+        def runner(args, **kw):
+            calls.append(args)
+            return Result(code[0], '停止: 前日データ不足\n' if code[0] else 'v1 保存しました\n')
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread, runner=runner)
+        # 前夜23:45に完了 → 印が残る
+        fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(23, 45, day=9), **kw)
+        # 0:05 の印からの実行が失敗 → 成功の記録（done_target）は付かず、印を「使った」（used_target）だけ付く
+        self.assertIsNone(fv.start_pending(self.dir, reports.append, now=at(0, 5, day=10), **kw))
+        self.assertEqual(len(calls), 2)
+        self.assertIn('止まったものがあります', reports[-1])
+        state = fv._read_state(self.dir)
+        self.assertEqual(state.get('used_target'), '2026-11-10')
+        self.assertIsNone(state.get('done_target'))
+        # 0:05 が失敗したあと、0:10 の確認では流れない（かつ「すでに自動保存済み」とも出さない）
+        why_0010 = fv.start_pending(self.dir, reports.append, now=at(0, 10, day=10), **kw)
+        self.assertIsNotNone(why_0010)
+        self.assertNotIn('すでに自動保存済み', why_0010)
+        self.assertIn('すでに実行済み', why_0010)
+        self.assertEqual(len(calls), 2)
+        # 7:00 に取り込みが完了すると流れる（成功すれば done_target が付く）
+        code[0] = 0
+        self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(7, 0, day=10), **kw))
         self.assertEqual(len(calls), 4)
+        self.assertEqual(reports[-1], '前向き検証を自動で保存しました')
+        self.assertEqual(fv._read_state(self.dir).get('done_target'), '2026-11-10')
+        # 成功したあとは「すでに自動保存済み」が出る
+        why_after = fv.start_pending(self.dir, reports.append, now=at(7, 5, day=10), **kw)
+        self.assertIn('すでに自動保存済み', why_after)
+
+    def test_state_write_failure_records_to_error_log(self):
+        import error_log
+        error_log.forget()
+        # data_dir の中に STATE_NAME と同名のフォルダを置いて書き込みを失敗させる
+        bad = self.dir / 'bad-state'
+        (bad / fv.STATE_NAME).mkdir(parents=True)
+        reports, calls = [], []
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        why = fv.start('サイトセブン', DONE_SITE777, bad, reports.append, now=at(23, 45, day=9), **kw)
+        self.assertIn('記録できませんでした', why)
+        log = (bad / 'errors.log').read_text(encoding='utf-8')
+        self.assertIn('forward.state', log)
 
     def test_missing_research_scripts_do_nothing(self):
         reports, calls = [], []

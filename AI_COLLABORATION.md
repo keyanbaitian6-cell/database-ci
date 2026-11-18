@@ -3641,3 +3641,33 @@
 |実iPhoneで保存失敗の行・B1・B2の一致・照合の時間|**未確認**（未公開）|公開後、次の取り込み・同期のあとに診断で確認|
 
 - 公開：**未公開**（閲覧ページは `00c97f4`＝B0のまま）。B0の一致をiPhoneで確かめてから、B1・B2・保存失敗の手がかりをまとめて公開するかを利用者が決める。元に戻す手順は、公開するときに書く。
+
+## 2026-11-18 Gemini：前向き検証の23:30〜23:59完了対応のClaudeレビュー修正（未push）
+
+- **Claudeのレビュー結果（`e9d303d` の後戻りと再現の流れ）**：
+  - `e9d303d` では、実行を始める前の `_launch()` で成否に関わらず `done_target = target` を書き込み、さらに0:00〜8:59に窓が自分で閉じた通常の取り込み完了経路（`start()`）まで `done_target` で止めていた。
+  - **再現する不具合（後戻り）**：前夜23:45の印により0:05に `start_pending()` が動いたが失敗（前日データ不足など）した場合でも `done_target` が付いてしまうため、その後7:00に本来の取り込みが完了して窓が閉じても `start()` が「本日の前向き検証はすでに自動保存済みです」と弾いて動かず、その日の前向き検証が保存されない。また、`_write_state` が `OSError` を `error_log` に残さず捨てていた。
+- **修正内容（基準 `f91e069`）**：
+  1. **取り込み完了の経路（`start()`、0:00〜8:59に窓が自分で閉じたとき）を従来どおりに戻した**：印や成功記録の有無にかかわらず止めずに毎回流す（研究スクリプトは既存予測を上書きせず正常終了することを事前確認済み。同時実行を防ぐ `_running` ロックはそのまま維持）。`app.py` の `save_forward_after` もそれに合わせて整理した。
+  2. **0時以降の印の経路（`start_pending()`）を「使った印（`used_target`）」と「成功の記録（`done_target`）」に分離した**：`start_pending()` は、その日に成功した実行（`done_target == target`、どちらの経路でも）があれば `'本日の前向き検証はすでに自動保存済みです'` として流さず、無ければ実行前に `used_target = target`（印を使った記録）を書き込んでから1回だけ流す。0:05が失敗したあとの0:10の確認では `used_target == target` により `'前夜23:30以降の取り込み完了の印はすでに実行済みです'` となって5分ごとに繰り返さず、かつ7:00に窓が閉じた `start()` は妨げない。
+  3. **成功の記録（`_record_done`）は `run()` が全手順成功（`ok == True`）を返したときだけ付ける**：失敗したときは `done_target` を付けず、「すでに自動保存済み」は `done_target == target` のときだけ出す。
+  4. **印のファイルの書き込み失敗を `error_log` に記録**：`_write_state()` で `OSError` が起きたら `error_log.record(folder, 'forward.state', error)` で `errors.log` に残し、呼び出し元も書き込み失敗を区別するようにした。
+  5. **試験の追加（`database/tests/test_forward_validation.py`）**：
+     - `test_failed_pending_run_at_0005_does_not_repeat_at_0010_and_still_runs_on_0700_capture`：0:05の印からの実行が失敗→`done_target` は付かず、0:10の確認では流れず（「すでに自動保存済み」も出ない）、7:00に取り込みが完了すると流れて成功記録が付く。
+     - `test_auto_close_at_0030_does_not_run_twice`：0:30に取り込み完了の経路（`start()`）で成功→0:35の印の確認（`start_pending()`）では流れないこと、および `start()` 自体は印や成功記録があっても毎回流れること。
+     - `test_state_write_failure_records_to_error_log`：印のファイルに書けなかったときに `errors.log` に `forward.state` が残ること。
+- **試験**：
+  - `database\.venv\Scripts\python.exe -m unittest discover -s tests -p test_forward_validation.py -v`：**24件 OK（0.919秒）**（既存の22件＋追加2件）。
+  - `database\.venv\Scripts\python.exe -m unittest discover -s tests`（PC全体）：**1,077件 OK（211.620秒）**。
+- **確認の表**：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 1. `start`（0:00〜8:59の自動完了）は印や成功記録があっても止めず毎回流す（`_running` は維持） | 済 | `test_auto_close_at_0030_does_not_run_twice`・`test_never_two_at_once` PASS |
+| 2. `start_pending` は印を「使った」と書いてから1回だけ流し、成功記録があれば流さない | 済 | `test_evening_completion_at_2345_leaves_mark_and_runs_once_at_0005_not_0010`・`test_auto_close_at_0030_does_not_run_twice` PASS |
+| 3. 成功記録は `run()` が全部成功したときだけ付け、「すでに自動保存済み」は成功記録があるときだけ出す | 済 | `test_failed_pending_run_at_0005_does_not_repeat_at_0010_and_still_runs_on_0700_capture` PASS |
+| 4. 印のファイルに書けなかったときは `error_log` に残す | 済 | `test_state_write_failure_records_to_error_log` PASS（`errors.log` に `forward.state`） |
+| 5. 0:05失敗→0:10非実行→7:00取り込み完了で流れる／0:30成功→0:35印確認で流れない／既存22件通過 | 済 | `test_forward_validation.py` 全24件 OK |
+| 6. PC全体の単体試験 | 済 | `unittest discover -s tests` 1,077件 OK（211.620秒） |
+| 実環境での23:30〜23:59完了後の動作 | **未確認** | PCアプリを再起動した後の実運用で確認 |
+
