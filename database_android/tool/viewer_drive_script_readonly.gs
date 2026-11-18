@@ -712,19 +712,30 @@ function vpReadCurves(site, ref) {
   vpCurveRows(text, ref);
   return text;
 }
+// 2026-11-19：PCの書き出しが新しくなってから、同期（30分ごと）が日別の部品を作り直すまでの間、前の一覧を使わずにいたため、
+// 閲覧ページの更新とグラフの線の読み込みが止まり、台のグラフが概略図になった（利用者のiPhone、11/19 7:18）。部品と線は中身の
+// ハッシュで決まるので、前の一覧のものも正しい。書き出しからこの時間内なら、前の一覧で一覧・部品・線を返す（閲覧ページは前の
+// 内容のまま、作り直したあとの更新で新しくなる）。これを過ぎても作り直されないとき（同期が止まっている等）は、黙って古い内容を
+// 出し続けないよう、今までどおり一覧を返さない。旧クライアントの全件GETは、今までどおり最新のファイル（doGet）を返す。
+const VP_STALE_MS = 3 * 3600000;
 function vpGet(latest, site, params) {
   // 旧形式だけの環境では追加の権限・設定は不要。
   const candidates = DriveApp.getFilesByName(vpManifestName(site));
-  let manifest = null;
+  let manifest = null, previous = null;
   while (candidates.hasNext()) {
     const file = candidates.next(); if (file.isTrashed()) continue;
     if (file.getSize() > 1024 * 1024) continue;
     const raw = JSON.parse(file.getBlob().getDataAsString('UTF-8'));
-    if (raw.base !== vpVersion(latest)) continue;
+    if (raw.base !== vpVersion(latest)) {
+      const behind = latest.getLastUpdated().getTime() - file.getLastUpdated().getTime();
+      if (!previous && behind >= 0 && behind <= VP_STALE_MS) previous = vpValidManifest(raw, site);
+      continue;
+    }
     const m = vpValidManifest(raw, site);
     if (manifest) throw new Error('閲覧用の更新一覧が複数あります。');
     manifest = m;
   }
+  if (!manifest && previous && (params.check || params.parts || params.curves)) manifest = previous;
   if (!manifest) {
     if (params.parts || params.curves) throw new Error('閲覧用が更新されました。もう一度読み込んでください。');
     return null;

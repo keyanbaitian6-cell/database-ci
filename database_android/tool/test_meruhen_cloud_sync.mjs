@@ -219,8 +219,12 @@ test('メルヘン差分：2日初回・1日更新・Web再取得・変更なし
   d.failApi(403, index.name); assert.throws(() => d.sync(), /更新に失敗/); assert.equal(index.text, saved);
   assert.equal(get({}).records.length, 2);
   d.failApi(200); d.sync(); assert.equal(get({}).records.length, 3);
+  const listed = get({check: '1'}).version;
   d.replace(base, viewer([record(600, '2026-10-04')]));
-  assert.equal(get({check: '1'}), null); // PCの新しい全件版を一旦使う。
+  // 2026-11-19：同期が部品を作り直すまで（書き出しから3時間以内）は、前の一覧（同じ目印）を返す。閲覧ページは前の内容のまま、
+  // 作り直したあとの更新で新しくなる。旧クライアントの全件GETは、今までどおり新しいPCの全件版（doGet）を返す（vpGet は null）。
+  assert.equal(get({check: '1'}).version, listed);
+  assert.equal(get({}), null);
   d.sync(); assert.equal(get({}).records.length, 4);
   d.setMode(false); d.sync(); assert.equal(get({}), null);
   assert.equal(JSON.parse(base.text).records.length, 4);
@@ -656,4 +660,37 @@ test('メルヘン履歴：線を外す前の一覧は、1回だけ日別原本�
   assert.equal(d.properties.get('meruhenHistoryRebuild') ?? null, null);
   assert.ok(d.doc('database-viewer-parts-meruhen.json').curve_parts.length > 0);
   const writes = d.writes.length; d.sync(); assert.equal(d.writes.length, writes, '作り直しは1回だけ');
+});
+
+test('メルヘン履歴：PCの書き出しが新しくなっても、部品を作り直すまでの3時間は前の一覧で一覧・部品・線を返す（2026-11-19）', async () => {
+  // 11/19 7:18、PCの書き出し（7:09）から同期が部品を作り直すまでの間、線の読み込みが断られ、台のグラフが概略図になった。
+  const d = drive({history: true}), base = d.files[0];
+  const rows = parity.records.slice(0, 12).map((r, i) => record(800 + i, r.day, {games: r.games, max_hold: r.max_hold ?? null,
+    graph_measurement: r.graph_measurement}));
+  d.add('database-backup-android.json', backup(rows)); d.setup();
+  while (d.sync().pending) { /* 24日ずつ */ }
+  const list = d.files.find(f => f.name === 'database-viewer-parts-meruhen.json' && !f.trashed);
+  const before = plain(d.context.vpGet(base, 'meruhen', {check: '1'}));
+  assert.ok(before.parts.curve_parts.length > 0);
+  // PCが新しく書き出した（同期はまだ部品を作り直していない）。
+  base.updated = list.updated + 10 * 60000;
+  const check = plain(d.context.vpGet(base, 'meruhen', {check: '1'}));
+  assert.equal(check.version, before.version, '前の一覧の目印のまま（閲覧ページは読み直さない）');
+  assert.deepEqual(check.parts, before.parts);
+  const read = url => plain(d.context.vpGet(base, 'meruhen', Object.fromEntries(new URL(url).searchParams)));
+  const storage = new Map(), cache = {get: key => storage.get(key), set: (key, value) => storage.set(key, value)};
+  const doc = await fetchViewerParts('https://example.test/exec', 'meruhen', check.parts, read, cache);
+  assert.equal(doc.records.length, before.parts.count, '前の一覧の部品を読める（一覧の件数どおり）');
+  const r = doc.records.find(x => x.graph_measurement?.curve_remote);
+  const curves = new Map(await fetchViewerCurves('https://example.test/exec', 'meruhen', doc.curve_parts.filter(c => c.day === r.day), read));
+  assert.deepEqual(curves.get(r.graph_measurement.curve_index), rows.find(o => o.rack === r.rack).graph_measurement.curve, '前の一覧の線を読める');
+  assert.equal(d.context.vpGet(base, 'meruhen', {}), null, '旧クライアントの全件GETは、今までどおり最新のファイル（doGet）');
+  // 3時間を過ぎても作り直されない（同期が止まっている等）ときは、黙って古い内容を出し続けない（今までどおり一覧を返さない）。
+  base.updated = list.updated + 4 * 3600000;
+  assert.equal(d.context.vpGet(base, 'meruhen', {check: '1'}), null);
+  assert.throws(() => d.context.vpGet(base, 'meruhen', {curves: check.parts.curve_parts[0].hash}), /閲覧用が更新されました/);
+  // 同期が作り直したら、新しい一覧になる。
+  base.updated = Date.now(); d.sync();
+  const fresh = plain(d.context.vpGet(base, 'meruhen', {check: '1'}));
+  assert.ok(fresh && fresh.parts, '作り直したあとは新しい一覧');
 });
