@@ -155,6 +155,22 @@
     target.click();
     return true;
   };
+  // 画面を1画面分離してから台へ戻す（下へ動けなければ上へ）。台が一度画面の外へ出て戻るので、
+  // 「画面に入ったとき」に読み込むサイトにも、「スクロールしたとき」に読み込むサイトにも、きっかけが届く。
+  // どちらへも動けない短いページでは、scroll・resize の知らせだけを出す。
+  const nudge = async (box, cancelled) => {
+    const room = document.documentElement.scrollHeight - innerHeight;
+    const step = Math.max(80, innerHeight);
+    if (room > 0) {
+      window.scrollBy({top: scrollY + step <= room ? step : -step, behavior: 'instant'});
+      await new Promise(resolve => setTimeout(resolve, 350));
+      if (cancelled()) throw new Error('停止しました。');
+    } else {
+      window.dispatchEvent(new Event('scroll'));
+      window.dispatchEvent(new Event('resize'));
+    }
+    box.scrollIntoView({block:'center', behavior:'instant'});
+  };
   const prepare = async (cancelled, wantedRacks=null) => {
     // サイト自身の遅延読み込みを通常の表示操作で進める。URLの直接取得や再試行はしない。
     for (const {box, rack} of graphBoxes()) {
@@ -167,8 +183,20 @@
       if (ready()) continue;
       box.scrollIntoView({block:'center', behavior:'instant'});
       const until = Date.now() + (window.__site777GraphWaitMs || 12000);
+      // P’s CUBEの一覧で学んだこと（2026-10-04「少し戻って再度下へ」、11-04「ちょっとスクロールするだけで出てくる」）：
+      // サイトの遅延読み込みは、画面が本当に動いたときだけ進むことがある。目的の台へ1回で飛ぶだけでは、
+      // ページの上端にある台（1ページ目の先頭・1台だけの機種）は画面が動かず、きっかけが来ない
+      // （2026-11-12〜18、グラフが出ずに止まった台はすべて1ページ目の上の台。手動で取れるのは人が画面を動かすから）。
+      // 出なければ一定の間隔で、少し離れてから台へ戻す。人が画面を少し動かすのと同じ操作で、URLは開かない。
+      const nudgeEvery = window.__site777NudgeMs || 3000;
+      let nextNudge = Date.now() + nudgeEvery;
       while (!ready() && Date.now() < until) {
         if (cancelled()) throw new Error('停止しました。');
+        if (Date.now() >= nextNudge) {
+          await nudge(current()?.box || box, cancelled);
+          nextNudge = Date.now() + nudgeEvery;
+          continue;
+        }
         await new Promise(resolve => setTimeout(resolve, 250));
       }
       if (!ready()) {

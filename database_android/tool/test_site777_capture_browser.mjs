@@ -90,6 +90,32 @@ try {
   });
   assert.equal(failure.stalled,true,'必要な台の画像不足は停止する');
   assert.equal(failure.detail.rack,102);
+  // 画面が本当に動いたときだけ読み込むページで、1ページ目の上端の台が出ずに止まっていた（2026-11-12〜18、
+  // ゴーゴージャグラー3の1286・1287番、1台だけの機種など。手動では人が画面を動かすので取れる）。
+  // P’s CUBEの一覧と同じく、一度離れてから台へ戻すと、サイトの読み込みが進む。上端の台へ飛ぶだけでは、台は
+  // 画面に入ったままで、サイトに新しいきっかけが届かない。ここでは「最初に画面に入った知らせを取りこぼし、
+  // 次に画面へ入り直したときに読み込む」ページで試す（実サイトの仕組みは確かめていない。止まり方を写した模型）。
+  await page.goto(source('D4300'));
+  await page.evaluate(reader);
+  const topRack=await page.evaluate(()=>{
+    window.__site777GraphWaitMs=4000;window.__site777NudgeMs=300;scrollTo(0,0);
+    const img=document.querySelectorAll('.graph-box img')[0], rack=img.closest('.graph-box').querySelector('span').textContent.replace(/\D/g,'');
+    const lazy=img.dataset.graph||`/chart/RequestSPDedamaTransitionChartForPortal.do?rack=${rack}&again=1`;
+    observer.unobserve(img);delete img.dataset.graph;img.src='/f/contents/images/sp/graph-back.png';
+    let first=true;
+    const late=new IntersectionObserver(entries=>entries.forEach(e=>{
+      if(first){first=false;return;}
+      if(e.isIntersecting){img.src=lazy;late.disconnect();}
+    }));
+    late.observe(img);
+    return Number(img.closest('.graph-box').querySelector('span').textContent.replace(/\D/g,''));
+  });
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(()=>document.querySelector('.graph-box img').src.includes('graph-back')),true,
+    '取りこぼした台は、そのままでは仮の画像のまま');
+  await page.evaluate(rack=>databaseSite777.prepare(()=>false,[rack]),topRack);
+  assert.deepEqual((await page.evaluate(rack=>databaseSite777.read(false,[rack]),topRack)).graphs.map(g=>g.rack),[topRack],
+    '一度離れてから戻すと、取りこぼした上端の台も読める');
   // 転送をネイティブ側でキャンセルしたとき、beforeunload後も停止理由を表示する。
   await page.goto(source('D3300'));
   await page.evaluate(()=>{
