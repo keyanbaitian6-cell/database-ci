@@ -217,6 +217,79 @@ class PushTests(unittest.TestCase):
             self.assertEqual(push_ci.main(['--dry-run'], clock=clock.__next__), 1)
         self.assertEqual(self.main_of(self.canonical), before)
 
+    def test_shallow_clone_of_ci_copy_ahead_of_canonical_unshallows_and_pushes(self):
+        canonical_tip = self.main_of(self.canonical)
+        for text in ('B', 'C', 'D', 'E'):
+            self.commit('app.py', text)
+        git(self.work, 'push', '-q', str(self.copy), 'HEAD:refs/heads/main')
+        shallow = self.work.parent / 'shallow_ci'
+        git(self.work.parent, 'clone', '-q', '--depth', '2', self.copy.as_uri(), str(shallow))
+        self.assertEqual(git(shallow, 'rev-parse', '--is-shallow-repository'), 'true')
+        # 補完前は浅い境界で履歴が切れ、正本の先端を祖先と判定できない状態を再現する。
+        git(shallow, 'fetch', '-q', '--no-tags', '--no-write-fetch-head', str(self.canonical), canonical_tip)
+        self.assertNotEqual(
+            subprocess.run(['git', 'merge-base', '--is-ancestor', canonical_tip, 'HEAD'], cwd=shallow).returncode, 0)
+        latest = self.commit('app.py', 'F', cwd=shallow)
+        os.chdir(shallow)
+        self.assertEqual(self.run_push(utc(2026, 11, 18, 9, 0)), 0)
+        self.assertEqual(git(shallow, 'rev-parse', '--is-shallow-repository'), 'false')
+        self.assertEqual(self.main_of(self.copy), latest)
+        self.assertEqual(self.main_of(self.canonical), canonical_tip)
+
+    def test_shallow_clone_of_canonical_ahead_of_ci_copy_unshallows_once_without_error(self):
+        copy_tip = self.main_of(self.copy)
+        for text in ('B', 'C', 'D', 'E'):
+            self.commit('app.py', text)
+        git(self.work, 'push', '-q', str(self.canonical), 'HEAD:refs/heads/main')
+        shallow = self.work.parent / 'shallow_canonical'
+        git(self.work.parent, 'clone', '-q', '--depth', '2', self.canonical.as_uri(), str(shallow))
+        self.assertEqual(git(shallow, 'rev-parse', '--is-shallow-repository'), 'true')
+        latest = self.commit('app.py', 'F', cwd=shallow)
+        os.chdir(shallow)
+        self.assertEqual(self.run_push(utc(2026, 11, 2, 1, 0)), 0)
+        self.assertEqual(git(shallow, 'rev-parse', '--is-shallow-repository'), 'false')
+        self.assertEqual(self.main_of(self.canonical), latest)
+        self.assertEqual(self.main_of(self.copy), copy_tip)
+
+    def test_shallow_clone_still_stops_when_other_repository_truly_diverged(self):
+        import io
+        other = self.work.parent / 'diverged'
+        git(self.work.parent, 'clone', '-q', str(self.canonical), str(other))
+        diverged = self.commit('notes.py', 'X', cwd=other)
+        git(other, 'push', '-q', 'origin', 'HEAD:refs/heads/main')
+        for text in ('B', 'C', 'D', 'E'):
+            self.commit('app.py', text)
+        copy_tip = git(self.work, 'rev-parse', 'HEAD')
+        git(self.work, 'push', '-q', str(self.copy), 'HEAD:refs/heads/main')
+        shallow = self.work.parent / 'shallow_diverged'
+        git(self.work.parent, 'clone', '-q', '--depth', '2', self.copy.as_uri(), str(shallow))
+        self.commit('app.py', 'F', cwd=shallow)
+        os.chdir(shallow)
+        err = io.StringIO()
+        with patch('sys.stdout'), patch('sys.stderr', err):
+            self.assertEqual(push_ci.main([], now=utc(2026, 11, 18, 9, 0)), 1)
+        self.assertIn(diverged[:7], err.getvalue())
+        self.assertIn('merge', err.getvalue())
+        self.assertEqual(self.main_of(self.copy), copy_tip)
+
+    def test_remaining_shallow_boundary_warns_to_unshallow_instead_of_merge(self):
+        import io
+        branch_repo = self.work.parent / 'branch.git'
+        git(self.work.parent, 'init', '-q', '--bare', '-b', 'main', str(branch_repo))
+        for text in ('B', 'C', 'D', 'E'):
+            self.commit('app.py', text)
+        git(self.work, 'push', '-q', str(branch_repo), 'HEAD:refs/heads/main')
+        shallow = self.work.parent / 'shallow_branch'
+        git(self.work.parent, 'clone', '-q', '--depth', '2', branch_repo.as_uri(), str(shallow))
+        before = self.main_of(self.copy)
+        os.chdir(shallow)
+        err = io.StringIO()
+        with patch('sys.stdout'), patch('sys.stderr', err):
+            self.assertEqual(push_ci.main([], now=utc(2026, 11, 18, 9, 0)), 1)
+        self.assertIn('--unshallow', err.getvalue())
+        self.assertIn('安易に merge', err.getvalue())
+        self.assertEqual(self.main_of(self.copy), before)
+
 
 if __name__ == '__main__':
     unittest.main()

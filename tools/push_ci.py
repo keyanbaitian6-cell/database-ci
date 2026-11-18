@@ -58,6 +58,10 @@ def remote_tip(url: str) -> str | None:
     return refs.split()[0] if refs else None
 
 
+def is_shallow() -> bool:
+    return git('rev-parse', '--is-shallow-repository') == 'true'
+
+
 def remote_main(url: str) -> str | None:
     """その GitHub の main を手元に取得してコミットを返す（空のリポジトリなら None）。"""
     tip = remote_tip(url)
@@ -65,7 +69,10 @@ def remote_main(url: str) -> str | None:
         return None
     # FETCH_HEADは同じ作業コピーの別fetchに上書きされる。照会したSHA自体を取得し、
     # 共有ファイルを読まずに返す。途中でmainが変われば最終照会で止める。
-    git('fetch', '--quiet', '--no-tags', '--no-write-fetch-head', url, tip)
+    # クラウド環境などの浅いクローン（--depth）では手元の履歴が途中で切れ、含まれている
+    # はずのもう一方の main を祖先と判定できないため、浅い間は履歴を補完する。
+    extra = ('--unshallow',) if is_shallow() else ()
+    git('fetch', '--quiet', '--no-tags', '--no-write-fetch-head', *extra, url, tip)
     return tip
 
 
@@ -93,6 +100,12 @@ def main(argv=None, now=None, clock=None) -> int:
     # この取得時点の両mainを包含することを確認する。送信前に先端の変化も確認する。
     for url, head in heads.items():
         if head and not is_ancestor(head, commit):
+            if is_shallow():
+                print(f'止めました：浅いクローン（shallow clone）の境界が残っているため、'
+                      f'{url} の main との親子関係を確かめられません。\n'
+                      'git fetch --unshallow で履歴をすべて取得してから、もう一度送ってください。'
+                      '安易に merge や force push はしないでください。', file=sys.stderr)
+                return 1
             only = git('log', '--oneline', f'{commit}..{head}')
             print(f'止めました：{url} の main に、送るコミットに無い変更があります。\n{only}\n'
                   'その main を取得して手元の main に合わせて（merge）から、もう一度送ってください。'
