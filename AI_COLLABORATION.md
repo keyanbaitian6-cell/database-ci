@@ -3792,4 +3792,5 @@
 - ビルド：`flutter build web --no-pub -t lib/viewer_main.dart --release --base-href /database-viewer/` → `tool/stage_viewer.py /c/w/cbw-b1/pub`（記録の文字列90種で確認、該当なし）。全体ゲート（ALL PASSED、`/c/w/cbw-b1/gate3/viewer`）のビルドと `diff -rq` で差なし。
 - 公開用の複製 `../outputs/viewer-step0-20261118/public-viewer`（`keyanbaitian6-cell/database-viewer`）に、中身が変わった4ファイル（`index.html`・`main.dart.js`・`storage_report.mjs`・`viewer_parts.mjs`。改行コードだけの差のファイルは入れていない）を `d1afc7c` としてコミット（親は `00c97f4`＝B0）。`main.dart.js` はゲートのビルドと同じバイト列（`cmp`）。
 - **元に戻す手順**：公開用の複製で `git revert d1afc7c` して `git push origin main`（B0の `00c97f4` の中身に戻る）。B1・B2の照合と保存失敗の手がかりは読むだけ・控えるだけで、見送りの直しも本体・キャッシュを変えないので、戻しても端末の保存データは影響を受けない。
+- 公開の反映：GitHub Pages が `d1afc7c` を built（Claudeが `gh api …/pages/builds/latest` で確認）。
 - 公開後に見ること：利用者のiPhoneの診断で「カレンダーの日別計算：一致」「日・機種一覧の日別採点：一致（店・日・台）」と、それぞれの「途中で終わった」の回数。照合の時間（B0〜B2の合計。デスクトップで約6秒）。夜中の書き出し直後に開いたとき、ファイル全体を読まずに「作り直しているところ」が出ること。いずれも次の取り込み・同期のあと（部品で更新したとき）に出る。
