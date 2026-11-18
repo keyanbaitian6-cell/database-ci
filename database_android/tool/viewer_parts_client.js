@@ -197,6 +197,14 @@ async function viewerHistoryCovers(url, site, bodyDays, cache = vpCache()) {
   for (const day of bodyDays) if (!have.has(day)) return false;
   return true;
 }
+// 接続先の日別キャッシュがあるか（見出しだけを読む。日の本文は読まない）。読めないときは false。
+async function viewerHistoryExists(url, site, cache = vpCache()) {
+  if (!cache.stream) return false;
+  try {
+    for await (const value of cache.stream(vpEndpointKey(url, site))) return !!value.header;
+  } catch { return false; }
+  return false;
+}
 // 段階B0（VIEWER_DAY_STORE.md、2026-11-18 利用者「既存で進めて」）：端末の本体と日別キャッシュ（Googleの部品）が、
 // 日ごとに同じ記録を持っているかを照合する。書き込みはしない。両方とも1件ずつ読み、日ごとに件数と、記録の全項目
 // （キーを並べ替えた正規化JSON）の指紋の和だけを持つ（並び順に依存しない。全件のオブジェクトは同時に持たない）。

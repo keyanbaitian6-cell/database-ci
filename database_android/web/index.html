@@ -44,6 +44,14 @@
 
     // 段階B1・B2の照合（読むだけ）：日別キャッシュを古い日から1日ずつ onDay(日, その日の記録のJSON) に渡し、全部渡したら
     // finish() の返事（照合結果のJSON）を診断に控える。メルヘンだけ。途中でページが終わっていたら、その照合だけ24時間止める。
+    // この接続先の日別キャッシュ（Googleの部品で更新してきた印）があるか。見出しだけを読む。
+    async function hasDayHistory(url) {
+      try {
+        const {viewerHistoryExists} = await import('./viewer_parts.mjs');
+        return await viewerHistoryExists(url, 'meruhen');
+      } catch { return false; }
+    }
+
     async function dayCheck(phase, held, record, onDay, finish, from = null) {
       if (await pscubeActive()) return null;
       let url = null;
@@ -285,7 +293,15 @@
               full = {document: doc};
             } else if (checked.stream) full = { response: checked.response, stream: checked.stream };
             else if (!checked.response.ok) throw Object.assign(new Error('http'), { status: checked.response.status });
-            else {
+            else if (await hasDayHistory(url)) {
+              // 2026-11-19：Googleのスクリプトは、PCの書き出しが新しくなってから日別の部品を作り直すまでの間、
+              // 部品を付けずに目印だけを返す。そのときファイル全体（グラフの線入り）を読むと、更新が重く、本体だけが
+              // 線入りの形になり日別キャッシュと食い違った（11/19 1:31。11/18 0:27の落ちも同じ時間帯）。
+              // 日別キャッシュを持つ端末（部品で更新してきた端末）は、ファイル全体を読まずに今回の更新を見送る。
+              // （画面には「Googleドライブから読めませんでした（前に読み込んだ内容を表示しています）。」に続けて出る。）
+              throw new Error('Google側で閲覧用の日別の部品を作り直しているところです（PCの書き出しの直後）。'
+                + '少し待ってから更新してください。');
+            } else {
               const response = await hedgedFetch(url, options);
               if (!response.ok) throw Object.assign(new Error('http'), { status: response.status });
               full = { response, stream: response.body };
