@@ -3708,3 +3708,11 @@
 - 変更・効果：
   - `keyanbaitian6-cell/database-ci` が Public になったことで、Antigravity の `Resources` に正本と同時に追加でき、PC・Antigravity の両方から両 `main` の照合・`python tools/push_ci.py` による送信が可能になる（スクリプト・URL等の変更は不要）。また、`database-ci` 側の GitHub Actions（CI）も Public リポジトリとして無料枠の分数制限なしで利用可能になる。
   - `AGENTS.md` の「Google Antigravity の制限と注意喚起」の記述を、「`database-ci` を Public 化したため PC・Antigravity の両方から `push_ci.py` が使え、作業開始時は期間と最新 `main` の一致を確かめる」内容に更新。
+
+## 2026-11-18 Claude（PC）：`database-ci` を公開にしたあとの確かめ
+
+- 依頼：利用者「作業コピー（`/home/antigravity/...`）の残りを片づけ、`database-ci` の最新 main に追いつかせ、`push_ci.py --dry-run` が403にならないか確かめて」。ClaudeはPCで動いており、Antigravityの作業コピーには触れられない。同じ手順をPCの作業コピーで行った（Antigravity側の確かめは未確認。Geminiが向こうで行う）。
+- PCの結果：未コミットの変更なし。手元の main は `2f32e2d` で、`database-ci` の main と同じ（どちらにも相手に無いコミットなし）。`py -3 tools/push_ci.py --dry-run` は終了コード0（「送り先の main は既にこのコミットです」、2026-11-18 14:20 JST）。`gh repo view` で `database-ci` は PUBLIC。古い stash 3つ（10/22・10/25）は触っていない。
+- CI：`7bf4df9`（画面試験2件の直し）の実行 44241747890 は success。
+- 公開で外から見えるようになったもの（HEADと全履歴を grep。中身は変えていない）：Googleのスクリプトの番地（`macros/s/AKfy…`）・鍵・トークン・DB・シード（`database_seed.json`）は無い。見えるもの：コミットの作者のメール（`keyanbaitian6@gmail.com` 977件、`imakurudev@gmail.com` 79件、全履歴）、文書の `imakurudev@gmail.com`（5か所：`ai_collaboration/2026-09.md`・`2026-10-01_15.md`・`database_android/ANDROID_BACKUP_DESTINATION.md`）、アンケート回答のスプレッドシートのファイルID（`AGENTS.md`。共有の設定が「リンクを知っている全員」でなければ中身は見えない）、店舗名と運用の記録。
+- 未確認・次の手順：Antigravity側の dry-run（Gemini）。スプレッドシートの共有の設定（利用者）。
