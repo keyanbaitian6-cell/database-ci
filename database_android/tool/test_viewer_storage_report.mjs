@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import {DIAG_KEY, DRIVE_HOLD_MS, CHECK_HOLD_MS, driveHold, checkHold, recordCheck, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
+import {DIAG_KEY, DRIVE_HOLD_MS, CHECK_HOLD_MS, CALENDAR_HOLD_MS, driveHold, checkHold, calendarHold, recordCheck, recordCalendar, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
 
 function memoryStorage(initial = {}) {
   const items = new Map(Object.entries(initial));
@@ -186,4 +186,44 @@ test('段階B0の照合：途中で終わったら24時間は照合だけを止�
   log = JSON.parse(storage.getItem(DIAG_KEY));
   lines = storageReportLines({log, databases: null});
   assert.ok(lines.some(l => l.startsWith('日別キャッシュと本体：照合できませんでした（保存した履歴が破損しています。）')), lines.join('\n'));
+});
+
+
+
+test('段階B1のカレンダー照合：途中で終わったら24時間は止め、B0の照合とは別に数え、結果を画面に出す（2026-11-18）', () => {
+  const storage = memoryStorage();
+  const none = () => storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY) || '{"version":1,"phases":{}}'), databases: null});
+  assert.ok(!none().some(l => l.includes('カレンダーの日別')), '記録が無いうちは行を出さない');
+  phaseStarted('calendar', {storage, now: at('2026-11-18T07:00:00Z')});
+  // ここでSafariが落ちた。次に開く。
+  phaseStarted('open', {storage, now: at('2026-11-18T07:10:00Z')});
+  assert.equal(calendarHold({storage, now: at('2026-11-18T07:10:00Z')}), '2026-11-19T07:00:00.000Z');
+  assert.equal(calendarHold({storage, now: at('2026-11-19T07:00:00Z')}), null, '24時間たったら止めない');
+  assert.equal(checkHold({storage, now: at('2026-11-18T07:10:00Z')}), null, 'B0の照合は止めない');
+  assert.equal(driveHold({storage, now: at('2026-11-18T07:10:00Z')}), null, 'Googleの更新は止めない');
+  assert.equal(CALENDAR_HOLD_MS, 24 * 3600 * 1000);
+  phaseFinished('open', {storage});
+  phaseStarted('calendar', {storage, now: at('2026-11-19T08:00:00Z')});
+  phaseFinished('calendar', {storage, now: at('2026-11-19T08:00:02Z')});
+  assert.equal(calendarHold({storage, now: at('2026-11-19T08:00:03Z')}), null, '最後まで終わったら印は消える');
+  recordCalendar({status: 'match', days: 108, records: 78817, cells: 216, mismatched: 0, examples: [], extra: 'x'}, {storage, now: at('2026-11-19T08:00:03Z')});
+  let log = JSON.parse(storage.getItem(DIAG_KEY));
+  assert.equal(log.calendar.extra, undefined, '決まった項目だけを控える');
+  assert.equal(log.check, undefined, 'B0の照合の結果とは別の項目');
+  let lines = storageReportLines({log, databases: null});
+  assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算：一致（108日・216マス）')), lines.join('\n'));
+  assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算と照合：最後まで終わった1回・前回2秒・最長2秒・途中で終わった1回')), lines.join('\n'));
+  assert.ok(!lines.some(l => l.startsWith('日別キャッシュと本体')), 'B0の行は、B0の記録があるときだけ');
+  recordCalendar({status: 'mismatch', days: 108, cells: 216, mismatched: 2,
+    examples: [{store: 'saiwaichou', day: '2026-11-03', old: '差枚120・分かる30/40台・要確認2・勝ち18/30', next: 'マス無し'}]}, {storage});
+  log = JSON.parse(storage.getItem(DIAG_KEY));
+  lines = storageReportLines({log, databases: null});
+  assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算：一致しないマス 2件（108日・216マス。例：saiwaichou 11/03 今の計算差枚120')), lines.join('\n'));
+  assert.ok(lines.some(l => l.includes('日別マス無し')), lines.join('\n'));
+  recordCalendar({status: 'no-cache'}, {storage});
+  lines = storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY)), databases: null});
+  assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算：日別キャッシュが無いので照合していません')), lines.join('\n'));
+  recordCalendar({status: 'error', message: '保存した履歴が破損しています。'}, {storage});
+  lines = storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY)), databases: null});
+  assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算：照合できませんでした（保存した履歴が破損しています。）')), lines.join('\n'));
 });

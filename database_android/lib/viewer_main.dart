@@ -5,6 +5,7 @@ import 'capture_health_ui.dart';
 import 'package:flutter/material.dart';
 
 import 'answer_check.dart';
+import 'calendar_day_net.dart';
 import 'candidate_list_page.dart';
 import 'day_comment.dart';
 import 'data_checks.dart';
@@ -264,7 +265,20 @@ class _ViewerHomeState extends State<ViewerHome> {
     // 段階B0（VIEWER_DAY_STORE.md）：本体を保存し直したら、日別キャッシュと日ごとに同じかを照合して診断に控える。
     // 読むだけで表示は変えない。更新と重ならないよう、更新中の印（_syncing）を外す前に行う。
     if (saved) await checkViewerDayCache();
+    // 段階B1（VIEWER_DAY_STORE.md）：カレンダーの日ごとの差枚を日別キャッシュから1日ずつ計算し、今の計算と
+    // 照合して診断に控える。カレンダーに出す値は今までの計算のまま（読み先はまだ切り替えない）。
+    if (saved) await _checkCalendarFromCache();
     if (mounted) setState(() => _syncing = false);
+  }
+
+  Future<void> _checkCalendarFromCache() async {
+    final data = _data;
+    if (data == null || data.source == 'pscube') return;
+    final table = DayNetTable();
+    await checkViewerCalendar(
+      onDay: (rowsJson) => table.addDay(jsonDecode(rowsJson) as List),
+      finish: () => jsonEncode(compareDayNets(table, data.records)),
+    );
   }
 
   /// 共有カレンダー（EVENT_CALENDAR.md）：ほかの端末で入れたイベントを取り込む。共有ファイルが

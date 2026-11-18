@@ -23,6 +23,11 @@ Future<String?> autoUpdateHeldUntil() async => null;
 
 Future<String?> checkViewerDayCache() async => null;
 
+Future<String?> checkViewerCalendar({
+  required void Function(String rowsJson) onDay,
+  required String Function() finish,
+}) async => null;
+
 Future<String?> backupFromRemote(
   String url, {
   String? unlessExportedAt,

@@ -320,6 +320,26 @@ async function compareViewerHistory(url, site, readBody, normalize = row => row,
   return {status: mismatched.length ? 'mismatch' : 'match', bodyDays: body.size, bodyRecords, bodySkipped,
     cacheDays: cached.size, cacheRecords, mismatchedDays: mismatched.length, examples: mismatched.slice(0, 3)};
 }
+// 段階B1（VIEWER_DAY_STORE.md、2026-11-18）：日別キャッシュを1日ずつ読み、その日の記録の一覧（表示前と同じ整え
+// normalize を掛けたもの）を onDay(day, rows) に渡す。書き込みはしない。1日ずつ渡すので、全日の記録を同時には持たない
+// （onDay が受け取ったあと、この関数は日の記録を持たない）。日別キャッシュが無ければ {status: 'no-cache'}。
+async function readViewerDays(url, site, onDay, normalize = row => row, cache = vpCache()) {
+  if (!cache.stream) return {status: 'unavailable'};
+  let header = false, days = 0, records = 0;
+  for await (const value of cache.stream(vpEndpointKey(url, site))) {
+    if (value.header) { header = true; continue; }
+    const rows = [];
+    for (const text of Object.values(value.parts || {})) {
+      const part = JSON.parse(text);
+      if (!Array.isArray(part)) throw new Error('保存した履歴が破損しています。');
+      for (const row of part) rows.push(normalize(row));
+    }
+    days++; records += rows.length;
+    onDay(value.day, rows);
+  }
+  if (!header) return {status: 'no-cache'};
+  return {status: 'ok', days, records};
+}
 async function vpClientHash(text) {
   const data = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(data)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -979,4 +999,4 @@ function createViewerDayStore({dbName = VD_DB} = {}) {
   return {inspect, writeDays, readRange, streamRange, readMetadata, readQuarantine, migrateLegacy, abandonMigration, syncParts, collect};
 }
 
-export {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, viewerHistoryCovers, compareViewerHistory, readViewerHistory, createViewerDayStore};
+export {fetchViewerParts, fetchViewerDocument, fetchViewerCurves, rememberViewerHistory, viewerHistoryCovers, compareViewerHistory, readViewerDays, readViewerHistory, createViewerDayStore};

@@ -3502,3 +3502,39 @@
 |店舗分割の要否と作業量を答える|済（概算。実測・実装なし）|上の読んだ資料と数値。1ファイルの縮小幅は店舗別の台数比からの計算で、iPhoneのSafariでの値は未確認|
 
 - 未確認：iPhoneでの実際のメモリ上限、店舗別の本体サイズの実測、共有カレンダーを含めた正確な作業量。次の手順：B1の公開とB0の一致確認（次の取り込み・同期のあと）。店舗別のDrive分割は、段階B後も落ちるときだけ再検討する。
+
+## 2026-11-18 Claude（Sonnet 5.5）：段階B1（カレンダーの日別計算と照合）のソース実装（未公開）
+
+- 依頼：利用者「B1進んでたほうがいいね」→ Opus 5.5 が完了の条件と確かめ方を示し（利用者の了承は「やることの指示プロンプトをお願いします。sonnetに切り替えてやらせます」）、Sonnet 5.5 が実装。基準：`b4af032`（`database-ci` の `main`。正本より新しい側）。対象は閲覧ページ（iPhone、Flutter web）のメルヘン版だけ。PC・Androidアプリ・共有カレンダーは変えない。
+- 方針（`VIEWER_DAY_STORE.md`「段階B1」）：日別キャッシュ（`database-viewer-parts-v1`）を1日ずつ読み、**今のカレンダーと同じ `dailyNet`** で店・日ごとの差枚を作り、Googleの更新で本体を保存したあと（B0の照合のあと）に、今の計算（全記録 `data.records` から）と全店・全日で比べて診断に出す。**カレンダーに出す値の読み先はまだ切り替えていない。** 書き込みはしない（本体・日別キャッシュ・保存量は変えない）。B1だけではメモリは減らない（起動時に本体を丸ごと読む作りはB7まで残る）。
+- 変更ファイル：`tool/viewer_parts_client.js`（`readViewerDays`。生成先 `web/viewer_parts.mjs`・`share_viewer/viewer_parts.mjs` を `node tool/build_viewer_parts.mjs` で作り直し、副作用で書き換わる `viewer_drive_script*.gs`・`share_viewer/capture_health.mjs` は `git checkout` で戻した）、`tool/build_viewer_parts.mjs`（書き出しの一覧）、`web/index.html`（`databaseViewer.checkCalendar(onDay, finish)`）、`web/storage_report.mjs`（区切り `calendar`・`calendarHold`（24時間）・`recordCalendar`・診断の行）、`lib/viewer_bridge_web.dart`・`viewer_bridge_stub.dart`（`checkViewerCalendar`）、`lib/viewer_data.dart`（`ViewerData.recordsOfRows`：`parse` と同じ読み方で1日分の記録を読む）、新規 `lib/calendar_day_net.dart`（`DayNetTable`・`compareDayNets`）、`lib/viewer_main.dart`（`_refreshFromDrive` の `saved` のとき、B0の照合のあとに `_checkCalendarFromCache`）。試験は新規 `test/calendar_day_net_test.dart`・`tool/test_viewer_calendar_check_browser.mjs`、追記 `tool/test_viewer_storage_report.mjs`。測定用 `tool/measure_viewer_update_peak.mjs` に `WAIT_CALENDAR=1`（カレンダー照合の結果が控えられるまで待つ）を足した。文書：`VIEWER_DAY_STORE.md`、`AGENTS.md` の段階Bの行。
+- 保持したもの：表示する値・採点・翌日候補・🌈・イベント・削除・欠測日の扱い・保存期間。日付を押したときのその日の台（`_recordsFor`）は変えていない（B2）。P’s CUBEの端末では動かさない（`pscubeActive` で null）。
+- 診断に出る行：「カレンダーの日別計算：一致（n日・nマス）」／「一致しないマス n件（日・マス・例：店 日付 今の計算… 日別…）」／「日別キャッシュが無いので照合していません」／「照合できませんでした（理由）」と、区切りの行「カレンダーの日別計算と照合：最後まで終わった n回・前回…・途中で終わった n回」。途中でページが終わったら24時間はこの照合だけを止める（B0の照合・Googleの更新は止めない）。
+- 試験（このPC、`database_android` で）：
+  - `flutter test --no-pub test/calendar_day_net_test.dart`：5件（合成108日・180日・365日で全マス一致、値の違い・日の欠け・本体に無い日を検出、読めない記録だけの日・空の日はマスを作らない）。合成データは、線を外して差枚を添えた記録・線のある記録・グラフ無し・数値異常・ゲーム数0・差枚なし・同じ台の重複（機種名の表記ゆれ）・読めない記録・対象外の機種を混ぜる。
+  - `node --test tool/test_viewer_storage_report.mjs`：8件（B1の診断の1件を追加）。`tool/test_viewer_calendar_check_browser.mjs`（実ビルド：更新のあとに1回動いて一致＝3日・9件・6マス・通信を増やさない・B0の照合も動く。橋渡し：1日ずつ渡す・表示前と同じ整え・読むだけ・一致しない結果とエラーの控え・キャッシュ無し・止めている間・P’s CUBE）：1件。B0の `test_viewer_day_cache_check_browser`：1件、`test_viewer_parts`：15件も通る。
+  - 全体ゲート `bash database_android/tool/check_before_build.sh < /dev/null`（`CHECK_BUILD_WORK=/c/w/cbw-b1/gate1`）：**ALL PASSED**（OKの行99・FAIL/UNRUNは0。`pc-tests`・`flutter-test`・`flutter-analyze`・`viewer-build` も OK。新しい試験 `test_viewer_calendar_check_browser` はゲートの中でも OK）。
+  - 実データ（手元の `database/data/database-viewer.json`、スクリプトはスクラッチだけ・コミットしない・push に入れていない）：Driveの部品と同じ形（線を外し、`net.mjs` の `meruhenNetDetail` で差枚を添える）にして実ビルドで更新させた結果、B0の照合 60日・52,916件・一致、カレンダーの照合 60日・52,916件・**120マス一致**（約1.0秒）。
+- メモリの測定（Windows版Chromium・合成データ・描画プロセスのJSヒープ上限を下げて、更新1回＋B0の照合＋B1のカレンダー照合が最後まで終わるか。**iPhoneのSafariではない**。同じ `limit-*` の方法で B0 と並べた）：
+
+|日数|B0（公開済み）|B1（今回）|
+|---|---|---|
+|80日|280MiBで終了・260で終わらない|280MiBで終了・260で終わらない|
+|108日|370MiBで終了・340で終わらない|370MiBで終了・340で終わらない|
+|180日|560・640とも終了|560・640とも終了|
+
+  上限なしの108日1回：JSヒープ最大 B0 558.4MiB／B1 542.2・571.9MiB（2回、ゆらぎの範囲）、描画プロセスのピーク B0 1,202.6MiB／B1 1,195.4・1,043.6MiB、保存後の残り約69MiB（同じ）。カレンダー照合の時間：80日約1.1秒・108日約1.2〜1.5秒・180日約2.6秒（Chromium）。**B0より山が増えない（同じ境界）ことを測っただけで、メモリが減ったわけではない。** 測定の出力は `C:\w\cbw-update-peak\limit-b1-*.json`（このPCの一時置き場。再現：`WAIT_CALENDAR=1 HEAP_LIMIT=<MiB> SCENARIOS=changed1 MEASURE_TMP=/c/w/cbw-update-peak/tmp node tool/measure_viewer_update_peak.mjs <build> <json> 1 <日数> 730`）。
+- 確認の表：
+
+|要件|結果|証拠|
+|---|---|---|
+|新しい計算が今の計算と全日・全店で一致|済（合成・実データの書き出し）|`calendar_day_net_test` 5件（108/180/365日）。実データ60日・120マス一致|
+|実ビルドで更新後に1回動き、一致を診断に出す／違いを検出／P’s CUBEでは動かない／保険で止まる|済（Chromium）|`test_viewer_calendar_check_browser` 1件・`test_viewer_storage_report` 8件|
+|メモリがB0より増えない|済（同じ境界。合成・Chromium）|上の表。上限なしの値はゆらぎの範囲|
+|全体ゲート|済（ALL PASSED）|`gate1.log`（上のとおり）|
+|実iPhoneで「カレンダーの日別計算：一致」が出る・落ちない|**未確認**（公開前）|公開後、次の取り込み・同期でドライブの内容が更新されたあと、利用者の診断で確認|
+|Dartの関数をJSから1日ずつ呼ぶ仕組み（`toJS`）がiPhoneのSafariで動く|**未確認**（Chromiumの実ビルドでは動いた）|同上|
+|公開（database-viewer）|**未公開**|下の「公開」|
+
+- 公開：**未公開**。閲覧ページ（database-viewer）の公開は `00c97f4`（B0）のまま。公開は、B0の「日別キャッシュと本体：一致」を利用者のiPhoneで確かめてから、利用者が決める。公開する場合は、公開用の複製を `../outputs/` の下に作り、`tool/stage_viewer.py` を通し、公開前にここへ「元に戻す手順」（`database-viewer` で `git revert <公開コミット>` して push）を書く。共有カレンダーは変えていない（`share_viewer/viewer_parts.mjs` は生成コピーなので追加の関数が入っただけで、共有カレンダーは未公開・動作は同じ）。ソースを戻す場合は、このコミットの `git revert`（B1は読むだけなので、戻しても端末のデータは影響を受けない）。
+- 未確認・次の手順：①B0の照合の結果（次の取り込み・同期のあとに閲覧ページを開く）。②そのあとB1を公開し、診断の「カレンダーの日別計算」の行と「途中で終わった」の回数を見る。③「一致」が続いたら、カレンダーの読み先を日別キャッシュ側へ切り替える（別の作業。公開前に元に戻す手順を書く）。④そのあとB2（日・機種一覧・前後の台）。

@@ -719,6 +719,23 @@ class ViewerData {
     );
   }
 
+  /// 日別キャッシュの1日分の記録 [rows] を、[parse]（メルヘン）と同じ規則で記録にする（段階B1、2026-11-18）。
+  /// 読めない記録・対象外の機種は除き、同じ台は [mergeSameRack] で1件にする。記録のキーに日付が入る
+  /// ので、1日ずつ数えても全記録をまとめて数えても同じ結果になる。🌈の印・並び順は当てない（差枚に関係しない）。
+  static List<SlotRecord> recordsOfRows(Iterable<Object?> rows) {
+    final merged = <String, SlotRecord>{};
+    for (final item in rows) {
+      final record = _record(item);
+      if (record == null) continue;
+      if (isHiddenMachine(record.store, record.machine)) continue;
+      final current = merged[record.key];
+      merged[record.key] = current == null
+          ? record
+          : mergeSameRack(current, record);
+    }
+    return merged.values.toList();
+  }
+
   static SlotRecord? _record(Object? item) {
     if (item is! Map) return null;
     final raw = Map<String, dynamic>.from(item);

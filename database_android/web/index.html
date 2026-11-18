@@ -426,6 +426,31 @@
         diag.recordCheck(result);
         return result.status;
       },
+      // 段階B1（VIEWER_DAY_STORE.md、2026-11-18）：カレンダーの日ごとの差枚を、日別キャッシュから1日ずつ計算し、
+      // 今の計算（全記録から）と照合して診断に出す。onDay(日, その日の記録のJSON) を1日ずつ呼び、全日の記録は
+      // 同時に持たない。finish() は照合の結果のJSON（{status, days, cells, mismatched, examples}）を返す。
+      // 読むだけで、本体・キャッシュ・表示は変えない。途中でページが終わっていたら24時間は照合しない。メルヘンだけ。
+      async checkCalendar(onDay, finish) {
+        if (await pscubeActive()) return null;
+        let url = null;
+        try { url = localStorage.getItem('database-viewer-remote'); } catch { /* 読めなければ照合しない */ }
+        if (!url) return null;
+        const diag = await import('./storage_report.mjs');
+        if (diag.calendarHold()) return null;
+        diag.phaseStarted('calendar');
+        let result;
+        try {
+          const {readViewerDays} = await import('./viewer_parts.mjs');
+          const read = await readViewerDays(url, 'meruhen', (day, rows) => onDay(day, JSON.stringify(rows)), lighten);
+          result = read.status === 'ok' ? {...read, ...JSON.parse(finish())} : read;
+        } catch (error) {
+          result = {status: 'error', message: String(error?.message || error).slice(0, 200)};
+        } finally {
+          diag.phaseFinished('calendar');
+        }
+        diag.recordCalendar(result);
+        return result.status;
+      },
       // 🌈の印（RAINBOW.md「iPhoneから付ける」）は本体（'data'、数十MB）と別の 'rainbow_marks' に置く。
       // 付け外し・共有の取り込みのたびに本体をまるごと読み書きすると、iPhoneのメモリが足りず落ちた
       // （2026-10-29）。本体に前から入っている印も使う（Dart側で合わせる）。

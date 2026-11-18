@@ -126,6 +126,27 @@ Future<String?> checkViewerDayCache() async {
   }
 }
 
+@JS('databaseViewer.checkCalendar')
+external JSPromise<JSString?> _checkCalendar(JSFunction onDay, JSFunction finish);
+
+/// 段階B1：日別キャッシュを1日ずつ読み、その日の記録（JSONの配列）を [onDay] に渡す。全部渡したら [finish]
+/// を呼び、その返事（照合の結果のJSON）を診断に控える（読むだけ。表示・保存は変えない）。結果の状態
+/// （`match`・`mismatch` など）。照合しなかった・失敗したときは null。
+Future<String?> checkViewerCalendar({
+  required void Function(String rowsJson) onDay,
+  required String Function() finish,
+}) async {
+  try {
+    final result = await _checkCalendar(
+      ((JSString day, JSString rows) => onDay(rows.toDart)).toJS,
+      (() => finish().toJS).toJS,
+    ).toDart;
+    return result?.toDart;
+  } on Object {
+    return null;
+  }
+}
+
 /// 本体と別に置いた🌈の印（JSONの配列）。無ければ null。
 Future<String?> loadRainbowMarks() async => (await _loadMarks().toDart)?.toDart;
 

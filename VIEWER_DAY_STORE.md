@@ -186,3 +186,24 @@ B0に着手する前にコードを読み直したところ、閲覧ページの
 - 合成データ・実データ（PCの閲覧用書き出し、手元だけ）で「一致」、わざと1日を変えたキャッシュで「一致しない日」を出すこと（`test_viewer_day_cache_check_browser.mjs`）。全体ゲート ALL PASSED。
 - 公開後、利用者のiPhoneの診断で「日別キャッシュと本体：一致」が続き、「照合：途中で終わった」が増えないこと。一致しない日が出たら、B1に進む前に原因を調べる。
 - B1（カレンダー）以降は、上の「段階B本体の計画」の表の順で、読み先を日別キャッシュに置き換えて進める（各段階で旧経路と照合してから画面を切り替える方針は同じ）。
+
+## 段階B1：カレンダーの日別計算と照合（2026-11-18 Claude。ソース実装済み・未公開）
+
+### やること・やらないこと
+
+- **やる**：カレンダー（店・日ごとの総差枚・勝率）を、日別キャッシュから1日ずつ計算する新しい経路を作り、Googleの更新で本体を保存したあと（B0の照合のあと）に、今の計算（全記録 `data.records` から `dailyNet`）と全店・全日で比べて、診断（「更新・差枚の取得状況」）に「カレンダーの日別計算：一致（n日・nマス）」または「一致しないマス n件（例：…）」を出す。
+- **やらない**：カレンダーに出す値の読み先は**まだ切り替えない**（今の計算のまま。切り替えは、利用者のiPhoneで「一致」が続くのを確かめてからの別の作業）。日付を押したときのその日の台（`_recordsFor`）は変えない（B2）。イベント・🌈の印は本体の見出しから来るので変えない。メルヘンだけ（P’s CUBEの端末では動かさない）。PC・Androidアプリ・共有カレンダーは変えない。本体・日別キャッシュの中身と保存量は変えない（書き込みなし）。
+- **B1だけでは、iPhoneのメモリは減らない。** 起動時に本体を丸ごと読む作りはB7まで残る。B1は、B7で本体の全件読み込みをやめたときにカレンダーが同じ値を出せることを、先に確かめるための段階。
+
+### 仕組み
+
+- JS（`tool/viewer_parts_client.js` の `readViewerDays`、生成先 `web/viewer_parts.mjs`・`share_viewer/viewer_parts.mjs`）：日別キャッシュを日の順に1日ずつ読み、表示前と同じ整え（`lighten`）を掛けたその日の記録の一覧を、`onDay(day, rows)` に渡す。全日の記録を同時には持たない。
+- 橋渡し（`web/index.html` の `databaseViewer.checkCalendar(onDay, finish)`、`lib/viewer_bridge_web.dart` の `checkViewerCalendar`）：1日分のJSONをDartの関数に渡し、全日を渡し終えたら `finish` の返事（照合結果のJSON）を診断に控える。区切り `calendar`（`storage_report.mjs`：`recordCalendar`・`calendarHold`）。途中でページが終わったら24時間はこの照合だけを止める（B0の照合・Googleの更新は止めない）。
+- Dart（`lib/calendar_day_net.dart`）：`DayNetTable.addDay` が、1日分の記録を `ViewerData.recordsOfRows`（`ViewerData.parse` と同じ読み方：読めない記録・対象外の機種を除き、同じ台を `mergeSameRack` で1件にする）で `SlotRecord` にし、**今のカレンダーと同じ `dailyNet`** で `DayNet` を作って控える（記録は持たない）。`compareDayNets` が、表と、今の計算（全記録から `dailyNet`）を、全店・全日で `total`・`captured`・`racks`・`needsCheck`・`judged`・`won` まで比べる。`_refreshFromDrive`（`viewer_main.dart`）が、本体を保存し直したあと（`saved`）、B0の照合のあとに呼ぶ。
+- 記録のキーに日付が入る（`store|day|machine|rack`）ので、1日ずつ数えても全記録をまとめて数えても同じ結果になる。🌈の印・並び順は差枚に関係しないので当てない。
+
+### 合格条件と、次に進む条件
+
+- 合成データ108日・180日・365日で全マス一致（`test/calendar_day_net_test.dart`）、1マスでも違えば検出（値の違い・日の欠け・本体に無い日）。実ビルドで更新後に1回動いて一致・通信を増やさない・読むだけ・止めている間・P’s CUBE（`tool/test_viewer_calendar_check_browser.mjs`）。診断の文言（`tool/test_viewer_storage_report.mjs`）。全体ゲート ALL PASSED。
+- 公開後、利用者のiPhoneの診断で「カレンダーの日別計算：一致」が続き、「カレンダーの日別計算と照合」の「途中で終わった」が増えないこと（B0の「日別キャッシュと本体：一致」が先）。「一致しないマス」が出たら、次に進む前に原因を調べる。
+- そのあと、カレンダーの読み先を日別キャッシュ側へ切り替える（別の作業。公開前に元に戻す手順を書く）。B2（日・機種一覧・前後の台）はその次。
