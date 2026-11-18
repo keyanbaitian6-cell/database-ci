@@ -207,7 +207,16 @@
         const latest=current(), img=latest?.box.querySelector('img');
         error.graph_wait = {rack, complete:!!img?.complete, width:img?.naturalWidth||0,
           image_kind:!img ? 'missing' : new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do'
-            ? 'chart' : 'placeholder', visible:!!latest&&visible(latest.box)};
+            ? 'chart' : 'placeholder', visible:!!latest&&visible(latest.box),
+          // 2026-11-19 利用者「1台の機種で表示されないって何？表示されてるようにしかみえなかった」：画面には
+          // グラフが出ているのに仮の画像と判定している疑い。台の枠の中の画像・canvas・背景画像を、
+          // パス（?以降は会員情報が入りうるので残さない）と大きさだけ記録して、次に止まったときに見分ける。
+          images:Array.from(latest?.box.querySelectorAll('img')||[]).slice(0,6).map(i=>{
+            let path='';try{path=new URL(i.currentSrc||i.src,location.href).pathname;}catch(_){}
+            return {path, w:i.naturalWidth||0, h:i.naturalHeight||0, shown:visible(i)};}),
+          canvases:latest?.box.querySelectorAll('canvas').length||0,
+          backgrounds:Array.from(latest?.box.querySelectorAll('*')||[]).map(e=>getComputedStyle(e).backgroundImage)
+            .filter(b=>b&&b!=='none').slice(0,4).map(b=>(b.match(/url\(["']?([^"')?]*)/)||[])[1]||'other')};
         throw error;
       }
     }

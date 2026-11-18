@@ -1010,6 +1010,12 @@ class SessionTest(unittest.TestCase):
         for record in records.values():validate_record(record)          # 別の端末・閲覧ページと同じ形の確認を通る
         self.assertIn('グラフ不明1台',self.session.state()['status'])
 
+    def test_graphless_limit_is_half_of_the_machine(self):
+        # 2026-11-19 利用者「仮だと思ったら再読み込みして」：ゴーゴージャグラー3（31台）の1ページ目の上の2台が両方出ず、
+        # 1機種1台までの枠で止まり続けた。台数の半分まで（1台・2台の機種は今までどおり1台）。
+        from site777_session import graphless_limit
+        self.assertEqual([graphless_limit(n) for n in (1,2,3,4,22,31)],[1,1,1,2,11,15])
+
     def test_graph_skip_needs_auto_capture_on_and_is_kept_when_the_window_reopens(self):
         self.cycle(table());self.cycle(graph(metadata=True))
         self.assertTrue(self.session.skip_graph(101,self.epoch)['ok'])

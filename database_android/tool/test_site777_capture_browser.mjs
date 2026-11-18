@@ -235,7 +235,11 @@ try {
   assert.match(await stalled.evaluate(()=>sessionStorage.getItem('test-paused')),/3回読み込み直してもグラフが表示されない/);
   assert.equal(loads.length,4,'最初の1回と、1分後（試験では1.2秒後）の読み込み直し3回');
   const graphWait=JSON.parse(await stalled.evaluate(()=>sessionStorage.getItem('test-graph-wait')));
-  assert.deepEqual(Object.keys(graphWait).sort(),['kind','rack','complete','width','image_kind','visible','day','page'].sort());
+  assert.deepEqual(Object.keys(graphWait).sort(),['kind','rack','complete','width','image_kind','visible','day','page',
+    'images','canvases','backgrounds'].sort());
+  // 画像はパスと大きさだけ（?以降・会員情報は残さない。2026-11-19 グラフが出ているのに仮の画像と判定する疑いの調査用）。
+  assert.ok(graphWait.images.length>0&&graphWait.images.every(i=>Object.keys(i).sort().join()==='h,path,shown,w'&&!/[?#]/.test(i.path)),JSON.stringify(graphWait.images));
+  assert.ok(graphWait.backgrounds.every(b=>!/[?#]/.test(b)));
   assert.equal(graphWait.kind,'graph_wait');assert.equal(graphWait.rack,101);
   assert.equal(graphWait.image_kind,'chart');assert.equal(graphWait.width,0);
   await stalled.waitForTimeout(2500);

@@ -100,12 +100,14 @@
     previous.textContent=s.previous||'';previous.style.display=s.previous?'block':'none';
   };
   // グラフが出ないとき（2026-11-07 利用者「グラフが出なかったら1分後に再読みするんじゃなかったの？」）：自動取り込み中だけ、
-  // 1分待ってからそのページを読み込み直し、自動取り込みはONのまま続ける（読み込み後はいつもどおり続きから）。
+  // 少し待ってからそのページを読み込み直し、自動取り込みはONのまま続ける（読み込み後はいつもどおり続きから）。
   // 同じページで3回まで。回数はページを読み込み直しても残るよう sessionStorage に置き、残せないときは読み込み直さずに止める。
   // 回数は、利用者が自動取り込みを新しく開始したときだけ0に戻す（2026-11-08 Codexのレビュー：同じ窓で止めて開始し直しても
   // 前の3回が残り、次にグラフが出ないとすぐOFFになっていた）。自動の読み込み直しの間は残す。
   // 戻り値：読み込み直した（または古い処理で何もしない）は true、回復は 'recovered'、上限は 'limit'、回数を残せないときは 'storage'。
-  const MAX_RETRIES=3, retryKey='database-site777-retries';
+  // 待つ時間は、2026-11-19 利用者「仮だと思ったら再読み込みして」で1分から約4秒に短くした（サイトセブンの取り込み間隔
+  // 3〜5秒と同じくらい。読み込み直しの回数は3回のまま。1台だけの機種は1台ごとに約10分かかっていた）。
+  const MAX_RETRIES=3, RETRY_MS=4000, retryKey='database-site777-retries';
   const retryCounts=()=>{try{const v=JSON.parse(sessionStorage.getItem(retryKey)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:null;}catch(_){return null;}};
   const retryLater=async(mine,epoch,wanted,stalledRack)=>{
     const meta=databaseSite777.read(true), url=meta.url, counts=retryCounts();
@@ -129,7 +131,7 @@
     if(!counts)return 'storage';
     const count=(Number(counts[url])||0)+1;
     if(count>MAX_RETRIES)return 'limit';
-    const until=Date.now()+(window.__site777RetryMs||60000);
+    const until=Date.now()+(window.__site777RetryMs||RETRY_MS);
     while(Date.now()<until){
       if(!alive||token!==mine)return true;
       if(recovered())return await stillCurrent()?'recovered':true;
@@ -212,8 +214,8 @@
         let retried='storage';
         try{retried=await retryLater(mine,epoch,wanted,error.graph_wait?.rack);}catch(_){}
         if(retried===true||retried==='recovered')return;
-        // 3回読み込み直しても出ない台は、1機種につき1台までグラフなしで保存して続ける（2026-11-13 利用者
-        // 「グラフなしで進めるようにお願いね」）。PCが断ったら（2台目など）今までどおり止める。
+        // 3回読み込み直しても出ない台は、グラフなしで保存して続ける（2026-11-13 利用者「グラフなしで進めるようにお願いね」。
+        // 1機種で台数の半分まで、1台・2台の機種は1台。2026-11-19）。PCが断ったら今までどおり止める。
         if(retried==='limit'&&Number.isInteger(error.graph_wait?.rack)&&alive&&token===mine){
           let skipped=null;
           try{skipped=await api().skip_graph?.(error.graph_wait.rack,epoch);}catch(_){}

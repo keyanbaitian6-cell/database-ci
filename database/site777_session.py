@@ -52,8 +52,16 @@ STAGING_KEEP_DAYS = 14
 # この回転数に満たない台（0Gを含む）は取り込まない（2026-11-10 利用者「0ゲーム、500g未満の台については取り込まない」）。
 # 採点の下限（core.MIN_SCORED_GAMES、P’s CUBE の RACK_PAGE_MIN_GAMES）と同じ500G。500Gちょうどは取り込む。
 MIN_SAVED_GAMES = 500
-# 読み込み直してもグラフが出ない台を、グラフなしで保存して進めてよい台数（1機種につき。2026-11-13 利用者）。
+# 読み込み直してもグラフが出ない台を、グラフなしで保存して進めてよい台数（1機種につき。2026-11-13 利用者、
+# 初めは1台）。2026-11-19 利用者「仮だと思ったら再読み込みして」：ゴーゴージャグラー3の1ページ目の上の2台
+# （1286・1287番）が両方出ず、2台目で止まり続けたため、その機種の台数の半分まで（1台・2台の機種は1台）にした。
+# 半分を超えて出ないときは、サイト側の不調とみて今までどおり止める。
 MAX_GRAPHLESS = 1
+
+
+def graphless_limit(racks):
+    """1機種でグラフなしにしてよい台数。[racks] はその機種の表の台数。"""
+    return max(MAX_GRAPHLESS, int(racks) // 2)
 # 同じDB（pscube.sqlite3）へほかの窓・PC本体が書いている間、待つ秒数（既定の5秒から延ばした。2026-11-13）。
 DB_WAIT = 30.0
 RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
@@ -519,8 +527,9 @@ class Session(Bridge):
     def skip_graph(self, rack, epoch):
         """自動取り込みで、1分ごとの読み込み直し（3回）でもグラフが出ない台を、グラフなしで保存して先へ進む
         （2026-11-13 利用者「グラフなしで進めるようにお願いね」。11/13 1:15〜1:40、ゴーゴージャグラー3の1286番台
-        だけ仮の画像のままで、3分後の再開を繰り返していた）。グラフなしにできるのは1機種につき1台まで。
-        2台目が出ないときはサイト側の不調とみて、今までどおり止める（呼ぶ側がそのまま停止する）。
+        だけ仮の画像のままで、3分後の再開を繰り返していた）。グラフなしにできるのは1機種につき
+        [graphless_limit]台まで（台数の半分、1台・2台の機種は1台。2026-11-19）。それを超えて出ないときは
+        サイト側の不調とみて、今までどおり止める（呼ぶ側がそのまま停止する）。
         グラフなしの台は「グラフ不明」として保存する（表の数値は保存する。あとで取り込み直しても保存済みの台は飛ばす）。"""
         with self._state_lock:
             job = self._job
@@ -529,7 +538,7 @@ class Session(Bridge):
             if ok:
                 skipped = job.setdefault('no_graph', [])
                 ok = (rack in {r['rack'] for r in job['rows']} and str(rack) not in job['graphs']
-                      and rack not in skipped and len(skipped) < MAX_GRAPHLESS)
+                      and rack not in skipped and len(skipped) < graphless_limit(len(job['rows'])))
             if ok:
                 skipped.append(rack)
                 model, day = job['table']['model_id'], self._day
