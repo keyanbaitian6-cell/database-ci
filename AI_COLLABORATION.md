@@ -3701,3 +3701,10 @@
 - 直したこと（試験だけ。確かめる中身は弱めていない）：①は `check=1` が来るまで待つ。②は `running` が空になるまで待ってから、同じく `running === null` を確かめる。③は共有の🌈が端末に入るまで待ってからボタンを探し、`boundingBox` は1秒だけ待つ（消えたら次の送りへ）。
 - 確かめたこと（Claudeが手元で直接）：`a74fd7f` の閲覧ページを作り直した（`flutter build web --no-pub -t lib/viewer_main.dart --release --base-href /database-viewer/`、`tool/stage_viewer.py C:\w\cbw-ci2\viewer`、`VIEWER_WEB_ROOT` で指定）。直す前の段階で drive_hold が5回中1回落ちた（上の②）。直したあと、drive_hold 10/10、rainbow 5/5。負荷をかけた状態（2つの試験を3組ずつ同時に、2回）でも12/12。ゲートの例外「落ちた項目だけの流し直し」（CIのゲートで落ちたのは2項目、変えたのはその2つの試験ファイルだけ）。
 - 送信：`tools/push_ci.py` で `database-ci` へ1回（CIが1回動く）。CIの結果はこの時点で未確認。
+
+## 2026-11-18 昼（追記）：`keyanbaitian6-cell/database-ci` を Public に変更（案A）
+
+- 経緯：Antigravity の「1つのプロジェクト内の非公開リポジトリは1所有者まで」の制限による作業の支障をなくすため、利用者が「誰でも見られる以外のデメリット」を確認のうえ、案A（正本 `imakurudev-eng/database` は非公開のまま、`keyanbaitian6-cell/database-ci` だけを Public に変更）を選択し、GitHub 上で Public への切り替えを完了。
+- 変更・効果：
+  - `keyanbaitian6-cell/database-ci` が Public になったことで、Antigravity の `Resources` に正本と同時に追加でき、PC・Antigravity の両方から両 `main` の照合・`python tools/push_ci.py` による送信が可能になる（スクリプト・URL等の変更は不要）。また、`database-ci` 側の GitHub Actions（CI）も Public リポジトリとして無料枠の分数制限なしで利用可能になる。
+  - `AGENTS.md` の「Google Antigravity の制限と注意喚起」の記述を、「`database-ci` を Public 化したため PC・Antigravity の両方から `push_ci.py` が使え、作業開始時は期間と最新 `main` の一致を確かめる」内容に更新。

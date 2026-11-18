@@ -121,9 +121,8 @@ This directory is a local mirror of the ChatGPT project “LINE”.
 - 正本は `imakurudev-eng/database` の `main` のまま。`database-ci` にだけあるコミットは、前半に正本へ送るときに一緒に入る。取り込み前に、作業記録（`AI_COLLABORATION.md`）にどのコミットが `database-ci` にだけあるかを書く。2026-10-20時点：`988267b`（Android 0.5.41、補完機種の台数確認の修正）が `database-ci` と手元のブランチ `fix/pscube-anaslo-count` にあり、正本の `main`（`3277043`）にはまだ無い。
 - `.md` だけの変更は CI が動かないので、期間に関係なくどちらへ送っても枠を使わない。ただし履歴を1本に保つため、期間内の側へ送る。
 - 枠の月切り替えは GitHub の都合（UTC）で、日本時間の1日朝9時ごろ。日本時間の15日・16日で切るのは、利用者が決めた目安。枠の残りが足りなくなりそうなら、利用者に聞く。
-- **Google Antigravity の制限と注意喚起（2026-11-18 利用者指定）**：Antigravity のプロジェクト（`Resources`）には「1つのプロジェクト内の非公開リポジトリはすべて同じ所有者（1アカウント）のものでなければならない（`A project's private resources must all belong to one owner`）」という制限があり、`imakurudev-eng/database` と `keyanbaitian6-cell/database-ci` を同時に登録できない（公開リポジトリの `database-share`・`database-viewer` は登録済み）。そのため次の運用とする：
-  - **GitHub への送信（`python tools/push_ci.py`）は PC（Windows）側で行う**（Antigravity 内からは片方の非公開リポジトリしか見えず、両 main の照合が 403 になるため）。
-  - **AI は作業を始める前に、期間（月前半 1〜15日＝正本／月後半 16〜末日＝`database-ci`）と環境内のリポジトリが合っているかを確かめ、ずれているとき（例：月後半なのに15日時点の正本しか見えていないとき）は、古い履歴の上で作業して枝分かれしないよう先に利用者へ注意する。**
+- **Google Antigravity での GitHub 連携と注意喚起（2026-11-18 利用者指定）**：Antigravity のプロジェクト（`Resources`）には「1つのプロジェクト内の非公開リポジトリはすべて同じ所有者（1アカウント）のものでなければならない（`A project's private resources must all belong to one owner`）」という制限がある。そのため **`keyanbaitian6-cell/database-ci` を公開（Public）リポジトリに変更**し、正本（`imakurudev-eng/database`、非公開）や `database-share`・`database-viewer`（公開）と同時に `Resources` へ登録できるようにした（これにより PC・Antigravity のどちらからでも `python tools/push_ci.py` で両 main の照合・送信ができ、`database-ci` 側の GitHub Actions 分数制限も無くなる）。あわせて次の運用を守る：
+  - **AI は作業を始める前に、期間（月前半 1〜15日＝正本／月後半 16〜末日＝`database-ci`）と環境内の手元 `main` の履歴が最新（両方の `main` を含む状態）かを確かめ、ずれているとき（例：月後半なのに15日時点の正本のままで `database-ci` の最新を取り込んでいないとき）は、古い履歴の上で作業して枝分かれしないよう先に最新を取り込むか利用者へ注意する。**
 
 ## 取得系アプリの開発メモ（2026-10-15 利用者指定）
 
