@@ -3569,3 +3569,51 @@
   - **順番・分担は保留**（利用者が決めるまで、提案1-①・1-②・2-①はどのAIも着手しない）。Claudeの段階B（B2のコミット・B1/B2の公開）は、もとからの予定どおり。
   - **AGENTS.md の共同作業の節に Gemini を足した**：見出しを「複数のAI（Codex・Claude・Gemini）で共同作業するための共有記録」にし、Geminiが11/18から加わったこと、AGENTS.md の決まりがGeminiにも同じく当てはまること、「相手のAI」は自分以外のすべてを指すこと、受け持ちは利用者が決める（未定）ことを書いた。「片方のAI／もう片方」「2つのAIが同じ作業コピーで」の2か所も3つのAIに合わせて直した。
 - コミット：AGENTS.md は、作業ツリーにあるClaudeの段階B2の1行（未コミット。B2のコードと一緒に送る）を含めず、Geminiの追加分だけを索引に載せて送った（`git hash-object`／`git update-index` で HEAD の版に同じ置き換えだけを当てた）。
+
+## 2026-11-18 Gemini：P-STATIONの前向き検証「23:30〜0:00に取り込みが終わった晩」の取りこぼし防止（着手前記録→実装）
+
+- 依頼：利用者から提案2-①（PC側だけ）の実装依頼。基準：`36d2bc2`（`database-ci` の `main`）。
+- **担当のファイル**：`database/forward_validation.py`、`database/app.py`、`database/tests/test_forward_validation.py`（およびこの `AI_COLLABORATION.md`。閲覧ページや研究スクリプトは一切触らない。着手前の `git status` で担当3ファイルに未コミット変更が無いことを確認済み）。
+- **完了の条件**：
+  1. 日本時間 23:30〜23:59 に「取り込み窓が自分で閉じて、最後まで取り込めた」（`forward_validation.finished(label, message)` が True）とき、翌営業日（翌日）の対象日に対する完了の印を `database/data/` 内のファイルに残す（PC再起動・アプリ再起動でも消えない形）。×で閉じた晩・途中で止まった晩は印を残さず自動実行しない。
+  2. 日本時間 0:00〜8:59 に、前夜（23:30〜23:59）の完了の印があり、その対象日の分をまだ流していなければ、`app.py` の5分ごとの確認（`daily_tick`）および起動時確認から今の `forward_validation.run` と同じ手順で裏で1回流す。
+  3. 流したら印を「済み」にして同じ日に2回流さない。また、0:00〜8:59 に窓が自分で閉じた従来の自動実行経路とも同じ印（対象日の「済み」）を共有し、二重に流れないようにする。
+  4. 結果は従来どおりログ欄に1行出し、`forward-validation.log` と `errors.log`（`forward.auto`）に残す。
+- **確かめ方**：
+  - `database/tests/test_forward_validation.py` に次の各場面の単体試験を足す：①23:45に自動完了→印が残り、0:05の確認で1回流れ、0:10の確認では流れない ②23:45に×で閉じた→印が残らず流れない ③印のある日の9:00以降→流れない ④アプリ起動し直し後（印のファイルだけがある）→0〜9時なら流れる ⑤0:30に自動完了（従来経路）→二重に流れない（23:45完了後に0:05で流れたあとの0:30再完了でも、0:30に先に完了したあとの定期確認でも二重に流れない）⑥研究スクリプトが無いPC→何もしない。
+  - `database/.venv/Scripts/python.exe -m unittest discover -s tests` でPC全試験が通ることを確かめる。
+- **v1（`forward.py`）を2回目に流したときの動きの確認（`forward.py:126-129, 223-226` のみ読取）**：
+  - `predict()`（`forward.py:126-129`）は、当日分の予測ファイル `predictions/<target>.json` が既に存在する場合、`study_sha256` の一致を確かめたうえで、9時締切判定（132行）や再計算を行わずに `(p, False)` を返す。
+  - `main()`（`forward.py:223-226`）は `created` が `False` のとき標準出力に `'保存済みの予測を返しました。変更していません。'` と出して **終了コード 0（正常終了）** で終わる（`停止:` は出ず、失敗表示にもならない）。したがって万が一2回目が走っても既存の予測は上書きされず、v1・export・v2 とも正常終了として扱える。そのうえで、PCアプリ側（`forward_validation.py`）の状態ファイルでも「1日1回（済みなら流さない）」を制御する。
+- **変更内容**：
+  - `database/forward_validation.py`：
+    - `STATE_NAME = 'forward-validation-state.json'`、`in_evening_window(now)`（日本時間 23:30:00〜23:59:59）、`_read_state` / `_write_state`（一時ファイル経由の置換）、`record_pending`、`_launch`、`start_pending` を追加。
+    - `start()` は、`finished(label, message)` が True かつ `in_evening_window(now)` のとき、研究スクリプトが存在すれば `data_dir / 'forward-validation-state.json'` に翌日分の `pending_target`（`YYYY-MM-DD`）・`pending_label`・`pending_at` を保存し、`'0時〜9時の間に自動で保存します（23:30以降の取り込み完了を記録しました）'` を返す（研究スクリプトが無いPCでは印を作らず理由を返す）。
+    - `start_pending()` は、日本時間 0:00〜8:59（`in_window(now)`）かつ研究スクリプトが存在し、`pending_target` が当日（`YYYY-MM-DD`）と一致し、かつ `done_target` が当日でないときだけ `_launch()` を呼ぶ。
+    - `_launch()` は、`start()`（0:00〜8:59の自動終了）と `start_pending()`（0:00〜8:59の定期確認）の共通入口として、`_state_lock` 内で `done_target == target` または `_running.locked()` を検査し、未実行なら `done_target = target` を書き込んでから `run()` を裏スレッドで動かす。これにより両経路間で二重に流れない。
+  - `database/app.py`：
+    - `poll_forward_results` を共通化し、`check_pending_forward()`（`forward_validation.start_pending(DATA_DIR, results.append)` を呼び、開始時はログ欄に `'前向き検証（P-STATION）の保存を裏で始めました。\n'`、完了時は結果1行を出す）を追加。
+    - `daily_tick()`（起動65秒後および以降5分ごと）から `check_pending_forward()` を呼ぶ。
+    - `save_forward_after()` は、`why` が `'0時〜9時の間に自動で保存します'` または `'本日の前向き検証は'` で始まるときは、「必要なら0時を過ぎてから毎朝実行.cmdを押してください」を付けずにその案内文だけをログ欄に出す。
+  - `database/tests/test_forward_validation.py`：
+    - 指定された6条件（23:45完了→印→0:05実行→0:10非実行、23:45×閉じ・エラー停止→非実行、9:00以降・翌日以降→非実行、再起動後の状態ファイルのみ→0〜9時実行、0:30自動完了との相互二重実行防止、研究スクリプト不在PC→何もしない）と `app.py` の `daily_tick` 連携の単体試験6関数を追加。
+- **試験**：
+  - `database\.venv\Scripts\python.exe -m unittest discover -s tests -p test_forward_validation.py -v`：22件 OK（0.936秒）。
+  - `database\.venv\Scripts\python.exe -m unittest discover -s tests`（PC全試験）：1,075件 OK（217.961秒）。
+- **確認の表**：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| v1を2回目に流したときの挙動確認 | 済 | `forward.py:126-129, 223-226`：既存予測があれば上書きせず `(p, False)` を返し終了コード0で終わることを確認 |
+| 23:45に自分で閉じて完了→印が残り、0:05で1回流れ、0:10では流れない | 済 | `test_evening_completion_at_2345_leaves_mark_and_runs_once_at_0005_not_0010` PASS |
+| 23:45に×で閉じた（またはエラー停止）→印が残らず流れない | 済 | `test_closed_with_x_at_2345_does_not_leave_mark_or_run` PASS |
+| 印のある日の9:00以降（および翌日以降）→流れない | 済 | `test_pending_mark_does_not_run_at_or_after_9am_or_on_later_days` PASS |
+| アプリ起動し直し後（印のファイルだけがある）→0〜9時なら流れる | 済 | `test_after_app_restart_with_only_state_file_on_disk_runs_in_morning_window` PASS |
+| 0:30に自分で閉じて完了（従来経路）→二重に流れない | 済 | `test_auto_close_at_0030_does_not_run_twice`（0:30先・23:45→0:05先の両方向）PASS |
+| 研究スクリプトのファイルが無いPC→何もしない | 済 | `test_missing_research_scripts_do_nothing` PASS |
+| PC全体の単体試験 | 済 | `unittest discover -s tests` 1,075件 OK |
+| 実環境で23:30〜23:59に完了した晩の0時以降の自動実行 | **未確認** | PCアプリを起動し直したあと、実際に23:30〜23:59に取り込みが完了した晩に確認 |
+
+- **状態**：手元で変更ファイル4つのみコミット済み・**未push**（Claudeのレビュー後、`py -3 tools/push_ci.py` で送信予定）。
+
+

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import subprocess
 import threading
 from pathlib import Path
@@ -27,8 +28,10 @@ import pscube_import
 
 JST = dt.timezone(dt.timedelta(hours=9))
 LOG_NAME = 'forward-validation.log'
+STATE_NAME = 'forward-validation-state.json'
 TIMEOUT_SECONDS = 600
 _running = threading.Lock()
+_state_lock = threading.Lock()
 
 
 def outputs_dir() -> Path:
@@ -62,6 +65,49 @@ def in_window(now: dt.datetime) -> bool:
     if now.tzinfo is None:
         raise ValueError('時刻にはタイムゾーンが必要です。')
     return now.astimezone(JST).hour < 9
+
+
+def in_evening_window(now: dt.datetime) -> bool:
+    """日本時間の 23:30:00〜23:59:59 か。この間に取り込みが完了したときは翌0時以降に流す印を残す。"""
+    if now.tzinfo is None:
+        raise ValueError('時刻にはタイムゾーンが必要です。')
+    local = now.astimezone(JST)
+    return local.hour == 23 and local.minute >= 30
+
+
+def _read_state(data_dir: Path) -> dict:
+    path = Path(data_dir) / STATE_NAME
+    try:
+        if not path.is_file():
+            return {}
+        data = json.loads(path.read_text(encoding='utf-8'))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_state(data_dir: Path, state: dict) -> None:
+    folder = Path(data_dir)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / f'{STATE_NAME}.tmp'
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        tmp.replace(folder / STATE_NAME)
+    except OSError:
+        pass
+
+
+def record_pending(data_dir: Path, label: str, now: dt.datetime) -> str:
+    """23:30〜23:59に窓が自分で閉じて完了したとき、翌日分の対象日を印として残す。"""
+    local = now.astimezone(JST)
+    target = (local.date() + dt.timedelta(days=1)).isoformat()
+    with _state_lock:
+        state = _read_state(data_dir)
+        state['pending_target'] = target
+        state['pending_label'] = label
+        state['pending_at'] = local.isoformat(timespec='seconds')
+        _write_state(data_dir, state)
+    return target
 
 
 def finished(label: str, message) -> bool:
@@ -128,19 +174,60 @@ def _append_log(data_dir, started, outs):
         pass  # 記録の失敗で取り込みの画面を止めない
 
 
-def start(label, message, data_dir, report, *, outputs=None, python=None, now=None,
-          thread=threading.Thread, runner=subprocess.run):
-    """取り込み窓が自分で閉じたときに app.py から呼ぶ。条件に合えば裏で動かし、終わったら report(文) を呼ぶ
-    （report は別のスレッドから呼ばれる。画面へは app.py 側が root.after で渡す）。動かさないときは理由を返す。"""
-    plan = steps(Path(outputs or outputs_dir()), Path(python or analysis_python()))
-    now = now or dt.datetime.now(JST)
-    why = decide(label, message, now, plan)
-    if why:
-        return why
+def _launch(plan, data_dir: Path, target: str, now: dt.datetime, report, thread, runner) -> str | None:
+    with _state_lock:
+        state = _read_state(data_dir)
+        if state.get('done_target') == target:
+            return '本日の前向き検証はすでに自動保存済みです'
+        if _running.locked():
+            return '前向き検証の保存はすでに動いています'
+        state['done_target'] = target
+        state['done_at'] = now.astimezone(JST).isoformat(timespec='seconds')
+        _write_state(data_dir, state)
     worker = thread(target=lambda: report(run(plan, data_dir, runner=runner, now=now)[1]),
                     name='forward-validation', daemon=True)
     worker.start()
     return None
+
+
+def start(label, message, data_dir, report, *, outputs=None, python=None, now=None,
+          thread=threading.Thread, runner=subprocess.run):
+    """取り込み窓が自分で閉じたときに app.py から呼ぶ。条件に合えば裏で動かし、終わったら report(文) を呼ぶ
+    （report は別のスレッドから呼ばれる。画面へは app.py 側が root.after で渡す）。
+    23:30〜23:59に完了したときは翌0時以降に流す印を残す。動かさないときは理由を返す。"""
+    plan = steps(Path(outputs or outputs_dir()), Path(python or analysis_python()))
+    now = now or dt.datetime.now(JST)
+    data_dir = Path(data_dir)
+    if finished(label, message) and in_evening_window(now):
+        if isinstance(plan, str):
+            return plan
+        record_pending(data_dir, label, now)
+        return '0時〜9時の間に自動で保存します（23:30以降の取り込み完了を記録しました）'
+    why = decide(label, message, now, plan)
+    if why:
+        return why
+    target = now.astimezone(JST).date().isoformat()
+    return _launch(plan, data_dir, target, now, report, thread, runner)
+
+
+def start_pending(data_dir, report, *, outputs=None, python=None, now=None,
+                  thread=threading.Thread, runner=subprocess.run) -> str | None:
+    """前夜23:30〜23:59に取り込み完了の印があり、0:00〜8:59で当日の前向き検証をまだ流していなければ裏で1回動かす。
+    動かしたときは None、動かさないときはその理由を返す。"""
+    now = now or dt.datetime.now(JST)
+    if not in_window(now):
+        return '0時〜9時の間だけ動かします（その日の分は9時が締切）'
+    plan = steps(Path(outputs or outputs_dir()), Path(python or analysis_python()))
+    if isinstance(plan, str):
+        return plan
+    data_dir = Path(data_dir)
+    target = now.astimezone(JST).date().isoformat()
+    state = _read_state(data_dir)
+    if state.get('done_target') == target:
+        return '本日の前向き検証はすでに自動保存済みです'
+    if state.get('pending_target') != target:
+        return '前夜23:30以降の取り込み完了の記録がありません'
+    return _launch(plan, data_dir, target, now, report, thread, runner)
 
 
 MERUHEN_STORES = (('nagamachiminami', '長町南'), ('saiwaichou', '幸町'))

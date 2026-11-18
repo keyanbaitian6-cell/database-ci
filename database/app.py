@@ -1059,24 +1059,7 @@ def main():
 
         root.after(2000, check)
 
-    def save_forward_after(label, message):
-        """取り込みが最後まで終わって窓が自分で閉じたら、P-STATIONの前向き検証（研究用の記録）を裏で保存する
-        （2026-11-09 利用者「取り込み完了して取得ブラウザが閉じられたときのみ自動実行」、forward_validation.py）。
-        日本時間0〜9時だけ。結果はログ欄に1行出す。失敗しても取り込みには影響しない。"""
-        results = []
-        try:
-            why = forward_validation.start(label, message, DATA_DIR, results.append)
-        except Exception as error:  # noqa: BLE001 - 研究用の記録の失敗で画面を止めない
-            error_log.record(DATA_DIR, 'forward.auto', error)
-            return
-        if why:
-            if forward_validation.finished(label, message) and not why.startswith('前向き検証のファイル'):
-                logbox.insert('end', f'前向き検証（P-STATION）：{why}。必要なら0時を過ぎてから毎朝実行.cmdを押してください。\n')
-                logbox.see('end')
-            return
-        logbox.insert('end', '前向き検証（P-STATION）の保存を裏で始めました。\n')
-        logbox.see('end')
-
+    def poll_forward_results(results):
         def poll():
             if not results:
                 root.after(2000, poll)
@@ -1085,6 +1068,42 @@ def main():
             logbox.see('end')
 
         root.after(2000, poll)
+
+    def check_pending_forward():
+        """23:30〜23:59に取り込み窓が自分で閉じて完了した印があれば、0〜9時に前向き検証を1回だけ裏で保存する。"""
+        results = []
+        try:
+            why = forward_validation.start_pending(DATA_DIR, results.append)
+        except Exception as error:  # noqa: BLE001 - 研究用の記録の失敗で画面を止めない
+            error_log.record(DATA_DIR, 'forward.auto', error)
+            return
+        if why is None:
+            logbox.insert('end', '前向き検証（P-STATION）の保存を裏で始めました。\n')
+            logbox.see('end')
+            poll_forward_results(results)
+
+    def save_forward_after(label, message):
+        """取り込みが最後まで終わって窓が自分で閉じたら、P-STATIONの前向き検証（研究用の記録）を裏で保存する
+        （2026-11-09 利用者「取り込み完了して取得ブラウザが閉じられたときのみ自動実行」、forward_validation.py）。
+        日本時間0〜9時だけ（23:30〜23:59に完了したときは印を残し、0時以降の定期確認で1回保存する）。
+        結果はログ欄に1行出す。失敗しても取り込みには影響しない。"""
+        results = []
+        try:
+            why = forward_validation.start(label, message, DATA_DIR, results.append)
+        except Exception as error:  # noqa: BLE001 - 研究用の記録の失敗で画面を止めない
+            error_log.record(DATA_DIR, 'forward.auto', error)
+            return
+        if why:
+            if forward_validation.finished(label, message) and not why.startswith('前向き検証のファイル'):
+                if why.startswith(('0時〜9時の間に自動で保存します', '本日の前向き検証は')):
+                    logbox.insert('end', f'前向き検証（P-STATION）：{why}。\n')
+                else:
+                    logbox.insert('end', f'前向き検証（P-STATION）：{why}。必要なら0時を過ぎてから毎朝実行.cmdを押してください。\n')
+                logbox.see('end')
+            return
+        logbox.insert('end', '前向き検証（P-STATION）の保存を裏で始めました。\n')
+        logbox.see('end')
+        poll_forward_results(results)
 
     def after_pscube(message, since):
         save_forward_after('P’s CUBE', message)
@@ -1974,6 +1993,7 @@ def main():
             daily_worker.start()
         while not daily_worker.results.empty():
             tell(daily_worker.results.get_nowait() + '\n')
+        check_pending_forward()
         root.after(300_000, daily_tick)
 
     def daily_on_start():

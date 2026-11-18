@@ -172,6 +172,110 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn("after_auto=lambda message: save_forward_after('サイトセブン', message)", source)
         self.assertIn("after_auto=lambda message: after_pscube(message, since)", source)
         self.assertIn("save_forward_after('P’s CUBE', message)\n        sleep_after_pscube(message, since)", source)
+        self.assertIn('why = forward_validation.start_pending(DATA_DIR, results.append)', source)
+        self.assertIn('check_pending_forward()\n        root.after(300_000, daily_tick)', source)
+
+    def test_evening_completion_at_2345_leaves_mark_and_runs_once_at_0005_not_0010(self):
+        reports, calls = [], []
+
+        def runner(args, **kw):
+            calls.append(args)
+            return Result(0, 'v1 保存しました\n')
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread, runner=runner)
+        # 11/9 23:45 に自分で閉じて完了 → その場では流れず、印が残る
+        why = fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(23, 45, day=9), **kw)
+        self.assertIsNotNone(why)
+        self.assertIn('0時〜9時', why)
+        self.assertEqual(calls, [])
+        self.assertEqual(reports, [])
+        state_path = self.dir / fv.STATE_NAME
+        self.assertTrue(state_path.is_file())
+        self.assertEqual(fv._read_state(self.dir).get('pending_target'), '2026-11-10')
+        # 11/10 0:05 の確認で1回流れる
+        self.assertIsNone(fv.start_pending(self.dir, reports.append, now=at(0, 5, day=10), **kw))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(reports, ['前向き検証を自動で保存しました'])
+        self.assertEqual(fv._read_state(self.dir).get('done_target'), '2026-11-10')
+        self.assertTrue((self.dir / fv.LOG_NAME).is_file())
+        self.assertIn('forward.auto', (self.dir / 'errors.log').read_text(encoding='utf-8'))
+        # 11/10 0:10 の確認では流れない
+        why_again = fv.start_pending(self.dir, reports.append, now=at(0, 10, day=10), **kw)
+        self.assertIsNotNone(why_again)
+        self.assertIn('すでに自動保存済み', why_again)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(reports), 1)
+
+    def test_closed_with_x_at_2345_does_not_leave_mark_or_run(self):
+        reports, calls = [], []
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        # 23:45 に×で閉じた（message=None）または403停止 → 印は残らず、0:05 でも流れない
+        self.assertIsNotNone(fv.start('サイトセブン', None, self.dir, reports.append, now=at(23, 45, day=9), **kw))
+        self.assertIsNotNone(fv.start('P’s CUBE', STOP_PSCUBE, self.dir, reports.append, now=at(23, 50, day=9), **kw))
+        self.assertFalse((self.dir / fv.STATE_NAME).exists())
+        self.assertIsNotNone(fv.start_pending(self.dir, reports.append, now=at(0, 5, day=10), **kw))
+        self.assertEqual(calls, [])
+        self.assertEqual(reports, [])
+
+    def test_pending_mark_does_not_run_at_or_after_9am_or_on_later_days(self):
+        reports, calls = [], []
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(23, 45, day=9), **kw)
+        # 印のある日の 9:00 以降 → 流れない
+        self.assertIsNotNone(fv.start_pending(self.dir, reports.append, now=at(9, 0, day=10), **kw))
+        self.assertIsNotNone(fv.start_pending(self.dir, reports.append, now=at(12, 30, day=10), **kw))
+        # 翌日（11/11）の 0:05 になっても、11/10 用の古い印では流れない
+        self.assertIsNotNone(fv.start_pending(self.dir, reports.append, now=at(0, 5, day=11), **kw))
+        self.assertEqual(calls, [])
+        self.assertEqual(reports, [])
+
+    def test_after_app_restart_with_only_state_file_on_disk_runs_in_morning_window(self):
+        # アプリを起動し直したあと（印のファイルだけがディスクにある状態） → 0〜9時なら流れる
+        (self.dir / fv.STATE_NAME).write_text(
+            '{"pending_target": "2026-11-10", "pending_label": "サイトセブン", "pending_at": "2026-11-09T23:45:00+09:00"}\n',
+            encoding='utf-8')
+        reports, calls = [], []
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        self.assertIsNone(fv.start_pending(self.dir, reports.append, now=at(7, 15, day=10), **kw))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(reports, ['前向き検証を自動で保存しました'])
+
+    def test_auto_close_at_0030_does_not_run_twice(self):
+        reports, calls = [], []
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        # ① 0:30 に自分で閉じて完了（今までの経路） → 1回流れ、その後の定期確認や2回目の完了では流れない
+        self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(0, 30, day=10), **kw))
+        self.assertEqual(len(calls), 2)
+        self.assertIsNotNone(fv.start_pending(self.dir, reports.append, now=at(0, 35, day=10), **kw))
+        self.assertIsNotNone(fv.start('P’s CUBE', DONE_PSCUBE, self.dir, reports.append, now=at(0, 40, day=10), **kw))
+        self.assertEqual(len(calls), 2)
+        # ② 逆に前夜23:45の印で 0:05 に流れたあと、0:30 に窓が自分で閉じても二重に流れない
+        dir2 = self.dir / 'case2'
+        dir2.mkdir()
+        fv.start('サイトセブン', DONE_SITE777, dir2, reports.append, now=at(23, 45, day=9), **kw)
+        self.assertIsNone(fv.start_pending(dir2, reports.append, now=at(0, 5, day=10), **kw))
+        self.assertEqual(len(calls), 4)
+        why = fv.start('サイトセブン', DONE_SITE777, dir2, reports.append, now=at(0, 30, day=10), **kw)
+        self.assertIsNotNone(why)
+        self.assertIn('すでに自動保存済み', why)
+        self.assertEqual(len(calls), 4)
+
+    def test_missing_research_scripts_do_nothing(self):
+        reports, calls = [], []
+        kw = dict(outputs=self.dir / 'missing-outputs', python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        # 研究スクリプトが無いPCでは、23:45でも印のファイルを作らず、0:05でも何もしない
+        why = fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(23, 45, day=9), **kw)
+        self.assertIn('ファイルがありません', why)
+        self.assertFalse((self.dir / fv.STATE_NAME).exists())
+        (self.dir / fv.STATE_NAME).write_text('{"pending_target": "2026-11-10"}\n', encoding='utf-8')
+        why_pending = fv.start_pending(self.dir, reports.append, now=at(0, 5, day=10), **kw)
+        self.assertIn('ファイルがありません', why_pending)
+        self.assertEqual(calls, [])
+        self.assertEqual(reports, [])
 
     def test_app_shows_the_meruhen_note_when_the_meruhen_window_closes(self):
         source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
