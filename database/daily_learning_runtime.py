@@ -650,6 +650,7 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
     target = prediction_target(now)
     shown = target or today
     label = f'{int(shown[5:7])}/{int(shown[8:])}'
+    trace(data_dir, f'開始：対象 {shown}' + ('' if target else '（保存できる時間帯の外）'), now=now)
     import error_log
     try:
         # 2026-11-12：することがある店舗の原本だけを読む。保存済み・締切後で、記録すべき結果も無ければ原本を開かない
@@ -670,6 +671,8 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                 error_log.note(data_dir, 'daily-learning', f'{source}: {type(error).__name__}: {error}')
         rows = [r for source in sorted(loaded) for r in loaded[source][0]]
         pscube = loaded.get('pscube', (None, {'records': [], 'machines': []}))[1]
+        trace(data_dir, f'原本を読みました：{"・".join(sorted(loaded)) or "なし"}'
+              + (f'（読めない：{"・".join(sorted(failed))}）' if failed else '') + f'・{len(rows)}行')
         # 結果の記録・採用判定の失敗では、その晩の予測の保存を止めない（2026-11-12。以前は1件の失敗で、
         # 直すまで毎晩すべての店舗の予測が保存されなくなった）。失敗は状態の文と errors.log に出す。
         problems = []
@@ -703,12 +706,15 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                 statuses.append(f'{name}：処理失敗（{explain(failed[SOURCES[store]])}）。従来方式を使用してください')
                 continue
             try:
+                trace(data_dir, f'{name}：データを確かめます')
                 if low is None:
                     low = skipped_low_racks(data_dir, shown)
                 why = ready(rows, shown, (store,), low)
                 if why:
                     statuses.append(f'{name}：取り込み待ち：' + '／'.join(why))
+                    trace(data_dir, statuses[-1])
                     continue
+                trace(data_dir, f'{name}：予測を計算します')
                 store_rows = [r for r in rows if r['store'] == store]
                 ps = pscube if store.startswith('pscube:') else {'records': [], 'machines': []}
                 # アナスロの分析用JSON（幸町・P-STATIONのジャグラー・ハナハナ）を過去の学習にだけ足す（daily_learning_archive.py）。
@@ -739,11 +745,14 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                         journal.state('start', target)
                 statuses.append(f'{name}：{label}の事前予測を固定保存しました'
                                 + (ARCHIVE_NOTE if 'archive_error' in archive_note else ''))
+                trace(data_dir, f'{name}：固定保存しました')
             except LateError:
                 statuses.append(f'{name}：計算中に8:00を過ぎたため、{label}の事前予測は保存していません（締切超過）')
+                trace(data_dir, statuses[-1])
             except Exception as error:     # noqa: BLE001 - 1店舗の失敗でほかの店の保存・表示を止めない
                 error_log.note(data_dir, 'daily-learning', f'{store}: {type(error).__name__}: {error}')
                 statuses.append(f'{name}：処理失敗（{explain(error)}）。従来方式を使用してください')
+                trace(data_dir, statuses[-1])
         status = '／'.join(statuses + problems)
         folder = core.resolve_sync_dir(data_dir) if sync else None
         if sync and folder is None:
@@ -760,11 +769,40 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
         journal.close()
 
 
+TRACE_NAME = 'run.log'
+TRACE_KEEP = 2000
+
+
+def trace(data_dir, text, *, now=None):
+    """日次学習の実行の記録を1行足す（2026-11-20）。11/20 7:08 の実行が長町南を保存したあと止まり、PCアプリの作業記録欄は
+    ファイルに残らないので、どこで止まったか分からなかった。開始・原本の読み込み・店ごとの確認と計算・終了の時刻を残す。
+    成績は書かない。書けなくても日次学習は止めない。長くなったら古い行から捨てる。"""
+    try:
+        path = Path(data_dir) / 'daily-learning' / TRACE_NAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = jst(now or datetime.now(JST)).isoformat(timespec='seconds')
+        line = stamp + '\t' + ' '.join(str(text).split())[:300] + '\n'
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(line)
+        if path.stat().st_size > TRACE_KEEP * 200:
+            lines = path.read_text(encoding='utf-8').splitlines(keepends=True)[-TRACE_KEEP:]
+            path.write_text(''.join(lines), encoding='utf-8')
+    except Exception:  # noqa: BLE001 - 記録の失敗で日次学習を止めない
+        pass
+
+
 def run(data_dir, **kwargs):
     from backup_status import output_lock
+    trace(data_dir, '依頼を受けました（鍵を待ちます）')
     # 既存のOSファイルロックはプロセス終了時にも解除される。
     with output_lock(Path(data_dir) / 'daily-learning', 'meruhen'):
-        return _run(data_dir, **kwargs)
+        try:
+            result = _run(data_dir, **kwargs)
+        except Exception as error:
+            trace(data_dir, f'失敗で終了：{type(error).__name__}: {error}')
+            raise
+        trace(data_dir, '終了：' + str(result.get('status', '')))
+        return result
 
 
 def main():

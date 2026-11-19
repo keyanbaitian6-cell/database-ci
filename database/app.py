@@ -2032,10 +2032,20 @@ def main():
                     daily_last[0] = mark
                     daily_worker.start()
                 tell('日次学習の予測を保存してから閉じます（1分ほど。待たずに閉じるときは、もう一度×を押してください）。\n')
-                limit = time.monotonic() + 180
+                limit = [time.monotonic() + daily_learning_ui.CLOSE_WAIT_SECONDS]
+
+                def ask_wait():
+                    # 3分を過ぎてもまだ保存中なら、黙って切らずに選ばせる（2026-11-20、daily_learning_ui.close_wait）。
+                    return messagebox.askyesno(
+                        '日次学習の保存中',
+                        '日次学習の予測を、まだ保存しています（3分を過ぎました）。\n\n'
+                        '「はい」：もう3分待ちます（終わればすぐに閉じます）。\n'
+                        '「いいえ」：今すぐ閉じます。まだ保存していない店の予測は保存されません'
+                        '（8時までにPC版を開き直せば、そのとき保存します）。', parent=root)
 
                 def wait_daily():
-                    if daily_worker.running and time.monotonic() < limit:
+                    done, limit[0] = daily_learning_ui.close_wait(daily_worker.running, time.monotonic(), limit[0], ask_wait)
+                    if not done:
                         root.after(1000, wait_daily)
                         return
                     while not daily_worker.results.empty():

@@ -13,6 +13,23 @@ from daily_learning_view import (CHECKUP_NOTES, LOAD_ERROR, METHOD_TEXT, NAMES, 
                                  date_label, default_target, status_parts, time_label)
 
 
+CLOSE_WAIT_SECONDS = 180
+
+
+def close_wait(running, now, deadline, ask):
+    """PC本体を閉じる前に、日次学習の保存を待つかどうか（2026-11-20）。(閉じてよいか, 新しい期限) を返す。
+
+    3分待っても終わらないとき、以前は黙って閉じて、途中の店の予測が保存されなかった（11/20 7:08、長町南だけ保存）。
+    期限を過ぎてまだ動いていたら ask() で選ばせる：True ならもう3分待つ（終われば、すぐ閉じる）、False なら閉じる。"""
+    if not running:
+        return True, deadline
+    if now < deadline:
+        return False, deadline
+    if ask():
+        return False, now + CLOSE_WAIT_SECONDS
+    return True, deadline
+
+
 class DailyLearningWorker:
     def __init__(self, data_dir):
         self.data_dir = Path(data_dir)
