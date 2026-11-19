@@ -3823,3 +3823,9 @@
 - 変更：`database_android/tool/viewer_parts_drive.js` の `vpGet`：一覧の元（`base`）が最新の書き出しと違っても、書き出しから3時間以内（`VP_STALE_MS`）なら、その前の一覧を `?check=1`・`?parts=`・`?curves=` に使う（同じ目印のままなので、閲覧ページは読み直さず前の内容を出し、線も読める）。3時間を過ぎたら今までどおり一覧を返さない（黙って古い内容を出し続けない）。旧クライアントの全件GET（引数なし）は今までどおり null＝doGet が最新のファイルを返す。`node tool/build_viewer_parts.mjs` で4本の `.gs`（`viewer_drive_script.gs`・`viewer_drive_script_readonly.gs`・`meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs`）を作り直し、改行をCRLFにそろえた（差分は各15行）。副作用で変わった `share_viewer/capture_health.mjs` は、元の `web/capture_health.mjs` との差（私の変更ではない、写しの遅れ）なので戻した。
 - 試験：`tool/test_meruhen_cloud_sync.mjs` に1件（同期で一覧と線を作る→PCが書き出した10分後：目印が前のまま・前の部品と線を読める・全件GETは null→4時間後：一覧を返さず線は「閲覧用が更新されました」→同期のあとは新しい一覧）。既存の1件（「メルヘン差分…」の「PCの新しい全件版を一旦使う」＝`get({check:'1'})` が null）は、決まりを変えたので「前の一覧と同じ目印」「全件GETは null」を確かめる形に書き換えた。流した試験：`test_meruhen_cloud_sync` 37件・`test_pscube_cloud_sync` 49件（`PYTHON` を渡さないと Python が見つからず1件落ちる＝変更前も同じ）・`test_viewer_parts` 15件・`test_viewer_drive_script` 17件・`test_viewer_drive_script_readonly` 6件・`test_daily_learning` 7件・`test_event_history_shared` 14件、すべて通過。閲覧ページ（`web/`・`lib/`）は変えていないので、全体ゲートは直前（`23e71bc`、ALL PASSED）のあとの小さな変更として流し直していない（AGENTS.md の例外）。
 - 未完了：**利用者による閲覧用スクリプト2本の貼り替えと、新しい版でのデプロイ**（`viewer_drive_script.gs`・`viewer_drive_script_readonly.gs`。URLを変えないよう「デプロイを管理」→編集→「新バージョン」）。貼り替えるまでは今までどおり（作り直しの間は線が概略図になり、閲覧ページは更新を見送る）。同期スクリプト2本は閲覧ページに応えない（doGet が無い）ので、今回は貼り替え不要。実iPhoneでの確認は未確認。
+
+## 2026-11-20 Claude（Opus 5.5）：長町南の4台構成の週（11/16）に、木曜（11/19）の結果を入れた
+
+- 依頼：利用者が店の表の画像（月〜木）を送り「追加お願い」。木曜＝2026-11-19。画像を拡大して読んだ（グランベルムの木曜は😀。最初の見立ての😌は誤りで、拡大して直した）。😍・😀・😌・🥶 が5件ずつ。
+- 保存：11/19の前回と同じ方法（`Store.merge_history_edits`、`4台構成`・週 `2026-11-16`・device `pc`）で20件。変更20・不一致0・除外0。保存後は 11/16〜11/19 が20件ずつ（ほかに 11/20 の空の1件は前からあるもの）。保存前の編集データは `C:\w\cbw-b1\event_history_edits_before_20261120.json` に控えた。
+- 未完了：共有へ反映（iPhone・共有カレンダーに届けるには必要。実行するとPCの閲覧用書き出しも新しくなるので、閲覧用スクリプト2本を貼り替えるまでは、その後最大30分ほど台のグラフが概略図になる。11/19 7:18の件）。
