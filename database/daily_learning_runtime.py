@@ -18,8 +18,9 @@ import time
 
 import core
 import daily_learning_archive
+import daily_learning_fixed
 from daily_learning import (JST, VERSION, RULE_VERSION, MATURITY, PERIOD, STORE_COUNT, STORE_MODEL, VARIETY_MODEL, History,
-                            Journal, LateError, comparison, digest, encoded, identity, jst, outcome, outcome_source, period_days,
+                            Journal, LateError, candidate_rates, comparison, digest, encoded, identity, jst, outcome, outcome_source, period_days,
                             prediction_target, rank_by, rank_pool, rollback_needed, shift, store_day, train, valid)
 from file_io import atomic_writer
 
@@ -395,7 +396,18 @@ def build_prediction(rows, pscube, target, journal, node=None, history_rows=None
                Path(__file__).with_name('normal_next_day_model.py'),
                Path(__file__).with_name('daily_learning_pscube.mjs'), SCORING_MJS,
                SCORING_MJS.with_name('data.mjs')]
-    return dict(input_day=shift(target, -1), groups=projected, methods=methods,
+    study = {}
+    if daily_learning_fixed.FIRST <= target <= daily_learning_fixed.LAST and groups:
+        # 通常の実行は1店舗ずつ。対照側だけ失敗しても従来の予測を締切内に保存する。
+        try:
+            store, = methods
+            control = daily_learning_fixed.prediction(target, store, methods[store], groups, projected,
+                                                      history, models, journal)
+        except Exception as error:
+            control = {'reason': f'固定係数の比較記録に失敗：{type(error).__name__}: {error}'}
+        study[daily_learning_fixed.STUDY] = control
+        sources.append(Path(daily_learning_fixed.__file__))
+    return dict(input_day=shift(target, -1), groups=projected, methods=methods, **study,
                 models={encoded(k): v for k, v in models.items()},
                 source_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources if p.is_file()})
 
@@ -437,12 +449,7 @@ def record_outcomes(journal, rows, today, stores=None):
                 found = {encoded(i): history.get(target, i) for i in ids}
                 labels = {k: outcome(r) for k, r in found.items()}
                 for name in ('current', 'learned'):
-                    observed = [labels[encoded(k)] for k in group[name] if labels[encoded(k)] is not None]
-                    stats[name] = statistics.mean(observed) if observed else None
-                    stats['n_' + name] = len(observed)
-                    stats['k_' + name] = len(group[name])
-                    stats['plus_' + name] = sum(observed)
-                    stats['missing_' + name] = 1 - len(observed) / len(group[name]) if group[name] else 0.
+                    stats.update(candidate_rates(name, group[name], labels))
                 stats['labels'] = labels
                 # 符号の根拠（ゲーム数・何から決めたか・取り込んだ時刻）。後の訂正・遅い取り込みと見分けるため。
                 stats['evidence'] = {k: None if r is None else [r.get('games'), outcome_source(r),
@@ -740,6 +747,9 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
                 if store.startswith('pscube:'):
                     inputs |= {'pscube_records': ps['records'], 'pscube_machines': ps['machines']}
                 journal.freeze(target, prediction, inputs, clock(), store=store)
+                control_reason = prediction.get(daily_learning_fixed.STUDY, {}).get('reason')
+                if control_reason:
+                    trace(data_dir, f'{name}：{control_reason}')
                 with journal.db:
                     if journal.get('state', 'start') is None:
                         journal.state('start', target)

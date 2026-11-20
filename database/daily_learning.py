@@ -369,6 +369,13 @@ def rank_by(pool, history, model, kind):
     return _ordered([(sum(a * b for a, b in zip(history.model_features(r, kind), model['weights'])), r) for r in pool])
 
 
+def candidate_rates(name, candidates, labels):
+    observed = [labels[encoded(k)] for k in candidates if labels[encoded(k)] is not None]
+    return {name: statistics.mean(observed) if observed else None,
+            'n_' + name: len(observed), 'k_' + name: len(candidates), 'plus_' + name: sum(observed),
+            'missing_' + name: 1 - len(observed) / len(candidates) if candidates else 0.}
+
+
 def _share(group, method, missing_as):
     """候補のうちプラスの割合。判定不能の台を missing_as（0＝非プラス、1＝プラス）として数える感度分析用。"""
     k = group.get('k_' + method)
@@ -463,8 +470,11 @@ def rollback_needed(days):
 
 class Journal:
     """追記専用の証拠と、復旧可能な最新表示を分離する。"""
-    def __init__(self, path):
+    def __init__(self, path, *, readonly=False):
         path = Path(path)
+        if readonly:
+            self.db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=10)
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, timeout=10)
         self.db.execute('PRAGMA journal_mode=WAL')
