@@ -1240,9 +1240,16 @@ def main():
         site777_process.append(process)
         # 自動取り込みが最後まで終わると窓は自分で閉じる（2026-11-07）。閉じたら結果をログ欄に出す（P’s CUBEと同じ）。
         import site777_browser
+        # バックアップ・閲覧用ファイルは窓を閉じたあとに1回だけ書く（2026-11-21）。失敗したときだけログ欄に出す。
+        def site777_backup_note():
+            note = site777_browser.take_backup_message(DATA_DIR)
+            if note:
+                logbox.insert('end', f'サイトセブン：{note}。\n')
+                logbox.see('end')
         watch_capture_window(process, 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR),
                              after_auto=lambda message: save_forward_after('サイトセブン', message),
-                             take_stop=lambda: site777_browser.take_stop_message(DATA_DIR))
+                             take_stop=lambda: site777_browser.take_stop_message(DATA_DIR),
+                             after_close=site777_backup_note)
         logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
                       'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')
         logbox.see('end')

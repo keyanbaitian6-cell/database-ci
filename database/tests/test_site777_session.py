@@ -140,25 +140,60 @@ class SessionTest(unittest.TestCase):
         self.assertEqual((row['reason'],row['stage'],row['error_type']),('capture_error','table','ValueError'))
         self.assertIn('掲載日付がありません',row['message'])
 
-    def test_a_backup_failure_is_shown_in_the_completion_message(self):
-        # 2026-11-08 Codexのレビュー：DBには保存できても、バックアップ・同期フォルダーへの書き出しの失敗を
-        # 捨てて、いつもの完了の文で窓を閉じていた。
+    def test_saving_machines_does_not_export_and_closing_exports_once(self):
+        # 2026-11-21 利用者「まとめて」：1機種を保存するたびにDB全体（約40MB、同期フォルダーを含む数か所）を書き出していて、
+        # 1日約55機種で取り込みが重かった。メルヘンと同じく、窓を閉じたあとに1回だけ書く。
         from unittest.mock import patch
         index={'kind':'index','url':url('D0300'),'page':1,'pages':[{'number':1}],'index_url':url('D0300'),
                'machines':[{'name':'試験ジャグラー3','model_id':'123','url':url('D2300'),'count':2}]}
-        with patch('site777_session.auto_backup',return_value='バックアップに失敗（取り込みは保存済み）'):
+        with patch('site777_session.auto_backup',return_value='バックアップ済み') as backup:
+            self.assertIsNone(self.session._backup_after_close(),'何も保存していなければ書かない')
+            self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
+            self.cycle(graph(2))
+            self.assertEqual(self.saved(),{101:3000,102:2800})
+            self.assertTrue(self.cycle(index)['complete'])
+            self.assertEqual(backup.call_count,0,'保存のたびには書き出さない')
+            self.assertIsNone(self.session._backup_after_close())
+            self.assertEqual(backup.call_count,1)
+            self.assertIsNone(self.session._backup_after_close(),'2回目は書く分が無い')
+            self.assertEqual(backup.call_count,1)
+        self.assertTrue(self.log('backup_after_close')[-1]['ok'])
+        # 午前0〜3時に出る翌日のタブ（営業日より後の日）も確かめる対象。
+        self.assertEqual(Session._unfinished(['2026-11-07','2026-11-06','2026-11-05'],'2026-11-06'),
+                         ['2026-11-07','2026-11-06'])
+
+    def test_a_backup_failure_after_close_is_returned_and_logged(self):
+        # 書き出しに失敗してもDBへの保存は済んでいる。文を返して、窓（site777_browser）が親画面への知らせに残す。
+        from unittest.mock import patch
+        failed='バックアップに失敗（取り込みは保存済み）'
+        with patch('site777_session.auto_backup',return_value=failed):
             self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
             result=self.cycle(graph(2))
-        self.assertIn('バックアップに失敗',result['state']['status'])
-        self.assertTrue(self.cycle(index)['complete'])
-        self.assertIn('バックアップに失敗（取り込みは保存済み）',self.session._completed)
-        self.assertIn('サイトへ戻る必要はありません',self.session._completed)
-        self.assertEqual(self.log('backup_problem')[-1]['result'],'バックアップに失敗（取り込みは保存済み）')
-        self.assertFalse(self.log('auto_finished')[-1]['backup_ok'])
-        # 新しく開始したら注意は消す。うまくいったときは何も足さない。
-        self.epoch=self.session.configure(True,'2026-11-06')['epoch']
-        self.assertTrue(self.cycle(index)['complete'])
-        self.assertNotIn('バックアップ',self.session._completed)
+            self.assertNotIn('バックアップ',result['state']['status'],'取り込み中には書き出しの結果は出ない')
+            self.assertEqual(self.session._backup_after_close(),failed)
+        row=self.log('backup_after_close')[-1]
+        self.assertEqual((row['ok'],row['result']),(False,failed))
+        # DBを開けないときも例外を出さず文で返す。
+        self.session._backup_due=True
+        def locked(_):
+            import sqlite3
+            raise sqlite3.OperationalError('database is locked')
+        self.session._store_factory=locked
+        self.assertIn('バックアップに失敗',self.session._backup_after_close())
+
+    def test_closing_the_window_leaves_a_backup_failure_for_the_main_screen(self):
+        import site777_browser
+        class Failing:
+            def _backup_after_close(self): return 'バックアップに失敗（取り込みは保存済み）'
+        class Fine:
+            def _backup_after_close(self): return None
+        site777_browser.backup_after_close(Fine(),self.tmp.name,self.session._log)
+        self.assertIsNone(site777_browser.take_backup_message(self.tmp.name))
+        site777_browser.backup_after_close(Failing(),self.tmp.name,self.session._log)
+        note=site777_browser.take_backup_message(self.tmp.name)
+        self.assertIn('バックアップに失敗（取り込みは保存済み）',note)
+        self.assertIn('サイトへ戻る必要はありません',note)
+        self.assertIsNone(site777_browser.take_backup_message(self.tmp.name),'1回読んだら消える')
 
     def due(self):
         """待っている自動の再開の時刻を今にする（3分待たない）。"""
@@ -765,42 +800,13 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(Session._unfinished(['2026-11-07','2026-11-06','2026-11-05'],'2026-11-06'),
                          ['2026-11-07','2026-11-06'])
 
-    def test_a_backup_failure_survives_an_auto_resume_and_a_later_success_clears_it(self):
-        # 2026-11-08：自動の再開（configure(True)）がバックアップの失敗の知らせを消し、再開のあと書き出さずに完了すると
-        # 完了の文に出なかった。書き出しは毎回DB全体なので、あとで成功したら知らせは消す。
-        from types import SimpleNamespace
-        from unittest.mock import patch
-        failed='バックアップに失敗（取り込みは保存済み）'
-        self.session._backup_note=failed
-        self.session._window=SimpleNamespace(get_current_url=lambda:url('D3300'))
-        self.session.pause('リンクを押しても移動しないため停止しました。','not_moved')
-        self.assertEqual(self.due(),url('D3300'))
-        self.assertTrue(self.session.state()['enabled'])
-        self.assertEqual(self.session._backup_note,failed,'自動の再開では消さない')
-        self.assertIn(failed,self.session._with_backup('範囲の取り込みが完了しました。'))
-        self.session._window=None
-        self.epoch=self.session.state()['epoch']
-        with patch('site777_session.auto_backup',return_value='バックアップ済み'):
-            self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
-            result=self.cycle(graph(2))
-        self.assertIsNone(self.session._backup_note)
-        self.assertNotIn('バックアップに失敗',result['state']['status'])
-        self.assertTrue(self.log('backup_recovered'))
-        # 利用者が新しく開始したときは、今までどおり消す。
-        self.session._backup_note=failed
-        self.session.configure(True,'2026-11-06')
-        self.assertIsNone(self.session._backup_note)
-
     def test_a_backup_already_written_by_a_newer_export_counts_as_success(self):
-        # 2026-11-08：073f0eb から auto_backup は「バックアップ済み（より新しい時点の書き出しが先に済んでいます）」も返す。
-        # 完全一致で比べていたので、成功なのに「バックアップに失敗」と出ていた。
+        # 2026-11-08：auto_backup は「バックアップ済み（より新しい時点の書き出しが先に済んでいます）」も返す。成功として扱う。
         from unittest.mock import patch
+        self.session._backup_due=True
         with patch('site777_session.auto_backup',return_value='バックアップ済み（より新しい時点の書き出しが先に済んでいます）'):
-            self.cycle(table());self.cycle(graph(metadata=True));self.cycle(graph())
-            result=self.cycle(graph(2))
-        self.assertIsNone(self.session._backup_note)
-        self.assertNotIn('バックアップに失敗',result['state']['status'])
-        self.assertFalse(self.log('backup_problem'))
+            self.assertIsNone(self.session._backup_after_close())
+        self.assertTrue(self.log('backup_after_close')[-1]['ok'])
 
     def test_opening_the_window_removes_staging_of_days_that_can_no_longer_be_captured(self):
         # 2026-11-08：機種ごとの途中の記録を消す仕組みが無く、1日に約50本ずつ増えていた。元の資料（sources）は残す。

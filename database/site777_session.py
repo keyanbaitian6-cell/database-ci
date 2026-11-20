@@ -140,8 +140,8 @@ class Session(Bridge):
         self._blocked_url = None
         # 今の工程（読み取ったページの種類）。停止の記録に残す。
         self._stage = None
-        # バックアップ・同期フォルダーへの書き出しがうまくいかなかったときの文（DBには保存済み）。完了の文に添える。
-        self._backup_note = None
+        # 窓を閉じたあとに書き出す分がある（1機種でも保存した）。_backup_after_close が見る。
+        self._backup_due = False
         # 自動の再開（RESUME_DELAY 秒後）。_resume_at は monotonic の時刻、_resume_plan は再開する日・範囲・向き・理由、
         # _resume_count は取り込みが進まないまま続けて再開した回数、_resume_serial は再開のたびに増やす番号
         # （記録用。2026-11-08 からカードはこれで読み込み直しの回数を戻さない。再開1回につき読み込み1回）。
@@ -315,9 +315,7 @@ class Session(Bridge):
                 return None
             plan, count = self._resume_plan, self._resume_count + 1
             self._resume_at = None
-            # 止まる前のバックアップの失敗も引き継ぐ（2026-11-08。configure(True) が消していたので、再開のあと
-            # 書き出さずに完了すると、完了の文に失敗が出なかった）。
-            run = (self._run_start, self._run_until, list(self._finished_days), self._backup_note)
+            run = (self._run_start, self._run_until, list(self._finished_days))
         try:
             self.configure(True, plan['day'], plan['until'], plan['direction'], plan.get('today_ok', False))
         except ValueError as error:
@@ -325,7 +323,6 @@ class Session(Bridge):
             return None
         with self._state_lock:
             self._run_start, self._run_until = run[0], run[1]
-            self._backup_note = run[3]
             if not self._finished_days:
                 self._finished_days = run[2]
         self._save_run()
@@ -346,12 +343,6 @@ class Session(Bridge):
                             f'（{count}/{RESUME_LIMIT}回目）。' + ('このページを読み込み直します。' if url else ''))
         self._log.write('auto_resume', reason=plan['reason'], day=plan['day'], count=count, reload=bool(url))
         return url
-
-    def _with_backup(self, text):
-        if not self._backup_note:
-            return text
-        return (f'{text} ただし{self._backup_note}。バックアップ・同期フォルダーへの書き出しを確かめてください'
-                '（サイトへ戻る必要はありません。本体の「バックアップ・同期」で状態を見られます）。')
 
     def configure(self, enabled, day=None, until=None, direction=None, today_ok=False):
         """自動取り込みのON/OFFと取り込む日。until を付けると day〜until の範囲（どちらが先でもよい）を
@@ -414,7 +405,6 @@ class Session(Bridge):
             # 利用者が開始したときは、続けて再開した回数も数え直す（自動の再開は _resume_if_due が回数を戻す）。
             self._resume_at = None
             if enabled:
-                self._backup_note = None
                 self._resume_count = 0
             self._pending_navigation = False
             self._blocked_navigation = False
@@ -757,13 +747,12 @@ class Session(Bridge):
                     self._enabled = False
                     self._pace.configure(False, 15)
                     self._until = None
-                    self._status = self._with_backup('範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
-                                                     if len(self._finished_days) > 1 else
-                                                     f'{finished}。取り込む台はありませんでした。')
+                    self._status = ('範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
+                                    if len(self._finished_days) > 1 else
+                                    f'{finished}。取り込む台はありませんでした。')
                     if automatic:
                         self._completed = self._status
-                    self._log.write('auto_finished', day=self._day, automatic=automatic,
-                                    backup_ok=not self._backup_note)
+                    self._log.write('auto_finished', day=self._day, automatic=automatic)
                     self._save_run(completed=True, locked=True)
                     return {'complete': True}
                 # 機種一覧は日付で変わらないので、読んだ一覧のまま次の日を確かめる。
@@ -818,7 +807,6 @@ class Session(Bridge):
                 self._status = '範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
             else:
                 self._status = f'指定日の取り込みが完了しました。追加{self._added}台、既存を保持{self._kept}台、グラフ不明{self._unknown}台。'
-            self._status = self._with_backup(self._status)
             # 残りの日が分からず止まったとき（left）は、続きを選べるよう窓を閉じない。
             if automatic and not left:
                 self._completed = self._status
@@ -827,7 +815,7 @@ class Session(Bridge):
             self._save_run(stopped=REASON_LABELS['range_unknown'], remaining=left_days)
             self._stopped('range_unknown', status, left=left, was_on=automatic, left_days=left_days)
         else:
-            self._log.write('auto_finished', day=self._day, automatic=automatic, backup_ok=not self._backup_note)
+            self._log.write('auto_finished', day=self._day, automatic=automatic)
             self._save_run(completed=True)
         return {'complete': True}
 
@@ -1037,6 +1025,27 @@ class Session(Bridge):
             raise ValueError('全台のグラフがそろっていません。完了とは扱いません。')
         return self._finish(job, epoch, payload.get('index_url'))
 
+    def _backup_after_close(self):
+        """窓を閉じたあとに1回だけ呼ぶ（site777_browser.run）。1機種でも保存していれば、バックアップ・閲覧用ファイルを
+        書き出す。保存中の処理があれば終わるのを待つ。書き出しに失敗してもDBへの保存は済んでいる（次に閉じたときにまた書く）。
+        戻り値：失敗したときの文（親画面のログ欄に出す）。成功・書き出す分が無いときは None。"""
+        with self._work_lock:
+            if not self._backup_due:
+                return None
+            self._backup_due = False
+            try:
+                store = self._store_factory(self._db_path)
+                try:
+                    written = str(auto_backup(store, self._folder / 'pscube-viewer.json'))
+                finally:
+                    store.close()
+            except (OSError, ValueError, sqlite3.Error) as error:
+                written = f'バックアップに失敗（取り込みは保存済み）：{type(error).__name__}'
+        # 成功は「バックアップ済み」で始まる文（「バックアップ済み（より新しい時点の書き出しが先に済んでいます）」も成功）。
+        ok = written.startswith(BACKUP_OK)
+        self._log.write('backup_after_close', ok=ok, result=written[:200])
+        return None if ok else written
+
     def _finish(self, job, epoch, index_url):
         model = job['table']['model_id']
         catalog = read_catalog(self._db_path)
@@ -1051,27 +1060,18 @@ class Session(Bridge):
         try:
             self._check(epoch)
             summary = store.import_backup(backup)
-            # 書き出しに失敗してもDBへの保存は済んでいる（auto_backup は例外を出さず文で返す）。
-            # 今までは戻り値を捨て、いつもの完了の文で窓を閉じていた（2026-11-08 Codexのレビュー）。
-            written = auto_backup(store, self._folder / 'pscube-viewer.json')
         finally:
             store.close()
-        # 成功は「バックアップ済み」で始まる文（2026-11-08 の 073f0eb から「バックアップ済み（より新しい時点の書き出しが
-        # 先に済んでいます）」も返る）。完全一致で比べると、成功なのに「バックアップに失敗」と出ていた。
-        if not str(written).startswith(BACKUP_OK):
-            self._backup_note = str(written)
-            self._log.write('backup_problem', result=self._backup_note)
-        elif self._backup_note:
-            # 書き出しは毎回DB全体なので、あとで成功すれば前の失敗の分も追いつく（2026-11-08）。
-            self._backup_note = None
-            self._log.write('backup_recovered')
+        # バックアップ・閲覧用ファイル（DB全体。約40MBを同期フォルダーなど数か所へ）は、ここでは書かず、窓を閉じたあとに
+        # 1回だけ書く（_backup_after_close。メルヘンの backup_after_session と同じ。2026-11-21 利用者「まとめて」）。
+        # 1機種ごとに書いていたので、1日約55機種で約55回の全体書き出しになり、取り込みが重かった。
+        self._backup_due = True
         self._done.add(model)
         self._added += summary['added']
         self._kept += summary['kept_local']
         unknown = sum(r['graph'] is None for r in backup['records'])
         self._unknown += unknown
-        self._status = self._with_backup(
-            f'{name}：追加{summary["added"]}台、既存を保持{summary["kept_local"]}台、グラフ不明{unknown}台。')
+        self._status = f'{name}：追加{summary["added"]}台、既存を保持{summary["kept_local"]}台、グラフ不明{unknown}台。'
         self._job = None
         self._check(epoch)
         return self._next(index_url)

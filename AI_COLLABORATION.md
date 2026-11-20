@@ -3856,3 +3856,22 @@
 - 量の見積もり：サイトセブンは1日約55〜59機種（`site777-staging` の 11/16〜20 のファイル数）。1日分で約55回の全体書き出し、ディスクへの書き込み約7GB、Googleドライブへの送り約2.6GBになる計算（未実測）。DBの写しで測った書き出しの前半（`export_payload`＋JSON化）は1回約1.7秒（44MB）。ファイルの複製・ドライブの同期の時間は未計測。
 - ほかの差（小さめ）：グラフが画像（メルヘンはSVG）で、表示を待つ・画面を少し動かす・最大3回読み込み直す（直近の記録で `graph_wait` 69回・前の記録で125回）。画像はPNGにしてPythonで線を読む（260×226なので軽い）。読み取った元データを `site777-staging/sources` に保存（48MB・1,953件）。WebView2の保存領域 `site777-webview` が約793MB。
 - 次の案（利用者の判断待ち）：書き出しを、メルヘンと同じく窓を閉じたとき（または1日分が終わったとき）の1回にまとめる。DBへの保存は今までどおり1機種ごと。閲覧ページ・Googleドライブの更新が窓を閉じるまで遅れる。
+
+### 2026-11-21 続き：サイトセブンの書き出しを、窓を閉じたあとの1回にまとめた（Claude）
+
+- 利用者「まとめて」（上の節の案）。PCだけの変更。閲覧ページ・Android・共有カレンダー・Google同期スクリプトは変えていない（表示する値は変わらない）。
+- 変更：`database/site777_session.py` の `_finish` から `auto_backup` を外し、保存したら `_backup_due` を立てるだけにした。新しい `_backup_after_close`（ページからは呼べない内部用。`test_page_api_does_not_expose_...` が見る）が、保存中の処理を待ってから1回だけ書き出す。`database/site777_browser.py` の `run` が `webview.start` のあと（窓が閉じたあと）に `backup_after_close` を呼ぶ。失敗したら `site777-backup-note.json` に文を残し、`database/app.py` が窓のプロセスの終了後（`watch_capture_window` の `after_close`）にログ欄へ出す。
+- やめたこと：取り込み中のカード・完了の文に「バックアップに失敗」を添える仕組み（`_backup_note`・`_with_backup`、自動の再開での引き継ぎ）。書き出しが取り込み中に無くなったため。失敗は本体のログ欄と「バックアップ・同期」の状態で見る。
+- 保持した仕様：DBへの保存は今までどおり1機種ごと。日次学習・前向き検証は窓のプロセスが終わってから動く（書き出しの後）。
+- 影響：閲覧ページ・Googleドライブの `pscube-viewer-drive.json` は、窓を閉じるまで更新されない。窓が自分で閉じる自動取り込みでは、閉じた直後に1回書く。PCの電源を落とすなどで窓のプロセスが途中で終わったときは、その回の書き出しは無い（DBには保存済み。次に窓を閉じたとき、または本体が書き出したときに追いつく）。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 1機種の保存で書き出さない | 済 | `test_saving_machines_does_not_export_and_closing_exports_once`（保存2台・完了まで `auto_backup` 0回） |
+| 閉じたあと1回だけ書き出す・2回目は書かない | 済 | 同上（1回、2回目は呼ばない） |
+| 失敗は文で返し、本体への知らせに残す | 済 | `test_a_backup_failure_after_close_is_returned_and_logged`、`test_closing_the_window_leaves_a_backup_failure_for_the_main_screen` |
+| 「より新しい時点の書き出しが先に済んでいます」は成功 | 済 | `test_a_backup_already_written_by_a_newer_export_counts_as_success` |
+| PC全体 | 済 | `python -m unittest discover -s tests` 1083件 OK（2026-11-21） |
+| 実際の取り込みで軽くなったか | 未確認 | 利用者が `start.cmd` で起動し直して取り込んだあと |
+
+- 効くのは、PC版を `start.cmd` で起動し直してから（利用者の作業）。

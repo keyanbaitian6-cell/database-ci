@@ -28,6 +28,8 @@ from file_io import take_notice, write_notice
 FINISHED_NAME = 'site777-capture-finished.json'
 # 最後に自動取り込みが止まった理由（2026-11-08）。窓を閉じたとき親画面のログ欄に出す（止まった時刻・文が分からなかったため）。
 LAST_STOP_NAME = 'site777-last-stop.json'
+# 窓を閉じたあとのバックアップ・閲覧用ファイルの書き出しが失敗したときの文（2026-11-21）。親画面のログ欄に出す。
+BACKUP_NOTE_NAME = 'site777-backup-note.json'
 
 
 def close_when_finished(session, window, data_dir) -> bool:
@@ -45,6 +47,26 @@ def close_when_finished(session, window, data_dir) -> bool:
 def take_finished_message(data_dir) -> str | None:
     """取り込み窓が閉じたあとに親画面が呼ぶ。自動で閉じたときの結果の文を返して知らせを消す（無ければ None）。"""
     return take_notice(Path(data_dir) / FINISHED_NAME)
+
+
+def take_backup_message(data_dir) -> str | None:
+    """取り込み窓が閉じたあとに親画面が呼ぶ。閉じたあとの書き出しが失敗したときの文を返して知らせを消す（無ければ None）。"""
+    return take_notice(Path(data_dir) / BACKUP_NOTE_NAME)
+
+
+def backup_after_close(session, data_dir, log):
+    """窓が閉じたあと（webview.start が戻ったあと）に1回だけ、バックアップ・閲覧用ファイルを書き出す
+    （2026-11-21 利用者「まとめて」。1機種ごとにDB全体を書き出していて取り込みが重かった。メルヘンと同じく閉じたときに1回）。
+    失敗しても例外を出さず、文を親画面への知らせに残す。"""
+    try:
+        note = session._backup_after_close()
+    except Exception as error:  # noqa: BLE001 - 書き出せなくてもDBへの保存は済んでいる
+        log.write('backup_after_close_failed', error=type(error).__name__)
+        note = f'バックアップに失敗（取り込みは保存済み）：{type(error).__name__}'
+    if note:
+        write_notice(Path(data_dir) / BACKUP_NOTE_NAME,
+                     f'{note}。本体の「バックアップ・同期」で状態を確かめてください（サイトへ戻る必要はありません）')
+    return note
 
 
 def take_stop_message(data_dir) -> str | None:
@@ -308,6 +330,7 @@ def run(data_dir, start_url=START_URL):
     window.events.loaded += loaded
     take_finished_message(data_dir)  # 前回の窓の知らせが残っていれば消す
     take_stop_message(data_dir)
+    take_backup_message(data_dir)
     closed = threading.Event()
     window.events.closed += closed.set
 
@@ -334,6 +357,7 @@ def run(data_dir, start_url=START_URL):
     # private_mode=False と専用の保存先でログインを残す。
     webview.start(gui='edgechromium', private_mode=False, user_agent=ANDROID_USER_AGENT,
                   storage_path=str(webview_storage(data_dir)))
+    backup_after_close(session, data_dir, log)
 
 
 def runtime_root():
