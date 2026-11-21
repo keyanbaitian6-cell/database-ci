@@ -46,7 +46,7 @@ def matched_pairs(store, groups, projected, history, models, fixed):
             kind = 'store'
         updated = saved['learned']
         if kind == 'blend':
-            # 2026-11-21 幸町の混合：固定版は開始日の係数と、その係数の学習量から決まる混合比のまま
+            # 2026-11-21 幸町・P-STATIONの混合：固定版は開始日の係数と、その係数の学習量から決まる混合比のまま
             # （開始日に専用係数の無かった機種は、後から専用係数ができても共通だけ）。更新版はその日の本番の候補。
             key = (store, group.get('rate', ''), STORE_MODEL)
             ordered = rank_blend(pool, history, fixed, store, group.get('rate', '')) if key in models else None

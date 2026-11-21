@@ -35,11 +35,14 @@ FEATURES = ('constant', 'last_plus', 'last_missing', 'plus7', 'coverage7',
 STORE_MODEL, VARIETY_MODEL = '#店舗共通', '#バラエティ'
 STORE_FEATURES = FEATURES + ('fresh7', 'fresh28')       # 今の機種が入ってから7日以内／8〜28日
 VARIETY_FEATURES = FEATURES + ('dry_streak',)            # プラスでない日が続いた数（直近28日、判定できない日は飛ばす）/28
-# 2026-11-21 幸町だけ：店舗共通の点と機種専用の点を、機種専用の係数の学習量に応じて混ぜる（'blend'）。
+# 2026-11-21 幸町（同日P-STATIONも）：店舗共通の点と機種専用の点を、機種専用の係数の学習量に応じて混ぜる（'blend'）。
 # 特徴は店舗共通と同じ12個（先頭10個が機種専用の特徴）。式は結果を見る前に固定した
-# （../outputs/daily-blend-20261121/計画.md）。方式の版は daily_learning_runtime.method_signature で幸町だけに付ける。
-BLEND_STORES = ('saiwaichou',)
-BLEND_VERSION = 'saiwaichou-blend-20261121'
+# （../outputs/daily-blend-20261121/計画.md）。方式の版は daily_learning_runtime.method_signature でその店だけに付ける。
+# 同日、P-STATIONにも入れた（アナスロ1年分の擬似前向き検証で現行より+0.73ポイント、前後半とも正、p=0.014。
+# 事前の条件にはわずかに届かなかったが、利用者「小さな改善でもいいの」「入れて」。../outputs/daily-pseudo-forward-20261121/）。
+# 店 → 方式の版の印。混合の式は両店で同じ。
+BLEND_STORES = {'saiwaichou': 'saiwaichou-blend-20261121', 'pscube:c740601:20': 'pstation-blend-20261121'}
+BLEND_VERSION = BLEND_STORES['saiwaichou']
 KIND_FEATURES = {'machine': FEATURES, 'store': STORE_FEATURES, 'variety': VARIETY_FEATURES, 'blend': STORE_FEATURES}
 VARIETY_STORES = ('nagamachiminami', 'saiwaichou')       # バラエティの組があるのはメルヘンの2店舗
 
@@ -375,7 +378,7 @@ def rank_by(pool, history, model, kind):
 
 
 def mix_weight(model):
-    """機種専用の係数の重み w（2026-11-21、幸町）。係数が無ければ 0。
+    """機種専用の係数の重み w（2026-11-21、幸町・P-STATION）。係数が無ければ 0。
 
     w = min(n/(n+100), d/(d+20))。n・d はその係数の学習に使えた件数・日数。100件・20日は専用の係数を作る
     下限（train）と同じ値で、なめらかな形では「専用と共通が半々」の点とみなす。件数と日数の少ないほうで決める
@@ -386,7 +389,7 @@ def mix_weight(model):
 
 
 def rank_blend(pool, history, models, store, rate=''):
-    """店舗共通の点と機種専用の点を混ぜて並べる（2026-11-21、幸町）。店舗共通の係数が無ければ None。
+    """店舗共通の点と機種専用の点を混ぜて並べる（2026-11-21、幸町・P-STATION）。店舗共通の係数が無ければ None。
 
     係数の配列は混ぜない。それぞれ本来の特徴で採点した点を (1-w)・w で混ぜる。どちらも同じ形のリッジ回帰
     （y−0.5、罰則100、日等重み）の出力なので同じ尺度。同点の並びは rank_pool と同じ。"""

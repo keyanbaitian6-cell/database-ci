@@ -111,8 +111,8 @@ def method_signature(store):
         import normal_next_day_model
         base = (f'score={core.VERSION},next={core.NEXT_DAY_METHOD_VERSION},normal={normal_next_day_model.METHOD_VERSION},'
                 f'variety={core.candidate_method_version(store, core.VARIETY_GROUP_NAME)}')
-    # 2026-11-21：幸町だけ学習版の並べ方（混合）を変えた。ほかの店舗の版は変えない（比較期間をやり直さない）。
-    learned = f'{VERSION}+{BLEND_VERSION}' if store in BLEND_STORES else VERSION
+    # 2026-11-21：幸町・P-STATIONの学習版の並べ方（混合）を変えた。長町南の版は変えない（比較期間をやり直さない）。
+    learned = f'{VERSION}+{BLEND_STORES[store]}' if store in BLEND_STORES else VERSION
     if store == 'pscube:c740601:20':
         # 2026-11-21：分析用JSONの古い形式のゼロ線を直した（daily_learning_archive.start_at_zero）。学習の正解が変わるので、
         # 直す前の日とは別の方式として数える（採用判定で直す前の日と混ぜない）。
@@ -385,7 +385,7 @@ def build_prediction(rows, pscube, target, journal, node=None, history_rows=None
             kind = 'variety'
             ordered = rank_by(group['pool'], history, models.get((group['store'], group.get('rate', ''), VARIETY_MODEL)), kind)
         elif group['store'] in BLEND_STORES and (group['store'], group.get('rate', ''), STORE_MODEL) in models:
-            # 2026-11-21 幸町：店舗共通の点と機種専用の点を、専用係数の学習量で混ぜる（専用係数の無い機種は共通だけ）。
+            # 2026-11-21 幸町・P-STATION：店舗共通の点と機種専用の点を、専用係数の学習量で混ぜる（専用係数の無い機種は共通だけ）。
             kind = 'blend'
             ordered = rank_blend(group['pool'], history, models, group['store'], group.get('rate', ''))
             mix = blend_weights(group['pool'], models, group['store'], group.get('rate', ''))

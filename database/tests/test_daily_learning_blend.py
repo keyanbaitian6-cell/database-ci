@@ -114,15 +114,34 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all('mix' not in g for g in prediction['groups']))
         self.assertNotIn(d.BLEND_VERSION, prediction['methods'][NAGA])
         self.assertEqual(runtime.method_signature(NAGA).split('|')[0], d.VERSION)
-        # P-STATIONは混合を使わない。版の印は分析用JSONのゼロ線の修正（2026-11-21）だけ。
+        # P-STATIONも同日に混合へ（利用者「入れて」）。版の印は混合とゼロ線の修正の2つ。
         self.assertEqual(runtime.method_signature('pscube:c740601:20').split('|')[0],
-                         d.VERSION + '+' + runtime.daily_learning_archive.ZERO_FIX)
+                         d.VERSION + '+pstation-blend-20261121+' + runtime.daily_learning_archive.ZERO_FIX)
         self.assertEqual(runtime.method_signature(SAI).split('|')[0], d.VERSION + '+' + d.BLEND_VERSION)
         # 従来候補の版の部分（「|」より後ろ）は今までと同じ
         with patch.object(d, 'BLEND_STORES', ()), patch.object(runtime, 'BLEND_STORES', ()):
             before = runtime.method_signature(SAI)
         self.assertEqual(runtime.method_signature(SAI).split('|')[1:], before.split('|')[1:])
         self.assertEqual(before.split('|')[0], d.VERSION)
+
+    def test_pstation_uses_blend_with_its_rate(self):
+        ps = 'pscube:c740601:20'
+        rows = [r | dict(store=ps, rate='20') for r in store_rows(ps) if r['machine'] in ('A', 'Old', 'N')]
+        daily = [r for r in rows if r['day'] == INPUT_DAY]
+        pick = lambda name: [r for r in daily if r['machine'] == name]
+        groups = [dict(store=ps, rate='20', name=n, pool=pick(n), current=[d.identity(r) for r in pick(n)][:k])
+                  for n, k in (('A', 2), ('N', 1))]
+        with patch.object(runtime, 'baseline_groups', return_value=groups):
+            prediction = runtime.build_prediction(rows, {'records': [], 'machines': []}, TARGET, NoState())
+        history = d.History(rows)
+        models = d.train(history, TARGET)
+        self.assertIn((ps, '20', d.STORE_MODEL), models)
+        by = {g['name']: g for g in prediction['groups']}
+        self.assertEqual({n: g['model'] for n, g in by.items()}, {'A': 'blend', 'N': 'blend'})
+        self.assertEqual(by['N']['mix'], {'N': 0.})
+        expected = d.rank_blend(groups[0]['pool'], history, models, ps, '20')
+        self.assertEqual(by['A']['learned'], [list(d.identity(r)) for r in expected[:2]])
+        self.assertTrue(all(g['selected'] == g['current'] for g in prediction['groups']))
 
     def test_shortage_without_common_model_falls_back_and_without_models_keeps_current(self):
         rows = store_rows()
