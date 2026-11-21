@@ -250,3 +250,34 @@ class ConverterTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OldGraphZeroLineTests(unittest.TestCase):
+    """2026-11-21：P-STATIONの古い形式（2026-01〜08前半）は赤い線の値が0のまま、点は y=312 から始まる。
+    最初の点をゼロ線にし、印（zero_from）を残す。推定差枚には使わない（目盛りの倍率が未確認、2026-11-06の判断）。"""
+
+    @staticmethod
+    def graph(zero, ys, xs=(0, 100, 300)):
+        data = html().replace(b'var x_value = [0, 1];var y_value = [100, 80];', f'var x_value = {list(xs)};var y_value = {list(ys)};'.encode())
+        data = data.replace(b'context.tick.value == 100', f'context.tick.value == {zero}'.encode())
+        return parse_html(data, '2026_09_15.html')['records'][0]['graph']
+
+    def test_old_format_takes_the_first_point_and_new_format_is_unchanged(self):
+        import anaslo_net
+        import daily_learning as dl
+        old = self.graph(0, [312, 300, 250])
+        self.assertEqual((old['zero_y'], old['zero_from']), (312., 'first-point'))
+        new = self.graph(312, [312, 300, 250])
+        self.assertEqual(new['zero_y'], 312.)
+        self.assertNotIn('zero_from', new)
+        same_start = self.graph(0, [0, -10, -40])           # 点の座標がゼロ線と合っている形は変えない
+        self.assertEqual(same_start['zero_y'], 0.)
+        self.assertNotIn('zero_from', same_start)
+        late_start = self.graph(0, [312, 300, 250], xs=(5, 100, 300))
+        self.assertNotIn('zero_from', late_start)
+        # 終点が始点より上（yが小さい）ならプラス。直す前は古い形式がすべて「プラスでない」と読まれた。
+        row = lambda g: dict(store='pscube:c740601:20', rate='20', day='2026-03-01', rack=1, machine='m', games=4000,
+                             bb=20, rb=10, graph=g)
+        self.assertEqual((dl.outcome(row(old)), dl.outcome(row(new))), (1, 1))
+        self.assertIsNone(anaslo_net.pixels(old))
+        self.assertIsNotNone(anaslo_net.pixels(new))

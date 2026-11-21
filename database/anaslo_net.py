@@ -65,6 +65,9 @@ def pixels(graph: dict | None) -> list[float] | None:
     """アナスロのグラフ（source_graph）をゼロ線からの高さ（上が正）にする。形が違えば None。"""
     if not isinstance(graph, dict) or graph.get('kind') != 'source_coordinates' or graph.get('zero_y') != ZERO_Y:
         return None
+    if graph.get('zero_from') == 'first-point':
+        return None   # 古い形式（ゼロ線を最初の点から決めた、anaslo_html）。目盛りの倍率が未確認なので推定しない（2026-11-06の判断）
+
     points = graph.get('points')
     if not isinstance(points, list) or not points:
         return None

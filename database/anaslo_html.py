@@ -179,9 +179,16 @@ def parse_html(raw, filename):
             raise ValueError('Invalid graph coordinates')
         if any(b < a for a, b in zip(xs, xs[1:])):
             raise ValueError('Graph X values are out of order')
+        zero_y, origin = float(zero[0]), {}
+        if zero_y == 0 and xs[0] == 0 and ys[0] != 0:
+            # 古い形式（P-STATIONの2026-01〜08前半）：軸は −1000〜1000・赤い線は0の設定のまま、点は新しい形式と同じ
+            # 画素の座標（下ほどマイナス）で y=312 から始まる。差枚のグラフは0枚から始まるので、最初の点をゼロ線にする
+            # （2026-11-21。新しい形式は9,813行すべて (0,312) 始まりで zero_y 312。直したあとのプラスの割合は新しい形式と
+            # ほぼ同じ）。目盛りの倍率は確かめられないので印を残し、推定差枚には使わない（anaslo_net.pixels）。
+            zero_y, origin = float(ys[0]), {'zero_from': 'first-point'}
         by_rack[rack]['graph'] = {'kind': 'source_coordinates', 'points': list(map(list, zip(xs, ys))),
-                                 'zero_y': float(zero[0]), 'y_increases_downward': True,
-                                 'medals_per_y_unit': None, 'games_per_x_unit': None}
+                                 'zero_y': zero_y, 'y_increases_downward': True,
+                                 'medals_per_y_unit': None, 'games_per_x_unit': None, **origin}
         graphs.add(rack)
     counts = Counter(r['machine'] for r in records)
     return {'day': day, 'store': {'source_name': store, 'rate': None},

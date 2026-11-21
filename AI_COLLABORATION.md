@@ -3979,3 +3979,20 @@
 - 直していないもの：`anaslo_converter.graph_measurement_from_source`（補完・推定差枚の側）も `zero_y` をそのまま使う。11/6の判断どおり、古い形式には推定差枚を付けていないので、今回は触っていない。
 - 次の手順：11/22朝、記録DBの予測で `2026-11-22|saiwaichou` の版（`+saiwaichou-blend-20261121`・組の種類 blend）と `2026-11-22|pscube:c740601:20` の版（`+pstation-zero-20261121`）を確かめる（成績は開かない。利用者が声をかける）。P-STATIONの混合（+0.73、p=0.014）は、条件を固定した前向きの比較の候補。
 - 変更：`database/daily_learning_archive.py`・`daily_learning_runtime.py`（P-STATIONの版の印）・`tests/test_daily_learning_archive.py`・`tests/test_daily_learning_blend.py`（P-STATIONの版の期待値）・`DAILY_LEARNING.md`。前の節の試験件数「96件」を89件に訂正。ローカルにコミットのみ、push・公開なし。
+
+### 2026-11-21 アナスロの変換プログラムで、古い形式のグラフのゼロ線を直した（Claude）
+
+- 依頼：「分析用JSON作り直したほうがいいのでは？」→ Claudeの提案（今あるJSONは作り直さず、変換プログラムを直す）に「直して」。基準コミット `e677ae4`。
+- 作り直さない理由：ゼロ線を読んで誤っていたのは日次学習だけで、読み込み側（`daily_learning_archive.start_at_zero`）で直し済み。P’s CUBEの原本DBのアナスロ由来の行（23,255行）は画面用のグラフを持たず（`graph` は空）、閲覧ページ・共有カレンダー・Androidはこのグラフでプラス・マイナスを出していない。推定差枚はゼロ線312のグラフだけが対象。`../outputs/pstation-anaslo-fullyear-20261112/`（計算済み、入力の指紋を固定）は当たり回数だけで成績を見ていてグラフを捨てている。上書きすると、この研究の再現の照合が通らなくなる。
+- 原因：保存HTMLの古い形式（P-STATION 2026-01〜08前半）は、グラフのスクリプトの軸が −1000〜1000・赤い線 `context.tick.value == 0`（上下反転なし）のまま、点は新しい形式と同じ画素の座標（y=312 から、下ほどマイナス）。`anaslo_html.parse_html` は赤い線の値をゼロ線として書くので `zero_y: 0` になっていた。新しい形式は軸0〜624・反転・赤い線312。
+- 直し方（`database/anaslo_html.py`）：赤い線の値が0で、最初の点が x=0・y≠0 なら、最初の点の y をゼロ線にし、`zero_from: 'first-point'` を残す。`database/anaslo_net.py` の `pixels` は `zero_from` の付いたグラフを使わない（目盛りの倍率が未確認なので推定差枚を付けない、11/6の判断を保つ）。変換結果の控え（`parse_cache`）は鍵に変換プログラムの指紋が入っているので、古い結果は自動で使われなくなる。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 保存HTMLで直した結果を確認（書き込みなし） | 済 | 保存HTML P-STATION 305日を直した変換で読み、今の分析用JSONと全35,051行を比較。点はすべて同じ。ゼロ線が変わったのは古い形式の25,149行だけ（0→312、`zero_from` 付き）、9,902行は変わらない（新しい形式9,813行と、始点がy=0の89行）。直した行の符号は「プラスでない→プラス」10,099行、そのまま14,593行、判定不能へ457行 |
+| 読み込み側の修正と同じ結果 | 済 | 変わる行の範囲（25,149行）が `start_at_zero` の対象と同じ。次に変換したJSONでは `start_at_zero` は何もしない |
+| 推定差枚に入らない | 済 | 試験で `anaslo_net.pixels` が古い形式に None、新しい形式に値を返す |
+| 試験 | 済 | `test_anaslo_converter.py` に `OldGraphZeroLineTests`（古い形式・新しい形式・点がゼロ線と合っている形・始点がx=0でない形・符号・推定差枚）。修正を外すと落ちることを確認。`database` で `python -m unittest discover -s tests` 1,096件成功（196.5秒） |
+| 今あるJSONの作り直し | しない | 上の理由。必要になったら、HTML変換アプリで作り直せば正しい値になる（そのときは固定済みの研究の入力の指紋が変わることを記録する） |
+
+- 変更：`database/anaslo_html.py`・`database/anaslo_net.py`・`database/tests/test_anaslo_converter.py`・`DAILY_LEARNING.md`（直していないものの行を更新）。サイトへのアクセスなし、データ・JSON・DBへの書き込みなし。ローカルにコミットのみ、push・公開なし。
