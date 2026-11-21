@@ -4035,3 +4035,9 @@
 | 実運用の初回保存（11/22分）・精度向上 | 未確認 | 今夜23:30以降。精度は前向きの記録で見る |
 
 - ローカルにコミットのみ、push・公開なし。
+
+### 2026-11-21 11:47 ここまでのコミットをpush（Claude）
+
+- 利用者「push公開して」。`python tools/push_ci.py`（日本時間11/21＝月の後半）で `keyanbaitian6-cell/database-ci` の main へ `d362902..d68dba8`。両方の main を含むことをスクリプトが確認。含まれるのは Codex の 4421949・e9ffb96・1032c47・e3ade31（係数固定の対照と記録）と、Claude の e4d73c3（幸町の混合）・e677ae4（P-STATIONのゼロ線）・6f221a4（変換プログラムのゼロ線）・a82e584（記録）・d68dba8（P-STATIONの混合）。
+- CI：Regression checks https://github.com/keyanbaitian6-cell/database-ci/actions/runs/44857797216 （push直後は queued。結果は未確認）。手元ではPC全体1,096件（`6f221a4`）と日次学習91件（`d68dba8`）が成功。Flutter・JS・画面の試験は、変更が無いので手元では流していない（CIの full が流す）。
+- 公開：閲覧ページ・共有カレンダー・Android・Googleスクリプトのコードは変えていないので、Web公開・APK作成・スクリプト貼替は不要で、していない。学習版の候補は、PCの日次学習が保存したあと、いつもの表示用JSON（Googleドライブ経由）に入る。
