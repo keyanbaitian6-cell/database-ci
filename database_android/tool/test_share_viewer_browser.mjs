@@ -58,9 +58,13 @@ day_summaries: [
 const pscube = {format: 'pscube-viewer', version: 1, exported_at: '2026-10-09T06:40:00+09:00', machines: [], records: [
   {store: 'c740601', rate: '20', day: d2, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 1, games: 5000, bb: 20, rb: 10, my: 3000, net_medals: 4321},
   {store: 'c740601', rate: '20', day: d2, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 2, games: 2000, bb: 5, rb: 3, my: 1000, net_medals: -1200},
+  {store: 'c740601', rate: '20', day: prev, machine: 'マイジャグラーV', rack: 1, games: 4000, bb: 15, rb: 10,
+    source_site: 'site777', net_estimate: {method: 'site777-axis-pixels-v2', value: -800, sure: true}},
+  {store: 'c740601', rate: '20', day: prev, machine: 'ハナハナ', rack: 3, games: 4000, bb: 15, rb: 10, net_medals: 0},
 ]};
 const shared = {format: 'database-events', version: 1, kind: 'pscube', events: [
-  {store: 'c740601', rate: '20', day: d2, name: '末尾イベ', updated_at: '2026-09-01T00:00:00Z'}]};
+  ...[d2, d3, prev, `${prev.slice(0, 7)}-05`].map(day =>
+    ({store: 'c740601', rate: '20', day, name: '末尾イベ', updated_at: '2026-09-01T00:00:00Z'}))]};
 // キャラ誕生日：ページと一緒に置くファイルの読み込みを、決まった中身に差し替える（1日：2人、5日：台の無い日に3人）。
 const [yy, mm] = ym.split('-').map(Number);
 const birthdays = {entries: [
@@ -125,6 +129,11 @@ try {
     assert.match(sheet, /101番\s*ゴーゴージャグラー3\s*\+1,417/);
     assert.match(sheet, /ゴーゴージャグラー3\s*5,000G\s*2台/);
     assert.ok(!/script/.test(await page.locator('.sheet .list').first().innerText()), '数値異常の台はTOP10に入れない');
+    await page.getByRole('button', {name: /半列<b>.*直近3回を比較/}).click();
+    assert.equal(await page.locator('#sheet-title').innerText(), '半列<b>');
+    assert.equal(await page.locator('.event-compare-table thead th').count(), 1);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.sheet .head-title').innerText(), 'その日のまとめ');
     await page.keyboard.press('Escape');
     await page.waitForSelector('.sheet', {state: 'detached'});
     await birthdayOnly.click();
@@ -206,6 +215,21 @@ try {
     assert.match(await p2.innerText(), /\+3,121/);
     await p2.click();
     assert.match(await page.locator('.sheet').innerText(), /総差枚\s*\+3,121\s*差枚がわかった台 2\/2台\n/, '0回転・500回転未満の台が無ければ何も足さない');
+    const beforeComparison = urls.length;
+    await page.getByRole('button', {name: /末尾イベ.*直近3回を比較/}).click();
+    const comparison = page.locator('.event-compare-table');
+    const periodHeadings = comparison.locator('thead th');
+    assert.equal(await periodHeadings.count(), 3);
+    assert.match(await periodHeadings.nth(0).innerText(), /\/2〜\s*\d+\/3\s*台記録 1\/2日/);
+    assert.match(await periodHeadings.nth(2).innerText(), /台記録 0\/1日/);
+    await page.locator('[data-event-machine]').selectOption('マイジャグラーV');
+    assert.deepEqual(await comparison.locator('tbody td').allInnerTexts(),
+      ['プラス 1/2台\n平均 +1,561枚', 'プラス 0/1台\n平均 -800枚\n推定含む', '—']);
+    assert.deepEqual(await comparison.locator('tbody th').allInnerTexts(), ['マイジャグラーV']);
+    assert.ok(await page.locator('.sheet').evaluate(e => e.scrollWidth <= e.clientWidth), `イベント比較が横にはみ出す（${width}px）`);
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
+    assert.equal(await page.locator('.sheet .head-title').innerText(), 'その日のまとめ');
+    assert.equal(urls.length, beforeComparison, 'イベント比較は読み込み済みの記録だけを使う');
     await page.locator('.sheet .row', {hasText: '1番'}).first().click();
     await page.locator('.sheet .row', {hasText: '1番'}).first().click();
     const pRack = await page.locator('.sheet').innerText();
@@ -214,6 +238,9 @@ try {
     assert.ok(!/最大持玉/.test(pRack));
     await page.getByRole('button', {name: '‹ 戻る'}).click();
     await page.getByRole('button', {name: '‹ 戻る'}).click();
+    await page.getByRole('button', {name: '閉じる'}).click();
+    await page.locator(`[data-event-open="${d3}"]`).click();
+    assert.equal(await page.locator('.event-compare-table thead th').count(), 3, 'イベントだけの日でも比較を開く');
     await page.getByRole('button', {name: '閉じる'}).click();
     // 幸町は選んだまま次に開いても残る。月の切り替え。
     await page.getByRole('button', {name: '幸町'}).click();

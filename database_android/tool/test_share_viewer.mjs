@@ -6,7 +6,7 @@ import test from 'node:test';
 import {meruhenNetDetail} from '../../share_viewer/net.mjs';
 import {readFileSync} from 'node:fs';
 import {
-  compactSigned, dayNet, daySummary, displayMachineName, enteredInAdvance, eventLabel, indexRecords,
+  compactSigned, dayNet, daySummary, displayMachineName, enteredInAdvance, eventComparison, eventLabel, indexRecords,
   meruhenRecords, mergeEvents, monthWeeks, pscubeRecords, scriptIdFrom, storeLabel, viewerNameFrom,
   calendarDays, idleVarietyRacks, isHiddenMachine, storeDays,
   lastRainbowDay, lastRainbowText, rackMark, storeHasRainbow,
@@ -135,6 +135,44 @@ test('イベント：入力時刻の新しい方、時刻のある方が勝つ�
   assert.equal(enteredInAdvance({day: '2026-10-10', at: Date.parse('2026-10-10T02:59:59+09:00')}), true);
   assert.equal(enteredInAdvance({day: '2026-10-10', at: Date.parse('2026-10-10T03:00:00+09:00')}), false);
   assert.equal(eventLabel(mergeEvents([{store: 'saiwaichou', day: '2026-10-04', name: '半列'}]).get('saiwaichou|2026-10-04')), '半列＊', '時刻不明は＊');
+});
+
+test('イベント比較：同じ店と貸玉の直近3回、月をまたぐ連続日、欠測と0枚、機種別の延べ台数', () => {
+  const store = 'pscube:c740601:20';
+  const event = (day, extra) => ({store: 'c740601', rate: '20', day, name: '取材', ...extra});
+  const events = mergeEvents([
+    ...['2026-12-10', '2026-12-18', '2026-12-22', '2026-12-31', '2027-01-01', '2027-01-10'].map(day => event(day)),
+    event('2026-12-30', {rate: '5'}), event('2026-12-20', {store: 'saiwaichou', rate: null}),
+    event('2026-12-23', {name: '別の取材'}),
+  ]);
+  const row = (net, extra) => ({store, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', games: 1000, net, ...extra});
+  const byDay = new Map([
+    [`${store}|2026-12-18`, [row(0), row(null)]],
+    [`${store}|2026-12-31`, [row(1200), row(-100)]],
+    [`${store}|2027-01-01`, [row(100, {machine: 'マイジャグラーV', estimated: true}), row(null, {machine: '別機種'})]],
+  ]);
+  const report = eventComparison(events, byDay, store, '2026-12-31');
+  assert.deepEqual(report.rounds.map(r => [r.from, r.to, r.recordedDays]),
+    [['2026-12-31', '2027-01-01', 2], ['2026-12-22', '2026-12-22', 0], ['2026-12-18', '2026-12-18', 1]]);
+  assert.deepEqual(report.rounds[0].byMachine.get('マイジャグラーV'),
+    {won: 2, judged: 3, captured: 3, total: 1200, estimated: true});
+  assert.equal(report.rounds[0].byMachine.get('別機種').captured, 0);
+  assert.equal(report.rounds[1].byMachine.size, 0);
+  assert.deepEqual(report.rounds[2].byMachine.get('マイジャグラーV'),
+    {won: 0, judged: 1, captured: 1, total: 0, estimated: false});
+  assert.deepEqual(eventComparison(events, byDay, store, '2026-12-10').rounds.map(r => r.from), ['2026-12-10']);
+  assert.deepEqual(eventComparison(events, byDay, store, '2026-12-24').rounds, []);
+});
+
+test('長町南のイベント比較：月曜で別の回に分け、同じ週に別イベントを挟んでも同じ回', () => {
+  const store = 'nagamachiminami';
+  const events = mergeEvents([
+    ...['2026-11-01', '2026-11-02', '2026-11-04', '2026-11-09'].map(day => ({store, day, name: '半列'})),
+    {store, day: '2026-11-03', name: '新台入替'},
+  ]);
+  const {rounds} = eventComparison(events, new Map(), store, '2026-11-02');
+  assert.deepEqual(rounds.map(r => [r.from, r.to, r.days]),
+    [['2026-11-02', '2026-11-04', 2], ['2026-11-01', '2026-11-01', 1]]);
 });
 
 test('表示：半角カナだけ全角に、10万枚以上は「万」、日曜始まりの週、リンクからスクリプトのID', () => {
