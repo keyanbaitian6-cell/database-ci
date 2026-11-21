@@ -49,6 +49,29 @@ class ArchiveTests(unittest.TestCase):
             self.assertFalse(d.valid(db_row('2026-10-01', 1, 'anaslo')))   # 原本DBのアナスロ行は今までどおり使わない
             self.assertEqual(archive.load(STORE, '2026-09-01', '2026-11-30', {STORE: Path(temp) / 'none'}), [])
 
+    def test_old_format_zero_line_is_the_first_point(self):
+        """2026-11-21：P-STATIONの古い形式（1〜8月前半）は zero_y が 0 のまま。最初の点（x=0）をゼロ線にする。
+        直す前は、ゼロ線より上（yが312より小さい）で終わった台も「プラスでない」と読まれていた。"""
+        def old(day, rack, end, first=(0, 312)):
+            r = record(day, rack)
+            r['source_graph'] = {'kind': 'source_coordinates', 'zero_y': 0.0, 'y_increases_downward': True,
+                                 'points': [list(first), [100, 300], [300, end]]}
+            return r
+        new = record('2026-10-03', 9)
+        new['source_graph'] = {'kind': 'source_coordinates', 'zero_y': 312.0, 'points': [[0, 312], [300, 250]]}
+        with tempfile.TemporaryDirectory() as temp:
+            folders = self.folder(temp, [[old('2026-03-01', 1, 250), old('2026-03-01', 2, 400),
+                                          old('2026-03-01', 3, 312.5), old('2026-03-01', 4, 250, first=(0, 0)),
+                                          old('2026-03-01', 5, 250, first=(5, 312)), new]])
+            rows = {r['rack']: r for r in archive.load(STORE, '2026-01-01', '2026-12-31', folders)}
+        self.assertEqual({k: d.outcome(r) for k, r in rows.items()}, {1: 1, 2: 0, 3: None, 4: 0, 5: 0, 9: 1})
+        self.assertEqual((rows[1]['graph']['zero_y'], rows[1]['graph']['zero_from']), (312., 'first-point'))
+        for rack in (4, 5, 9):           # 最初の点が0・x=0でない・新しい形式は、そのまま
+            self.assertNotIn('zero_from', rows[rack]['graph'])
+        self.assertIn('+' + archive.ZERO_FIX, runtime.method_signature(STORE))
+        self.assertNotIn(archive.ZERO_FIX, runtime.method_signature('saiwaichou'))
+        self.assertNotIn(archive.ZERO_FIX, runtime.method_signature('nagamachiminami'))
+
     def test_merge_prefers_database_and_never_touches_input_day(self):
         with tempfile.TemporaryDirectory() as temp:
             folders = self.folder(temp, [[record('2026-10-01', 1, end=80), record('2026-10-01', 2), record('2026-10-02', 3),

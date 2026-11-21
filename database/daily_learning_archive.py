@@ -22,6 +22,24 @@ ROOT = Path(__file__).resolve().parents[1] / 'html_converter' / 'data'
 FOLDERS = {'saiwaichou': ROOT / 'normal_analysis' / 'saiwaichou',
            'pscube:c740601:20': ROOT / 'pstation_analysis'}
 FLAG = 'normal-analysis'
+ZERO_FIX = 'pstation-zero-20261121'     # start_at_zero の版（P-STATIONの方式の版に付ける）
+
+
+def start_at_zero(graph):
+    """P-STATIONの古い形式（2026-01〜08前半）のグラフは `zero_y` が 0 のまま書かれている。点は x=0・y=312 から始まる。
+
+    差枚のグラフは0枚から始まるので、`zero_y` が 0 で最初の点が x=0 なら、最初の点の y をゼロ線にする（2026-11-21）。
+    新しい形式（`zero_y` 312）は9,813行すべて (0,312) から始まり、この規則と同じ。直す前は、古い形式の行が
+    1〜7月すべて「プラスでない」と読まれ、日次学習の正解・特徴が誤っていた（月ごとのプラス率0%、直すと40〜43%）。
+    最初の点が y=0 の行（89行）・形が違う行はそのまま。"""
+    try:
+        first = graph['points'][0]
+        if (graph.get('kind') == 'source_coordinates' and float(graph.get('zero_y', 0.)) == 0.
+                and float(first[0]) == 0. and float(first[1]) != 0.):
+            return {**graph, 'zero_y': float(first[1]), 'zero_from': 'first-point'}
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+        pass
+    return graph
 
 
 def files(store, folders=None):
@@ -51,7 +69,7 @@ def load(store, first, last, folders=None):
             if store.startswith('pscube:'):
                 row['rate'] = '20'
                 if 'source_graph' in row:
-                    row['graph'] = row.pop('source_graph')
+                    row['graph'] = start_at_zero(row.pop('source_graph'))
             key = (day, int(row['rack']), str(row['machine']))
             if key in found and found[key] != row:
                 conflicts.add(key)

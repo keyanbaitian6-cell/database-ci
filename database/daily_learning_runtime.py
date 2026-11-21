@@ -113,6 +113,10 @@ def method_signature(store):
                 f'variety={core.candidate_method_version(store, core.VARIETY_GROUP_NAME)}')
     # 2026-11-21：幸町だけ学習版の並べ方（混合）を変えた。ほかの店舗の版は変えない（比較期間をやり直さない）。
     learned = f'{VERSION}+{BLEND_VERSION}' if store in BLEND_STORES else VERSION
+    if store == 'pscube:c740601:20':
+        # 2026-11-21：分析用JSONの古い形式のゼロ線を直した（daily_learning_archive.start_at_zero）。学習の正解が変わるので、
+        # 直す前の日とは別の方式として数える（採用判定で直す前の日と混ぜない）。
+        learned += '+' + daily_learning_archive.ZERO_FIX
     return f'{learned}|{base}'
 
 

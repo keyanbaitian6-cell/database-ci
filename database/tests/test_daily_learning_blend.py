@@ -114,7 +114,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all('mix' not in g for g in prediction['groups']))
         self.assertNotIn(d.BLEND_VERSION, prediction['methods'][NAGA])
         self.assertEqual(runtime.method_signature(NAGA).split('|')[0], d.VERSION)
-        self.assertEqual(runtime.method_signature('pscube:c740601:20').split('|')[0], d.VERSION)
+        # P-STATIONは混合を使わない。版の印は分析用JSONのゼロ線の修正（2026-11-21）だけ。
+        self.assertEqual(runtime.method_signature('pscube:c740601:20').split('|')[0],
+                         d.VERSION + '+' + runtime.daily_learning_archive.ZERO_FIX)
         self.assertEqual(runtime.method_signature(SAI).split('|')[0], d.VERSION + '+' + d.BLEND_VERSION)
         # 従来候補の版の部分（「|」より後ろ）は今までと同じ
         with patch.object(d, 'BLEND_STORES', ()), patch.object(runtime, 'BLEND_STORES', ()):
