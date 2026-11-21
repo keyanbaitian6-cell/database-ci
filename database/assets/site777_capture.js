@@ -171,7 +171,12 @@
     }
     box.scrollIntoView({block:'center', behavior:'instant'});
   };
-  const prepare = async (cancelled, wantedRacks=null) => {
+  // 窓を最小化してページが見えないと、サイトの遅延読み込み（lazy-load.js の IntersectionObserver、画面に半分以上
+  // 見えたら src を差し替える）が動かず、グラフは出ない（2026-11-21、実WebView2の模擬ページで確認。起動設定を変えても、
+  // WebView2 の IsVisible を true にしても出なかった）。見えない間は待ち時間に数えず、見えるまで待つ
+  // （読み込み直し・グラフなしでの保存をしない）。onHidden は見えない間 true、見えたら false で呼ぶ（カードの表示用）。
+  const pageHidden = () => document.visibilityState === 'hidden';
+  const prepare = async (cancelled, wantedRacks=null, onHidden=null) => {
     // サイト自身の遅延読み込みを通常の表示操作で進める。URLの直接取得や再試行はしない。
     for (const {box, rack} of graphBoxes()) {
       if (cancelled()) throw new Error('停止しました。');
@@ -182,7 +187,7 @@
       const ready = () => imageReady(current()?.box.querySelector('img'));
       if (ready()) continue;
       box.scrollIntoView({block:'center', behavior:'instant'});
-      const until = Date.now() + (window.__site777GraphWaitMs || 12000);
+      let until = Date.now() + (window.__site777GraphWaitMs || 12000);
       // P’s CUBEの一覧で学んだこと（2026-10-04「少し戻って再度下へ」、11-04「ちょっとスクロールするだけで出てくる」）：
       // サイトの遅延読み込みは、画面が本当に動いたときだけ進むことがある。目的の台へ1回で飛ぶだけでは、
       // ページの上端にある台（1ページ目の先頭・1台だけの機種）は画面が動かず、きっかけが来ない
@@ -190,8 +195,21 @@
       // 出なければ一定の間隔で、少し離れてから台へ戻す。人が画面を少し動かすのと同じ操作で、URLは開かない。
       const nudgeEvery = window.__site777NudgeMs || 3000;
       let nextNudge = Date.now() + nudgeEvery;
+      let wait = window.__site777GraphWaitMs || 12000;
       while (!ready() && Date.now() < until) {
         if (cancelled()) throw new Error('停止しました。');
+        if (pageHidden()) {
+          onHidden?.(true);
+          while (pageHidden() && !ready()) {
+            if (cancelled()) throw new Error('停止しました。');
+            await new Promise(resolve => setTimeout(resolve, 250));
+          }
+          onHidden?.(false);
+          // 見えたら、その台の待ちを初めから数え直す（見えない間に使った分を数えない）。
+          until = Date.now() + wait;
+          nextNudge = Date.now() + nudgeEvery;
+          continue;
+        }
         if (Date.now() >= nextNudge) {
           await nudge(current()?.box || box, cancelled);
           nextNudge = Date.now() + nudgeEvery;
@@ -206,6 +224,8 @@
         // URLや画像・会員情報は記録せず、次回は止まった台と画像の状態を区別できるようにする。
         const latest=current(), img=latest?.box.querySelector('img');
         error.graph_wait = {rack, complete:!!img?.complete, width:img?.naturalWidth||0,
+          // 止まったときにページが見えていたか（2026-11-21。見えないページではサイトの遅延読み込みが動かない）。
+          visibility:document.visibilityState, focused:document.hasFocus(),
           image_kind:!img ? 'missing' : new URL(img.currentSrc || img.src, location.href).pathname === '/chart/RequestSPDedamaTransitionChartForPortal.do'
             ? 'chart' : 'placeholder', visible:!!latest&&visible(latest.box),
           // 2026-11-19 利用者「1台の機種で表示されないって何？表示されてるようにしかみえなかった」：画面には
@@ -221,5 +241,5 @@
       }
     }
   };
-  window.databaseSite777 = {read, go, prepare, samePage, readyRacks};
+  window.databaseSite777 = {read, go, prepare, samePage, readyRacks, pageHidden};
 })();

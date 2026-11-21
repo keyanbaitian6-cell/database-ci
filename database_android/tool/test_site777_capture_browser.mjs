@@ -236,7 +236,9 @@ try {
   assert.equal(loads.length,4,'最初の1回と、1分後（試験では1.2秒後）の読み込み直し3回');
   const graphWait=JSON.parse(await stalled.evaluate(()=>sessionStorage.getItem('test-graph-wait')));
   assert.deepEqual(Object.keys(graphWait).sort(),['kind','rack','complete','width','image_kind','visible','day','page',
-    'images','canvases','backgrounds'].sort());
+    'images','canvases','backgrounds','visibility','focused'].sort());
+  // 止まったときにページが見えていたか（2026-11-21。見えないページではサイトの遅延読み込みが動かない）。
+  assert.equal(graphWait.visibility,'visible');assert.equal(typeof graphWait.focused,'boolean');
   // 画像はパスと大きさだけ（?以降・会員情報は残さない。2026-11-19 グラフが出ているのに仮の画像と判定する疑いの調査用）。
   assert.ok(graphWait.images.length>0&&graphWait.images.every(i=>Object.keys(i).sort().join()==='h,path,shown,w'&&!/[?#]/.test(i.path)),JSON.stringify(graphWait.images));
   assert.ok(graphWait.backgrounds.every(b=>!/[?#]/.test(b)));

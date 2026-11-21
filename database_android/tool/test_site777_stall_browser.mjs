@@ -36,7 +36,8 @@ async function setup(){
 }
 async function overlay(page,mode){
   await page.evaluate(mode=>{
-    window.__mode=mode;window.__calls=[];window.__staged=[];window.__paused=[];window.__wait=false;
+    window.__mode=mode;window.__calls=[];window.__staged=[];window.__paused=[];window.__wait=false;window.__notes=[];
+    window.__vis='visible';Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__vis});
     window.__s={enabled:true,epoch:1,ready:true,day:'2026-11-06',days:['2026-11-06'],status:'開始'};
     if(mode==='recover_more'){
       const box=[...document.querySelectorAll('.graph-box')].find(b=>b.querySelector('span')?.textContent==='[103]');
@@ -55,7 +56,10 @@ async function overlay(page,mode){
         }
         Object.assign(window.__s,{enabled:false,ready:false,status:'完了'});return {state:structuredClone(window.__s)};
       },
-      note:async()=>{window.__wait=true;if(window.__mode.startsWith('recover'))setTimeout(()=>window.setChart(102,true),650);},
+      note:async raw=>{const n=JSON.parse(raw);window.__notes.push(n);if(n.kind!=='graph_wait')return;
+        window.__wait=true;if(window.__mode.startsWith('recover'))setTimeout(()=>window.setChart(102,true),650);
+        // 止まったあとの読み込み直しを待つ間に最小化された（2026-11-21）。
+        if(window.__mode==='hidden_retry')window.__vis='hidden';},
       pause:async(message,reason)=>{window.__paused.push(reason);Object.assign(window.__s,{enabled:false,epoch:2,status:message||'停止'});
         return structuredClone(window.__s);}}};
   },mode);
@@ -75,6 +79,47 @@ try{
     },replaceBox);
     assert.deepEqual(await page.evaluate(()=>databaseSite777.read(false,[101]).graphs.map(g=>g.rack)),[101]);
     assert.equal(requests.filter(r=>r.startsWith('/chart/')).length,1);
+    await page.close();
+  }
+  // 最小化などでページが見えない間は、サイトの遅延読み込みが動かない（2026-11-21、実WebView2で確認）。
+  // 見えない間は待ち時間に数えず止まらない。見えてから出たグラフはそのまま読む。画像の要求はサイト自身の1回だけ。
+  {
+    const {page,requests}=await setup();
+    const got=await page.evaluate(async()=>{
+      let vis='hidden';Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>vis});
+      const seen=[];let done=null;
+      const run=databaseSite777.prepare(()=>false,[101],h=>seen.push(h)).then(()=>{done='ok';},e=>{done='error:'+e.message;});
+      await new Promise(r=>setTimeout(r,1500));   // 待ち時間（300ms）の5倍
+      const during=done;
+      vis='visible';setTimeout(()=>window.setChart(101),100);
+      await run;return {during,done,seen};
+    });
+    assert.equal(got.during,null,'見えない間に止まらない');
+    assert.equal(got.done,'ok');assert.deepEqual(got.seen,[true,false]);
+    assert.deepEqual(await page.evaluate(()=>databaseSite777.read(false,[101]).graphs.map(g=>g.rack)),[101]);
+    assert.equal(requests.filter(r=>r.startsWith('/chart/')).length,1);
+    // 見えないまま止まるのは、見えてから待ち時間を過ぎたとき。止まったときの記録に見え方を残す。
+    const stalled=await page.evaluate(async()=>{
+      try{await databaseSite777.prepare(()=>false,[102]);return null;}catch(e){return e.graph_wait;}
+    });
+    assert.equal(stalled.rack,102);assert.equal(stalled.visibility,'visible');assert.equal(typeof stalled.focused,'boolean');
+    await page.close();
+  }
+  // 止まったあとの読み込み直しの待ちの間に最小化されたら、見えるまで読み込み直さない（読み込み直しても出ないため）。
+  // 回数は使わず、見えて出たグラフで続ける。
+  {
+    const {page,requests}=await setup();await page.evaluate(()=>window.setChart(101));
+    await page.waitForFunction(()=>document.querySelector('.graph-box img').complete);
+    await overlay(page,'hidden_retry');
+    await page.waitForFunction(()=>window.__wait);
+    await page.waitForTimeout(2600);                 // 読み込み直しの待ち（1200ms）の2倍
+    assert.equal(requests.filter(r=>r.startsWith('/f/D4300.do?')).length,1,'見えない間に読み込み直さない');
+    assert.match(await page.textContent('#database-site777-status'),/最小化/);
+    await page.evaluate(()=>{window.__vis='visible';window.setChart(102,true);});
+    await page.waitForFunction(()=>window.__s.status==='完了',{},{timeout:10000});
+    const got=await page.evaluate(()=>({paused:__paused,retries:JSON.parse(sessionStorage.getItem('database-site777-retries'))[location.href]}));
+    assert.deepEqual(got.paused,[]);assert.equal(got.retries,2);
+    assert.equal(requests.filter(r=>r.startsWith('/f/D4300.do?')).length,1);
     await page.close();
   }
   // 先に読めた101だけ途中保存、102は待機中に回復。再読込回数を消費せず、既読画像を再送しない。
@@ -112,5 +157,5 @@ try{
     await page.close();
   }
   assert.deepEqual(errors,[]);
-  console.log('サイトセブン：画像と親要素の置換、成功分の途中保存、待機中の回復、余計な再取得なし、停止と保存失敗の保護：成功');
+  console.log('サイトセブン：画像と親要素の置換、最小化中は止まらず読み込み直さない、成功分の途中保存、待機中の回復、余計な再取得なし、停止と保存失敗の保護：成功');
 }finally{await browser.close();}

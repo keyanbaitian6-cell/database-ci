@@ -242,6 +242,30 @@ class Site777BrowserTest(unittest.TestCase):
         source = Path(app.__file__).read_text(encoding='utf-8')
         self.assertIn("text='サイトセブンを開く（スマホ会員）'", source)
 
+    def test_the_window_keeps_page_timers_like_pscube(self):
+        """2026-11-21：見えない2つ目の窓でグラフ待ちが毎分同じ秒にしか動いていなかった。窓を作る前に P’s CUBE と同じ
+        起動設定（見えない窓の時計を間引かない・覆われても見えている扱い）を WebView2 の環境変数へ足す。"""
+        import os
+        from unittest import mock
+        from pscube_import import BROWSER_ARGUMENTS
+
+        class Stop(Exception):
+            pass
+
+        def create_window(*args, **kwargs):
+            seen.append(os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', ''))
+            raise Stop()
+
+        seen = []
+        fake = SimpleNamespace(create_window=create_window)
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(sys.modules, {'webview': fake}), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', None)
+            with self.assertRaises(Stop):
+                site777_browser.run(folder)
+        self.assertEqual(len(seen), 1)
+        self.assertIn(BROWSER_ARGUMENTS, seen[0])
+
 
 if __name__ == '__main__':
     unittest.main()

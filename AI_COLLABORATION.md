@@ -4082,3 +4082,25 @@
   2. グラフを待つ間に `document.visibilityState` が hidden なら、グラフが出ないとは数えない（読み込み直さない・グラフなしで保存しない・再開の回数にも数えない）。カードに「最小化中はグラフが読み込まれません。窓を戻すと続きます」と出して、見えるまで待つ。読み込み直しのアクセスとグラフなしの台が減る。
   3. graph_wait のログに visibilityState と窓の状態を残す（確かめるため）。
   - 確かめ方：模擬ページの実 WebView2 試験（最小化で待ち、戻すと保存して進む・読み込み直しが0回）を `database/tests` に足し、全体ゲート。実サイトでは次の取り込みで、graph_wait の visibilityState を見る。
+
+## 2026-11-21 サイトセブン：最小化中はグラフが出ないとは数えず、見えるまで待つ（Claude）
+
+- 依頼：利用者「入れて」（上の節の直し方の案1〜3）。基準コミット `a850c37`（正本ではなく `database-ci` の main と同じ）。
+- 完了の条件（着手前に利用者へ提示）：サイトセブンの窓が P’s CUBE と同じ起動設定で開く／最小化中はグラフが出ないとは数えない（読み込み直し0回・グラフなしで保存しない）／窓を戻すとそのまま保存して進む／止まったときのログに見え方が残る。
+- 変更：
+  - `database/site777_browser.py` `run`：最初に `pscube_import.keep_page_timers()`（見えない窓の時計を1分に1回へ間引かない・覆われても見えている扱い）。サイトへの間隔は Python 側の3〜5秒のまま。
+  - `database/assets/site777_capture.js` `prepare(cancelled, wantedRacks, onHidden)`：台を待つ間に `document.visibilityState` が hidden なら、見えるまで250msごとに待ち（停止は効く）、見えたらその台の待ち（12秒）を数え直す。`onHidden(true/false)` でカードへ知らせる。graph_wait の記録に `visibility`・`focused` を足した（URL・会員情報は残さないまま）。`pageHidden` を外へ出した。
+  - `database/assets/site777_overlay.js`：見えない間はカードに「窓が最小化されているため、グラフが読み込まれません。窓を元に戻すと続きます（ほかの窓の後ろに置くのは問題ありません）。」と出し、ログに `graph_hidden`（日・ページ番号だけ）を残す。止まったあとの読み込み直しの待ち（`retryLater`）の間に見えなくなったら、見えるまで読み込み直さず、待ちを数え直す（回数は使わない）。
+- 変わる動き：前は最小化した窓が12秒ごとに「グラフが出ない」と数え、読み込み直し3回・3分後の再開・グラフなしで保存、と進んでいた。今は最小化している間はその窓の取り込みが進まない（グラフなしの台を作らない）。戻すと続きから。ほかの窓の後ろに置くのは問題ない。
+- 確認の表：
+  | 要件 | 結果 | 証拠 |
+  |---|---|---|
+  | 窓の起動設定 | 済 | `test_site777_browser.py` `test_the_window_keeps_page_timers_like_pscube`（窓を作る時点で環境変数に BROWSER_ARGUMENTS） |
+  | 見えない間は止まらない・見えたら続く | 済 | `test_site777_stall_browser.mjs`（待ち300msの5倍見えないままでも止まらない、見えてから出たグラフを読む、画像の要求1回） |
+  | 読み込み直しの待ち中に最小化 → 読み込み直さない・回数を使わない | 済 | 同（2.6秒見えない間 D4300 の読み込み1回のまま、カードに「最小化」、戻すと完了、回数2のまま） |
+  | 止まったときに見え方を残す | 済 | `test_site777_capture_browser.mjs`（graph_wait の項目一覧に visibility・focused） |
+  | 本物の WebView2 で最小化→戻す | 済 | 新しい手で流す試験 `database/tests/smoke_site777_minimized.py`：最小化中 hidden・6秒止まらず・グラフの要求0回、戻すと完了・要求1回・読み込み直し0回（ok true） |
+  | 既存の取り込みの流れ | 済 | `smoke_site777_session.py`（2機種・32台、グラフ要求32回、終わりで自動OFF） |
+  | 全体ゲート | 済 | `check_before_build.sh` ALL PASSED（101項目、PC 1098件・UTC 28件・Flutter 886件・analyze・閲覧ページの作成と画面試験・共有ページ・JS） |
+  | 実サイトで止まらなくなったか | 未確認 | 次の取り込みのあと、ログの graph_wait の visibility と graph_hidden を見る |
+- 反映：PCは `start.cmd` で開き直すと効く（取り込み窓を開き直せばよい）。閲覧ページ・共有カレンダー・Android・Googleスクリプトは変えていないので、公開・APK・貼替は不要で、していない。

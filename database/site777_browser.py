@@ -290,7 +290,12 @@ def reload_page(window, url, invoke=None):
 
 def run(data_dir, start_url=START_URL):
     import webview
+    from pscube_import import keep_page_timers
 
+    # 見えない窓でページの時計を1分に1回へ間引かせない・ほかの窓に覆われても見えている扱いにする（P’s CUBE と同じ起動設定。
+    # 2026-11-21：2つ目の窓のグラフ待ちが毎分同じ秒にしか動いていなかった）。サイトへの間隔は Python 側の3〜5秒のまま。
+    # 最小化はこれでも見えないままなので、グラフ待ちはカード側（prepare）が見えるまで待つ。
+    keep_page_timers()
     log = DiagnosticLog(data_dir)
     from site777_session import Session
     from capture_card import CARD_JS
