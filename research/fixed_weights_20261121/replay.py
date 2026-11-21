@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'database'))
-from daily_learning import History, Journal, STORE_MODEL, VARIETY_MODEL, encoded, identity, prediction_target, rank_by, rank_pool, shift, valid
+from daily_learning import History, Journal, STORE_MODEL, VARIETY_MODEL, encoded, identity, prediction_target, rank_blend, rank_by, rank_pool, shift, valid
 from daily_learning_fixed import STORES, matched_pairs
 
 FIRST, LAST = '2026-11-13', '2026-11-21'  # v4の初日から依頼日の締切まで。成績で期間を選ばない。
@@ -57,7 +57,9 @@ def replay(path):
                 features = [history.model_features(r, kind or 'machine') for r in pool]
                 if features != [i['features'] for i in saved['pool']]:
                     raise ValueError(f'{key} {name} の当時の特徴と不一致')
-                if kind == 'machine':
+                if kind == 'blend':     # 2026-11-22以降の幸町（混合）。この再生の期間（〜11-21）には出ない。
+                    ordered = rank_blend(pool, history, models, store, rate)
+                elif kind == 'machine':
                     ordered = rank_pool(pool, history, models)
                 elif kind is not None:
                     model = VARIETY_MODEL if kind == 'variety' else STORE_MODEL

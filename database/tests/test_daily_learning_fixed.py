@@ -28,7 +28,8 @@ class FixedControlTests(unittest.TestCase):
         if common:
             models[store, '', d.STORE_MODEL] = dict(weights=[0.] * 7 + [slope] + [0.] * 4)
         if own:
-            models[store, '', machine] = dict(weights=[0.] * 7 + [-slope] + [0.] * 2)
+            # 本物の係数と同じく学習量（件数・日数）を持たせる（幸町の混合の重みに使う、2026-11-21）。
+            models[store, '', machine] = dict(weights=[0.] * 7 + [-slope] + [0.] * 2, n=100, days=20)
         with (patch.object(runtime, 'baseline_groups', return_value=groups),
               patch.object(runtime, 'train', return_value=models),
               patch.object(runtime, 'method_signature', return_value=method)):

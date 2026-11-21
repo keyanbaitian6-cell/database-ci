@@ -20,8 +20,9 @@ import core
 import daily_learning_archive
 import daily_learning_fixed
 from daily_learning import (JST, VERSION, RULE_VERSION, MATURITY, PERIOD, STORE_COUNT, STORE_MODEL, VARIETY_MODEL, History,
-                            Journal, LateError, candidate_rates, comparison, digest, encoded, identity, jst, outcome, outcome_source, period_days,
-                            prediction_target, rank_by, rank_pool, rollback_needed, shift, store_day, train, valid)
+                            BLEND_STORES, BLEND_VERSION, Journal, LateError, blend_weights, candidate_rates, comparison, digest,
+                            encoded, identity, jst, outcome, outcome_source, period_days,
+                            prediction_target, rank_blend, rank_by, rank_pool, rollback_needed, shift, store_day, train, valid)
 from file_io import atomic_writer
 
 FILE_NAME = 'daily-learning.json'
@@ -110,7 +111,9 @@ def method_signature(store):
         import normal_next_day_model
         base = (f'score={core.VERSION},next={core.NEXT_DAY_METHOD_VERSION},normal={normal_next_day_model.METHOD_VERSION},'
                 f'variety={core.candidate_method_version(store, core.VARIETY_GROUP_NAME)}')
-    return f'{VERSION}|{base}'
+    # 2026-11-21：幸町だけ学習版の並べ方（混合）を変えた。ほかの店舗の版は変えない（比較期間をやり直さない）。
+    learned = f'{VERSION}+{BLEND_VERSION}' if store in BLEND_STORES else VERSION
+    return f'{learned}|{base}'
 
 
 def explain(error):
@@ -373,9 +376,15 @@ def build_prediction(rows, pscube, target, journal, node=None, history_rows=None
         adopted = state.get('active') == 'learned' and state.get('method') == method
         # v4：バラエティは台ごとに独立に見る（機種ごとの係数で機種どうしを比べない）ので、バラエティ専用の係数だけで並べる。
         # それ以外は機種ごとの係数（v3と同じ）、無い機種（新台など）は店舗共通の係数。
+        mix = None
         if group['name'] == core.VARIETY_GROUP_NAME:
             kind = 'variety'
             ordered = rank_by(group['pool'], history, models.get((group['store'], group.get('rate', ''), VARIETY_MODEL)), kind)
+        elif group['store'] in BLEND_STORES and (group['store'], group.get('rate', ''), STORE_MODEL) in models:
+            # 2026-11-21 幸町：店舗共通の点と機種専用の点を、専用係数の学習量で混ぜる（専用係数の無い機種は共通だけ）。
+            kind = 'blend'
+            ordered = rank_blend(group['pool'], history, models, group['store'], group.get('rate', ''))
+            mix = blend_weights(group['pool'], models, group['store'], group.get('rate', ''))
         else:
             kind, ordered = 'machine', rank_pool(group['pool'], history, models)
             if ordered is None:
@@ -388,6 +397,7 @@ def build_prediction(rows, pscube, target, journal, node=None, history_rows=None
                               learned=learned, selected=learned if active == 'learned' else current,
                               active=active, trained=ordered is not None, method=method,
                               model=kind if ordered is not None else None,
+                              **({'mix': mix} if mix is not None else {}),
                               status=('改善を確認して採用中' if active == 'learned' else
                                       '学習済み・将来成績を比較中' if ordered is not None else '学習データ不足・従来方式'),
                               pool=[{'id': list(identity(r)), 'features': history.model_features(r, kind if ordered is not None else 'machine')}

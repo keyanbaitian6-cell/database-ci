@@ -35,7 +35,12 @@ FEATURES = ('constant', 'last_plus', 'last_missing', 'plus7', 'coverage7',
 STORE_MODEL, VARIETY_MODEL = '#店舗共通', '#バラエティ'
 STORE_FEATURES = FEATURES + ('fresh7', 'fresh28')       # 今の機種が入ってから7日以内／8〜28日
 VARIETY_FEATURES = FEATURES + ('dry_streak',)            # プラスでない日が続いた数（直近28日、判定できない日は飛ばす）/28
-KIND_FEATURES = {'machine': FEATURES, 'store': STORE_FEATURES, 'variety': VARIETY_FEATURES}
+# 2026-11-21 幸町だけ：店舗共通の点と機種専用の点を、機種専用の係数の学習量に応じて混ぜる（'blend'）。
+# 特徴は店舗共通と同じ12個（先頭10個が機種専用の特徴）。式は結果を見る前に固定した
+# （../outputs/daily-blend-20261121/計画.md）。方式の版は daily_learning_runtime.method_signature で幸町だけに付ける。
+BLEND_STORES = ('saiwaichou',)
+BLEND_VERSION = 'saiwaichou-blend-20261121'
+KIND_FEATURES = {'machine': FEATURES, 'store': STORE_FEATURES, 'variety': VARIETY_FEATURES, 'blend': STORE_FEATURES}
 VARIETY_STORES = ('nagamachiminami', 'saiwaichou')       # バラエティの組があるのはメルヘンの2店舗
 
 
@@ -222,7 +227,7 @@ class History:
                     break
                 streak += 1
             return [streak / 28]
-        if kind == 'store':
+        if kind in ('store', 'blend'):
             if start is None:
                 return [0., 0.]       # データの初めより前からある台は、入った日が分からない
             installed = ids[bisect_right(ids, start)]
@@ -367,6 +372,43 @@ def rank_by(pool, history, model, kind):
     if model is None:
         return None
     return _ordered([(sum(a * b for a, b in zip(history.model_features(r, kind), model['weights'])), r) for r in pool])
+
+
+def mix_weight(model):
+    """機種専用の係数の重み w（2026-11-21、幸町）。係数が無ければ 0。
+
+    w = min(n/(n+100), d/(d+20))。n・d はその係数の学習に使えた件数・日数。100件・20日は専用の係数を作る
+    下限（train）と同じ値で、なめらかな形では「専用と共通が半々」の点とみなす。件数と日数の少ないほうで決める
+    （同じ日の台は店全体の上下を共有するので、台数が多くても日数が少なければ重みを上げない）。成績で選んだ値ではない。"""
+    if model is None:
+        return 0.
+    return min(model['n'] / (model['n'] + 100), model['days'] / (model['days'] + 20))
+
+
+def rank_blend(pool, history, models, store, rate=''):
+    """店舗共通の点と機種専用の点を混ぜて並べる（2026-11-21、幸町）。店舗共通の係数が無ければ None。
+
+    係数の配列は混ぜない。それぞれ本来の特徴で採点した点を (1-w)・w で混ぜる。どちらも同じ形のリッジ回帰
+    （y−0.5、罰則100、日等重み）の出力なので同じ尺度。同点の並びは rank_pool と同じ。"""
+    common = models.get((store, rate, STORE_MODEL))
+    if common is None:
+        return None
+    scores = []
+    for row in pool:
+        x = history.model_features(row, 'blend')
+        score = sum(a * b for a, b in zip(x, common['weights']))
+        own = models.get(learning_key(identity(row))[:3])
+        w = mix_weight(own)
+        if w:
+            score = (1 - w) * score + w * sum(a * b for a, b in zip(x[:len(FEATURES)], own['weights']))
+        scores.append((score, row))
+    return _ordered(scores)
+
+
+def blend_weights(pool, models, store, rate=''):
+    """組の各機種（学習の名前）の重み w。保存・点検用。"""
+    names = sorted({learning_key(identity(r))[2] for r in pool})
+    return {name: mix_weight(models.get((store, rate, name))) for name in names}
 
 
 def candidate_rates(name, candidates, labels):

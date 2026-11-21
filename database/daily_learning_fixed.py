@@ -6,7 +6,7 @@ from pathlib import Path
 
 from daily_learning import (
     JST, MATURITY, STORE_MODEL, VARIETY_MODEL, Journal, candidate_rates, comparison,
-    identity, rank_by, rank_pool, shift, store_day,
+    identity, rank_blend, rank_by, rank_pool, shift, store_day,
 )
 from daily_learning_names import learning_key
 
@@ -45,7 +45,12 @@ def matched_pairs(store, groups, projected, history, models, fixed):
         if kind == 'machine' and any(learning_key(identity(r))[:3] not in fixed for r in pool):
             kind = 'store'
         updated = saved['learned']
-        if kind == 'machine':
+        if kind == 'blend':
+            # 2026-11-21 幸町の混合：固定版は開始日の係数と、その係数の学習量から決まる混合比のまま
+            # （開始日に専用係数の無かった機種は、後から専用係数ができても共通だけ）。更新版はその日の本番の候補。
+            key = (store, group.get('rate', ''), STORE_MODEL)
+            ordered = rank_blend(pool, history, fixed, store, group.get('rate', '')) if key in models else None
+        elif kind == 'machine':
             ordered = rank_pool(pool, history, fixed)
         elif kind in ('store', 'variety'):
             name = STORE_MODEL if kind == 'store' else VARIETY_MODEL
