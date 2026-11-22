@@ -122,7 +122,7 @@ class LocalReportTests(unittest.TestCase):
             try:
                 with patch.object(app, 'ROOT', root_path), patch.object(app, 'DATA_DIR', data), patch('daily_learning_runtime.run_due', return_value=(False, None)), \
                      patch.object(app.tk, 'Tk', make_root), \
-                     patch.object(app.os, 'startfile') as start, \
+                     patch.object(app.os, 'startfile', create=True) as start, \
                      patch('webbrowser.open') as browser, \
                      patch.object(app.messagebox, 'showinfo') as info:
                     app.main()
