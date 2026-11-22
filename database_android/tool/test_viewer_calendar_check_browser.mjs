@@ -100,7 +100,9 @@ const helpers = () => {
   await page.goto(origin + '/database-viewer/');
   await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
   let log = null;
-  for (let i = 0; i < 160 && !(log?.calendar && !log.running); i++) {
+  // B0→B1→B2 は1つずつ動き、区切りの間は running が null になる。B1（calendar）だけで止めると、B2 の結果を
+  // 確かめる前に読んでしまう（2026-11-22、Geminiの点検 H-12⑤）。最後の B2（scores）まで待つ。
+  for (let i = 0; i < 160 && !(log?.calendar && log?.scores && !log.running); i++) {
     await page.waitForTimeout(250);
     log = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag')); } catch { return null; } });
   }

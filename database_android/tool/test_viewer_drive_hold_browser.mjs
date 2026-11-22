@@ -87,12 +87,17 @@ try {
     await page.getByText(NOTICE, {exact: false}).waitFor({timeout: 30000});
     assert.equal(await settle(page, requests), 0, '開き直しても自動更新を呼ばない');
     // 手動の更新はいつでも使える。
+    const scoresBefore = (await diag()).phases.scores?.count ?? 0;
     await page.getByRole('button', {name: 'Googleドライブの最新を読み込む'}).click();
     await updated(page).waitFor({timeout: 60000});
     assert.ok(requests.some(url => url.includes('check=1')), '手動の更新は通信する');
     // 知らせのあとも、共有の取り込みと日別キャッシュの照合（B0〜B2、`running` が calendar・scores など）が続く。
     // それが終わってから確かめる（2026-11-18、知らせの直後に calendar の途中で落ちた）。
-    for (let i = 0; i < 80 && (await diag()).running !== null; i++) await page.waitForTimeout(250);
+    // 照合は B0→B1→B2 の順に1つずつ動き、区切りと区切りの間は running が null になる（2026-11-22、CI run 45030818108 で
+    // B0 と B1 の間の null を「終わった」と読み、直後に B1 の calendar が始まって落ちた）。最後の B2（scores）の回数が
+    // 増え、かつ何も動いていないところまで待つ（B2 は日別キャッシュが無くても区切りを数える。index.html の dayCheck）。
+    const settled = d => d.running === null && (d.phases.scores?.count ?? 0) > scoresBefore;
+    for (let i = 0; i < 160 && !settled(await diag()); i++) await page.waitForTimeout(250);
     const done = await diag();
     assert.equal(done.drive_halt, undefined, '手動の更新が最後まで終わったら印を消す');
     assert.equal(done.running, null);
