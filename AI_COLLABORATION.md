@@ -4146,4 +4146,4 @@
 | 本当に枝分かれしているときは従来どおり停止／浅い境界が残るときは誤った `merge` を案内しない | 済 | `test_shallow_clone_still_stops_when_other_repository_truly_diverged`・`test_remaining_shallow_boundary_warns_to_unshallow_instead_of_merge` PASS（`11f530c`） |
 | 既存の `push_ci.py` の全試験通過 | 済 | `test_push_ci.py` 全19件 OK（JST・UTC、`11f530c`） |
 
-- 配布・公開状況：**GitHub 未反映（Antigravityクラウド作業コピーにローカルコミット済み・PC側からの反映待ち）**。`63e8bfb` 基準で `git am` できるパッチを作成し、一時複製で警告なし適用・ツリー完全一致・`test_push_ci.py` 19件通過を確認して利用者へ渡した。Web公開・Googleスクリプト貼替・同期実行・APK作成は対象外（未実施）。
+- 配布・公開状況：**`keyanbaitian6-cell/database-ci` の `main` へ送信済み（2026-11-22 21:19 JST、PC側の Gemini にて反映）**。PC側で `63e8bfb` へ fast-forward したうえで `git am --3way` により警告なく適用（コード・試験 `1c692c1`、文書 `5623211`）、Windows 環境で `database\.venv\Scripts\python.exe -m unittest discover -s tests -p test_push_ci.py -v` 全19件 OK（59.297秒）を確認し、`tools/push_ci.py` で `63e8bfb..5623211` を非強制送信した。CI の結果は未確認（送信時点で実行中）。Web公開・Googleスクリプト貼替・同期実行・APK作成は対象外（未実施）。
