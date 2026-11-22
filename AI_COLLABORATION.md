@@ -4429,7 +4429,8 @@
 | C8 理由の文・同点の順・半角記号・照合画面の機種名 | 済 | `test/store_pattern_test.dart` 11件、新規 `test/display_machine_name_test.dart`、`test/pscube_validation_page_test.dart`、`test/half_width_kana_screens_test.dart` |
 | C9 公開の道具の抜けで止まる・共有カレンダー試験の時計固定 | 済 | 新規 `database/tests/test_stage_publish_files.py` 3件、`test_share_viewer_browser`（既定日と 2027-01-20 の両方）、`test_share_history_reread_browser`・`test_share_loading_browser` |
 | 全体ゲート（`0786256` 単独） | 済 | `bash database_android/tool/check_before_build.sh` 104項目 OK・ALL PASSED（作業フォルダ `C:\w\wt-c49`、ログ `C:\w\cbw-c49.log`） |
-| 全体ゲート（Gemini の `009dc55` と合わせた版） | 実行中 | 作業フォルダ `C:\w\wt-all`、ログ `C:\w\cbw-all.log`。結果はこの下に追記する |
+| 全体ゲート（Gemini の `009dc55` と合わせた版） | 済（1件は流し直しで通過） | 作業フォルダ `C:\w\wt-all`。1回目は作業フォルダに gitに入っていない種データ `database_android/assets/database_seed.json` を写し忘れ、Flutter の試験・解析・閲覧ページのビルドが落ちた（コードの失敗ではない）。写して全体を流し直し、2回目は `test_viewer_event_history_browser` の1件だけ失敗（横幅393・長町南で「4台構成」のボタンを30秒待って切れた）。コードを変えずに同じビルド（`VIEWER_WEB_ROOT=C:\w\cbw-alliewer`）でこの試験だけを2回流し、2回とも通過。`0786256` 単独のゲートでも通っており、`009dc55` は閲覧ページを変えていないため、重いときの待ち時間切れと判断した。ほかの項目はすべて OK |
+| 次にこの試験が同じ所で落ちたら | 未 | 「4台構成」のボタンを押す待ちを、ほかの手順と同じ60秒にすることを検討する（今回は試験を変えていない） |
 | C5 | 保留 | 上のとおり利用者の判断待ち |
 
 - **まだのこと（利用者の決定待ち）**
