@@ -4164,3 +4164,18 @@
   - 変えていないもの：取り込み中のスリープ禁止、Windowsの電源設定（このアプリからは触らない）、閲覧ページ・Android・共有カレンダー・Googleスクリプト（公開・APK・貼替は不要）。
   - 試験：`database/tests` の全体 1,102件 OK（`.venv` の Python、Windows）。1回目は自分の書き替えで `app.py` に構文の誤り（改行の書き方）が入り、取り込みに関わる22件が読み込めず落ちた。直して全体を流し直した。
   - 効くのは、PC版を `start.cmd` で起動し直してから（利用者の作業）。push は未実施（統合の結果と合わせて送るかを利用者に確かめる）。
+
+## 2026-11-22 夜 Claude：3つのAIの点検結果から、並行して直せるものの分担（担当のファイル）
+
+- 利用者「作業が競合しないようにgeminiとclaudeで並行作業が可能な修正を見つけてとりあえず分けて指示を出せる？」。基準：手元の main `b8b398c`（自動スリープの取り消し。**まだ push していない**）。同じファイルを2つのAIが同時に直さないよう、担当のファイルを先に決める。push は各AIでせず、両方の作業がそろってから1回にまとめる（CIの分数を節約）。
+- **Gemini（PCのPython。担当ファイル：`database/daily_learning_runtime.py`、`database/forward_validation.py`、`database/site777_session.py`、`database/app.py`、`database/tests/` の関係する試験、`database/tests/test_app_output_worker.py`）**
+  - G1 日次学習：1つの原本DBが10分以内に書かれただけで全店が待つ／一時的な失敗や500G未満の控え（`site777-staging/日付-low.json`）だけの追加では原本DBの更新時刻が変わらず、8:00まで再試行しない（Codex #3・Gemini H-2①②、Claudeがコードで確認：`daily_learning_runtime.py:93-99`）。
+  - G2 前向き検証：自動実行が失敗・中断・実行中の重なりで、その朝はやり直さない（Claude #4・Codex #8・Gemini M-3①、Claudeが確認：`forward_validation.py:239` で実行前に印を使う、`:149-150` で実行中は断るだけ）。
+  - G3 サイトセブン：①2窓で500G未満の控えの読み・足し・書きが競合して消える（Codex #6・Gemini H-3①、確認：`site777_session.py:591-600`）②書き出しに失敗すると印を戻さず、次の窓で追加0台なら書き出さない（Codex #7、確認：`:1033-1035`）③表を読んだのが23:30前でも、保存処理の時刻が付いて確定扱いになる（Codex #1、確認：`:1057` の `self._now()`）。
+  - G4 試験のぶれ：Windowsで2秒の固定待ちで落ちた `test_startup_import_keeps_tk_timers_running_during_report_generation`（11/21 run 44863125882）。待ちの上限を延ばす（条件を満たせばすぐ抜けるので遅くならない・弱めない）。
+- **Claude（閲覧ページ・共有カレンダー。担当ファイル：`database_android/web/pscube/viewer_bootstrap.mjs`、`database_android/tool/viewer_parts_client.js`・`build_viewer_parts.mjs` と生成先 `web/viewer_parts.mjs`・`share_viewer/viewer_parts.mjs`・`share_viewer/capture_health.mjs`、`share_viewer/app.mjs`、`database_android/lib/day_score_check.dart`・`viewer_main.dart`、`database_android/tool/test_*.mjs`・`test/` の関係する試験）**
+  - C1 閲覧ページのP’s CUBE版に、更新が途中で落ちたら6時間自動更新を止める保険（`autoUpdateHold`）と保存失敗の控え（`recordSaveFailure`）が無い（Gemini H-8、Claudeが確認：`web/pscube/viewer_bootstrap.mjs` は `phase` だけ渡し `autoUpdateHold` が無い。11/18の記録の「P’s CUBE版も同じに働く」は誤り）。
+  - C2 日別キャッシュの中身だけ壊れた日が書き直されない（Codex #4、確認：`viewer_parts_client.js:399-400`）／共有カレンダーが保存済みの全履歴を毎回読み直す（Codex #10・Gemini H-5）／共有カレンダーの `capture_health.mjs` が生成物とずれ照合の試験の外（Claude #8・Gemini H-12①）。
+  - C3 iPhoneのB2が過去の日を一巡できない（Codex #11・Gemini H-7、確認：`day_score_check.dart:157-162`）。
+- 今は分けない（利用者の判断・設計が要る、またはファイルが重なる）：共有カレンダーの長期のメモリの測定と保険（Claude #2）、P’s CUBE版の検査の回数（Claude #3）、サイトセブンを最小化したときの知らせ（Claude #5）、GoogleのスクリプトとDrive（Codex #2・Gemini H-6・M-5・H-11②）、P’s CUBE・メルヘンの台数が変わった日の取り戻し（Codex #5・Gemini H-9・H-10）、Gemini H-1（MYが空の台。今のデータでは0件：保存済みP’s CUBE DBで、MYが空なのはアナスロの補完だけ（比較から除外済み）、サイトセブン4,841件・P’s CUBE 11,795件はすべてMYあり。潜在の穴）、Gemini H-4（共有カレンダーの localStorage に送信済みの分が溜まる。容量に届く時期は未確認）。
+- 公開（閲覧ページ・共有カレンダー）は、Claudeの作業が終わってから利用者が決める。
