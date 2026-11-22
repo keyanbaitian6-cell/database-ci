@@ -4351,3 +4351,11 @@
 - 利用者「CI後に公開」。CI：`521e713`（試験の待ち方の直し。Web の中身は `272505f` と同じ）の run 45032059369 が success（full・pc の Ubuntu・Windows とも）。その前の `5ca2e45` の run 45030818108 は full だけ試験の待ち方の競合で failure（上の記録）。
 - 公開するもの：全体ゲート（`/c/w/cbw-c123`、`272505f` のソース、ALL PASSED）の `viewer`・`share` の stage を、公開用の複製（`../outputs/publish-c123-20261122/public-viewer`・`public-share`）に写し、改行だけの差を戻して、中身の変わったファイルだけをコミットした。閲覧ページ `7280190`（`main.dart.js`・`pscube/viewer_bootstrap.mjs`・`viewer_parts.mjs`、直前 `d1afc7c`）、共有カレンダー `ea4e6e0`（`app.mjs`・`viewer_parts.mjs` と版番号の更新、直前 `913b216`）。前回の公開から共有カレンダーに入ったソースの変更は `272505f` だけ。
 - **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `git revert 7280190` して push、共有カレンダーは `keyanbaitian6-cell/database-share` で `git revert ea4e6e0` して push。どちらも端末の保存の形は変えていない（B2 の覚え方のキーが `database-viewer-b2-day:<店>` に替わるだけで、戻しても古いキーから始め直すだけ）ので、戻しても端末のデータは影響を受けない。
+- 公開の push（2026-11-23 0時台）：`database-viewer` `d1afc7c..7280190`、`database-share` `913b216..ea4e6e0`（非強制）。GitHub Pages の公開処理は両方とも開始（queued）を確認。iPhone での表示・P’s CUBE版の保険の動き・B2 の照合日は未確認。
+
+## 2026-11-23 0時台 利用者の決定：P’s CUBE の取り込みはもうしない（サイトセブンから取り込む）
+
+- 利用者「ごめん忘れてた。P's cubeの取り込みはもうやらないかな。サイトセブンからやるから」。`AGENTS.md` の P’s CUBE の節を書き替えた（取り込みはしない・P-STATION はサイトセブンから・保存先と閲覧・日次学習・前向き検証はそのまま・コードは利用者が言うまで消さない）。
+- **2回目の分担から外したもの**：G5（P’s CUBE 減台後の取り戻し。PC `pscube_import.py`・Android `pscube_store.dart`）、G6（Android の P’s CUBE で3回失敗したときにページを離す）、C9 のうち P’s CUBE の取り込み部品（`pscube_capture.js`・`pscube_auto_probe.js`）の作り直しと照合の試験。どれも P’s CUBE の取り込みだけに効くため。Gemini には、G5・G6 をしないよう伝える（利用者経由）。
+- そのまま残すもの：G7〜G11（サイトセブン・前向き検証・日次学習・アナスロ・試験）、C4〜C8、C9 の残り（`stage_viewer.py --pscube-only` の `shared_events.mjs`、`stage_share_viewer.py` の `sw.js`、共有ページの画面試験の1月の抜け）。P’s CUBE の 48MiB（H-6②）は、保存先が同じで P-STATION の台が毎日増えるので、引き続き期日つき（12月下旬の見込み）。
+- 照合の表のうち、P’s CUBE の取り込みだけの項目（Codex #5、Gemini M-2①②）は、今後は直す対象にしない。M-2③（機種の種別の優先）は保存・閲覧の規則なので残る。
