@@ -1958,7 +1958,11 @@ def main():
         # 7:30台だけ、しかも取り込み窓が開いていると動かず、窓を朝まで開いたままだと保存されなかった）。
         # 同じ原本で「取り込み待ち」になったら、原本が変わるまで読み直さない（daily_learning_runtime.run_due）。
         from daily_learning import JST
-        from daily_learning_runtime import run_due
+        from daily_learning_runtime import clear_failed_mark, run_due
+        while not daily_worker.results.empty():
+            msg = daily_worker.results.get_nowait()
+            daily_last[0] = clear_failed_mark(daily_last[0], msg)
+            tell(msg + '\n')
         try:
             due, daily_last[0] = run_due(DATA_DIR, datetime.now(JST), daily_last[0])
         except Exception:  # noqa: BLE001 - 確認に失敗しても次の5分で確かめ直す
@@ -1966,7 +1970,9 @@ def main():
         if due:
             daily_worker.start()
         while not daily_worker.results.empty():
-            tell(daily_worker.results.get_nowait() + '\n')
+            msg = daily_worker.results.get_nowait()
+            daily_last[0] = clear_failed_mark(daily_last[0], msg)
+            tell(msg + '\n')
         check_pending_forward()
         root.after(300_000, daily_tick)
 

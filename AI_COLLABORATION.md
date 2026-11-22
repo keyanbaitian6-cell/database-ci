@@ -4180,6 +4180,66 @@
 - 今は分けない（利用者の判断・設計が要る、またはファイルが重なる）：共有カレンダーの長期のメモリの測定と保険（Claude #2）、P’s CUBE版の検査の回数（Claude #3）、サイトセブンを最小化したときの知らせ（Claude #5）、GoogleのスクリプトとDrive（Codex #2・Gemini H-6・M-5・H-11②）、P’s CUBE・メルヘンの台数が変わった日の取り戻し（Codex #5・Gemini H-9・H-10）、Gemini H-1（MYが空の台。今のデータでは0件：保存済みP’s CUBE DBで、MYが空なのはアナスロの補完だけ（比較から除外済み）、サイトセブン4,841件・P’s CUBE 11,795件はすべてMYあり。潜在の穴）、Gemini H-4（共有カレンダーの localStorage に送信済みの分が溜まる。容量に届く時期は未確認）。
 - 公開（閲覧ページ・共有カレンダー）は、Claudeの作業が終わってから利用者が決める。
 
+## 2026-11-22 夜 Gemini：PC Python 4件（G1 日次学習・G2 前向き検証・G3 サイトセブン・G4 試験）の修正（着手前記録→実装）
+
+- 依頼：上の分担のうち Gemini 担当の4件（G1〜G4、PC の Python のみ）。基準：`bbe1031`（Claude の自動スリープ取り消し `b8b398c` を含む）。`database_android/`・`share_viewer/` は触らない。対象サイトへの接続なし、記録DBの `outcomes`・`decisions` と `../outputs/` の途中成績は開かない。
+- **担当のファイル**：`database/daily_learning_runtime.py`、`database/forward_validation.py`、`database/site777_session.py`、`database/app.py`、`database/tests/test_daily_learning_schedule.py`、`database/tests/test_forward_validation.py`、`database/tests/test_site777_session.py`、`database/tests/test_app_output_worker.py`（およびこの `AI_COLLABORATION.md`）。
+- **完了の条件**：
+  1. **G1 日次学習（`daily_learning_runtime.py`・`app.py`）**：
+     - 原本DBごとに変更と10分静穏を判定し、片方の原本DBが10分以内に書かれていても、もう片方の原本DBが10分以上静穏なら先に動かしてそろった店を保存する（書き込み中だった側は印に入れず、10分静穏になった時点で動く）。
+     - P-STATION（`pscube`）の入力の印に `site777-staging/日付-low.json` の更新時刻も含め、500G未満の控えだけが追加・更新されたときも10分静穏後に再実行する。
+     - 一時的な処理失敗（DBロック・タイムアウト等、`処理失敗` や `失敗で終了`）が起きた原本は印を固定せず、8:00の締切前に限って次の確認で再試行できるようにする。データがそろっていない「取り込み待ち」では同じ原本で5分ごとに読み直さない。
+  2. **G2 前向き検証（`forward_validation.py`）**：
+     - `start_pending`（前夜23:30〜23:59の完了の印からの0:00〜8:59自動実行）が失敗または途中で中断したときは、9:00の締切までに1回だけ再試行できるようにする（成功したら再試行しない。再試行も失敗したら3回目は流さない）。
+     - 実行中（`_running` ロック中）に次の完了の知らせが届いたとき、「すでに動いています」で捨てずに控え、先の実行が終わったあとに9:00の締切内なら続けて1回だけ流す（実行中に複数回届いても1回にまとめる）。
+     - ×で閉じた晩・エラー停止の晩は自動実行しない決まり（11/9）を維持する。
+  3. **G3 サイトセブン（`site777_session.py`）**：
+     - 500G未満の控え（`site777-staging/日付-low.json`）を読んで足して書く処理をプロセス・スレッド間のファイルの鍵と一時ファイル置換（`atomic_writer`）で守り、2つの窓で同じ日を同時に取り込んでも両方の機種の控えが消えずに残る。
+     - 窓を閉じたあとの書き出し（`_backup_after_close`）が失敗したときは `_backup_due` の印（メモリとディスクの控え）を戻し、同じ窓の再試行や次の窓で追加が0台のときでも成功するまで書き出す。
+     - 表（`table`）を読んだ時刻をジョブに控え、保存（`_finish`）の時刻が23:30を過ぎていても、表を読んだのが23:30より前ならその時刻を `source_captured_at` に使って確定前（未確定）として扱う。
+  4. **G4 試験（`database/tests/test_app_output_worker.py`）**：
+     - `test_startup_import_keeps_tk_timers_running_during_report_generation` の固定2秒待ち上限を延ばし（条件を満たせばすぐ抜ける形はそのまま、検証内容は弱めない）、負荷の高い Windows 環境でも時間切れしにくくする。
+- **確かめ方**：
+  - G1〜G3 の各条件に対する再発防止試験を `database/tests/test_daily_learning_schedule.py`、`database/tests/test_forward_validation.py`、`database/tests/test_site777_session.py` に追加し、G4 の `test_app_output_worker.py` とあわせて個別実行で通過を確かめる。
+  - 最後に `database\.venv\Scripts\python.exe -m unittest discover -s tests` で PC 試験全体を流し、全件成功することを確認する。
+- **変更内容**：
+  - **G1（`database/daily_learning_runtime.py`・`database/app.py`）**：
+    - `run_due()` に `_source_stamp()`・`_failed_sources()`・`clear_failed_mark()` を追加。原本ごとに変更と10分静穏を判定し、片方の原本DBが10分以内に書かれていても、もう片方の原本DBが静穏なら先に動かしてその原本だけを印に入れるようにした。
+    - P-STATION（`pscube`）の入力の印に `site777-staging/日付-low.json` の更新時刻も含め、500G未満の控えだけが追加・更新された場合も10分静穏後に再実行するようにした。
+    - 直近の実行で `処理失敗`（原本DBロック・タイムアウト等）または `失敗で終了` になった原本は `before` から外し、`app.py` の `daily_tick()` でも `daily_worker.results` に `処理失敗` があれば `clear_failed_mark()` で該当原本の印だけを消すようにした（8:00の締切前に再試行でき、`取り込み待ち` の原本は残して5分ごとに読み直さない）。
+  - **G2（`database/forward_validation.py`）**：
+    - `start_pending()` に `MAX_PENDING_ATTEMPTS = 2`（`used_count`）を導入。1回目の自動実行が失敗または途中で中断（`done_target` 未記録）したときは、9:00までに1回だけ再試行できるようにした（成功時は `done_target` で止め、再試行も失敗したら3回目は流さない）。
+    - `run()` が実行中（`_running` ロック中）に次の完了の知らせが届いたとき、捨てずに `_queued` に1回分控え、先の実行が終わった時点の時刻が9:00の締切内（`in_window`）なら続けて1回だけ流すようにした。×で閉じた晩・エラー停止時は従来どおり動かさない。
+  - **G3（`database/site777_session.py`）**：
+    - `Session._write()` を `file_io.atomic_writer` に置き換え、`_remember_low()` をスレッド＋OSファイルロック `_low_file_lock`（`site777-low.lock`）で囲んで、2窓が同じ日を同時に取り込んでも `site777-staging/日付-low.json` の控えが消えないようにした。
+    - `_backup_after_close()` は `auto_backup` が成功（`BACKUP_OK`）したときだけ `_backup_due` の印（メモリおよび `site777-backup-due.json`）を消すようにし、失敗時は同じ窓の再試行でも次の窓で追加0台のまま閉じたときでも、成功するまで書き出すようにした。
+    - `kind == 'table'` で表を読んだ時刻 `table_at` をジョブ（`table_at`）に控え、`_finish()` の `source.make_backup()` に渡すことで、保存の時刻が23:30を過ぎていても表を23:30より前に読んでいれば確定前（未確定）として扱うようにした。
+  - **G4（`database/tests/test_app_output_worker.py`）**：
+    - `test_startup_import_keeps_tk_timers_running_during_report_generation` のループ待ち上限を2秒→15秒（`release.wait`・`join` も3秒→15秒）に延長した（条件を満たせばすぐ抜けるため実行時間は変わらず、検査も弱めていない）。
+- **試験（Windows、`database\.venv\Scripts\python.exe`）**：
+  - `test_daily_learning_schedule.py`：10件 OK（2.376秒、新規3件）。
+  - `test_forward_validation.py`：26件 OK（1.215秒、新規2件＋再試行更新1件）。
+  - `test_site777_session.py`：61件 OK（8.271秒、新規3件）。
+  - `test_app_output_worker.py`：1件 OK（1.544秒）。
+  - PC全体 `python -m unittest discover -s tests`：**1,110件すべて OK**（1,089件はサンドボックス内一括実行211.8秒でOK、サンドボックスのMSYS2/Git名前付きオブジェクト制限に当たる `test_push_ci.py` 19件・`test_project_python.py` 12件の計31件を通常実行52.3秒でOK確認）。
+- **確認の表**：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| G1 1つの原本DBが書き込み中でも、10分静穏な別の原本の店は先に動かす | 済 | `test_daily_learning_schedule.py` `test_one_recently_written_database_does_not_make_the_other_database_wait` PASS |
+| G1 500G未満の控え（`日付-low.json`）だけの追加でも10分静穏後に再実行する | 済 | `test_daily_learning_schedule.py` `test_adding_only_low_games_record_for_site777_triggers_rerun_after_quiet` PASS |
+| G1 一時的な失敗は8:00前に再試行し、「取り込み待ち」では5分ごとに読み直さない | 済 | `test_daily_learning_schedule.py` `test_transient_failure_is_retried_before_cutoff_while_waiting_for_capture_is_not` PASS |
+| G2 `start_pending` が失敗・中断したら9:00までに1回だけ再試行でき、成功後は流さない | 済 | `test_forward_validation.py` `test_failed_pending_run_at_0005_does_not_repeat_at_0010_and_still_runs_on_0700_capture`・`test_failed_or_interrupted_pending_run_retries_once_before_9am_and_stops_on_success` PASS |
+| G2 実行中に届いた完了の知らせを控え、先の実行後に締切内なら1回だけ流す（×閉じは流さない） | 済 | `test_forward_validation.py` `test_completion_arriving_while_running_runs_once_after_first_finishes_if_before_9am` PASS |
+| G3 2窓同時で500G未満の控え（`日付-low.json`）が競合して消えない | 済 | `test_site777_session.py` `test_two_windows_concurrently_recording_low_racks_keep_both_models` PASS |
+| G3 書き出し失敗時は `_backup_due` を残し、次の窓で追加0台でも成功するまで書き出す | 済 | `test_site777_session.py` `test_failed_backup_after_close_keeps_due_mark_even_when_next_window_adds_zero_racks` PASS |
+| G3 表を読んだのが23:30前なら、保存が23:30を過ぎても表の時刻で確定前扱いになる | 済 | `test_site777_session.py` `test_table_read_before_2330_and_saved_after_2330_uses_table_time_and_remains_unfinal` PASS |
+| G4 `test_app_output_worker.py` の待ち上限延長（試験は弱めない） | 済 | `test_app_output_worker.py` 1件 OK（1.544秒） |
+| PC全体の単体試験 | 済 | `database/tests` 全1,110件 OK |
+| 実運用（`start.cmd` 再起動後の日次学習・前向き検証・サイトセブン2窓） | **未確認** | PCアプリ・取り込み窓を `start.cmd` から開き直した後の実運用で確認 |
+
+
+
 ## 2026-11-22 夜 Claude：C1〜C3（閲覧ページ・共有カレンダー）の直し（ソースのみ・未公開・未push）
 
 - 依頼：利用者「C1-C3までお願いします」（上の分担のClaudeの担当）。基準 `bbe1031`。完了の条件（着手時に利用者へ提示）：①表示する値・保存する内容は変えない ②C1は保険と保存失敗の控えがメルヘン版と同じに働く ③C2は壊れた日を書き直し、共有カレンダーの読み直しを省く ④C3は日が増えても全日を一巡する ⑤再発を捕まえる試験を足し、全体ゲート ALL PASSED。

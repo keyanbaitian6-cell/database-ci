@@ -70,13 +70,80 @@ def unsaved_stores(data_dir, target):
         return list(STORES)
 
 
+def _source_stamp(data_dir, source, target):
+    """原本の更新時刻の印と、最後の書き込み時刻。P-STATIONは500G未満の控え（日付-low.json）も見る。"""
+    data_dir = Path(data_dir)
+    try:
+        db_mtime = os.stat(data_dir / DB_FILES[source]).st_mtime
+    except OSError:
+        db_mtime = None
+    if source == 'pscube':
+        try:
+            low_mtime = os.stat(data_dir / 'site777-staging' / f'{shift(target, -1)}-low.json').st_mtime
+        except OSError:
+            low_mtime = None
+        if low_mtime is not None:
+            times = [t for t in (db_mtime, low_mtime) if t is not None]
+            return (db_mtime, low_mtime), (max(times) if times else None)
+    return db_mtime, db_mtime
+
+
+def _failed_sources(data_dir, target, stores):
+    """直近の実行で一時的な失敗（処理失敗・失敗で終了）になった原本。取り込み待ちは含めない。"""
+    data_dir = Path(data_dir)
+    failed = set()
+    doc_at = ''
+    try:
+        doc = json.loads((data_dir / FILE_NAME).read_text(encoding='utf-8'))
+        doc_at = str(doc.get('updated_at') or '')
+        if doc_at and prediction_target(datetime.fromisoformat(doc_at)) == target:
+            status = str(doc.get('status') or '')
+            for store in stores:
+                if f'{STORE_NAMES.get(store, store)}：処理失敗' in status:
+                    failed.add(SOURCES[store])
+            if status.startswith('処理失敗') or '日次学習で処理失敗' in status:
+                failed.update(SOURCES[s] for s in stores)
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    try:
+        lines = (data_dir / 'daily-learning' / TRACE_NAME).read_text(encoding='utf-8').splitlines()
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            stamp, sep, text = line.partition('\t')
+            if sep and text.startswith('失敗で終了：') and prediction_target(datetime.fromisoformat(stamp)) == target:
+                if not doc_at or stamp >= doc_at:
+                    failed.update(SOURCES[s] for s in stores)
+            break
+    except (OSError, ValueError):
+        pass
+    return failed
+
+
+def clear_failed_mark(last, status):
+    """実行結果の文に一時的な『処理失敗』が含まれるとき、その原本の印を消して次回の確認で再試行できるようにする。
+    データがそろっていない『取り込み待ち』の原本の印は残す。"""
+    if not last or not isinstance(last, tuple) or len(last) != 2 or not isinstance(last[1], dict):
+        return last
+    text = str(status or '')
+    if '処理失敗' not in text:
+        return last
+    failed = {SOURCES[s] for s in STORES if f'{STORE_NAMES.get(s, s)}：処理失敗' in text}
+    if not failed and (text.strip().startswith('処理失敗') or '日次学習で処理失敗' in text):
+        failed = set(SOURCES.values())
+    if not failed:
+        return last
+    return (last[0], {k: v for k, v in last[1].items() if k not in failed})
+
+
 def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS):
     """今、日次学習を動かすか。(動かすか, 入力の印)。入力の印は、前に試したときと同じなら動かさないために使う
     （データがそろわず「取り込み待ち」になった晩に、同じ原本で5分ごとに読み直さない）。
     - 保存できる時間帯（前日23:30〜当日8:00）で、まだ保存していない店があるときだけ。
-    - その店の原本DBが前に試したときから変わっていること。
-    - 定期確認では、原本DBの最後の書き込みから quiet 秒たっていること（取り込み中は待つ）。PC本体を閉じるとき
-      （on_close）は待たない（閉じる＝取り込みは終わった、とみる。そろっていなければ ready が取り込み待ちにする）。
+    - 原本ごとに、前に試したときから変わっており（または前回が一時的な処理失敗で）、最後の書き込みから
+      quiet 秒たっているものが1つでもあれば動かす（1つの原本が書き込み中でも、そろった別の原本の店は先に保存する）。
+    - P-STATION（pscube）は500G未満の控え（site777-staging/日付-low.json）の更新時刻も含めて判定する。
+    - PC本体を閉じるとき（on_close）は quiet 秒を待たない（閉じる＝取り込みは終わった、とみる。そろっていなければ ready が取り込み待ちにする）。
     原本DBは開かない（ファイルの更新時刻だけ）。"""
     target = prediction_target(now)
     if target is None:
@@ -84,19 +151,20 @@ def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS):
     stores = unsaved_stores(data_dir, target)
     if not stores:
         return False, last
-    stamps = {}
+    stamps, latest = {}, {}
     for source in sorted({SOURCES[s] for s in stores}):
-        try:
-            stamps[source] = os.stat(Path(data_dir) / DB_FILES[source]).st_mtime
-        except OSError:
-            stamps[source] = None
-    # 前に試したときと同じ対象日で、残っている店の原本DBがどれも変わっていなければ動かさない。
-    before = last[1] if last and last[0] == target else {}
-    if all(source in before and before[source] == t for source, t in stamps.items()):
-        return False, last
-    if not on_close and any(t is not None and jst(now).timestamp() - t < quiet for t in stamps.values()):
-        return False, last
-    return True, (target, {**before, **stamps})
+        stamps[source], latest[source] = _source_stamp(data_dir, source, target)
+    failed = _failed_sources(data_dir, target, stores)
+    before = {k: v for k, v in (last[1] if last and last[0] == target else {}).items() if k not in failed}
+    now_ts = jst(now).timestamp()
+    ready_stamps = {
+        source: t for source, t in stamps.items()
+        if (source not in before or before[source] != t)
+        and (on_close or latest[source] is None or now_ts - latest[source] >= quiet)
+    }
+    if not ready_stamps:
+        return False, (target, before) if failed and last and last[0] == target else last
+    return True, (target, {**before, **ready_stamps})
 
 
 def method_signature(store):

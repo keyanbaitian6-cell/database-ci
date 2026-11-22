@@ -269,28 +269,97 @@ class ForwardValidationTests(unittest.TestCase):
         kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread, runner=runner)
         # 前夜23:45に完了 → 印が残る
         fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(23, 45, day=9), **kw)
-        # 0:05 の印からの実行が失敗 → 成功の記録（done_target）は付かず、印を「使った」（used_target）だけ付く
+        # 0:05 の印からの実行（1回目）が失敗 → 成功の記録（done_target）は付かず、used_count=1 が付く
         self.assertIsNone(fv.start_pending(self.dir, reports.append, now=at(0, 5, day=10), **kw))
         self.assertEqual(len(calls), 2)
         self.assertIn('止まったものがあります', reports[-1])
         state = fv._read_state(self.dir)
         self.assertEqual(state.get('used_target'), '2026-11-10')
+        self.assertEqual(state.get('used_count'), 1)
         self.assertIsNone(state.get('done_target'))
-        # 0:05 が失敗したあと、0:10 の確認では流れない（かつ「すでに自動保存済み」とも出さない）
-        why_0010 = fv.start_pending(self.dir, reports.append, now=at(0, 10, day=10), **kw)
-        self.assertIsNotNone(why_0010)
-        self.assertNotIn('すでに自動保存済み', why_0010)
-        self.assertIn('すでに実行済み', why_0010)
-        self.assertEqual(len(calls), 2)
+        # 0:05 が失敗したあと、9時までに1回だけ再試行できる（0:10、2回目）。ここでも失敗すると3回目は流れない
+        self.assertIsNone(fv.start_pending(self.dir, reports.append, now=at(0, 10, day=10), **kw))
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(fv._read_state(self.dir).get('used_count'), 2)
+        why_0015 = fv.start_pending(self.dir, reports.append, now=at(0, 15, day=10), **kw)
+        self.assertIsNotNone(why_0015)
+        self.assertNotIn('すでに自動保存済み', why_0015)
+        self.assertIn('すでに実行済み', why_0015)
+        self.assertEqual(len(calls), 4)
         # 7:00 に取り込みが完了すると流れる（成功すれば done_target が付く）
         code[0] = 0
         self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, reports.append, now=at(7, 0, day=10), **kw))
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 6)
         self.assertEqual(reports[-1], '前向き検証を自動で保存しました')
         self.assertEqual(fv._read_state(self.dir).get('done_target'), '2026-11-10')
         # 成功したあとは「すでに自動保存済み」が出る
         why_after = fv.start_pending(self.dir, reports.append, now=at(7, 5, day=10), **kw)
         self.assertIn('すでに自動保存済み', why_after)
+
+    def test_failed_or_interrupted_pending_run_retries_once_before_9am_and_stops_on_success(self):
+        # 1回目が途中で中断（または失敗）して done_target が無いまま used_target だけ書かれているとき、
+        # 9時前なら1回だけ再試行でき、成功したらそれ以上流れない。
+        (self.dir / fv.STATE_NAME).write_text(
+            '{"pending_target": "2026-11-10", "used_target": "2026-11-10", "used_count": 1}\n',
+            encoding='utf-8')
+        reports, calls = [], []
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0, 'v1 保存しました\n'))[1])
+        self.assertIsNone(fv.start_pending(self.dir, reports.append, now=at(0, 10, day=10), **kw))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(reports, ['前向き検証を自動で保存しました'])
+        self.assertEqual(fv._read_state(self.dir).get('done_target'), '2026-11-10')
+        why_next = fv.start_pending(self.dir, reports.append, now=at(0, 15, day=10), **kw)
+        self.assertIn('すでに自動保存済み', why_next)
+        self.assertEqual(len(calls), 2)
+
+    def test_completion_arriving_while_running_runs_once_after_first_finishes_if_before_9am(self):
+        # 実行中に次の完了の知らせが届いても「すでに動いています」で捨てず、先の実行が終わったあとに締切内なら1回だけ流す。
+        gate, inside = threading.Event(), threading.Event()
+        calls, reports1, reports2, reports3 = [], [], [], []
+        current_time = [at(8, 50, day=10)]
+
+        def runner(args, **kw):
+            calls.append(args[-1])
+            if len(calls) == 1:
+                inside.set()
+                gate.wait(5)
+            return Result(0, '保存しました\n')
+
+        kw = dict(outputs=self.outputs, python=self.python, runner=runner, now=lambda: current_time[0])
+        self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, reports1.append, **kw))
+        self.assertTrue(inside.wait(5))
+        # 実行中に2回完了が届いても、また×閉じ（None）が届いても、終わったあとに動くのは1回だけ
+        self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, reports2.append, **kw))
+        self.assertIsNone(fv.start('P’s CUBE', DONE_PSCUBE, self.dir, reports3.append, **kw))
+        self.assertIsNotNone(fv.start('サイトセブン', None, self.dir, reports3.append, **kw))
+        gate.set()
+        for _ in range(100):
+            if len(calls) >= 4 and reports1 and reports2 and reports3:
+                break
+            threading.Event().wait(0.02)
+        self.assertEqual(calls, ['daily', 'morning', 'daily', 'morning'], '先の実行のあと1回だけ続けて流れる')
+        self.assertEqual(reports1, ['前向き検証を自動で保存しました'])
+        self.assertEqual(reports2, ['前向き検証を自動で保存しました'])
+        self.assertEqual(reports3, ['前向き検証を自動で保存しました'])
+
+        # 先の実行が終わった時点で9:00を過ぎていれば、控えていた分は流さない
+        gate.clear()
+        inside.clear()
+        calls.clear()
+        late_reports = []
+        current_time[0] = at(8, 58, day=10)
+        self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, lambda _: None, **kw))
+        self.assertTrue(inside.wait(5))
+        self.assertIsNone(fv.start('サイトセブン', DONE_SITE777, self.dir, late_reports.append, **kw))
+        current_time[0] = at(9, 1, day=10)
+        gate.set()
+        for _ in range(100):
+            if late_reports:
+                break
+            threading.Event().wait(0.02)
+        self.assertEqual(calls, ['daily', 'morning'], '9時を過ぎてから終わったときは後続を流さない')
+        self.assertIn('0時〜9時', late_reports[0])
 
     def test_state_write_failure_records_to_error_log(self):
         import error_log

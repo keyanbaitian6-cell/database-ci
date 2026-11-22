@@ -25,7 +25,7 @@ class AppOutputWorkerTests(unittest.TestCase):
             def worker(run):
                 result = OutputWorker(run); workers.append(result); return result
             def delayed(*args, **kwargs):
-                entered.set(); release.wait(3)
+                entered.set(); release.wait(15)
                 return original_output(*args, **kwargs)
             def make_root():
                 root = original_tk(); root.withdraw(); roots.append(root)
@@ -34,7 +34,7 @@ class AppOutputWorkerTests(unittest.TestCase):
                     root.after(10, tick)
                 root.after(10, tick)
                 def loop():
-                    deadline = time.monotonic() + 2
+                    deadline = time.monotonic() + 15
                     while not entered.is_set() and time.monotonic() < deadline:
                         root.update(); time.sleep(0.005)
                     self.assertTrue(entered.is_set(), 'startup imported and queued real output')
@@ -42,7 +42,7 @@ class AppOutputWorkerTests(unittest.TestCase):
                     for _ in range(15): root.update(); time.sleep(0.005)
                     self.assertGreater(len(ticks), count, 'Tk is responsive while output is blocked')
                     release.set()
-                    deadline = time.monotonic() + 2
+                    deadline = time.monotonic() + 15
                     while time.monotonic() < deadline:
                         root.update(); time.sleep(0.005)
                         if (root_path / 'reports' / 'database-history.html').exists(): break
@@ -57,5 +57,5 @@ class AppOutputWorkerTests(unittest.TestCase):
                 release.set()
                 for w in workers:
                     w.finish()
-                    if w.thread: w.thread.join(3)
+                    if w.thread: w.thread.join(15)
                 for root in roots: root.destroy()

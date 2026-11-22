@@ -48,8 +48,10 @@ class RunDueTest(unittest.TestCase):
 
     def test_runs_once_the_capture_has_been_quiet_for_ten_minutes_even_with_windows_open(self):
         self.touch('meruhen', minutes_ago=3)                       # メルヘンを取り込み中
+        self.touch('pscube', minutes_ago=3)
         self.assertFalse(self.due()[0], '書き込みから10分たつまで待つ')
         self.touch('meruhen', minutes_ago=11)
+        self.touch('pscube', minutes_ago=11)
         due, mark = self.due()
         self.assertTrue(due)
         # 同じ原本でもう一度は動かさない（「取り込み待ち」の晩に5分ごとに読み直さない）。
@@ -59,6 +61,73 @@ class RunDueTest(unittest.TestCase):
         self.assertFalse(self.due(last=mark)[0])
         self.touch('meruhen', minutes_ago=10.5)
         self.assertTrue(self.due(last=mark)[0])
+
+    def test_one_recently_written_database_does_not_make_the_other_database_wait(self):
+        # 1つの原本DBが10分以内に書かれていても、10分以上静穏な別の原本の店は先に動かす。
+        self.touch('meruhen', minutes_ago=15)
+        self.touch('pscube', minutes_ago=2)
+        due, mark = self.due()
+        self.assertTrue(due, '静穏なメルヘンを先に動かす')
+        self.assertEqual(set(mark[1]), {'meruhen'}, '書き込み中のpscubeはまだ印に入れない')
+        self.save('nagamachiminami', 'saiwaichou')
+        # pscube がまだ10分たっていない間は待つ。
+        self.assertFalse(self.due(last=mark)[0])
+        # pscube が最後の書き込みから10分たったら、追加の書き込みが無くても動く。
+        self.touch('pscube', minutes_ago=11)
+        due2, mark2 = self.due(last=mark)
+        self.assertTrue(due2)
+        self.assertEqual(set(mark2[1]), {'meruhen', 'pscube'})
+
+    def test_adding_only_low_games_record_for_site777_triggers_rerun_after_quiet(self):
+        # サイトセブンで500G未満の控え（site777-staging/日付-low.json）だけが追加・更新され、
+        # pscube.sqlite3 の更新時刻が変わらないときも、10分静穏後に再実行する。
+        due, mark = self.due()
+        self.assertTrue(due)
+        self.save('nagamachiminami', 'saiwaichou')                 # P-STATION だけ90%未満で取り込み待ちだったとする
+        self.assertFalse(self.due(last=mark)[0])
+        staging = self.root / 'site777-staging'
+        staging.mkdir(exist_ok=True)
+        low_file = staging / '2026-11-13-low.json'
+        low_file.write_text('{"123": [101, 102]}', encoding='utf-8')
+        recent = NIGHT.timestamp() - 2 * 60
+        os.utime(low_file, (recent, recent))
+        self.assertFalse(self.due(last=mark)[0], '控えの書き込みから10分たつまでは待つ')
+        quiet_stamp = NIGHT.timestamp() - 11 * 60
+        os.utime(low_file, (quiet_stamp, quiet_stamp))
+        due2, mark2 = self.due(last=mark)
+        self.assertTrue(due2, 'pscube.sqlite3 が変わらなくても low.json の追加で再実行する')
+        self.assertFalse(self.due(last=mark2)[0], '同じ控えでは繰り返さない')
+
+    def test_transient_failure_is_retried_before_cutoff_while_waiting_for_capture_is_not(self):
+        # 一時的な失敗（DBの鍵など）は原本DBの更新時刻が変わらなくても8:00前に再試行し、
+        # データ不足の「取り込み待ち」は5分ごとに読み直さない。
+        import json
+        due, mark = self.due()
+        self.assertTrue(due)
+        # 1. 長町南・幸町が「取り込み待ち」、P-STATION が「処理失敗（原本DBを読めません…）」だったとき
+        status = ('長町南：取り込み待ち：長町南の前日データが不足しています／'
+                  '幸町：取り込み待ち：幸町の前日データが不足しています／'
+                  'P-STATION：処理失敗（原本DBを読めません（database is locked）。取り込み中なら、終わったあとに読み直します）。従来方式を使用してください')
+        (self.root / runtime.FILE_NAME).write_text(
+            json.dumps({'updated_at': NIGHT.isoformat(), 'status': status}, ensure_ascii=False), encoding='utf-8')
+        due2, mark2 = self.due(last=mark)
+        self.assertTrue(due2, '処理失敗の P-STATION は同じ原本でも再試行する')
+        # app.py の daily_tick が使う clear_failed_mark でも、処理失敗の pscube だけ印が消え、取り込み待ちの meruhen は残る。
+        cleared = runtime.clear_failed_mark(mark, status)
+        self.assertEqual(set(cleared[1]), {'meruhen'})
+        # 2. 再試行の結果、P-STATION も「取り込み待ち」に変わったら、同じ原本ではもう読み直さない。
+        waiting_only = ('長町南：取り込み待ち：長町南の前日データが不足しています／'
+                        '幸町：取り込み待ち：幸町の前日データが不足しています／'
+                        'P-STATION：取り込み待ち：P-STATIONの前日データが不足しています')
+        (self.root / runtime.FILE_NAME).write_text(
+            json.dumps({'updated_at': NIGHT.isoformat(), 'status': waiting_only}, ensure_ascii=False), encoding='utf-8')
+        self.assertFalse(self.due(last=mark2)[0], '取り込み待ちでは5分ごとに読み直さない')
+        self.assertEqual(runtime.clear_failed_mark(mark2, waiting_only), mark2)
+        # 3. 記録DBの鍵などで export の前に「失敗で終了」したときも、8:00前なら再試行し、8:00以降は動かさない。
+        runtime.trace(self.root, '失敗で終了：OperationalError: database is locked', now=NIGHT)
+        self.assertTrue(self.due(last=mark2)[0])
+        after_cutoff = datetime(2026, 11, 14, 8, 0, tzinfo=JST)
+        self.assertFalse(self.due(now=after_cutoff, last=mark2)[0], '8:00以降は再試行しない')
 
     def test_only_unsaved_stores_and_their_own_database_count(self):
         self.save('nagamachiminami', 'saiwaichou')
@@ -87,6 +156,7 @@ class RunDueTest(unittest.TestCase):
 
     def test_closing_the_app_does_not_wait_for_ten_minutes(self):
         self.touch('meruhen', minutes_ago=1)
+        self.touch('pscube', minutes_ago=1)
         self.assertFalse(self.due()[0])
         due, mark = self.due(on_close=True)
         self.assertTrue(due, 'PC本体を閉じる＝取り込みは終わった、とみる')
@@ -102,6 +172,7 @@ class RunDueTest(unittest.TestCase):
         source = (Path(runtime.__file__).parent / 'app.py').read_text(encoding='utf-8')
         tick = source[source.index('def daily_tick'):source.index('def daily_on_start')]
         self.assertIn('run_due(DATA_DIR', tick)
+        self.assertIn('clear_failed_mark(daily_last[0]', tick)
         self.assertNotIn('capture_open', tick, '取り込み窓が開いていても、原本DBで判断する')
         self.assertNotIn('now.hour in (7, 23)', tick)
         close = source[source.index('def close_app'):source.index("root.protocol('WM_DELETE_WINDOW', close_app)")]

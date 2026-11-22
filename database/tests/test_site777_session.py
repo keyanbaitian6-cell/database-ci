@@ -1091,3 +1091,101 @@ class SessionTest(unittest.TestCase):
         self.assertTrue(state['status'][2]['excluded'],'取り込まない機種は対象外')
         self.assertEqual(state['status'][3],{'done':0,'total':1,'excluded':False})
         self.assertEqual(self.session.machine_status('壊れた'),{'day':'2026-11-06','status':[]})
+
+    def test_two_windows_concurrently_recording_low_racks_keep_both_models(self):
+        # 2つの窓で同じ日を取り込むとき、500G未満の控え（日付-low.json）を読んで足して書く処理が競合しても消えない。
+        import threading
+        w1 = self.new_session()
+        w2 = self.new_session()
+        w1.configure(False, '2026-11-06')
+        w2.configure(False, '2026-11-06')
+        barrier = threading.Barrier(2)
+        orig_low_racks = w1._low_racks
+
+        def slow_low_racks(session):
+            data = orig_low_racks()
+            try:
+                barrier.wait(timeout=0.05)
+            except threading.BrokenBarrierError:
+                pass
+            return data
+
+        w1._low_racks = lambda: slow_low_racks(w1)
+        w2._low_racks = lambda: slow_low_racks(w2)
+        t1 = threading.Thread(target=lambda: [w1._remember_low(f'{100 + i}', [1000 + i]) for i in range(10)])
+        t2 = threading.Thread(target=lambda: [w2._remember_low(f'{200 + i}', [2000 + i]) for i in range(10)])
+        t1.start()
+        t2.start()
+        t1.join(10)
+        t2.join(10)
+        saved_low = orig_low_racks()
+        expected = {**{f'{100 + i}': {1000 + i} for i in range(10)},
+                    **{f'{200 + i}': {2000 + i} for i in range(10)}}
+        self.assertEqual(saved_low, expected)
+
+    def test_failed_backup_after_close_keeps_due_mark_even_when_next_window_adds_zero_racks(self):
+        # 書き出しに失敗したら _backup_due の印を残し、同じ窓でも次の窓で追加0台でも、成功するまで書き出す。
+        from unittest.mock import patch
+        failed = 'バックアップに失敗（取り込みは保存済み）'
+        self.cycle(table())
+        self.cycle(graph(metadata=True))
+        self.cycle(graph())
+        self.cycle(graph(2))
+        with patch('site777_session.auto_backup', return_value=failed) as backup_fail:
+            self.assertEqual(self.session._backup_after_close(), failed)
+            self.assertEqual(backup_fail.call_count, 1)
+            self.assertTrue(self.session._backup_due, '失敗したときは印を戻さない')
+        # 次の窓を開き、追加が0台のまま閉じても、前の窓の未書き出し分を書き出す。
+        next_window = self.new_session()
+        self.assertTrue(next_window._backup_due, '次の窓にも未書き出しの印が引き継がれる')
+        with patch('site777_session.auto_backup', return_value='バックアップ済み') as backup_ok:
+            self.assertIsNone(next_window._backup_after_close())
+            self.assertEqual(backup_ok.call_count, 1)
+            self.assertFalse(next_window._backup_due, '成功したら印を消す')
+            self.assertIsNone(next_window._backup_after_close(), '成功したあとはもう一度書かない')
+            self.assertEqual(backup_ok.call_count, 1)
+        third_window = self.new_session()
+        self.assertFalse(third_window._backup_due)
+
+    def test_table_read_before_2330_and_saved_after_2330_uses_table_time_and_remains_unfinal(self):
+        # 表を読んだのが23:30より前なら、グラフの読み取りに時間がかかって保存（_finish）が23:30を過ぎても、
+        # 表を読んだ時刻を source_captured_at に使い、確定前として扱う（あとで取り込み直すと置き換わる）。
+        current = [datetime.fromisoformat('2026-11-06T23:28:00+09:00')]
+        folder = self.root / 'cross-2330'
+        folder.mkdir()
+        session = Session(folder, DiagnosticLog(folder), now=lambda: current[0],
+                          store_factory=lambda path: PscubeStore(path, recording=False))
+        epoch = session.configure(True, '2026-11-06', None, None, True)['epoch']
+        payload = table()
+        payload['rows'][0][2] = '3000'
+        # 23:28 に表を読む
+        self.assertNotIn('error', session.capture(json.dumps(payload), epoch))
+        # グラフを読んで保存し終えたのは 23:32（23:30過ぎ）
+        current[0] = datetime.fromisoformat('2026-11-06T23:32:00+09:00')
+        for step in (graph(metadata=True), graph(), graph(2)):
+            res = session.capture(json.dumps(step), epoch)
+            self.assertNotIn('error', res, res.get('error'))
+        store = PscubeStore(folder / 'pscube.sqlite3', recording=False)
+        try:
+            records = {r['rack']: r for r in store.export_payload()['records']}
+        finally:
+            store.close()
+        self.assertEqual(records[101]['source_captured_at'], '2026-11-06T23:28:00+09:00')
+        self.assertEqual(records[101]['games'], 3000)
+        # 確定前なので保存済みには数えず、23:30以降の取り込みで置き換わる
+        current[0] = datetime.fromisoformat('2026-11-06T23:40:00+09:00')
+        later = Session(folder, DiagnosticLog(folder), now=lambda: current[0],
+                        store_factory=lambda path: PscubeStore(path, recording=False))
+        epoch2 = later.configure(True, '2026-11-06')['epoch']
+        payload2 = table()
+        payload2['rows'][0][2] = '8200'
+        for step in (payload2, graph(metadata=True), graph(), graph(2)):
+            res = later.capture(json.dumps(step), epoch2)
+            self.assertNotIn('error', res, res.get('error'))
+        store = PscubeStore(folder / 'pscube.sqlite3', recording=False)
+        try:
+            records2 = {r['rack']: r for r in store.export_payload()['records']}
+        finally:
+            store.close()
+        self.assertEqual(records2[101]['games'], 8200)
+        self.assertEqual(records2[101]['source_captured_at'], '2026-11-06T23:40:00+09:00')

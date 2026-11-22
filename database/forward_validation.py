@@ -30,8 +30,11 @@ JST = dt.timezone(dt.timedelta(hours=9))
 LOG_NAME = 'forward-validation.log'
 STATE_NAME = 'forward-validation-state.json'
 TIMEOUT_SECONDS = 600
+MAX_PENDING_ATTEMPTS = 2
 _running = threading.Lock()
 _state_lock = threading.Lock()
+_queued: dict | None = None
+_queued_reports: list = []
 
 
 def outputs_dir() -> Path:
@@ -105,6 +108,8 @@ def record_pending(data_dir: Path, label: str, now: dt.datetime) -> bool:
     target = (local.date() + dt.timedelta(days=1)).isoformat()
     with _state_lock:
         state = _read_state(data_dir)
+        if state.get('pending_target') != target:
+            state.pop('used_count', None)
         state['pending_target'] = target
         state['pending_label'] = label
         state['pending_at'] = local.isoformat(timespec='seconds')
@@ -145,39 +150,77 @@ def decide(label: str, message, now: dt.datetime, plan) -> str | None:
     return None
 
 
-def run(plan, data_dir: Path, *, runner=subprocess.run, now=None) -> tuple[bool, str]:
-    """手順を画面を出さずに順に動かす。(すべて成功か, 画面に出す短い文)。同時に2つは動かさない。"""
-    if not _running.acquire(blocking=False):
-        return False, '前向き検証の保存はすでに動いています'
-    current = (now or dt.datetime.now(JST)).astimezone(JST)
+def _resolve_now(now) -> dt.datetime:
+    value = now() if callable(now) else now
+    return (value or dt.datetime.now(JST)).astimezone(JST)
+
+
+def _run_once(plan, data_dir: Path, *, runner=subprocess.run, now=None) -> tuple[bool, str]:
+    current = _resolve_now(now)
     started = current.isoformat(timespec='seconds')
+    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    codes, outs = {}, []
+    for name, args, cwd in plan:
+        if name == 'export' and codes.get('v1') != 0:
+            continue   # 毎朝実行.cmd と同じく、v1が止まったら書き出さない
+        try:
+            result = runner(args, cwd=str(cwd), stdin=subprocess.DEVNULL, capture_output=True,
+                            timeout=TIMEOUT_SECONDS, creationflags=flags)
+            out = (result.stdout or b'').decode('utf-8', 'replace') + (result.stderr or b'').decode('utf-8', 'replace')
+            code = result.returncode
+        except (OSError, subprocess.SubprocessError) as error:
+            out, code = f'{type(error).__name__}: {error}', -1
+        codes[name] = code
+        outs.append(f'--- {name} 終了コード {code}\n{out.rstrip()}')
+    stops = [line.strip() for text in outs for line in text.splitlines() if line.strip().startswith('停止:')]
+    failed = [name for name, code in codes.items() if code != 0]
+    ok = not failed
+    if ok:
+        _record_done(Path(data_dir), current)
+    text = ('前向き検証を自動で保存しました' if ok else
+            '前向き検証の自動保存で止まったものがあります：' +
+            (' / '.join(stops) or '終了コード ' + ', '.join(f'{n}={codes[n]}' for n in failed)))
+    _append_log(data_dir, started, outs)
+    error_log.note(data_dir, 'forward.auto', text)
+    return ok, text
+
+
+def run(plan, data_dir: Path, *, runner=subprocess.run, now=None, _report=None) -> tuple[bool, str]:
+    """手順を画面を出さずに順に動かす。(すべて成功か, 画面に出す短い文)。同時に2つは動かさない。
+    動いている間に届いた次の完了の知らせは捨てずに控え、先の実行が終わったあとに締切（9時）内なら1回だけ流す。"""
+    global _queued
+    if not _running.acquire(blocking=False):
+        with _state_lock:
+            _queued = {'plan': plan, 'data_dir': Path(data_dir), 'runner': runner, 'now': now}
+            if _report is not None:
+                _queued_reports.append(_report)
+        return False, '前向き検証の保存はすでに動いています（終わったあとに続けて保存します）'
     try:
-        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        codes, outs = {}, []
-        for name, args, cwd in plan:
-            if name == 'export' and codes.get('v1') != 0:
-                continue   # 毎朝実行.cmd と同じく、v1が止まったら書き出さない
-            try:
-                result = runner(args, cwd=str(cwd), stdin=subprocess.DEVNULL, capture_output=True,
-                                timeout=TIMEOUT_SECONDS, creationflags=flags)
-                out = (result.stdout or b'').decode('utf-8', 'replace') + (result.stderr or b'').decode('utf-8', 'replace')
-                code = result.returncode
-            except (OSError, subprocess.SubprocessError) as error:
-                out, code = f'{type(error).__name__}: {error}', -1
-            codes[name] = code
-            outs.append(f'--- {name} 終了コード {code}\n{out.rstrip()}')
-        stops = [line.strip() for text in outs for line in text.splitlines() if line.strip().startswith('停止:')]
-        failed = [name for name, code in codes.items() if code != 0]
-        ok = not failed
-        if ok:
-            _record_done(Path(data_dir), current)
-        text = ('前向き検証を自動で保存しました' if ok else
-                '前向き検証の自動保存で止まったものがあります：' +
-                (' / '.join(stops) or '終了コード ' + ', '.join(f'{n}={codes[n]}' for n in failed)))
-        _append_log(data_dir, started, outs)
-        error_log.note(data_dir, 'forward.auto', text)
+        ok, text = _run_once(plan, Path(data_dir), runner=runner, now=now)
+        if _report is not None:
+            _report(text)
+        while True:
+            with _state_lock:
+                nxt = _queued
+                reports = list(_queued_reports)
+                _queued = None
+                _queued_reports.clear()
+            if nxt is None:
+                break
+            next_now = _resolve_now(nxt['now'])
+            if not in_window(next_now):
+                late = '0時〜9時の間だけ動かします（その日の分は9時が締切）'
+                for cb in reports:
+                    cb(late)
+                break
+            _, next_text = _run_once(nxt['plan'], nxt['data_dir'], runner=nxt['runner'], now=next_now)
+            for cb in reports:
+                cb(next_text)
         return ok, text
     finally:
+        with _state_lock:
+            _queued = None
+            _queued_reports.clear()
         _running.release()
 
 
@@ -196,18 +239,18 @@ def start(label, message, data_dir, report, *, outputs=None, python=None, now=No
     23:30〜23:59に完了したときは翌0時以降に流す印を残す。0:00〜8:59に完了したときは印があっても止めず毎回動かす。
     動かさないときは理由を返す。"""
     plan = steps(Path(outputs or outputs_dir()), Path(python or analysis_python()))
-    now = now or dt.datetime.now(JST)
+    current = (now() if callable(now) else now) or dt.datetime.now(JST)
     data_dir = Path(data_dir)
-    if finished(label, message) and in_evening_window(now):
+    if finished(label, message) and in_evening_window(current):
         if isinstance(plan, str):
             return plan
-        if record_pending(data_dir, label, now):
+        if record_pending(data_dir, label, current):
             return '0時〜9時の間に自動で保存します（23:30以降の取り込み完了を記録しました）'
         return '23:30以降の取り込み完了を記録できませんでした'
-    why = decide(label, message, now, plan)
+    why = decide(label, message, current, plan)
     if why:
         return why
-    worker = thread(target=lambda: report(run(plan, data_dir, runner=runner, now=now)[1]),
+    worker = thread(target=lambda: run(plan, data_dir, runner=runner, now=now, _report=report),
                     name='forward-validation', daemon=True)
     worker.start()
     return None
@@ -216,15 +259,16 @@ def start(label, message, data_dir, report, *, outputs=None, python=None, now=No
 def start_pending(data_dir, report, *, outputs=None, python=None, now=None,
                   thread=threading.Thread, runner=subprocess.run) -> str | None:
     """前夜23:30〜23:59に取り込み完了の印があり、0:00〜8:59で当日の成功記録がまだ無ければ、
-    印を「使った」と書いてから裏で1回だけ動かす。動かしたときは None、動かさないときはその理由を返す。"""
-    now = now or dt.datetime.now(JST)
-    if not in_window(now):
+    印を「使った」と書いてから裏で動かす（失敗・中断したときは9時までに1回だけ再試行できる）。
+    動かしたときは None、動かさないときはその理由を返す。"""
+    current = (now() if callable(now) else now) or dt.datetime.now(JST)
+    if not in_window(current):
         return '0時〜9時の間だけ動かします（その日の分は9時が締切）'
     plan = steps(Path(outputs or outputs_dir()), Path(python or analysis_python()))
     if isinstance(plan, str):
         return plan
     data_dir = Path(data_dir)
-    local = now.astimezone(JST)
+    local = current.astimezone(JST)
     target = local.date().isoformat()
     with _state_lock:
         state = _read_state(data_dir)
@@ -232,15 +276,18 @@ def start_pending(data_dir, report, *, outputs=None, python=None, now=None,
             return '本日の前向き検証はすでに自動保存済みです'
         if state.get('pending_target') != target:
             return '前夜23:30以降の取り込み完了の記録がありません'
-        if state.get('used_target') == target:
+        used_count = (int(state.get('used_count', 1)) if isinstance(state.get('used_count'), int) else 1) \
+            if state.get('used_target') == target else 0
+        if used_count >= MAX_PENDING_ATTEMPTS:
             return '前夜23:30以降の取り込み完了の印はすでに実行済みです'
         if _running.locked():
             return '前向き検証の保存はすでに動いています'
         state['used_target'] = target
+        state['used_count'] = used_count + 1
         state['used_at'] = local.isoformat(timespec='seconds')
         if not _write_state(data_dir, state):
             return '前向き検証の印を更新できませんでした'
-    worker = thread(target=lambda: report(run(plan, data_dir, runner=runner, now=now)[1]),
+    worker = thread(target=lambda: run(plan, data_dir, runner=runner, now=now, _report=report),
                     name='forward-validation', daemon=True)
     worker.start()
     return None

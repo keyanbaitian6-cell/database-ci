@@ -1,21 +1,23 @@
 """表→グラフ各ページ→掲載済みの次機種。通信は表示ブラウザのリンク操作だけ。"""
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
 import threading
+import time
 from time import monotonic
 
 from anaslo_converter import read_catalog, suggestions
 from browser_import import clean_overlay_layout
 from pscube_import import (PscubeStore, PscubeRandomCapture, auto_backup, business_day, is_excluded_machine,
                            recent_business_days, site777_final, site777_final_at)
-from file_io import write_notice
+from file_io import atomic_writer, write_notice
 from site777_browser import Bridge, LAST_STOP_NAME
 import site777_import as source
 
@@ -47,6 +49,7 @@ REASON_LABELS = {
 # 前回の取り込みの範囲・済んだ日・止まった理由（2026-11-08 Codexの提案：窓を開き直すと日付の範囲を選び直しになり、
 # 前回どこまで取り込んだかが分からなかった）。窓を開いたとき、カードに案内を出し、残りの日を選んでおく。
 LAST_RUN_NAME = 'site777-last-run.json'
+BACKUP_DUE_NAME = 'site777-backup-due.json'
 # 機種ごとの途中の記録を残す日数（今の営業日から。サイトが見せる8日分より長く取る。2026-11-08）。
 STAGING_KEEP_DAYS = 14
 # この回転数に満たない台（0Gを含む）は取り込まない（2026-11-10 利用者「0ゲーム、500g未満の台については取り込まない」）。
@@ -64,6 +67,44 @@ def graphless_limit(racks):
     return max(MAX_GRAPHLESS, int(racks) // 2)
 # 同じDB（pscube.sqlite3）へほかの窓・PC本体が書いている間、待つ秒数（既定の5秒から延ばした。2026-11-13）。
 DB_WAIT = 30.0
+_low_thread_lock = threading.Lock()
+
+
+@contextmanager
+def _low_file_lock(folder, timeout=DB_WAIT):
+    """500G未満の控え（日付-low.json）を読んで足して書く鍵（2窓の別プロセス・別スレッドをまたぐ）。"""
+    path = Path(folder) / 'site777-low.lock'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = monotonic() + timeout
+    with _low_thread_lock, path.open('a+b') as lock:
+        if lock.seek(0, os.SEEK_END) == 0:
+            lock.write(b'0')
+            lock.flush()
+        while True:
+            lock.seek(0)
+            try:
+                if os.name == 'nt':
+                    import msvcrt
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
 RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
                        'graph_retry_limit', 'graph_retry_storage', 'card_error', 'overlay_failed',
                        'range_unknown', 'site_redirect'})
@@ -140,8 +181,8 @@ class Session(Bridge):
         self._blocked_url = None
         # 今の工程（読み取ったページの種類）。停止の記録に残す。
         self._stage = None
-        # 窓を閉じたあとに書き出す分がある（1機種でも保存した）。_backup_after_close が見る。
-        self._backup_due = False
+        # 窓を閉じたあとに書き出す分がある（1機種でも保存した、または前の窓で書き出しに失敗した）。_backup_after_close が見る。
+        self._backup_due = self._backup_due_path().is_file()
         # 自動の再開（RESUME_DELAY 秒後）。_resume_at は monotonic の時刻、_resume_plan は再開する日・範囲・向き・理由、
         # _resume_count は取り込みが進まないまま続けて再開した回数、_resume_serial は再開のたびに増やす番号
         # （記録用。2026-11-08 からカードはこれで読み込み直しの回数を戻さない。再開1回につき読み込み1回）。
@@ -155,6 +196,19 @@ class Session(Bridge):
         self._previous = None
         self._load_previous()
         self._prune_staging()
+
+    def _backup_due_path(self):
+        return self._folder / BACKUP_DUE_NAME
+
+    def _set_backup_due(self, due):
+        self._backup_due = bool(due)
+        try:
+            if due:
+                self._write(self._backup_due_path(), {'due': True})
+            else:
+                self._backup_due_path().unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _prune_staging(self):
         """もう取り込めない古い日の、機種ごとの途中の記録（site777-staging/日付-機種.json）を消す（2026-11-08。
@@ -188,10 +242,10 @@ class Session(Bridge):
                     'resume_serial': self._resume_serial, 'previous': self._previous,
                     'unfinished_from': self._unfinished_from(), 'today_ok': self._today_ok}
 
-    def _unfinished_from(self):
+    def _unfinished_from(self, now=None):
         """まだ確定していない最初の日。今の営業日（午前3時で切り替え）の23:30（2026-11-10 利用者「23時45分くらいに最終更新だから」
         「23時半以降に取り込みだしたやつも飛ばしていいです」。11/8 は翌日0:30だった）より前ならその営業日、過ぎていれば翌日。"""
-        now = self._now()
+        now = now or self._now()
         day = business_day(now)
         if now >= site777_final_at(day):
             day = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
@@ -553,10 +607,8 @@ class Session(Bridge):
 
     @staticmethod
     def _write(path, data):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + '.tmp')
-        temporary.write_text(json.dumps(data, ensure_ascii=False, allow_nan=False), encoding='utf-8')
-        temporary.replace(path)
+        with atomic_writer(path) as out:
+            out.write(json.dumps(data, ensure_ascii=False, allow_nan=False))
 
     def _save_source(self, payload):
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False).encode('utf-8')
@@ -588,17 +640,19 @@ class Session(Bridge):
         except (OSError, ValueError, TypeError, AttributeError):
             return {}
 
-    def _remember_low(self, model, racks):
+    def _remember_low(self, model, racks, captured_at=None):
         """確定した日の500G未満の台を覚える。確定前の日は覚えない（あとで回って500Gを超えることがあるため）。
         書けなくても取り込みは続ける（次に開いたときにその機種を開き直すだけ）。"""
-        if self._unfinished([self._day], self._unfinished_from()):
+        if self._unfinished([self._day], self._unfinished_from(captured_at)):
             return
-        data = {k: sorted(v) for k, v in self._low_racks().items()}
-        if data.get(model, []) == sorted(racks):
-            return
-        data[model] = sorted(racks)
+        wanted = sorted(racks)
         try:
-            self._write(self._low_path(), data)
+            with _low_file_lock(self._folder):
+                data = {k: sorted(v) for k, v in self._low_racks().items()}
+                if data.get(model, []) == wanted:
+                    return
+                data[model] = wanted
+                self._write(self._low_path(), data)
         except OSError:
             pass
 
@@ -900,7 +954,8 @@ class Session(Bridge):
             url = source.source_url(payload.get('table_url'), 'table')
             return {'action': {'type': 'link', 'url': url}}
         if kind == 'table':
-            days = {source.day_from_label(d['label'], self._now()): d for d in payload.get('days', [])}
+            table_at = self._now()
+            days = {source.day_from_label(d['label'], table_at): d for d in payload.get('days', [])}
             if not days:
                 raise ValueError('掲載日付がありません。')
             with self._state_lock:
@@ -908,19 +963,19 @@ class Session(Bridge):
                 self._day = self._day or self._days[0]
             if self._day not in days:
                 raise ValueError('指定した日付はこの機種のページにありません。')
-            if self._unfinished([self._day], self._unfinished_from()) and not self._today_ok:
+            if self._unfinished([self._day], self._unfinished_from(table_at)) and not self._today_ok:
                 # 確認していない確定前の日は保存しない（手動の取り込みの守り。自動は開始のときに configure が確かめ、
                 # 確定前の最初の日は進むだけなので、自動の途中でここに来ることはない）。
                 raise ValueError(f'{self._day[5:].replace("-", "/")}の分はまだ確定していないため、取り込みませんでした'
                                  '（その日の23:30より前）。取り込むときはカードの確認から（23:30以降に取り込み直すと置き換わります）。')
-            if source.day_from_label(payload.get('selected_md'), self._now()) != self._day:
+            if source.day_from_label(payload.get('selected_md'), table_at) != self._day:
                 return {'action': {'type': 'link', 'url': days[self._day]['url']}}
-            rows = source.table_records(payload, self._day, self._now())
+            rows = source.table_records(payload, self._day, table_at)
             model = payload['model_id']
             occupied = self._occupied()
             # 500G未満（0Gを含む）の台は取り込まない（2026-11-10 利用者）。グラフも読まない。すでに保存してある台は消さない。
             low = [r['rack'] for r in rows if r['games'] < MIN_SAVED_GAMES]
-            self._remember_low(model, low)
+            self._remember_low(model, low, table_at)
             wanted = [r for r in rows if r['rack'] not in occupied and r['games'] >= MIN_SAVED_GAMES]
             skipped = f'（{MIN_SAVED_GAMES}G未満の{len(low)}台は取り込まず）' if low else ''
             if not wanted:
@@ -934,7 +989,8 @@ class Session(Bridge):
                 old = json.loads(self._job_path(model).read_text(encoding='utf-8'))
             except (OSError, ValueError):
                 pass
-            self._job = {'table': payload, 'rows': wanted, 'all_racks': [r['rack'] for r in rows],
+            self._job = {'table': payload, 'table_at': table_at.isoformat(timespec='seconds'),
+                         'rows': wanted, 'all_racks': [r['rack'] for r in rows],
                          'all_my': {str(r['rack']): r['my'] for r in rows},
                          'graphs': old.get('graphs', {}) if old.get('table_sha') == digest else {},
                          'pages': old.get('pages', []) if old.get('table_sha') == digest else [], 'table_sha': digest,
@@ -1027,12 +1083,11 @@ class Session(Bridge):
 
     def _backup_after_close(self):
         """窓を閉じたあとに1回だけ呼ぶ（site777_browser.run）。1機種でも保存していれば、バックアップ・閲覧用ファイルを
-        書き出す。保存中の処理があれば終わるのを待つ。書き出しに失敗してもDBへの保存は済んでいる（次に閉じたときにまた書く）。
+        書き出す。保存中の処理があれば終わるのを待つ。書き出しに失敗してもDBへの保存は済んでいる（印を残し、次に閉じたときにまた書く）。
         戻り値：失敗したときの文（親画面のログ欄に出す）。成功・書き出す分が無いときは None。"""
         with self._work_lock:
-            if not self._backup_due:
+            if not self._backup_due and not self._backup_due_path().is_file():
                 return None
-            self._backup_due = False
             try:
                 store = self._store_factory(self._db_path)
                 try:
@@ -1041,10 +1096,20 @@ class Session(Bridge):
                     store.close()
             except (OSError, ValueError, sqlite3.Error) as error:
                 written = f'バックアップに失敗（取り込みは保存済み）：{type(error).__name__}'
-        # 成功は「バックアップ済み」で始まる文（「バックアップ済み（より新しい時点の書き出しが先に済んでいます）」も成功）。
-        ok = written.startswith(BACKUP_OK)
+            # 成功は「バックアップ済み」で始まる文（「バックアップ済み（より新しい時点の書き出しが先に済んでいます）」も成功）。
+            ok = written.startswith(BACKUP_OK)
+            self._set_backup_due(not ok)
         self._log.write('backup_after_close', ok=ok, result=written[:200])
         return None if ok else written
+
+    def _table_time(self, job):
+        try:
+            value = datetime.fromisoformat(job.get('table_at', ''))
+            if value.tzinfo is not None:
+                return value
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return self._now()
 
     def _finish(self, job, epoch, index_url):
         model = job['table']['model_id']
@@ -1054,7 +1119,7 @@ class Session(Bridge):
         graphs = {int(k): v for k,v in job['graphs'].items()}
         for rack in job.get('no_graph', []):
             graphs.setdefault(rack, source.missing_graph())      # グラフなしで進めた台（skip_graph）
-        backup = source.make_backup(job['table'], job['rows'], graphs, self._day, name, catalog, self._now())
+        backup = source.make_backup(job['table'], job['rows'], graphs, self._day, name, catalog, self._table_time(job))
         self._check(epoch)
         store = self._store_factory(self._db_path)
         try:
@@ -1065,7 +1130,7 @@ class Session(Bridge):
         # バックアップ・閲覧用ファイル（DB全体。約40MBを同期フォルダーなど数か所へ）は、ここでは書かず、窓を閉じたあとに
         # 1回だけ書く（_backup_after_close。メルヘンの backup_after_session と同じ。2026-11-21 利用者「まとめて」）。
         # 1機種ごとに書いていたので、1日約55機種で約55回の全体書き出しになり、取り込みが重かった。
-        self._backup_due = True
+        self._set_backup_due(True)
         self._done.add(model)
         self._added += summary['added']
         self._kept += summary['kept_local']
