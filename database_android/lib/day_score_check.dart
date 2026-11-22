@@ -144,27 +144,30 @@ String _minus30(String day) => DateTime.parse(day)
     .toIso8601String()
     .substring(0, 10);
 
-/// 1回の照合で比べる日：いちばん新しい日を [recent] 日と、それより前の日を [cursor] から順に [rotating] 日
-/// （端まで行ったら最初に戻る）。戻り値の `next` を次の [cursor] として覚えておくと、更新のたびに全日を一巡する。
-({List<String> targets, int next}) pickScoreDays(
+/// 1回の照合で比べる日：いちばん新しい日を [recent] 日と、それより前の日を、前回の最後に比べた日 [after] より
+/// 古い日から順に [rotating] 日（いちばん古い日まで行ったら、新しい側へ戻る）。戻り値の `next`（最後に選んだ日）を
+/// 次の [after] として覚えておくと、日が増えても全日を一巡する。
+///
+/// 2026-11-22（Codexの点検 #11・Gemini H-7）：以前は新しい順の並びの「位置」を覚えていたので、新しい日が先頭に
+/// 入るたびに同じ位置が1日ずれ、1日1回ほどの更新では同じ過去の日ばかり選んで一巡しなかった。日付で覚える。
+({List<String> targets, String? next}) pickScoreDays(
   Iterable<String> days,
-  int cursor, {
+  String? after, {
   int recent = 1,
   int rotating = 3,
 }) {
   final sorted = days.toSet().toList()..sort((a, b) => b.compareTo(a));
   final latest = sorted.take(recent).toList();
   final rest = sorted.skip(recent).toList();
-  if (rest.isEmpty) return (targets: latest, next: 0);
-  final start = cursor < 0 || cursor >= rest.length ? 0 : cursor;
+  if (rest.isEmpty) return (targets: latest, next: null);
+  // 前回の日より古い最初の日から。覚えた日が無い・いちばん古い日まで済んでいるときは、いちばん新しい側から。
+  var start = after == null ? 0 : rest.indexWhere((d) => d.compareTo(after) < 0);
+  if (start < 0) start = 0;
   final picked = <String>[
     for (var i = 0; i < rotating && i < rest.length; i++)
       rest[(start + i) % rest.length],
   ];
-  return (
-    targets: [...latest, ...picked],
-    next: (start + picked.length) % rest.length,
-  );
+  return (targets: [...latest, ...picked], next: picked.last);
 }
 
 String _n(double? v) => v == null ? '-' : v.toStringAsFixed(6);

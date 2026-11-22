@@ -116,21 +116,40 @@ void main() {
 
   test('照合する日：最新の日と、順に回す3日。更新のたびに全日を一巡する', () {
     final days = [for (var i = 0; i < 9; i++) dayText(i)];
-    var cursor = 0;
+    String? after;
     final seen = <String>{};
     for (var n = 0; n < 3; n++) {
-      final pick = pickScoreDays(days, cursor);
+      final pick = pickScoreDays(days, after);
       expect(pick.targets.first, dayText(8), reason: 'いちばん新しい日は毎回');
       expect(pick.targets.length, 4);
       seen.addAll(pick.targets);
-      cursor = pick.next;
+      after = pick.next;
     }
     expect(seen, days.toSet(), reason: '3回の更新で全9日を一巡');
-    expect(pickScoreDays(days, 99).targets.skip(1).first, dayText(7), reason: '覚えた位置が範囲外なら最初から');
-    final single = pickScoreDays([dayText(0)], 5);
+    expect(pickScoreDays(days, dayText(0)).targets.skip(1).first, dayText(7), reason: 'いちばん古い日まで済んだら新しい側へ戻る');
+    expect(pickScoreDays(days, null).targets.skip(1).first, dayText(7), reason: '覚えた日が無ければ新しい側から');
+    expect(pickScoreDays(days, '2027-12-31').targets.skip(1).first, dayText(7), reason: 'どの日より新しい日を覚えていても新しい側から');
+    final single = pickScoreDays([dayText(0)], dayText(0));
     expect(single.targets, [dayText(0)]);
-    expect(single.next, 0);
-    expect(pickScoreDays(const [], 0).targets, isEmpty);
+    expect(single.next, isNull);
+    expect(pickScoreDays(const [], null).targets, isEmpty);
+  });
+
+  test('照合する日：毎回1日ずつ新しい日が増えても、過去の日を一巡する（2026-11-22）', () {
+    // 実際の運用に近い形：更新のたびに最新の日が1日増え、順に回すのは1日だけ。以前（並びの位置で覚えた）は、
+    // 新しい日が先頭に入るたびに位置がずれ、同じ過去の日ばかり選んで一巡しなかった。
+    final days = [for (var i = 0; i < 20; i++) dayText(i)];
+    final original = days.toSet();
+    String? after;
+    final seen = <String>{};
+    for (var n = 0; n < 40 && !seen.containsAll(original.difference({dayText(19)})); n++) {
+      final pick = pickScoreDays(days, after, rotating: 1);
+      seen.addAll(pick.targets.skip(1));
+      after = pick.next;
+      days.add(dayText(20 + n));
+    }
+    expect(seen.containsAll(original.difference({dayText(19)})), isTrue,
+        reason: '最初にあった過去の日（最新の日を除く19日）を、日が増えても選び切る');
   });
 
   test('対象の日だけを採点し、窓は対象の日の30日前から読めば足りる', () {

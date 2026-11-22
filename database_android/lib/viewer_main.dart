@@ -278,15 +278,17 @@ class _ViewerHomeState extends State<ViewerHome> {
     final data = _data;
     if (data == null || data.source == 'pscube') return;
     // 1回の更新で比べるのは1店の、最新の日と順に回す1日だけ（採点は1日730台で数秒かかり、窓の記録がメモリを
-    // 使う。day_score_check.dart）。店は更新のたびに交互にし、両方の店が済んだら次の日へ進む。
-    const key = 'database-viewer-b2-cursor', storeKey = 'database-viewer-b2-store';
+    // 使う。day_score_check.dart）。店は更新のたびに交互にし、順に回す日は店ごとに「最後に比べた日」で覚える
+    // （2026-11-22：以前は全店共通の並びの位置で覚え、新しい日が入るたびにずれて一巡しなかった）。
+    const storeKey = 'database-viewer-b2-store';
     final stores = {for (final r in data.records) r.store}.toList()..sort();
     if (stores.isEmpty) return;
     final storeAt = (int.tryParse(loadViewerSetting(storeKey) ?? '') ?? 0) % stores.length;
     final store = stores[storeAt];
+    final key = 'database-viewer-b2-day:$store';
     final pick = pickScoreDays(
       {for (final r in data.records) if (r.store == store) r.day},
-      int.tryParse(loadViewerSetting(key) ?? '') ?? 0,
+      loadViewerSetting(key),
       rotating: 1,
     );
     final check = DayScoreCheck(data.records, pick.targets, store: store);
@@ -296,9 +298,9 @@ class _ViewerHomeState extends State<ViewerHome> {
       from: check.from,
     );
     if (status == 'match' || status == 'mismatch') {
-      final nextStore = (storeAt + 1) % stores.length;
-      saveViewerSetting(storeKey, '$nextStore');
-      if (nextStore == 0) saveViewerSetting(key, '${pick.next}');
+      saveViewerSetting(storeKey, '${(storeAt + 1) % stores.length}');
+      final next = pick.next;
+      if (next != null) saveViewerSetting(key, next);
     }
   }
 

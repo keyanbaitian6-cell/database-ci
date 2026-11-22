@@ -4179,3 +4179,26 @@
   - C3 iPhoneのB2が過去の日を一巡できない（Codex #11・Gemini H-7、確認：`day_score_check.dart:157-162`）。
 - 今は分けない（利用者の判断・設計が要る、またはファイルが重なる）：共有カレンダーの長期のメモリの測定と保険（Claude #2）、P’s CUBE版の検査の回数（Claude #3）、サイトセブンを最小化したときの知らせ（Claude #5）、GoogleのスクリプトとDrive（Codex #2・Gemini H-6・M-5・H-11②）、P’s CUBE・メルヘンの台数が変わった日の取り戻し（Codex #5・Gemini H-9・H-10）、Gemini H-1（MYが空の台。今のデータでは0件：保存済みP’s CUBE DBで、MYが空なのはアナスロの補完だけ（比較から除外済み）、サイトセブン4,841件・P’s CUBE 11,795件はすべてMYあり。潜在の穴）、Gemini H-4（共有カレンダーの localStorage に送信済みの分が溜まる。容量に届く時期は未確認）。
 - 公開（閲覧ページ・共有カレンダー）は、Claudeの作業が終わってから利用者が決める。
+
+## 2026-11-22 夜 Claude：C1〜C3（閲覧ページ・共有カレンダー）の直し（ソースのみ・未公開・未push）
+
+- 依頼：利用者「C1-C3までお願いします」（上の分担のClaudeの担当）。基準 `bbe1031`。完了の条件（着手時に利用者へ提示）：①表示する値・保存する内容は変えない ②C1は保険と保存失敗の控えがメルヘン版と同じに働く ③C2は壊れた日を書き直し、共有カレンダーの読み直しを省く ④C3は日が増えても全日を一巡する ⑤再発を捕まえる試験を足し、全体ゲート ALL PASSED。
+- C1（Gemini H-8）：`database_android/web/pscube/viewer_bootstrap.mjs` に `autoUpdateHold`（storage_report の `driveHold`、6時間）と、保存失敗の控え（`recordSaveFailure`、元の失敗はそのまま返す）を足した。Dart の起動処理（`viewer_main.dart` の `_start` の `autoUpdateHeldUntil`）はメルヘン版と共通なので、P’s CUBE版でも同じに止まる。**11/18の記録「P’s CUBE版も同じに働く」は誤りだった**（P’s CUBE版の橋渡しには `phase` しか無く、止める期限を返す口が無かった）。試験：新規 `tool/test_pscube_viewer_guards_browser.mjs`（実ブラウザで bootstrap を読む。1時間前の途中→期限、終われば消える、7時間前・印なしは止めない、保存失敗の数と種類・元の失敗、診断の行）。直す前の版では「autoUpdateHold がある」で落ちることを確認。
+- C2：
+  - Codex #4：`tool/viewer_parts_client.js` の `fetchViewerParts` で、Google（または読みかけ）から取り直した部品（`fetched`）を含む日も書き直す日に入れた。以前は部品の顔ぶれ（ハッシュの一覧）が同じだと書き直さず、端末は壊れたまま、次にオフラインで開くと「破損」で止まった。試験：`tool/test_viewer_parts.mjs` に1件（壊れた部品だけ取り直す・画面の内容は同じ・端末の保存が壊れる前と同じに戻る・オフラインで読める・直ったあとは取り直さない）。直す前の版では「端末の保存も壊れる前と同じに戻る」で落ちることを確認。
+  - Codex #10・Gemini H-5：`share_viewer/app.mjs` の読み込みで、部品から組み立てた内容（history）の日がすべて端末の日別キャッシュにあれば（`viewerHistoryCovers`、1日ずつ読む）、`rememberViewerHistory` を呼ばない（呼んでも何もしない場合だけ省く。旧スクリプトの全件応答の移行は今までどおり）。以前は端末の全日の部品を1回の読み出しでまとめて読み、2店分の内容と同時にメモリに載っていた。試験：新規 `tool/test_share_history_reread_browser.mjs`（本物の同期スクリプトの部品の作り方で偽Googleを作る。まとめ読みが1回目・2回目とも1回だけ、オフラインで同じ日が読める）。直す前の版では1回目から2回になり落ちることを確認。**実機・長期データでのメモリの減り方は測っていない**（共有カレンダーの長期のメモリの測定はClaude #2として別に残る）。
+  - Claude #8・Gemini H-12①：`tool/build_viewer_parts.mjs` に `shareCaptureHealth()`（閲覧ページの `capture_health.mjs` から `netHealth` だけを外した写し）を足し、生成スクリプトがそれを書くようにした。今の `share_viewer/capture_health.mjs` と一字一句同じ（生成し直しても変わらない）。`test_viewer_parts.mjs` の「配布版は生成元と一致」にこのファイルを足した。生成スクリプトを流すと .gs 4本・共有ページの部品が改行コードだけ変わったので、それは戻した（中身の差は無し）。
+- C3（Codex #11・Gemini H-7の一部）：`lib/day_score_check.dart` の `pickScoreDays` を、並びの位置ではなく「最後に比べた日」で覚える形にし、`lib/viewer_main.dart` で店ごとに `database-viewer-b2-day:<店>` に保存する（古い `database-viewer-b2-cursor` は使わない）。以前は新しい日が先頭に入るたびに位置がずれ、同じ過去の日ばかり選んでいた（古い選び方を同じ場面で模擬すると19日のうち1日しか選べない）。試験：`test/day_score_check_test.dart` を新しい形に直し、「毎回1日ずつ増えても過去の日を一巡する」を足した（8件）。`tool/test_viewer_calendar_check_browser.mjs` の覚え方の確認を新しいキーに。`VIEWER_DAY_STORE.md` に追記。**Gemini H-7 のもう1つ（巡回の日が古いと、`from` から最新の日までの範囲を毎回読む重さ）は直していない**（読み方を日ごとの窓に分ける設計が要る）。
+- 保持したもの：表示する値・採点・翌日候補・🌈・イベント・保存期間。Googleのスクリプトの中身（貼り替え不要）。PC・Android アプリは変えていない。
+- 試験：Dart の静的解析（変えた3ファイル）問題なし、`flutter test test/day_score_check_test.dart` 8件、`test_viewer_parts` 16件・`test_viewer_storage_report` 10件・`test_share_viewer` 35件・`test_capture_health` 8件・`test_release_info` 2件・`test_share_android_entry` 3件、`test_pscube_drive_browser`・`test_share_loading_browser`・`test_share_viewer_browser` PASS。**全体ゲート ALL PASSED**（`CHECK_BUILD_WORK=/c/w/cbw-c123`、OK 103項目。ゲートの途中から Gemini が同じフォルダで `database/` の PC の Python を変え始めていたので、ゲートのPC試験には Gemini の書きかけが入っていた可能性がある。Claude の変更したファイルとは重ならない）。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 表示・保存する内容を変えない | 済（合成データ・Chromium） | `test_viewer_parts`（画面の内容・保存が壊れる前と同じ）、`test_share_history_reread_browser`（オフラインで同じ日）、全体ゲート |
+| C1 保険と保存失敗の控え | 済（Chromium） | `test_pscube_viewer_guards_browser`、直す前は落ちる |
+| C2 壊れた日を書き直す／読み直しを省く／生成物と一致 | 済 | `test_viewer_parts` 16件、`test_share_history_reread_browser`、直す前は落ちる |
+| C3 日が増えても一巡 | 済 | `day_score_check_test` 8件、古い選び方の模擬で1/19 |
+| 全体ゲート | 済（ALL PASSED） | `/c/w/cbw-c123.log` |
+| 実iPhoneで効くか | **未確認**（未公開） | 公開後、P’s CUBE版の診断の「途中で終わった」と保存失敗の行、メルヘン版のB2の照合日 |
+| 公開（database-viewer・database-share） | **未公開** | 利用者が決める |

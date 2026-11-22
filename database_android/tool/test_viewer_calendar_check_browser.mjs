@@ -127,9 +127,11 @@ const helpers = () => {
   assert.ok(lines.some(l => /^カレンダーの日別計算と照合：最後まで終わった1回/.test(l)), lines.join('\n'));
   assert.deepEqual(log.scores.targets, ['2026-11-09', '2026-11-10']);
   assert.ok(lines.some(l => l.startsWith('日・機種一覧の日別採点：一致（長町南・11/09・11/10の2日・4台）')), lines.join('\n'));
-  // 次の更新では幸町の同じ日。両方の店が済んでから、次の日（11/08）へ進む。
+  // 次の更新では幸町。順に回す日は店ごとに「最後に比べた日」で覚える（2026-11-22。長町南は11/09まで済み、幸町はまだ）。
   assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-store')), '1');
-  assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-cursor')), null);
+  assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-day:nagamachiminami')), '2026-11-09');
+  assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-day:saiwaichou')), null);
+  assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-cursor')), null, '古い位置の覚え方は使わない');
   assert.ok(lines.some(l => /^日・機種一覧の日別採点と照合：最後まで終わった1回/.test(l)), lines.join('\n'));
   await context.close();
 }

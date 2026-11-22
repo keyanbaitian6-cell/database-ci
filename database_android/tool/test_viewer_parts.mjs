@@ -3,7 +3,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
-import {partsClient, partsDrive, partsPublisher} from './build_viewer_parts.mjs';
+import {partsClient, partsDrive, partsPublisher, shareCaptureHealth} from './build_viewer_parts.mjs';
 import {fetchViewerParts, fetchViewerDocument, rememberViewerHistory, readViewerHistory} from '../web/viewer_parts.mjs';
 
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -90,6 +90,11 @@ test('配布版は生成元と一致（両ページ・両Apps Script・メルヘ
     const source = readFileSync(new URL(path, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
     assert.equal(source.split('// BEGIN GENERATED VIEWER PARTS\n')[1], path.startsWith('meruhen') ? partsPublisher() : partsDrive());
   }
+  // 共有ページの取り込み状況の部品も生成元と一致（netHealth だけを外した写し。2026-11-22）。
+  const health = readFileSync(new URL('../../share_viewer/capture_health.mjs', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+  assert.equal(health, shareCaptureHealth());
+  assert.ok(!health.includes('export function netHealth('));
+  assert.ok(health.includes('export function updateStatusLines('), '共有ページが使う関数は残る');
 });
 
 test('両Apps Scriptの実doGet：差分と全件の内容一致・ID非公開・許可以外のpartを拒否', () => {
@@ -146,6 +151,26 @@ test('キャッシュ破損・消失・保存拒否・接続先とサイトの�
   const noCache = {get() {throw new Error('disabled');}, set() {throw new Error('quota');}};
   await assert.rejects(fetchViewerParts('https://a.test/exec', 'meruhen', m, read, noCache), /保存データは変更していません/);
   await assert.rejects(fetchViewerParts('https://a.test/exec', 'pscube', m, read, cache), /不正/);
+});
+
+test('中身だけ壊れた日を取り直したら端末にも書き直し、次はオフラインでも読める・取り直さない（2026-11-22）', async () => {
+  const f = fixture(), cache = storage(); f.publish([row('2026-10-01'), row('2026-10-02', 2, 200)]);
+  const m = f.get({check: '1'}).parts; let calls = 0;
+  const read = url => {calls++; return f.read(url);};
+  const first = await fetchViewerParts('https://a.test/exec', 'meruhen', m, read, cache);
+  const good = JSON.stringify([...cache.map]);
+  // 同じハッシュのまま本文だけ壊れる（部品の顔ぶれは同じ）。
+  const entry = [...cache.map.values()][0], broken = m.parts[0].hash;
+  entry.parts[broken] = entry.parts[broken].replace('"rack"', '"rakk"');
+  const before = calls;
+  const repaired = await fetchViewerParts('https://a.test/exec', 'meruhen', m, read, cache);
+  assert.equal(calls, before + 1, '壊れた部品だけ取り直す');
+  assert.deepEqual(repaired.records, first.records, '画面に出す内容は前と同じ');
+  assert.equal(JSON.stringify([...cache.map]), good, '端末の保存も壊れる前と同じに戻る');
+  const offline = await readViewerHistory('https://a.test/exec', 'meruhen', cache);
+  assert.deepEqual(offline.records, first.records, 'オフラインで開き直しても読める');
+  await fetchViewerParts('https://a.test/exec', 'meruhen', m, read, cache);
+  assert.equal(calls, before + 1, '直ったあとは取り直さない');
 });
 
 test('壊れた通信・途中の世代変更では保存せず、一覧を取り直すと回復する', async () => {
