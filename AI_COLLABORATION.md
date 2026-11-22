@@ -4325,3 +4325,23 @@
 | Gemini L-1 | ○ | `push_ci.py` は日本語名の `.md` を引用符付きで受け取り文書だけと判定しない／版情報は作業フォルダの全ファイル（未追跡も）を読む／共有イベントの10MB・PC同期の5秒・合図ファイルの書き方は今すぐ困る大きさではない |
 
 - 次の手順：直す順番・分担は利用者が決める。期日が近いのは H-6②（P’s CUBEの48MiB、12月下旬の見込み）。アクセスが増える型は Codex #5（P’s CUBE減台）と Gemini M-1①・M-2②。
+
+## 2026-11-22 深夜 Claude：照合した指摘の、2回目の分担（Gemini と Claude。担当のファイル）
+
+- 利用者「先ほどと同じく競合しないように作業の指示分割をお願いします。相手はgeminiです」。基準：手元の main `60c9390`（未push。database-ci は `521e713`、CI 実行中）。push は各AIでせず、両方の作業がそろってから Claude が全体ゲートのあと1回で送る。APK の作成・Google スクリプトの貼り替え・Web 公開は、それぞれ利用者が決める（今回は作らない・貼らない・公開しない）。
+- **Gemini（担当ファイル：`database/pscube_import.py`、`database/site777_session.py`、`database/site777_browser.py`、`database/app.py`、`database/forward_validation.py`、`database/daily_learning_runtime.py`、`database/anaslo_converter.py`、`database/daily_learning_archive.py`、`tools/push_ci.py`、`database/tests/` の関係する試験、`database_android/lib/pscube_store.dart`、`database_android/lib/pscube_import_page.dart` と、それらの Dart の試験〔`database_android/test/` の P’s CUBE の保存・取り込みの試験〕）**
+  - G5 P’s CUBE減台後の過去日の取り戻し（Codex #5）：PC `pscube_import.py` と Android `pscube_store.dart` を同じ規則に。今の台数（`expected_count`）とだけ比べず、増台・減台のどちらでも過去日の全台一覧を開き直し続けない。
+  - G6 Androidで保存に3回失敗した待機でもページを離す（M-2②、`pscube_import_page.dart`）。
+  - G7 サイトセブン：別の窓が保存した機種を「済み」に足しても再開の回数を戻さない（M-1①、`site777_session.py`）／窓ごとの知らせのファイルを2窓で取り違えない（H-3②、`site777_browser.py`）。
+  - G8 前向き検証：取り込み窓がほかに開いている間は、窓が閉じても前向き検証を流さない（最後の窓が閉じたときに判定。H-3③）／PCアプリを閉じるとき前向き検証の実行も日次学習と同じく待つ（M-3②）／23:30〜23:59の印は、その晩の対象日（今日）の取り込みが完了したときだけ（M-3③）。
+  - G9 日次学習：G1 のレビューの点（書き込み中の原本の店は、その実行で判定しない）／同期先への書き出しに失敗したら、保存済みでも次の確認で書き出しだけやり直す（M-4①）。
+  - G10 アナスロの分析用JSON：日を落とす上書きをしない（Codex #9、`anaslo_converter.py`）。
+  - G11 試験：Tk の別スレッドの試験の対象を固定の一覧から自動に（M-8③）／`database/daily_learning_pscube.mjs` の試験を足す（H-12③）／`push_ci.py` が日本語名の `.md` を文書だけと判定できるように（L-1。`git -c core.quotePath=false`）。
+- **Claude（担当ファイル：`database_android/tool/meruhen_cloud_sync.gs`・`viewer_history_adapters.js`・`viewer_parts_client.js`・`build_viewer_parts.mjs` と生成先〔`viewer_drive_script*.gs`・`pscube_cloud_sync.gs`・`web/viewer_parts.mjs`・`share_viewer/viewer_parts.mjs`・`share_viewer/capture_health.mjs`〕、`database_android/web/pscube/data.mjs`・`sync.mjs`、`database_android/tool/build_pscube_capture.mjs` と生成先 `database_android/assets/pscube_capture.js`・`pscube_auto_probe.js`、`database_android/tool/stage_viewer.py`・`stage_share_viewer.py`、`share_viewer/`、`database_android/lib/` の `backup_service.dart`・`web_import_page.dart`・`store_pattern.dart`・`store_pattern_page.dart`・`setting_estimate.dart`・`pscube_validation_page.dart`・`date_events.dart`・`pscube_viewer_data.dart`、`database_android/tool/test_*.mjs`・`database_android/test/` のうち上の担当に関係する試験〔Gemini の P’s CUBE の保存・取り込みの試験以外〕）**
+  - C4 メルヘン同期がAndroidのイベントと `record_updated_at` を落とす（H-11②。貼り替えは利用者）／AndroidがPCのバックアップの差枚・🌈だけの更新を見落とす（H-11③）。
+  - C5 Androidのメルヘンで日の完了の処理に入らない（H-9②）。
+  - C6 共有カレンダー・P’s CUBE版も、部品を作り直す前は全体を読まずに見送る（M-5②）。
+  - C7 60文字のイベント名の数え方をPC（文字数）にそろえる（Codex #12。Dart・JS・Googleスクリプト）。
+  - C8 店の入れ方のふり返りの理由の文・同点の並び順をPCにそろえる（M-7①・並び）／半角の中点「･」の変換（M-7②）／`pscube_validation_page.dart` の機種名を `displayMachineName` に（H-12④）／半角カナの画面試験が例外を捨てない（H-12④）。
+  - C9 公開の工程：`stage_viewer.py --pscube-only` に `shared_events.mjs`／`stage_share_viewer.py` の `sw.js` の置き換えを確かめる／P’s CUBEの取り込み部品を作り直し、生成物と元の照合の試験を足す（H-12②。PC・Android の取り込みが使う部品なので、取り込みの試験を通す）／共有ページの画面試験の1月の抜け（M-8②）。
+- 今回は分けない（利用者の判断・設計・実地の確認が要る）：P’s CUBEの48MiB（H-6②、12月下旬の見込み。分け方の設計を先に利用者へ）、店休日など使える台0台の日の扱い（H-2③）、サイトセブンのグラフなしの数え方（H-10②。仕様の確認）、日次学習の台番号のリンクを閲覧ページにも出すか（M-7③）、機種の種別はどちらを優先するか（M-2③）、増台・減台の日のメルヘン・サイトセブン（H-9①・H-10①。サイトが過去日の一覧に何台出すかの確認）、サイトセブンの8秒・翌日のタブ（M-1②③）、120秒どうし（M-2①）、Googleの整理の時間（M-5①）、重い処理（M-6）、共有カレンダーの localStorage（H-4）・長期のメモリ（Claude #2）、P’s CUBE版の山（Claude #3）、最小化の知らせ（Claude #5）、画面試験の30秒（Claude #6）、iPhoneのイベント（Claude #7、保留中）、B2の読む範囲（H-7）、L-1 の残り。
