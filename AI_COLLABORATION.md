@@ -4346,14 +4346,14 @@
   - C9 公開の工程：`stage_viewer.py --pscube-only` に `shared_events.mjs`／`stage_share_viewer.py` の `sw.js` の置き換えを確かめる／P’s CUBEの取り込み部品を作り直し、生成物と元の照合の試験を足す（H-12②。PC・Android の取り込みが使う部品なので、取り込みの試験を通す）／共有ページの画面試験の1月の抜け（M-8②）。
 - 今回は分けない（利用者の判断・設計・実地の確認が要る）：P’s CUBEの48MiB（H-6②、12月下旬の見込み。分け方の設計を先に利用者へ）、店休日など使える台0台の日の扱い（H-2③）、サイトセブンのグラフなしの数え方（H-10②。仕様の確認）、日次学習の台番号のリンクを閲覧ページにも出すか（M-7③）、機種の種別はどちらを優先するか（M-2③）、増台・減台の日のメルヘン・サイトセブン（H-9①・H-10①。サイトが過去日の一覧に何台出すかの確認）、サイトセブンの8秒・翌日のタブ（M-1②③）、120秒どうし（M-2①）、Googleの整理の時間（M-5①）、重い処理（M-6）、共有カレンダーの localStorage（H-4）・長期のメモリ（Claude #2）、P’s CUBE版の山（Claude #3）、最小化の知らせ（Claude #5）、画面試験の30秒（Claude #6）、iPhoneのイベント（Claude #7、保留中）、B2の読む範囲（H-7）、L-1 の残り。
 
-## 2026-11-23 0時台 Claude：C1〜C3の公開（閲覧ページ・共有カレンダー）
+## 2026-11-22 23時台 Claude：C1〜C3の公開（閲覧ページ・共有カレンダー）
 
 - 利用者「CI後に公開」。CI：`521e713`（試験の待ち方の直し。Web の中身は `272505f` と同じ）の run 45032059369 が success（full・pc の Ubuntu・Windows とも）。その前の `5ca2e45` の run 45030818108 は full だけ試験の待ち方の競合で failure（上の記録）。
 - 公開するもの：全体ゲート（`/c/w/cbw-c123`、`272505f` のソース、ALL PASSED）の `viewer`・`share` の stage を、公開用の複製（`../outputs/publish-c123-20261122/public-viewer`・`public-share`）に写し、改行だけの差を戻して、中身の変わったファイルだけをコミットした。閲覧ページ `7280190`（`main.dart.js`・`pscube/viewer_bootstrap.mjs`・`viewer_parts.mjs`、直前 `d1afc7c`）、共有カレンダー `ea4e6e0`（`app.mjs`・`viewer_parts.mjs` と版番号の更新、直前 `913b216`）。前回の公開から共有カレンダーに入ったソースの変更は `272505f` だけ。
 - **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `git revert 7280190` して push、共有カレンダーは `keyanbaitian6-cell/database-share` で `git revert ea4e6e0` して push。どちらも端末の保存の形は変えていない（B2 の覚え方のキーが `database-viewer-b2-day:<店>` に替わるだけで、戻しても古いキーから始め直すだけ）ので、戻しても端末のデータは影響を受けない。
-- 公開の push（2026-11-23 0時台）：`database-viewer` `d1afc7c..7280190`、`database-share` `913b216..ea4e6e0`（非強制）。GitHub Pages の公開処理は両方とも開始（queued）を確認。iPhone での表示・P’s CUBE版の保険の動き・B2 の照合日は未確認。
+- 公開の push（2026-11-22 23時台）：`database-viewer` `d1afc7c..7280190`、`database-share` `913b216..ea4e6e0`（非強制）。GitHub Pages の公開処理は両方とも開始（queued）を確認。iPhone での表示・P’s CUBE版の保険の動き・B2 の照合日は未確認。
 
-## 2026-11-23 0時台 利用者の決定：P’s CUBE の取り込みはもうしない（サイトセブンから取り込む）
+## 2026-11-22 23時台 利用者の決定：P’s CUBE の取り込みはもうしない（サイトセブンから取り込む）
 
 - 利用者「ごめん忘れてた。P's cubeの取り込みはもうやらないかな。サイトセブンからやるから」。`AGENTS.md` の P’s CUBE の節を書き替えた（取り込みはしない・P-STATION はサイトセブンから・保存先と閲覧・日次学習・前向き検証はそのまま・コードは利用者が言うまで消さない）。
 - **2回目の分担から外したもの**：G5（P’s CUBE 減台後の取り戻し。PC `pscube_import.py`・Android `pscube_store.dart`）、G6（Android の P’s CUBE で3回失敗したときにページを離す）、C9 のうち P’s CUBE の取り込み部品（`pscube_capture.js`・`pscube_auto_probe.js`）の作り直しと照合の試験。どれも P’s CUBE の取り込みだけに効くため。Gemini には、G5・G6 をしないよう伝える（利用者経由）。
