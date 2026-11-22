@@ -4404,3 +4404,35 @@
 | PC 全体回帰確認 | OK | `database/.venv/Scripts/python.exe -m unittest discover -s tests` で全 1,125 件を実行し、サンドボックス対象外の 1,103 件が全件通過（327.7秒）。サンドボックス制限を受ける `test_push_ci`＋`test_project_python` の 32 件は制限外実行で 32/32 件通過（合計 1,125/1,125 件通過）。 |
 
 
+
+## 2026-11-23 0時台 Claude：C4〜C9（C5を除く）の修正（Android・閲覧ページ・共有カレンダー・Google同期・公開の道具）
+
+- **依頼**：利用者「C4-C8とC9の残りお願いします」（分担は上の「照合した指摘の、2回目の分担」。Gemini は G7〜G11 で PC 側）。基準コミット `2779496`、Claude のコミット `0786256`（32ファイル）。Gemini の `009dc55` がその上に乗る。
+- **完了の条件**：各項目に修正前の版で落ちる試験を足し、修正後に通る。全体ゲート ALL PASSED。push は両方そろってから1回（Claude）。
+- **変更と方針**
+  - **C4 Android のイベント名・復元の時刻が Google に届く**
+    - `tool/meruhen_cloud_sync.gs`：文書形式の読み込み `meruhenReadBackup` が `date_events` を返す（新しい `meruhenValidDateEvent`：店・日の形・`updated_at`・名前は1〜60文字〔コードポイント〕、名前なしは削除の印）。`meruhenPick` は `record_updated_at` の新しい方を残す。
+    - `lib/backup_service.dart`：バックアップの取り込みで、JO の差枚（`jo_net` が無い、または `jo_captured_at` が新しい）と🌈（`rainbow_at` が新しい）だけが新しい行も保存する（`extraOnly`。グラフ・リンク・設定だけの行にも同じ規則を付ける）。画面の文言は変えていない。
+  - **C6 日別の部品を作り直している間は全体読みをしない**：`tool/viewer_parts_client.js` の `fetchViewerDocument` と `web/pscube/sync.mjs`。その端末が部品で更新したことがある（日別キャッシュの見出しに `parts_at`）のに応答に部品が無いときは、全体を読まずに「Google側で閲覧用の日別の部品を作り直しているところです…少し待ってから更新してください。」で止める（PC の書き出し直後の全体読みでメモリが山になるため）。一度も部品で更新していない端末（`rememberViewerHistory` の写しだけ）は従来どおり全体を読む。
+  - **C7 イベント名の長さを PC と同じくコードポイントで数える**：`web/pscube/data.mjs`（`pscube_cloud_sync.gs` を再生成）、`viewer_drive_script.gs`、Android の `date_events.dart`・`app_controller.dart`・`event_name_dialog.dart`・`main.dart`・`pscube_viewer_data.dart`（`.runes.length`）。絵文字を含む名前が端末ごとに切れ方が違わない。
+  - **C8 表示**：店の入れ方のふり返り（`store_pattern_page.dart`）の判定しない理由に「プラスか分かる台が7割未満」を PC と同じ順で出す。同点の機種は最初に出た順（`store_pattern.dart`、PC の安定な並べ替えと同じ）。`displayMachineName` が半角の `｡｢｣､･` も全角で出す（照合用の `foldHalfWidthKana` は変えない）。P’s CUBE の照合の画面も `displayMachineName` を通す。`half_width_kana_screens_test.dart` は画面を開くときの例外を捨てずに失敗として数える。
+  - **C9 公開の道具と共有カレンダーの試験**：`tool/stage_viewer.py` の P’s CUBE 版だけの公開で写す共通部品に `shared_events.mjs` を足し、実際に読む `../`・`./` の部品が抜けていたら止める。`tool/stage_share_viewer.py` の `sw.js` の版・保存一覧の置き換えは、1か所ずつ当たらなければ（対象フォルダを消す前に）止める。`tool/test_share_viewer_browser.mjs` は時計を固定（既定 2026-11-20 12:00 JST、`SHARE_TEST_NOW` で変更可）し、日付が進んでも落ちない。
+- **C5 は保留（利用者の判断待ち）**：Android メルヘン版の `_dayFinished`（取り逃した日の自動の取り直し）は、条件 `automatic && autoToken != null` に対して呼び出し側が `autoToken` だけを渡すため、今は一度も動いていない。直すと 11/4 に作った「取り逃した日を自動で取り直す」が初めて動き、メルヘンへのアクセスが増える。増える量の見積もりと利用者の決定の後で扱う。
+- **確認の表**
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| C4 Google 同期が Android のイベント名・`record_updated_at` を残す | 済 | `tool/test_meruhen_cloud_sync.mjs` 39件（追加2件は修正前に失敗） |
+| C4 バックアップ取り込みで新しい JO 差枚・🌈を保存 | 済 | `test/backup_service_test.dart`（追加は修正前に失敗） |
+| C6 部品の作り直し中は全体読みしない／一度も部品で更新していない端末は従来どおり | 済 | 新規 `tool/test_parts_pending_hold_browser.mjs`（parts・写し・なし の3通り）、`test_pscube_drive_browser`・`test_viewer_drive_parts_pending_browser`・`test_pscube_sync` 16件・`test_viewer_parts` 16件 |
+| C7 イベント名の長さをコードポイントで数える | 済 | 新規 `test/event_name_length_test.dart`、`tool/test_pscube_data.mjs` 18件、`test_pscube_cloud_sync` 49件、`test_viewer_drive_script` 17件 |
+| C8 理由の文・同点の順・半角記号・照合画面の機種名 | 済 | `test/store_pattern_test.dart` 11件、新規 `test/display_machine_name_test.dart`、`test/pscube_validation_page_test.dart`、`test/half_width_kana_screens_test.dart` |
+| C9 公開の道具の抜けで止まる・共有カレンダー試験の時計固定 | 済 | 新規 `database/tests/test_stage_publish_files.py` 3件、`test_share_viewer_browser`（既定日と 2027-01-20 の両方）、`test_share_history_reread_browser`・`test_share_loading_browser` |
+| 全体ゲート（`0786256` 単独） | 済 | `bash database_android/tool/check_before_build.sh` 104項目 OK・ALL PASSED（作業フォルダ `C:\w\wt-c49`、ログ `C:\w\cbw-c49.log`） |
+| 全体ゲート（Gemini の `009dc55` と合わせた版） | 実行中 | 作業フォルダ `C:\w\wt-all`、ログ `C:\w\cbw-all.log`。結果はこの下に追記する |
+| C5 | 保留 | 上のとおり利用者の判断待ち |
+
+- **まだのこと（利用者の決定待ち）**
+  - Google スクリプトの貼り替え：`meruhen_cloud_sync.gs`（C4）、`pscube_cloud_sync.gs`・`viewer_drive_script.gs`（C7）。貼り替えるまで、Google 側は従来の動き。
+  - 閲覧ページ・共有カレンダーの公開（C6・C7・C8・C9 の画面と道具）。公開するまで利用者の iPhone は従来の版。
+  - APK（C4・C7・C8 の Android 側）。作るまで端末は従来の版。
