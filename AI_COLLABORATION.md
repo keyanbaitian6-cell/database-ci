@@ -4120,3 +4120,30 @@
 | 利用者の実機での動作 | 未確認 | 公開ページの画面試験はブラウザーと模擬データ |
 
 - 共有の `viewer_parts.mjs` は、前回公開以降にソースのmainに入っていた閲覧データ読み込みの更新も含む。同じ内容で全体ゲートと公開ページ試験を確認した。ソースの反映先は11月後半の `database-ci`。Google側のスクリプトの貼り替えは不要。
+
+## 2026-11-22 Gemini（Antigravityクラウド）：Antigravity側での `push_ci.py --dry-run` 確認と、浅いクローン対応（`63e8bfb` 基準で再作成）
+
+- 依頼：2026-11-18に提案・実装した `tools/push_ci.py` の浅いクローン対応および運用ルール更新について、2026-11-22に利用者「作り直して」を受け、最新の `keyanbaitian6-cell/database-ci` の `main`（`63e8bfb`、正本 `2ba855e` を含む）を基準にパッチを作り直した。2026-11-18「`database-ci` を公開にしたあとの確かめ」で未確認だった「Antigravity側の dry-run（Gemini）」の確定記録も兼ねる。アプリ画面・店舗ロジックの変更はなし。
+- 原因と根拠（クラウド環境で直接確認）：
+  - 2026-11-18に `/home/antigravity/keyanbaitian6-cell/database-ci` で変更前の `python3 tools/push_ci.py --dry-run` を実行したところ、403等の認証エラーは出ず正本（`imakurudev-eng/database`）と `database-ci` の両方に接続できた。
+  - 一方で、Antigravity のクラウドVMは会話開始時に各リポジトリを直近50コミットの浅いクローン（`git rev-parse --is-shallow-repository` が `true`、`rev-list --count HEAD` が `50`）で配置するため、正本 `2ba855e` から50コミット以上離れた状態では手元の履歴が途中で切れ、`git merge-base --is-ancestor` が偽となって「正本の `main` に、送るコミットに無い変更があります。merge してから送ってください」と誤停止していた。
+  - また、実 `git push` を試したところ `remote: Permission to keyanbaitian6-cell/database-ci.git denied to imakurudev-eng.`（HTTP 403）となった（正本 `imakurudev-eng/database` への `git push --dry-run` は成功）。Antigravity クラウド環境の `git` 送信用トークンはプロジェクト所有者（`imakurudev-eng`）のリポジトリにだけ push 権限を持つため。利用者は方針2（リポジトリ構成は変えず、月後半の `database-ci` への push は PC 側で行う）を決定した。
+- 変更ファイルと方針（コードコミット `11f530c`）：
+  - `tools/push_ci.py`：`is_shallow()`（`git rev-parse --is-shallow-repository`）を追加し、`remote_main()` でリポジトリが浅い間は `git fetch --quiet --no-tags --no-write-fetch-head --unshallow <url> <tip>` で履歴を補完する（1つ目の取得で完全リポジトリになれば2つ目には `--unshallow` を付けない）。万一どちらの `main` にも含まれない浅い境界が手元に残って `is_ancestor()` が偽になった場合も、誤って `merge` を促さず `git fetch --unshallow` を案内して停止する。
+  - `database/tests/test_push_ci.py`：浅いクローンの4場面（後半に `database-ci` が先行している浅いクローンからの送信、前半に正本が先行している浅いクローンからの送信、浅いクローンでも相手リポジトリが本当に枝分かれしていれば止まること、両 `main` に無い浅い境界が残る場合に `merge` ではなく `--unshallow` を案内して止まること）を追加。
+  - `AGENTS.md`：Google Antigravity での GitHub 連携欄に、月前半（正本）は Antigravity から直接 push 可能・月後半（`database-ci`）の push は PC 側で行う運用を追記。
+- 保持した仕様・設定：日本時間による送り先判定、1日9時までの正本へのコード送信抑止、`FETCH_HEAD` 非依存、送信直前の両 `main` 再照会・期間再確認、非強制 push（完全リポジトリでは従来どおり `--unshallow` なしで取得）。
+- 試験（Antigravityクラウド Linux、`11f530c` 上で再実行）：
+  - `python3 -m unittest discover -s tests -p test_push_ci.py -v`（日本時間および `TZ=UTC`）：各19件 OK（既存15件＋新規4件）。
+  - `python3 tools/push_ci.py --dry-run`（2026-11-22 10:23 JST）：終了コード0（「送り先 `https://github.com/keyanbaitian6-cell/database-ci`」「2ファイル変更：CI が1回動きます。」）。浅いクローン実機（補完前 `is-shallow-repository=true`・50件）からの自動補完（`false`・全履歴取得）も 11/18 に同環境で直接確認済み。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| Antigravityクラウドから両リポジトリの取得確認（`--dry-run`） | 済 | `11f530c` での `python3 tools/push_ci.py --dry-run` 終了コード0（`ls-remote`・`fetch` とも成功） |
+| Antigravityクラウドから `keyanbaitian6-cell/database-ci` への実 `git push` | **失敗（403・仕様確認済み）** | `remote: Permission to keyanbaitian6-cell/database-ci.git denied to imakurudev-eng.`（正本 `imakurudev-eng/database` への `git push --dry-run` は成功）。月後半は PC 側から push する方針に決定し `AGENTS.md` へ反映 |
+| 浅いクローン環境で正本・`database-ci` の差が50件超でも自動補完して判定・送信できる | 済 | `test_shallow_clone_of_ci_copy_ahead_of_canonical_unshallows_and_pushes`・`test_shallow_clone_of_canonical_ahead_of_ci_copy_unshallows_once_without_error` PASS（`11f530c`）、実クラウド浅いクローンからの補完・dry-run 成功 |
+| 本当に枝分かれしているときは従来どおり停止／浅い境界が残るときは誤った `merge` を案内しない | 済 | `test_shallow_clone_still_stops_when_other_repository_truly_diverged`・`test_remaining_shallow_boundary_warns_to_unshallow_instead_of_merge` PASS（`11f530c`） |
+| 既存の `push_ci.py` の全試験通過 | 済 | `test_push_ci.py` 全19件 OK（JST・UTC、`11f530c`） |
+
+- 配布・公開状況：**GitHub 未反映（Antigravityクラウド作業コピーにローカルコミット済み・PC側からの反映待ち）**。`63e8bfb` 基準で `git am` できるパッチを作成し、一時複製で警告なし適用・ツリー完全一致・`test_push_ci.py` 19件通過を確認して利用者へ渡した。Web公開・Googleスクリプト貼替・同期実行・APK作成は対象外（未実施）。
