@@ -344,7 +344,8 @@ function validEvents(events, pscube, max = EVENT_MAX) {
     if (typeof e.updated_at !== 'string' || !EVENT_TIME.test(e.updated_at) || isNaN(Date.parse(e.updated_at))) return null;
     if (pscube && (typeof e.rate !== 'string' || !/^\d+(\.\d+)?$/.test(e.rate))) return null;
     const name = e.name === null ? null : typeof e.name === 'string' ? e.name.trim() : undefined;
-    if (name === undefined || (name !== null && (!name || name.length > 60 || /[\u0000-\u001f\u007f]/.test(name)))) return null;
+    // 文字数は PC（Python の len）と同じく1字ずつ数える（🌈 なども1字。2026-11-22、Codexの点検 #12）。
+    if (name === undefined || (name !== null && (!name || [...name].length > 60 || /[\u0000-\u001f\u007f]/.test(name)))) return null;
     const event = { store: e.store, day: e.day, name: name, updated_at: e.updated_at };
     if (pscube) event.rate = e.rate;
     result.push(event);

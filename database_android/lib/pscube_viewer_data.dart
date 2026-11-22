@@ -39,7 +39,8 @@ String? cleanPscubeEventName(String? name) {
   if (name == null) return null;
   final text = name.trim();
   if (text.isEmpty) return null;
-  if (text.length > 60 || RegExp(r'[\u0000-\u001f\u007f]').hasMatch(text)) {
+  // 文字数は PC（Python の len）と同じく1字ずつ数える（runes。🌈 も1字。2026-11-22、Codexの点検 #12）。
+  if (text.runes.length > 60 || RegExp(r'[\u0000-\u001f\u007f]').hasMatch(text)) {
     throw const FormatException('イベント名は1〜60文字で入力してください。');
   }
   return text;

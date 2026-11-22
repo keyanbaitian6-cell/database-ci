@@ -77,6 +77,84 @@ void main() {
     expect(plan.toSave.length, 1);
   });
 
+  test('数値が同じでも、新しい差枚（ジャグラーオンライン）と🌈は取り込み、古いものでは戻さない（2026-11-22）', () {
+    SlotRecord withExtra(Map<String, Object?> extra) =>
+        sample(rack: 101).copyWith(extra: extra);
+    const jo = {
+      'jo_net': 1500,
+      'jo_bb': 7,
+      'jo_captured_at': '2026-09-14T01:00:00+09:00',
+    };
+    // 手元に差枚が無い：足す。
+    final added = service.plan([withExtra(jo).toJson()], [sample(rack: 101)]);
+    expect(added.extraOnly.single.extra['jo_net'], 1500);
+    expect(added.extraOnly.single.extra['jo_bb'], 7);
+    expect(added.unchanged, isEmpty);
+    expect(added.toSave, hasLength(1));
+    // 新しい時刻の差枚：置き換える。古い時刻の差枚：今のまま。
+    final newer = service.plan(
+      [
+        withExtra({
+          ...jo,
+          'jo_net': 1800,
+          'jo_captured_at': '2026-09-14T02:00:00+09:00',
+        }).toJson(),
+      ],
+      [withExtra(jo)],
+    );
+    expect(newer.extraOnly.single.extra['jo_net'], 1800);
+    final older = service.plan(
+      [
+        withExtra({
+          ...jo,
+          'jo_net': 900,
+          'jo_captured_at': '2026-09-14T00:00:00+09:00',
+        }).toJson(),
+      ],
+      [withExtra(jo)],
+    );
+    expect(older.extraOnly, isEmpty);
+    expect(older.unchanged, hasLength(1));
+    // 🌈：rainbow_at の新しい方。
+    const mark = {'rainbow': true, 'rainbow_at': '2026-09-14T03:00:00+09:00'};
+    final rainbow = service.plan(
+      [withExtra(mark).toJson()],
+      [sample(rack: 101)],
+    );
+    expect(rainbow.extraOnly.single.extra['rainbow'], true);
+    final cleared = service.plan(
+      [
+        withExtra({'rainbow': false, 'rainbow_at': '2026-09-15T00:00:00+09:00'})
+            .toJson(),
+      ],
+      [withExtra(mark)],
+    );
+    expect(cleared.extraOnly.single.extra['rainbow'], false);
+    // 同じ内容は今までどおり「変わらない」。
+    final same = service.plan(
+      [
+        withExtra({...jo, ...mark}).toJson(),
+      ],
+      [
+        withExtra({...jo, ...mark}),
+      ],
+    );
+    expect(same.unchanged, hasLength(1));
+    expect(same.toSave, isEmpty);
+    // グラフを足すときも、手元の新しい差枚は消さない。
+    const graph = GraphMeasurement(
+      baselineY: 100,
+      peakY: 40,
+      troughY: 140,
+      endY: 60,
+    );
+    final graphPlan = service.plan(
+      [sample(rack: 101, graph: graph).toJson()],
+      [withExtra(jo)],
+    );
+    expect(graphPlan.graphOnly.single.extra['jo_net'], 1500);
+  });
+
   test('設定情報だけが新しい場合は安全に追加し、異なる設定情報は競合にする', () {
     final withSetting = service.plan(
       [sample(rack: 101, confirmedSetting: '5以上').toJson()],

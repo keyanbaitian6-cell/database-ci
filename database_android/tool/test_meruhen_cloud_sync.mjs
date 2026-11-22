@@ -34,6 +34,35 @@ test('明示削除は最後の1台にも反映し、古いAndroid入力では復
   d.sync(); assert.equal(get().records.filter(r => r.rack === 537).length, 1);
 });
 
+test('履歴方式：Androidのバックアップのイベント（消した印も）を取り込み、不正なものは飛ばす（2026-11-22）', () => {
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0], get = () => plain(d.context.vpGet(base, 'meruhen', {}));
+  d.replace(base, viewer([record(537)])); d.sync();
+  assert.deepEqual(get().date_events ?? [], []);
+  const added = {store: 'saiwaichou', day: '2026-10-02', name: ' 試験イベ🌈 ', updated_at: '2026-10-15T12:00:00+09:00'};
+  const removed = {store: 'nagamachiminami', day: '2026-10-01', name: null, updated_at: '2026-10-15T12:00:00+09:00'};
+  const bad = [{store: 'pscube', day: '2026-10-02', name: 'x'}, {store: 'saiwaichou', day: '2026-13-40', name: 'x'},
+    {store: 'saiwaichou', day: '2026-10-03', name: null}, {store: 'saiwaichou', day: '2026-10-04', name: 'あ'.repeat(61)}];
+  // 59字＋🌈は PC と同じく60字（UTF-16 では61）。通る。
+  const long = {store: 'saiwaichou', day: '2026-10-05', name: '漢'.repeat(59) + '🌈', updated_at: '2026-10-15T12:00:00+09:00'};
+  d.add('database-backup-android-20261015-120001.json', backup([record(538)], {date_events: [added, removed, long, ...bad]}));
+  d.sync();
+  const events = get().date_events.map(e => `${e.store}|${e.day}|${e.name}`).sort();
+  assert.deepEqual(events, ['nagamachiminami|2026-10-01|null', 'saiwaichou|2026-10-02|試験イベ🌈', `saiwaichou|2026-10-05|${long.name}`]);
+  assert.deepEqual(get().records.map(r => r.rack).sort(), [537, 538], '記録は今までどおり');
+});
+
+test('数値が同じ台をまとめるとき、削除から戻した時刻（record_updated_at）は新しい方を残す（2026-11-22）', () => {
+  const d = drive({history: true}); d.setup();
+  const pick = (a, b) => plain(d.context.meruhenPick(a, b));
+  const old = record(537, '2026-10-02', {record_updated_at: '2026-10-15T12:00:00+09:00'});
+  const newer = record(537, '2026-10-02', {record_updated_at: '2026-10-16T12:00:00+09:00'});
+  assert.equal(pick(old, newer).record_updated_at, newer.record_updated_at);
+  assert.equal(pick(newer, old).record_updated_at, newer.record_updated_at, '古い方では戻さない');
+  assert.equal(pick(record(537), newer).record_updated_at, newer.record_updated_at, '無い方には足す');
+  assert.equal(pick(newer, record(537)).record_updated_at, newer.record_updated_at);
+});
+
 test('PC入力に記録の無い日（削除印・イベントだけ・60日より前）は、残っているPCの記録を消さない', () => {
   // 2026-10-17：8/1〜8/17だけのPC入力に、全期間の削除印と期間内のイベントが入っていたため、
   // その日のPCの記録が丸ごと置き換えられて消えた（9/14が0台など）。普段の60日分でも、

@@ -30,6 +30,7 @@ class BackupImportPlan {
     required this.skipped,
     this.linkOnly = const [],
     this.settingOnly = const [],
+    this.extraOnly = const [],
   });
 
   final List<SlotRecord> added;
@@ -45,12 +46,66 @@ class BackupImportPlan {
   /// Same data, but only the manually entered setting information is new.
   final List<SlotRecord> settingOnly;
 
+  /// Same numbers, but the backup has a newer Juggler Online net (`jo_net`…)
+  /// or 🌈 mark (`rainbow`・`rainbow_at`) than the saved row.
+  final List<SlotRecord> extraOnly;
+
   List<SlotRecord> get toSave => [
     ...added,
     ...graphOnly,
     ...linkOnly,
     ...settingOnly,
+    ...extraOnly,
   ];
+}
+
+const _joKeys = [
+  'jo_net',
+  'jo_bb',
+  'jo_rb',
+  'jo_art',
+  'jo_start',
+  'jo_games',
+  'jo_captured_at',
+];
+
+DateTime? _extraTime(Object? value) =>
+    value is String ? DateTime.tryParse(value) : null;
+
+bool _extraNewer(Object? a, Object? b) {
+  final x = _extraTime(a), y = _extraTime(b);
+  return x != null && (y == null || x.isAfter(y));
+}
+
+/// 数値が同じ台でも、ジャグラーオンラインの差枚（jo_net…）と🌈は、[from] の方が新しければ [from] の値を返す
+/// （PC・Googleの同期 meruhenPick と同じ考え方：差枚は jo_captured_at の新しい方、[base] に無ければ足す。
+/// 🌈は rainbow_at の新しい方）。2026-11-22、Geminiの点検 H-11③：以前は比べる項目に入っておらず、PCの
+/// バックアップで付いた差枚・🌈だけの更新は「変わらない」として取り込まれなかった。無ければ null。
+Map<String, Object?>? newerExtras(SlotRecord base, SlotRecord from) {
+  final out = <String, Object?>{};
+  if (from.extra['jo_net'] is num &&
+      (base.extra['jo_net'] is! num ||
+          _extraNewer(
+            from.extra['jo_captured_at'],
+            base.extra['jo_captured_at'],
+          ))) {
+    for (final key in _joKeys) {
+      if (from.extra.containsKey(key)) out[key] = from.extra[key];
+    }
+  }
+  if (from.extra.containsKey('rainbow') &&
+      _extraNewer(from.extra['rainbow_at'], base.extra['rainbow_at'])) {
+    out['rainbow'] = from.extra['rainbow'];
+    out['rainbow_at'] = from.extra['rainbow_at'];
+  }
+  return out.isEmpty ? null : out;
+}
+
+SlotRecord _withExtras(SlotRecord base, SlotRecord from) {
+  final extras = newerExtras(base, from);
+  return extras == null
+      ? base
+      : base.copyWith(extra: {...base.extra, ...extras});
 }
 
 /// Reads/writes the same portable JSON backup format the PC app uses
@@ -438,6 +493,7 @@ class BackupPlanner {
     final unchanged = <SlotRecord>[];
     final linkOnly = <SlotRecord>[];
     final settingOnly = <SlotRecord>[];
+    final extraOnly = <SlotRecord>[];
     final conflicts = <BackupConflict>[];
     var skipped = 0;
     for (final item in rawRecords) {
@@ -499,7 +555,7 @@ class BackupPlanner {
       }
       if (incoming.graph != null && local.graph == null) {
         graphOnly.add(
-          incoming.copyWith(
+          _withExtras(incoming, local).copyWith(
             firstCapturedAt: earliestTimestamp(
               incoming.firstCapturedAt,
               local.firstCapturedAt,
@@ -515,7 +571,7 @@ class BackupPlanner {
         // 手元の台（画像を読み込んでいない軽い形）に足すだけ。保存しても
         // DBの画像はそのまま残る。
         linkOnly.add(
-          local.copyWith(
+          _withExtras(local, incoming).copyWith(
             detailUrl: incoming.detailUrl,
             confirmedSetting:
                 incoming.confirmedSetting ?? local.confirmedSetting,
@@ -524,8 +580,13 @@ class BackupPlanner {
       } else if (incoming.confirmedSetting != null &&
           local.confirmedSetting == null) {
         settingOnly.add(
-          local.copyWith(confirmedSetting: incoming.confirmedSetting),
+          _withExtras(
+            local,
+            incoming,
+          ).copyWith(confirmedSetting: incoming.confirmedSetting),
         );
+      } else if (newerExtras(local, incoming) != null) {
+        extraOnly.add(_withExtras(local, incoming));
       } else {
         unchanged.add(local);
       }
@@ -538,6 +599,7 @@ class BackupPlanner {
       skipped: skipped,
       linkOnly: linkOnly,
       settingOnly: settingOnly,
+      extraOnly: extraOnly,
     );
   }
 }
@@ -557,6 +619,7 @@ class BackupImportResult {
   int graphOnly = 0;
   int linkOnly = 0;
   int settingOnly = 0;
+  int extraOnly = 0;
   int unchanged = 0;
   int skipped = 0;
   int candidates = 0;
@@ -579,6 +642,7 @@ class BackupImportResult {
     graphOnly += plan.graphOnly.length;
     linkOnly += plan.linkOnly.length;
     settingOnly += plan.settingOnly.length;
+    extraOnly += plan.extraOnly.length;
     unchanged += plan.unchanged.length;
     skipped += plan.skipped;
     conflicts.addAll(

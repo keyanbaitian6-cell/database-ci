@@ -21,7 +21,8 @@ void main() {
                 'preliminary': 1,
                 'machines': [
                   {
-                    'name': 'マイジャグラーV',
+                    // 半角カナの機種名（P-STATION）は全角で出す（2026-11-22、Geminiの点検 H-12④）。
+                    'name': 'ﾏｲｼﾞｬｸﾞﾗｰV',
                     'candidates': {
                       'random_draw': [1001],
                       'date_two_exploratory': [1009],
@@ -42,6 +43,8 @@ void main() {
       await tester.pumpAndSettle();
     }
     expect(find.text('保存時刻 00:21:30（日本時間）'), findsOneWidget);
+    expect(find.text('マイジャグラーV'), findsOneWidget);
+    expect(find.textContaining('ﾏｲｼﾞｬｸﾞﾗｰ'), findsNothing);
     expect(find.textContaining('確定前のサイトセブン記録が1台分'), findsOneWidget);
     expect(find.textContaining('日付と下2桁が一致（探索）\n1009'), findsOneWidget);
   });

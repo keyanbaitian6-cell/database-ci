@@ -16,7 +16,18 @@ String storeShortName(String store) =>
 /// 画面に出す機種名。長町南の一覧は半角カナ（例：`ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3`）で読みにくい
 /// ので、表示だけ全角カナにそろえる。保存している名前（照合・検索・削除の
 /// 範囲に使う）は変えない。
-String displayMachineName(String machine) => foldHalfWidthKana(machine);
+///
+/// 半角の記号（中点「･」・句読点・かぎ括弧）も全角にする（2026-11-22、Geminiの点検 M-7②。P-STATIONの機種名の
+/// 3つに「･」があり、半角カナと同じく閲覧ページの字体に無い）。照合に使う [foldHalfWidthKana] は変えない
+/// （設定の推定・翌日候補の機種の照合に使うため）。
+String displayMachineName(String machine) {
+  var name = foldHalfWidthKana(machine);
+  const half = '｡｢｣､･', full = '。「」、・';
+  for (var i = 0; i < half.length; i++) {
+    name = name.replaceAll(half[i], full[i]);
+  }
+  return name;
+}
 
 /// 機種名の並び順。表示している名前（全角にそろえた名前）の順に並べる。
 /// 保存している名前のままだと、半角カナの機種が漢字の機種より後ろに回る。

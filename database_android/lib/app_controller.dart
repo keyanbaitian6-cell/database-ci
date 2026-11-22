@@ -261,7 +261,8 @@ class AppController extends ChangeNotifier {
       throw ArgumentError('店舗または日付が不正です。');
     }
     final trimmed = name?.trim() ?? '';
-    if (trimmed.length > eventNameMax) {
+    // 文字数は PC と同じく1字ずつ数える（runes。🌈 も1字。2026-11-22）。
+    if (trimmed.runes.length > eventNameMax) {
       throw ArgumentError('イベント名は1〜$eventNameMax文字で入力してください。');
     }
     final previous = Map.of(dateEvents);

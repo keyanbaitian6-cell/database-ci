@@ -164,6 +164,48 @@ void main() {
     expect((none.total, none.run), (0, null));
   });
 
+  testWidgets('画面：判定しない理由はPCと同じ順に選ぶ（分かる台が7割未満の日、2026-11-22）', (tester) async {
+    Future<void> show(List<SlotRecord> rows) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StorePatternPage(
+            key: UniqueKey(),
+            data: ViewerData(records: rows),
+            store: store,
+            day: day,
+            onDayChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // 分かる台10台（プラスもマイナスもある）・分からない台6台（稼働16台の7割に届かない）。
+    await show([
+      for (var i = 1; i <= 10; i++) rack(i, i.isEven),
+      for (var i = 11; i <= 16; i++) rack(i, true, known: false),
+    ]);
+    expect(find.textContaining('稼働した台の7割に届かない'), findsOneWidget);
+    expect(find.textContaining('全部プラス、または全部マイナス'), findsNothing);
+    // 全部プラスの日は今までどおり。
+    await show([for (var i = 1; i <= 12; i++) rack(i, true)]);
+    expect(find.textContaining('全部プラス、または全部マイナス'), findsOneWidget);
+  });
+
+  test('同点の機種は、台番号の順に最初に出てきた順（PCの並べ替えと同じ、2026-11-22）', () {
+    // 2機種とも4台中2台プラス（偏りの強さも割合も同じ）。台番号の小さい方（ゼ）が先。名前の順（ア＜ゼ）ではない。
+    final r = storePatternDay(store, day, [
+      for (var i = 1; i <= 4; i++) rack(i, i.isOdd, machine: 'ゼ機種'),
+      for (var i = 5; i <= 8; i++) rack(i, i.isOdd, machine: 'ア機種'),
+      for (var i = 9; i <= 12; i++) rack(i, i.isEven, machine: 'ン機種'),
+    ]);
+    final tied = [
+      for (final g in r.machines)
+        if (g.label != 'ン機種') g.label,
+    ];
+    expect(tied, ['ゼ機種', 'ア機種']);
+  });
+
   testWidgets('画面：その日の判定と履歴、履歴から日を選べる', (tester) async {
     final rows = [
       for (var i = 101; i <= 112; i++)

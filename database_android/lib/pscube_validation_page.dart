@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import 'list_views.dart' show displayMachineName;
+
 const pscubeValidationStore = 'pscube:c740601:20';
 const _methods = <String, String>{
   'random_draw': '同機種内の無作為',
@@ -110,7 +112,8 @@ class _PscubeValidationPageState extends State<PscubeValidationPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            machine['name'] as String,
+                            // 半角カナの機種名は全角に（2026-11-22、Geminiの点検 H-12④。AGENTS.md の決まり）。
+                            displayMachineName(machine['name'] as String),
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           for (final entry in _methods.entries)

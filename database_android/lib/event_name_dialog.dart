@@ -119,7 +119,8 @@ class _EventNameDialogState extends State<EventNameDialog> {
             child: const Text('イベントなしにする'),
           ),
         FilledButton(
-          onPressed: value.isEmpty || value.length > eventNameMaxLength
+          // 文字数は PC と同じく1字ずつ数える（runes。🌈 も1字。2026-11-22）。
+          onPressed: value.isEmpty || value.runes.length > eventNameMaxLength
               ? null
               : () => Navigator.pop(context, value),
           child: const Text('保存'),

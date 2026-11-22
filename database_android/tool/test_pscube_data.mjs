@@ -170,6 +170,9 @@ test('date events: free names, validated scope and dates; old suffix marks becom
   assert.throws(() => validateData({...data(),date_events:[named(),named('別')]}));
   assert.equal(cleanEventName('  末尾イベ '), '末尾イベ');
   assert.equal(cleanEventName(' '), null);
+  // 文字数は PC（Python の len）と同じく1字ずつ（2026-11-22、Codexの点検 #12）。59字＋🌈は60字で通り、61字は止める。
+  assert.equal(cleanEventName('漢'.repeat(59) + '🌈'), '漢'.repeat(59) + '🌈');
+  assert.throws(() => cleanEventName('漢'.repeat(60) + '🌈'), /1〜60文字/);
 });
 test('imports without events keep them; a newer removal survives an older named backup', () => {
   const event = {...data(),date_events:[named()]};

@@ -108,6 +108,16 @@ README = """# database カレンダー（閲覧専用）
 """
 
 
+def service_worker(text, version, shell):
+    """sw.js の版（VERSION）と保存する一覧（FILES）を置き換える。どちらも1か所ずつ当たらなければ公開しない
+    （2026-11-22、Geminiの点検 H-12②。当たらないと古い版のまま公開し、端末のキャッシュが新しいファイルに入れ替わらない）。"""
+    text, versions = re.subn(r"const VERSION = '[^']+';", f"const VERSION = '{version}';", text)
+    text, lists = re.subn(r'const FILES = \[.*?\];', 'const FILES = ' + json.dumps(shell) + ';', text, flags=re.S)
+    if versions != 1 or lists != 1:
+        sys.exit(f'sw.js の版（{versions}か所）・保存する一覧（{lists}か所）を置き換えられません。公開しません。')
+    return text
+
+
 def main(target):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from stage_viewer import record_probes
@@ -121,6 +131,7 @@ def main(target):
             sys.exit(f'{name} にスクリプトのURL・IDらしい文字列があります。公開しません。')
         if any(p.encode() in data for p in probes):
             sys.exit(f'{name} に記録らしい文字列があります。公開しません。')
+    service_worker(files['sw.js'].decode('utf-8'), 'check', [])   # 消す前に、置き換えが当たるかを確かめる
     target.mkdir(parents=True, exist_ok=True)
     for entry in target.iterdir():
         if entry.name == '.git':
@@ -132,8 +143,7 @@ def main(target):
             text = files[name].decode('utf-8')
             if name == 'sw.js':
                 shell = ['./index.html', './android.html'] + [f'./{n}?v={version}' for n in sorted(FILES - {'index.html', 'android.html', 'sw.js'})]
-                text = re.sub(r"const VERSION = '[^']+';", f"const VERSION = '{version}';", text)
-                text = re.sub(r'const FILES = \[.*?\];', 'const FILES = ' + json.dumps(shell) + ';', text, flags=re.S)
+                text = service_worker(text, version, shell)
             (target / name).write_text(stamped(name, text, version), encoding='utf-8', newline='\n')
         else:
             shutil.copyfile(SOURCE / name, target / name)

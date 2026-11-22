@@ -1218,7 +1218,8 @@ class _ResultsPageState extends State<ResultsPage> {
     text.dispose();
     if (result == null || !mounted) return;
     final name = result.isEmpty ? null : result;
-    if (name != null && name.length > 60) return;
+    // 文字数は PC と同じく1字ずつ数える（runes。🌈 も1字。2026-11-22）。
+    if (name != null && name.runes.length > 60) return;
     await widget.controller.setDateEvent(
       store: selectedStore,
       day: selectedDay,

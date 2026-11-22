@@ -318,8 +318,26 @@ function meruhenReadBackup(file, size, document = false, allowDeletions = docume
   }
   const record_deletions = vhDeletions(raw);
   if (!allowDeletions && record_deletions.length) throw new Error('削除記録の同期には履歴モードを有効にしてください。');
-  return document ? {records: [...out.values()], record_deletions,source:raw.source,exported_at:raw.exported_at,
+  // Androidで入れたイベント（消した印を含む）も渡す（2026-11-22、Geminiの点検 H-11②。以前は記録だけを返し、
+  // 履歴方式の見出しの統合〔mergeHeader の date_events〕に届かなかった）。PC の core._valid_date_event と同じ検査で、
+  // 通らないものは記録と同じく飛ばす。
+  const date_events = Array.isArray(raw.date_events) ? raw.date_events.filter(meruhenValidDateEvent).map(meruhenCleanDateEvent) : [];
+  return document ? {records: [...out.values()], record_deletions, date_events, source:raw.source,exported_at:raw.exported_at,
     sync_status:validateSyncStatus(raw.sync_status)} : [...out.values()];
+}
+
+/** PC core._valid_date_event と同じ：店・日付・入力時刻（あれば）・名前（1〜60文字。文字は PC と同じく1字ずつ数える）。
+ * 名前の無いもの（消した印）は入力時刻のあるものだけ。 */
+function meruhenValidDateEvent(e) {
+  if (!e || typeof e !== 'object' || !MERUHEN_STORES.includes(e.store) || typeof e.day !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(e.day) || !Number.isFinite(Date.parse(e.day + 'T00:00:00Z'))) return false;
+  if ('updated_at' in e && meruhenTime(e.updated_at) == null) return false;
+  if (e.name == null) return 'updated_at' in e;
+  return typeof e.name === 'string' && e.name.trim().length > 0 && [...e.name.trim()].length <= 60;
+}
+function meruhenCleanDateEvent(e) {
+  return {store: e.store, day: e.day, name: typeof e.name === 'string' ? e.name.trim() : null,
+    ...('updated_at' in e ? {updated_at: e.updated_at} : {})};
 }
 
 function meruhenReadStore(file) {
@@ -405,6 +423,10 @@ function meruhenPick(base, other) {
     if (theirs != null && (mine == null || theirs > mine)) set({captured_at: other.captured_at});
   }
   if (base.confirmed_setting == null && other.confirmed_setting != null) set({confirmed_setting: other.confirmed_setting});
+  // 削除から戻した時刻（record_updated_at）は新しい方を残す（2026-11-22、Geminiの点検 H-11②。数値が同じ台をまとめると
+  // 引き継がれず、削除の印より新しく戻した台が、また削除扱いになることがあった）。
+  const mineAt = meruhenTime(base.record_updated_at), theirsAt = meruhenTime(other.record_updated_at);
+  if (theirsAt != null && (mineAt == null || theirsAt > mineAt)) set({record_updated_at: other.record_updated_at});
   if (Number.isSafeInteger(other.jo_net)) {
     const mine = meruhenTime(base.jo_captured_at), theirs = meruhenTime(other.jo_captured_at);
     if (!Number.isSafeInteger(base.jo_net) || (theirs != null && (mine == null || theirs > mine))) {

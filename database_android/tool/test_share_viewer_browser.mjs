@@ -25,11 +25,20 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 const pageUrl = process.env.SHARE_PUBLIC_URL || `${origin}/share/index.html`;
 
 // 今月（日本時間）の1日・2日に台を置く（ページは今月から開く）。
-const now = new Date(Date.now() + 9 * 3600000);
+// 2026-11-22（Geminiの点検 M-8②）：以前は本当の今日を使い、1月（前の月が前の年）は年のシートと月の移動の確認を
+// 飛ばしていた。ページと試験の今日を決まった日に固定する（SHARE_TEST_NOW で変えられる。例：2027-01-20T12:00:00+09:00）。
+const FIXED_NOW = Date.parse(process.env.SHARE_TEST_NOW || '2026-11-20T12:00:00+09:00');
+const now = new Date(FIXED_NOW + 9 * 3600000);
 const ym = now.toISOString().slice(0, 7);
 const d1 = `${ym}-01`, d2 = `${ym}-02`, d3 = `${ym}-03`;
 // 先月の15日（保存したHTMLからの集計だけがある日。2026-10-18 day_summaries）。
 const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15)).toISOString().slice(0, 10);
+// ページの時計（Date）も同じ日に固定する。タイマーはふだんどおり進む。
+async function fixedContext(options) {
+  const context = await browser.newContext(options);
+  await context.clock.setFixedTime(FIXED_NOW);
+  return context;
+}
 const curve = (heights) => {
   const c = heights.map((h, i) => [i * 10 + 0.5, 200.5 - h]);
   const ys = c.map(p => p[1]);
@@ -81,7 +90,7 @@ responses['event-history'] = {format:'database-event-history',version:1,base:{ve
 const browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox']});
 try {
   for (const width of [320, 393, 1280]) {
-    const context = await browser.newContext({viewport: {width, height: 860}});
+    const context = await fixedContext({viewport: {width, height: 860}});
     const methods = [];
     const urls = [];
     await context.route('https://script.google.com/**', route => {
@@ -335,7 +344,7 @@ try {
   }
   {
     // 更新の失敗：どの店が何で失敗したかを知らせに出す（2026-10-18）。
-    const context = await browser.newContext({viewport: {width: 393, height: 860}});
+    const context = await fixedContext({viewport: {width: 393, height: 860}});
     let failing = {};
     await context.route('https://script.google.com/**', route => {
       const file = new URL(route.request().url()).searchParams.get('file') ?? '';
@@ -359,7 +368,7 @@ try {
     await context.close();
   }
   // リンク無し：貼り付けの画面。形の違うものは断り、正しいリンクで開く。
-  const context = await browser.newContext({viewport: {width: 393, height: 860}});
+  const context = await fixedContext({viewport: {width: 393, height: 860}});
   await context.route('https://script.google.com/**', route => route.fulfill({status: 200, contentType: 'application/json',
     headers: {'access-control-allow-origin': '*'}, body: JSON.stringify(responses[new URL(route.request().url()).searchParams.get('file') ?? ''] ?? {})}));
   const page = await context.newPage();

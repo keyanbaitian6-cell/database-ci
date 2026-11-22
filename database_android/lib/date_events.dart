@@ -70,7 +70,8 @@ class DateEvent {
     }
     if (name is! String ||
         name.trim().isEmpty ||
-        name.trim().length > eventNameMax) {
+        // 文字数は PC（Python の len）と同じく1字ずつ数える（runes。🌈 も1字。2026-11-22、Codexの点検 #12）。
+        name.trim().runes.length > eventNameMax) {
       return null;
     }
     return DateEvent(

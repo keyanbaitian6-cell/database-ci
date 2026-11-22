@@ -109,7 +109,13 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(target, warnIfMissed: false);
         await advance();
-        tester.takeException();
+        // 押して開いた画面の例外を捨てずに残す（2026-11-22、Geminiの点検 H-12④。以前は捨てて先へ進み、
+        // 画面が開けずに落ちていても気づかなかった）。
+        final opened = tester.takeException();
+        if (opened != null)
+          problems.add(
+            '${label.isEmpty ? 'ボタン${i + 1}' : label}：開いたときに例外 $opened',
+          );
         visited.add(label);
         check(label.isEmpty ? 'ボタン${i + 1}' : label);
         final navigator = tester.state<NavigatorState>(
@@ -119,7 +125,11 @@ void main() {
           navigator.pop();
           await advance();
         }
-        tester.takeException();
+        final closed = tester.takeException();
+        if (closed != null)
+          problems.add(
+            '${label.isEmpty ? 'ボタン${i + 1}' : label}：戻るときに例外 $closed',
+          );
       }
       expect(visited.where((v) => v.contains('店の入れ方のふり返り')), isNotEmpty);
       expect(visited.where((v) => v.contains('狙い台一覧')), isNotEmpty);

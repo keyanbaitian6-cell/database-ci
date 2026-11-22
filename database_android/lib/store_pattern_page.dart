@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'list_views.dart' show dayWithWeekday;
+import 'list_views.dart' show dayWithWeekday, displayMachineName;
 import 'models.dart';
 import 'shared_widgets.dart';
 import 'store_pattern.dart';
@@ -102,7 +102,7 @@ class _StorePatternPageState extends State<StorePatternPage> {
       borderRadius: BorderRadius.circular(999),
     ),
     child: Text(
-      chance.label,
+      displayMachineName(chance.label),
       style: TextStyle(
         fontSize: 12,
         color: _chanceColor(chance),
@@ -140,7 +140,7 @@ class _StorePatternPageState extends State<StorePatternPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          g.label,
+          displayMachineName(g.label),
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 2),
@@ -181,9 +181,13 @@ class _StorePatternPageState extends State<StorePatternPage> {
       if (!r.usable && r.total > 0)
         Padding(
           padding: const EdgeInsets.only(top: 6),
+          // 理由はPC（store_pattern_ui.py）と同じ順に選ぶ。2026-11-22（Geminiの点検 M-7①）：以前は、分かる台が
+          // 7割に届かない日（アナスロで補った日など）にも「全部プラス、または全部マイナス」と出していた。
           child: _note(
             r.total < patternMinRacks
                 ? '台が少ない（$patternMinRacks台未満）ので、偏りは判定しません。'
+                : r.total < patternKnownShare * r.played
+                ? 'プラスかどうか分かる台が、稼働した台の7割に届かない（アナスロで補った日など）ので、偏りは判定しません。'
                 : '全部プラス、または全部マイナスの日なので、偏りは判定しません。',
           ),
         ),

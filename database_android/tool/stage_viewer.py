@@ -12,6 +12,7 @@ string that only exists in the records is still found.
 """
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -20,6 +21,9 @@ HERE = Path(__file__).resolve().parents[1]
 BUILD = HERE / 'build' / 'web'
 SEED = HERE / 'assets' / 'database_seed.json'
 PSCUBE = HERE / 'web' / 'pscube'
+# P’s CUBE版（pscube/ の中）が読む、閲覧ページと共通の部品（../ の .mjs）。P’s CUBE版だけを公開するとき写す。
+# 2026-11-22（Geminiの点検 H-12②）：shared_events.mjs が抜けていた。抜けを止めるため、実際に読む部品と照合する（pscube_shared_imports）。
+PSCUBE_SHARED = ('drive_fetch.mjs', 'viewer_parts.mjs', 'backup_stream.mjs', 'capture_health.mjs', 'storage_report.mjs', 'shared_events.mjs')
 PSCUBE_FILES = {'index.html', 'data.mjs', 'archive.mjs', 'scoring.mjs', 'sync.mjs', 'graph_probe.mjs', 'viewer_bridge.mjs', 'viewer_bootstrap.mjs'}
 
 README = """# database 閲覧
@@ -46,6 +50,21 @@ def record_probes():
     return {p for p in probes if len(p) >= 15}
 
 
+def pscube_shared_imports():
+    """P’s CUBE版のファイルが読む共通の部品（../x.mjs）と、その部品が読む同じ階層の部品（./x.mjs）の名前。"""
+    names = set()
+    for name in PSCUBE_FILES:
+        names |= set(re.findall(r"""['"]\.\./([A-Za-z0-9_]+\.mjs)['"]""", (PSCUBE / name).read_text(encoding='utf-8')))
+    pending = list(names)
+    while pending:
+        text = (HERE / 'web' / pending.pop()).read_text(encoding='utf-8')
+        for found in re.findall(r"""['"]\./([A-Za-z0-9_]+\.mjs)['"]""", text):
+            if found not in names:
+                names.add(found)
+                pending.append(found)
+    return names
+
+
 def stage_pscube(target):
     """Add P's CUBE's input bridge for the shared Flutter viewer."""
     target = Path(target)
@@ -57,7 +76,10 @@ def stage_pscube(target):
         sys.exit('共通閲覧画面の新しいFlutterビルドが必要です。先に全体をstageしてください。')
     if dest.exists() and any(p.name not in PSCUBE_FILES | {'app.mjs', 'style.css'} for p in dest.iterdir()):
         sys.exit('公開先のpscubeフォルダに未知のファイルがあります。')
-    for name in ('drive_fetch.mjs', 'viewer_parts.mjs', 'backup_stream.mjs', 'capture_health.mjs', 'storage_report.mjs'):
+    missing = pscube_shared_imports() - set(PSCUBE_SHARED)
+    if missing:
+        sys.exit(f'P’s CUBE版が読む共通の部品が、写す一覧（PSCUBE_SHARED）にありません: {sorted(missing)}')
+    for name in PSCUBE_SHARED:
         data = (HERE / 'web' / name).read_bytes()
         if any(p.encode() in data for p in record_probes()):
             sys.exit(f'{name} に記録らしい文字列があります。公開しません。')

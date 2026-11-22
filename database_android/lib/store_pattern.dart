@@ -195,12 +195,16 @@ StorePatternDay storePatternDay(
     // 2026-11-17 利用者「文字化けしすぎ」）。保存している名前は変えない。
     byMachine.putIfAbsent(foldHalfWidthKana(r.machine), () => []).add(r);
   }
-  final machines = groups(byMachine)
+  // 同点（偏りの強さもプラスの割合も同じ）の機種は、台番号の順に最初に出てきた順のまま（PC store_pattern.py の
+  // 安定な並べ替えと同じ）。2026-11-22（Geminiの点検 M-7）：以前は名前の順にしていて、PCと並びが違った。
+  final grouped = groups(byMachine);
+  final firstSeen = {for (final (i, g) in grouped.indexed) g.label: i};
+  final machines = grouped
     ..sort((a, b) {
       final c = a.adjusted.compareTo(b.adjusted);
       if (c != 0) return c;
       final r = b.rate.compareTo(a.rate);
-      return r != 0 ? r : a.label.compareTo(b.label);
+      return r != 0 ? r : firstSeen[a.label]!.compareTo(firstSeen[b.label]!);
     });
   final bySuffix = <String, List<SlotRecord>>{};
   final order = suffixesFor(store);
