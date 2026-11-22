@@ -4147,3 +4147,11 @@
 | 既存の `push_ci.py` の全試験通過 | 済 | `test_push_ci.py` 全19件 OK（JST・UTC、`11f530c`） |
 
 - 配布・公開状況：**`keyanbaitian6-cell/database-ci` の `main` へ送信済み（2026-11-22 21:19 JST、PC側の Gemini にて反映）**。PC側で `63e8bfb` へ fast-forward したうえで `git am --3way` により警告なく適用（コード・試験 `1c692c1`、文書 `5623211`）、Windows 環境で `database\.venv\Scripts\python.exe -m unittest discover -s tests -p test_push_ci.py -v` 全19件 OK（59.297秒）を確認し、`tools/push_ci.py` で `63e8bfb..5623211` を非強制送信した。CI の結果は未確認（送信時点で実行中）。Web公開・Googleスクリプト貼替・同期実行・APK作成は対象外（未実施）。
+
+## 2026-11-22 Claude：正本（`imakurudev-eng/database`）の遅れを取り戻す送信
+
+- 依頼：利用者「正本の上限まだ達してないし、とりあえず遅れをできるだけ治しておいて」。月後半の送り先は `database-ci` だが、正本の無料枠が残っているため、利用者の指示で正本の `main` も最新へ追いつかせる。
+- 送信前の状態（2026-11-22 夜に取得して確認）：手元 `main` ＝ `database-ci` の `main` ＝ `7c77d2c`。正本の `main` は `2ba855e` で、手元より98コミット遅れ、正本にだけあるコミットは0件（`git rev-list --count HEAD..origin/main` = 0）。
+- 方法：`tools/push_ci.py` は日付から送り先を `database-ci` に決めるため、正本へは `git push origin HEAD:refs/heads/main`（非強制・fast-forward）で1回だけ送る。この記録のコミット（`.md` のみ）も同じ送信に含め、`database-ci` へは `tools/push_ci.py` で送る（`.md` だけなので CI は動かない）。
+- CI：正本でコードを含む98コミット分の CI が1回動く（正本の枠を使う。約23分、Windowsは2倍で数える）。結果は送信時点で未確認。`database-ci` 側の `5623211` の CI（run 45021678971）も確認時点で実行中・結果未確認。
+- 対象外：アプリ・採点・取り込み・Web公開・Googleスクリプト・APKの変更なし。
