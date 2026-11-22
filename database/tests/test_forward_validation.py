@@ -171,7 +171,7 @@ class ForwardValidationTests(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
         self.assertIn("after_auto=lambda message: save_forward_after('サイトセブン', message)", source)
         self.assertIn("after_auto=lambda message: after_pscube(message, since)", source)
-        self.assertIn("save_forward_after('P’s CUBE', message)\n        sleep_after_pscube(message, since)", source)
+        self.assertIn("save_forward_after('P’s CUBE', message)\n        check_after_pscube(message, since)", source)
         self.assertIn('why = forward_validation.start_pending(DATA_DIR, results.append)', source)
         self.assertIn('check_pending_forward()\n        root.after(300_000, daily_tick)', source)
 

@@ -2,15 +2,15 @@
 
 - 取り込み窓（P’s CUBE）の自動取り込みがON（休憩・拒否のあとの待機中も）の間は、PCを自動でスリープさせない
   （`keep_awake`、Windows の SetThreadExecutionState。呼んだスレッドが終わると自動で解ける）。画面の消灯は止めない。
-- 自動取り込みが終わって取り込み窓が自分で閉じたら、親画面が結果を確かめ（`pscube_import.capture_problems`）、
-  5分後にスリープする（`sleep_now`）。5分の間は取り消せる。利用者が窓を自分で閉じたときはスリープしない。
+- 取り込み後にPCをスリープにする仕組み（11/6の「5分後にスリープ」）は、2026-11-22 利用者「自動スリープは取り消そう」でやめた。
+  窓が閉じると日次学習・前向き検証が裏で動き始め、その途中で眠ると8:00・9:00の締切を逃すため。このアプリからは
+  スリープにしない（Windowsの電源設定の自動スリープは、このアプリでは変えない）。
 - Windows 以外では何もしない（試験・別の環境で止めない）。
 """
 import sys
 
 ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
-SLEEP_DELAY_SECONDS = 300
 
 
 def _kernel32():
@@ -28,12 +28,3 @@ def keep_awake(on, kernel32=None):
     flags = ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0)
     return bool(kernel32.SetThreadExecutionState(flags))
 
-
-def sleep_now(powrprof=None):
-    """PCをスリープにする（休止状態ではなくスリープ。強制しない＝ほかのアプリが止めていれば従う）。できたらTrue。"""
-    if powrprof is None:
-        if sys.platform != 'win32':
-            return False
-        import ctypes
-        powrprof = ctypes.windll.powrprof
-    return bool(powrprof.SetSuspendState(False, False, False))

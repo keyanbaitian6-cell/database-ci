@@ -1,4 +1,5 @@
-"""PCのスリープの扱い（2026-11-06 利用者「取り込み中はスリープ禁止」「取り込み後問題なかったか確認し、5分後にスリーブ」）。"""
+"""PCのスリープの扱い（2026-11-06 利用者「取り込み中はスリープ禁止」。取り込み後の5分後のスリープは
+2026-11-22 利用者「自動スリープは取り消そう」でやめた。取り込み後の確認の記録は残す）。"""
 import sys
 import tempfile
 import unittest
@@ -20,12 +21,19 @@ class PowerTests(unittest.TestCase):
         self.assertEqual([c.args[0] for c in kernel.SetThreadExecutionState.call_args_list],
                          [0x80000001, 0x80000000], 'ONの間は ES_CONTINUOUS|ES_SYSTEM_REQUIRED、解くときは ES_CONTINUOUS だけ')
 
-    def test_sleep_is_sleep_not_hibernate_and_not_forced(self):
-        powrprof = mock.Mock()
-        powrprof.SetSuspendState.return_value = 1
-        self.assertTrue(power.sleep_now(powrprof=powrprof))
-        powrprof.SetSuspendState.assert_called_once_with(False, False, False)
-        self.assertEqual(power.SLEEP_DELAY_SECONDS, 300, '5分後')
+    def test_the_app_never_puts_the_pc_to_sleep_after_a_capture(self):
+        # 2026-11-22 利用者「自動スリープは取り消そう」。取り込み窓が閉じると日次学習・前向き検証が裏で動き始めるので、
+        # その途中で眠ると8:00・9:00の締切を逃す。スリープにする関数・呼び出し・5分の数え下げが戻っていないこと。
+        root = Path(__file__).resolve().parents[1]
+        self.assertFalse(hasattr(power, 'sleep_now'))
+        self.assertFalse(hasattr(power, 'SLEEP_DELAY_SECONDS'))
+        for path in [root / 'app.py', *root.glob('*_import.py'), *root.glob('site777_*.py'), root / 'power.py']:
+            source = path.read_text(encoding='utf-8')
+            for word in ('SetSuspendState', 'sleep_now', 'SLEEP_DELAY_SECONDS', 'sleep_after_pscube', 'Toplevel(root)\n        dialog.title(\'5分後'):
+                self.assertNotIn(word, source, f'{path.name} に {word}')
+        app = (root / 'app.py').read_text(encoding='utf-8')
+        self.assertIn("save_forward_after('P’s CUBE', message)\n        check_after_pscube(message, since)", app)
+        self.assertIn("error_log.note(DATA_DIR, 'pscube.after_check', result)", app, '取り込み後の確認の記録は残す')
 
     def test_capture_problems_reads_only_this_session_and_needs_a_complete_message(self):
         with tempfile.TemporaryDirectory() as tmp:

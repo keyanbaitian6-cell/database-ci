@@ -17,7 +17,6 @@ import forward_validation
 import daily_learning_ui
 import store_pattern_ui
 import input_versions
-import power
 import pscube_import
 from event_calendar import PscubeEvents, open_event_calendar
 from event_history import open_event_history as show_event_history
@@ -1107,52 +1106,20 @@ def main():
 
     def after_pscube(message, since):
         save_forward_after('P’s CUBE', message)
-        sleep_after_pscube(message, since)
+        check_after_pscube(message, since)
 
-    def sleep_after_pscube(message, since):
-        """P’s CUBEの自動取り込みが終わって窓が自分で閉じたら、結果を確かめて記録し、5分後にPCをスリープする
-        （2026-11-06 利用者「取り込み後問題なかったか確認し、5分後にスリーブ」、power.py）。5分の間は取り消せる。"""
+    def check_after_pscube(message, since):
+        """P’s CUBEの自動取り込みが終わって窓が自分で閉じたら、結果を確かめてログ欄と記録に残す。
+        2026-11-22 利用者「自動スリープは取り消そう」：11/6に入れた「5分後にPCをスリープ」はやめた。窓が閉じると
+        日次学習・前向き検証が裏で動き始めるので、その途中で眠ると8:00・9:00の締切を逃すため。"""
         try:
             problems = pscube_import.capture_problems(DATA_DIR, message, since)
-        except Exception as error:  # noqa: BLE001 - 確認に失敗してもスリープの案内は出す
+        except Exception as error:  # noqa: BLE001 - 確認に失敗しても結果の行は出す
             problems = [f'確認できませんでした：{error}']
         result = '問題なし' if not problems else '気になる点 ' + ' / '.join(problems)
         error_log.note(DATA_DIR, 'pscube.after_check', result)
         logbox.insert('end', f'P’s CUBE 取り込み後の確認：{result}\n')
         logbox.see('end')
-        dialog = tk.Toplevel(root)
-        dialog.title('5分後にスリープします')
-        dialog.attributes('-topmost', True)
-        text = tk.StringVar()
-        ttk.Label(dialog, text=f'P’s CUBE の自動取り込みが終わりました。\n確認：{result}', wraplength=420,
-                  justify='left').pack(padx=16, pady=(14, 6), anchor='w')
-        ttk.Label(dialog, textvariable=text).pack(padx=16, pady=6, anchor='w')
-        left = [power.SLEEP_DELAY_SECONDS]
-        cancelled = [False]
-
-        def cancel():
-            cancelled[0] = True
-            logbox.insert('end', 'スリープを取り消しました。\n')
-            logbox.see('end')
-            dialog.destroy()
-
-        ttk.Button(dialog, text='スリープを取り消す', command=cancel).pack(padx=16, pady=(6, 14))
-        dialog.protocol('WM_DELETE_WINDOW', cancel)
-
-        def count():
-            if cancelled[0]:
-                return
-            if left[0] <= 0:
-                dialog.destroy()
-                logbox.insert('end', 'PCをスリープにします。\n')
-                logbox.see('end')
-                error_log.note(DATA_DIR, 'pscube.after_sleep', 'スリープ' + ('しました' if power.sleep_now() else 'できませんでした'))
-                return
-            text.set(f'あと {left[0] // 60}分{left[0] % 60:02d}秒でPCをスリープにします。')
-            left[0] -= 1
-            root.after(1000, count)
-
-        count()
 
     def open_browser_import():
         try:
