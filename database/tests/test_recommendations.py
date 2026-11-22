@@ -9,6 +9,10 @@ from event_history_data import empty_edits, load_base, clean_edits
 
 
 class RecommendationTests(unittest.TestCase):
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def plan(self, **changes):
         return dict(rec.DEFAULT, machines=['機種A', '機種B', '機種C', '機種D'], **changes)
 

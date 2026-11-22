@@ -730,7 +730,59 @@ def export(journal, data_dir, status, now, sync_dir=None):
     return document
 
 
-def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
+SYNC_UNAVAILABLE_SUFFIX = '／同期先未設定または利用不可'
+_SYNC_WRITE_ERR_RE = re.compile(r'／同期先へ書けません（[^）]*）。Googleドライブの起動・同期先の設定を確認してください')
+
+
+def _has_sync_error(status: str) -> bool:
+    return '同期先へ書けません' in status or '同期先未設定または利用不可' in status
+
+
+def _strip_sync_error(status: str) -> str:
+    return _SYNC_WRITE_ERR_RE.sub('', status).replace(SYNC_UNAVAILABLE_SUFFIX, '')
+
+
+def needs_sync_retry(data_dir) -> bool:
+    """直近の daily-learning.json に同期先への書き出し失敗が残っているか（原本DBは開かない）。"""
+    try:
+        doc = json.loads((Path(data_dir) / FILE_NAME).read_text(encoding='utf-8'))
+        return isinstance(doc, dict) and _has_sync_error(str(doc.get('status') or ''))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def retry_sync_export(data_dir, *, clock=lambda: datetime.now(JST)) -> str | None:
+    """同期先（Googleドライブ等）への書き出し失敗だけをやり直す。予測の再計算や原本DBの読み込みは行わない。"""
+    data_dir = Path(data_dir)
+    if not needs_sync_retry(data_dir):
+        return None
+    folder = core.resolve_sync_dir(data_dir)
+    if folder is None or not Path(folder).is_dir():
+        return None
+    from backup_status import output_lock
+    with output_lock(data_dir / 'daily-learning', 'meruhen'):
+        path = data_dir / FILE_NAME
+        try:
+            doc = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(doc, dict) or not _has_sync_error(str(doc.get('status') or '')):
+            return None
+        doc['status'] = _strip_sync_error(str(doc.get('status') or ''))
+        try:
+            if not Path(folder).is_dir():
+                return None
+            with atomic_writer(Path(folder) / FILE_NAME) as f:
+                f.write(encoded(doc))
+        except OSError:
+            return None
+        with atomic_writer(path) as f:
+            f.write(encoded(doc))
+        trace(data_dir, '同期先への書き出しを再試行して完了しました', now=clock())
+        return '日次学習の同期先への書き出しを再試行して完了しました'
+
+
+def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, quiet=0):
     data_dir = Path(data_dir)
     now, journal = jst(clock()), Journal(data_dir / 'daily-learning' / 'journal.sqlite3')
     today = now.date().isoformat()
@@ -745,11 +797,18 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
         # 2026-11-12：することがある店舗の原本だけを読む。保存済み・締切後で、記録すべき結果も無ければ原本を開かない
         # （以前は毎回、原本2つ（509MB・67MB）を丸ごと一時コピーしていた）。読めない原本があっても、ほかの店は続ける。
         saved = {s for s in STORES if journal.has('predictions', shown + '|' + s)}
+        writing = set()
+        if target is not None and quiet > 0:
+            now_ts = now.timestamp()
+            for source in sorted({SOURCES[s] for s in STORES if s not in saved}):
+                _, latest = _source_stamp(data_dir, source, target)
+                if latest is not None and now_ts - latest < quiet:
+                    writing.add(source)
         due = due_outcomes(journal, today)
-        wanted = {s for s in STORES if s not in saved and target is not None}
-        wanted |= {store_of(k) for k in due if store_of(k) in STORES}
+        wanted = {s for s in STORES if s not in saved and target is not None and SOURCES[s] not in writing}
+        wanted |= {store_of(k) for k in due if store_of(k) in STORES and SOURCES[store_of(k)] not in writing}
         if any(store_of(k) not in STORES for k in due):
-            wanted |= set(STORES)
+            wanted |= {s for s in STORES if SOURCES[s] not in writing}
         loaded, failed = {}, {}
         for source in sorted({SOURCES[s] for s in wanted}):
             try:
@@ -790,6 +849,10 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True):
             if target is None:
                 statuses.append(f'{name}：{label}は締切超過・事前予測なし。従来方式を表示してください'
                                 '（次に保存できるのは23:30以降）')
+                continue
+            if SOURCES[store] in writing:
+                statuses.append(f'{name}：取り込み中のため待機（書き込み終了後{max(1, int(quiet) // 60)}分で保存します）')
+                trace(data_dir, statuses[-1])
                 continue
             if SOURCES[store] in failed:
                 statuses.append(f'{name}：処理失敗（{explain(failed[SOURCES[store]])}）。従来方式を使用してください')

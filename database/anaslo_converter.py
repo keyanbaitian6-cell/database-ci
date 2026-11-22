@@ -392,10 +392,31 @@ def normal_analysis_name(payload):
     return f'normal-analysis-{payload["store"]}-{period}.json'
 
 
+def _safe_analysis_path(folder, base_name, new_days):
+    """既存ファイルに含まれる日のうち新しい内容に含まれない日がある場合は上書きせず別名にする。"""
+    import hashlib
+    folder = Path(folder)
+    candidate = folder / base_name
+    days = sorted({str(d) for d in new_days})
+    new_set = set(days)
+    if candidate.exists():
+        try:
+            existing = json.loads(candidate.read_text(encoding='utf-8'))
+            existing_days = set(existing.get('days') or []) if isinstance(existing, dict) else None
+        except (OSError, ValueError, TypeError):
+            existing_days = None
+        if existing_days is None or (existing_days - new_set):
+            base = Path(base_name)
+            tag = hashlib.sha256(','.join(days).encode('utf-8')).hexdigest()[:8]
+            candidate = folder / f'{base.stem}-{len(days)}d-{tag}{base.suffix}'
+    return candidate
+
+
 def save_normal_analysis(folder, payload):
-    """分析用ファイルを決まったフォルダへ保存する。同じ期間は作り直し（HTMLから毎回同じ内容になる）。"""
+    """分析用ファイルを決まったフォルダへ保存する。同じ日集合（または包含する日集合）の作り直しは上書きし、
+    既存ファイルの日を落とす上書きは別名にして残す。"""
     from file_io import atomic_writer
-    path = Path(folder) / normal_analysis_name(payload)
+    path = _safe_analysis_path(folder, normal_analysis_name(payload), payload['days'])
     path.parent.mkdir(parents=True, exist_ok=True)
     with atomic_writer(path) as stream:
         stream.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + '\n')
@@ -456,7 +477,7 @@ def save_other_analysis(folder, payload):
         raise ValueError('その他機種の分析用ファイルの形式が違います。')
     days = sorted({d.replace('-', '') for d in payload['days']})
     period = days[0] if len(days) == 1 else f'{days[0]}-{days[-1]}'
-    path = Path(folder) / f'other-analysis-{payload["store"]}-{period}.json'
+    path = _safe_analysis_path(folder, f'other-analysis-{payload["store"]}-{period}.json', payload['days'])
     path.parent.mkdir(parents=True, exist_ok=True)
     with atomic_writer(path) as stream:
         stream.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + '\n')

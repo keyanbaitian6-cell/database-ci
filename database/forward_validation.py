@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -102,8 +103,72 @@ def _write_state(data_dir: Path, state: dict) -> bool:
         return False
 
 
-def record_pending(data_dir: Path, label: str, now: dt.datetime) -> bool:
-    """23:30〜23:59に窓が自分で閉じて完了したとき、翌日分の対象日を印として残す。"""
+def is_running() -> bool:
+    """前向き検証の自動保存スレッドが動いているか、または続けて実行する分を控えているか。"""
+    with _state_lock:
+        return _running.locked() or _queued is not None
+
+
+class ForwardWindowGate:
+    """複数の取り込み窓が開いている間は前向き検証をすぐ動かさず保留し、最後の窓が閉じたときに1回だけ判定する。
+    P-STATION の取り込み窓が×閉じや途中停止で終わった場合は保留を取り消す（不完全なデータで固定しない）。"""
+
+    def __init__(self):
+        self._pending: list[tuple[str, str]] = []
+
+    def defer(self, label: str, message: str) -> None:
+        if finished(label, message):
+            self._pending.append((label, str(message)))
+
+    def cancel(self) -> None:
+        self._pending.clear()
+
+    def has_pending(self) -> bool:
+        return bool(self._pending)
+
+    def flush(self) -> tuple[str, str] | None:
+        if not self._pending:
+            return None
+        label = self._pending[-1][0]
+        merged = '／'.join(msg for _, msg in self._pending)
+        self._pending.clear()
+        return label, merged
+
+    def take(self, label: str, message: str) -> tuple[str, str]:
+        messages = [msg for _, msg in self._pending]
+        self._pending.clear()
+        if message:
+            messages.append(str(message))
+        return label, '／'.join(messages)
+
+
+def _message_has_day(message: str, day: dt.date) -> bool:
+    iso = day.isoformat()
+    if re.search(rf'(?<!\d){re.escape(iso)}(?!\d)', message):
+        return True
+    return re.search(rf'(?<!\d)0?{day.month}/0?{day.day}(?!\d)', message) is not None
+
+
+def covers_evening_day(label: str, message, now: dt.datetime) -> bool:
+    """23:30〜23:59に完了した知らせが、その晩の対象日（JST当日）の取り込みを含んでいるか。"""
+    if not message:
+        return False
+    text = str(message)
+    day = now.astimezone(JST).date()
+    if label == 'サイトセブン':
+        return _message_has_day(text, day)
+    if label == 'P’s CUBE':
+        if re.search(r'\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}', text):
+            return _message_has_day(text, day)
+        return True
+    return False
+
+
+def record_pending(data_dir: Path, label: str, now: dt.datetime, message=None) -> bool:
+    """23:30〜23:59に窓が自分で閉じて完了したとき、翌日分の対象日を印として残す。
+    message が渡されたときは、その晩の対象日（JST当日）の取り込みを含む場合だけ印を残す。"""
+    if message is not None and not covers_evening_day(label, message, now):
+        return False
     local = now.astimezone(JST)
     target = (local.date() + dt.timedelta(days=1)).isoformat()
     with _state_lock:
@@ -242,9 +307,11 @@ def start(label, message, data_dir, report, *, outputs=None, python=None, now=No
     current = (now() if callable(now) else now) or dt.datetime.now(JST)
     data_dir = Path(data_dir)
     if finished(label, message) and in_evening_window(current):
+        if not covers_evening_day(label, message, current):
+            return 'その晩の対象日の取り込みではないため、翌朝の自動保存の印は残しません'
         if isinstance(plan, str):
             return plan
-        if record_pending(data_dir, label, current):
+        if record_pending(data_dir, label, current, message=message):
             return '0時〜9時の間に自動で保存します（23:30以降の取り込み完了を記録しました）'
         return '23:30以降の取り込み完了を記録できませんでした'
     why = decide(label, message, current, plan)

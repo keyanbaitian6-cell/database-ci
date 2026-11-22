@@ -109,8 +109,10 @@ class OtherAnalysisTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
 
     def test_converter_button_saves_unresolved_names_without_regular_save(self):
+        import gc
         root = tk.Tk()
         root.withdraw()
+        self.addCleanup(gc.collect)  # Tcl_AsyncDelete 対策（test_anaslo_saiwaichou と同じ）
         self.addCleanup(root.destroy)
         converter_dir = Path(__file__).resolve().parents[2] / 'html_converter'
         if str(converter_dir) not in sys.path:

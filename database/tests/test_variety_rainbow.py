@@ -22,6 +22,8 @@ def row(rack, machine, day, games=3000, **extra):
 
 class VarietyRainbowTests(unittest.TestCase):
     def setUp(self):
+        import gc
+        self.addCleanup(gc.collect)  # Tcl_AsyncDelete 対策（root.destroy のあとにメインスレッドで回収）
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / 'database.sqlite3'

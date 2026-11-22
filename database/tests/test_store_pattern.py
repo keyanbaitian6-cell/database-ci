@@ -30,6 +30,10 @@ def texts(parent):
 
 
 class StorePatternTest(unittest.TestCase):
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def test_hypergeometric_and_comparisons(self):
         rows = [rack(i, True, 'A') for i in range(1, 4)] + [rack(i, i <= 5, 'B') for i in range(4, 11)]
         r = sp.store_pattern_day(STORE, DAY, rows, core.rack_won)

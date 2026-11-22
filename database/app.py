@@ -90,13 +90,16 @@ def anaslo_converter_command():
     return [sys.executable, str(app_path)], app_path.parent
 
 
-def site777_browser_command():
+def site777_browser_command(window_id=None):
     """サイトセブン（スマホ会員）をAndroidとして開くブラウザ（site777_browser.py）を別の窓で開くコマンド
     （2026-11-07 利用者「PC版でandroidユーザーとしてブラウザを開いてログインをしたい」）。"""
     if getattr(sys, 'frozen', False):
         raise OSError('配布版（EXE）からは開けません。database/start.cmd から開いてください。')
     here = Path(__file__).resolve().parent
-    return [sys.executable, str(here / 'site777_browser.py'), str(here / 'data')], here
+    command = [sys.executable, str(here / 'site777_browser.py'), str(here / 'data')]
+    if window_id:
+        command.append(str(window_id))
+    return command, here
 
 
 def decode_machine_token(token):
@@ -1015,6 +1018,7 @@ def main():
         logbox.insert('end', note)
 
     capture_windows = []
+    forward_gate = forward_validation.ForwardWindowGate()
 
     def capture_open():
         """取り込み窓が開いているか。開いている間は、日次学習を定期確認・起動時に動かさない（途中の数値で固定しないため）。"""
@@ -1046,6 +1050,8 @@ def main():
                           else f'{label}の取り込み画面を閉じました。最後の停止：{stop}\n' if stop
                           else f'{label}の取り込み画面を閉じました。\n')
             logbox.see('end')
+            if label in ('サイトセブン', 'P’s CUBE') and not forward_validation.finished(label, message):
+                forward_gate.cancel()
             if message and after_auto is not None:
                 after_auto(message)
             if after_close is not None:
@@ -1054,6 +1060,9 @@ def main():
             # 0時〜7時半に取り込みを終えて×で閉じ、朝7:30より前にPCを消すと、その日の予測が保存されなかった）。
             # 途中で閉じたデータは、台数・取り込み時刻の確認（ready）が「取り込み待ち」にする。
             if not capture_open():
+                deferred = forward_gate.flush()
+                if deferred is not None:
+                    save_forward_after(*deferred)
                 start_daily()
 
         root.after(2000, check)
@@ -1084,8 +1093,16 @@ def main():
     def save_forward_after(label, message):
         """取り込みが最後まで終わって窓が自分で閉じたら、P-STATIONの前向き検証（研究用の記録）を裏で保存する
         （2026-11-09 利用者「取り込み完了して取得ブラウザが閉じられたときのみ自動実行」、forward_validation.py）。
+        ほかの取り込み窓が開いている間は動かさず、最後の窓が閉じたときに判定する。
         日本時間0〜9時だけ（23:30〜23:59に完了したときは印を残し、0時以降の定期確認で1回保存する）。
         結果はログ欄に1行出す。失敗しても取り込みには影響しない。"""
+        if capture_open():
+            if forward_validation.finished(label, message):
+                forward_gate.defer(label, message)
+                logbox.insert('end', '前向き検証（P-STATION）：ほかの取り込み窓が開いているため、最後の窓が閉じたあとに判定します。\n')
+                logbox.see('end')
+            return
+        label, message = forward_gate.take(label, message)
         results = []
         try:
             why = forward_validation.start(label, message, DATA_DIR, results.append)
@@ -1198,8 +1215,10 @@ def main():
                 '片方を「上から取り込む」、もう片方を「下から取り込む」にしてください'
                 '（もう片方が済ませた機種は、機種一覧に戻ったときに飛ばします）。', parent=root):
             return
+        import uuid
+        window_id = uuid.uuid4().hex[:12]
         try:
-            command, folder = site777_browser_command()
+            command, folder = site777_browser_command(window_id)
             process = subprocess.Popen(command, cwd=str(folder))
         except OSError as exc:
             messagebox.showerror('起動できません', f'サイトセブンを開けません：{exc}', parent=root)
@@ -1209,13 +1228,13 @@ def main():
         import site777_browser
         # バックアップ・閲覧用ファイルは窓を閉じたあとに1回だけ書く（2026-11-21）。失敗したときだけログ欄に出す。
         def site777_backup_note():
-            note = site777_browser.take_backup_message(DATA_DIR)
+            note = site777_browser.take_backup_message(DATA_DIR, window_id)
             if note:
                 logbox.insert('end', f'サイトセブン：{note}。\n')
                 logbox.see('end')
-        watch_capture_window(process, 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR),
+        watch_capture_window(process, 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR, window_id),
                              after_auto=lambda message: save_forward_after('サイトセブン', message),
-                             take_stop=lambda: site777_browser.take_stop_message(DATA_DIR),
+                             take_stop=lambda: site777_browser.take_stop_message(DATA_DIR, window_id),
                              after_close=site777_backup_note)
         logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
                       'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')
@@ -1930,13 +1949,50 @@ def main():
 
     ttk.Button(results_buttons, text='直前の保存を取り消す', command=undo_last).pack(side='left')
 
-    daily_worker = daily_learning_ui.DailyLearningWorker(DATA_DIR)
+    class QuietDailyWorker(daily_learning_ui.DailyLearningWorker):
+        def __init__(self, data_dir):
+            super().__init__(data_dir)
+            self._next_quiet = 0
+
+        def start(self, *, quiet=0):
+            with self.lock:
+                if self.running:
+                    self._next_quiet = min(self._next_quiet, quiet) if self.again else quiet
+                    self.again = True
+                    return False
+                self.running = True
+                current_quiet = quiet
+
+            def work():
+                from daily_learning_runtime import run as run_daily
+                nonlocal current_quiet
+                while True:
+                    try:
+                        result = run_daily(self.data_dir, quiet=current_quiet)
+                        self.results.put(result['status'])
+                    except Exception as error:
+                        import error_log
+                        error_log.note(self.data_dir, 'daily-learning', f'{type(error).__name__}: {error}')
+                        self.results.put('日次学習で処理失敗。従来候補を利用できます。日次学習画面を確認してください。')
+                    with self.lock:
+                        if not self.again:
+                            self.running = False
+                            return
+                        self.again = False
+                        current_quiet = self._next_quiet
+                        self._next_quiet = 0
+            self.thread = threading.Thread(target=work, name='daily-learning', daemon=True)
+            self.thread.start()
+            return True
+
+    daily_worker = QuietDailyWorker(DATA_DIR)
     ttk.Button(results_buttons, text='日次学習・採用中の候補',
                command=lambda: daily_learning_ui.show(root, DATA_DIR)).pack(side='left', padx=8)
     # 店の入れ方のふり返り（全台系・末尾・並び。2026-11-18 利用者「PCでも表示させてほしい」。閲覧ページと同じ計算）。
     ttk.Button(results_buttons, text='店の入れ方のふり返り',
                command=lambda: store_pattern_ui.show(root, DATA_DIR)).pack(side='left')
     daily_last = [None]
+    sync_retry_running = [False]
 
     def start_daily():
         """日次学習を動かし、そのときの原本の印を覚える（5分ごとの確認が同じ原本で動き直さないように）。"""
@@ -1958,7 +2014,8 @@ def main():
         # 7:30台だけ、しかも取り込み窓が開いていると動かず、窓を朝まで開いたままだと保存されなかった）。
         # 同じ原本で「取り込み待ち」になったら、原本が変わるまで読み直さない（daily_learning_runtime.run_due）。
         from daily_learning import JST
-        from daily_learning_runtime import clear_failed_mark, run_due
+        from daily_learning_runtime import (QUIET_SECONDS, clear_failed_mark, needs_sync_retry,
+                                            retry_sync_export, run_due)
         while not daily_worker.results.empty():
             msg = daily_worker.results.get_nowait()
             daily_last[0] = clear_failed_mark(daily_last[0], msg)
@@ -1968,7 +2025,21 @@ def main():
         except Exception:  # noqa: BLE001 - 確認に失敗しても次の5分で確かめ直す
             due = False
         if due:
-            daily_worker.start()
+            daily_worker.start(quiet=QUIET_SECONDS)
+        elif not daily_worker.running and not sync_retry_running[0] and needs_sync_retry(DATA_DIR):
+            sync_retry_running[0] = True
+
+            def _retry_sync():
+                try:
+                    msg = retry_sync_export(DATA_DIR)
+                    if msg:
+                        daily_worker.results.put(msg)
+                except Exception:  # noqa: BLE001 - 同期再試行の失敗で画面を止めない
+                    pass
+                finally:
+                    sync_retry_running[0] = False
+
+            threading.Thread(target=_retry_sync, name='daily-sync-retry', daemon=True).start()
         while not daily_worker.results.empty():
             msg = daily_worker.results.get_nowait()
             daily_last[0] = clear_failed_mark(daily_last[0], msg)
@@ -1998,6 +2069,7 @@ def main():
             return
         # 保存できる時間帯（前日23:30〜当日8:00）に閉じるとき、まだ保存していない店があれば、日次学習を済ませてから閉じる
         # （2026-11-14 利用者「2つとも進める」。11/12・11/13の夜は、取り込みのあとPC本体を閉じて予測が保存されなかった）。
+        # すでに動いている前向き検証（forward_validation）も途中で切らずに同じ枠で待つ（閉じるときに新しく起動はしない）。
         # 待っている間にもう一度×を押すと、待たずに閉じる。3分たっても終わらなければ閉じる。
         if not daily_closing[0]:
             daily_closing[0] = True
@@ -2007,24 +2079,27 @@ def main():
                 due, mark = run_due(DATA_DIR, datetime.now(JST), daily_last[0], on_close=True)
             except Exception:  # noqa: BLE001 - 確かめられなければ、いつもどおり閉じる
                 due = False
-            if due or daily_worker.running:
+            if due or daily_worker.running or forward_validation.is_running():
                 if due:
                     daily_last[0] = mark
                     daily_worker.start()
-                tell('日次学習の予測を保存してから閉じます（1分ほど。待たずに閉じるときは、もう一度×を押してください）。\n')
+                if forward_validation.is_running() and not (due or daily_worker.running):
+                    tell('前向き検証の自動保存が終わってから閉じます（待たずに閉じるときは、もう一度×を押してください）。\n')
+                else:
+                    tell('日次学習の予測を保存してから閉じます（1分ほど。待たずに閉じるときは、もう一度×を押してください）。\n')
                 limit = [time.monotonic() + daily_learning_ui.CLOSE_WAIT_SECONDS]
 
                 def ask_wait():
                     # 3分を過ぎてもまだ保存中なら、黙って切らずに選ばせる（2026-11-20、daily_learning_ui.close_wait）。
                     return messagebox.askyesno(
-                        '日次学習の保存中',
-                        '日次学習の予測を、まだ保存しています（3分を過ぎました）。\n\n'
+                        '保存中',
+                        '日次学習または前向き検証の保存が、まだ終わっていません（3分を過ぎました）。\n\n'
                         '「はい」：もう3分待ちます（終わればすぐに閉じます）。\n'
                         '「いいえ」：今すぐ閉じます。まだ保存していない店の予測は保存されません'
                         '（8時までにPC版を開き直せば、そのとき保存します）。', parent=root)
 
                 def wait_daily():
-                    done, limit[0] = daily_learning_ui.close_wait(daily_worker.running, time.monotonic(), limit[0], ask_wait)
+                    done, limit[0] = daily_learning_ui.close_wait(daily_worker.running or forward_validation.is_running(), time.monotonic(), limit[0], ask_wait)
                     if not done:
                         root.after(1000, wait_daily)
                         return

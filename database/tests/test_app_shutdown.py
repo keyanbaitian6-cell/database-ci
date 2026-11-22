@@ -15,6 +15,10 @@ from output_worker import OutputWorker
 
 
 class AppShutdownTests(unittest.TestCase):
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def check_close(self, running_output):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)

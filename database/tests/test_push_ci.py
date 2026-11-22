@@ -108,6 +108,12 @@ class PushTests(unittest.TestCase):
         self.assertEqual(self.run_push(utc(2026, 10, 31, 22, 0)), 0)
         self.assertEqual(self.main_of(self.canonical), notes)
 
+    def test_japanese_markdown_filename_counts_as_docs_only_on_the_first_morning(self):
+        # 日本語名の .md でも git diff の引用符エスケープで文書だけ判定が外れないこと。
+        notes = self.commit('計画.md', '記録')
+        self.assertEqual(self.run_push(utc(2026, 10, 31, 22, 0)), 0)
+        self.assertEqual(self.main_of(self.canonical), notes)
+
     def test_nothing_to_send_when_the_target_already_has_it(self):
         self.assertEqual(self.run_push(utc(2026, 11, 2, 0, 0)), 0)
 

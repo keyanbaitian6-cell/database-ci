@@ -8,6 +8,7 @@ GCがいつ走るかはメモリの使われ方しだいで、作業フォルダ
 """
 import gc
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -53,11 +54,33 @@ print('OFF_MAIN=' + json.dumps(off_main))
 sys.exit(0 if result.wasSuccessful() and not off_main else 1)
 '''
 
-# Tkを作る試験と、その後で別スレッドを動かす試験（ゲートと同じ名前順）。
-MODULES = ['test_anaslo_browser', 'test_anaslo_download_ui', 'test_anaslo_saiwaichou', 'test_pscube_auto']
+# Tkを作る試験を自動検出し、ゲートと同じ名前順で並べたうえで、別スレッドを動かす試験を末尾に添える。
+TK_TEST_PATTERN = re.compile(
+    r'(?:tk|tkinter)\.Tk\b|HtmlConverterApp|\bapp\.main\b|daily_learning_ui\.show'
+)
+
+
+def discover_modules(tests_dir: Path = TESTS) -> list[str]:
+    found = sorted(
+        path.stem for path in tests_dir.glob('test_*.py')
+        if path.stem not in ('test_tk_threads', 'test_pscube_auto')
+        and TK_TEST_PATTERN.search(path.read_text(encoding='utf-8'))
+    )
+    return found + ['test_pscube_auto']
+
+
+MODULES = discover_modules()
 
 
 class TkThreadTests(unittest.TestCase):
+    def test_discovers_tk_test_modules_automatically(self):
+        modules = discover_modules()
+        self.assertEqual(modules[-1], 'test_pscube_auto')
+        for expected in ('test_anaslo_browser', 'test_anaslo_converter', 'test_app_shutdown',
+                         'test_app_output_worker', 'test_store_pattern'):
+            self.assertIn(expected, modules)
+        self.assertNotIn('test_tk_threads', modules)
+
     def test_tk_tests_leave_nothing_for_another_thread_to_collect(self):
         # 試験は tests/ にあり、試験から読む本体（core など）は database/ にある。両方を読めるようにする。
         env = dict(os.environ, PYTHONPATH=os.pathsep.join(

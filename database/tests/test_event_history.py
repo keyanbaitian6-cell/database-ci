@@ -21,6 +21,10 @@ class HistoryTests(unittest.TestCase):
     def setUp(self):
         self.base = load_base()
 
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def test_capacity_rejects_growth_without_losing_saved_history_and_allows_replacement(self):
         with tempfile.TemporaryDirectory() as folder:
             db = Store(Path(folder)/'test.db')

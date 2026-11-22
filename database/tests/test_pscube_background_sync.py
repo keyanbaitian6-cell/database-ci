@@ -20,6 +20,9 @@ def setUpModule():
 
 
 class BackgroundPscubeSyncTests(unittest.TestCase):
+    def tearDown(self):
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def run_app(self, callback):
         with tempfile.TemporaryDirectory() as directory:
             base=Path(directory); data=base/'data'; sync=base/'sync'; sync.mkdir()

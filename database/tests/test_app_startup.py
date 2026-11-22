@@ -13,6 +13,10 @@ from core import Store, export_backup, load_settings, save_settings
 
 
 class AppStartupTests(unittest.TestCase):
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def test_variety_is_built_only_on_first_open_and_refreshed_on_reopen(self):
         with tempfile.TemporaryDirectory() as folder:
             root_path = Path(folder)

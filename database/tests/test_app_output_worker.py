@@ -12,6 +12,10 @@ from output_worker import OutputWorker
 
 
 class AppOutputWorkerTests(unittest.TestCase):
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def test_startup_import_keeps_tk_timers_running_during_report_generation(self):
         with tempfile.TemporaryDirectory() as directory:
             root_path = Path(directory); data = root_path / 'data'; sync = root_path / 'sync'; sync.mkdir()

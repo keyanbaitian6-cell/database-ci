@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 from datetime import datetime
@@ -32,29 +33,45 @@ LAST_STOP_NAME = 'site777-last-stop.json'
 BACKUP_NOTE_NAME = 'site777-backup-note.json'
 
 
-def close_when_finished(session, window, data_dir) -> bool:
+def clean_window_id(window_id) -> str | None:
+    """2窓同時運用で知らせのファイルを分離する窓ID。英数字・_- のみ許可する。"""
+    if not isinstance(window_id, str):
+        return None
+    value = window_id.strip()
+    return value if re.fullmatch(r'[A-Za-z0-9_-]{1,40}', value) else None
+
+
+def notice_path(data_dir, base_name: str, window_id=None) -> Path:
+    wid = clean_window_id(window_id)
+    if not wid:
+        return Path(data_dir) / base_name
+    base = Path(base_name)
+    return Path(data_dir) / f'{base.stem}-{wid}{base.suffix}'
+
+
+def close_when_finished(session, window, data_dir, window_id=None) -> bool:
     """自動取り込みが最後まで終わり、保存の処理も終わっていれば、結果の文を親画面への知らせに残して窓を閉じる
     （2026-11-07 利用者「取り込み終わったなら閉じる仕様にしてね」。メルヘン・P’s CUBEの close_when_finished と同じ。
     サイトのページを開いたままにしない）。手動の取り込み・途中で止まったときは閉じない。"""
     message = session._completed
     if not message or session._work_lock.locked():
         return False
-    write_notice(Path(data_dir) / FINISHED_NAME, message)
+    write_notice(notice_path(data_dir, FINISHED_NAME, window_id), message)
     window.destroy()
     return True
 
 
-def take_finished_message(data_dir) -> str | None:
+def take_finished_message(data_dir, window_id=None) -> str | None:
     """取り込み窓が閉じたあとに親画面が呼ぶ。自動で閉じたときの結果の文を返して知らせを消す（無ければ None）。"""
-    return take_notice(Path(data_dir) / FINISHED_NAME)
+    return take_notice(notice_path(data_dir, FINISHED_NAME, window_id))
 
 
-def take_backup_message(data_dir) -> str | None:
+def take_backup_message(data_dir, window_id=None) -> str | None:
     """取り込み窓が閉じたあとに親画面が呼ぶ。閉じたあとの書き出しが失敗したときの文を返して知らせを消す（無ければ None）。"""
-    return take_notice(Path(data_dir) / BACKUP_NOTE_NAME)
+    return take_notice(notice_path(data_dir, BACKUP_NOTE_NAME, window_id))
 
 
-def backup_after_close(session, data_dir, log):
+def backup_after_close(session, data_dir, log, window_id=None):
     """窓が閉じたあと（webview.start が戻ったあと）に1回だけ、バックアップ・閲覧用ファイルを書き出す
     （2026-11-21 利用者「まとめて」。1機種ごとにDB全体を書き出していて取り込みが重かった。メルヘンと同じく閉じたときに1回）。
     失敗しても例外を出さず、文を親画面への知らせに残す。"""
@@ -64,14 +81,14 @@ def backup_after_close(session, data_dir, log):
         log.write('backup_after_close_failed', error=type(error).__name__)
         note = f'バックアップに失敗（取り込みは保存済み）：{type(error).__name__}'
     if note:
-        write_notice(Path(data_dir) / BACKUP_NOTE_NAME,
+        write_notice(notice_path(data_dir, BACKUP_NOTE_NAME, window_id),
                      f'{note}。本体の「バックアップ・同期」で状態を確かめてください（サイトへ戻る必要はありません）')
     return note
 
 
-def take_stop_message(data_dir) -> str | None:
+def take_stop_message(data_dir, window_id=None) -> str | None:
     """取り込み窓が閉じたあとに親画面が呼ぶ。最後に止まった時刻と理由の文を返して知らせを消す（無ければ None）。"""
-    return take_notice(Path(data_dir) / LAST_STOP_NAME)
+    return take_notice(notice_path(data_dir, LAST_STOP_NAME, window_id))
 
 # 開いたらすぐログイン画面（2026-11-07 利用者「ホームからサイトセブンクリックしたらそのままログイン画面にして
 # 欲しい」「クレジットカード会員だからここね」）。利用者はスマホ会員のクレジットカード会員で、そのログイン画面。
@@ -288,7 +305,7 @@ def reload_page(window, url, invoke=None):
     invoke(go)
 
 
-def run(data_dir, start_url=START_URL):
+def run(data_dir, start_url=START_URL, window_id=None):
     import webview
     from pscube_import import keep_page_timers
 
@@ -296,10 +313,11 @@ def run(data_dir, start_url=START_URL):
     # 2026-11-21：2つ目の窓のグラフ待ちが毎分同じ秒にしか動いていなかった）。サイトへの間隔は Python 側の3〜5秒のまま。
     # 最小化はこれでも見えないままなので、グラフ待ちはカード側（prepare）が見えるまで待つ。
     keep_page_timers()
+    window_id = clean_window_id(window_id)
     log = DiagnosticLog(data_dir)
     from site777_session import Session
     from capture_card import CARD_JS
-    session = Session(data_dir, log)
+    session = Session(data_dir, log, window_id=window_id)
     window = webview.create_window(TITLE, start_url, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1],
                                    js_api=session)
     session._window = window
@@ -333,16 +351,16 @@ def run(data_dir, start_url=START_URL):
         site777_samples.collect(window, data_dir, log)
 
     window.events.loaded += loaded
-    take_finished_message(data_dir)  # 前回の窓の知らせが残っていれば消す
-    take_stop_message(data_dir)
-    take_backup_message(data_dir)
+    take_finished_message(data_dir, window_id)  # この窓の古い知らせが残っていれば消す（別の窓の知らせは触らない）
+    take_stop_message(data_dir, window_id)
+    take_backup_message(data_dir, window_id)
     closed = threading.Event()
     window.events.closed += closed.set
 
     def watch_finished():
         while not closed.wait(0.5):
             try:
-                if close_when_finished(session, window, data_dir):
+                if close_when_finished(session, window, data_dir, window_id):
                     log.write('closed_when_finished')
                     return
             except Exception as error:  # noqa: BLE001 - 閉じられなくても見張りは続ける
@@ -362,7 +380,7 @@ def run(data_dir, start_url=START_URL):
     # private_mode=False と専用の保存先でログインを残す。
     webview.start(gui='edgechromium', private_mode=False, user_agent=ANDROID_USER_AGENT,
                   storage_path=str(webview_storage(data_dir)))
-    backup_after_close(session, data_dir, log)
+    backup_after_close(session, data_dir, log, window_id)
 
 
 def runtime_root():
@@ -372,4 +390,5 @@ def runtime_root():
 
 
 if __name__ == '__main__':
-    run(sys.argv[1] if len(sys.argv) > 1 else runtime_root() / 'data')
+    run(sys.argv[1] if len(sys.argv) > 1 else runtime_root() / 'data',
+        window_id=sys.argv[2] if len(sys.argv) > 2 else None)

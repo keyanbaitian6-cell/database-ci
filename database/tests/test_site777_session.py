@@ -1189,3 +1189,29 @@ class SessionTest(unittest.TestCase):
             store.close()
         self.assertEqual(records2[101]['games'], 8200)
         self.assertEqual(records2[101]['source_captured_at'], '2026-11-06T23:40:00+09:00')
+
+    def test_skipping_machine_saved_by_another_window_does_not_reset_resume_count(self):
+        # 別の窓が保存した機種を _skip_saved_machines が「済み」に足しても、
+        # この窓が進んだことにはならず _resume_count を0に戻さない（5回上限が効く）。
+        other = self.new_session()
+        other_epoch = other.configure(True, '2026-11-06')['epoch']
+        for step in (table(), graph(metadata=True), graph(), graph(2)):
+            res = other.capture(json.dumps(step), other_epoch)
+            self.assertNotIn('error', res, res.get('error'))
+        self.epoch = self.session.configure(True, '2026-11-06')['epoch']
+        self.session._resume_count = 4
+        next_url = url('D2300', model='456')
+        idx = {'kind': 'index', 'url': url('D0300'), 'page': 1, 'pages': [{'number': 1}], 'index_url': url('D0300'),
+               'machines': [{'name': '試験ジャグラー3', 'model_id': '123', 'url': url('D2300'), 'count': 2},
+                            {'name': '別の機種', 'model_id': '456', 'url': next_url, 'count': 1}]}
+        res = self.cycle(idx)
+        self.assertEqual(res['action']['url'], source_url(next_url, 'model'))
+        self.assertIn('123', self.session._done, '別の窓が保存した機種は飛ばす')
+        self.assertEqual(self.session._resume_count, 4, '別の窓の保存を飛ばしただけでは再開回数を0に戻さない')
+        # 5回目の再開後に再び失敗すると打ち切りになる
+        self.session.pause('止まりました。', 'navigation_failed')
+        self.due()
+        self.assertEqual(self.session._resume_count, 5)
+        self.session.pause('止まりました。', 'navigation_failed')
+        self.assertIsNone(self.session.state()['resume_at'])
+        self.assertIn('5回続けても取り込みが進まないため', self.session.state()['status'])

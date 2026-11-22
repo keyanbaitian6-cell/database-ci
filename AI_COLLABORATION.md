@@ -4359,3 +4359,48 @@
 - **2回目の分担から外したもの**：G5（P’s CUBE 減台後の取り戻し。PC `pscube_import.py`・Android `pscube_store.dart`）、G6（Android の P’s CUBE で3回失敗したときにページを離す）、C9 のうち P’s CUBE の取り込み部品（`pscube_capture.js`・`pscube_auto_probe.js`）の作り直しと照合の試験。どれも P’s CUBE の取り込みだけに効くため。Gemini には、G5・G6 をしないよう伝える（利用者経由）。
 - そのまま残すもの：G7〜G11（サイトセブン・前向き検証・日次学習・アナスロ・試験）、C4〜C8、C9 の残り（`stage_viewer.py --pscube-only` の `shared_events.mjs`、`stage_share_viewer.py` の `sw.js`、共有ページの画面試験の1月の抜け）。P’s CUBE の 48MiB（H-6②）は、保存先が同じで P-STATION の台が毎日増えるので、引き続き期日つき（12月下旬の見込み）。
 - 照合の表のうち、P’s CUBE の取り込みだけの項目（Codex #5、Gemini M-2①②）は、今後は直す対象にしない。M-2③（機種の種別の優先）は保存・閲覧の規則なので残る。
+
+## 2026-11-22 23時台 Gemini：G7〜G11（サイトセブン・前向き検証・日次学習・アナスロ・試験）の修正
+
+- 基準：`main` の `2779496`（未push。利用者の決定により G5・G6 は対象外。`database_android/`・`share_viewer/`・`.gs` は一切触らない）。対象サイトには接続せず、日次学習の成績表（`outcomes`・`decisions`）と `../outputs/` の途中成績は開かない。
+- **完了の条件（着手前記録）**
+  - **G7 サイトセブン**（`site777_session.py`・`site777_browser.py`・`app.py`）：
+    - ①別の窓が保存した機種を `_skip_saved_machines` / `_skip_complete_days` が「済み」に足しても `_resume_count` を 0 に戻さず、この窓が自分で保存したときだけ戻す。
+    - ②2つの窓が同じ知らせファイル（`site777-capture-finished.json`・`site777-last-stop.json`・`site777-backup-note.json`）を取り違え・消し合わないよう窓ごとのIDで分離する（ID未指定時は従来互換）。
+  - **G8 前向き検証**（`forward_validation.py`・`app.py`・`site777_session.py`）：
+    - ①ほかに取り込み窓が開いている間は、1つ目の窓が自動で閉じても前向き検証をすぐ動かさず保留し、最後の取り込み窓が閉じたときに判定する（P-STATION の取り込み窓が×閉じ・エラー停止したときは保留を取り消す）。
+    - ②PCアプリを閉じるとき、実行中の前向き検証も日次学習と同じく `daily_learning_ui.close_wait` で待つ（×閉じ時の自動実行禁止〔11/9〕は維持）。
+    - ③23:30〜23:59 の `record_pending` は、その晩の対象日（JST当日）の取り込みが完了したときだけ印を残し、過去日の取り直しでは残さない（サイトセブンの単日完了文にも日付を含める）。
+  - **G9 日次学習**（`daily_learning_runtime.py`・`app.py`）：
+    - ①静穏な原本だけで `run_due` が発火したとき、書き込み中（10分未満）の別原本に属する店はその実行で評価・固定保存しない。
+    - ②同期先への `daily-learning.json` 書き出しに失敗したとき、全店舗が保存済みでも次の確認で予測を再計算せず書き出しだけを再試行する。
+  - **G10 アナスロの分析用JSON**（`anaslo_converter.py`）：
+    - 既存ファイルに含まれる日のうち新しい内容に含まれない日がある場合は上書きせず別名で保存し、既存の日を落とさない（同じ日集合・包含する日集合は従来どおり上書き）。`daily_learning_archive` が両方読み込める。
+  - **G11 試験・道具**（`database/tests/test_tk_threads.py`・`database/tests/test_daily_learning_pscube.py`・`tools/push_ci.py`・`database/tests/test_push_ci.py`）：
+    - ①`test_tk_threads.py` の対象モジュール一覧を自動検出し、既存のTk試験の漏れをなくす。
+    - ②`database/daily_learning_pscube.mjs` を合成データで実行し、入出力JSONの形を確かめる試験を追加する。
+    - ③`tools/push_ci.py` の `git diff --name-only` に `-c core.quotePath=false` を付け、日本語名の `.md` でも `docs_only` と判定できるようにし、`test_push_ci.py` に試験を追加する。
+- **確かめ方（着手前記録）**
+  - 各項目（G7〜G11）の回帰試験を先に追加し、修正前の版（`2779496`）で失敗することを確認する。
+  - 修正後に対象試験と PC 全試験（`database/.venv/Scripts/python.exe -m unittest discover -s tests`）を実行し、全件通過することを確認する（Windows サンドボックス制限を受ける `test_push_ci.py`・`test_project_python.py` を含む全件を確認）。
+  - 変更した自分のファイルだけを `git add <ファイル>` でコミットする（push・APK作成はしない）。
+- **実施内容と確認結果**
+  - 変更ファイル（30ファイル）：`database/site777_session.py`、`database/site777_browser.py`、`database/forward_validation.py`、`database/daily_learning_runtime.py`、`database/anaslo_converter.py`、`database/app.py`、`tools/push_ci.py`、`database/tests/test_daily_learning_pscube.py`（新規）、関係する回帰試験および `test_tk_threads.py` 自動検出で見つかった Tk 循環参照リーク試験14本の `gc.collect()` 後片付け修正、`AI_COLLABORATION.md`。`database_android/`・`share_viewer/`・`.gs` は未変更。
+  - **確認の表**
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| G7-① サイトセブン：他窓の保存を `_skip_saved_machines` で飛ばしても `_resume_count` を戻さず、自窓の保存時だけ戻す | OK | 修正前（`2779496`）で `test_skipping_machine_saved_by_another_window_does_not_reset_resume_count` が `AssertionError: 0 != 4` で失敗。`site777_session.py` に `_own_saves` を導入し、修正後は `test_site777_session` 全件通過。 |
+| G7-② サイトセブン：2窓の知らせファイル（完了・停止・バックアップ失敗）を窓ごとのIDで分離し取り違え・消去を防ぐ | OK | 修正前で `test_two_windows_keep_separate_notice_files_and_do_not_erase_each_other` が `TypeError` で失敗。`site777_browser.py` に `notice_path` / `window_id`、`site777_session.py` と `app.py`（`site777_browser_command`・`open_site777_browser`）へ `window_id` を通し、修正後は `test_site777_browser` 全件通過（ID未指定時は従来互換）。 |
+| G8-① 前向き検証：他窓が開いている間は動かさず保留し、最後の窓が閉じたときに判定（P-STATION 窓の中断時は保留取消） | OK | 修正前で `test_multi_window_gate_waits_for_last_window_and_cancels_on_abort` が `AttributeError` で失敗。`forward_validation.ForwardWindowGate` を追加し `app.py` の `watch_capture_window`・`save_forward_after` に接続、修正後は `test_forward_validation` 全件通過。 |
+| G8-② 前向き検証：PCアプリ終了時に実行中の前向き検証も `daily_learning_ui.close_wait` で待つ（×閉じ時自動実行禁止〔11/9〕を維持） | OK | 修正前で `test_is_running_reflects_background_execution_and_close_app_waits` が `AttributeError` で失敗。`forward_validation.is_running()` を追加し `app.py` `close_app` に組み込み（`forward_validation.start` は呼ばない）、修正後は `test_forward_validation`・`test_daily_learning_trace` 全件通過。 |
+| G8-③ 前向き検証：23:30〜23:59 の `record_pending` は当日（JST）の取り込み完了時だけ印を残す | OK | 修正前で `test_evening_pending_only_marks_when_todays_business_day_was_captured` が過去日でも印が残り失敗（`True is not false`）。`site777_session.py` の単日完了文に `MM/DD` を含め、`forward_validation.covers_evening_day()` で当日照合を追加、修正後は通過。 |
+| G9-① 日次学習：静穏な原本だけで `run_due` 発火時、書き込み中（10分未満）の別原本に属する店を判定・固定保存しない | OK | 修正前で `test_run_with_quiet_skips_stores_whose_source_db_is_still_being_written` が `TypeError` で失敗。`daily_learning_runtime._run(..., quiet=0)` で書き込み中原本を除外し、`app.py` `daily_tick` から `quiet=QUIET_SECONDS` で起動するよう修正、通過。 |
+| G9-② 日次学習：同期先への書き出し失敗時、保存済みでも次回確認で予測を再計算せず書き出しだけ再試行する | OK | 修正前で `test_sync_export_failure_retries_export_only_without_recomputing` が `AttributeError` で失敗。`daily_learning_runtime.needs_sync_retry` / `retry_sync_export` を追加し `app.py` `daily_tick` の裏スレッドで再試行するよう接続、原本DBを開かず同期復旧することを確認。 |
+| G10 アナスロの分析用JSON：既存ファイルの日を落とす上書きをしない（同日集合の作り直しは上書き、`daily_learning_archive` が両方読める） | OK | 修正前で `test_save_normal_analysis_does_not_overwrite_existing_file_with_missing_days` が同一ファイル名へ上書きし失敗。`anaslo_converter._safe_analysis_path` を `save_normal_analysis`・`save_other_analysis` に適用し、2日目の保持とアーカイブ読み込みを確認（`test_anaslo_converter` 22件・`test_anaslo_saiwaichou`・`test_other_analysis` 全件通過）。 |
+| G11-① `test_tk_threads.py` の対象を自動検出し、Tk の別スレッドGCリークを潰す | OK | 修正前（`2779496`）で自動検出した20モジュール＋`test_pscube_auto` に対しプローブ実行すると `Tcl_AsyncDelete`（終了コード 2147483651）を実再現。14試験ファイルにメインスレッドでの `gc.collect()` 後片付けを追加し、`test_tk_threads` 3件（自動検出21モジュール・301試験の連続別スレッドGCプローブ、`OFF_MAIN=[]`）が86.5秒で全件通過。 |
+| G11-② `database/daily_learning_pscube.mjs` の合成データ試験 | OK | 新規 `database/tests/test_daily_learning_pscube.py` で実 Node によりノーマル機・AT機・少数機の合成入力を実行し、`store`・`rate`・`name`・`profile`・`pool`・`current` の契約を確認（2件通過、実成績DBは未参照）。 |
+| G11-③ `tools/push_ci.py` で日本語名 `.md` を `docs_only` 判定できる | OK | 修正前で `test_japanese_markdown_filename_counts_as_docs_only_on_the_first_morning` が `AssertionError: 1 != 0` で失敗。`tools/push_ci.py:119` に `-c core.quotePath=false` を追加し、`test_push_ci`＋`test_project_python` 32件全件通過。 |
+| PC 全体回帰確認 | OK | `database/.venv/Scripts/python.exe -m unittest discover -s tests` で全 1,125 件を実行し、サンドボックス対象外の 1,103 件が全件通過（327.7秒）。サンドボックス制限を受ける `test_push_ci`＋`test_project_python` の 32 件は制限外実行で 32/32 件通過（合計 1,125/1,125 件通過）。 |
+
+

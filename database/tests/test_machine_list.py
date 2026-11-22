@@ -22,6 +22,8 @@ def row(rack, machine, games=3000, day=DAY, **extra):
 
 class MachineListTests(unittest.TestCase):
     def setUp(self):
+        import gc
+        self.addCleanup(gc.collect)  # Tcl_AsyncDelete 対策（root.destroy のあとにメインスレッドで回収）
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / 'database.sqlite3'
@@ -207,6 +209,8 @@ class SuffixMarkTests(unittest.TestCase):
         self.assertEqual([rack_suffix(r) for r in (7, 17, 120, 1203)], [7, 7, 0, 3])
 
     def setUp(self):
+        import gc
+        self.addCleanup(gc.collect)  # Tcl_AsyncDelete 対策（root.destroy のあとにメインスレッドで回収）
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / 'database.sqlite3'

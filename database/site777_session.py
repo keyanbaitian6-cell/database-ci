@@ -18,7 +18,7 @@ from browser_import import clean_overlay_layout
 from pscube_import import (PscubeStore, PscubeRandomCapture, auto_backup, business_day, is_excluded_machine,
                            recent_business_days, site777_final, site777_final_at)
 from file_io import atomic_writer, write_notice
-from site777_browser import Bridge, LAST_STOP_NAME
+from site777_browser import Bridge, LAST_STOP_NAME, notice_path
 import site777_import as source
 
 # 移動を指示してから、読み込みの完了（成功・失敗）がこれだけ来なければ止める（2026-11-08）。
@@ -136,9 +136,10 @@ DIRECTIONS = ('top', 'bottom')
 
 
 class Session(Bridge):
-    def __init__(self, data_dir, log, *, now=None, store_factory=None):
+    def __init__(self, data_dir, log, *, now=None, store_factory=None, window_id=None):
         super().__init__(log)
         self._folder = Path(data_dir)
+        self._window_id = window_id
         self._db_path = self._folder / 'pscube.sqlite3'
         self._now = now or (lambda: datetime.now(source.JST))
         # 2つの窓が同時に保存すると、既定の5秒では待ちきれず「database is locked」で止まった（2026-11-13 1:39）。
@@ -191,6 +192,7 @@ class Session(Bridge):
         self._resume_plan = None
         self._resume_count = 0
         self._resume_serial = 0
+        self._own_saves = 0
         # 今の取り込みの範囲の始まり・終わり（前回の案内に残す）と、窓を開いたときの前回の案内の文。
         self._run_start = self._run_until = None
         self._previous = None
@@ -355,7 +357,7 @@ class Session(Bridge):
                         **{k: v for k, v in detail.items() if v is not None})
         notice = clean_reason(status) if resume else text
         label = REASON_LABELS.get(reason, reason)
-        write_notice(self._folder / LAST_STOP_NAME,
+        write_notice(notice_path(self._folder, LAST_STOP_NAME, self._window_id),
                      f'{self._now():%m/%d %H:%M}に停止【{label}】：{notice or "停止しました。"}')
         if reason != 'range_unknown':
             self._save_run(stopped=label)
@@ -642,19 +644,20 @@ class Session(Bridge):
 
     def _remember_low(self, model, racks, captured_at=None):
         """確定した日の500G未満の台を覚える。確定前の日は覚えない（あとで回って500Gを超えることがあるため）。
-        書けなくても取り込みは続ける（次に開いたときにその機種を開き直すだけ）。"""
+        書けなくても取り込みは続ける（次に開いたときにその機種を開き直すだけ）。新たに書き込んだら True。"""
         if self._unfinished([self._day], self._unfinished_from(captured_at)):
-            return
+            return False
         wanted = sorted(racks)
         try:
             with _low_file_lock(self._folder):
                 data = {k: sorted(v) for k, v in self._low_racks().items()}
                 if data.get(model, []) == wanted:
-                    return
+                    return False
                 data[model] = wanted
                 self._write(self._low_path(), data)
+                return True
         except OSError:
-            pass
+            return False
 
     def _check(self, epoch):
         with self._state_lock:
@@ -860,7 +863,8 @@ class Session(Bridge):
             elif len(self._finished_days) > 1:
                 self._status = '範囲の取り込みが完了しました。' + '、'.join(self._finished_days)
             else:
-                self._status = f'指定日の取り込みが完了しました。追加{self._added}台、既存を保持{self._kept}台、グラフ不明{self._unknown}台。'
+                md = self._day[5:].replace('-', '/')
+                self._status = f'指定日（{md}）の取り込みが完了しました。追加{self._added}台、既存を保持{self._kept}台、グラフ不明{self._unknown}台。'
             # 残りの日が分からず止まったとき（left）は、続きを選べるよう窓を閉じない。
             if automatic and not left:
                 self._completed = self._status
@@ -896,15 +900,16 @@ class Session(Bridge):
                 if type(page) is not int or page < 1 or str(page) != selected:
                     raise ValueError('読み取り資料と表示中のページ番号が違います。')
             self._stage = kind
-            done_before = len(self._done) + len(self._finished_days)
+            saves_before = self._own_saves
             result = self._capture(payload, epoch)
             with self._state_lock:
                 current = epoch == self._epoch
                 if current and result.get('action'):
                     self._pending_navigation = True
                     self._pending_since = monotonic()
-                if current and len(self._done) + len(self._finished_days) > done_before:
-                    # 機種・日が1つ済んだ＝取り込みが進んだ。自動の再開の回数を数え直す。
+                if current and self._own_saves > saves_before:
+                    # この窓自身が新しく保存した＝取り込みが進んだ。自動の再開の回数を数え直す
+                    # （別の窓が保存した機種を _skip_saved_machines で飛ばしただけでは戻さない）。
                     self._resume_count = 0
             if not current:
                 raise StaleRun('取り込みの設定が変わったため停止しました。')
@@ -975,7 +980,8 @@ class Session(Bridge):
             occupied = self._occupied()
             # 500G未満（0Gを含む）の台は取り込まない（2026-11-10 利用者）。グラフも読まない。すでに保存してある台は消さない。
             low = [r['rack'] for r in rows if r['games'] < MIN_SAVED_GAMES]
-            self._remember_low(model, low, table_at)
+            if self._remember_low(model, low, table_at):
+                self._own_saves += 1
             wanted = [r for r in rows if r['rack'] not in occupied and r['games'] >= MIN_SAVED_GAMES]
             skipped = f'（{MIN_SAVED_GAMES}G未満の{len(low)}台は取り込まず）' if low else ''
             if not wanted:
@@ -1131,6 +1137,8 @@ class Session(Bridge):
         # 1回だけ書く（_backup_after_close。メルヘンの backup_after_session と同じ。2026-11-21 利用者「まとめて」）。
         # 1機種ごとに書いていたので、1日約55機種で約55回の全体書き出しになり、取り込みが重かった。
         self._set_backup_due(True)
+        if summary['added'] > 0:
+            self._own_saves += 1
         self._done.add(model)
         self._added += summary['added']
         self._kept += summary['kept_local']

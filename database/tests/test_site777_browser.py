@@ -266,6 +266,36 @@ class Site777BrowserTest(unittest.TestCase):
         self.assertEqual(len(seen), 1)
         self.assertIn(BROWSER_ARGUMENTS, seen[0])
 
+    def test_two_windows_keep_separate_notice_files_and_do_not_erase_each_other(self):
+        # 2窓運用で窓ごとの知らせファイルを分離し、2つ目の窓を開いても1つ目の窓の知らせを消さない。
+        import threading
+        import app
+        from site777_session import Session
+
+        cmd1, _ = app.site777_browser_command('win1')
+        self.assertEqual(cmd1[-1], 'win1')
+        cmd_default, _ = app.site777_browser_command()
+        self.assertEqual(len(cmd_default), 3)
+
+        with tempfile.TemporaryDirectory() as folder:
+            closed = []
+            window = SimpleNamespace(destroy=lambda: closed.append(True))
+            s1 = SimpleNamespace(_completed='窓1が完了', _work_lock=threading.Lock(),
+                                 _backup_after_close=lambda: 'バックアップに失敗（窓1）')
+            self.assertTrue(site777_browser.close_when_finished(s1, window, folder, window_id='win1'))
+            site777_browser.backup_after_close(s1, folder, site777_browser.DiagnosticLog(folder), window_id='win1')
+            sess1 = Session(folder, site777_browser.DiagnosticLog(folder), window_id='win1')
+            sess1.pause('窓1が停止', 'navigation_failed')
+
+            # 2つ目の窓が自分の知らせを掃除しても、1つ目の窓の知らせは消えない
+            self.assertIsNone(site777_browser.take_finished_message(folder, window_id='win2'))
+            self.assertIsNone(site777_browser.take_backup_message(folder, window_id='win2'))
+            self.assertIsNone(site777_browser.take_stop_message(folder, window_id='win2'))
+
+            self.assertEqual(site777_browser.take_finished_message(folder, window_id='win1'), '窓1が完了')
+            self.assertIn('バックアップに失敗（窓1）', site777_browser.take_backup_message(folder, window_id='win1'))
+            self.assertIn('窓1が停止', site777_browser.take_stop_message(folder, window_id='win1'))
+
 
 if __name__ == '__main__':
     unittest.main()

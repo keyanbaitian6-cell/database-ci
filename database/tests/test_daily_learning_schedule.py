@@ -179,6 +179,76 @@ class RunDueTest(unittest.TestCase):
         self.assertIn('on_close=True', close)
         self.assertIn('daily_worker.start()', close)
 
+    def test_run_with_quiet_skips_stores_whose_source_db_is_still_being_written(self):
+        # 1つの原本DB（meruhen）が静穏で、もう1つ（pscube）が書き込み中（10分未満）のとき、
+        # quiet 指定の run は書き込み中の原本を開かず、その店の予測も判定・固定保存しない。
+        from unittest.mock import patch
+        self.touch('meruhen', minutes_ago=15)
+        self.touch('pscube', minutes_ago=2)
+        loaded_sources = []
+        built_stores = []
+
+        def fake_load(data_dir, target, sources=('meruhen', 'pscube')):
+            loaded_sources.append(tuple(sources))
+            rows = []
+            if 'meruhen' in sources:
+                rows += [{'store': 'nagamachiminami', 'day': '2026-11-13', 'rack': 1, 'machine': 'M', 'games': 3000},
+                         {'store': 'saiwaichou', 'day': '2026-11-13', 'rack': 1, 'machine': 'M', 'games': 3000}]
+            if 'pscube' in sources:
+                rows += [{'store': 'pscube:c740601:20', 'day': '2026-11-13', 'rack': 1, 'machine': 'M', 'games': 3000}]
+            return rows, {'records': [], 'machines': []}
+
+        def fake_build(store_rows, ps, target, journal, node, history_rows=None):
+            store = store_rows[0]['store']
+            built_stores.append(store)
+            return {'target': target, 'input_day': '2026-11-13', 'version': 'test',
+                    'groups': [{'store': store, 'name': 'M', 'active': 'current', 'status': 'current',
+                                'selected': [1], 'current': [1], 'learned': [1]}]}
+
+        with patch.object(runtime, 'load_inputs', side_effect=fake_load), \
+                patch.object(runtime, 'ready', return_value=[]), \
+                patch.object(runtime, 'build_prediction', side_effect=fake_build):
+            doc = runtime.run(self.root, clock=lambda: NIGHT, sync=False, quiet=runtime.QUIET_SECONDS)
+        self.assertEqual(loaded_sources, [('meruhen',)], '書き込み中のpscube原本は開かない')
+        self.assertEqual(built_stores, ['nagamachiminami', 'saiwaichou'], '静穏なメルヘン2店だけを保存する')
+        self.assertEqual(runtime.unsaved_stores(self.root, TARGET), ['pscube:c740601:20'])
+        self.assertIn('P-STATION：取り込み中のため待機', doc['status'])
+
+    def test_sync_export_failure_retries_export_only_without_recomputing(self):
+        # 同期先（Googleドライブ）への書き出しに失敗したとき、全店舗が保存済みであっても
+        # 次の確認で予測を再計算せず（原本DBも開かず）書き出しだけを再試行する。
+        import json
+        from unittest.mock import patch
+        from daily_learning import Journal
+        j = Journal(self.root / 'daily-learning' / 'journal.sqlite3')
+        try:
+            for store in runtime.STORES:
+                j.freeze(TARGET, {'target': TARGET, 'input_day': '2026-11-13', 'version': 'test',
+                                  'groups': [{'store': store, 'name': 'M', 'active': 'current', 'status': 'current',
+                                              'selected': [1], 'current': [1], 'learned': [1]}]},
+                         {'rows': []}, NIGHT, store=store)
+        finally:
+            j.close()
+        missing_sync = self.root / 'drive-sync'
+        with patch('core.resolve_sync_dir', return_value=missing_sync):
+            doc = runtime.run(self.root, clock=lambda: NIGHT, sync=True)
+        self.assertIn('同期先へ書けません', doc['status'])
+        self.assertFalse((missing_sync / runtime.FILE_NAME).exists())
+        self.assertTrue(runtime.needs_sync_retry(self.root))
+        # 同期先フォルダーが復活したら、原本DBを開かずに書き出しだけ再試行して成功する
+        missing_sync.mkdir()
+        with patch('core.resolve_sync_dir', return_value=missing_sync), \
+                patch.object(runtime, 'load_inputs', side_effect=AssertionError('原本を開いてはいけない')), \
+                patch.object(runtime, 'build_prediction', side_effect=AssertionError('再計算してはいけない')):
+            msg = runtime.retry_sync_export(self.root, clock=lambda: NIGHT)
+        self.assertIsNotNone(msg)
+        self.assertTrue((missing_sync / runtime.FILE_NAME).is_file())
+        synced = json.loads((missing_sync / runtime.FILE_NAME).read_text(encoding='utf-8'))
+        local = json.loads((self.root / runtime.FILE_NAME).read_text(encoding='utf-8'))
+        self.assertNotIn('同期先へ書けません', synced['status'])
+        self.assertNotIn('同期先へ書けません', local['status'])
+        self.assertFalse(runtime.needs_sync_retry(self.root))
+
 
 if __name__ == '__main__':
     unittest.main()

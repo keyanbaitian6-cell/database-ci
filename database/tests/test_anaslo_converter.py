@@ -67,6 +67,33 @@ class PstationNormalAnalysisTests(unittest.TestCase):
             store.import_backup(json.loads(path.read_text(encoding='utf-8')))
         self.assertEqual(store.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
 
+    def test_save_normal_analysis_does_not_overwrite_existing_file_with_missing_days(self):
+        # 1・2・3日のファイルがあるところに、1・3日だけのファイルを保存しても上書きせず2日目を落とさない。
+        from anaslo_converter import make_normal_analysis, save_normal_analysis
+        import daily_learning_archive
+        from unittest.mock import patch
+        day2 = self.folder / '2026_09_16_j.html'
+        day2.write_bytes(html('2026/09/16', 'マイジャグラーV'))
+        day3 = self.folder / '2026_09_17.html'
+        day3.write_bytes(html('2026/09/17', 'マイジャグラーV'))
+        staging_123 = analyze([self.folder / '2026_09_15.html', day2, day3])
+        staging_13 = analyze([self.folder / '2026_09_15.html', day3])
+        out_dir = self.folder / 'out-g10'
+        p123 = save_normal_analysis(out_dir, make_normal_analysis(staging_123))
+        self.assertEqual(p123.name, 'normal-analysis-p-station-20260915-20260917.json')
+        p13 = save_normal_analysis(out_dir, make_normal_analysis(staging_13))
+        self.assertNotEqual(p13, p123, '2日目が落ちる上書きをしない')
+        self.assertEqual(json.loads(p123.read_text(encoding='utf-8'))['days'],
+                         ['2026-09-15', '2026-09-16', '2026-09-17'])
+        self.assertEqual(json.loads(p13.read_text(encoding='utf-8'))['days'],
+                         ['2026-09-15', '2026-09-17'])
+        # 同じ1・3日を再保存してもファイルは無限に増えない
+        self.assertEqual(save_normal_analysis(out_dir, make_normal_analysis(staging_13)), p13)
+        # 日次学習のアーカイブ読み込みは両方のファイルを読み、2日目を失わない
+        with patch.dict(daily_learning_archive.FOLDERS, {'pscube:c740601:20': out_dir}):
+            loaded = daily_learning_archive.load('pscube:c740601:20', '2026-09-01', '2026-09-30')
+        self.assertEqual({r['day'] for r in loaded}, {'2026-09-15', '2026-09-16', '2026-09-17'})
+
     def test_converter_button_saves_into_its_own_folder(self):
         import gc
         import importlib.util

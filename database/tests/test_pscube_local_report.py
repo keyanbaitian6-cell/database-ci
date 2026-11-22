@@ -26,6 +26,10 @@ def seed(path, external=True):
 
 
 class LocalReportTests(unittest.TestCase):
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def test_read_only_data_and_script_escaping(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

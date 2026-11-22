@@ -395,6 +395,66 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn('note = forward_validation.meruhen_note(DATA_DIR, since)', source)
         self.assertIn('if after_close is not None:\n                after_close()', source)
 
+    def test_multi_window_gate_waits_for_last_window_and_cancels_on_abort(self):
+        # ほかの取り込み窓が開いている間は動かさず、最後の窓が閉じたときに1回だけ判定する。
+        gate = fv.ForwardWindowGate()
+        gate.defer('サイトセブン', '指定日（11/09）の取り込みが完了しました。')
+        self.assertTrue(gate.has_pending())
+        # 2つ目の窓も完了して最後の窓が閉じたとき、まとめて1回だけ返す
+        label, merged = gate.take('サイトセブン', '指定日（11/08）の取り込みが完了しました。')
+        self.assertEqual(label, 'サイトセブン')
+        self.assertIn('11/09', merged)
+        self.assertIn('11/08', merged)
+        self.assertFalse(gate.has_pending())
+        # 1つ目が完了したあと2つ目のP-STATION窓が×閉じ（または停止）になったら保留を取り消す
+        gate.defer('サイトセブン', '指定日（11/09）の取り込みが完了しました。')
+        gate.cancel()
+        self.assertIsNone(gate.flush())
+        # app.py にゲートが接続されている
+        source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
+        self.assertIn('ForwardWindowGate()', source)
+
+    def test_is_running_reflects_background_execution_and_close_app_waits(self):
+        gate, inside = threading.Event(), threading.Event()
+        self.assertFalse(fv.is_running())
+
+        def slow(args, **kw):
+            inside.set()
+            gate.wait(5)
+            return Result(0)
+
+        t = threading.Thread(target=fv.run, args=(self.plan(), self.dir), kwargs={'runner': slow, 'now': at(7)})
+        t.start()
+        self.assertTrue(inside.wait(5))
+        self.assertTrue(fv.is_running())
+        gate.set()
+        t.join(5)
+        self.assertFalse(fv.is_running())
+        # close_app が実行中の前向き検証も close_wait で待ち、×閉じ時に自動起動はしない
+        source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
+        close = source[source.index('def close_app'):source.index("root.protocol('WM_DELETE_WINDOW', close_app)")]
+        self.assertIn('forward_validation.is_running()', close)
+        self.assertNotIn('forward_validation.start', close)
+
+    def test_evening_pending_only_marks_when_todays_business_day_was_captured(self):
+        reports, calls = [], []
+        kw = dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                  runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        # 11/9 23:45 に過去日（11/6）だけ取り直して完了 → 印を残さない
+        why_past = fv.start('サイトセブン', '指定日（11/06）の取り込みが完了しました。追加5台、既存を保持0台、グラフ不明0台。',
+                            self.dir, reports.append, now=at(23, 45, day=9), **kw)
+        self.assertIsNotNone(why_past)
+        self.assertFalse((self.dir / fv.STATE_NAME).exists(), '過去日の取り直しでは翌朝の印を残さない')
+        why_past_range = fv.start('サイトセブン', '範囲の取り込みが完了しました。11/05、11/06',
+                                  self.dir, reports.append, now=at(23, 46, day=9), **kw)
+        self.assertIsNotNone(why_past_range)
+        self.assertFalse((self.dir / fv.STATE_NAME).exists(), '当日を含まない範囲では翌朝の印を残さない')
+        # 当日（11/9）の単日完了 → 印を残す
+        why_today = fv.start('サイトセブン', '指定日（11/09）の取り込みが完了しました。追加5台、既存を保持0台、グラフ不明0台。',
+                             self.dir, reports.append, now=at(23, 47, day=9), **kw)
+        self.assertIn('0時〜9時', why_today)
+        self.assertEqual(fv._read_state(self.dir).get('pending_target'), '2026-11-10')
+
 
 class MeruhenNoteTest(unittest.TestCase):
     """メルヘンの取り込み窓が閉じたら、店舗別の候補比較の記録の様子を1行出す（2026-11-16 利用者「メルヘンも出すようにして」）。"""

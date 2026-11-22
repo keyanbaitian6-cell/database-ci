@@ -15,6 +15,10 @@ from output_worker import OutputWorker
 
 
 class SharedOutputUiTests(unittest.TestCase):
+    def tearDown(self):
+        import gc
+        gc.collect()  # Tcl_AsyncDelete 対策：破棄した Tk を別スレッドの GC へ持ち越さない
+
     def test_selecting_folder_waits_for_completion_and_update_button_reuses_saved_data(self):
         with tempfile.TemporaryDirectory() as directory:
             root_path = Path(directory)
