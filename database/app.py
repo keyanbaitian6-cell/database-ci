@@ -8,6 +8,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -2036,8 +2037,16 @@ def main():
                         current_skip = self._next_skip if self._next_skip is not None else frozenset()
                         self._next_quiet = 0
                         self._next_skip = None
-            self.thread = threading.Thread(target=work, name='daily-learning', daemon=True)
-            self.thread.start()
+            # 裏の処理を立ち上げられなかったら「実行中」の印を戻す（2026-11-23。app.py に import threading が無く、
+            # ここで NameError になったまま running が True で残り、11/23 の夜はその後の依頼がすべて後回しになった）。
+            try:
+                self.thread = threading.Thread(target=work, name='daily-learning', daemon=True)
+                self.thread.start()
+            except BaseException:
+                with self.lock:
+                    self.running = False
+                    self.again = False
+                raise
             return True
 
     daily_worker = QuietDailyWorker(DATA_DIR)

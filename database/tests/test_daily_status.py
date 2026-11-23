@@ -166,12 +166,15 @@ def tick_functions(data_dir, *, check_pending_forward):
     start = source.index('    daily_tick_note = [None, None]')
     end = source.index('    def daily_on_start')
     code = textwrap.dedent(source[start:end])
-    env = {
+    # 大域の名前（tk・datetime・threading など）は app.py のものをそのまま使う。試験の側で足すと、app.py の
+    # 読み込み忘れ（11/23 の threading）を隠してしまう。
+    import app
+    env = dict(vars(app))
+    env.update({
         'closing': [False], 'root': FakeRoot(), 'error_log': FakeErrors(), 'DATA_DIR': Path(data_dir),
         'daily_worker': FakeWorker(), 'daily_last': [None], 'sync_retry_running': [False],
-        'told': [], 'daily_status': FakeLabel(), 'tk': tk, 'datetime': datetime, 'threading': threading,
-        'check_pending_forward': check_pending_forward,
-    }
+        'told': [], 'daily_status': FakeLabel(), 'check_pending_forward': check_pending_forward,
+    })
     env['tell'] = env['told'].append
     exec(code, env)  # noqa: S102 - 試験用にアプリの関数を取り出すだけ
     return env
@@ -219,6 +222,65 @@ class DailyTickTest(Folder):
         self.assertEqual(env['told'], ['P-STATION：11/14の事前予測を固定保存しました\n'])
         self.assertEqual(env['root'].after_calls[-1][0], 10_000)
         self.assertIn('日次学習', env['daily_status'].text)
+
+
+def worker_class():
+    """app.py の main() の中の QuietDailyWorker を、app.py の大域の名前のまま取り出す。"""
+    import app
+    source = APP.read_text(encoding='utf-8')
+    start = source.index('    class QuietDailyWorker')
+    end = source.index('    daily_worker = QuietDailyWorker(DATA_DIR)')
+    env = dict(vars(app))
+    exec(textwrap.dedent(source[start:end]), env)  # noqa: S102 - 試験用にアプリのクラスを取り出すだけ
+    return env['QuietDailyWorker'], env
+
+
+class QuietDailyWorkerTest(Folder):
+    """11/23 の夜：app.py に import threading が無く、start() が NameError で落ちて running が True のまま残った。"""
+
+    def test_start_really_runs_in_the_background_and_clears_the_running_mark(self):
+        from unittest.mock import patch
+        Worker, _ = worker_class()
+        release, calls = threading.Event(), []
+
+        def fake_run(data_dir, **kwargs):
+            calls.append(kwargs)
+            release.wait(5)
+            return {'status': 'P-STATION：固定保存しました'}
+
+        worker = Worker(self.root)
+        with patch.object(runtime, 'run', side_effect=fake_run):
+            self.assertTrue(worker.start(quiet=600))
+            self.assertFalse(worker.start(), '実行中の依頼は後回し')
+            release.set()
+            worker.thread.join(5)
+            self.assertFalse(worker.thread.is_alive())
+        self.assertEqual(len(calls), 2, '後回しにした分を、終わったあとに1回やり直す')
+        self.assertEqual(calls[0]['quiet'], 600)
+        self.assertFalse(worker.running)
+        self.assertEqual(worker.results.get_nowait(), 'P-STATION：固定保存しました')
+        log = (self.root / 'daily-learning' / runtime.TRACE_NAME).read_text(encoding='utf-8')
+        self.assertIn('依頼を受けました（実行中のため、終わったあとにもう一度動かします）', log)
+
+    def test_a_failed_thread_start_does_not_leave_the_running_mark(self):
+        Worker, env = worker_class()
+
+        class Broken:
+            @staticmethod
+            def Thread(*args, **kwargs):
+                raise RuntimeError('立ち上げられない')
+
+        env['threading'] = Broken
+        worker = Worker(self.root)
+        with self.assertRaises(RuntimeError):
+            worker.start()
+        self.assertFalse(worker.running, '印が残ると、その後の依頼がすべて後回しになる')
+        env['threading'] = threading
+        from unittest.mock import patch
+        with patch.object(runtime, 'run', return_value={'status': 'ok'}):
+            self.assertTrue(worker.start(), '次の依頼はふつうに動く')
+            worker.thread.join(5)
+        self.assertFalse(worker.running)
 
 
 class AppWiringTest(unittest.TestCase):
