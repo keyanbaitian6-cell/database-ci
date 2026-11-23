@@ -4473,3 +4473,6 @@
 - 最新の `database-ci/main` と手元の `main` は `eb68744` で一致し、正本の `main`（`1100513`）を含むことを確認した。一時ブランチの `74a03c9` はこの先にそのまま取り込んだ。
 - 送信差分は `AGENTS.md` とこの共有記録だけ。ワークフローの Markdown 除外と変更内容を確認し、利用者指定どおり試験・ビルドは省略した。作業中の別変更が混ざらないよう、別の作業ツリーで確認と記録を行った。
 - 送信先は月後半の `keyanbaitian6-cell/database-ci` の `main`。送信を確認してから、正本の一時ブランチだけを削除する。
+- **注意：Claude の push（2026-11-23 17:41）に、別のAIのコミット `addcd92` が一緒に乗った**（`imakurudev-eng`、17:41:41、「PC: fix 2-window Site Seven simultaneous close blocking forward validation and daily learning」、PC の7ファイル）。Claude が記録をコミットする直前に、同じ作業コピーの main に積まれていて、`tools/push_ci.py` は HEAD までをまとめて送るため。Claude は送る前にこのコミットを確かめていなかった（次からは push の直前に `git log <前回送った版>..HEAD` を見る）。
+  - 送ったあとに確かめた結果：`addcd92` で足された試験 `test_site777_session` の `test_two_windows_concurrently_writing_same_model_job_stay_consistent` は、コミットされた版では存在しない `self.folder` を使っていて、毎回 `AttributeError` で落ちる。CI run 45140749183（`eb68744`）は full・Ubuntu・Windows とも、この1件だけで failure。手元で何度か通ったのは、Claude が流している間に別のAIが作業コピーのこの行を `self.root` に直していたため（Claude は最初「結果が揺れる試験」と書いたが誤り）。直すのは `addcd92` を作ったAI（作業コピーで直し中。Claude は触っていない）。
+  - 作業フォルダに未追跡の `Pc Apply Site777 2win Patch.md`・`site777_2win.patch` がある（`addcd92` を当てたときのものと思われる。Claude は触っていない）。
