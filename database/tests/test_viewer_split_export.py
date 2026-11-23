@@ -61,6 +61,8 @@ class ViewerSplitExportTests(unittest.TestCase):
         self.assertEqual(sorted(header['split_stores']), ['nagamachiminami', 'saiwaichou'])
         self.assertIn('date_events', header)
         self.assertNotIn('record_deletions', header, '削除の印は店のファイルに入れる')
+        # 1回の書き出しの3つのファイルは同じ時刻（Googleは同じ時刻の店のファイルを「PCの書き出し」に足し合わせる）。
+        self.assertEqual({saiwai['exported_at'], naga['exported_at'], header['exported_at']}, {header['exported_at']})
         self.assertEqual(read_status(self.data, 'meruhen')['state'], 'success')
 
     def test_deletion_marks_go_to_the_file_of_their_store(self):

@@ -789,3 +789,25 @@ test('店ごとの書き出し：履歴方式でない古い方式は、見出�
   assert.equal(d.files[0].text, text, '書き換えない');
   assert.notEqual(before, text);
 });
+
+test('店ごとの書き出し：同期の状態の「PCの書き出し」に両店の最新日と台数がそろい、見出しのファイルで消えない', () => {
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0];
+  d.replace(base, pcHeader());
+  d.add('database-viewer-nagamachiminami.json', pcStore('nagamachiminami', [naga(101), naga(102, {day: '2026-10-03'})]));
+  d.add('database-viewer-saiwaichou.json', pcStore('saiwaichou', [record(537), record(538)]));
+  d.sync();
+  const pc = () => d.doc('database-viewer-parts-meruhen.json').header.sync_status.writes.find(w => w.source === 'pc');
+  assert.deepEqual(pc().stores.map(s => [s.store, s.day, s.count]).sort(),
+    [['nagamachiminami', '2026-10-03', 1], ['saiwaichou', '2026-10-02', 2]]);
+  // 次の書き出し（時刻が新しい）：見出しが先に届いても、店の分がそろえば両店になる。
+  const later = {exported_at: '2026-10-14T09:00:00+09:00'};
+  d.replace(base, {...pcHeader(), ...later}); d.sync();
+  assert.equal(pc().at, '2026-10-13T09:00:00+09:00', '見出しのファイルだけでは「PCの書き出し」を変えない');
+  d.replace(d.files.find(f => f.name === 'database-viewer-saiwaichou.json'), pcStore('saiwaichou', [record(537, '2026-10-04')], later));
+  d.replace(d.files.find(f => f.name === 'database-viewer-nagamachiminami.json'), pcStore('nagamachiminami', [naga(101, {day: '2026-10-04'})], later));
+  d.sync();
+  assert.equal(pc().at, later.exported_at);
+  assert.deepEqual(pc().stores.map(s => [s.store, s.day, s.count]).sort(),
+    [['nagamachiminami', '2026-10-04', 1], ['saiwaichou', '2026-10-04', 1]]);
+});

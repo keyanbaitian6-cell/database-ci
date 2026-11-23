@@ -1405,7 +1405,7 @@ def saved_answer_candidates(store, first_day):
     return saved
 
 
-def export_viewer(store, path, days=VIEWER_DAYS, only_store=None, split_stores=None):
+def export_viewer(store, path, days=VIEWER_DAYS, only_store=None, split_stores=None, exported_at=None):
     """Write the light file the iPhone viewer reads: the latest ``days`` days
     (counted from the newest saved day), without graph images. The graph
     curve (the site's SVG line, about a sixth of the image's size) is kept so
@@ -1417,23 +1417,26 @@ def export_viewer(store, path, days=VIEWER_DAYS, only_store=None, split_stores=N
     ``only_store``: その店の台と削除の印だけを書き、``stores`` に店を入れる（同期フォルダの店ごとのファイル）。
     イベント・答え合わせ・日ごとのまとめは入れない（見出しのファイルに入れる）。
     ``split_stores``: 台を入れず、見出し（イベント・答え合わせ・日ごとのまとめ）と分けた店の一覧だけを書く。
+    ``exported_at``: 1回の書き出しの3つのファイルに同じ時刻を入れる。Googleは同期の状態の「PCの書き出し」を
+    時刻ごとに1つにまとめ、同じ時刻の店のファイルどうしを足し合わせる（ずれると後のファイルの分だけになる）。
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     latest = store.db.execute('SELECT MAX(day) FROM days').fetchone()[0]
     cutoff = ((date.fromisoformat(latest) - timedelta(days=days - 1)).isoformat()
               if latest else None)
-    # 先の日に入力したイベントも渡す（イベントカレンダー）。消した印も含める。
-    date_events = [event for event in store.date_events(include_removed=True)
-                   if cutoff and event['day'] >= cutoff]
-    # 保存したアナスロのHTMLからの日ごとの「何台中何台プラス」（台の数値は無い。共有ページのカレンダーが
-    # 台データの無い日にだけ使う。2026-10-18、html_day_summary.py）。DBの隣のファイルが無ければ載せない。
-    import html_day_summary
-    summaries = html_day_summary.load_days(Path(store.path).parent / html_day_summary.SUMMARY_NAME)
-    # 当時の翌日候補（答え合わせ用、saved_answer_candidates）。前の日の候補で照らすので1日前から。
-    answers = saved_answer_candidates(store, (date.fromisoformat(cutoff) - timedelta(days=1)).isoformat()) if cutoff else {}
     base = dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
-                exported_at=datetime.now().astimezone().isoformat(), source='pc-viewer', days=days)
+                exported_at=exported_at or datetime.now().astimezone().isoformat(), source='pc-viewer', days=days)
+    if not only_store:
+        # 先の日に入力したイベントも渡す（イベントカレンダー）。消した印も含める。
+        date_events = [event for event in store.date_events(include_removed=True)
+                       if cutoff and event['day'] >= cutoff]
+        # 保存したアナスロのHTMLからの日ごとの「何台中何台プラス」（台の数値は無い。共有ページのカレンダーが
+        # 台データの無い日にだけ使う。2026-10-18、html_day_summary.py）。DBの隣のファイルが無ければ載せない。
+        import html_day_summary
+        summaries = html_day_summary.load_days(Path(store.path).parent / html_day_summary.SUMMARY_NAME)
+        # 当時の翌日候補（答え合わせ用、saved_answer_candidates）。前の日の候補で照らすので1日前から。
+        answers = saved_answer_candidates(store, (date.fromisoformat(cutoff) - timedelta(days=1)).isoformat()) if cutoff else {}
     if only_store:
         fields = dict(base, stores=[only_store], record_deletions=store.record_deletions(only_store))
     elif split_stores:
@@ -2123,15 +2126,15 @@ def _auto_backup(store, data_dir, *, strict, notices, import_shared, status):
         # （書きかけのファイルがDriveへ上がらないように）。
         # 店ごとのファイルを先に、見出しのファイルを最後に書く（Googleは見出しのファイルが変わったことで、
         # 新しい書き出しが届いたと知る）。
-        too_big = []
+        too_big, exported_at = [], datetime.now().astimezone().isoformat()
         for shop, name in VIEWER_STORE_FILE_NAMES.items():
             local = Path(data_dir) / name
-            export_viewer(store, local, only_store=shop)
+            export_viewer(store, local, only_store=shop, exported_at=exported_at)
             if local.stat().st_size > VIEWER_GOOGLE_LIMIT:
                 too_big.append(f'{STORE_NAMES[shop]}（{local.stat().st_size / 1048576:.1f}MiB）')
             atomic_copy(local, Path(folder) / name)
         local = Path(data_dir) / VIEWER_FILE_NAME
-        export_viewer(store, local, split_stores=list(VIEWER_STORE_FILE_NAMES))
+        export_viewer(store, local, split_stores=list(VIEWER_STORE_FILE_NAMES), exported_at=exported_at)
         atomic_copy(local, Path(folder) / VIEWER_FILE_NAME)
         if too_big:
             # Googleはこの店の分を読めず、閲覧ページのその店の更新が止まる。書き出し自体は続ける。

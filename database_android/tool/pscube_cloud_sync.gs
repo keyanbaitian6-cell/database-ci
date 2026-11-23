@@ -1573,10 +1573,24 @@ function vhInput(file, kind) {
   return {file, kind, id: kind + ':' + file.getId(), name: file.getName(), size: file.getSize(), version: vpVersion(file)};
 }
 function vhSourceStatus(old,fresh,input) {
+  // PCが店ごとに分けて書き出したとき（2026-11-23）：見出しのファイル（split_stores）は台を持たないので「PCの書き出し」を
+  // 作らない（作ると、同じ書き出しの店の分を台0件で上書きする）。
+  if (Array.isArray(fresh.split_stores)) return mergeSyncStatus(old.sync_status,fresh.sync_status);
   // Driveの更新時刻は、その入力自身の書き出しにだけ結び付ける。
   // 古いPC出力の読み込みで、別ファイルにある新しいPC出力の時刻を偽って更新しない。
   const own=fresh.cloud_merged ? null : makeSyncWrite(fresh.source,fresh.exported_at,fresh.records || [],
     input?.file ? input.file.getLastUpdated().toISOString() : undefined);
+  // 店のファイル（stores）は、同じ時刻の書き出し（PCは1回の書き出しの3つのファイルに同じ時刻を入れる）の
+  // 「PCの書き出し」に、その店の分を足し合わせる。時刻が違えば今までどおり新しい方を残す。
+  const prior=fresh.source==='pc-viewer' && Array.isArray(fresh.stores) && own ? (validateSyncStatus(old.sync_status)?.writes || []).find(w => w.source==='pc') : null;
+  const mine=own?.writes[0];
+  if (prior && mine && Date.parse(prior.at)===Date.parse(mine.at)) {
+    const drive=[prior.drive_at,mine.drive_at].filter(Boolean).sort().pop();
+    const joined=validateSyncStatus({version:1,writes:[{source:'pc',at:mine.at,...(drive ? {drive_at:drive} : {}),
+      stores:[...prior.stores.filter(s => !fresh.stores.includes(s.store)),...mine.stores]}]});
+    const rest=validateSyncStatus(old.sync_status);
+    return mergeSyncStatus({...rest,writes:rest.writes.filter(w => w.source!=='pc')},fresh.sync_status,joined);
+  }
   return mergeSyncStatus(old.sync_status,fresh.sync_status,own);
 }
 // A missing day may have aged out of the PC's 60-day view. Only an explicit,
