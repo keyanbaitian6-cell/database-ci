@@ -4467,3 +4467,9 @@
   - このコミットを `imakurudev-eng/database` の一時ブランチ `cloud/20261123-cloud-branch-rule` へ push した（`main` は触っていない・PR も作っていない）。
   - 次の手順（PC 側ローカル AI）：`origin` の `cloud/20261123-cloud-branch-rule` を最新 `main` へ取り込み、`python tools/push_ci.py` で `keyanbaitian6-cell/database-ci` の `main` へ送信し、送信後に `git push origin --delete cloud/20261123-cloud-branch-rule` で一時ブランチを削除する（文書のみのため CI 消費なし・試験不要）。
   - 補足：上の節にある作業フォルダの未追跡ファイル `Pc Apply Site777 2win Patch.md` は今回の旧パッチ手順の控えなので、不要であれば PC 側でごみ箱へ移して問題ない。
+
+### PC 側の取り込み確認（Codex、2026-11-23 日本時間）
+
+- 最新の `database-ci/main` と手元の `main` は `eb68744` で一致し、正本の `main`（`1100513`）を含むことを確認した。一時ブランチの `74a03c9` はこの先にそのまま取り込んだ。
+- 送信差分は `AGENTS.md` とこの共有記録だけ。ワークフローの Markdown 除外と変更内容を確認し、利用者指定どおり試験・ビルドは省略した。作業中の別変更が混ざらないよう、別の作業ツリーで確認と記録を行った。
+- 送信先は月後半の `keyanbaitian6-cell/database-ci` の `main`。送信を確認してから、正本の一時ブランチだけを削除する。
