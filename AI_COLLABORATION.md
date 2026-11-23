@@ -4444,3 +4444,12 @@
   - 確認：`os.startfile` を消した状態で流す小さな実行器で、直す前の版は CI と同じ `AttributeError` で失敗し、直した版は5件通過。PC 全試験 `database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,125件 OK（336.6秒）。全体ゲートは流し直していない（試験1行だけの直しのため、AGENTS.md の「落ちた項目だけの流し直し」による）。
 - **Google スクリプトの貼り替え（利用者の報告、2026-11-23 朝）**：利用者「スクリプト張り替え終わり」。対象は `meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs`・`viewer_drive_script.gs` の3本（`viewer_drive_script.gs` は「デプロイを管理」から新しいバージョンでデプロイする案内をした）。AI は Google 側の動作を直接は確かめていない。
 - **CI の結果（`d921dcf`）**：成功（`full`・`pc (ubuntu-latest, UTC)`・`pc (windows-latest, UTC)` すべて success。https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45076707800）。これで C4〜C9・G7〜G11 を含む main は CI でも確認済み。閲覧ページ・共有カレンダーの公開と APK はまだ（利用者の決定待ち）。
+
+## 2026-11-23 夕方 Claude：C4〜C9 の公開（閲覧ページ・共有カレンダー）
+
+- 利用者「公開して」。CI：`d921dcf` の run 45076707800 が success（Web の中身は `009dc55` と同じ。そのあとは試験1行と .md だけ）。
+- 公開するもの：全体ゲート（`/c/w/cbw-all`、`009dc55` のソース）の `viewer`・`share` の stage を、公開用の複製（`../outputs/publish-c123-20261122/public-viewer`・`public-share`、公開前に origin の main と一致を確認）に写し、改行だけの差を戻した。閲覧ページは4ファイル（`main.dart.js`・`pscube/data.mjs`・`pscube/sync.mjs`・`viewer_parts.mjs`）、共有カレンダーは9ファイル（多くは版 `?v=` の付け替え。中身の変更は `viewer_parts.mjs` の部品の作り直し中の止め方〔C6〕など）。
+- このゲートの1件（`test_viewer_event_history_browser`）は待ち時間切れで、同じビルドで2回流し直して通過（上の C4〜C9 の節）。
+- **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で今回のコミットを `git revert` して push（戻り先は `7280190`）、共有カレンダーは `keyanbaitian6-cell/database-share` で今回のコミットを `git revert` して push（戻り先は `ea4e6e0`）。端末の保存の形は変えていないので、戻しても端末の記録はそのまま読める。
+- 公開の push（2026-11-23 夕方）：`database-viewer` `7280190..05b5373`、`database-share` `ea4e6e0..ed60a35`（非強制）。共有カレンダーの版 `083f58484688`（stage の確認：19ファイル、記録の文字列 90 種・スクリプトのIDとも該当なし）。GitHub Pages の公開処理は両方とも開始（in_progress）を確認。iPhone での表示、部品の作り直し中の止め方の実際の動きは未確認。APK はまだ作っていない。
+- 作業フォルダに、誰のものか分からない未追跡のファイル `Pc Apply Site777 2win Patch.md` があった。Claude は触っていない（コミットにも入れていない）。
