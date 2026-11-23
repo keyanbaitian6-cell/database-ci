@@ -68,15 +68,16 @@ def graphless_limit(racks):
 # 同じDB（pscube.sqlite3）へほかの窓・PC本体が書いている間、待つ秒数（既定の5秒から延ばした。2026-11-13）。
 DB_WAIT = 30.0
 _low_thread_lock = threading.Lock()
+_job_thread_lock = threading.Lock()
 
 
 @contextmanager
-def _low_file_lock(folder, timeout=DB_WAIT):
-    """500G未満の控え（日付-low.json）を読んで足して書く鍵（2窓の別プロセス・別スレッドをまたぐ）。"""
-    path = Path(folder) / 'site777-low.lock'
+def _file_lock(folder, name, thread_lock, timeout=DB_WAIT):
+    """2窓の別プロセス・別スレッド間で共有ファイル（low / staging）の読み書きを直列化する鍵。"""
+    path = Path(folder) / name
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = monotonic() + timeout
-    with _low_thread_lock, path.open('a+b') as lock:
+    with thread_lock, path.open('a+b') as lock:
         if lock.seek(0, os.SEEK_END) == 0:
             lock.write(b'0')
             lock.flush()
@@ -104,6 +105,20 @@ def _low_file_lock(folder, timeout=DB_WAIT):
             else:
                 import fcntl
                 fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _low_file_lock(folder, timeout=DB_WAIT):
+    """500G未満の控え（日付-low.json）を読んで足して書く鍵（2窓の別プロセス・別スレッドをまたぐ）。"""
+    with _file_lock(folder, 'site777-low.lock', _low_thread_lock, timeout=timeout):
+        yield
+
+
+@contextmanager
+def _job_file_lock(folder, timeout=DB_WAIT):
+    """機種ごとの途中記録（site777-staging/日付-機種.json）の読み書きを直列化する鍵（2窓が同じ機種で出会ったときの衝突防止）。"""
+    with _file_lock(folder, 'site777-job.lock', _job_thread_lock, timeout=timeout):
+        yield
 
 RESUMABLE = frozenset({'not_moved', 'navigation_timeout', 'navigation_failed', 'capture_error',
                        'graph_retry_limit', 'graph_retry_storage', 'card_error', 'overlay_failed',
@@ -592,7 +607,7 @@ class Session(Bridge):
                                 '保存して続けます。')
         if not ok:
             return {'ok': False, 'state': self.state()}
-        self._write(self._job_path(model), job)
+        self._write_job(model, job)
         self._log.write('graph_skipped', day=day, model=model, rack=rack)
         return {'ok': True, 'state': self.state()}
 
@@ -629,6 +644,17 @@ class Session(Bridge):
         if not model.isdecimal() or not self._day:
             raise ValueError('機種・日付を確認できません。')
         return self._folder / 'site777-staging' / f'{self._day}-{model}.json'
+
+    def _read_job(self, model):
+        try:
+            with _job_file_lock(self._folder):
+                return json.loads(self._job_path(model).read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return {}
+
+    def _write_job(self, model, data):
+        with _job_file_lock(self._folder):
+            self._write(self._job_path(model), data)
 
     def _low_path(self):
         return self._folder / 'site777-staging' / f'{self._day}-low.json'
@@ -990,18 +1016,14 @@ class Session(Bridge):
                 self._status = f'{payload["machine"]}：{len(rows) - len(low)}台は既存の記録を保持しました{skipped}。'
                 return self._next(payload.get('index_url'))
             digest = self._save_source(payload)
-            old = {}
-            try:
-                old = json.loads(self._job_path(model).read_text(encoding='utf-8'))
-            except (OSError, ValueError):
-                pass
+            old = self._read_job(model)
             self._job = {'table': payload, 'table_at': table_at.isoformat(timespec='seconds'),
                          'rows': wanted, 'all_racks': [r['rack'] for r in rows],
                          'all_my': {str(r['rack']): r['my'] for r in rows},
                          'graphs': old.get('graphs', {}) if old.get('table_sha') == digest else {},
                          'pages': old.get('pages', []) if old.get('table_sha') == digest else [], 'table_sha': digest,
                          'no_graph': old.get('no_graph', []) if old.get('table_sha') == digest else []}
-            self._write(self._job_path(model), self._job)
+            self._write_job(model, self._job)
             if {r['rack'] for r in wanted} <= {int(k) for k in self._job['graphs']} | set(self._job['no_graph']):
                 return self._finish(self._job, epoch, payload.get('index_url'))
             self._status = f'{payload["machine"]}：表{len(rows)}台、未保存{len(wanted)}台のグラフを読みます。'
@@ -1060,7 +1082,7 @@ class Session(Bridge):
             staged = {**job, 'graphs': {**job['graphs'], **{str(r): g for r, g in got.items()}}}
             self._save_source(payload)
             self._check(epoch)
-            self._write(self._job_path(model), staged)
+            self._write_job(model, staged)
             self._job = staged
             self._log.write('graphs_staged', day=self._day, model=model, page=payload['page'], racks=sorted(got))
             return {'partial_saved': True}
@@ -1077,7 +1099,7 @@ class Session(Bridge):
         job['pages'].append(page)
         self._save_source(payload)
         self._check(epoch)
-        self._write(self._job_path(model), job)
+        self._write_job(model, job)
         needed = {r['rack'] for r in job['rows']} - set(job.get('no_graph', []))
         present = {int(r) for r in job['graphs']}
         if not needed <= present:

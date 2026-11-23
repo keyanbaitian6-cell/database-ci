@@ -136,12 +136,13 @@ def clear_failed_mark(last, status):
     return (last[0], {k: v for k, v in last[1].items() if k not in failed})
 
 
-def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS):
+def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS, skip_sources=()):
     """今、日次学習を動かすか。(動かすか, 入力の印)。入力の印は、前に試したときと同じなら動かさないために使う
     （データがそろわず「取り込み待ち」になった晩に、同じ原本で5分ごとに読み直さない）。
     - 保存できる時間帯（前日23:30〜当日8:00）で、まだ保存していない店があるときだけ。
     - 原本ごとに、前に試したときから変わっており（または前回が一時的な処理失敗で）、最後の書き込みから
       quiet 秒たっているものが1つでもあれば動かす（1つの原本が書き込み中でも、そろった別の原本の店は先に保存する）。
+    - skip_sources に指定した原本（別店舗の取り込み窓が開いている間など）は対象外とし、印も更新しない。
     - P-STATION（pscube）は500G未満の控え（site777-staging/日付-low.json）の更新時刻も含めて判定する。
     - PC本体を閉じるとき（on_close）は quiet 秒を待たない（閉じる＝取り込みは終わった、とみる。そろっていなければ ready が取り込み待ちにする）。
     原本DBは開かない（ファイルの更新時刻だけ）。"""
@@ -151,10 +152,14 @@ def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS):
     stores = unsaved_stores(data_dir, target)
     if not stores:
         return False, last
+    skip = set(skip_sources or ())
+    active_stores = [s for s in stores if SOURCES[s] not in skip]
+    if not active_stores:
+        return False, last
     stamps, latest = {}, {}
-    for source in sorted({SOURCES[s] for s in stores}):
+    for source in sorted({SOURCES[s] for s in active_stores}):
         stamps[source], latest[source] = _source_stamp(data_dir, source, target)
-    failed = _failed_sources(data_dir, target, stores)
+    failed = _failed_sources(data_dir, target, active_stores)
     before = {k: v for k, v in (last[1] if last and last[0] == target else {}).items() if k not in failed}
     now_ts = jst(now).timestamp()
     ready_stamps = {
@@ -782,7 +787,7 @@ def retry_sync_export(data_dir, *, clock=lambda: datetime.now(JST)) -> str | Non
         return '日次学習の同期先への書き出しを再試行して完了しました'
 
 
-def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, quiet=0):
+def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, quiet=0, skip_sources=()):
     data_dir = Path(data_dir)
     now, journal = jst(clock()), Journal(data_dir / 'daily-learning' / 'journal.sqlite3')
     today = now.date().isoformat()
@@ -797,18 +802,20 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
         # 2026-11-12：することがある店舗の原本だけを読む。保存済み・締切後で、記録すべき結果も無ければ原本を開かない
         # （以前は毎回、原本2つ（509MB・67MB）を丸ごと一時コピーしていた）。読めない原本があっても、ほかの店は続ける。
         saved = {s for s in STORES if journal.has('predictions', shown + '|' + s)}
+        open_skip = set(skip_sources or ()) if target is not None else set()
         writing = set()
         if target is not None and quiet > 0:
             now_ts = now.timestamp()
-            for source in sorted({SOURCES[s] for s in STORES if s not in saved}):
+            for source in sorted({SOURCES[s] for s in STORES if s not in saved and SOURCES[s] not in open_skip}):
                 _, latest = _source_stamp(data_dir, source, target)
                 if latest is not None and now_ts - latest < quiet:
                     writing.add(source)
+        blocked = writing | open_skip
         due = due_outcomes(journal, today)
-        wanted = {s for s in STORES if s not in saved and target is not None and SOURCES[s] not in writing}
-        wanted |= {store_of(k) for k in due if store_of(k) in STORES and SOURCES[store_of(k)] not in writing}
+        wanted = {s for s in STORES if s not in saved and target is not None and SOURCES[s] not in blocked}
+        wanted |= {store_of(k) for k in due if store_of(k) in STORES and SOURCES[store_of(k)] not in blocked}
         if any(store_of(k) not in STORES for k in due):
-            wanted |= {s for s in STORES if SOURCES[s] not in writing}
+            wanted |= {s for s in STORES if SOURCES[s] not in blocked}
         loaded, failed = {}, {}
         for source in sorted({SOURCES[s] for s in wanted}):
             try:
@@ -849,6 +856,10 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
             if target is None:
                 statuses.append(f'{name}：{label}は締切超過・事前予測なし。従来方式を表示してください'
                                 '（次に保存できるのは23:30以降）')
+                continue
+            if SOURCES[store] in open_skip:
+                statuses.append(f'{name}：取り込み中のため待機（取り込み画面が閉じたあとに保存します）')
+                trace(data_dir, statuses[-1])
                 continue
             if SOURCES[store] in writing:
                 statuses.append(f'{name}：取り込み中のため待機（書き込み終了後{max(1, int(quiet) // 60)}分で保存します）')

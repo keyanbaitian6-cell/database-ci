@@ -1017,24 +1017,26 @@ def main():
     for note in startup_notes:
         logbox.insert('end', note)
 
-    capture_windows = []
+    capture_tracker = forward_validation.CaptureWindowTracker()
     forward_gate = forward_validation.ForwardWindowGate()
 
-    def capture_open():
-        """取り込み窓が開いているか。開いている間は、日次学習を定期確認・起動時に動かさない（途中の数値で固定しないため）。"""
-        capture_windows[:] = [p for p in capture_windows if p.poll() is None]
-        return bool(capture_windows)
+    def capture_open(source=None):
+        """取り込み窓が開いているか（起動時確認は実プロセスの生存、終了判定は未処理窓の有無）。"""
+        return capture_tracker.has_open(source)
 
     def watch_capture_window(process, label, take_message, after_auto=None, take_stop=None, after_close=None):
         """自動取り込みが全部終わると取り込み窓は自分で閉じる（2026-10-30、サイトへの接続を止めるため）。
         窓のプロセスが終わったら、その結果をログ欄に出す。自動で閉じたとき（結果の文がある）は after_auto も呼ぶ。"""
-        capture_windows.append(process)
+        entry = capture_tracker.add(process, label)
+        source = entry['source']
 
         def check():
             if process.poll() is None:
                 root.after(2000, check)
                 return
-            capture_open()
+            # 2窓が同時に閉じたとき、まだ check() が走っていない別窓まで外して早合点しないよう、
+            # 自分のエントリだけをここで取り除く（2026-11-23）。
+            capture_tracker.remove(entry)
             try:
                 message = take_message()
             except Exception:  # noqa: BLE001 - the notice is only a convenience
@@ -1050,20 +1052,24 @@ def main():
                           else f'{label}の取り込み画面を閉じました。最後の停止：{stop}\n' if stop
                           else f'{label}の取り込み画面を閉じました。\n')
             logbox.see('end')
-            if label in ('サイトセブン', 'P’s CUBE') and not forward_validation.finished(label, message):
-                forward_gate.cancel()
+            if source == 'pscube' and not forward_validation.finished(label, message):
+                forward_gate.cancel(remaining=capture_tracker.has_open('pscube'))
             if message and after_auto is not None:
-                after_auto(message)
+                try:
+                    after_auto(message)
+                except Exception as error:  # noqa: BLE001 - 後処理の例外で日次学習の起動を止めない
+                    error_log.record(DATA_DIR, 'capture.after_auto', error)
             if after_close is not None:
                 after_close()
-            # 自動で閉じたときに加え、手で閉じたときも、ほかに取り込み窓が無ければ日次学習を動かす（2026-11-12。
-            # 0時〜7時半に取り込みを終えて×で閉じ、朝7:30より前にPCを消すと、その日の予測が保存されなかった）。
-            # 途中で閉じたデータは、台数・取り込み時刻の確認（ready）が「取り込み待ち」にする。
-            if not capture_open():
-                deferred = forward_gate.flush()
-                if deferred is not None:
-                    save_forward_after(*deferred)
-                start_daily()
+            # この原本DBの取り込み窓がすべて閉じ終えたら、別店舗の窓が開いていても終わった側の日次学習をすぐ動かす
+            # （2026-11-23：サイトセブン2窓とメルヘンを並行した際、メルヘン終了までP-STATION側が待たされていた）。
+            # 手で閉じたときも同様に動かし、途中のデータは ready が「取り込み待ち」にする。
+            if not capture_tracker.has_open(source):
+                if source == 'pscube':
+                    deferred = forward_gate.flush()
+                    if deferred is not None:
+                        save_forward_after(*deferred)
+                start_daily(skip_sources=capture_tracker.open_sources(exclude=source))
 
         root.after(2000, check)
 
@@ -1093,14 +1099,21 @@ def main():
     def save_forward_after(label, message):
         """取り込みが最後まで終わって窓が自分で閉じたら、P-STATIONの前向き検証（研究用の記録）を裏で保存する
         （2026-11-09 利用者「取り込み完了して取得ブラウザが閉じられたときのみ自動実行」、forward_validation.py）。
-        ほかの取り込み窓が開いている間は動かさず、最後の窓が閉じたときに判定する。
+        ほかのP-STATION取り込み窓（サイトセブン・P’s CUBE）が開いている間は動かさず、最後の窓が閉じたときに判定する
+        （別店舗のメルヘン窓の終了は待たない）。
         日本時間0〜9時だけ（23:30〜23:59に完了したときは印を残し、0時以降の定期確認で1回保存する）。
         結果はログ欄に1行出す。失敗しても取り込みには影響しない。"""
-        if capture_open():
+        if capture_open('pscube'):
             if forward_validation.finished(label, message):
                 forward_gate.defer(label, message)
-                logbox.insert('end', '前向き検証（P-STATION）：ほかの取り込み窓が開いているため、最後の窓が閉じたあとに判定します。\n')
-                logbox.see('end')
+                if not forward_gate.is_aborted():
+                    logbox.insert('end', '前向き検証（P-STATION）：ほかのP-STATION取り込み窓が開いているため、最後の窓が閉じたあとに判定します。\n')
+                    logbox.see('end')
+            return
+        if forward_gate.is_aborted():
+            forward_gate.take(label, message)
+            logbox.insert('end', '前向き検証（P-STATION）：同時に開いていた別の取り込み窓が途中で閉じたため、自動保存は行いませんでした。必要なら0時を過ぎてから毎朝実行.cmdを押してください。\n')
+            logbox.see('end')
             return
         label, message = forward_gate.take(label, message)
         results = []
@@ -1228,7 +1241,11 @@ def main():
         import site777_browser
         # バックアップ・閲覧用ファイルは窓を閉じたあとに1回だけ書く（2026-11-21）。失敗したときだけログ欄に出す。
         def site777_backup_note():
-            note = site777_browser.take_backup_message(DATA_DIR, window_id)
+            try:
+                note = site777_browser.take_backup_message(DATA_DIR, window_id)
+            except Exception as error:  # noqa: BLE001 - バックアップ通知の読取失敗で日次学習の起動を止めない
+                error_log.record(DATA_DIR, 'site777.backup_note', error)
+                return
             if note:
                 logbox.insert('end', f'サイトセブン：{note}。\n')
                 logbox.see('end')
@@ -1953,22 +1970,26 @@ def main():
         def __init__(self, data_dir):
             super().__init__(data_dir)
             self._next_quiet = 0
+            self._next_skip = None
 
-        def start(self, *, quiet=0):
+        def start(self, *, quiet=0, skip_sources=()):
+            skip = frozenset(skip_sources or ())
             with self.lock:
                 if self.running:
                     self._next_quiet = min(self._next_quiet, quiet) if self.again else quiet
+                    self._next_skip = (self._next_skip & skip) if (self.again and self._next_skip is not None) else skip
                     self.again = True
                     return False
                 self.running = True
                 current_quiet = quiet
+                current_skip = skip
 
             def work():
                 from daily_learning_runtime import run as run_daily
-                nonlocal current_quiet
+                nonlocal current_quiet, current_skip
                 while True:
                     try:
-                        result = run_daily(self.data_dir, quiet=current_quiet)
+                        result = run_daily(self.data_dir, quiet=current_quiet, skip_sources=current_skip)
                         self.results.put(result['status'])
                     except Exception as error:
                         import error_log
@@ -1980,7 +2001,9 @@ def main():
                             return
                         self.again = False
                         current_quiet = self._next_quiet
+                        current_skip = self._next_skip if self._next_skip is not None else frozenset()
                         self._next_quiet = 0
+                        self._next_skip = None
             self.thread = threading.Thread(target=work, name='daily-learning', daemon=True)
             self.thread.start()
             return True
@@ -1994,17 +2017,21 @@ def main():
     daily_last = [None]
     sync_retry_running = [False]
 
-    def start_daily():
+    def start_daily(*, skip_sources=()):
         """日次学習を動かし、そのときの原本の印を覚える（5分ごとの確認が同じ原本で動き直さないように）。"""
         from daily_learning import JST
         from daily_learning_runtime import run_due
+        skip = tuple(skip_sources or ())
         try:
-            due, mark = run_due(DATA_DIR, datetime.now(JST), None, on_close=True)
+            due, mark = run_due(DATA_DIR, datetime.now(JST), None, on_close=True, skip_sources=skip)
             if due:
-                daily_last[0] = mark
+                if daily_last[0] and daily_last[0][0] == mark[0]:
+                    daily_last[0] = (mark[0], {**daily_last[0][1], **mark[1]})
+                else:
+                    daily_last[0] = mark
         except Exception:  # noqa: BLE001 - 印を覚えられなくても動かす
             pass
-        daily_worker.start()
+        daily_worker.start(skip_sources=skip)
 
     def daily_tick():
         if closing[0]:

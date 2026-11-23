@@ -249,6 +249,53 @@ class RunDueTest(unittest.TestCase):
         self.assertNotIn('同期先へ書けません', local['status'])
         self.assertFalse(runtime.needs_sync_retry(self.root))
 
+    def test_run_with_skip_sources_saves_finished_store_immediately_without_opening_open_window_db(self):
+        # サイトセブン2窓が閉じた直後（メルヘン窓はまだ開いている＝skip_sources=('meruhen',)）に動かしたとき、
+        # メルヘン原本を開かず待機にしつつ、P-STATION（pscube）だけを即座に固定保存する。
+        from unittest.mock import patch
+        self.touch('meruhen', minutes_ago=0)
+        self.touch('pscube', minutes_ago=0)
+        loaded_sources = []
+        built_stores = []
+
+        def fake_load(data_dir, target, sources=('meruhen', 'pscube')):
+            loaded_sources.append(tuple(sources))
+            rows = []
+            if 'meruhen' in sources:
+                rows += [{'store': 'nagamachiminami', 'day': '2026-11-13', 'rack': 1, 'machine': 'M', 'games': 3000},
+                         {'store': 'saiwaichou', 'day': '2026-11-13', 'rack': 1, 'machine': 'M', 'games': 3000}]
+            if 'pscube' in sources:
+                rows += [{'store': 'pscube:c740601:20', 'day': '2026-11-13', 'rack': 1, 'machine': 'M', 'games': 3000}]
+            return rows, {'records': [], 'machines': []}
+
+        def fake_build(store_rows, ps, target, journal, node, history_rows=None):
+            store = store_rows[0]['store']
+            built_stores.append(store)
+            return {'target': target, 'input_day': '2026-11-13', 'version': 'test',
+                    'groups': [{'store': store, 'name': 'M', 'active': 'current', 'status': 'current',
+                                'selected': [1], 'current': [1], 'learned': [1]}]}
+
+        with patch.object(runtime, 'load_inputs', side_effect=fake_load), \
+                patch.object(runtime, 'ready', return_value=[]), \
+                patch.object(runtime, 'build_prediction', side_effect=fake_build):
+            doc = runtime.run(self.root, clock=lambda: NIGHT, sync=False, skip_sources=('meruhen',))
+        self.assertEqual(loaded_sources, [('pscube',)], '開いているメルヘン原本は開かない')
+        self.assertEqual(built_stores, ['pscube:c740601:20'], '終わったP-STATIONだけ即座に保存する')
+        self.assertEqual(runtime.unsaved_stores(self.root, TARGET), ['nagamachiminami', 'saiwaichou'])
+        self.assertIn('長町南：取り込み中のため待機（取り込み画面が閉じたあとに保存します）', doc['status'])
+
+    def test_run_due_with_skip_sources_does_not_mark_skipped_source_as_checked(self):
+        self.touch('meruhen', minutes_ago=1)
+        self.touch('pscube', minutes_ago=0)
+        due, mark = runtime.run_due(self.root, NIGHT, None, on_close=True, skip_sources=('meruhen',))
+        self.assertTrue(due)
+        self.assertIn('pscube', mark[1])
+        self.assertNotIn('meruhen', mark[1], '除外したメルヘンは確認済みにしない')
+        # 後でメルヘン窓が閉じたとき（on_close=True, skip_sources=()）、メルヘンが確実に実行対象になる
+        due2, mark2 = runtime.run_due(self.root, NIGHT, mark, on_close=True)
+        self.assertTrue(due2)
+        self.assertIn('meruhen', mark2[1])
+
 
 if __name__ == '__main__':
     unittest.main()

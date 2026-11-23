@@ -111,23 +111,32 @@ def is_running() -> bool:
 
 class ForwardWindowGate:
     """複数の取り込み窓が開いている間は前向き検証をすぐ動かさず保留し、最後の窓が閉じたときに1回だけ判定する。
-    P-STATION の取り込み窓が×閉じや途中停止で終わった場合は保留を取り消す（不完全なデータで固定しない）。"""
+    P-STATION の取り込み窓が×閉じや途中停止で終わった場合は保留を取り消し、同じバッチの残りの窓が
+    完了しても誤って動かさない（不完全なデータで固定しない）。"""
 
     def __init__(self):
         self._pending: list[tuple[str, str]] = []
+        self._aborted = False
 
     def defer(self, label: str, message: str) -> None:
-        if finished(label, message):
+        if not self._aborted and finished(label, message):
             self._pending.append((label, str(message)))
 
-    def cancel(self) -> None:
+    def cancel(self, *, remaining: bool = False) -> None:
         self._pending.clear()
+        self._aborted = bool(remaining)
 
     def has_pending(self) -> bool:
-        return bool(self._pending)
+        return bool(self._pending) and not self._aborted
+
+    def is_aborted(self) -> bool:
+        return self._aborted
 
     def flush(self) -> tuple[str, str] | None:
-        if not self._pending:
+        aborted = self._aborted
+        self._aborted = False
+        if aborted or not self._pending:
+            self._pending.clear()
             return None
         label = self._pending[-1][0]
         merged = '／'.join(msg for _, msg in self._pending)
@@ -135,11 +144,58 @@ class ForwardWindowGate:
         return label, merged
 
     def take(self, label: str, message: str) -> tuple[str, str]:
+        aborted = self._aborted
+        self._aborted = False
         messages = [msg for _, msg in self._pending]
         self._pending.clear()
+        if aborted:
+            return label, ''
         if message:
             messages.append(str(message))
         return label, '／'.join(messages)
+
+
+def window_source(label: str) -> str:
+    """取り込み窓の表示名から、対象の原本DBの種別（pscube / meruhen / other）を返す。"""
+    if label in ('サイトセブン', 'P’s CUBE'):
+        return 'pscube'
+    if label == 'メルヘン':
+        return 'meruhen'
+    return 'other'
+
+
+class CaptureWindowTracker:
+    """開いている取り込み窓と、終了直後でまだ親画面の後処理が済んでいない窓をソース別に管理する。
+
+    2つの窓が同時に閉じたとき、プロセス生存（poll() is None）だけで一括掃除すると、
+    1つ目の終了処理の時点で「全窓が閉じた」と早合点して2つ目の結果を見ずに二重起動や
+    キャンセルすり抜けが起きる。各窓は自分の後処理が始まったときにだけ自身を外す。"""
+
+    def __init__(self):
+        self._entries: list[dict] = []
+
+    def add(self, process, label: str) -> dict:
+        entry = {'process': process, 'label': label, 'source': window_source(label)}
+        self._entries.append(entry)
+        return entry
+
+    def remove(self, entry: dict) -> None:
+        try:
+            self._entries.remove(entry)
+        except ValueError:
+            pass
+
+    def has_open(self, source: str | None = None) -> bool:
+        """まだ動いているか、終了直後の後処理が済んでいない窓があるか。"""
+        return any(source is None or e['source'] == source for e in self._entries)
+
+    def has_live(self, source: str | None = None) -> bool:
+        """プロセス自体が現在も動いている窓があるか（起動時の定期確認向け）。"""
+        return any((source is None or e['source'] == source) and e['process'].poll() is None for e in self._entries)
+
+    def open_sources(self, *, exclude: str | None = None) -> tuple[str, ...]:
+        """まだ開いている（または後処理中の）原本DBの種別（meruhen / pscube）。"""
+        return tuple(s for s in ('meruhen', 'pscube') if s != exclude and self.has_open(s))
 
 
 def _message_has_day(message: str, day: dt.date) -> bool:

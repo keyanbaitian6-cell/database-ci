@@ -455,6 +455,89 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn('0時〜9時', why_today)
         self.assertEqual(fv._read_state(self.dir).get('pending_target'), '2026-11-10')
 
+    def test_two_site777_windows_closing_simultaneously_run_forward_once_even_while_meruhen_is_open(self):
+        # サイトセブン2窓が同時に閉じたとき、1つ目の終了処理で2つ目を飛ばして早合点しない。
+        # また、別店舗のメルヘン窓が開いたままでも、サイトセブン2窓が閉じ終えた時点で1回だけ判定できる。
+        class FakeProc:
+            def __init__(self, code=None):
+                self.code = code
+            def poll(self):
+                return self.code
+
+        tracker = fv.CaptureWindowTracker()
+        gate = fv.ForwardWindowGate()
+        p1, p2, m1 = FakeProc(0), FakeProc(0), FakeProc(None)
+        e1 = tracker.add(p1, 'サイトセブン')
+        e2 = tracker.add(p2, 'サイトセブン')
+        tracker.add(m1, 'メルヘン')
+
+        # 2窓ともOS上は既に終了しているが、e1 処理時点では e2 が未処理なのでまだ pscube は開いている扱い
+        tracker.remove(e1)
+        self.assertTrue(tracker.has_open('pscube'))
+        gate.defer('サイトセブン', '指定日（11/22）の取り込みが完了しました。追加120台、既存を保持0台、グラフ不明0台。')
+        self.assertTrue(gate.has_pending())
+
+        # e2 を外した瞬間に pscube 窓は0（メルヘンは開いたまま）。ここで1回だけ前向き検証を起動できる
+        tracker.remove(e2)
+        self.assertFalse(tracker.has_open('pscube'))
+        self.assertTrue(tracker.has_open('meruhen'))
+        self.assertEqual(tracker.open_sources(exclude='pscube'), ('meruhen',))
+        label, merged = gate.take('サイトセブン', '11/22（全255台が保存済み・機種ページを開かずに飛ばした）。取り込む台はありませんでした。')
+        self.assertEqual(label, 'サイトセブン')
+        self.assertIn('追加120台', merged)
+        self.assertIn('全255台が保存済み', merged)
+        self.assertIsNone(gate.flush(), '二重起動しない')
+
+    def test_simultaneous_close_with_one_aborted_window_cancels_regardless_of_check_order(self):
+        # サイトセブン2窓が同時に閉じ、片方が自動完了・もう片方が×閉じだった場合、
+        # どちらの窓の後処理が先に走っても前向き検証を起動しない（次の新しい単窓では正常に動く）。
+        class FakeProc:
+            def poll(self):
+                return 0
+
+        # 順番1：完了窓が先 → ×閉じ窓が後
+        tracker = fv.CaptureWindowTracker()
+        gate = fv.ForwardWindowGate()
+        e_done = tracker.add(FakeProc(), 'サイトセブン')
+        e_abort = tracker.add(FakeProc(), 'サイトセブン')
+        tracker.remove(e_done)
+        self.assertTrue(tracker.has_open('pscube'))
+        gate.defer('サイトセブン', '指定日（11/22）の取り込みが完了しました。')
+        tracker.remove(e_abort)
+        self.assertFalse(tracker.has_open('pscube'))
+        gate.cancel(remaining=tracker.has_open('pscube'))
+        self.assertFalse(gate.is_aborted())
+        self.assertIsNone(gate.flush())
+
+        # 順番2：×閉じ窓が先 → 完了窓が後（従来の cancel() では後続の完了窓がすり抜けていた）
+        tracker2 = fv.CaptureWindowTracker()
+        gate2 = fv.ForwardWindowGate()
+        e_abort2 = tracker2.add(FakeProc(), 'サイトセブン')
+        e_done2 = tracker2.add(FakeProc(), 'サイトセブン')
+        tracker2.remove(e_abort2)
+        self.assertTrue(tracker2.has_open('pscube'))
+        gate2.cancel(remaining=tracker2.has_open('pscube'))
+        self.assertTrue(gate2.is_aborted())
+        tracker2.remove(e_done2)
+        self.assertFalse(tracker2.has_open('pscube'))
+        self.assertTrue(gate2.is_aborted())
+        _, merged = gate2.take('サイトセブン', '指定日（11/22）の取り込みが完了しました。')
+        self.assertEqual(merged, '', '中断記憶により完了窓だけでは起動させない')
+        self.assertFalse(gate2.is_aborted(), 'バッチ完了で中断記憶はリセットされる')
+
+        # 次の新しい単窓（自動完了）は正常に通る
+        label, msg = gate2.take('サイトセブン', '指定日（11/23）の取り込みが完了しました。')
+        self.assertEqual(label, 'サイトセブン')
+        self.assertIn('11/23', msg)
+
+    def test_app_watch_capture_window_tracks_per_source_without_dropping_unprocessed_windows(self):
+        source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
+        self.assertIn('forward_validation.CaptureWindowTracker()', source)
+        self.assertIn('capture_tracker.remove(entry)', source)
+        self.assertIn("forward_gate.cancel(remaining=capture_tracker.has_open('pscube'))", source)
+        self.assertIn("if capture_open('pscube'):", source)
+        self.assertIn('start_daily(skip_sources=capture_tracker.open_sources(exclude=source))', source)
+
 
 class MeruhenNoteTest(unittest.TestCase):
     """メルヘンの取り込み窓が閉じたら、店舗別の候補比較の記録の様子を1行出す（2026-11-16 利用者「メルヘンも出すようにして」）。"""

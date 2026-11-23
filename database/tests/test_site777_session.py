@@ -1215,3 +1215,37 @@ class SessionTest(unittest.TestCase):
         self.session.pause('止まりました。', 'navigation_failed')
         self.assertIsNone(self.session.state()['resume_at'])
         self.assertIn('5回続けても取り込みが進まないため', self.session.state()['status'])
+
+    def test_two_windows_concurrently_writing_same_model_job_stay_consistent(self):
+        # 2窓（前から・後ろから）が真ん中の同じ機種で同時に途中記録（staging JSON）を読み書きしても、
+        # _job_file_lock で直列化されて例外や破損が起きないことを確認する（2026-11-23）。
+        import threading
+        other = self.new_session()
+        self.session.configure(True, '2026-11-06')
+        other.configure(True, '2026-11-06')
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def worker(sess, tag):
+            try:
+                barrier.wait(timeout=5)
+                for step in range(20):
+                    sess._write_job('123', {'writer': tag, 'step': step, 'graphs': {str(step): tag}})
+                    loaded = sess._read_job('123')
+                    self.assertIn(loaded.get('writer'), ('front', 'back'))
+                    self.assertIsInstance(loaded.get('graphs'), dict)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=worker, args=(self.session, 'front')),
+            threading.Thread(target=worker, args=(other, 'back')),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+        self.assertEqual(errors, [])
+        self.assertTrue((self.folder / 'site777-job.lock').exists())
+        final = self.session._read_job('123')
+        self.assertIn(final.get('writer'), ('front', 'back'))
