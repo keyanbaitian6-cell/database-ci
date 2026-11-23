@@ -4753,7 +4753,7 @@
 |---|---|---|
 | 機種別ピックアップの計算・表示・操作・横はみ出しなし | 済 | `test_share_viewer.mjs` 37件、`test_share_viewer_browser.mjs` 320/393/1280px、Chromium（320/393/1280px）・WebKit（393px）の描画確認（いずれも横はみ出し 0px） |
 | 全体ゲート（PC・Flutter・閲覧/共有ステージ・JS全件） | 済 | `C:\w\cbw-pickup-ui-20261124` で `check_before_build.sh`（`CHECK_JS_JOBS=2`）**ALL PASSED**（`pc-tests` 1,164件、`flutter-test` 895件、`flutter-analyze`、`viewer-build`・`viewer-stage`、`share-stage` 19ファイル・版 `14f74413ed32`・記録文字列90種・スクリプトID該当なし、JS 97ファイル全件成功） |
-| GitHub push・共有カレンダー公開 | 実施中 | 送信・公開後に追記 |
+| GitHub push・共有カレンダー公開 | 済（CI 実行中） | `tools/push_ci.py` で `database-ci/main` へ `c1c7c73..f020188` を送信（[CI run 45279322821](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45279322821) 実行中）。共有カレンダー `database-share` `7584833..b9248a8`・版 `14f74413ed32`（8ファイル更新：本体 `index.html`・`android.html`・`app.mjs` と版番号 `?v=` 反映5ファイル、[Pages run 45279592237](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45279592237) 成功）。戻す場合は `database-share` で `b9248a8` を `git revert`（戻り先 `7584833`） |
 | iPhone実機での表示確認 | 未確認 | ブラウザー試験・WebKit 393px プレビューまで |
 
 ## 2026-11-24 朝 Claude：メルヘンの取り込み窓を2つ同時に開くときの点検（コードを読んだだけ。変更なし）
