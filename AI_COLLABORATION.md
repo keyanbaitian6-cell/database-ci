@@ -4687,4 +4687,10 @@
 | 合計順、7件上限、同点、欠損・0枚・0回転、推定 | 済 | `node --test database_android/tool/test_share_viewer.mjs` 37件 |
 | 4項目、1〜7位、機種名から台一覧、日付送り・戻る・追加通信なし・横はみ出しなし | 済 | `test_share_viewer_browser.mjs` 320・393・1280px。確認用ステージ `e59469008d6c` でも成功 |
 | 既存画面の回帰確認とスマートフォン幅の操作 | 済 | 確認用ステージで関連ブラウザー試験12ファイル、14件。WebKitでも320・393pxの7位をタップして台一覧・戻るを確認 |
-| 全体ゲート・公開・実機 | 未確認 | ソースと確認用ステージまで。全体ゲート、GitHubへの送信、公開ページ、実機は未実施 |
+| 全体ゲート | 済 | `684bce6` の [GitHub Actions](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45173415826) で全体ゲート、PCのUbuntu・Windowsの3ジョブが成功 |
+| 共有カレンダー公開 | 済 | `762eabe` → `9b60406`、版 `22a72c966658`。[GitHub Pages](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45188458813) 成功 |
+| 公開後の確認 | 済 | 配信された19ファイルが公開コミットとSHA-256で一致。非公開データを置かない4パスは404。公開URLを使い、模擬データで320・393・1280pxの機種別順位・台一覧・戻るを確認 |
+| 実機 | 未確認 | ブラウザー試験とWebKitの確認まで |
+
+- 利用者「問題ないか最終確認後push」「引継ぎいらないかな。そのままお願いします」。ソースは日本時間11月23日21:20に `tools/push_ci.py 684bce6` で `database-ci/main` へ送った。公開用ファイルは同コミットの `share_viewer/` を `stage_share_viewer.py` で生成し、実記録を検出する90種類の文字列と接続先IDのいずれも該当なし。公開差分は8ファイルで、機種別表示の4ファイルと、参照先の版番号だけを更新した4ファイル。
+- 公開を戻す場合は `keyanbaitian6-cell/database-share` で `9b60406` を `git revert` し、`762eabe` 相当の表示へ戻す。
