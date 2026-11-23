@@ -244,6 +244,23 @@ test('回っていない台：期間はカレンダーの日数（記録の無�
   assert.equal(calendarDays('2026-09-28', '2026-10-04'), 7);
 });
 
+test('回っていない台：条件を変えても過去日の索引を作り直さず、履歴を更新したら結果も変える', () => {
+  const byDay = idleSample();
+  const first = byDay.get(`nagamachiminami|${day(1)}`).find(r => r.rack === 10);
+  const machine = first.machine;
+  let reads = 0;
+  Object.defineProperty(first, 'machine', {get: () => { reads++; return machine; }});
+  assert.deepEqual(picks(byDay, 10, {gamesLimit: 3000}), [['A', 10, 10], ['B', 20, 10], ['B', 21, 10]]);
+  assert.ok(reads > 0);
+  reads = 0;
+  assert.deepEqual(picks(byDay, 9, {gamesLimit: 3000}), [['A', 10, 9], ['B', 20, 9], ['B', 21, 9]]);
+  assert.deepEqual(picks(byDay, 10, {gamesLimit: 500}), [['A', 10, 9]]);
+  assert.equal(reads, 0, '選択日・回転数を変えても同じ過去日を索引化し直さない');
+  const updated = idleSample();
+  updated.get(`nagamachiminami|${day(10)}`).find(r => r.rack === 10).games = 3000;
+  assert.deepEqual(picks(updated, 10, {gamesLimit: 500}), []);
+});
+
 test('幸町の聖闘士星矢 海皇覚醒（1279番台、稼働停止）は表示しない。沖ドキなど以前の記録は出す', () => {
   assert.ok(isHiddenMachine('saiwaichou', 'L 聖闘士星矢 海皇覚醒 ED'));
   assert.ok(!isHiddenMachine('nagamachiminami', 'L聖闘士星矢海皇覚醒ED'));

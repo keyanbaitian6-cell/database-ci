@@ -1222,6 +1222,7 @@ class _ViewerHomeState extends State<ViewerHome> {
             MaterialPageRoute<void>(
               builder: (_) => DailyLearningPage(
                 store: store,
+                records: all,
                 load: () {
                   final url = _remote;
                   if (url == null) throw StateError('Driveの読み込み先を設定してください');

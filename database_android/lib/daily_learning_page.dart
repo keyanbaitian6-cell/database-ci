@@ -1,14 +1,20 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'daily_learning_transport.dart';
 import 'list_views.dart' show displayMachineName;
+import 'models.dart' show SlotRecord;
+import 'rack_site_link.dart' show rackModelCodes, rackSiteUrl, site777Today;
+import 'viewer_bridge.dart' show openExternalUrl;
+
+const _pstationStore = 'pscube:c740601:20';
 
 const dailyStoreNames = {
   'nagamachiminami': '長町南',
   'saiwaichou': '幸町',
-  'pscube:c740601:20': 'P-STATION',
+  _pstationStore: 'P-STATION',
 };
 
 Map<String, dynamic> parseDailyLearning(String text) {
@@ -226,15 +232,27 @@ const _dailyMethodText = {
 
 /// 全端末でPCが固定した同じ候補を読む。画面側で再学習しない。
 class DailyLearningPage extends StatefulWidget {
-  const DailyLearningPage({super.key, this.load, this.store});
+  const DailyLearningPage({
+    super.key,
+    this.load,
+    this.store,
+    this.records = const [],
+    this.now,
+    this.openSite,
+  });
   final Future<String> Function()? load;
   final String? store;
+  // 閲覧ページが既に表示している台。リンクのために履歴を読み直さない。
+  final List<SlotRecord> records;
+  final DateTime Function()? now;
+  final bool Function(String url)? openSite;
   @override
   State<DailyLearningPage> createState() => _DailyLearningPageState();
 }
 
 class _DailyLearningPageState extends State<DailyLearningPage> {
   late String _store = widget.store ?? 'nagamachiminami';
+  late final _models = rackModelCodes(widget.records, _pstationStore);
   String? _target;
   late Future<Map<String, dynamic>> _data = _read();
   Future<Map<String, dynamic>> _read() async =>
@@ -314,7 +332,7 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
           );
         }
         final data = snapshot.data!;
-        final now = DateTime.now();
+        final now = (widget.now ?? DateTime.now)();
         final initial = dailyDefaultTarget(now);
         final known = {
           initial,
@@ -326,6 +344,10 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
           known.contains(_target) ? _target! : initial,
           now,
         );
+        final linkRacks = kIsWeb && _store == _pstationStore;
+        final today = site777Today(now);
+        // 共有カレンダーの dailyRackLinkDay と同じく、未来日のリンクは当営業日を案内する。
+        final linkDay = view.target.compareTo(today) > 0 ? today : view.target;
         final theme = Theme.of(context);
         final muted = theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
@@ -367,7 +389,21 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
             ),
             Text('最終処理 ${dailyTime(view.updated)}（日本時間）', style: muted),
             const SizedBox(height: 8),
-            for (final g in view.groups) _DailyGroupCard(g),
+            for (final g in view.groups)
+              _DailyGroupCard(
+                g,
+                rackUrl: linkRacks
+                    ? (rack) => rackSiteUrl(
+                        _store,
+                        rack,
+                        view.target,
+                        now,
+                        models: _models,
+                      )
+                    : null,
+                linkDay: linkDay,
+                openSite: widget.openSite ?? openExternalUrl,
+              ),
             const SizedBox(height: 4),
             _DailyMore(
               title: '処理状況・日次学習について',
@@ -486,8 +522,16 @@ class _DailyAlerts extends StatelessWidget {
 }
 
 class _DailyGroupCard extends StatelessWidget {
-  const _DailyGroupCard(this.group);
+  const _DailyGroupCard(
+    this.group, {
+    required this.rackUrl,
+    required this.linkDay,
+    required this.openSite,
+  });
   final DailyGroupView group;
+  final String? Function(int rack)? rackUrl;
+  final String linkDay;
+  final bool Function(String url) openSite;
 
   @override
   Widget build(BuildContext context) {
@@ -565,27 +609,11 @@ class _DailyGroupCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text: '${r.rack}',
-                                style: const TextStyle(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF1D1D1F),
-                                  fontFeatures: [FontFeature.tabularFigures()],
-                                ),
-                              ),
-                              const TextSpan(
-                                text: '番',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Color(0xFF707070),
-                                ),
-                              ),
-                            ],
-                          ),
+                        _DailyRackNumber(
+                          r.rack,
+                          url: rackUrl?.call(r.rack),
+                          linkDay: linkDay,
+                          openSite: openSite,
                         ),
                         if (r.machine != null)
                           Text(
@@ -609,6 +637,61 @@ class _DailyGroupCard extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DailyRackNumber extends StatelessWidget {
+  const _DailyRackNumber(
+    this.rack, {
+    required this.url,
+    required this.linkDay,
+    required this.openSite,
+  });
+  final int rack;
+  final String? url;
+  final String linkDay;
+  final bool Function(String url) openSite;
+
+  @override
+  Widget build(BuildContext context) {
+    final target = url;
+    final linkColor = Theme.of(context).colorScheme.primary;
+    final text = Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '$rack',
+            style: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.w600,
+              color: target == null ? const Color(0xFF1D1D1F) : linkColor,
+              decoration: target == null ? null : TextDecoration.underline,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const TextSpan(
+            text: '番',
+            style: TextStyle(fontSize: 13, color: Color(0xFF707070)),
+          ),
+        ],
+      ),
+    );
+    if (target == null) return text;
+    return Tooltip(
+      message: '$rack番の${dailyDateLabel(linkDay)}のデータをサイトセブンで開く',
+      child: Semantics(
+        link: true,
+        child: InkWell(
+          onTap: () {
+            if (openSite(target)) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('$rack番のサイトセブンのページを開けませんでした。')),
+            );
+          },
+          child: text,
         ),
       ),
     );

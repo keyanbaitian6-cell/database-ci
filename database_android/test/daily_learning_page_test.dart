@@ -1,8 +1,10 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:database_android/daily_learning_page.dart';
+import 'package:database_android/models.dart';
 
 Map<String, dynamic> fixture() => {
   'format': 'daily-learning',
@@ -135,6 +137,113 @@ void main() {
     expect(find.text('L MHRサンブレイクXA'), findsOneWidget);
     expect(find.text('1157番'), findsOneWidget);
     expect(find.textContaining('ｻﾝ'), findsNothing);
+  });
+
+  testWidgets('P-STATIONの台番号はWebだけで、共有カレンダーと同じ営業日の台を開く', (tester) async {
+    const pstation = 'pscube:c740601:20';
+    final now = DateTime.parse('2026-11-12T02:59:59+09:00');
+    final raw = fixture();
+    raw['days'] = [
+      for (final day in ['2026-11-12', '2026-11-04', '2026-11-03'])
+        {
+          'target': day,
+          'saved_at': '${day}T01:00:00+09:00',
+          'groups': [
+            {
+              'store': pstation,
+              'name': 'バラエティ',
+              'active': 'current',
+              'status': '改善未確認',
+              'selected': [
+                [pstation, '20', 'L MHRｻﾝﾌﾞﾚｲｸXA', 1286],
+                [pstation, '20', '出典なし', 1290],
+              ],
+            },
+            {
+              'store': 'nagamachiminami',
+              'name': '試験機',
+              'active': 'current',
+              'status': '改善未確認',
+              'selected': [
+                ['nagamachiminami', '', '試験機', 101],
+              ],
+            },
+          ],
+        },
+    ];
+    SlotRecord row(String day, String code, {String host = 'm.site777.jp'}) =>
+        SlotRecord(
+          store: pstation,
+          day: day,
+          machine: 'L MHRｻﾝﾌﾞﾚｲｸXA',
+          rack: 1286,
+          games: 2000,
+          bb: 10,
+          rb: 5,
+          extra: {
+            'source_site': 'site777',
+            'source_url': 'https://$host/f/D3300.do?mdc=$code',
+          },
+        );
+    final opened = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DailyLearningPage(
+          store: pstation,
+          load: () async => jsonEncode(raw),
+          now: () => now,
+          records: [
+            row('2026-11-11', '0200'),
+            row('2026-11-10', '0100'),
+            row('2026-11-12', '9999', host: 'invalid.example'),
+          ],
+          openSite: (url) {
+            opened.add(url);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('L MHRサンブレイクXA'), findsOneWidget);
+    expect(find.text('1290番'), findsOneWidget);
+    expect(find.byTooltip('1290番の11月11日（水）のデータをサイトセブンで開く'), findsNothing);
+    expect(opened, isEmpty, reason: '表示だけではリンク先を開かない');
+
+    Finder link(String day) =>
+        find.byTooltip('1286番の${dailyDateLabel(day)}のデータをサイトセブンで開く');
+    final current = link('2026-11-11');
+    if (kIsWeb) {
+      expect(current, findsOneWidget, reason: '日本時間3時前の翌日候補は当営業日を開く');
+      await tester.ensureVisible(current);
+      await tester.tap(current);
+      expect(opened, [
+        'https://m.site777.jp/f/D4000.do?pmc=04034001&mdc=0200&dtdd=0&dn=1286',
+      ]);
+    } else {
+      expect(current, findsNothing);
+      expect(find.text('1286番'), findsOneWidget);
+      await tester.tap(find.text('1286番'));
+      expect(opened, isEmpty);
+    }
+    await pickDay(tester, '${dailyDateLabel('2026-11-04')}・過去日');
+    final recent = link('2026-11-04');
+    expect(recent, kIsWeb ? findsOneWidget : findsNothing);
+    if (kIsWeb) {
+      await tester.ensureVisible(recent);
+      await tester.tap(recent);
+      expect(opened.last, contains('&dtdd=7&dn=1286'));
+    }
+    await pickDay(tester, '${dailyDateLabel('2026-11-03')}・過去日');
+    expect(link('2026-11-03'), findsNothing, reason: '8日前はリンクの対象外');
+    expect(find.text('1286番'), findsOneWidget);
+
+    await tester.tap(find.byType(DropdownButton<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('長町南').last);
+    await tester.pumpAndSettle();
+    expect(find.text('101番'), findsOneWidget);
+    expect(find.byTooltip('101番の11月3日（火）のデータをサイトセブンで開く'), findsNothing);
   });
 
   // 2026-11-12：4画面で同じ順・意味にそろえた表示。
