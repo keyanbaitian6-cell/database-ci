@@ -4601,3 +4601,23 @@
 | PC全試験の結果 | 済（分けて確認） | `TZ=JST-9` で試験プロセスの時差 +09:00 を確認。 `python -m unittest discover -s tests` 1,153件中1,131件が成功。サンドボックス内で Git Bash・一時Gitリポジトリを使う既存22件が失敗したため、通常のWindows環境で `test_project_python.py` 全12件、`test_push_ci.py` 全20件を再実行し、すべて成功。模擬リポジトリのみを使用した。 |
 | 実動作・送信 | 未確認 | 実サイト、PCアプリでの次回取り込み・学習、CIは未確認。pushは保留。適用済みの2窓パッチ手順の控え `Pc Apply Site777 2win Patch.md` は作業フォルダに残した。 |
   - **実機の確認（2026-11-23 19:31、Claude が PC のログを直接確認）**：利用者がもう一度 `start.cmd` で起動し直した。起動1分後の確認で日次学習が実際に裏で動いた（`run.log` 19:31:56「開始：対象 2026-11-23（保存できる時間帯の外）」→ 19:32:14「終了：…11/23は締切超過・事前予測なし…」。11/23 の分は締切の8時を過ぎているので保存されないのが正しい）。19:32:01「定期確認：待ちます（保存できる時間帯の外（23:30〜8:00））」。`errors.log` に新しい行は無い。今夜（11/24 の予測）の 23:30 以降の動きと本体画面の1行の見え方は未確認。
+
+## 2026-11-23 夜 Gemini：G12（使える台0台は固定しない）・G13（サイトセブン最小化待機のPCログ通知）の補足記録
+
+- **基準とコミット経緯**：G13 の `site777_*` は `cdda41f` の上で着手し、`database/app.py`・`database/daily_learning_runtime.py` は Claude の `20c6c25` コミット完了を確認してから実装した。Gemini が PC 全試験を実行中に、利用者の承認で Codex が作業コピーの8ファイルを `4fcd91e` として引き取りコミット済み（`154c2ca` の `import threading` も保持されていることを `git show 4fcd91e` で確認）。本節は、依頼要件のログ文言・締切後の扱いと Gemini 側の修正前失敗／全試験確認の記録を補足する（文書のみ、push なし）。
+- **G12（日次学習：使える台が0台の店・日は固定しない）の仕様・締切後の扱い・ログ文言**
+  - 対象：`database/daily_learning_runtime.py` の `ready()`（`usable = [r for r in current if valid(r)]` が空のとき理由を返す）。
+  - 締切前（23:30〜8:00）：予測を固定保存せず「取り込み待ち」にする。状態文・`daily-learning/run.log`（`trace`）の文言は `{店名}：取り込み待ち：{店名}の前日データに使える台がありません（全{N}台）`。本体画面 1 行（`night_status`）は `{店名} 取り込み待ち`（`wait`）。締切（8:00）までに有効な台の取り込みが入って原本が更新されれば、`run_due` が更新を検知し `_run` が予測を作り直して固定保存する。
+  - 0台のまま締切（8:00）を過ぎたときの扱い：予測は未保存のまま確定する（`predictions` に行を入れないため、将来の `outcomes`・`decisions` に空や異常データの日が混入しない）。8:00 以降の実行では既存の `{店名}：{月/日}は締切超過・事前予測なし。従来方式を表示してください（次に保存できるのは23:30以降）` が出力され、`checkup()` では `missed`、`night_status()` では `{店名} 未保存`（`error`）として扱われる。
+- **G13（サイトセブン：最小化中の待機を PC アプリのログ欄へ出す）の仕様と保持事項**
+  - 対象：`database/assets/site777_overlay.js`・`database/site777_session.py`・`database/site777_browser.py`・`database/app.py`。
+  - 最小化でグラフ待ち（`prepare`）または読み込み直し待ち（`retryLater`）に入ると、`overlay.js` が既存の `api().note` で `graph_hidden`／`graph_visible` を送り（公開 API 集合は増やさない）、`Session` が窓IDごとの `site777-wait-notice.json`（`WAIT_NOTICE_NAME`）へ待機開始・10分ごとの再通知（`HIDDEN_REMIND_SECONDS = 600`、`graph_hidden_waiting` も記録）・復帰の知らせを書く（対象日・上から／下から付き。初回通知が未読の一瞬の最小化は取り消してノイズを出さない）。`app.py` の `watch_capture_window` が稼働中2秒ごとに `take_wait_message` を読んで `logbox` に出し、読取例外でも監視を止めず、窓終了時は未読の待機知らせをログ欄へ出さずに掃除する。
+  - 保持した仕様：取り込み間隔（`Site777RandomCapture` 3〜5秒ランダム）、読み込み直し回数・待ち時間（`MAX_RETRIES=3`・`RETRY_MS=4000`）、自動再開（`RESUME_DELAY=180`・`RESUME_LIMIT=5`）、対象サイトへ接続しないこと。
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| G12 修正前失敗→修正後通過（0台固定せず・再取り込みで保存・締切後未保存） | 済 | `test_daily_learning.LearningTests.test_zero_usable_racks_is_not_frozen_rebuilds_before_cutoff_and_misses_after_cutoff`（修正前 `AssertionError: 0 != 1` → 修正後 OK） |
+| G13 `site777_*` 修正前失敗→修正後通過（通知・再通知・復帰・2窓分離・`overlay.js`） | 済 | `test_site777_session.py` 追加2件・`test_site777_browser.py` 追加1件が修正前で失敗/エラー → 修正後 `test_site777_*.py` 111件 OK、`node --check database/assets/site777_overlay.js` OK |
+| G13 `app.py` 稼働中ログ欄通知・例外耐性・終了時掃除 | 済 | `test_site777_browser.Site777BrowserTest.test_app_watch_capture_window_polls_wait_notice_while_open_and_clears_on_close`（修正前 FAIL → 修正後 OK、関連63件 OK） |
+| PC全試験（Gemini 側実行） | 済（分けて確認） | `TZ=JST-9 database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,153件中 1,131件 OK（462.3秒）。実行環境制限で落ちた `test_push_ci.py`（17件ERROR）と `test_project_python.py`（5件FAIL）を通常環境で再実行し 32件すべて OK |
+| 実機・実サイト・push・CI | 未確認 | 対象サイトには未接続。PCアプリ実画面・実WebView2最小化での目視は未確認。push は保留（3つそろってから Claude が1回で送信） |
