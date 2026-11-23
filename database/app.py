@@ -1050,19 +1050,35 @@ def main():
         """取り込み窓が開いているか（起動時確認は実プロセスの生存、終了判定は未処理窓の有無）。"""
         return capture_tracker.has_open(source)
 
-    def watch_capture_window(process, label, take_message, after_auto=None, take_stop=None, after_close=None):
+    def watch_capture_window(process, label, take_message, after_auto=None, take_stop=None, after_close=None,
+                             poll_notice=None):
         """自動取り込みが全部終わると取り込み窓は自分で閉じる（2026-10-30、サイトへの接続を止めるため）。
+        窓が開いている間に poll_notice が文を返せばログ欄へ出す（最小化中の待機知らせ等、2026-11-23）。
         窓のプロセスが終わったら、その結果をログ欄に出す。自動で閉じたとき（結果の文がある）は after_auto も呼ぶ。"""
         entry = capture_tracker.add(process, label)
         source = entry['source']
 
         def check():
             if process.poll() is None:
+                if poll_notice is not None:
+                    try:
+                        notice = poll_notice()
+                    except Exception as error:  # noqa: BLE001 - 待機知らせの読取失敗で監視を止めない
+                        error_log.record(DATA_DIR, 'capture.poll_notice', error)
+                        notice = None
+                    if notice:
+                        logbox.insert('end', f'{label}：{notice}\n')
+                        logbox.see('end')
                 root.after(2000, check)
                 return
             # 2窓が同時に閉じたとき、まだ check() が走っていない別窓まで外して早合点しないよう、
             # 自分のエントリだけをここで取り除く（2026-11-23）。
             capture_tracker.remove(entry)
+            if poll_notice is not None:
+                try:
+                    poll_notice()  # 閉じたあとに残った未読の待機知らせはログ欄へ出さず掃除する
+                except Exception:  # noqa: BLE001 - the notice is only a convenience
+                    pass
             try:
                 message = take_message()
             except Exception:  # noqa: BLE001 - the notice is only a convenience
@@ -1278,7 +1294,8 @@ def main():
         watch_capture_window(process, 'サイトセブン', lambda: site777_browser.take_finished_message(DATA_DIR, window_id),
                              after_auto=lambda message: save_forward_after('サイトセブン', message),
                              take_stop=lambda: site777_browser.take_stop_message(DATA_DIR, window_id),
-                             after_close=site777_backup_note)
+                             after_close=site777_backup_note,
+                             poll_notice=lambda: site777_browser.take_wait_message(DATA_DIR, window_id))
         logbox.insert('end', 'サイトセブンをスマホとして、クレジットカード会員のログイン画面から開きました。'
                       'ログインしたら、P-STATIONの20スロを表示し、取り込みカードの日付（から・まで）を確認して開始してください。\n')
         logbox.see('end')

@@ -1249,3 +1249,66 @@ class SessionTest(unittest.TestCase):
         self.assertTrue((self.root / 'site777-job.lock').exists())
         final = self.session._read_job('123')
         self.assertIn(final.get('writer'), ('front', 'back'))
+
+    def test_minimized_graph_wait_leaves_notice_reminds_and_reports_resume(self):
+        # G13（2026-11-23）：窓を最小化したままグラフ待ちに入ったとき、PCアプリ本体のログ欄へ知らせるため
+        # 待機知らせを出し、続くときは一定間隔で再通知、窓を戻したら再開を知らせる。間隔・回数は変えない。
+        from unittest.mock import patch
+        import site777_browser
+        import site777_session
+        self.assertEqual((site777_session.Site777RandomCapture.LOW, site777_session.Site777RandomCapture.HIGH), (3, 5))
+        self.assertEqual((site777_session.RESUME_DELAY, site777_session.RESUME_LIMIT), (180, 5))
+        fake_mono = [100.0]
+        with patch.object(site777_session, 'monotonic', side_effect=lambda: fake_mono[0]):
+            self.session.note(json.dumps({'kind': 'graph_hidden', 'day': '2026-11-06', 'page': 1}))
+            notice = site777_browser.take_wait_message(self.root)
+            self.assertIsNotNone(notice)
+            self.assertIn('最小化', notice)
+            self.assertIn('11/06', notice)
+            self.assertIn('上から', notice)
+            self.assertIn('元に戻すと続きます', notice)
+            # 重複した graph_hidden では二重に知らせを出さない
+            self.session.note(json.dumps({'kind': 'graph_hidden', 'day': '2026-11-06', 'page': 1}))
+            self.assertIsNone(site777_browser.take_wait_message(self.root))
+            # まだ再通知間隔前なら何も出ない
+            fake_mono[0] += site777_session.HIDDEN_REMIND_SECONDS - 1
+            self.assertIsNone(self.session._check_hidden_wait())
+            self.assertIsNone(site777_browser.take_wait_message(self.root))
+            # 間隔がたったら経過分数つきの再通知が出て、診断ログにも残る
+            fake_mono[0] += 1
+            reminded = self.session._check_hidden_wait()
+            self.assertIsNotNone(reminded)
+            self.assertIn('最小化されたまま', reminded)
+            self.assertIn('分', reminded)
+            self.assertEqual(site777_browser.take_wait_message(self.root), reminded)
+            self.assertEqual(len(self.log('graph_hidden_waiting')), 1)
+            # 窓を戻したら再開の知らせが出て、以降の再通知は止まる
+            self.session.note(json.dumps({'kind': 'graph_visible', 'day': '2026-11-06', 'page': 1}))
+            resumed = site777_browser.take_wait_message(self.root)
+            self.assertIsNotNone(resumed)
+            self.assertIn('窓が戻ったため', resumed)
+            fake_mono[0] += site777_session.HIDDEN_REMIND_SECONDS * 2
+            self.assertIsNone(self.session._check_hidden_wait())
+            # 親画面が読む前（一瞬の最小化）に戻ったときは、未読の待機知らせを消してノイズを出さない
+            self.session.note(json.dumps({'kind': 'graph_hidden', 'day': '2026-11-06', 'page': 2}))
+            self.session.note(json.dumps({'kind': 'graph_visible', 'day': '2026-11-06', 'page': 2}))
+            self.assertIsNone(site777_browser.take_wait_message(self.root))
+            # 停止やページ読み込み完了で待機状態が解除される
+            self.session.note(json.dumps({'kind': 'graph_hidden', 'day': '2026-11-06', 'page': 2}))
+            self.assertIsNotNone(site777_browser.take_wait_message(self.root))
+            self.session.pause('停止しました。', 'user_stop')
+            fake_mono[0] += site777_session.HIDDEN_REMIND_SECONDS * 2
+            self.assertIsNone(self.session._check_hidden_wait())
+
+    def test_overlay_reports_hidden_wait_in_both_prepare_and_retry_without_changing_retries(self):
+        # prepare と retryLater のどちらで最小化待ちになっても graph_hidden / graph_visible を送り、
+        # 読み込み直しの回数・待ち時間（MAX_RETRIES=3, RETRY_MS=4000）は変えない。
+        overlay = (Path(__file__).resolve().parents[1] / 'assets' / 'site777_overlay.js').read_text(encoding='utf-8')
+        self.assertIn('const MAX_RETRIES=3, RETRY_MS=4000', overlay)
+        self.assertIn('graph_hidden', overlay)
+        self.assertIn('graph_visible', overlay)
+        retry_block = overlay[overlay.index('const retryLater='):overlay.index('const stop=')]
+        self.assertIn('notifyHidden(true', retry_block)
+        self.assertIn('notifyHidden(false', retry_block)
+        prepare_block = overlay[overlay.index('databaseSite777.prepare('):overlay.index('if(!alive||token!==mine)return;')]
+        self.assertIn('notifyHidden(hidden)', prepare_block)

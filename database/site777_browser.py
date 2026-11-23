@@ -31,6 +31,8 @@ FINISHED_NAME = 'site777-capture-finished.json'
 LAST_STOP_NAME = 'site777-last-stop.json'
 # 窓を閉じたあとのバックアップ・閲覧用ファイルの書き出しが失敗したときの文（2026-11-21）。親画面のログ欄に出す。
 BACKUP_NOTE_NAME = 'site777-backup-note.json'
+# 窓を最小化したままグラフの読み込みを待っている間の知らせ（2026-11-23）。窓が開いている間に親画面のログ欄へ出す。
+WAIT_NOTICE_NAME = 'site777-wait-notice.json'
 
 
 def clean_window_id(window_id) -> str | None:
@@ -89,6 +91,11 @@ def backup_after_close(session, data_dir, log, window_id=None):
 def take_stop_message(data_dir, window_id=None) -> str | None:
     """取り込み窓が閉じたあとに親画面が呼ぶ。最後に止まった時刻と理由の文を返して知らせを消す（無ければ None）。"""
     return take_notice(notice_path(data_dir, LAST_STOP_NAME, window_id))
+
+
+def take_wait_message(data_dir, window_id=None) -> str | None:
+    """取り込み窓が開いている間に親画面が定期的に呼ぶ。最小化中の待機・再開の知らせを返して消す（無ければ None）。"""
+    return take_notice(notice_path(data_dir, WAIT_NOTICE_NAME, window_id))
 
 # 開いたらすぐログイン画面（2026-11-07 利用者「ホームからサイトセブンクリックしたらそのままログイン画面にして
 # 欲しい」「クレジットカード会員だからここね」）。利用者はスマホ会員のクレジットカード会員で、そのログイン画面。
@@ -354,6 +361,7 @@ def run(data_dir, start_url=START_URL, window_id=None):
     take_finished_message(data_dir, window_id)  # この窓の古い知らせが残っていれば消す（別の窓の知らせは触らない）
     take_stop_message(data_dir, window_id)
     take_backup_message(data_dir, window_id)
+    take_wait_message(data_dir, window_id)
     closed = threading.Event()
     window.events.closed += closed.set
 
@@ -373,6 +381,10 @@ def run(data_dir, start_url=START_URL, window_id=None):
                     reload_page(window, url)
             except Exception as error:  # noqa: BLE001 - 再開できなくても見張りは続ける
                 log.write('resume_failed', error=type(error).__name__)
+            try:
+                session._check_hidden_wait()
+            except Exception as error:  # noqa: BLE001 - 待機知らせで監視を止めない
+                log.write('hidden_wait_check_failed', error=type(error).__name__)
 
     threading.Thread(target=watch_finished, daemon=True).start()
     log.write('start')

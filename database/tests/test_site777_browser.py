@@ -296,6 +296,115 @@ class Site777BrowserTest(unittest.TestCase):
             self.assertIn('バックアップに失敗（窓1）', site777_browser.take_backup_message(folder, window_id='win1'))
             self.assertIn('窓1が停止', site777_browser.take_stop_message(folder, window_id='win1'))
 
+    def test_wait_notices_are_isolated_per_window_and_checked_in_watcher(self):
+        # G13（2026-11-23）：最小化中の待機知らせも窓IDごとに分離し、起動時に掃除、監視スレッドで定期確認する。
+        from site777_session import Session
+        with tempfile.TemporaryDirectory() as folder:
+            s1 = Session(folder, site777_browser.DiagnosticLog(folder), window_id='win1')
+            s1.configure(True, s1._day, direction='bottom')
+            s1.note(json.dumps({'kind': 'graph_hidden', 'day': s1._day, 'page': 1}))
+            self.assertIsNone(site777_browser.take_wait_message(folder, window_id='win2'))
+            msg = site777_browser.take_wait_message(folder, window_id='win1')
+            self.assertIsNotNone(msg)
+            self.assertIn('最小化', msg)
+            self.assertIn('下から', msg)
+            self.assertIsNone(site777_browser.take_wait_message(folder, window_id='win1'))
+        source = Path(site777_browser.__file__).read_text(encoding='utf-8')
+        self.assertIn('take_wait_message(data_dir, window_id)', source)
+        self.assertIn('session._check_hidden_wait()', source)
+
+    def test_app_watch_capture_window_polls_wait_notice_while_open_and_clears_on_close(self):
+        # G13（2026-11-23）：窓が開いている間に最小化の待機・再開知らせをPCアプリ本体のログ欄へ出し、
+        # 例外でも監視を止めず、窓が閉じたときは未読の待機知らせをログ欄へ出さずに掃除する。
+        import textwrap
+        import forward_validation
+        app_source = (Path(site777_browser.__file__).resolve().parent / 'app.py').read_text(encoding='utf-8')
+        self.assertIn('poll_notice=lambda: site777_browser.take_wait_message(DATA_DIR, window_id)', app_source)
+        start = app_source.index('    def watch_capture_window(')
+        end = app_source.index('    def poll_forward_results(')
+        code = textwrap.dedent(app_source[start:end])
+
+        class FakeRoot:
+            def __init__(self):
+                self.after_calls = []
+
+            def after(self, ms, func):
+                self.after_calls.append((ms, func))
+
+        class FakeLogbox:
+            def __init__(self):
+                self.lines = []
+                self.seen = 0
+
+            def insert(self, where, text):
+                self.lines.append(text)
+
+            def see(self, where):
+                self.seen += 1
+
+        class FakeErrors:
+            def __init__(self):
+                self.records = []
+
+            def record(self, data_dir, where, error):
+                self.records.append((where, type(error).__name__))
+
+        class FakeProcess:
+            def __init__(self):
+                self.code = None
+
+            def poll(self):
+                return self.code
+
+        with tempfile.TemporaryDirectory() as folder:
+            root, logbox, errors = FakeRoot(), FakeLogbox(), FakeErrors()
+            started_daily = []
+            env = {
+                'capture_tracker': forward_validation.CaptureWindowTracker(),
+                'forward_gate': forward_validation.ForwardWindowGate(),
+                'forward_validation': forward_validation,
+                'root': root, 'logbox': logbox, 'error_log': errors,
+                'DATA_DIR': Path(folder),
+                'start_daily': lambda **kw: started_daily.append(kw),
+                'save_forward_after': lambda *a: None,
+            }
+            exec(code, env)  # noqa: S102 - app.pyのwatch_capture_windowだけを偽UIで動かす
+            proc = FakeProcess()
+            notices = iter(['19:00 窓が最小化されているため、グラフの読み込みを待っています',
+                            RuntimeError('読取失敗'),
+                            '19:05 窓が戻ったため、グラフの読み込みを続けます',
+                            '19:06 閉じたあとに残っていた未読の待機知らせ'])
+            consumed = []
+
+            def poll_notice():
+                item = next(notices, None)
+                if isinstance(item, Exception):
+                    raise item
+                if item is not None:
+                    consumed.append(item)
+                return item
+
+            env['watch_capture_window'](proc, 'サイトセブン', lambda: None, poll_notice=poll_notice)
+            # 1回目：待機知らせがログ欄に出る
+            root.after_calls.pop(0)[1]()
+            self.assertEqual(logbox.lines, ['サイトセブン：19:00 窓が最小化されているため、グラフの読み込みを待っています\n'])
+            self.assertEqual(len(root.after_calls), 1)
+            # 2回目：読取例外が出ても記録するだけで監視ループが止まらない
+            root.after_calls.pop(0)[1]()
+            self.assertEqual(errors.records, [('capture.poll_notice', 'RuntimeError')])
+            self.assertEqual(len(root.after_calls), 1)
+            # 3回目：窓が戻った再開知らせがログ欄に出る
+            root.after_calls.pop(0)[1]()
+            self.assertIn('窓が戻ったため', logbox.lines[-1])
+            self.assertEqual(len(root.after_calls), 1)
+            # 4回目：窓が閉じたときは未読の待機知らせを掃除するが、ログ欄には出さない
+            proc.code = 0
+            root.after_calls.pop(0)[1]()
+            self.assertEqual(consumed[-1], '19:06 閉じたあとに残っていた未読の待機知らせ')
+            self.assertFalse(any('閉じたあとに残っていた' in line for line in logbox.lines))
+            self.assertIn('サイトセブンの取り込み画面を閉じました。', logbox.lines[-1])
+            self.assertEqual(len(started_daily), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

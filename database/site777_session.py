@@ -18,12 +18,14 @@ from browser_import import clean_overlay_layout
 from pscube_import import (PscubeStore, PscubeRandomCapture, auto_backup, business_day, is_excluded_machine,
                            recent_business_days, site777_final, site777_final_at)
 from file_io import atomic_writer, write_notice
-from site777_browser import Bridge, LAST_STOP_NAME, notice_path
+from site777_browser import Bridge, LAST_STOP_NAME, WAIT_NOTICE_NAME, notice_path
 import site777_import as source
 
 # 移動を指示してから、読み込みの完了（成功・失敗）がこれだけ来なければ止める（2026-11-08）。
 # 移動中は次の読み取りをしない（旧画面を読み直さない）ので、来ないままだと止まらずに待ち続けるため。
 NAVIGATION_LIMIT = 90
+# 窓を最小化したままグラフの読み込みを待っている間、PC本体のログ欄へ再通知する間隔（秒、2026-11-23）。
+HIDDEN_REMIND_SECONDS = 600
 BACKUP_OK = 'バックアップ済み'
 # 自動取り込み中に止まったら、3分後に自動で再開する（2026-11-08 利用者「別店舗など、取り込み対象以外へ移動しようとした
 # （navigation_blocked）これ以外は全て3分後には自動復帰でお願いします」「利用者の停止ボタンも対象外」）。
@@ -208,6 +210,12 @@ class Session(Bridge):
         self._resume_count = 0
         self._resume_serial = 0
         self._own_saves = 0
+        # 窓の最小化でグラフ読み込みを待っている間の状態（PC本体のログ欄へ知らせるため、2026-11-23）。
+        self._hidden_since = None
+        self._hidden_next_remind = None
+        self._hidden_reminded = False
+        self._hidden_wait_day = None
+        self._hidden_wait_page = None
         # 今の取り込みの範囲の始まり・終わり（前回の案内に残す）と、窓を開いたときの前回の案内の文。
         self._run_start = self._run_until = None
         self._previous = None
@@ -244,6 +252,86 @@ class Session(Bridge):
             pass
         if removed:
             self._log.write('staging_pruned', removed=removed, before=cutoff)
+
+    def note(self, payload):
+        """ページからの記録を受け取り、最小化中のグラフ待機・再開ならPC本体のログ欄用の知らせも残す。"""
+        super().note(payload)
+        try:
+            data = json.loads(payload)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+        kind = data.get('kind')
+        if kind == 'graph_hidden':
+            self._on_graph_hidden(data)
+        elif kind == 'graph_visible':
+            self._on_graph_visible(data)
+
+    def _window_label(self):
+        md = self._day[5:].replace('-', '/') if isinstance(self._day, str) and len(self._day) >= 10 else ''
+        way = '下から' if self._direction == 'bottom' else '上から'
+        return f'{md}・{way}' if md else way
+
+    def _clear_hidden_wait(self):
+        self._hidden_since = None
+        self._hidden_next_remind = None
+        self._hidden_reminded = False
+        self._hidden_wait_day = None
+        self._hidden_wait_page = None
+
+    def _on_graph_hidden(self, data):
+        with self._state_lock:
+            if self._hidden_since is not None:
+                return
+            now_mono = monotonic()
+            self._hidden_since = now_mono
+            self._hidden_next_remind = now_mono + HIDDEN_REMIND_SECONDS
+            self._hidden_reminded = False
+            self._hidden_wait_day = data.get('day') or self._day
+            page = data.get('page')
+            self._hidden_wait_page = page if type(page) is int and page >= 1 else None
+            label = self._window_label()
+            stamp = f'{self._now():%H:%M}'
+        message = (f'{stamp} 窓が最小化されているため、グラフの読み込みを待っています（{label}・このままでは進みません）。'
+                   'タスクバーから窓を元に戻すと続きます（ほかの窓の後ろに置くのは問題ありません）。')
+        write_notice(notice_path(self._folder, WAIT_NOTICE_NAME, self._window_id), message)
+
+    def _on_graph_visible(self, data):
+        with self._state_lock:
+            if self._hidden_since is None:
+                return
+            reminded = self._hidden_reminded
+            self._clear_hidden_wait()
+            label = self._window_label()
+            stamp = f'{self._now():%H:%M}'
+        path = notice_path(self._folder, WAIT_NOTICE_NAME, self._window_id)
+        # 初回通知を親画面が読む前（一瞬の最小化）に戻ったときは、未読の知らせを消して再開通知も出さない。
+        if not reminded and path.exists():
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        write_notice(path, f'{stamp} 窓が戻ったため、グラフの読み込みを続けます（{label}）。')
+
+    def _check_hidden_wait(self):
+        with self._state_lock:
+            if self._hidden_since is None or self._hidden_next_remind is None:
+                return None
+            now_mono = monotonic()
+            if now_mono < self._hidden_next_remind:
+                return None
+            minutes = max(1, int((now_mono - self._hidden_since) // 60))
+            self._hidden_next_remind = now_mono + HIDDEN_REMIND_SECONDS
+            self._hidden_reminded = True
+            day, page, label = self._hidden_wait_day, self._hidden_wait_page, self._window_label()
+            stamp = f'{self._now():%H:%M}'
+        message = (f'{stamp} 窓が最小化されたまま約{minutes}分待っています（{label}）。'
+                   'タスクバーから窓を元に戻すと続きます。')
+        write_notice(notice_path(self._folder, WAIT_NOTICE_NAME, self._window_id), message)
+        self._log.write('graph_hidden_waiting', minutes=minutes, day=day, page=page)
+        return message
 
     def state(self):
         self._watch_navigation()
@@ -480,6 +568,7 @@ class Session(Bridge):
             self._pending_navigation = False
             self._blocked_navigation = False
             self._blocked_url = None
+            self._clear_hidden_wait()
             self._pace.configure(enabled, 15)
             self._epoch += 1
             self._status = '自動取り込みを開始します。' if enabled else '停止しました。'
@@ -490,6 +579,7 @@ class Session(Bridge):
     def _loaded(self):
         with self._state_lock:
             self._pending_navigation = False
+            self._clear_hidden_wait()
         self._pace.loaded()
 
     def _navigation_starting(self, raw, redirected=False):
@@ -1168,5 +1258,7 @@ class Session(Bridge):
         self._unknown += unknown
         self._status = f'{name}：追加{summary["added"]}台、既存を保持{summary["kept_local"]}台、グラフ不明{unknown}台。'
         self._job = None
+        with self._state_lock:
+            self._clear_hidden_wait()
         self._check(epoch)
         return self._next(index_url)

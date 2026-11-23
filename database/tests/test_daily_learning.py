@@ -568,6 +568,77 @@ class LearningTests(unittest.TestCase):
                 self.assertIn('11/12の事前予測は保存済みです', doc['status'], stamp)
             self.assertTrue(doc['days'][0]['saved_at'].startswith('2026-11-11T23:35:00'))
 
+    def test_zero_usable_racks_is_not_frozen_rebuilds_before_cutoff_and_misses_after_cutoff(self):
+        # G12（2026-11-23 利用者の決定）：使える台が0台の店・日は予測を固定しない。
+        # 締切（8:00）までに有効な台の取り込みが入れば作り直す。0台のまま締切を過ぎたら未保存（締切超過・missed）。
+        at = datetime.fromisoformat
+        target, prev_day = '2026-11-12', '2026-11-11'
+        base_naga = [row(d.shift(prev_day, -n), r, store='nagamachiminami') | {'captured_at': f'{d.shift(prev_day, -n)}T23:20:00+09:00'}
+                     for n in range(1, 5) for r in range(1, 11)]
+        zero_naga = [row(prev_day, r, store='nagamachiminami') | {'games': 0, 'captured_at': f'{prev_day}T23:20:00+09:00'}
+                     for r in range(1, 11)]
+        valid_naga = [row(prev_day, r, store='nagamachiminami') | {'games': 2000, 'captured_at': f'{prev_day}T23:20:00+09:00'}
+                      for r in range(1, 11)]
+        # ready()：全行あっても使える台が0台なら理由を返す（0Gの店休日等、およびP-STATIONのアナスロ補完行のみ）
+        reasons = runtime.ready(base_naga + zero_naga, target, ('nagamachiminami',))
+        self.assertEqual(len(reasons), 1)
+        self.assertIn('使える台がありません', reasons[0])
+        ps_store = 'pscube:c740601:20'
+        ps_anaslo_only = [row(prev_day, r, store=ps_store) | {'games': 2000, 'source_site': 'anaslo'} for r in range(1, 11)]
+        ps_reasons = runtime.ready(ps_anaslo_only, target, (ps_store,))
+        self.assertEqual(len(ps_reasons), 1)
+        self.assertIn('使える台がありません', ps_reasons[0])
+
+        # _run()：0台の店は固定保存せず取り込み待ちにし、締切前（7:30）に有効データが入れば作り直して固定保存する
+        valid_saiwai = [row(prev_day, r, store='saiwaichou') | {'games': 2000, 'captured_at': f'{prev_day}T23:20:00+09:00'}
+                        for r in range(1, 11)]
+        valid_ps = [row(prev_day, r, store=ps_store) | {'games': 2000} for r in range(1, 11)]
+
+        def fake_build(rows, pscube, t, journal, node=None, history_rows=None):
+            g = dict(key='k', store=rows[0]['store'], name='試験機', current=[list(d.identity(rows[0]))],
+                     learned=[list(d.identity(rows[0]))], selected=[list(d.identity(rows[0]))],
+                     active='current', trained=False, status='学習データ不足・従来方式', pool=[])
+            return dict(input_day=d.shift(t, -1), groups=[g], models={}, source_sha256={})
+
+        state_rows = [base_naga + zero_naga + valid_saiwai + valid_ps]
+
+        def fake_load(data_dir, t, sources=('meruhen', 'pscube')):
+            picked = [r for r in state_rows[0] if runtime.SOURCES.get(r['store']) in sources]
+            return picked, {'records': [], 'machines': []}
+
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(runtime, 'load_inputs', side_effect=fake_load), \
+                patch.object(runtime, 'build_prediction', side_effect=fake_build):
+            doc1 = runtime._run(Path(temp), clock=lambda: at('2026-11-12T00:30:00+09:00'), sync=False)
+            self.assertIn('長町南：取り込み待ち：長町南の前日データに使える台がありません', doc1['status'])
+            self.assertIn('幸町：11/12の事前予測を固定保存しました', doc1['status'])
+            self.assertIn('P-STATION：11/12の事前予測を固定保存しました', doc1['status'])
+            self.assertEqual(runtime.unsaved_stores(temp, target), ['nagamachiminami'])
+            trace_text = (Path(temp) / 'daily-learning' / runtime.TRACE_NAME).read_text(encoding='utf-8')
+            self.assertIn('長町南：取り込み待ち：長町南の前日データに使える台がありません', trace_text)
+            text_wait, level_wait = runtime.night_status(temp, at('2026-11-12T00:35:00+09:00'))
+            self.assertEqual(level_wait, 'wait')
+            self.assertIn('長町南 取り込み待ち', text_wait)
+            # 締切（8:00）までに有効な台の取り込みが入れば作り直して固定保存する
+            state_rows[0] = base_naga + valid_naga + valid_saiwai + valid_ps
+            doc2 = runtime._run(Path(temp), clock=lambda: at('2026-11-12T07:30:00+09:00'), sync=False)
+            self.assertIn('長町南：11/12の事前予測を固定保存しました', doc2['status'])
+            self.assertEqual(runtime.unsaved_stores(temp, target), [])
+
+        # 0台のまま締切（8:00）を過ぎたときは未保存（締切超過・checkup は missed・night_status は error）
+        state_rows[0] = base_naga + zero_naga + valid_saiwai + valid_ps
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(runtime, 'load_inputs', side_effect=fake_load), \
+                patch.object(runtime, 'build_prediction', side_effect=fake_build):
+            runtime._run(Path(temp), clock=lambda: at('2026-11-12T00:30:00+09:00'), sync=False)
+            doc_late = runtime._run(Path(temp), clock=lambda: at('2026-11-12T08:10:00+09:00'), sync=False)
+            self.assertIn('長町南：11/12は締切超過・事前予測なし', doc_late['status'])
+            self.assertEqual(runtime.unsaved_stores(temp, target), ['nagamachiminami'])
+            self.assertEqual(doc_late['checkup']['stores']['nagamachiminami'][-1]['state'], 'missed')
+            text_late, level_late = runtime.night_status(temp, at('2026-11-12T08:15:00+09:00'))
+            self.assertEqual(level_late, 'error')
+            self.assertIn('長町南 未保存', text_late)
+
 
 if __name__ == '__main__':
     unittest.main()

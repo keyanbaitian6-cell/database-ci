@@ -526,8 +526,13 @@ def ready(rows, target, stores=STORES, low=None):
             if missing and lost > MISSING_RACK_LIMIT * len(racks[earlier[-1]]):
                 reasons.append(f'{name}の前日データに「{missing[0]}」など{len(missing)}機種（{lost}台）がありません')
         usable = [r for r in current if valid(r)]
+        # 2026-11-23 利用者の決定（G12）：使える台が0台の店・日は予測を固定せず取り込み待ちにする。
+        # 締切（8:00）までに有効な台の取り込みが入れば作り直す。0台のまま8:00を過ぎたら未保存（締切超過）。
+        if not usable:
+            reasons.append(f'{name}の前日データに使える台がありません（全{len(current)}台）')
+            continue
         unknown = sum(1 for r in usable if outcome(r) is None)
-        if usable and unknown > max(3, UNKNOWN_LIMIT * len(usable)):
+        if unknown > max(3, UNKNOWN_LIMIT * len(usable)):
             reasons.append(f'{name}の前日データでグラフ・差枚の無い台が{unknown}台あります')
     return reasons
 

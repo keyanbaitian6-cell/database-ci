@@ -109,6 +109,10 @@
   // 3〜5秒と同じくらい。読み込み直しの回数は3回のまま。1台だけの機種は1台ごとに約10分かかっていた）。
   const MAX_RETRIES=3, RETRY_MS=4000, retryKey='database-site777-retries';
   const HIDDEN_TEXT='窓が最小化されているため、グラフが読み込まれません。窓を元に戻すと続きます（ほかの窓の後ろに置くのは問題ありません）。';
+  const notifyHidden=(hidden,phase)=>{
+    try{api().note?.(JSON.stringify({kind:hidden?'graph_hidden':'graph_visible',day:current?.day,
+      page:Number(new URL(location.href).searchParams.get('pan')||1),...(phase?{phase}:{})}))?.catch?.(()=>{});}catch(_){}
+  };
   const retryCounts=()=>{try{const v=JSON.parse(sessionStorage.getItem(retryKey)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:null;}catch(_){return null;}};
   const retryLater=async(mine,epoch,wanted,stalledRack)=>{
     const meta=databaseSite777.read(true), url=meta.url, counts=retryCounts();
@@ -132,19 +136,25 @@
     if(!counts)return 'storage';
     const count=(Number(counts[url])||0)+1;
     if(count>MAX_RETRIES)return 'limit';
-    let until=Date.now()+(window.__site777RetryMs||RETRY_MS);
-    while(Date.now()<until){
-      if(!alive||token!==mine)return true;
-      if(recovered())return await stillCurrent()?'recovered':true;
-      // 見えない間は読み込み直さない（読み込み直しても出ない）。見えたら待ちを数え直す（2026-11-21）。
-      if(databaseSite777.pageHidden?.()){
-        status.textContent=HIDDEN_TEXT;
-        await new Promise(resolve=>setTimeout(resolve,250));
-        until=Date.now()+(window.__site777RetryMs||RETRY_MS);
-        continue;
+    let until=Date.now()+(window.__site777RetryMs||RETRY_MS), wasHidden=false;
+    try{
+      while(Date.now()<until){
+        if(!alive||token!==mine)return true;
+        if(recovered())return await stillCurrent()?'recovered':true;
+        // 見えない間は読み込み直さない（読み込み直しても出ない）。見えたら待ちを数え直す（2026-11-21）。
+        if(databaseSite777.pageHidden?.()){
+          if(!wasHidden){wasHidden=true;notifyHidden(true,'retry');}
+          status.textContent=HIDDEN_TEXT;
+          await new Promise(resolve=>setTimeout(resolve,250));
+          until=Date.now()+(window.__site777RetryMs||RETRY_MS);
+          continue;
+        }
+        if(wasHidden){wasHidden=false;notifyHidden(false,'retry');}
+        status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後にこのページを読み込み直して続けます（${count}/${MAX_RETRIES}回目）。`;
+        await new Promise(resolve=>setTimeout(resolve,Math.min(1000,Math.max(0,until-Date.now()))));
       }
-      status.textContent=`グラフが表示されないため、${Math.ceil((until-Date.now())/1000)}秒後にこのページを読み込み直して続けます（${count}/${MAX_RETRIES}回目）。`;
-      await new Promise(resolve=>setTimeout(resolve,Math.min(1000,Math.max(0,until-Date.now()))));
+    }finally{
+      if(wasHidden)notifyHidden(false,'retry');
     }
     if(!await stillCurrent())return true;
     if(recovered())return 'recovered';
@@ -177,8 +187,7 @@
         // 最小化などでページが見えない間は、グラフが出ないとは数えずに待つ（2026-11-21。サイトの遅延読み込みが動かない）。
         await databaseSite777.prepare(()=>!alive||token!==mine,wanted,hidden=>{
           status.textContent=hidden?HIDDEN_TEXT:'表示されていないグラフを順に読み込んでいます…';
-          if(hidden)try{api().note?.(JSON.stringify({kind:'graph_hidden',day:current?.day,
-            page:Number(new URL(location.href).searchParams.get('pan')||1)}))?.catch?.(()=>{});}catch(_){}
+          notifyHidden(hidden);
         });
         if(!alive||token!==mine)return;
         result=await api().capture(JSON.stringify(databaseSite777.read(false,wanted)),epoch);
