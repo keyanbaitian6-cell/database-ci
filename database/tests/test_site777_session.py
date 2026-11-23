@@ -1246,6 +1246,6 @@ class SessionTest(unittest.TestCase):
         for t in threads:
             t.join(timeout=15)
         self.assertEqual(errors, [])
-        self.assertTrue((self.folder / 'site777-job.lock').exists())
+        self.assertTrue((self.root / 'site777-job.lock').exists())
         final = self.session._read_job('123')
         self.assertIn(final.get('writer'), ('front', 'back'))
