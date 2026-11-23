@@ -299,6 +299,28 @@
   .total .sub { font-size: 14px; letter-spacing: -0.224px; color: var(--color-slate); }
   .sheet h3 { font-family: var(--font-display); font-size: 24px; font-weight: 600; line-height: 1.17; margin: 40px 0 2px; }
   .sheet .caption { font-size: 14px; letter-spacing: -0.224px; color: var(--color-slate); margin: 0 0 12px; }
+  .machine-pickups { display: grid; gap: 12px; }
+  .machine-pickup {
+    width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0;
+    text-align: center; font-size: 13px;
+  }
+  .machine-pickup caption { text-align: start; }
+  .machine-pickup caption small { display: block; margin-bottom: 5px; color: var(--color-slate); font-size: 12px; }
+  .machine-pickup .row-link {
+    display: inline-flex; align-items: baseline; gap: 8px; max-width: 100%; min-height: 44px;
+    padding: 11px 0; border: 0; background: none; font: inherit; font-size: 16px; font-weight: 600;
+    color: var(--color-pricing-blue); text-align: start; cursor: pointer;
+  }
+  .machine-pickup .row-link:focus-visible { outline: 2px solid var(--color-pricing-blue); outline-offset: -2px; }
+  .pickup-rank { flex: none; color: var(--color-slate); }
+  .pickup-name { text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+  .machine-pickup th, .machine-pickup td { padding: 7px 2px; overflow-wrap: anywhere; }
+  .machine-pickup th { background: var(--color-paper-frost); font-size: 12px; }
+  .machine-pickup th:last-child { width: 31%; }
+  .machine-pickup th:first-child { border-radius: 8px 0 0 0; }
+  .machine-pickup th:last-child { border-radius: 0 8px 0 0; }
+  .machine-pickup td { background: var(--color-gallery-white); border-bottom: 1px solid var(--color-control-gray); font-weight: 600; }
+  .machine-pickup td span { display: inline-block; }
   .list { background: var(--color-studio-mist); border-radius: var(--radius-cards); padding: 6px 20px; list-style: none; margin: 0; }
   .list li { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--color-control-gray); }
   .list .row {

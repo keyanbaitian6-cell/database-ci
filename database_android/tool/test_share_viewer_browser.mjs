@@ -48,6 +48,9 @@ const meruhen = {format: 'database-backup', version: 1, exported_at: '2026-10-09
   {store: 'nagamachiminami', day: d1, machine: 'ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3', rack: 101, games: 6000, bb: 30, rb: 20, max_hold: 2376, graph_measurement: curve([0, -63, 40, 147, 128])},
   {store: 'nagamachiminami', day: d1, machine: 'ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3', rack: 102, games: 4000, bb: 10, rb: 5, max_hold: 2900, graph_measurement: curve([0, 120, 40, -50])},
   {store: 'nagamachiminami', day: d1, machine: '北斗<script>', rack: 103, games: 88888888, bb: 1, rb: 1, max_hold: 1},
+  ...Array.from({length: 8}, (_, k) => ({store: 'nagamachiminami', day: d2,
+    machine: k === 6 ? 'ﾃｽﾄ機種7 <長い機種名でも横にはみ出さずに読み取れることを確認する機種>' : `テスト機種${k + 1}`,
+    rack: 401 + k, games: 6000, bb: 30, rb: 20, jo_net: (8 - k) * 100})),
   // 3日：ジャグラーオンラインの差枚の台が15台（TOP50の11位からは折りたたみ）。ネオアイム201〜214番は (i-7)*100 枚。
   {store: 'nagamachiminami', day: d3, machine: 'ハナハナ', rack: 301, games: 7000, bb: 30, rb: 20, jo_net: 5000},
   ...Array.from({length: 14}, (_, k) => ({store: 'nagamachiminami', day: d3, machine: 'ネオアイム', rack: 201 + k,
@@ -138,6 +141,28 @@ try {
     assert.match(sheet, /101番\s*ゴーゴージャグラー3\s*\+1,417/);
     assert.match(sheet, /ゴーゴージャグラー3\s*5,000G\s*2台/);
     assert.ok(!/script/.test(await page.locator('.sheet .list').first().innerText()), '数値異常の台はTOP10に入れない');
+    const pickup = page.getByRole('region', {name: '機種別データピックアップ'});
+    const pickupTables = pickup.getByRole('table');
+    assert.equal(await pickupTables.count(), 1);
+    assert.deepEqual(await pickupTables.first().getByRole('columnheader').allInnerTexts(), ['機種別差枚', '平均差枚', '平均G数', '勝率']);
+    assert.deepEqual(await pickupTables.first().getByRole('cell').allInnerTexts(), ['+295', '+148', '5,000', '50.0% (1/2)']);
+    assert.match(await pickupTables.first().locator('caption').innerText(), /推定を含む/);
+    const beforePickup = urls.length;
+    await page.getByRole('combobox', {name: '表示する日付'}).selectOption(d2);
+    assert.deepEqual(await pickup.locator('.pickup-rank').allInnerTexts(), ['1位', '2位', '3位', '4位', '5位', '6位', '7位']);
+    assert.equal(await pickup.getByText('テスト機種8').count(), 0);
+    assert.deepEqual(await pickupTables.last().getByRole('cell').allInnerTexts(), ['+200', '+200', '6,000', '100.0% (1/1)']);
+    assert.ok(await page.locator('.sheet').evaluate(e => e.scrollWidth <= e.clientWidth), `機種別ピックアップが横にはみ出す（${width}px）`);
+    await pickup.getByRole('button', {name: /7位.*テスト機種7/}).click();
+    assert.match(await page.locator('#sheet-title').innerText(), /^テスト機種7 <長い機種名/);
+    assert.equal(await page.getByRole('combobox', {name: '表示する日付'}).inputValue(), d2);
+    assert.equal(await page.locator('.sheet .list .row').count(), 1);
+    assert.match(await page.locator('.sheet .list .row').innerText(), /407番/);
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
+    assert.equal(await pickupTables.count(), 7);
+    await page.getByRole('combobox', {name: '表示する日付'}).selectOption(d1);
+    assert.equal(await pickupTables.count(), 1);
+    assert.equal(urls.length, beforePickup, '機種別ピックアップと台一覧は読み込み済みの記録だけを使う');
     await page.getByRole('button', {name: /半列<b>.*直近3回を比較/}).click();
     assert.equal(await page.locator('#sheet-title').innerText(), '半列<b>');
     assert.equal(await page.locator('.event-compare-table thead th').count(), 1);
@@ -224,6 +249,7 @@ try {
     assert.match(await p2.innerText(), /\+3,121/);
     await p2.click();
     assert.match(await page.locator('.sheet').innerText(), /総差枚\s*\+3,121\s*差枚がわかった台 2\/2台\n/, '0回転・500回転未満の台が無ければ何も足さない');
+    assert.deepEqual(await pickupTables.first().getByRole('cell').allInnerTexts(), ['+3,121', '+1,561', '3,500', '50.0% (1/2)']);
     const beforeComparison = urls.length;
     await page.getByRole('button', {name: /末尾イベ.*直近3回を比較/}).click();
     const comparison = page.locator('.event-compare-table');

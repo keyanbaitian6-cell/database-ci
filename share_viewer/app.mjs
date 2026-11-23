@@ -23,7 +23,7 @@ import {
   SAIWAICHOU_GAP_NET, saiwaichouMachineNet, saiwaichouGrade, saiwaichouGapEnd, saiwaichouGap,
   monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureText,
   characterBirthdayCellLabel, characterBirthdaysOn, parseCharacterBirthdays,
-  ALL_RACKS_SORTS, allRacksOrder, nonVarietyRacks, storeDayComment, eventComparison,
+  ALL_RACKS_SORTS, allRacksOrder, nonVarietyRacks, storeDayComment, eventComparison, machinePickups,
 } from './data.mjs';
 
 const ID_KEY = 'database-share-script-id';
@@ -873,8 +873,35 @@ async function flushHistoryEdits() {
   } finally { historySending.delete(id); }
 }
 
+function machinePickupSection(racks) {
+  const pickups = machinePickups(racks);
+  return `
+    <section aria-labelledby="machine-pickup-title">
+      <h3 id="machine-pickup-title">機種別データピックアップ</h3>
+      ${pickups.length ? `<p class="caption">合計差枚の多い順に最大7機種。機種名を押すと台一覧が見られます。</p>
+      <div class="machine-pickups">
+        ${pickups.map((x, i) => {
+          const netNote = [x.estimated ? '推定を含む' : '', x.captured < x.racks ? `差枚取得 ${x.captured}/${x.racks}台` : '']
+            .filter(Boolean).join('・');
+          return `<table class="machine-pickup">
+            <caption><button type="button" class="row-link" data-machine="${esc(x.machine)}">
+              <span class="pickup-rank num">${i + 1}位</span><span class="pickup-name">${esc(displayMachineName(x.machine))}</span>
+            </button>${netNote ? `<small>${netNote}</small>` : ''}</caption>
+            <thead><tr><th scope="col">機種別差枚</th><th scope="col">平均差枚</th><th scope="col">平均G数</th><th scope="col">勝率</th></tr></thead>
+            <tbody><tr>
+              <td class="num ${tone(x.total)}">${signed(x.total)}</td>
+              <td class="num ${tone(x.averageNet)}">${signed(x.averageNet)}</td>
+              <td class="num">${count(x.averageGames)}</td>
+              <td class="num">${x.judged ? `${(100 * x.won / x.judged).toFixed(1)}% <span>(${x.won}/${x.judged})</span>` : '—'}</td>
+            </tr></tbody>
+          </table>`;
+        }).join('')}
+      </div>` : '<p class="note">この日は差枚がわかる機種がありません。</p>'}
+    </section>`;
+}
+
 /**
- * 日付を押したときのシート。その日の差枚TOP50（11位からは折りたたみ）・強かった機種10選 →
+ * 日付を押したときのシート。機種別データピックアップ・差枚TOP50（11位からは折りたたみ）・強かった機種10選 →
  * 台や機種を押すと、その日のその機種の台一覧 → 台を押すと、その台のその日のデータ（利用者指定 2026-10-10）。
  */
 function openDay(first) {
@@ -913,6 +940,7 @@ function openDay(first) {
       ${net.winRate ? `<p class="total" data-win-rate><span class="label">勝率</span>
         <span class="value num zero">${winRateText(net.won, net.judged)}</span>
         <span class="sub num">${net.judged}台中${net.won}台プラス（${netName}の分からない台が多い日）</span></p>` : ''}
+      ${machinePickupSection(racks)}
       <h3>TOP50</h3>
       <p class="caption">${netName}の多い順。台を押すと、その機種の台一覧が見られます。末尾を選ぶと、その末尾の台番に印が付きます（機種の台一覧にも引き継ぎます）。</p>
       ${top.length ? suffixPicker(digit) : ''}

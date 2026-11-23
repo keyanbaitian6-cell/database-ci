@@ -16,7 +16,7 @@ import {
   rackWon, showWinRate, winRateText, daySummaries, calendarDay,
   monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureReason, loadFailureText,
   characterBirthdayCellLabel, characterBirthdayLabel, characterBirthdaysOn, parseCharacterBirthdays,
-  lowGames, lowGamesNote,
+  lowGames, lowGamesNote, machinePickups,
 } from '../../share_viewer/data.mjs';
 
 function measurement(heights, withCurve = true) {
@@ -84,6 +84,24 @@ test('差枚は50位まで、強かった機種は10位まで', () => {
   assert.deepEqual([top[0].rack, top[49].rack], [60, 11]);
   assert.equal(machines.length, 10);
   assert.deepEqual(machines.map(m => m.machine).slice(0, 2), ['機種11', '機種10']);
+});
+
+test('機種別ピックアップは合計差枚順で7件まで、欠損と0枚を区別して集計する', () => {
+  const row = (machine, net, games, extra) => ({store: 'nagamachiminami', machine, net, games, bb: 1, rb: 1, ...extra});
+  const rows = [
+    row('機種A', 1800, 2000, {estimated: true}), row('機種A', -301, 1000),
+    row('機種A', null, 1000, {graph: {baseline_y: 10, end_y: 8}}), row('機種A', null, 0),
+    row('機種B', 1499, 5000), row('機種C', 0, 0), row('未取得', null, 8000),
+    ...[-1, -2, -3, -4, -5].map((net, i) => row(`機種${i + 4}`, net, 1000)),
+  ];
+  const pickups = machinePickups(rows);
+  assert.deepEqual(pickups.map(x => [x.machine, x.total]),
+    [['機種A', 1499], ['機種B', 1499], ['機種C', 0], ['機種4', -1], ['機種5', -2], ['機種6', -3], ['機種7', -4]]);
+  assert.deepEqual(pickups[0], {machine: '機種A', total: 1499, captured: 2, racks: 4, judged: 3, won: 2,
+    averageNet: 750, averageGames: 1000, estimated: true});
+  assert.equal(pickups[1].averageNet, 1499, '平均差枚が高くても、順位は合計差枚で決める');
+  assert.equal(pickups[2].judged, 0, '0回転は勝率に数えない');
+  assert.deepEqual(machinePickups([row('未取得', null, 1000)]), []);
 });
 
 test('台の読み込み：数値異常の台は数えず、差枚の無い日は0にしない。P’s CUBEは貸玉ごと・沖ドキは外す', () => {
