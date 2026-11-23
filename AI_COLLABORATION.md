@@ -4765,3 +4765,19 @@
   2. 完了の知らせ `meruhen-capture-finished.json` が全窓で1つ（サイトセブンは窓ごとの `window_id`）。2窓だと、ログ欄の完了の行が別の窓の行に出る・消えることがある。また、2つ目の窓を開いた瞬間に、1つ目の窓の読まれていない知らせを消す（`run_session` の冒頭）。ログ欄の表示だけで、保存・日次学習には影響しない。
   3. 合流のとき、片方がグラフを取っている途中の機種（台数がそろっていない機種を優先する）へ、もう片方も入ることがある（コードから見た可能性。実機では確かめていない）。同じ台のグラフを2回取るとアクセスが少し重なるが、保存は上書きなので壊れない。
 - 次の手順：1（保存の待ちをサイトセブンと同じ30秒に）と2（知らせを窓ごとに）を直すか、利用者に確認中。サイトへのアクセスは増えない。
+
+## 2026-11-24 朝 Claude：メルヘンの保存の待ちを10秒に・完了の知らせを窓ごとに
+
+- 依頼：上の点検（「メルヘンの取り込み窓を2つ同時に開くときの点検」）に対して、利用者「保存の待ちは10秒で、窓ごとに知らせるようにして」。基準は `57e10a1`（Codex・Gemini の共有カレンダーの更新を含む最新 main）。合流のときに同じ機種へ入る件（点検の3）は今回は触らない。
+- 変更：
+  - `database/core.py`：`Store` に `timeout`（既定は今までどおり5秒）を足し、`input_versions.connect` へ渡す。
+  - `database/browser_import.py`：`MERUHEN_DB_WAIT = 10.0`。メルヘンの窓の中と、表・グラフを保存する処理（`--confirm-table`・`--confirm-graph`）で本体DBを開く `Store(...)` 10か所すべてを10秒待ちにした。完了の知らせは窓IDごとのファイル（`meruhen-capture-finished-<窓ID>.json`。窓IDの規則はサイトセブンの `clean_window_id` と同じ。窓IDが無い・おかしいときは従来の1つのファイル）。`run_session(db, reports, window_id)`、起動の引数の3つ目が窓ID。窓を開いたときに消すのは同じ窓IDの古い知らせだけ。
+  - `database/app.py`：`open_browser_import` で窓ID（`uuid4().hex[:12]`）を作り、ソース起動・exe起動の両方の引数に付け、閉じたときはその窓の知らせだけを読む。
+  - パチンコのDB（`pachinko.py`）と P-STATION 側は変えていない。サイトへのアクセスは変わらない。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| メルヘンの窓・保存の処理が本体DBを10秒待つ | 済 | `tests/test_meruhen_close.py` `MeruhenDbWaitTests`：`Store(` 10か所すべてが `timeout=MERUHEN_DB_WAIT`（10.0）、`Store(timeout=0.2)` はほかの書き込み中に開けず、`timeout=5.0` は相手が終わるのを待って開ける |
+| 完了の知らせが窓ごと（2窓のどちらの後処理が先でも混ざらない） | 済 | `TwoWindowNoticeTests` 3件（窓ごとの読み分け・おかしい窓IDは従来のファイル・app.py と起動の引数・`run_session` のつなぎ） |
+| PC試験に回帰なし | 済 | `TZ=JST-9 .venv/Scripts/python.exe -m unittest discover -s tests`：1169件 OK（`test_meruhen_close` は9件） |
+| 実機（PCアプリで2窓を開いて閉じる） | 未確認 | 次の2窓運用で、ログ欄の完了の行がそれぞれの窓に出るか・`database is locked` が `errors.log` に増えないかを見る。PCアプリは再起動するまで古いコードのまま |

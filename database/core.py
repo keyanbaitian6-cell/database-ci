@@ -420,10 +420,11 @@ def date_event_in_advance(event):
 
 
 class Store:
-    def __init__(self, path, *, recording=True):
+    def __init__(self, path, *, recording=True, timeout=5.0):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = input_versions.connect(self.path, recording=recording)
+        # timeout：ほかの接続の書き込み・写しを待つ秒数（メルヘンの取り込み窓は10秒、browser_import.MERUHEN_DB_WAIT）
+        self.db = input_versions.connect(self.path, recording=recording, timeout=timeout)
         try:
             self._initialize()
         except BaseException:

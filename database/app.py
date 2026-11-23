@@ -1204,6 +1204,9 @@ def main():
         logbox.see('end')
 
     def open_browser_import():
+        # 窓ごとの知らせのファイルに分ける窓ID（2026-11-24、メルヘンも2窓運用が当たり前になったため。サイトセブンと同じ形）
+        import uuid
+        window_id = uuid.uuid4().hex[:12]
         try:
             if getattr(sys, 'frozen', False):
                 executable_dir = Path(sys.executable).resolve().parent
@@ -1214,10 +1217,10 @@ def main():
                 browser = next((candidate for candidate in browser_candidates if candidate.exists()), None)
                 if browser is None:
                     raise OSError('database-browser.exe が見つかりません。database/bin の配布フォルダ一式をそろえてください。')
-                command = [str(browser), str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports')]
+                command = [str(browser), str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports'), window_id]
             else:
                 command = [sys.executable, str(ROOT / 'browser_import.py'),
-                           str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports')]
+                           str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports'), window_id]
             since = datetime.now().astimezone().isoformat(timespec='seconds')
             process = subprocess.Popen(
                 command,
@@ -1233,7 +1236,7 @@ def main():
 
         def meruhen_message():
             import browser_import
-            return browser_import.take_finished_message(DATA_DIR)
+            return browser_import.take_finished_message(DATA_DIR, window_id)
 
         def meruhen_forward_note():
             # メルヘンの前向き検証（店舗別の候補比較）の記録の様子を1行出す。自動で閉じても×で閉じても出す（2026-11-16 利用者

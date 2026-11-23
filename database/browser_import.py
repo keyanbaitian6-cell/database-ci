@@ -1659,7 +1659,7 @@ class _Bridge:
         current_rack = payload.get('rack')
         if not (store_path and day):
             return json.dumps({'url': None, 'reason': 'unknown_page'})
-        db = Store(self._db_path)
+        db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
         try:
             if not machine and current_rack is not None:
                 # An individual rack's own graph page often has no
@@ -1709,7 +1709,7 @@ class _Bridge:
             return json.dumps({'racks': []})
         rack = payload.get('rack')
         machine = machine_key(payload.get('machine')) if payload.get('machine') else None
-        db = Store(self._db_path)
+        db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
         try:
             rows = db.rows(day, None, store_path)
         finally:
@@ -1724,7 +1724,7 @@ class _Bridge:
         バックアップ・閲覧用ファイルは、取り込みの画面を閉じたときにまとめて作り直す（backup_after_session）。"""
         try:
             payload = json.loads(raw) if isinstance(raw, str) else raw
-            db = Store(self._db_path)
+            db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
             try:
                 db.set_rainbow(payload.get('store'), payload.get('day'), int(payload.get('rack')),
                                payload.get('on') is True)
@@ -1849,7 +1849,7 @@ class _Bridge:
         if not day:
             # 日付を確かめるために開く機種も、今日まだ済んでいない機種を優先する
             # （開いた先でそのまま表を取り込めるように）。
-            db = Store(self._db_path)
+            db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
             try:
                 today_progress = machine_progress(db, store_path, today_iso())
             finally:
@@ -1908,7 +1908,7 @@ class _Bridge:
                 return all_done_message
             return json.dumps({'url': None, 'message': '機種一覧が表示されるのを待ってから、もう一度押してください。（しばらく待っても表示されない場合は、ページを再読み込みしてください）'}, ensure_ascii=False)
 
-        db = Store(self._db_path)
+        db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
         try:
             progress = machine_progress(db, store_path, day)
             last_capture = machine_last_capture(db, store_path, day)
@@ -2033,7 +2033,7 @@ class _Bridge:
         except (TypeError, ValueError):
             return json.dumps({'text': ''})
         day, store_path = payload.get('day'), payload.get('store')
-        db = Store(self._db_path)
+        db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
         try:
             guessed = not day and bool(store_path)
             if guessed:
@@ -2058,7 +2058,7 @@ class _Bridge:
         names = [str(n or '') for n in payload.get('machines') or []]
         if store_path not in STORE_NAMES:
             return json.dumps({'status': [None] * len(names)})
-        db = Store(self._db_path)
+        db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
         try:
             day = day or today_iso()
             progress = machine_progress(db, store_path, day)
@@ -2076,7 +2076,7 @@ class _Bridge:
         return json.dumps({'day': day, 'status': status}, ensure_ascii=False)
 
     def undo_last_save(self):
-        db = Store(self._db_path)
+        db = Store(self._db_path, timeout=MERUHEN_DB_WAIT)
         try:
             label = undo_last_save(db, Path(self._db_path).parent)
         except ValueError as exc:
@@ -2220,7 +2220,7 @@ def _confirm_table(payload_path, db_path, reports_folder):
     if is_excluded_machine(payload.get('store'), machine):
         _write_advance_signal(f'{machine}は取り込みの対象外です。保存しませんでした。')
         return
-    store = Store(db_path)
+    store = Store(db_path, timeout=MERUHEN_DB_WAIT)
     try:
         location = payload['store']
         saved_rows = [dict(store=location, kind_code=21, day=day, machine=machine,
@@ -2290,7 +2290,7 @@ def _confirm_graph(payload_path, db_path, reports_folder):
     if error:
         _show_error(messagebox, root, '取り込みできません', error, db_path, 'meruhen.save.graph')
         return
-    store = Store(db_path)
+    store = Store(db_path, timeout=MERUHEN_DB_WAIT)
     try:
         try:
             context = build_graph_context(payload, store)
@@ -2370,10 +2370,30 @@ def _save_pachinko_graph(payload, db_path, root, messagebox):
         _show_error(messagebox, root, '取り込みできません', str(exc), db_path, 'pachinko.save.graph')
 
 
+# 本体DBの書き込み・写しを待つ秒数（2026-11-24 利用者「保存の待ちは10秒」。既定の5秒では、2窓運用で片方の窓が閉じたときの
+# バックアップ〔約509MBの写し〕や日次学習の写しと保存が重なり、database is locked で保存に失敗して自動取り込みが止まった
+# 記録がある：errors.log の 11/12 0:01・11/21 7:40）。
+MERUHEN_DB_WAIT = 10.0
 FINISHED_NAME = 'meruhen-capture-finished.json'
 
 
-def close_when_finished(bridge, window, data_dir) -> bool:
+def clean_window_id(window_id) -> str | None:
+    """2窓同時運用で知らせのファイルを分ける窓ID（英数字・_- のみ。site777_browser と同じ規則）。"""
+    if not isinstance(window_id, str):
+        return None
+    value = window_id.strip()
+    return value if re.fullmatch(r'[A-Za-z0-9_-]{1,40}', value) else None
+
+
+def finished_path(data_dir, window_id=None) -> Path:
+    """完了の知らせのファイル。窓IDがあれば窓ごと（2026-11-24 利用者「窓ごとに知らせるようにして」。
+    以前は全窓で1つで、2窓だとログ欄の完了の行が別の窓に出る・2つ目の窓を開いたときに1つ目の知らせを消していた）。"""
+    wid = clean_window_id(window_id)
+    name = FINISHED_NAME if not wid else f'{Path(FINISHED_NAME).stem}-{wid}{Path(FINISHED_NAME).suffix}'
+    return Path(data_dir) / name
+
+
+def close_when_finished(bridge, window, data_dir, window_id=None) -> bool:
     """自動取り込みが機種一覧で「未取り込みなし」になり、保存の処理も終わっていれば、結果の文を親画面への知らせに
     残して窓を閉じる（2026-10-30 利用者「各取り込み終わったら停止してほしい」、PCのメルヘン）。閉じたあとの
     バックアップは、今までどおり run_session が保存の処理の終了を待ってから行う。手動の取り込みでは閉じない。"""
@@ -2381,17 +2401,17 @@ def close_when_finished(bridge, window, data_dir) -> bool:
     if (not message or bridge._submit_lock.locked() or bridge._pending_advance is not None
             or any(child.poll() is None for child in bridge._children)):
         return False
-    write_notice(Path(data_dir) / FINISHED_NAME, message)
+    write_notice(finished_path(data_dir, window_id), message)
     window.destroy()
     return True
 
 
-def take_finished_message(data_dir) -> str | None:
+def take_finished_message(data_dir, window_id=None) -> str | None:
     """取り込み窓が閉じたあとに親画面が呼ぶ。自動で閉じたときの結果の文を返して知らせを消す（無ければ None）。"""
-    return take_notice(Path(data_dir) / FINISHED_NAME)
+    return take_notice(finished_path(data_dir, window_id))
 
 
-def run_session(db_path, reports_folder):
+def run_session(db_path, reports_folder, window_id=None):
     """Open the embedded browser. Table/graph review happens in separate
     processes spawned by :class:`_Bridge`; this also runs one background
     thread that watches for the advance-signal file those processes write
@@ -2402,7 +2422,8 @@ def run_session(db_path, reports_folder):
     import threading
     import webview
 
-    take_finished_message(Path(db_path).parent)  # 前回の窓の知らせが残っていれば消す
+    window_id = clean_window_id(window_id)
+    take_finished_message(Path(db_path).parent, window_id)  # 同じ窓IDの古い知らせが残っていれば消す（ほかの窓の分は消さない）
     layout = load_browser_layout(Path(db_path).parent, _desktop_rect())
     bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()), layout=layout)
     placement = layout['window']
@@ -2450,7 +2471,7 @@ def run_session(db_path, reports_folder):
                 if state['enabled']:
                     bridge._auto.pause('ON・待機：' + str(exc), state['revision'])
             try:
-                if close_when_finished(bridge, window, Path(db_path).parent):
+                if close_when_finished(bridge, window, Path(db_path).parent, window_id):
                     return
             except Exception as error:  # noqa: BLE001 - 閉じられなくても見張りは続ける
                 error_log.record(Path(db_path).parent, 'meruhen.auto.close', error)
@@ -2537,4 +2558,4 @@ if __name__ == '__main__':
     else:
         db_arg = Path(args[0]) if len(args) > 0 else root / 'data' / 'database.sqlite3'
         reports_arg = Path(args[1]) if len(args) > 1 else root / 'reports'
-        run_session(db_arg, reports_arg)
+        run_session(db_arg, reports_arg, args[2] if len(args) > 2 else None)
