@@ -4715,3 +4715,28 @@
 
 - 公開の内訳：`C:\w\cbw-pstation-label-2` の `ALL PASSED` 済みステージから `../outputs/publish-c123-20261122/public-viewer`・`public-share`（公開前に最新 `origin/main` と一致を確認）へ反映し、改行だけの差を戻して非強制 push。閲覧ページは3ファイル（`capture_health.mjs`・`main.dart.js`・`pscube/index.html`、記録の文字列90種該当なし）、共有カレンダーは9ファイル（`capture_health.mjs` の変更＋版 `?v=bc008072ece8` 反映8ファイル、19ファイル・記録の文字列90種・スクリプトID該当なし）。
 - **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `42526d7` を `git revert` して push（戻り先は `08efe2b`）、共有カレンダーは `keyanbaitian6-cell/database-share` で `7584833` を `git revert` して push（戻り先は `9b60406`）。表示名の変更のみで、保存データ形式・内部キーは変わらないため安全に戻せる。
+
+## 2026-11-24 Claude：サイトセブン2窓で片方を×で閉じると、P-STATION前向き検証の自動保存・翌朝の印が飛ぶ不具合を修正
+
+- 依頼（利用者が貼った依頼文）：11/23 23:47 にサイトセブン2窓（上から・下から）で 11/23 分を取り込み、23:57:32 の合流で片方を×で閉じ、残りの窓が 23:58:06 に `auto_finished`（11/23 を取り切り）→ `closed_when_finished` で自動で閉じた。日次学習は3店舗とも保存できたが、`forward-validation-state.json` に `pending_target: "2026-11-24"` が残らず、0時以降の定期確認でも前向き検証が動かなかった（11/24 0:38 に利用者が手で v1・v2・Drive書き出しを実行済み。これは利用者の報告で、AIは直接確かめていない）。
+- 基準：正本 `1100513` と `database-ci` `cea1e29` を取得し、両方を含む手元 `main` `cea1e29` から作業。
+- 原因：`ForwardWindowGate` は、P-STATION 窓が1つでも完了の知らせなしで閉じると `cancel(remaining=True)` でバッチ全体を取り消していた（パターンA：×が先→完了が後）。完了が先・×が後（パターンB）では、最後の窓の `cancel(remaining=False)` が保留した完了の知らせを消していた。サイトセブンの完了の知らせは共有DBと `日付-low.json` の照合で対象の全機種がそろったときだけ出るので、片方の×閉じで取り消す必要は無い。
+- 変更：
+  - `database/forward_validation.py`：`ForwardWindowGate` は×閉じ・途中停止を覚えるだけにし（`cancel` は保留を消さない）、最後の窓が閉じたとき（`flush`・`take`）、×閉じがあったバッチでは **対象営業日（23:30〜23:59＝JST当日、0:00〜8:59＝前日）を含む完了の知らせだけ** を残す。1つも無ければ従来どおり取り消す。`target_day`・`covers_target_day` を追加（`covers_evening_day` は同じ判定を使う形に整理）。0:00〜8:59 のサイトセブン完了も、前日の営業日を含まない知らせ（古い別日だけの取り直し）では動かさない（`decide`）。裏の実行を作ってからスレッドが走り出すまでも `is_running()` が真になるよう数え（`_spawn`）、同じ瞬間の `start_pending` の二重起動と、閉じるときの待ちすり抜けを防ぐ。
+  - `database/app.py`：`save_forward_after` は窓が開いている間は×閉じの有無に関係なく保留し、最後の窓で `take` が空のときだけ「対象日の完了の知らせが無かった」と出して止める。`check_pending_forward()` を、5分おきの定期確認に加えて ①取り込み窓が閉じた後（P-STATION の窓が開いていないとき）②起動の5秒後（`forward_on_start`）と `daily_on_start`（どちらも P-STATION の窓が開いていないとき）③`close_app`（印が未実行なら裏で始め、既存の `forward_validation.is_running()` の待機枠で待ってから閉じる）でも呼ぶ。時刻（0:00〜8:59）・印・実行済みの判定は今までどおり `start_pending` が見る。
+  - 試験：`database/tests/test_forward_validation.py`（新しく7件。app.py と同じ順で窓の閉じを再現する補助を使う。以前の「1窓でも×閉じなら必ず取り消す」を確かめていた1件を新しい決まりに書き換え、実時刻に頼っていた1か所の時刻を固定）、`database/tests/test_site777_browser.py`（窓の監視を偽の画面で動かす試験に `check_pending_forward` を足し、閉じたときに1回呼ぶことを確認）。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| パターンA（×が先→対象日の完了が後）で印・保存が動く | 済 | 修正前は失敗（`0 != 1`）、修正後に通過：`test_two_site777_windows_x_close_first_then_other_finishes_target_day_records_pending`（23:58 に `pending_target` 2026-11-24、0:05 の `start_pending` で1回保存） |
+| パターンB（対象日の完了が先→×が後）で印が残る | 済 | 修正前は失敗、修正後に通過：`test_two_site777_windows_finish_first_then_other_x_closed_records_pending` |
+| 0:00〜8:59 の2窓（どちらの順でも）で1回だけ保存 | 済 | 修正前は失敗、修正後に通過：`test_two_site777_windows_in_morning_run_once_when_previous_day_finished` |
+| 全窓×閉じ／別日だけ完了＋対象日の窓×閉じ（両方の順、夜・朝）では動かない | 済 | `test_two_site777_windows_without_target_day_completion_do_not_run`（修正前後とも通過）、`test_simultaneous_close_with_one_aborted_window_uses_only_target_day_completion_regardless_of_check_order` |
+| 0:00〜8:59 に古い別日だけの完了では動かない | 済 | 修正前は失敗、修正後に通過：`test_morning_site777_completion_of_an_older_day_only_does_not_run` |
+| 窓が閉じた後・起動時・閉じるときの印の確認、二重起動なし | 済 | 修正前は失敗、修正後に通過：`test_app_checks_pending_after_window_close_on_start_and_on_close`（app.py の配線）、`test_is_running_is_true_between_spawning_and_the_thread_starting`、`test_site777_browser` の監視試験 |
+| PC試験に回帰なし（`TZ=JST-9`） | 済 | `TZ=JST-9 .venv/Scripts/python.exe -m unittest discover -s tests`：1164件、失敗1件（`test_site777_browser` の監視試験が新しい `check_pending_forward` を用意していなかった。試験側の偽の環境に足した）。直したあと `test_site777_browser`・`test_forward_validation`・`test_undefined_names`・`test_daily_status` の71件が OK。`TZ=UTC` でも `test_forward_validation`・`test_site777_browser` 54件 OK |
+| 全体ゲート・CI | 未確認 | ビルド・公開はしないため全体ゲートは流していない。`main` には送らず、一時ブランチ `cloud/20261124-forward-2win-close` へ送った（`main` 向けのCIは動かない） |
+| 実機（PCアプリでの2窓運用・0時台の起動／終了） | 未確認 | 次の2窓運用の晩に、ログ欄の「最後の窓が閉じたあとに判定します」→「0時〜9時の間に自動で保存します」と、`forward-validation-state.json` の `pending_target` を利用者と確かめる |
+
+- 変わる動き（利用者に伝える）：0:00〜8:59 にサイトセブン1窓で **前日ではない古い日だけ** を取り直して完了したときは、前向き検証を自動では動かさなくなった（以前は動いていた）。必要なら `毎朝実行.cmd` を押す。
+- 未取り込み：この作業は `imakurudev-eng/database` の一時ブランチ `cloud/20261124-forward-2win-close` にだけある。取り込むときは AGENTS.md の手順（`git fetch origin cloud/20261124-forward-2win-close` → `main` へ取り込み → `python tools/push_ci.py` → 一時ブランチを削除）。PCアプリは再起動するまで古いコードのまま。

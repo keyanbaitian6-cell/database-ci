@@ -408,10 +408,12 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn('11/09', merged)
         self.assertIn('11/08', merged)
         self.assertFalse(gate.has_pending())
-        # 1つ目が完了したあと2つ目のP-STATION窓が×閉じ（または停止）になったら保留を取り消す
+        # 1つ目が完了したあと2つ目のP-STATION窓が×閉じ（または停止）になり、完了した日が対象営業日でなければ取り消す
+        from unittest import mock
         gate.defer('サイトセブン', '指定日（11/09）の取り込みが完了しました。')
         gate.cancel()
-        self.assertIsNone(gate.flush())
+        with mock.patch.object(fv, '_clock', lambda: at(0, 30, day=24)):
+            self.assertIsNone(gate.flush())
         # app.py にゲートが接続されている
         source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
         self.assertIn('ForwardWindowGate()', source)
@@ -490,47 +492,54 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn('全255台が保存済み', merged)
         self.assertIsNone(gate.flush(), '二重起動しない')
 
-    def test_simultaneous_close_with_one_aborted_window_cancels_regardless_of_check_order(self):
-        # サイトセブン2窓が同時に閉じ、片方が自動完了・もう片方が×閉じだった場合、
-        # どちらの窓の後処理が先に走っても前向き検証を起動しない（次の新しい単窓では正常に動く）。
+    def test_simultaneous_close_with_one_aborted_window_uses_only_target_day_completion_regardless_of_check_order(self):
+        # サイトセブン2窓が同時に閉じ、片方が自動完了・もう片方が×閉じだった場合、どちらの窓の後処理が先に走っても、
+        # 完了の知らせが対象営業日を含むときだけ判定し、含まないときは起動しない（2026-11-24 に、以前の
+        # 「1窓でも×閉じなら必ず取り消す」から変えた）。次の新しい単窓では正常に動く。
+        from unittest import mock
+
         class FakeProc:
             def poll(self):
                 return 0
 
-        # 順番1：完了窓が先 → ×閉じ窓が後
-        tracker = fv.CaptureWindowTracker()
-        gate = fv.ForwardWindowGate()
-        e_done = tracker.add(FakeProc(), 'サイトセブン')
-        e_abort = tracker.add(FakeProc(), 'サイトセブン')
-        tracker.remove(e_done)
-        self.assertTrue(tracker.has_open('pscube'))
-        gate.defer('サイトセブン', '指定日（11/22）の取り込みが完了しました。')
-        tracker.remove(e_abort)
-        self.assertFalse(tracker.has_open('pscube'))
-        gate.cancel(remaining=tracker.has_open('pscube'))
-        self.assertFalse(gate.is_aborted())
-        self.assertIsNone(gate.flush())
+        done = '指定日（11/22）の取り込みが完了しました。'
+        for now, expect in ((at(23, 50, day=22), True), (at(0, 30, day=23), True), (at(0, 30, day=24), False)):
+            with mock.patch.object(fv, '_clock', lambda now=now: now):
+                # 順番1：完了窓が先 → ×閉じ窓が後
+                tracker = fv.CaptureWindowTracker()
+                gate = fv.ForwardWindowGate()
+                e_done = tracker.add(FakeProc(), 'サイトセブン')
+                e_abort = tracker.add(FakeProc(), 'サイトセブン')
+                tracker.remove(e_done)
+                self.assertTrue(tracker.has_open('pscube'))
+                gate.defer('サイトセブン', done)
+                tracker.remove(e_abort)
+                self.assertFalse(tracker.has_open('pscube'))
+                gate.cancel(remaining=tracker.has_open('pscube'))
+                self.assertTrue(gate.is_aborted())
+                flushed = gate.flush()
+                self.assertEqual(flushed, ('サイトセブン', done) if expect else None, now)
+                self.assertFalse(gate.is_aborted(), 'バッチ完了で中断記憶はリセットされる')
 
-        # 順番2：×閉じ窓が先 → 完了窓が後（従来の cancel() では後続の完了窓がすり抜けていた）
-        tracker2 = fv.CaptureWindowTracker()
-        gate2 = fv.ForwardWindowGate()
-        e_abort2 = tracker2.add(FakeProc(), 'サイトセブン')
-        e_done2 = tracker2.add(FakeProc(), 'サイトセブン')
-        tracker2.remove(e_abort2)
-        self.assertTrue(tracker2.has_open('pscube'))
-        gate2.cancel(remaining=tracker2.has_open('pscube'))
-        self.assertTrue(gate2.is_aborted())
-        tracker2.remove(e_done2)
-        self.assertFalse(tracker2.has_open('pscube'))
-        self.assertTrue(gate2.is_aborted())
-        _, merged = gate2.take('サイトセブン', '指定日（11/22）の取り込みが完了しました。')
-        self.assertEqual(merged, '', '中断記憶により完了窓だけでは起動させない')
-        self.assertFalse(gate2.is_aborted(), 'バッチ完了で中断記憶はリセットされる')
+                # 順番2：×閉じ窓が先 → 完了窓が後
+                tracker2 = fv.CaptureWindowTracker()
+                gate2 = fv.ForwardWindowGate()
+                e_abort2 = tracker2.add(FakeProc(), 'サイトセブン')
+                e_done2 = tracker2.add(FakeProc(), 'サイトセブン')
+                tracker2.remove(e_abort2)
+                self.assertTrue(tracker2.has_open('pscube'))
+                gate2.cancel(remaining=tracker2.has_open('pscube'))
+                self.assertTrue(gate2.is_aborted())
+                tracker2.remove(e_done2)
+                self.assertFalse(tracker2.has_open('pscube'))
+                _, merged = gate2.take('サイトセブン', done)
+                self.assertEqual(merged, done if expect else '', now)
+                self.assertFalse(gate2.is_aborted(), 'バッチ完了で中断記憶はリセットされる')
 
-        # 次の新しい単窓（自動完了）は正常に通る
-        label, msg = gate2.take('サイトセブン', '指定日（11/23）の取り込みが完了しました。')
-        self.assertEqual(label, 'サイトセブン')
-        self.assertIn('11/23', msg)
+                # 次の新しい単窓（自動完了）は正常に通る
+                label, msg = gate2.take('サイトセブン', '指定日（11/23）の取り込みが完了しました。')
+                self.assertEqual(label, 'サイトセブン')
+                self.assertIn('11/23', msg)
 
     def test_app_watch_capture_window_tracks_per_source_without_dropping_unprocessed_windows(self):
         source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
@@ -539,6 +548,143 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn("forward_gate.cancel(remaining=capture_tracker.has_open('pscube'))", source)
         self.assertIn("if capture_open('pscube'):", source)
         self.assertIn('start_daily(skip_sources=capture_tracker.open_sources(exclude=source))', source)
+
+    # ---- サイトセブン2窓（上から・下から）の合流と前向き検証（2026-11-24。11/23 23:57 に片方を×で閉じ、
+    # 残りの窓が 23:58 に 11/23 を取り切って自動で閉じたのに、翌朝の印が残らなかった）----
+
+    DONE_1123 = '指定日（11/23）の取り込みが完了しました。追加249台、既存を保持45台、グラフ不明4台。'
+    DONE_1120 = '指定日（11/20）の取り込みが完了しました。追加3台、既存を保持0台、グラフ不明0台。'
+
+    class _Proc:
+        def poll(self):
+            return 0
+
+    def _app_save(self, tracker, gate, label, message, launched):
+        # app.py の save_forward_after と同じ順で判定する（窓が開いている間は保留、最後の窓で1回だけ）。
+        if tracker.has_open('pscube'):
+            if fv.finished(label, message):
+                gate.defer(label, message)
+            return
+        aborted = gate.is_aborted()
+        label, message = gate.take(label, message)
+        if aborted and not message:
+            return
+        launched.append((label, message))
+
+    def _app_close(self, tracker, gate, entry, label, message, launched):
+        # app.py の watch_capture_window の check() と同じ順（自分の窓を外す→×なら印→after_auto→最後の窓なら flush）。
+        tracker.remove(entry)
+        if not fv.finished(label, message):
+            gate.cancel(remaining=tracker.has_open('pscube'))
+        if message:
+            self._app_save(tracker, gate, label, message, launched)
+        if not tracker.has_open('pscube'):
+            deferred = gate.flush()
+            if deferred is not None:
+                self._app_save(tracker, gate, *deferred, launched)
+
+    def _two_windows(self, first, second, now):
+        """first / second は (閉じる順の) 各窓の完了の知らせ（×閉じは None）。起動した (label, message) を返す。"""
+        from unittest import mock
+        tracker, gate, launched = fv.CaptureWindowTracker(), fv.ForwardWindowGate(), []
+        e1 = tracker.add(self._Proc(), 'サイトセブン')
+        e2 = tracker.add(self._Proc(), 'サイトセブン')
+        with mock.patch.object(fv, '_clock', lambda: now, create=True):
+            self._app_close(tracker, gate, e1, 'サイトセブン', first, launched)
+            self._app_close(tracker, gate, e2, 'サイトセブン', second, launched)
+        return launched
+
+    def _start_kw(self, calls):
+        return dict(outputs=self.outputs, python=self.python, thread=SyncThread,
+                    runner=lambda args, **k: (calls.append(args), Result(0))[1])
+
+    def test_two_site777_windows_x_close_first_then_other_finishes_target_day_records_pending(self):
+        # パターンA：合流時に片方を×で閉じ（23:57）、残りの窓が 11/23 を取り切って自動で閉じた（23:58）
+        now = at(23, 58, day=23)
+        launched = self._two_windows(None, self.DONE_1123, now)
+        self.assertEqual(len(launched), 1, '対象日の完了の知らせがあるので取り消さない')
+        label, message = launched[0]
+        calls = []
+        why = fv.start(label, message, self.dir, [].append, now=now, **self._start_kw(calls))
+        self.assertIn('0時〜9時', why)
+        self.assertEqual(fv._read_state(self.dir).get('pending_target'), '2026-11-24')
+        # 0:05 の定期確認（または窓が閉じた後・起動時・閉じるとき）で1回だけ保存する
+        self.assertIsNone(fv.start_pending(self.dir, [].append, now=at(0, 5, day=24), **self._start_kw(calls)))
+        self.assertEqual(len(calls), 2)
+
+    def test_two_site777_windows_finish_first_then_other_x_closed_records_pending(self):
+        # パターンB：片方が先に 11/23 を取り切って自動で閉じ、まだ開いていたもう片方を×で閉じた
+        now = at(23, 58, day=23)
+        launched = self._two_windows(self.DONE_1123, None, now)
+        self.assertEqual(len(launched), 1, '最後の窓が×閉じでも、対象日の完了があれば判定する')
+        why = fv.start(*launched[0], self.dir, [].append, now=now, **self._start_kw([]))
+        self.assertIn('0時〜9時', why)
+        self.assertEqual(fv._read_state(self.dir).get('pending_target'), '2026-11-24')
+
+    def test_two_site777_windows_in_morning_run_once_when_previous_day_finished(self):
+        # 0:00〜8:59 は前日の営業日が対象。どちらの順でも1回だけ保存する
+        now = at(0, 30, day=24)
+        for order in ((None, self.DONE_1123), (self.DONE_1123, None)):
+            launched = self._two_windows(*order, now)
+            self.assertEqual(len(launched), 1, order)
+            calls = []
+            self.assertIsNone(fv.start(*launched[0], self.dir, [].append, now=now, **self._start_kw(calls)))
+            self.assertEqual(len(calls), 2)
+
+    def test_two_site777_windows_without_target_day_completion_do_not_run(self):
+        evening, morning = at(23, 58, day=23), at(0, 30, day=24)
+        for now in (evening, morning):
+            # 2窓とも×閉じ（途中停止）
+            self.assertEqual(self._two_windows(None, None, now), [])
+            # 別の日（11/20）だけ完了し、対象日（11/23）の窓は×閉じ（どちらの順でも）
+            self.assertEqual(self._two_windows(self.DONE_1120, None, now), [])
+            self.assertEqual(self._two_windows(None, self.DONE_1120, now), [])
+        self.assertFalse((self.dir / fv.STATE_NAME).exists())
+
+    def test_morning_site777_completion_of_an_older_day_only_does_not_run(self):
+        # 0:00〜8:59 に、前日（11/23）ではない古い日（11/20）だけを取り込んで完了しても動かさない
+        calls = []
+        why = fv.start('サイトセブン', self.DONE_1120, self.dir, [].append, now=at(0, 30, day=24), **self._start_kw(calls))
+        self.assertIsNotNone(why)
+        self.assertEqual(calls, [])
+        self.assertIsNone(fv.start('サイトセブン', self.DONE_1123, self.dir, [].append, now=at(0, 31, day=24),
+                                   **self._start_kw(calls)))
+        self.assertEqual(len(calls), 2)
+
+    def test_is_running_is_true_between_spawning_and_the_thread_starting(self):
+        # 窓が閉じた直後に start() が裏の実行を作ったら、そのスレッドが走り出す前でも「動いている」と数える
+        # （同じ瞬間の start_pending・閉じるときの待機が二重起動や待ちすり抜けをしないように）。
+        class LateThread:
+            made = []
+
+            def __init__(self, target, name, daemon):
+                self.target = target
+                LateThread.made.append(self)
+
+            def start(self):
+                pass
+
+        fv.record_pending(self.dir, 'サイトセブン', at(23, 58, day=23), message=self.DONE_1123)
+        calls = []
+        kw = dict(outputs=self.outputs, python=self.python, runner=lambda args, **k: (calls.append(args), Result(0))[1])
+        self.assertIsNone(fv.start('サイトセブン', self.DONE_1123, self.dir, [].append, now=at(0, 1, day=24),
+                                   thread=LateThread, **kw))
+        self.assertTrue(fv.is_running())
+        self.assertIsNotNone(fv.start_pending(self.dir, [].append, now=at(0, 1, day=24), thread=SyncThread, **kw))
+        LateThread.made[-1].target()
+        self.assertFalse(fv.is_running())
+        self.assertEqual(len(calls), 2, '二重に動かさない')
+
+    def test_app_checks_pending_after_window_close_on_start_and_on_close(self):
+        source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8')
+        watch = source[source.index('def watch_capture_window'):source.index('def poll_forward_results')]
+        self.assertIn("if not capture_tracker.has_open('pscube'):\n                check_pending_forward()", watch)
+        on_start = source[source.index('def daily_on_start'):source.index('def note_app_start')]
+        self.assertIn("if not capture_open('pscube'):\n                check_pending_forward()", on_start)
+        self.assertIn('root.after(5_000, forward_on_start)', source)
+        close = source[source.index('def close_app'):source.index("root.protocol('WM_DELETE_WINDOW', close_app)")]
+        self.assertIn('check_pending_forward()', close)
+        self.assertLess(close.index('check_pending_forward()'), close.index('forward_validation.is_running()'))
 
 
 class MeruhenNoteTest(unittest.TestCase):

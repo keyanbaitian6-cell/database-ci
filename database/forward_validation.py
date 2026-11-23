@@ -9,7 +9,12 @@
     3. 前向き検証v2（学習版A・B・Cと現行）：`pstation-forward-20261110/forward2.py morning`（1・2の成否に関係なく動かす）
   研究用の記録はこのアプリのDBを読み取り専用で読むだけで、DB・採点・同期・公開は変えない。サイトにも接続しない。
 - 動かすのは次のときだけ：
-  - サイトセブン：自動取り込みが最後まで終わり、窓が自分で閉じたとき（完了の知らせがあるとき）。
+  - サイトセブン：自動取り込みが最後まで終わり、窓が自分で閉じたとき（完了の知らせがあるとき）。0:00〜8:59 は、
+    知らせに前日の営業日が含まれるときだけ（古い別の日だけの取り直しでは動かさない。2026-11-24）。
+    2窓（上から・下から）で取り込み、片方を×で閉じても、対象営業日の完了の知らせが届いていれば最後の窓が閉じたときに
+    判定する（ForwardWindowGate、2026-11-24）。
+  - 23:30〜23:59 に残した翌朝の印は、0:00〜8:59 の5分おきの定期確認・取り込み窓が閉じた後・PCアプリの起動時・
+    閉じるときに確かめて1回だけ保存する（app.py の check_pending_forward）。
   - P’s CUBE：窓が自分で閉じ、知らせが完了（「すべて取り込みました」）のとき。403などで止まって閉じたときは動かさない。
   - 日本時間の0:00〜8:59。前向き検証は「その日の朝9時より前に、その日の分」を保存する決まりなので、それ以外の時刻は何もしない。
 - 利用者が×で閉じたとき・途中で止まったときは知らせが無いので動かさない（app.py の watch_capture_window が after_auto を呼ばない）。
@@ -36,6 +41,12 @@ _running = threading.Lock()
 _state_lock = threading.Lock()
 _queued: dict | None = None
 _queued_reports: list = []
+_launches = 0   # start()/start_pending() が裏の実行を作ってから、そのスレッドが終わるまでの数
+
+
+def _clock() -> dt.datetime:
+    """取り込み窓のバッチの対象日を決めるときの今の時刻（試験で差し替える）。"""
+    return dt.datetime.now(JST)
 
 
 def outputs_dir() -> Path:
@@ -106,53 +117,85 @@ def _write_state(data_dir: Path, state: dict) -> bool:
 def is_running() -> bool:
     """前向き検証の自動保存スレッドが動いているか、または続けて実行する分を控えているか。"""
     with _state_lock:
-        return _running.locked() or _queued is not None
+        return _running.locked() or _queued is not None or _launches > 0
+
+
+def _spawn(thread, target) -> None:
+    """裏の実行を作る。スレッドが走り出す前から is_running() が真になるよう、作る前に数える
+    （2026-11-24。窓が閉じた直後の start() と同じ瞬間の start_pending()・閉じるときの待機が、まだ走っていない
+    スレッドを見落として二重起動・待ちすり抜けをしないように）。"""
+    global _launches
+
+    def wrapped():
+        global _launches
+        try:
+            target()
+        finally:
+            with _state_lock:
+                _launches -= 1
+
+    with _state_lock:
+        _launches += 1
+    try:
+        thread(target=wrapped, name='forward-validation', daemon=True).start()
+    except BaseException:
+        with _state_lock:
+            _launches -= 1
+        raise
 
 
 class ForwardWindowGate:
-    """複数の取り込み窓が開いている間は前向き検証をすぐ動かさず保留し、最後の窓が閉じたときに1回だけ判定する。
-    P-STATION の取り込み窓が×閉じや途中停止で終わった場合は保留を取り消し、同じバッチの残りの窓が
-    完了しても誤って動かさない（不完全なデータで固定しない）。"""
+    """複数の P-STATION 取り込み窓（サイトセブン2窓の上から・下から など）が開いている間は前向き検証をすぐ動かさず保留し、
+    最後の窓が閉じたときに1回だけ判定する。
+
+    サイトセブンの完了の知らせは、共有DBと `日付-low.json` を照合して対象の全機種がそろったときにだけ出る。
+    そこで、同じバッチの中で窓が×閉じ・途中停止で終わっても（cancel）、対象営業日（23:30〜23:59 はJST当日、
+    0:00〜8:59 は前日）を含む完了の知らせが1つでも届いていれば、その知らせで判定する
+    （2026-11-24。11/23 23:57 に合流した片方を×で閉じ、残りの窓が 23:58 に 11/23 を取り切ったのに、
+    以前はバッチ全体を取り消して翌朝の印を残さなかった）。対象日の完了が1つも無ければ取り消す。"""
 
     def __init__(self):
         self._pending: list[tuple[str, str]] = []
         self._aborted = False
 
     def defer(self, label: str, message: str) -> None:
-        if not self._aborted and finished(label, message):
+        if finished(label, message):
             self._pending.append((label, str(message)))
 
     def cancel(self, *, remaining: bool = False) -> None:
-        self._pending.clear()
-        self._aborted = bool(remaining)
+        """P-STATION の窓が最後まで取り込めずに閉じたことを覚える。保留した完了の知らせは消さず、
+        最後の窓が閉じたとき（flush / take）に対象日を含む知らせだけを残す。remaining は呼び出し側の互換のため。"""
+        del remaining
+        self._aborted = True
 
     def has_pending(self) -> bool:
-        return bool(self._pending) and not self._aborted
+        return bool(self._pending)
 
     def is_aborted(self) -> bool:
         return self._aborted
 
+    def _usable(self, items: list[tuple[str, str]], aborted: bool) -> list[tuple[str, str]]:
+        if not aborted:
+            return items
+        now = _clock()
+        return [(label, msg) for label, msg in items if covers_target_day(label, msg, now)]
+
     def flush(self) -> tuple[str, str] | None:
-        aborted = self._aborted
+        items = self._usable(list(self._pending), self._aborted)
         self._aborted = False
-        if aborted or not self._pending:
-            self._pending.clear()
-            return None
-        label = self._pending[-1][0]
-        merged = '／'.join(msg for _, msg in self._pending)
         self._pending.clear()
-        return label, merged
+        if not items:
+            return None
+        return items[-1][0], '／'.join(msg for _, msg in items)
 
     def take(self, label: str, message: str) -> tuple[str, str]:
-        aborted = self._aborted
-        self._aborted = False
-        messages = [msg for _, msg in self._pending]
-        self._pending.clear()
-        if aborted:
-            return label, ''
+        items = list(self._pending)
         if message:
-            messages.append(str(message))
-        return label, '／'.join(messages)
+            items.append((label, str(message)))
+        items = self._usable(items, self._aborted)
+        self._aborted = False
+        self._pending.clear()
+        return label, '／'.join(msg for _, msg in items)
 
 
 def window_source(label: str) -> str:
@@ -205,12 +248,20 @@ def _message_has_day(message: str, day: dt.date) -> bool:
     return re.search(rf'(?<!\d)0?{day.month}/0?{day.day}(?!\d)', message) is not None
 
 
-def covers_evening_day(label: str, message, now: dt.datetime) -> bool:
-    """23:30〜23:59に完了した知らせが、その晩の対象日（JST当日）の取り込みを含んでいるか。"""
+def target_day(now: dt.datetime) -> dt.date | None:
+    """前向き検証の対象営業日。23:30〜23:59 は JST の当日、0:00〜8:59 は前日。それ以外の時刻は None。"""
+    local = now.astimezone(JST)
+    if in_evening_window(now):
+        return local.date()
+    if in_window(now):
+        return local.date() - dt.timedelta(days=1)
+    return None
+
+
+def _covers_day(label: str, message, day: dt.date) -> bool:
     if not message:
         return False
     text = str(message)
-    day = now.astimezone(JST).date()
     if label == 'サイトセブン':
         return _message_has_day(text, day)
     if label == 'P’s CUBE':
@@ -218,6 +269,17 @@ def covers_evening_day(label: str, message, now: dt.datetime) -> bool:
             return _message_has_day(text, day)
         return True
     return False
+
+
+def covers_evening_day(label: str, message, now: dt.datetime) -> bool:
+    """23:30〜23:59に完了した知らせが、その晩の対象日（JST当日）の取り込みを含んでいるか。"""
+    return _covers_day(label, message, now.astimezone(JST).date())
+
+
+def covers_target_day(label: str, message, now: dt.datetime) -> bool:
+    """完了の知らせが、今の時刻の対象営業日（target_day）の取り込みを含んでいるか。対象の時刻の外なら False。"""
+    day = target_day(now)
+    return day is not None and _covers_day(label, message, day)
 
 
 def record_pending(data_dir: Path, label: str, now: dt.datetime, message=None) -> bool:
@@ -266,6 +328,9 @@ def decide(label: str, message, now: dt.datetime, plan) -> str | None:
         return '最後まで取り込めたときだけ動かします'
     if not in_window(now):
         return '0時〜9時の間だけ動かします（その日の分は9時が締切）'
+    if label == 'サイトセブン' and not covers_target_day(label, message, now):
+        # 古い別の日だけを取り直して完了したときは、前日分が未完了のまま固定しない（2026-11-24）
+        return '前日の営業日の取り込みが含まれていないため動かしません'
     if isinstance(plan, str):
         return plan
     return None
@@ -373,9 +438,7 @@ def start(label, message, data_dir, report, *, outputs=None, python=None, now=No
     why = decide(label, message, current, plan)
     if why:
         return why
-    worker = thread(target=lambda: run(plan, data_dir, runner=runner, now=now, _report=report),
-                    name='forward-validation', daemon=True)
-    worker.start()
+    _spawn(thread, lambda: run(plan, data_dir, runner=runner, now=now, _report=report))
     return None
 
 
@@ -403,16 +466,14 @@ def start_pending(data_dir, report, *, outputs=None, python=None, now=None,
             if state.get('used_target') == target else 0
         if used_count >= MAX_PENDING_ATTEMPTS:
             return '前夜23:30以降の取り込み完了の印はすでに実行済みです'
-        if _running.locked():
+        if _running.locked() or _launches > 0:
             return '前向き検証の保存はすでに動いています'
         state['used_target'] = target
         state['used_count'] = used_count + 1
         state['used_at'] = local.isoformat(timespec='seconds')
         if not _write_state(data_dir, state):
             return '前向き検証の印を更新できませんでした'
-    worker = thread(target=lambda: run(plan, data_dir, runner=runner, now=now, _report=report),
-                    name='forward-validation', daemon=True)
-    worker.start()
+    _spawn(thread, lambda: run(plan, data_dir, runner=runner, now=now, _report=report))
     return None
 
 

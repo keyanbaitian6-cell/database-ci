@@ -1113,6 +1113,10 @@ def main():
                     if deferred is not None:
                         save_forward_after(*deferred)
                 start_daily(skip_sources=capture_tracker.open_sources(exclude=source))
+            # 23:30〜23:59 に残した翌朝の印は、0:00〜8:59 に窓が閉じた直後にも確かめる（2026-11-24。0:01 にメルヘン窓を
+            # 閉じてすぐPCアプリを閉じると、5分おきの定期確認が来る前で取りこぼした）。時刻・印・実行中は start_pending が見る。
+            if not capture_tracker.has_open('pscube'):
+                check_pending_forward()
 
         root.after(2000, check)
 
@@ -1127,17 +1131,21 @@ def main():
         root.after(2000, poll)
 
     def check_pending_forward():
-        """23:30〜23:59に取り込み窓が自分で閉じて完了した印があれば、0〜9時に前向き検証を1回だけ裏で保存する。"""
+        """23:30〜23:59に取り込み窓が自分で閉じて完了した印があれば、0〜9時に前向き検証を1回だけ裏で保存する。
+        5分おきの定期確認のほか、0〜9時に取り込み窓が閉じた後・PCアプリの起動時・閉じるときにも呼ぶ（2026-11-24）。
+        裏で始めたら True。"""
         results = []
         try:
             why = forward_validation.start_pending(DATA_DIR, results.append)
         except Exception as error:  # noqa: BLE001 - 研究用の記録の失敗で画面を止めない
             error_log.record(DATA_DIR, 'forward.auto', error)
-            return
+            return False
         if why is None:
             logbox.insert('end', '前向き検証（P-STATION）の保存を裏で始めました。\n')
             logbox.see('end')
             poll_forward_results(results)
+            return True
+        return False
 
     def save_forward_after(label, message):
         """取り込みが最後まで終わって窓が自分で閉じたら、P-STATIONの前向き検証（研究用の記録）を裏で保存する
@@ -1149,16 +1157,17 @@ def main():
         if capture_open('pscube'):
             if forward_validation.finished(label, message):
                 forward_gate.defer(label, message)
-                if not forward_gate.is_aborted():
-                    logbox.insert('end', '前向き検証（P-STATION）：ほかのP-STATION取り込み窓が開いているため、最後の窓が閉じたあとに判定します。\n')
-                    logbox.see('end')
+                logbox.insert('end', '前向き検証（P-STATION）：ほかのP-STATION取り込み窓が開いているため、最後の窓が閉じたあとに判定します。\n')
+                logbox.see('end')
             return
-        if forward_gate.is_aborted():
-            forward_gate.take(label, message)
-            logbox.insert('end', '前向き検証（P-STATION）：同時に開いていた別の取り込み窓が途中で閉じたため、自動保存は行いませんでした。必要なら0時を過ぎてから毎朝実行.cmdを押してください。\n')
+        # 同じバッチの窓が×閉じ・途中停止で終わっていても、対象営業日を含む完了の知らせがあればそれで判定する
+        # （2026-11-24、サイトセブン2窓の合流で片方を×で閉じたとき。ForwardWindowGate）。
+        aborted = forward_gate.is_aborted()
+        label, message = forward_gate.take(label, message)
+        if aborted and not message:
+            logbox.insert('end', '前向き検証（P-STATION）：同時に開いていた別の取り込み窓が途中で閉じ、対象日の取り込み完了の知らせが無かったため、自動保存は行いませんでした。必要なら0時を過ぎてから毎朝実行.cmdを押してください。\n')
             logbox.see('end')
             return
-        label, message = forward_gate.take(label, message)
         results = []
         try:
             why = forward_validation.start(label, message, DATA_DIR, results.append)
@@ -2205,6 +2214,8 @@ def main():
         if closing[0]:
             return
         try:
+            if not capture_open('pscube'):
+                check_pending_forward()
             if capture_open():
                 root.after(300_000, daily_on_start)
                 return
@@ -2212,11 +2223,22 @@ def main():
         except Exception as error:  # noqa: BLE001 - 起動時の確認の失敗は残して、5分ごとの確認に任せる
             error_log.record(DATA_DIR, 'daily.on_start', error)
 
+    def forward_on_start():
+        # 翌朝9時前にPCアプリを開いてすぐ（日次学習の初回確認の60秒より前に）閉じても、前夜の印を取りこぼさない（2026-11-24）。
+        if closing[0]:
+            return
+        try:
+            if not capture_open('pscube'):
+                check_pending_forward()
+        except Exception as error:  # noqa: BLE001 - 5分ごとの確認に任せる
+            error_log.record(DATA_DIR, 'forward.on_start', error)
+
     def note_app_start():
         # PCアプリの起動を run.log に残す（2026-11-23。夜に動いていたのがどの版か・いつ起動したかが分からなかった）。
         from daily_learning_runtime import trace
         trace(DATA_DIR, f'PCアプリを起動しました（版 {source_version()}）')
     note_app_start()
+    root.after(5_000, forward_on_start)
     root.after(60_000, daily_on_start)
     root.after(65_000, daily_tick)
     root.after(10_000, daily_results_poll)
@@ -2233,7 +2255,9 @@ def main():
             return
         # 保存できる時間帯（前日23:30〜当日8:00）に閉じるとき、まだ保存していない店があれば、日次学習を済ませてから閉じる
         # （2026-11-14 利用者「2つとも進める」。11/12・11/13の夜は、取り込みのあとPC本体を閉じて予測が保存されなかった）。
-        # すでに動いている前向き検証（forward_validation）も途中で切らずに同じ枠で待つ（閉じるときに新しく起動はしない）。
+        # すでに動いている前向き検証（forward_validation）も途中で切らずに同じ枠で待つ。
+        # 0:00〜8:59 に閉じるとき、前夜23:30以降の取り込み完了の印がまだ実行されていなければ、ここで裏の保存を始めて
+        # 同じ枠で待つ（2026-11-24。定期確認の5分を待たずに閉じると取りこぼした）。時刻・印は start_pending が見る。
         # 待っている間にもう一度×を押すと、待たずに閉じる。3分たっても終わらなければ閉じる。
         if not daily_closing[0]:
             daily_closing[0] = True
@@ -2243,6 +2267,7 @@ def main():
                 due, mark = run_due(DATA_DIR, datetime.now(JST), daily_last[0], on_close=True)
             except Exception:  # noqa: BLE001 - 確かめられなければ、いつもどおり閉じる
                 due = False
+            check_pending_forward()
             if due or daily_worker.running or forward_validation.is_running():
                 if due:
                     daily_last[0] = mark

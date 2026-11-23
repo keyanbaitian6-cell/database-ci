@@ -358,8 +358,9 @@ class Site777BrowserTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as folder:
             root, logbox, errors = FakeRoot(), FakeLogbox(), FakeErrors()
-            started_daily = []
+            started_daily, pending_checks = [], []
             env = {
+                'check_pending_forward': lambda: pending_checks.append(1),
                 'capture_tracker': forward_validation.CaptureWindowTracker(),
                 'forward_gate': forward_validation.ForwardWindowGate(),
                 'forward_validation': forward_validation,
@@ -404,6 +405,8 @@ class Site777BrowserTest(unittest.TestCase):
             self.assertFalse(any('閉じたあとに残っていた' in line for line in logbox.lines))
             self.assertIn('サイトセブンの取り込み画面を閉じました。', logbox.lines[-1])
             self.assertEqual(len(started_daily), 1)
+            # P-STATION の窓がすべて閉じたら、前夜の翌朝の印も確かめる（2026-11-24。時刻・印は start_pending が見る）
+            self.assertEqual(len(pending_checks), 1)
 
 
 if __name__ == '__main__':
