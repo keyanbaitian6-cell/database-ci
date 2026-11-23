@@ -4453,3 +4453,17 @@
 - **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で今回のコミットを `git revert` して push（戻り先は `7280190`）、共有カレンダーは `keyanbaitian6-cell/database-share` で今回のコミットを `git revert` して push（戻り先は `ea4e6e0`）。端末の保存の形は変えていないので、戻しても端末の記録はそのまま読める。
 - 公開の push（2026-11-23 夕方）：`database-viewer` `7280190..05b5373`、`database-share` `ea4e6e0..ed60a35`（非強制）。共有カレンダーの版 `083f58484688`（stage の確認：19ファイル、記録の文字列 90 種・スクリプトのIDとも該当なし）。GitHub Pages の公開処理は両方とも開始（in_progress）を確認。iPhone での表示、部品の作り直し中の止め方の実際の動きは未確認。APK はまだ作っていない。
 - 作業フォルダに、誰のものか分からない未追跡のファイル `Pc Apply Site777 2win Patch.md` があった。Claude は触っていない（コミットにも入れていない）。
+
+## 2026-11-23 夕方：クラウド作業の引き渡しを `cloud/...` 一時ブランチ経由に統一（Gemini・全AI共通ルール）
+
+- **経緯・依頼**：利用者「クラウド作業やってもらうときにパッチとか作ってくれるのはいいんだけどPCにもどって反映させる方法がめんどくさいからもっとやりやすい方法考えておいてください。今回のは無事終わらせました」→ 案1（`imakurudev-eng/database` の一時ブランチ `cloud/...` 経由）の提案に「1で今後実行させるようにルールきめて。各AIすべて。」と決定。
+- **確認した根拠**：
+  - `imakurudev-eng/database` には Antigravity クラウド環境から `git push` 可能（`--dry-run` で確認。`keyanbaitian6-cell/database-ci` はクラウド側のトークン権限により 403）。
+  - `.github/workflows/regression.yml`（唯一のリポジトリ内ワークフロー）は `push.branches: [main]` と `pull_request` のみで発火するため、`cloud/...` 一時ブランチへの push だけなら（PR を作らない限り）CI 無料枠を一切消費しない。
+- **変更内容（文書のみ・基準コミット `eb68744b`）**：
+  - `AGENTS.md`：「Google Antigravity での GitHub 連携と注意喚起」の節を更新し、クラウド側 AI（Gemini 等）と PC 側ローカル AI（Claude・Codex 等）の共通手順（`cloud/YYYYMMDD-<作業名>` への push → PC 側で `git fetch origin cloud/<名前>` 取り込み → PC 試験・記録追記 → `tools/push_ci.py` で期間内 `main` 送信 → 使い終わった一時ブランチ削除）を明記した。
+  - 文書（`.md`）だけの変更のため、既存の CI 除外ルールどおり試験・ビルドは再実行していない。
+- **引き渡し状態（新ルールの初回実行）**：
+  - このコミットを `imakurudev-eng/database` の一時ブランチ `cloud/20261123-cloud-branch-rule` へ push した（`main` は触っていない・PR も作っていない）。
+  - 次の手順（PC 側ローカル AI）：`origin` の `cloud/20261123-cloud-branch-rule` を最新 `main` へ取り込み、`python tools/push_ci.py` で `keyanbaitian6-cell/database-ci` の `main` へ送信し、送信後に `git push origin --delete cloud/20261123-cloud-branch-rule` で一時ブランチを削除する（文書のみのため CI 消費なし・試験不要）。
+  - 補足：上の節にある作業フォルダの未追跡ファイル `Pc Apply Site777 2win Patch.md` は今回の旧パッチ手順の控えなので、不要であれば PC 側でごみ箱へ移して問題ない。
