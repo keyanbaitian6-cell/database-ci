@@ -4739,4 +4739,4 @@
 | 実機（PCアプリでの2窓運用・0時台の起動／終了） | 未確認 | 次の2窓運用の晩に、ログ欄の「最後の窓が閉じたあとに判定します」→「0時〜9時の間に自動で保存します」と、`forward-validation-state.json` の `pending_target` を利用者と確かめる |
 
 - 変わる動き（利用者に伝える）：0:00〜8:59 にサイトセブン1窓で **前日ではない古い日だけ** を取り直して完了したときは、前向き検証を自動では動かさなくなった（以前は動いていた）。必要なら `毎朝実行.cmd` を押す。
-- 未取り込み：この作業は `imakurudev-eng/database` の一時ブランチ `cloud/20261124-forward-2win-close` にだけある。取り込むときは AGENTS.md の手順（`git fetch origin cloud/20261124-forward-2win-close` → `main` へ取り込み → `python tools/push_ci.py` → 一時ブランチを削除）。PCアプリは再起動するまで古いコードのまま。
+- main への取り込み（2026-11-24 7:15、利用者「mainiにとりこんで」）：手元 `main` に `934a77f` が既にあったので、`python tools/push_ci.py` で `database-ci/main` へ `cea1e29..934a77f` を送った（[CI run 45277911726](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45277911726) は送信時点で実行中。結果は未確認）。一時ブランチ `cloud/20261124-forward-2win-close` は削除した。正本 `imakurudev-eng/database` の main には、12/1 9時以降の前半の送信で入る。送信時、手元に別作業の `share_viewer/app.mjs`・`index.html` の未コミット差分があったが、送ったのはコミットだけで含めていない。PCアプリは再起動するまで古いコードのまま。
