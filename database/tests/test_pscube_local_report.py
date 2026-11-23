@@ -103,6 +103,11 @@ class LocalReportTests(unittest.TestCase):
                 root.withdraw()
                 def mainloop():
                     root.update()
+                    self.assertEqual(app.PSCUBE_LABEL, 'P-STATION')
+                    store_combos = [w for w in widgets(root) if isinstance(w, ttk.Combobox)
+                                    and 'P-STATION' in w.cget('values')]
+                    self.assertTrue(store_combos)
+                    self.assertEqual(store_combos[0].get(), 'P-STATION')
                     def click(label):
                         next(w for w in widgets(root) if isinstance(w, ttk.Button)
                              and w.cget('text') == label).invoke()
@@ -110,7 +115,9 @@ class LocalReportTests(unittest.TestCase):
                     self.assertEqual(start.call_count, 1)
                     report = Path(start.call_args.args[0])
                     self.assertTrue(report.is_file())
-                    self.assertIn('2026-08-01', report.read_text(encoding='utf-8'))
+                    report_text = report.read_text(encoding='utf-8')
+                    self.assertIn('2026-08-01', report_text)
+                    self.assertIn('P-STATION 保存データ', report_text)
                     click('選んだ機種の結果を開く')
                     click('過去の記録を見る')
                     self.assertEqual(start.call_count, 3 if external else 1)

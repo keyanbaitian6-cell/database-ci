@@ -80,7 +80,7 @@ void main() {
         [20.0, 40.0],
       ]);
       expect(viewerStoreNames(data.records), {
-        'pscube:c740601:20': 'P’s CUBE（20スロ）',
+        'pscube:c740601:20': 'P-STATION（20スロ）',
       });
       final another = ViewerData.parse(jsonEncode(fixture(rate: '5')));
       expect(another.records.first.key, isNot(r.key));
@@ -132,7 +132,7 @@ void main() {
       await tester.drag(find.byType(Scrollable).first, const Offset(0, 5000));
       await tester.pumpAndSettle();
       expect(find.text('database 閲覧'), findsOneWidget);
-      expect(find.text('P’s CUBE（20スロ）'), findsOneWidget);
+      expect(find.text('P-STATION（20スロ）'), findsOneWidget);
       expect(find.textContaining('準備版'), findsNothing);
       await tester.pumpWidget(
         MaterialApp(

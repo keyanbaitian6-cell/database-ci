@@ -39,7 +39,7 @@ String signedMedals(int value) {
 String storeDisplayName(String store) {
   if (isPscubeStore(store)) {
     final parts = store.split(':');
-    return 'P’s CUBE（${parts[2]}スロ）';
+    return 'P-STATION（${parts[2]}スロ）';
   }
   return storeNames[store] ?? store;
 }

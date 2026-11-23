@@ -934,7 +934,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       'android' => 'Android版',
       'pc' || 'pc-deleted' => 'PC版',
       'pc-viewer' => 'PC版（閲覧用・直近60日）',
-      'pscube' => 'P’s CUBE・',
+      'pscube' => 'P-STATION・',
       _ => '',
     };
     if (data.file == 'Googleドライブ（自動）') {

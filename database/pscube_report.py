@@ -51,10 +51,10 @@ def build_report(path, folder, day=None, machine=None):
     records = read_records(path)
     days = sorted({r['day'] for r in records}, reverse=True)
     if not days:
-        raise ValueError('P’s CUBEのローカル保存データがありません。')
+        raise ValueError('P-STATIONのローカル保存データがありません。')
     day = day or days[0]
     if not any(r['day'] == day and (machine is None or r['machine'] == machine) for r in records):
-        raise ValueError(f'{day}のP’s CUBE保存データがありません。')
+        raise ValueError(f'{day}のP-STATION保存データがありません。')
     compact = []
     for r in records:
         row = {key: r.get(key) for key in ('day', 'machine', 'rate', 'rack', 'games', 'bb', 'rb', 'at_art', 'my')}
@@ -73,13 +73,13 @@ def build_report(path, folder, day=None, machine=None):
 
 
 PAGE = r'''<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>database P’s CUBE 保存データ</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>database P-STATION 保存データ</title>
 <style>__STYLE__
 main{max-width:1200px}.filters{display:flex;gap:16px;flex-wrap:wrap;margin:18px 0}
 select{font:inherit;padding:8px;border:1px solid var(--hairline);border-radius:6px;max-width:100%}
 .card{overflow-x:auto}th{text-align:left;padding:12px 14px;white-space:nowrap;background:#f5f5f7}
 </style></head><body><main>
-<div class="f7-brand">__FAN__<h1>P’s CUBE 保存データ</h1></div>
+<div class="f7-brand">__FAN__<h1>P-STATION 保存データ</h1></div>
 <p class="sub">P-STATION&amp;IIスロット館 ｜ このPCの保存済み記録</p>
 <div class="filters"><label>日付 <select id="day"></select></label><label>機種名 <select id="machine"></select></label></div>
 <p class="sub" id="count"></p>

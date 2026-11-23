@@ -115,7 +115,7 @@ void main() {
     );
     await tester.tap(find.text('開く'));
     await tester.pumpAndSettle();
-    expect(find.text('P’s CUBE（20スロ）　2026年10月のデータ'), findsOneWidget);
+    expect(find.text('P-STATION（20スロ）　2026年10月のデータ'), findsOneWidget);
     expect(find.text('10/1（木）'), findsOneWidget);
     expect(find.text('華の日'), findsOneWidget);
     // イベント名が日付の下で切れないよう、行は56（メルヘンで起きた件、86eb7f8）。P’s CUBEも同じ。

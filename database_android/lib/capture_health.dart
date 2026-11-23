@@ -428,7 +428,7 @@ List<String> updateStatusLines(
     for (final w in (status?['writes'] as List? ?? [])) ...[
       '${{'pc': 'PC', 'android': 'Android', 'browser': 'iPhone・ブラウザ'}[w['source']]}の書き出し：${when(w['at'])}／Driveファイルの更新：${when(w['drive_at'])}',
       for (final s in w['stores'] as List)
-        'この出力の最新日：${{'nagamachiminami': '長町南', 'saiwaichou': '幸町'}[s['store']] ?? (RegExp(r'^c\d+$').hasMatch(s['store'] as String) ? 'P’s CUBE' : s['store'])}${s['rate'] == null ? '' : '（${s['rate']}スロ）'} ${s['day']}・${s['count']}台',
+        'この出力の最新日：${{'nagamachiminami': '長町南', 'saiwaichou': '幸町'}[s['store']] ?? (RegExp(r'^c\d+$').hasMatch(s['store'] as String) ? 'P-STATION' : s['store'])}${s['rate'] == null ? '' : '（${s['rate']}スロ）'} ${s['day']}・${s['count']}台',
     ],
   ];
   if (lines.isEmpty) lines.add('元ファイルの書き出し：未確認');

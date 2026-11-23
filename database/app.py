@@ -67,8 +67,9 @@ MACHINE_DEFAULT = ''
 ALL_DAYS_LABEL = 'すべての日付'
 ALL_STORES_LABEL = 'すべての店舗'
 # P’s CUBE（専用の記録）を、メルヘンの2店舗と並べて選べるようにする（利用者の指示、2026-10-02）。
+# 店舗の表示名は「P-STATION」（2026-11-23 利用者指定。内部キー・保存先は pscube のまま）。
 PSCUBE_KEY = 'pscube'
-PSCUBE_LABEL = 'P’s CUBE（スロット）'
+PSCUBE_LABEL = 'P-STATION'
 # 同期フォルダの知らせ（画面上の帯）を出し直す間隔。
 SYNC_BANNER_INTERVAL_MS = 30000
 PSCUBE_VIEWER_URL = 'https://keyanbaitian6-cell.github.io/database-viewer/pscube/'
@@ -594,14 +595,14 @@ def main():
     def pscube_only(title):
         """P’s CUBEを選んでいるときは、メルヘン専用の操作を止める（P’s CUBEの記録は変えない）。"""
         if current_location() == PSCUBE_KEY:
-            messagebox.showinfo(title, 'P’s CUBEの記録は、この操作の対象外です。', parent=root)
+            messagebox.showinfo(title, 'P-STATIONの記録は、この操作の対象外です。', parent=root)
             return True
         return False
 
     def open_pscube_viewer():
         import webbrowser
         webbrowser.open(PSCUBE_VIEWER_URL)
-        logbox.insert('end', 'P’s CUBEの閲覧ページを開きました（採点・翌日候補）。Googleドライブの自動読み込みが未設定なら、'
+        logbox.insert('end', 'P-STATIONの閲覧ページを開きました（採点・翌日候補）。Googleドライブの自動読み込みが未設定なら、'
                              'ページの「Googleドライブの自動読み込みを設定」にApps ScriptのURLを入れてください。\n')
         logbox.see('end')
 
@@ -611,7 +612,7 @@ def main():
             output = build_report(DATA_DIR / 'pscube.sqlite3', ROOT / 'reports', target, selected_machine)
             os.startfile(output)
         except (ValueError, OSError) as exc:
-            messagebox.showinfo('P’s CUBEの保存データを開けません', str(exc), parent=root)
+            messagebox.showinfo('P-STATIONの保存データを開けません', str(exc), parent=root)
 
     def external_pscube_selected():
         from pscube_report import has_external_day

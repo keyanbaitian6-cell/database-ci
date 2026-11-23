@@ -87,6 +87,10 @@ void main() {
       'processed_at': '2026-10-24T11:00:00Z',
       'supplement_supported': true,
     };
+    expect(
+      updateStatusLines(newer),
+      contains('この出力の最新日：P-STATION（20スロ） 2026-10-01・1台'),
+    );
     final older = makeSyncWrite('pc', '2026-10-23T10:00:00Z', rows)!;
     expect(
       mergeSyncStatuses(newer, older)!['writes'][0]['at'],

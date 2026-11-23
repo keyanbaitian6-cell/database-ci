@@ -609,7 +609,7 @@ class _BackupExportDialogState extends State<_BackupExportDialog> {
               if (widget.allowPscube)
                 const DropdownMenuItem(
                   value: pscubeBackupChoice,
-                  child: Text('P’s CUBE（専用の記録・全期間）'),
+                  child: Text('P-STATION（専用の記録・全期間）'),
                 ),
             ],
             onChanged: (v) => setState(() {
@@ -626,7 +626,7 @@ class _BackupExportDialogState extends State<_BackupExportDialog> {
           ],
           if (_store == pscubeBackupChoice)
             const Text(
-              'P’s CUBEの記録は、メルヘンとは別のファイル（pscube-backup-android-…）で全期間を書き出します。',
+              'P-STATIONの記録は、メルヘンとは別のファイル（pscube-backup-android-…）で全期間を書き出します。',
               style: TextStyle(fontSize: 12, color: AppColors.ash),
             )
           else

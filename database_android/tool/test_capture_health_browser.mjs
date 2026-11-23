@@ -55,6 +55,8 @@ try{
       // P’s CUBEの差枚の取得状況（○台中○台…・未取得の台の一覧）は出さない（2026-11-15 利用者「この表記をすべてからなくしてほしい」）。
       assert.ok(!text.join('\n').includes('取得済み（0枚'));
       assert.ok(!text.join('\n').includes('1番 診断試験機種'));
+      assert.ok(text.join('\n').includes('P-STATION（20スロ）'));
+      assert.ok(!text.join('\n').includes('P’s CUBE（20スロ）'));
       // 保存の診断（2026-10-31）：P’s CUBEのページも本体の大きさと読み込みの回数を出す。
       assert.match(text.join('\n'),/本体（前に読み込んだ内容・P’s CUBE）：約[\d.]+MB/);
       assert.match(text.join('\n'),/P’s CUBEの保存先：\d+項目/);
@@ -65,6 +67,8 @@ try{
       await page.locator('[data-health] summary').click();
       const health=page.locator('[data-health]');await health.getByText(/スマホ補完：反映 1件/).waitFor();
       assert.doesNotMatch(await health.innerText(),/取得済み（0枚|1番 診断試験機種/,'P’s CUBEの差枚の取得状況は出さない（2026-11-15）');
+      assert.match(await health.innerText(),/この出力の最新日：P-STATION（20スロ）/);
+      assert.doesNotMatch(await health.innerText(),/P’s CUBE/);
       await page.locator('[data-health-day]').selectOption(older);
       assert.equal(await page.locator('[data-health]').evaluate(e=>e.open),true);
       await page.reload();await page.locator('.grid').waitFor();await page.locator('[data-health] summary').click();

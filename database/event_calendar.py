@@ -503,9 +503,9 @@ class MeruhenEvents:
 
 class PscubeEvents:
     """P’s CUBEのイベント（pscube.sqlite3）。店舗の全貸玉に同じ名前を付ける（PscubeStore.set_date_event_days）。"""
-    title = 'イベントカレンダー（P’s CUBE）'
+    title = 'イベントカレンダー（P-STATION）'
 
-    def __init__(self, db_path, on_changed=None, label='P’s CUBE'):
+    def __init__(self, db_path, on_changed=None, label='P-STATION'):
         self.db_path, self.on_changed = db_path, on_changed
         self.stores = {'pscube': label}
 

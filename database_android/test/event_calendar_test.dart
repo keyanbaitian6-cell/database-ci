@@ -832,7 +832,7 @@ void main() {
         MaterialApp(
           home: StatefulBuilder(
             builder: (context, setState) => EventCalendarPage(
-              stores: const {scope: 'P’s CUBE（20スロ）'},
+              stores: const {scope: 'P-STATION（20スロ）'},
               initialStore: scope,
               today: DateTime(2026, 10, 9),
               eventFor: (store, d) => events['$store|$d'],

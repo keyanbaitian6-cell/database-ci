@@ -160,7 +160,7 @@ def build_machine_list_tab(parent, db_path, on_marked, default_location=None, on
     ttk.Label(parent, text='機種一覧', style='H2.TLabel').pack(anchor='w')
     ttk.Label(parent, text='選んだ日の、バラエティ以外の機種の台です（バラエティはバラエティ🌈のタブ）。'
                            '機種を選ぶとその機種だけ。★注目・☆長期傾向＝翌日候補（仮）。点数・設定候補の意味は「結果を見る」と同じで、'
-                           '出率・差枚・設定を表すものではありません。P’s CUBEは全機種で、PC版では採点しないため点数・設定候補・★☆は出ません。',
+                           '出率・差枚・設定を表すものではありません。P-STATIONは全機種で、PC版では採点しないため点数・設定候補・★☆は出ません。',
               style='Sub.TLabel', wraplength=900).pack(anchor='w', pady=(0, 10))
     bar = ttk.Frame(parent)
     bar.pack(fill='x')

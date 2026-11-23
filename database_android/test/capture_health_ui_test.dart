@@ -58,6 +58,8 @@ void main() {
     expect(text, isNot(contains('取得済み（0枚')));
     expect(text, isNot(contains('2番 試験機種')));
     expect(text, isNot(contains('3番')));
+    expect(text, contains('P-STATION（20スロ）：2026-10-23'));
+    expect(text, isNot(contains('P’s CUBE（20スロ）')));
     expect(text, contains('Google側の処理：未確認'));
     expect(text, contains('この端末の読み込み：未確認'));
   });

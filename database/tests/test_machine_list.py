@@ -172,8 +172,8 @@ class MachineListTests(unittest.TestCase):
         root.geometry('1200x700+-3000+0')
         frame = ttk.Frame(root)
         frame.pack(fill='both', expand=True)
-        build_machine_list_tab(frame, self.path, lambda: None, STORE, run=_now, pscube=(pscube_path, 'P’s CUBE（スロット）'))
-        frame.machine_list_vars['store'].set('P’s CUBE（スロット）')
+        build_machine_list_tab(frame, self.path, lambda: None, STORE, run=_now, pscube=(pscube_path, 'P-STATION'))
+        frame.machine_list_vars['store'].set('P-STATION')
         root.update()
         table = frame.machine_list_table
         self.assertEqual(frame.machine_list_vars['day'].get(), '2026-11-01', '最新の日')

@@ -28,7 +28,7 @@ Future<void> showCaptureHealth(
   final stores = <String, String>{};
   for (final r in records) {
     final key =
-            '${RegExp(r'^c\d+$').hasMatch('${r['store']}') ? 'P’s CUBE' : storeDisplayName('${r['store']}')}${r['rate'] == null ? '' : '・${r['rate']}スロ'}',
+            '${RegExp(r'^c\d+$').hasMatch('${r['store']}') ? 'P-STATION' : storeDisplayName('${r['store']}')}${r['rate'] == null ? '' : '・${r['rate']}スロ'}',
         d = '${r['day']}';
     if (!stores.containsKey(key) || d.compareTo(stores[key]!) > 0) {
       stores[key] = d;

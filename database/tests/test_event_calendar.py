@@ -253,6 +253,8 @@ class PscubeCalendarTests(unittest.TestCase):
         # 保存は今の時刻で記録されるので、ずっと先の日を使う（2026-10-30にした日付は、その日の3時を過ぎると
         # 「前もって登録」でなくなり＊が付いて失敗した、2026-10-30）。
         events = PscubeEvents(self.path, lambda store: called.append(store.date_event_for('2099-10-30')))
+        self.assertEqual(events.title, 'イベントカレンダー（P-STATION）')
+        self.assertEqual(events.stores, {'pscube': 'P-STATION'})
         events.save('pscube', ['2099-10-30'], '末尾イベ')
         entries, names = events.load('pscube')
         self.assertEqual((entries['2099-10-30']['name'], names, called), ('末尾イベ', ['末尾イベ'], ['末尾イベ']))
