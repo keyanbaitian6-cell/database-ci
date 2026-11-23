@@ -4626,3 +4626,9 @@
   - やり方：本体の `daily_learning_runtime.run` を、時計だけ 2026-11-23 07:09:00 にして動かした（`load_inputs` は11/22までの行だけ。`ready`・`build_prediction`・`freeze`・同期の書き出しは夜と同じ経路）。各店の予測の本文に `late_note`（上の経緯）と `computed_at`（本当の計算時刻 19:44）を足した（画面には出ない項目）。表示用ファイルの `updated_at` だけは本当の時刻（19:44:24）。`run.log` に「利用者の決定で、11/23 分を保存時刻 07:09 として保存します（実際の実行 …）」の1行を先に残した。時計を 07:09 にしたので、本体の処理はその時刻として前の晩の予測の結果の記録・採用判定の処理も通っている（AI は成績を見ていない）。
   - 結果：3店とも「11/23の事前予測を固定保存しました」。長町南78台・幸町118台・P-STATION 60台（さっき一覧で渡したものと同じ）。`data/daily-learning.json` と同期先 `G:/マイドライブ/database共有/daily-learning.json`（19:44:27）を書いた。同期先のファイルを `database_android/tool/daily_learning_projection.js`（Google のスクリプトと同じ確かめ）に通して、11/23 分 102機種・256台が通ることを確かめた。共有ページ・iPhone・PC の画面での見え方は未確認。
   - 記録DBは追記専用で、この3件は取り消せない。11/23 分は今後、成績の記録・学習の判定にもほかの日と同じく入る。本体画面の1行の点検（`checkup`）でも 11/23 は「保存できた」に数わる。
+
+## 2026-11-23 夜 Codex：3担当分の送信を確認
+
+- 利用者がpushを承認。依頼時の `4fcd91e` に固定した専用作業コピーで、合成の種データを使って `bash database_android/tool/check_before_build.sh` が `ALL PASSED`。PC全1,153件、UTCカレンダー試験、Flutter全895件・静的解析、閲覧ページの試験用ビルド、閲覧・共有のステージ、JavaScript全97ファイルが成功した。
+- 11/23の送信先は `keyanbaitian6-cell/database-ci` の `main`。`tools/push_ci.py` が並行作業で先に送られた後続コミットを検出して送信を止めた。GitHubの `main` は `a3c81cb` で、祖先に `4fcd91e` が含まれることを確認した。後続2件は共有記録のみ。重複pushは発生していない。
+- CIは確認時点で実行中。Web公開・Googleスクリプト貼り替え・APK作成はこの依頼の対象外。 [GitHub Actions 実行結果](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45158839302)
