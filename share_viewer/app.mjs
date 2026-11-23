@@ -881,20 +881,30 @@ function machinePickupSection(racks) {
       ${pickups.length ? `<p class="caption">合計差枚の多い順に最大7機種。機種名を押すと台一覧が見られます。</p>
       <div class="machine-pickups">
         ${pickups.map((x, i) => {
-          const netNote = [x.estimated ? '推定を含む' : '', x.captured < x.racks ? `差枚取得 ${x.captured}/${x.racks}台` : '']
-            .filter(Boolean).join('・');
-          return `<table class="machine-pickup">
-            <caption><button type="button" class="row-link" data-machine="${esc(x.machine)}">
-              <span class="pickup-rank num">${i + 1}位</span><span class="pickup-name">${esc(displayMachineName(x.machine))}</span>
-            </button>${netNote ? `<small>${netNote}</small>` : ''}</caption>
+          const rank = i + 1;
+          const rankClass = rank <= 3 ? ` pickup-rank-${rank}` : '';
+          const winRateClass = x.judged
+            ? (x.won * 100 >= x.judged * 70 ? ' pickup-win-high' : x.won * 2 >= x.judged ? ' pickup-win-good' : '')
+            : ' zero';
+          const netNotes = [x.estimated ? '推定を含む' : '', x.captured < x.racks ? `差枚取得 ${x.captured}/${x.racks}台` : '']
+            .filter(Boolean);
+          return `<div class="pickup-card${rankClass}"><table class="machine-pickup">
+            <caption>
+              <button type="button" class="row-link" data-machine="${esc(x.machine)}">
+                <span class="pickup-rank num">${rank}位</span>
+                <span class="pickup-name">${esc(displayMachineName(x.machine))}</span>
+                <span class="pickup-chev" aria-hidden="true">›</span>
+              </button>
+              ${netNotes.length ? `<small class="pickup-notes">${netNotes.map(n => `<span class="pickup-note-tag">${n}</span>`).join(' ')}</small>` : ''}
+            </caption>
             <thead><tr><th scope="col">機種別差枚</th><th scope="col">平均差枚</th><th scope="col">平均G数</th><th scope="col">勝率</th></tr></thead>
             <tbody><tr>
-              <td class="num ${tone(x.total)}">${signed(x.total)}</td>
-              <td class="num ${tone(x.averageNet)}">${signed(x.averageNet)}</td>
-              <td class="num">${count(x.averageGames)}</td>
-              <td class="num">${x.judged ? `${(100 * x.won / x.judged).toFixed(1)}% <span>(${x.won}/${x.judged})</span>` : '—'}</td>
+              <td class="pickup-total num ${tone(x.total)}">${signed(x.total)}</td>
+              <td class="pickup-avg num ${tone(x.averageNet)}">${signed(x.averageNet)}</td>
+              <td class="pickup-games num">${count(x.averageGames)}</td>
+              <td class="pickup-win num${winRateClass}">${x.judged ? `${(100 * x.won / x.judged).toFixed(1)}% <span class="pickup-ratio">(${x.won}/${x.judged})</span>` : '—'}</td>
             </tr></tbody>
-          </table>`;
+          </table></div>`;
         }).join('')}
       </div>` : '<p class="note">この日は差枚がわかる機種がありません。</p>'}
     </section>`;

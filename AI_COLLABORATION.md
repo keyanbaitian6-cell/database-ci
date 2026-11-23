@@ -4740,3 +4740,18 @@
 
 - 変わる動き（利用者に伝える）：0:00〜8:59 にサイトセブン1窓で **前日ではない古い日だけ** を取り直して完了したときは、前向き検証を自動では動かさなくなった（以前は動いていた）。必要なら `毎朝実行.cmd` を押す。
 - main への取り込み（2026-11-24 7:15、利用者「mainiにとりこんで」）：手元 `main` に `934a77f` が既にあったので、`python tools/push_ci.py` で `database-ci/main` へ `cea1e29..934a77f` を送った（[CI run 45277911726](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45277911726) は送信時点で実行中。結果は未確認）。一時ブランチ `cloud/20261124-forward-2win-close` は削除した。正本 `imakurudev-eng/database` の main には、12/1 9時以降の前半の送信で入る。送信時、手元に別作業の `share_viewer/app.mjs`・`index.html` の未コミット差分があったが、送ったのはコミットだけで含めていない。PCアプリは再起動するまで古いコードのまま。
+
+## 2026-11-24 朝 Gemini：共有カレンダー「機種別データピックアップ」の見た目・配色を改善
+
+- 依頼：「機種別ランキングみたいなのを追加したけど少しみづらいから、見やすいように色とか工夫して」（iPhone実機の「その日のまとめ」画面写真付き）。対象は共有カレンダー（`share_viewer/`）のみ。基準コミットは正本と `database-ci` の両方を含む最新 `main` `c1c7c73`（着手時点 `934a77f`、途中に加わった記録コミット `c1c7c73` を含む）。
+- 変更内容（計算ロジック・データ構造・テーブルのアクセシビリティ構造は従来どおり保持）：
+  - `share_viewer/app.mjs`（`machinePickupSection`）：各機種テーブルを `.pickup-card`（1〜3位は `.pickup-rank-1`〜`3`）で囲み、注記（`推定を含む`・`差枚取得 x/y台`）をヘッダー内のタグ `.pickup-note-tag` に整理、ボタン右端にタップ可能を示す `›`（`aria-hidden="true"`）を追加。勝率は 70%以上に `.pickup-win-high`、50%以上に `.pickup-win-good`、判定不能に `.zero` を付与。
+  - `share_viewer/index.html`：カード枠・角丸・左端アクセントバー、1位（金）・2位（銀）・3位（銅）の順位バッジとヘッダー帯、4〜7位の白抜きバッジ＋薄ブルーグレー帯、表ヘッダー帯と薄い縦区切り線、主役の機種別差枚セルの淡色ハイライト（プラス青・マイナス橙・ゼロ灰）、勝率の緑強調と台数 `(won/judged)` の控えめ表記、360px以下での文字サイズ調整を追加。
+- 利用者へ 393px のプレビュー画像を提示し、「OK公開して」の承認後に全体ゲートを実行。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 機種別ピックアップの計算・表示・操作・横はみ出しなし | 済 | `test_share_viewer.mjs` 37件、`test_share_viewer_browser.mjs` 320/393/1280px、Chromium（320/393/1280px）・WebKit（393px）の描画確認（いずれも横はみ出し 0px） |
+| 全体ゲート（PC・Flutter・閲覧/共有ステージ・JS全件） | 済 | `C:\w\cbw-pickup-ui-20261124` で `check_before_build.sh`（`CHECK_JS_JOBS=2`）**ALL PASSED**（`pc-tests` 1,164件、`flutter-test` 895件、`flutter-analyze`、`viewer-build`・`viewer-stage`、`share-stage` 19ファイル・版 `14f74413ed32`・記録文字列90種・スクリプトID該当なし、JS 97ファイル全件成功） |
+| GitHub push・共有カレンダー公開 | 実施中 | 送信・公開後に追記 |
+| iPhone実機での表示確認 | 未確認 | ブラウザー試験・WebKit 393px プレビューまで |
