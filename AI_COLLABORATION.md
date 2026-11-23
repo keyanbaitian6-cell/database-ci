@@ -4521,3 +4521,36 @@
 | 関連の回帰試験 | 済 | `node --test` の `test_share_*.mjs` 計53件、日次学習・4大オススメの関連18件。WindowsではPythonの出力をUTF-8に指定し、改行コードを照合する既存の生成物試験はGitのLF版を一時フォルダに展開して確認した。生成物は変更していない。 |
 | Flutter静的解析・全試験 | 済 | `flutter analyze --no-pub --no-fatal-infos` は終了コード0（既存の情報レベル指摘あり）、`flutter test --no-pub` は全895件成功。 |
 | 実機・公開・CI | 未確認 | iPhone実機とサイトセブンの実ページは未確認。ローカルコミットまで。push・公開は各担当がそろった後に行う。 |
+
+## 2026-11-23 夜 Claude：Gemini の2窓パッチの取り込み・11/23 0時台のログ確認・PC本体画面の「今夜の日次学習」の1行
+
+- **依頼**：利用者が Gemini（Antigravity）のパッチ（基準 `d921dcf`、2コミット：`bf52783e` コード7ファイル・`7afde96a` 共有記録）を `Pc Apply Site777 2win Patch.md` として置き、「適用・ログ確認・PC全試験・共有記録・push」を依頼。途中で利用者「原因を先に」「直しを入れて」「とりあえず普通に取り込んだあと学習し候補を出してるかどうかを肉眼的にわかるようにしたい」（出す画面は利用者に確かめ、**PCアプリの本体画面だけ**）。
+- **パッチの適用**：置かれていたのは `.patch` ではなく説明つきの `.md`。中のパッチ本体を切り出して `git am -3`。1つ目は `addcd92` として入った。2つ目（Gemini の共有記録の節）は、別のAIが `AI_COLLABORATION.md` に未コミットで書き足していたため止まり、相手の追記を消さないよう `git am --quit` で終えた（`--abort`・`--skip` は作業コピーを戻して相手の追記を消すおそれがあった）。その直後、別のセッションが `addcd92` を含めて `eb68744` を database-ci へ push した（PC の試験の前）。Gemini の節の全文は作業フォルダの `Pc Apply Site777 2win Patch.md`（未追跡）にあり、この節に要点だけ写す：
+  - Gemini が見つけた4つ：①2窓が同時に閉じると、1つ目の終了処理が未処理の2つ目まで「閉じた」と数えて早合点する（`CaptureWindowTracker` で各窓が自分だけを外す）②×閉じの窓が先に処理されると、後の自動完了の窓で前向き検証がすり抜ける（`ForwardWindowGate` に中断の記憶）③メルヘンの窓が開いている間、P-STATION 側の前向き検証・日次学習が待たされる（`window_source` で原本ごとに分け、`run_due`・`_run` に `skip_sources`）④2窓が同じ機種の途中記録を同時に書く（`_job_file_lock`）。
+- **PC全試験（`addcd92` の上）**：`TZ=JST-9 database/.venv/Scripts/python.exe -m unittest discover -s tests` → 1,131件中1件 ERROR（Gemini が足した `test_two_windows_concurrently_writing_same_model_job_stay_consistent` が存在しない `self.folder` を使っていた。2窓の書き込み自体は通っていた）。CI run 45140749183（`eb68744`）も3ジョブともこの1件だけで failure。直しは別の Claude のセッションが `2023b18` でコミット・push 済み。
+- **11/23 0時台の PC のログ（Claude が直接確認。成績・`outcomes`・`decisions` は開いていない）**：
+  - `logs/site777-browser.log`：2窓とも 0:17:57・0:17:59 に `auto_finished`（automatic）→`closed_when_finished`、0:18:11・0:18:24 にバックアップ成功。0:42:52 にもう1窓（全255台保存済み、automatic false）、0:46:06 にもう1窓（開いた記録のあと閉じた記録なし、最終行 0:46:13）。
+  - `errors.log`：0時台はメルヘンの取り込みの読み直し（`meruhen.save.graph`・`meruhen.save.table`）だけ。DBのロック・同期先への書き込みエラー・日次学習のエラーは無し。
+  - `daily-learning/run.log`：最後は 11/22 0:11:21。**11/23 は1行も無い（日次学習は一度も始まっていない）**。`forward-validation.log`：最後は 11/22 0:02。
+  - Windows の記録：電源の診断（Power-Troubleshooter）で 11/22 20:22 起床→11/23 7:16 スリープ（それまでPCは起きていた）。0:20:53 に Tcpip 4231（一時ポートを使い切った）。python.exe の異常終了 12回（11/22 23:42〜23:57、`tcl86t.dll`・0x80000003）は、G11 の Tk 別スレッドの試験の再現と同じ終了コード。0:07 以降、PCアプリの異常終了の記録は無い。
+- **切り分け**：当時の版（`befe241`）の `run_due` を当時のファイルの時刻で読み取りだけで動かすと 0:28 以降は「動かす」（P-STATION の原本の最後の書き込みは 0:18:10）。5分ごとの確認は窓が開いていても動く作りなので、11/23 は日次学習が始まるはずだった。前の晩（11/20〜22）に確認で動いた跡が無いのは、アプリが取り込み後にPCをスリープさせていたため（11/22 21:51 `b8b398c` でやめた）。**11/23 に止まった場所（5分ごとの確認の連鎖が切れたのか、裏の処理か）は、例外が `start.cmd` の黒い画面にしか出ない作りだったため決められなかった**。今回のパッチ（窓が閉じたときの流れ）だけでは説明できない。
+- **直し（この節のコミット。PC の Python だけ）**：
+  - `database/app.py`：
+    - 本体画面の上部に「今夜の日次学習」の1行（`daily_status`）。例「今夜の日次学習（11/23の予測）：長町南 取り込み待ち／幸町 まだ／P-STATION 保存済み 00:28（候補62台）　最後の確認 00:33」。色は全店保存済み＝緑、まだ＝黄、処理失敗・締切超過・8時を過ぎて未保存＝赤、時間帯の外で保存済み＝灰。「最後の確認」の時刻が進まなければ、5分ごとの確認が止まっている。
+    - 5分ごとの確認を `daily_tick`（例外を受けて `errors.log` の `daily.tick` に残し、`finally` で必ず次の5分を予約する）と `daily_check`（中身）に分けた。`run_due` の例外も、内容が変わったときだけ `daily.run_due` に残す（今までは黙って握りつぶしていた）。
+    - 判定（動かします／待ちますと、その理由）を、内容が変わったときだけ `run.log` に「定期確認：…」と1行。裏の処理が実行中で後回しにしたとき「依頼を受けました（実行中のため、終わったあとにもう一度動かします）」。PCアプリの起動「PCアプリを起動しました（版 xxxxxxx）」と終了「PCアプリを閉じます」も1行ずつ。版は `.git` のファイルを読む `source_version()`（git コマンドは使わない）。
+    - 日次学習が終わったら、10秒おきの `daily_results_poll` が記録欄と本体画面の1行に出す。`daily_on_start` の例外も `daily.on_start` に残す。
+  - `database/daily_learning_runtime.py`：`run_due(..., reasons=None)` に理由を1つ足す引数。`night_status(data_dir, now)` が上の1行と段階（ok・wait・error・idle）を返す。記録DBは `predictions` だけを読み取り専用で開く（`outcomes`・`decisions` は開かない。試験でも確かめる）。原本DBは開かない。
+  - 試験：新規 `database/tests/test_daily_status.py`（13件。`app.py` の `main()` の中の確認の関数をソースから取り出し、偽の画面・部品で実際に動かす：例外でも次の5分を予約する・同じ判定は1回だけ書く・閉じたら止まる・終わった結果が10秒の確認で画面に出る、ほか理由・1行の中身・版の読み取り）。`test_daily_learning_schedule.py`・`test_forward_validation.py` の配線の確かめを新しい形に合わせた。
+- **注意（分担）**：`f2a8f6e`「3回目の分担」で `database/app.py`・`database/daily_learning_runtime.py` は Gemini の担当ファイル（G12 など）。このコミットで両方を変えたので、Gemini はこのコミットを含む main の上で作業すること。
+- **サイトへのアクセス**：増えない（サイトに接続していない）。表示はPCだけで、閲覧ページ・共有カレンダー・Android・Google スクリプトは変えていない（公開・APK・貼替は不要）。
+- **確認の表**：
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| 5分ごとの確認が例外でも次を予約し、errors.log に残す | 済（試験） | `test_daily_status` `test_an_exception_inside_the_check_still_books_the_next_check_and_is_recorded` |
+| 判定と理由を、変わったときだけ run.log に1行 | 済（試験） | `test_the_decision_is_written_once_until_it_changes_and_the_screen_shows_the_night`・`RunDueReasonTest` 2件 |
+| 本体画面の1行（保存時刻・候補数・まだ・取り込み待ち・処理失敗・締切後） | 済（試験） | `NightStatusTest` 5件。保存済みのデータで読み取りだけで試した例：11/22 0:30「長町南 保存済み 00:09（候補77台）…」、11/23 0:30「…まだ」 |
+| PCアプリの起動・終了・後回しを run.log に | 済（試験は配線のみ） | `AppWiringTest` 2件 |
+| PC全試験 | 済 | `TZ=JST-9 database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,147件 OK（460.7秒。1回目は1,144件中 `test_app_startup` の `test_startup_imports_each_new_store_backup_and_sync_tab_scrolls_to_the_import_button` が1件失敗。単独6回・ファイル全体6回はすべて通り、変更前（HEAD の別作業コピー）と変更後で10回ずつ流し比べてどちらも失敗0回。ほかのAIが並行して試験を流していた時間の揺れと見ている。原因は未確認）。作業コピーにほかのAIの site777 まわりの未コミットの変更がある状態で流した |
+| 実際のPCアプリの画面での見え方・次の晩の run.log | 未確認 | 利用者が `start.cmd` で起動し直してから |

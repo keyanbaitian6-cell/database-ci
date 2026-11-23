@@ -172,7 +172,9 @@ class RunDueTest(unittest.TestCase):
         source = (Path(runtime.__file__).parent / 'app.py').read_text(encoding='utf-8')
         tick = source[source.index('def daily_tick'):source.index('def daily_on_start')]
         self.assertIn('run_due(DATA_DIR', tick)
-        self.assertIn('clear_failed_mark(daily_last[0]', tick)
+        self.assertIn('drain_daily_results()', tick)
+        drain = source[source.index('def drain_daily_results'):source.index('def daily_results_poll')]
+        self.assertIn('clear_failed_mark(daily_last[0]', drain)
         self.assertNotIn('capture_open', tick, '取り込み窓が開いていても、原本DBで判断する')
         self.assertNotIn('now.hour in (7, 23)', tick)
         close = source[source.index('def close_app'):source.index("root.protocol('WM_DELETE_WINDOW', close_app)")]

@@ -136,7 +136,10 @@ def clear_failed_mark(last, status):
     return (last[0], {k: v for k, v in last[1].items() if k not in failed})
 
 
-def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS, skip_sources=()):
+SOURCE_NAMES = {'meruhen': 'メルヘン（長町南・幸町）', 'pscube': 'P-STATION'}
+
+
+def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS, skip_sources=(), reasons=None):
     """今、日次学習を動かすか。(動かすか, 入力の印)。入力の印は、前に試したときと同じなら動かさないために使う
     （データがそろわず「取り込み待ち」になった晩に、同じ原本で5分ごとに読み直さない）。
     - 保存できる時間帯（前日23:30〜当日8:00）で、まだ保存していない店があるときだけ。
@@ -145,16 +148,24 @@ def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS, sk
     - skip_sources に指定した原本（別店舗の取り込み窓が開いている間など）は対象外とし、印も更新しない。
     - P-STATION（pscube）は500G未満の控え（site777-staging/日付-low.json）の更新時刻も含めて判定する。
     - PC本体を閉じるとき（on_close）は quiet 秒を待たない（閉じる＝取り込みは終わった、とみる。そろっていなければ ready が取り込み待ちにする）。
+    - reasons にリストを渡すと、判定の理由を1つ足す（PCの定期確認が run.log と本体画面に出す。2026-11-23）。
     原本DBは開かない（ファイルの更新時刻だけ）。"""
+    def because(text):
+        if reasons is not None:
+            reasons.append(text)
+
     target = prediction_target(now)
     if target is None:
+        because('保存できる時間帯の外（23:30〜8:00）')
         return False, last
     stores = unsaved_stores(data_dir, target)
     if not stores:
+        because('全店の予測は保存済み')
         return False, last
     skip = set(skip_sources or ())
     active_stores = [s for s in stores if SOURCES[s] not in skip]
     if not active_stores:
+        because('残りの店は取り込み画面が開いている間は待つ')
         return False, last
     stamps, latest = {}, {}
     for source in sorted({SOURCES[s] for s in active_stores}):
@@ -168,8 +179,89 @@ def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS, sk
         and (on_close or latest[source] is None or now_ts - latest[source] >= quiet)
     }
     if not ready_stamps:
+        waits = []
+        for source in sorted(stamps):
+            if source in before and before[source] == stamps[source]:
+                waits.append(f'{SOURCE_NAMES[source]}は前回と同じ原本')
+            else:
+                waits.append(f'{SOURCE_NAMES[source]}は書き込みから{max(1, int(quiet) // 60)}分待ち')
+        because('、'.join(waits))
         return False, (target, before) if failed and last and last[0] == target else last
+    because('・'.join(SOURCE_NAMES[s] for s in sorted(ready_stamps)) + 'の原本で動かす')
     return True, (target, {**before, **ready_stamps})
+
+
+def _status_segment(status, name):
+    """日次学習の結果の文（店ごとに『／』で区切られる）から、その店の部分だけを返す。"""
+    for part in str(status or '').split('／'):
+        if part.strip().startswith(f'{name}：'):
+            return part.strip()[len(name) + 1:]
+    return ''
+
+
+def night_status(data_dir, now) -> tuple[str, str]:
+    """PC本体画面の1行（2026-11-23 利用者「普通に取り込んだあと学習し候補を出してるかどうかを肉眼的にわかるようにしたい」）。
+    (文, 段階)。段階は ok（全店保存済み）・wait（まだの店がある）・error（処理失敗など）・idle（時間帯の外）。
+    記録DBは予測（predictions）だけを読み取り専用で開く（成績の表は開かない）。原本DBは開かない。"""
+    now = jst(now)
+    target = prediction_target(now)
+    in_window = target is not None
+    if not in_window:
+        target = now.date().isoformat()
+    saved = {}
+    path = Path(data_dir) / 'daily-learning' / 'journal.sqlite3'
+    if path.exists():
+        journal = None
+        try:
+            journal = Journal(path, readonly=True)
+            for store in STORES:
+                body = journal.get('predictions', f'{target}|{store}')
+                if body is not None:
+                    saved[store] = body
+        except (sqlite3.Error, ValueError, OSError):
+            pass
+        finally:
+            if journal is not None:
+                journal.close()
+    status = ''
+    try:
+        doc = json.loads((Path(data_dir) / FILE_NAME).read_text(encoding='utf-8'))
+        doc_at = str(doc.get('updated_at') or '')
+        if doc_at and prediction_target(datetime.fromisoformat(doc_at)) == target:
+            status = str(doc.get('status') or '')
+    except (OSError, ValueError, TypeError):
+        pass
+    parts, level = [], 'ok'
+    for store in STORES:
+        name = STORE_NAMES[store]
+        body = saved.get(store)
+        if body is not None:
+            at = str(body.get('saved_at') or '')
+            when = at[11:16] if len(at) >= 16 else ''
+            count = sum(len(g.get('selected') or []) for g in body.get('groups') or [] if isinstance(g, dict))
+            parts.append(f'{name} 保存済み{" " + when if when else ""}（候補{count}台）')
+            continue
+        segment = _status_segment(status, name)
+        if '処理失敗' in segment or (status.startswith('処理失敗') and not segment):
+            parts.append(f'{name} 処理失敗')
+            level = 'error'
+        elif '締切超過' in segment:
+            parts.append(f'{name} 締切超過・未保存')
+            level = 'error'
+        elif '取り込み待ち' in segment:
+            parts.append(f'{name} 取り込み待ち')
+            level = 'wait' if level == 'ok' else level
+        elif '待機' in segment:
+            parts.append(f'{name} 取り込み中のため待機')
+            level = 'wait' if level == 'ok' else level
+        else:
+            parts.append(f'{name} まだ' if in_window else f'{name} 未保存')
+            level = ('wait' if in_window else 'error') if level == 'ok' else level
+    day = f'{int(target[5:7])}/{int(target[8:10])}'
+    head = f'今夜の日次学習（{day}の予測）' if in_window else f'日次学習（{day}の予測・8時で締切。次は23:30から）'
+    if not in_window and level == 'ok':
+        level = 'idle'
+    return f'{head}：' + '／'.join(parts), level
 
 
 def method_signature(store):

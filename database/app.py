@@ -42,6 +42,26 @@ def runtime_root():
 
 ROOT = runtime_root()
 DATA_DIR = ROOT / 'data'
+
+
+def source_version(root=None):
+    """起動したソースの版（git のコミットの先頭7文字）。分からなければ「不明」。git コマンドは使わない（2026-11-23）。"""
+    git = Path(root or ROOT).parent / '.git'
+    try:
+        head = (git / 'HEAD').read_text(encoding='utf-8').strip()
+        if not head.startswith('ref: '):
+            return head[:7] or '不明'
+        ref = head[5:].strip()
+        if (git / ref).is_file():
+            return (git / ref).read_text(encoding='utf-8').strip()[:7] or '不明'
+        for line in (git / 'packed-refs').read_text(encoding='utf-8').splitlines():
+            if line.endswith(' ' + ref):
+                return line[:7]
+    except OSError:
+        pass
+    return '不明'
+
+
 MACHINE_DEFAULT = ''
 ALL_DAYS_LABEL = 'すべての日付'
 ALL_STORES_LABEL = 'すべての店舗'
@@ -389,6 +409,11 @@ def main():
              font=('Yu Gothic UI', 10, 'bold')).pack(side='left', fill='x', expand=True)
     sync_banner_button = ttk.Button(sync_banner)
     sync_banner_button.pack(side='right')
+    # 今夜の日次学習の様子（2026-11-23 利用者「普通に取り込んだあと学習し候補を出してるかどうかを肉眼的にわかるようにしたい」）。
+    # 5分ごとの確認（daily_tick）が書き換える。「最後の確認」の時刻が進んでいなければ、確認そのものが止まっている。
+    daily_status = tk.Label(frame, text='今夜の日次学習：起動の1分後に確かめます。', anchor='w', justify='left',
+                            wraplength=820, padx=12, pady=6, font=('Yu Gothic UI', 10), background='#EEF2F5')
+    daily_status.pack(fill='x', pady=(0, 10))
     notebook = ttk.Notebook(frame)
     notebook.pack(fill='both', expand=True)
     tab_home = ttk.Frame(notebook, padding=22)
@@ -1974,15 +1999,22 @@ def main():
 
         def start(self, *, quiet=0, skip_sources=()):
             skip = frozenset(skip_sources or ())
+            deferred = False
             with self.lock:
                 if self.running:
                     self._next_quiet = min(self._next_quiet, quiet) if self.again else quiet
                     self._next_skip = (self._next_skip & skip) if (self.again and self._next_skip is not None) else skip
                     self.again = True
-                    return False
-                self.running = True
-                current_quiet = quiet
-                current_skip = skip
+                    deferred = True
+                else:
+                    self.running = True
+            if deferred:
+                # 後回しにしたことも残す（2026-11-23。11/23の夜は一度も始まらず、止まった場所が分からなかった）。
+                from daily_learning_runtime import trace
+                trace(self.data_dir, '依頼を受けました（実行中のため、終わったあとにもう一度動かします）')
+                return False
+            current_quiet = quiet
+            current_skip = skip
 
             def work():
                 from daily_learning_runtime import run as run_daily
@@ -2033,24 +2065,95 @@ def main():
             pass
         daily_worker.start(skip_sources=skip)
 
+    daily_tick_note = [None, None]   # 直前に run.log へ書いた判定・例外（同じ内容は5分ごとに書き直さない）
+    daily_tick_at = [None]
+    DAILY_STATUS_COLORS = {'ok': '#E6F4EA', 'wait': '#FFF4DC', 'error': '#FDE2E1', 'idle': '#EEF2F5'}
+
+    def refresh_daily_status(problem=None):
+        """本体画面の「今夜の日次学習」の1行を出し直す。失敗しても本体は止めない。"""
+        from daily_learning import JST
+        from daily_learning_runtime import night_status
+        try:
+            text, level = night_status(DATA_DIR, datetime.now(JST))
+        except Exception as error:  # noqa: BLE001 - 表示の不具合で本体を止めない
+            text, level = f'今夜の日次学習：様子を読めませんでした（{type(error).__name__}）', 'error'
+        if daily_worker.running:
+            text += '／計算中'
+        if daily_tick_at[0]:
+            text += f'　最後の確認 {daily_tick_at[0]}'
+        if problem:
+            text += f'　{problem}'
+            level = 'error'
+        try:
+            daily_status.configure(text=text, background=DAILY_STATUS_COLORS.get(level, '#EEF2F5'))
+        except tk.TclError:
+            pass
+
+    def drain_daily_results():
+        from daily_learning_runtime import clear_failed_mark
+        got = False
+        while not daily_worker.results.empty():
+            msg = daily_worker.results.get_nowait()
+            daily_last[0] = clear_failed_mark(daily_last[0], msg)
+            tell(msg + '\n')
+            got = True
+        return got
+
+    def daily_results_poll():
+        # 日次学習が終わったら、5分を待たずに本体画面の1行へ出す（10秒おき。キューを見るだけ）。
+        if closing[0]:
+            return
+        try:
+            if drain_daily_results():
+                refresh_daily_status()
+        except Exception as error:  # noqa: BLE001 - 知らせの不具合で本体を止めない
+            error_log.record(DATA_DIR, 'daily.results', error)
+        root.after(10_000, daily_results_poll)
+
     def daily_tick():
         if closing[0]:
             return
+        # 途中で例外が起きても、必ず次の5分を予約し直し、例外は errors.log に残す（2026-11-23。11/23の夜は PC が起きていて
+        # 判定も「動かす」になるはずなのに、日次学習が一度も始まらず、どこで止まったかの記録も無かった）。
+        problem = None
+        try:
+            problem = daily_check()
+        except Exception as error:  # noqa: BLE001 - 定期確認は止めない
+            error_log.record(DATA_DIR, 'daily.tick', error)
+            problem = f'定期確認でエラー（{type(error).__name__}。errors.log）'
+        finally:
+            if not closing[0]:
+                root.after(300_000, daily_tick)
+        try:
+            refresh_daily_status(problem)
+        except Exception as error:  # noqa: BLE001
+            error_log.record(DATA_DIR, 'daily.status', error)
+
+    def daily_check():
         # 保存できる時間帯（前日23:30〜当日8:00）は5分ごとに、まだ保存していない店の原本DBが10分書かれていなければ動かす
         # （2026-11-14 利用者「取り込みが終了したら勝手にやってくれるはずなのになぜかうまくいってない」。今までは23:30台・
         # 7:30台だけ、しかも取り込み窓が開いていると動かず、窓を朝まで開いたままだと保存されなかった）。
         # 同じ原本で「取り込み待ち」になったら、原本が変わるまで読み直さない（daily_learning_runtime.run_due）。
         from daily_learning import JST
-        from daily_learning_runtime import (QUIET_SECONDS, clear_failed_mark, needs_sync_retry,
-                                            retry_sync_export, run_due)
-        while not daily_worker.results.empty():
-            msg = daily_worker.results.get_nowait()
-            daily_last[0] = clear_failed_mark(daily_last[0], msg)
-            tell(msg + '\n')
+        from daily_learning_runtime import (QUIET_SECONDS, needs_sync_retry, retry_sync_export, run_due, trace)
+        now = datetime.now(JST)
+        daily_tick_at[0] = now.strftime('%H:%M')
+        drain_daily_results()
+        reasons, problem = [], None
         try:
-            due, daily_last[0] = run_due(DATA_DIR, datetime.now(JST), daily_last[0])
-        except Exception:  # noqa: BLE001 - 確認に失敗しても次の5分で確かめ直す
+            due, daily_last[0] = run_due(DATA_DIR, now, daily_last[0], reasons=reasons)
+        except Exception as error:  # noqa: BLE001 - 確認に失敗しても次の5分で確かめ直す
             due = False
+            reason = f'{type(error).__name__}: {error}'
+            if reason != daily_tick_note[1]:
+                daily_tick_note[1] = reason
+                error_log.record(DATA_DIR, 'daily.run_due', error)
+            reasons = [f'判定でエラー（{type(error).__name__}）']
+            problem = f'判定でエラー（{type(error).__name__}。errors.log）'
+        note = f'定期確認：{"動かします" if due else "待ちます"}（{"・".join(reasons) or "理由不明"}）'
+        if due or note != daily_tick_note[0]:
+            daily_tick_note[0] = note
+            trace(DATA_DIR, note)
         if due:
             daily_worker.start(quiet=QUIET_SECONDS)
         elif not daily_worker.running and not sync_retry_running[0] and needs_sync_retry(DATA_DIR):
@@ -2067,22 +2170,29 @@ def main():
                     sync_retry_running[0] = False
 
             threading.Thread(target=_retry_sync, name='daily-sync-retry', daemon=True).start()
-        while not daily_worker.results.empty():
-            msg = daily_worker.results.get_nowait()
-            daily_last[0] = clear_failed_mark(daily_last[0], msg)
-            tell(msg + '\n')
+        drain_daily_results()
         check_pending_forward()
-        root.after(300_000, daily_tick)
+        return problem
 
     def daily_on_start():
         if closing[0]:
             return
-        if capture_open():
-            root.after(300_000, daily_on_start)
-            return
-        start_daily()
+        try:
+            if capture_open():
+                root.after(300_000, daily_on_start)
+                return
+            start_daily()
+        except Exception as error:  # noqa: BLE001 - 起動時の確認の失敗は残して、5分ごとの確認に任せる
+            error_log.record(DATA_DIR, 'daily.on_start', error)
+
+    def note_app_start():
+        # PCアプリの起動を run.log に残す（2026-11-23。夜に動いていたのがどの版か・いつ起動したかが分からなかった）。
+        from daily_learning_runtime import trace
+        trace(DATA_DIR, f'PCアプリを起動しました（版 {source_version()}）')
+    note_app_start()
     root.after(60_000, daily_on_start)
     root.after(65_000, daily_tick)
+    root.after(10_000, daily_results_poll)
     root.after(400, auto_sync_on_start)
     root.after(PSCUBE_SYNC_FIRST_MS, poll_pscube_from_sync)
     # 翌日候補の比較用の検証記録は、操作ごとに接続を閉じても起動中は送り続ける（input_versions.hold）。
@@ -2143,6 +2253,11 @@ def main():
             # Marks added while an earlier output was running need one final snapshot.
             schedule_outputs(backup=True)
         closing[0] = True
+        try:
+            from daily_learning_runtime import trace
+            trace(DATA_DIR, 'PCアプリを閉じます')
+        except Exception:  # noqa: BLE001 - 記録できなくても閉じる
+            pass
         # Prevent another edit after the final output snapshot was requested.
         # Timers keep running so completion/error notifications still reach Tk.
         # A bind tag beginning with '.' is interpreted as a window pathname.
