@@ -183,7 +183,7 @@ function pscubeCloudRun() {
     if (backupFile && viewerFile && props.getProperty('pscubeCloudInputs') === inputVersion &&
         props.getProperty('pscubeCloudBackup') === backupVersion && props.getProperty('pscubeCloudViewer') === viewerVersion && props.getProperty('pscubeCloudParts') === partsVersion) {
       const failed = Object.values(failures), failedCount = Object.keys(failedVersions).length;
-      if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props);
+      if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props, startedAt);
       const status = {...previous, at: new Date().toISOString(), result: failedCount ? 'unchanged-partial' : 'unchanged',
         message: '変更なし', inputs: inputs.length, failed: failedCount, transient: 0, elapsed_ms: Date.now() - startedAt,
         backup_bytes: backupFile.getSize(), viewer_bytes: viewerFile.getSize()};
@@ -291,7 +291,7 @@ function pscubeCloudRun() {
       incremental = vpPublish(folder, savedViewer, 'pscube', viewer, pscubeCloudWrite, viewerFile ? viewerFile.getId() + ':' + viewerVersion : undefined);
     } else if (writeViewer) savedViewer = pscubeCloudWrite(folder, viewerFile, PSCUBE_CLOUD_VIEWER, viewerText);
     props.setProperty('pscubeCloudParts', PSCUBE_INCREMENTAL_VIEWER ? vpCheckpoint(folder, 'pscube', savedViewer) : 'legacy');
-    if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props);
+    if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props, startedAt);
     props.setProperties({pscubeCloudBackup: pscubeCloudVersion(savedBackup), pscubeCloudViewer: pscubeCloudVersion(savedViewer)});
     // 取り込めなかった入力は版ごと記録済みなので、残りが無ければチェックポイントを確定する。未取り込みの入力（次回分・
     // 読み込み中に変わった入力・一時的な障害で読めなかった入力）が残る間は確定しない。
@@ -1259,26 +1259,54 @@ function vpPublish(folder, base, site, doc, write, expectedBase) {
   return {parts: written, bytes: writtenBytes, total: planned.reduce((n, p) => n + p.bytes, 0), revision};
 }
 
+// 古い生成物の整理（フォルダの全ファイルを見て回る）に使ってよい時間。Googleの1回の実行は6分まで。同期の本体
+// （約2分半〜3分で次回へ回す）のあとに呼ぶので、実行の始まりから4分を過ぎたら、続きの位置を残して次の回へ回す
+// （2026-11-23、Geminiの点検 M-5①。以前は時間の上限が無く、ファイルが多いと6分で打ち切られて、状態を保存する前に
+// 止まり、「整理した」の記録も残らないので、毎回最初から見直して止まるおそれがあった）。
+const VP_MAINTAIN_UNTIL_MS = 240000;
+// 1回の整理でごみ箱へ移す上限。
+const VP_PRUNE_MAX = 200;
+
+/** フォルダのファイルを順に visit へ渡す（visit が true を返したら1件消した）。消した数が上限に届くか deadline を
+ * 過ぎたら、Driveの続きの印を props の tokenKey に残して {done: false}。次はその続きから見る。最後まで見たら印を消して
+ * {done: true}。props が無いときは続きを残さない（試験・手動の実行）。 */
+function vpSweep(folder, props, tokenKey, deadline, visit) {
+  const token = props ? props.getProperty(tokenKey) : null;
+  let files = null;
+  if (token) {
+    try { files = DriveApp.continueFileIterator(token); }
+    catch (error) { files = null; }  // 古くなった印（約1週間で切れる）は、最初から見直す
+  }
+  if (!files) files = folder.getFiles();
+  let removed = 0;
+  while (files.hasNext()) {
+    if (removed >= VP_PRUNE_MAX || Date.now() >= deadline) {
+      if (props) props.setProperty(tokenKey, files.getContinuationToken());
+      return {removed, done: false};
+    }
+    if (visit(files.next())) removed++;
+  }
+  if (props) props.deleteProperty(tokenKey);
+  return {removed, done: true};
+}
+
 // 現在の一覧にない生成パーツだけを7日後にごみ箱へ。バックアップや旧形式JSONは対象外。
 // 一覧確定後の保守であり、失敗しても確定済みの閲覧データは有効。
-function vpPrune(folder, site) {
+function vpPrune(folder, site, props = null, deadline = Infinity) {
   const manifest = vpReadManifest(vpUnique(folder, vpManifestName(site)), site);
   const active = new Set([...manifest.parts, ...(manifest.curve_parts || [])].map(p => p.id));
   const pattern = new RegExp('^database-viewer-(part|curves)-' + site + '-[a-f0-9]{64}\\.json$');
-  const files = folder.getFiles(), cutoff = Date.now() - 7 * 86400000;
-  let removed = 0;
-  while (files.hasNext() && removed < 200) {
-    const f = files.next();
-    if (!f.isTrashed() && pattern.test(f.getName()) && !active.has(f.getId()) && f.getLastUpdated().getTime() < cutoff) {
-      f.setTrashed(true); removed++;
-    }
-  }
-  return removed;
+  const cutoff = Date.now() - 7 * 86400000;
+  return vpSweep(folder, props, site + 'ViewerPartsCleanToken', deadline, f => {
+    if (f.isTrashed() || !pattern.test(f.getName()) || active.has(f.getId()) || f.getLastUpdated().getTime() >= cutoff) return false;
+    f.setTrashed(true); return true;
+  });
 }
-function vpMaintain(folder, site, props) {
+function vpMaintain(folder, site, props, startedAt = Date.now()) {
   const key = site + 'ViewerPartsCleaned';
   if (Date.now() - Number(props.getProperty(key) || 0) < 6 * 3600000) return;
-  try { vpPrune(folder, site); props.setProperty(key, String(Date.now())); }
+  // 最後まで見たときだけ「整理した」と記録する。途中で止まったら、次の回（30分後）に続きから見る。
+  try { if (vpPrune(folder, site, props, startedAt + VP_MAINTAIN_UNTIL_MS).done) props.setProperty(key, String(Date.now())); }
   catch (error) { console.log('古い閲覧用キャッシュの整理は次回再試行します：' + String(error.message || error)); }
 }
 
@@ -1488,8 +1516,8 @@ function vhSync(folder, base, props, adapter, startedAt) {
   if (!old || vpCanonical(old) !== vpCanonical(m)) write(folder, indexFile, indexName, text);
   if (props.getProperty(site + 'HistoryRebuild') && m.history_rebuild_next === null) props.deleteProperty(site + 'HistoryRebuild');
   // 故障した原本の自動削除はしない。未参照の生成物だけ7日後に整理する。
-  vpMaintain(folder, site, props);
-  vhMaintain(folder, site, props);
+  vpMaintain(folder, site, props, startedAt);
+  vhMaintain(folder, site, props, startedAt);
   const remaining = inputs.filter(needsInput).length + (m.history_rebuild_next != null ? 1 : 0);
   const status = {at: new Date().toISOString(), result: Object.keys(failures.versions).length ? 'partial' : 'ok', history: true,
     message: '履歴を日別に保存・' + changedDays + '日更新', processed, remaining,
@@ -1502,22 +1530,22 @@ function vhSync(folder, base, props, adapter, startedAt) {
 }
 
 // 元バックアップ・現行の全日原本・移行用控えは対象外。未参照の生成原本だけ7日後に整理。
-function vhMaintain(folder, site, props) {
+// 時間の上限（VP_MAINTAIN_UNTIL_MS）と1回の上限（200件）で止まったら、続きの位置を残して次の回へ回し、最後まで
+// 見たときだけ「整理した」と記録する（2026-11-23、Geminiの点検 M-5①。vpSweep）。
+function vhMaintain(folder, site, props, startedAt = Date.now()) {
   const key = site + 'HistoryCleaned';
   if (Date.now() - Number(props.getProperty(key) || 0) < 6 * 3600000) return;
   try {
     const index = vpUnique(folder, vpManifestName(site)), revision = vpVersion(index);
     const m = vpReadManifest(index, site), active = new Set((m.cloud_days || []).map(d => d.id));
     const pattern = new RegExp('^database-history-day-' + site + '-\\d{4}-\\d{2}-\\d{2}-[a-f0-9]{64}\\.json$');
-    const files = folder.getFiles(), cutoff = Date.now() - 7 * 86400000; let removed = 0;
-    while (files.hasNext() && removed < 200) {
-      const file = files.next();
-      if (!file.isTrashed() && pattern.test(file.getName()) && !active.has(file.getId()) && file.getLastUpdated().getTime() < cutoff) {
-        if (vpVersion(index) !== revision) throw new Error('履歴一覧が更新されました。');
-        file.setTrashed(true); removed++;
-      }
-    }
-    props.setProperty(key, String(Date.now()));
+    const cutoff = Date.now() - 7 * 86400000;
+    const swept = vpSweep(folder, props, site + 'HistoryCleanToken', startedAt + VP_MAINTAIN_UNTIL_MS, file => {
+      if (file.isTrashed() || !pattern.test(file.getName()) || active.has(file.getId()) || file.getLastUpdated().getTime() >= cutoff) return false;
+      if (vpVersion(index) !== revision) throw new Error('履歴一覧が更新されました。');
+      file.setTrashed(true); return true;
+    });
+    if (swept.done) props.setProperty(key, String(Date.now()));
   } catch (error) { console.log('古い日別原本の整理は次回再試行します：' + String(error.message || error)); }
 }
 

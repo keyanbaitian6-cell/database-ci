@@ -204,8 +204,8 @@ function vhSync(folder, base, props, adapter, startedAt) {
   if (!old || vpCanonical(old) !== vpCanonical(m)) write(folder, indexFile, indexName, text);
   if (props.getProperty(site + 'HistoryRebuild') && m.history_rebuild_next === null) props.deleteProperty(site + 'HistoryRebuild');
   // 故障した原本の自動削除はしない。未参照の生成物だけ7日後に整理する。
-  vpMaintain(folder, site, props);
-  vhMaintain(folder, site, props);
+  vpMaintain(folder, site, props, startedAt);
+  vhMaintain(folder, site, props, startedAt);
   const remaining = inputs.filter(needsInput).length + (m.history_rebuild_next != null ? 1 : 0);
   const status = {at: new Date().toISOString(), result: Object.keys(failures.versions).length ? 'partial' : 'ok', history: true,
     message: '履歴を日別に保存・' + changedDays + '日更新', processed, remaining,
@@ -218,21 +218,21 @@ function vhSync(folder, base, props, adapter, startedAt) {
 }
 
 // 元バックアップ・現行の全日原本・移行用控えは対象外。未参照の生成原本だけ7日後に整理。
-function vhMaintain(folder, site, props) {
+// 時間の上限（VP_MAINTAIN_UNTIL_MS）と1回の上限（200件）で止まったら、続きの位置を残して次の回へ回し、最後まで
+// 見たときだけ「整理した」と記録する（2026-11-23、Geminiの点検 M-5①。vpSweep）。
+function vhMaintain(folder, site, props, startedAt = Date.now()) {
   const key = site + 'HistoryCleaned';
   if (Date.now() - Number(props.getProperty(key) || 0) < 6 * 3600000) return;
   try {
     const index = vpUnique(folder, vpManifestName(site)), revision = vpVersion(index);
     const m = vpReadManifest(index, site), active = new Set((m.cloud_days || []).map(d => d.id));
     const pattern = new RegExp('^database-history-day-' + site + '-\\d{4}-\\d{2}-\\d{2}-[a-f0-9]{64}\\.json$');
-    const files = folder.getFiles(), cutoff = Date.now() - 7 * 86400000; let removed = 0;
-    while (files.hasNext() && removed < 200) {
-      const file = files.next();
-      if (!file.isTrashed() && pattern.test(file.getName()) && !active.has(file.getId()) && file.getLastUpdated().getTime() < cutoff) {
-        if (vpVersion(index) !== revision) throw new Error('履歴一覧が更新されました。');
-        file.setTrashed(true); removed++;
-      }
-    }
-    props.setProperty(key, String(Date.now()));
+    const cutoff = Date.now() - 7 * 86400000;
+    const swept = vpSweep(folder, props, site + 'HistoryCleanToken', startedAt + VP_MAINTAIN_UNTIL_MS, file => {
+      if (file.isTrashed() || !pattern.test(file.getName()) || active.has(file.getId()) || file.getLastUpdated().getTime() >= cutoff) return false;
+      if (vpVersion(index) !== revision) throw new Error('履歴一覧が更新されました。');
+      file.setTrashed(true); return true;
+    });
+    if (swept.done) props.setProperty(key, String(Date.now()));
   } catch (error) { console.log('古い日別原本の整理は次回再試行します：' + String(error.message || error)); }
 }

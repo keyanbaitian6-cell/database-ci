@@ -179,7 +179,7 @@ function pscubeCloudRun() {
     if (backupFile && viewerFile && props.getProperty('pscubeCloudInputs') === inputVersion &&
         props.getProperty('pscubeCloudBackup') === backupVersion && props.getProperty('pscubeCloudViewer') === viewerVersion && props.getProperty('pscubeCloudParts') === partsVersion) {
       const failed = Object.values(failures), failedCount = Object.keys(failedVersions).length;
-      if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props);
+      if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props, startedAt);
       const status = {...previous, at: new Date().toISOString(), result: failedCount ? 'unchanged-partial' : 'unchanged',
         message: '変更なし', inputs: inputs.length, failed: failedCount, transient: 0, elapsed_ms: Date.now() - startedAt,
         backup_bytes: backupFile.getSize(), viewer_bytes: viewerFile.getSize()};
@@ -287,7 +287,7 @@ function pscubeCloudRun() {
       incremental = vpPublish(folder, savedViewer, 'pscube', viewer, pscubeCloudWrite, viewerFile ? viewerFile.getId() + ':' + viewerVersion : undefined);
     } else if (writeViewer) savedViewer = pscubeCloudWrite(folder, viewerFile, PSCUBE_CLOUD_VIEWER, viewerText);
     props.setProperty('pscubeCloudParts', PSCUBE_INCREMENTAL_VIEWER ? vpCheckpoint(folder, 'pscube', savedViewer) : 'legacy');
-    if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props);
+    if (PSCUBE_INCREMENTAL_VIEWER) vpMaintain(folder, 'pscube', props, startedAt);
     props.setProperties({pscubeCloudBackup: pscubeCloudVersion(savedBackup), pscubeCloudViewer: pscubeCloudVersion(savedViewer)});
     // 取り込めなかった入力は版ごと記録済みなので、残りが無ければチェックポイントを確定する。未取り込みの入力（次回分・
     // 読み込み中に変わった入力・一時的な障害で読めなかった入力）が残る間は確定しない。

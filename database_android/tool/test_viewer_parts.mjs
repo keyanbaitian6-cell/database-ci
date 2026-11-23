@@ -11,7 +11,11 @@ const plain = x => JSON.parse(JSON.stringify(x));
 const iterator = values => { let i = 0; return {hasNext: () => i < values.length, next: () => values[i++]}; };
 function fixture() {
   const files = [], writes = []; let time = Date.now(), serial = 0;
-  const folder = {getFilesByName: name => iterator(files.filter(f => f.name === name && !f.trashed)), getFiles: () => iterator(files)};
+  // フォルダの一覧は Drive と同じく続きの印（getContinuationToken・DriveApp.continueFileIterator）を持つ（2026-11-23）。
+  const tokens = new Map();
+  const paged = (values, start = 0) => { let i = start; return {hasNext: () => i < values.length, next: () => values[i++],
+    getContinuationToken: () => { const token = 'token-' + (tokens.size + 1); tokens.set(token, {values, i}); return token; }}; };
+  const folder = {getFilesByName: name => iterator(files.filter(f => f.name === name && !f.trashed)), getFiles: () => paged([...files])};
   function add(name, text) {
     const f = {name, text, id: String(++serial), time: ++time, trashed: false,
       getId: () => f.id, getName: () => f.name, getLastUpdated: () => new Date(f.time), getSize: () => Buffer.byteLength(f.text),
@@ -25,7 +29,9 @@ function fixture() {
   };
   const context = vm.createContext({console, Utilities: {DigestAlgorithm: {SHA_256: 'sha256'}, Charset: {UTF_8: 'utf8'},
     computeDigest: (_, text) => [...createHash('sha256').update(text).digest()], newBlob: text => ({getBytes: () => Buffer.from(text)})},
-    DriveApp: {getFilesByName: name => folder.getFilesByName(name), getFileById: id => {
+    DriveApp: {getFilesByName: name => folder.getFilesByName(name),
+      continueFileIterator: token => { const saved = tokens.get(token); if (!saved) throw new Error('invalid token'); return paged(saved.values, saved.i); },
+      getFileById: id => {
       const f = files.find(f => f.id === id); if (!f) throw new Error('not found'); return f;
     }}, ContentService: {MimeType: {JSON: 'json'}, createTextOutput: text => ({text, setMimeType() {return this;}})}});
   vm.runInContext(partsPublisher(), context);
@@ -219,8 +225,53 @@ test('失敗時の旧一覧保持・未使用パーツ再利用・生成物修�
   const old = f.files.find(x => x.name.startsWith('database-viewer-part-') && x !== active);
   old.time = Date.now() - 8 * 86400000;
   const backup = f.add('database-backup-android.json', '{}'); backup.time = old.time;
-  assert.equal(f.context.vpPrune(f.folder, 'meruhen'), 1);
+  assert.equal(f.context.vpPrune(f.folder, 'meruhen').removed, 1);
   assert.equal(old.trashed, true); assert.equal(backup.trashed, false); assert.equal(f.base.trashed, false);
+});
+
+const memoryProps = () => { const map = new Map(); return {map, getProperty: key => map.get(key) ?? null,
+  setProperty: (key, value) => map.set(key, value), deleteProperty: key => map.delete(key)}; };
+
+// 2026-11-23（Geminiの点検 M-5①）：古い生成物の整理は、実行の始まりから決まった時間（VP_MAINTAIN_UNTIL_MS）までで止め、
+// 1回の上限（200件）や時間で止まったら続きの位置を残して、次の回はその続きから見る。最後まで見たときだけ「整理した」と
+// 記録する。以前は時間の上限が無く、ファイルが多いとGoogleの6分で打ち切られ、毎回最初から見直すおそれがあった。
+test('閲覧用の部品の整理は時間の上限と200件で止まり、次の回は続きから見て、見終えたときだけ整理済みにする', () => {
+  const f = fixture(); f.publish([row('2026-10-02')]);
+  const until = vm.runInContext('VP_MAINTAIN_UNTIL_MS', f.context);
+  const old = Array.from({length: 205}, (_, i) => {
+    const x = f.add('database-viewer-part-meruhen-' + hash('old' + i) + '.json', '{}'); x.time = Date.now() - 8 * 86400000; return x;
+  });
+  const props = memoryProps(), trashed = () => old.filter(x => x.trashed).length;
+  f.context.vpMaintain(f.folder, 'meruhen', props, Date.now() - until - 1);
+  assert.equal(trashed(), 0, '時間の上限を過ぎていたら何も消さない');
+  assert.equal(props.getProperty('meruhenViewerPartsCleaned'), null);
+  assert.ok(props.getProperty('meruhenViewerPartsCleanToken'), '続きの位置を残す');
+  f.context.vpMaintain(f.folder, 'meruhen', props, Date.now());
+  assert.equal(trashed(), 200);
+  assert.equal(props.getProperty('meruhenViewerPartsCleaned'), null, '200件で止まったときは整理済みにしない');
+  f.context.vpMaintain(f.folder, 'meruhen', props, Date.now());
+  assert.equal(trashed(), 205, '次の回は続きから見て残りを消す');
+  assert.ok(props.getProperty('meruhenViewerPartsCleaned'));
+  assert.equal(props.getProperty('meruhenViewerPartsCleanToken'), null);
+  assert.equal(f.base.trashed, false);
+});
+
+test('日別原本の整理も時間の上限で止まり、続きから見る（古くなった続きの印は最初から見直す）', () => {
+  const f = fixture(); f.publish([row('2026-10-02')]);
+  const until = vm.runInContext('VP_MAINTAIN_UNTIL_MS', f.context);
+  const old = Array.from({length: 3}, (_, i) => {
+    const x = f.add('database-history-day-meruhen-2026-09-0' + (i + 1) + '-' + hash('day' + i) + '.json', '{}');
+    x.time = Date.now() - 8 * 86400000; return x;
+  });
+  const props = memoryProps();
+  f.context.vhMaintain(f.folder, 'meruhen', props, Date.now() - until - 1);
+  assert.equal(old.filter(x => x.trashed).length, 0);
+  assert.equal(props.getProperty('meruhenHistoryCleaned'), null);
+  props.setProperty('meruhenHistoryCleanToken', 'expired');
+  f.context.vhMaintain(f.folder, 'meruhen', props, Date.now());
+  assert.equal(old.filter(x => x.trashed).length, 3);
+  assert.ok(props.getProperty('meruhenHistoryCleaned'));
+  assert.equal(props.getProperty('meruhenHistoryCleanToken'), null);
 });
 
 // 2026-11-17：途中で通信に失敗しても、次の読み込みは読み終えた部品の続きから読む（共有カレンダーでP-STATIONが出なかった件）。

@@ -4568,3 +4568,14 @@
   - 閲覧用スクリプト：部品の作り直し前に見出しだけのファイルを渡さず、「作り直しているところ」で止める（台0件に見えないように）。
   - 入れる順番：先にスクリプト2本を貼り替え、そのあと PC を `start.cmd` で起動し直す。履歴方式が前提。
   - 見積もり：作る1〜2時間・全体ゲート15〜20分・貼り替えと起動し直し・Google の反映30分〜1時間。push は他の作業とまとめてよい（入れるのに push は要らない）。
+
+## 2026-11-23 夜 Claude：K2 Google の整理に時間の上限を付けた（Gemini の点検 M-5①）
+
+- 利用者「K2を進めて」。基準 `2023b18` の上の手元の main。
+- **原因**：古い生成物の整理（`vpMaintain`→`vpPrune`：閲覧用の部品、`vhMaintain`：日別原本）は、同期の本体のあとでフォルダの全ファイルを1つずつ見て回り、時間の上限が無かった。消すのは1回200件まで、最後に「整理した」（`<site>ViewerPartsCleaned`・`<site>HistoryCleaned`）を記録。ファイルが多いと Google の1回6分で打ち切られ、状態の保存（`adapter.save`）の前に止まり、「整理した」も残らないので、毎回最初から見直して止まるおそれがあった。
+- **直し**（`tool/viewer_parts_publish.js`・`tool/viewer_history_cloud.js`・`tool/pscube_cloud_sync_runtime.js`・`tool/meruhen_cloud_sync.gs` の手書きの部分、`tool/build_viewer_parts.mjs` で `meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs` を作り直し）：
+  - 新しい `vpSweep`：実行の始まりから4分（`VP_MAINTAIN_UNTIL_MS = 240000`。6分の上限に2分残す）を過ぎるか、1回の上限（200件）に届いたら、Drive の続きの印（`getContinuationToken`）を `<site>ViewerPartsCleanToken`・`<site>HistoryCleanToken` に残して止め、次の回（30分後）は `DriveApp.continueFileIterator` で続きから見る。古くなった印（約1週間）は最初から見直す。**最後まで見たときだけ「整理した」と記録**する（200件で止まったときも記録しない。以前は200件で止まっても記録し、残りは6時間後に最初から）。
+  - `vpMaintain`・`vhMaintain` は `startedAt`（同期の実行の始まり）を受け取る。呼び出し4か所（履歴方式の `vhSync`、P’s CUBE・メルヘンの旧方式）で渡す。
+  - 消す対象（7日より古く、今の一覧に無い生成物だけ）・6時間ごとの間隔は変えていない。閲覧用スクリプト `viewer_drive_script*.gs` は変わらない（整理の処理を含まない）。
+- **試験**：`tool/test_viewer_parts.mjs` に2件（部品の整理が時間の上限・200件で止まって続きから見て、見終えたときだけ整理済みになる／日別原本の整理も時間で止まり、古い印なら最初から見る）。偽の Drive に続きの印を足した。直す前の版（`viewer_parts_publish.js`・`viewer_history_cloud.js` を HEAD に戻して流した）では新しい2件と、戻り値を変えた既存の1件の計3件が失敗。直したあと：`test_viewer_parts` 18・`test_meruhen_cloud_sync` 39・`test_pscube_cloud_sync` 49・`test_viewer_drive_script` 17・`test_pscube_data` 18・`test_viewer_history_performance` 2・`test_pscube_sync` 16、すべて通過。全体ゲートは、3つの作業をまとめて送る前に流す（まだ）。
+- **まだのこと**：Google の同期スクリプト2本（`meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs`）の貼り替え（利用者の作業。店ごとに分ける作業でも同じ2本を貼り替えるので、まとめて1回にできる）。push は3つの作業がそろってから。
