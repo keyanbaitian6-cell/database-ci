@@ -218,6 +218,11 @@ function meruhenCloudRun() {
         !Array.isArray(viewer.records) || !viewer.records.every(meruhenValidRecord)) {
       throw new MeruhenCloudStop('viewer', MERUHEN_CLOUD_VIEWER + ' がPC版の閲覧用ファイルの形ではありません。書き換えずに止めました。');
     }
+    // PCが店ごとに分けて書き出した見出しだけのファイル（2026-11-23）は、台を持たない。この古い方式で足し込むと
+    // 閲覧用の台が0件になるので、書き換えずに止める。分けた書き出しは履歴方式だけが読む。
+    if (Array.isArray(viewer.split_stores)) {
+      throw new MeruhenCloudStop('config', 'PCが閲覧用を店ごとに分けて書き出しています。MERUHEN_HISTORY_VIEWER を true（履歴方式）にしてください。書き換えずに止めました。');
+    }
     const merged = meruhenApply(viewer, [...records.values()]);
     // 期間（60日）より古いAndroidの記録は貯めない。
     for (const [key, r] of records) if (r.day < merged.cutoff) { records.delete(key); storeChanged = true; }
@@ -1340,6 +1345,10 @@ function vhNotDeleted(row, deletions) {
   const mark = deletions.get(meruhenKey(row));
   return !mark || Math.max(meruhenTime(row.record_updated_at) || 0, meruhenTime(row.captured_at) || 0) > meruhenTime(mark.deleted_at);
 }
+function vhSortPc(rows) {
+  return rows.map((r, i) => [r, i]).sort(([a, i], [b, j]) =>
+    a.store < b.store ? -1 : a.store > b.store ? 1 : a.rack - b.rack || i - j).map(([r]) => r);
+}
 function vhMergeMeruhen(old, fresh, kind) {
   const marks = new Map(vhDeletions(old).map(m => [meruhenKey(m), m]));
   for (const m of vhDeletions(fresh)) {
@@ -1354,7 +1363,13 @@ function vhMergeMeruhen(old, fresh, kind) {
   // PCの閲覧用入力に記録が1件も無い日（削除印・イベントだけの日。60日より前の削除印の日など）は、
   // その日の記録を出していないだけ。置き換えると、残っているPCの記録が消える（2026-10-17、8/1〜8/17だけの
   // 入力で9/14〜9/20などの30日が消えた）。残した記録にも削除印を当てるので、本当に消した台は消える。
-  const pc = kind === 'pc' && fresh.records.length ? fresh.records : old.pc;
+  // 店ごとのファイル（stores あり。2026-11-23 利用者「店ごとに分ける」）は、その店のPCの台だけを入れ替え、
+  // ほかの店の台は残す。並びは分ける前の1ファイル（PC の ORDER BY day,store,rack）と同じ店→台番の順にそろえ、
+  // 同じ中身なら日別原本を書き直さない（読む順で並びが変わると、毎回全日を書き直してしまう）。
+  const stores = Array.isArray(fresh.stores) ? new Set(fresh.stores) : null;
+  const pc = kind === 'pc' && fresh.records.length
+    ? (stores ? vhSortPc([...old.pc.filter(r => !stores.has(r.store)), ...fresh.records]) : fresh.records)
+    : old.pc;
   return {...old, record_deletions: [...marks.values()],
     pc: pc.filter(r => vhNotDeleted(r, marks)),
     android: [...android.values()].filter(r => vhNotDeleted(r, marks))};
@@ -1379,7 +1394,9 @@ function vhMeruhen(folder, base, props, startedAt) {
     header: () => ({format: 'database-backup', version: 1, source: 'pc-viewer', exported_at: new Date().toISOString()}),
     inputs: () => {
       const legacy = meruhenUniqueFile(folder, MERUHEN_CLOUD_STORE);
-      return [vhInput(base, 'pc'), ...(legacy ? [vhInput(legacy, 'legacy')] : []),
+      // PCの店ごとの閲覧用（2026-11-23）。見出しの base より後に読む。無ければ（分ける前のPC）今までどおり base だけ。
+      const stores = MERUHEN_STORES.map(s => meruhenUniqueFile(folder, 'database-viewer-' + s + '.json')).filter(Boolean);
+      return [vhInput(base, 'pc'), ...stores.map(f => vhInput(f, 'pc')), ...(legacy ? [vhInput(legacy, 'legacy')] : []),
         ...meruhenListInputs([folder, DriveApp.getRootFolder()]).map(i => vhInput(i.file, 'android'))];
     },
     read: input => {
@@ -1391,6 +1408,15 @@ function vhMeruhen(folder, base, props, startedAt) {
       const doc = JSON.parse(text.replace(/^\uFEFF/, ''));
       if (doc.format !== 'database-backup' || doc.version !== 1 || doc.source !== 'pc-viewer' ||
           !Array.isArray(doc.records) || !doc.records.every(meruhenValidRecord)) throw new Error('PC閲覧用の形式が不正です。');
+      // 店ごとのファイルは、書いてある店の台・削除の印だけ。見出しのファイル（split_stores）は台を持たない。
+      const inStores = list => !Array.isArray(doc.stores) || list.every(x => doc.stores.includes(x.store));
+      if (doc.stores !== undefined && (!Array.isArray(doc.stores) || !doc.stores.length ||
+          !doc.stores.every(s => MERUHEN_STORES.includes(s)) || !inStores(doc.records) || !inStores(vhDeletions(doc)))) {
+        throw new Error('PCの店ごとの閲覧用の形式が不正です。');
+      }
+      if (doc.split_stores !== undefined && (!Array.isArray(doc.split_stores) || doc.records.length)) {
+        throw new Error('PCの閲覧用の見出しの形式が不正です。');
+      }
       vhDeletions(doc); return doc;
     },
     group: doc => vhGroup(doc, 'meruhen'),

@@ -142,6 +142,21 @@ test('今までの閲覧用ファイルの読み出しは残り、許可して�
   assert.match(JSON.stringify(d.get('nothing')), /指定できない/);
 });
 
+// 2026-11-23（利用者「店ごとに分ける」）：PCが閲覧用を店ごとのファイルと見出しだけの database-viewer.json に分けた。
+// 部品ができる前に見出しだけを丸ごと渡すと台が0件に見えるので、部品の作り直しを待つよう返す（共有カレンダー用の読むだけの版も同じ）。
+test('見出しだけの閲覧用ファイル（店ごとに分けた書き出し）は丸ごと渡さず、部品の作り直しを待つよう返す', async () => {
+  const readonly = await fs.readFile(new URL('./viewer_drive_script_readonly.gs', import.meta.url), 'utf8');
+  for (const code of [source, readonly]) {
+    const d = drive({}, code);
+    const base = d.files.find(f => f.name === 'database-viewer.json');
+    base.text = JSON.stringify({format: 'database-backup', version: 1, exported_at: '2026-11-23T20:00:00+09:00', source: 'pc-viewer',
+      days: 60, split_stores: ['nagamachiminami', 'saiwaichou'], date_events: [], records: []});
+    assert.match(d.get('').error, /作り直しているところ/);
+    base.text = JSON.stringify({format: 'database-backup', version: 1, source: 'pc-viewer', records: [{rack: 1}]});
+    assert.deepEqual(d.get('').records, [{rack: 1}], '分けていない書き出しは今までどおり丸ごと渡す');
+  }
+});
+
 // 確定が出た台の印🌈（2026-10-11、RAINBOW.md「iPhoneから付ける」）：閲覧ページで付け外しした🌈を足し込む。
 const mark = (rack, on, at, extra = {}) => ({store: 'saiwaichou', day: '2026-10-10', rack, on, updated_at: at, ...extra});
 

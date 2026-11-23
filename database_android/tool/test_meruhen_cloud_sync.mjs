@@ -723,3 +723,69 @@ test('メルヘン履歴：PCの書き出しが新しくなっても、部品を
   const fresh = plain(d.context.vpGet(base, 'meruhen', {check: '1'}));
   assert.ok(fresh && fresh.parts, '作り直したあとは新しい一覧');
 });
+
+// 2026-11-23（利用者「店ごとに分ける」）：PCの閲覧用の書き出しが両店60日の1ファイルで約49.6MB（Googleが読める48MiBの
+// 手前）になり、店ごとのファイル（その店の台と削除の印、stores）と見出しだけの database-viewer.json（split_stores）に分けた。
+const pcHeader = () => ({...viewer([]), split_stores: ['nagamachiminami', 'saiwaichou']});
+const pcStore = (store, records, patch = {}) => { const {date_events, ...rest} = viewer(records); return {...rest, stores: [store], ...patch}; };
+const naga = (rack, patch = {}) => record(rack, '2026-10-02', {store: 'nagamachiminami', ...patch});
+
+test('店ごとに分けた書き出し：分ける前と同じ中身なら日別原本を書き直さず、店のファイルはその店の台だけ入れ替える', () => {
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0], get = () => plain(d.context.vpGet(base, 'meruhen', {})).records;
+  d.replace(base, viewer([naga(101), record(537), record(538)])); d.sync();
+  const before = d.doc('database-viewer-parts-meruhen.json').cloud_days.map(x => [x.day, x.hash]);
+  d.replace(base, pcHeader());
+  const saiwai = d.add('database-viewer-saiwaichou.json', pcStore('saiwaichou', [record(537), record(538)]));
+  d.add('database-viewer-nagamachiminami.json', pcStore('nagamachiminami', [naga(101)]));
+  d.sync();
+  assert.deepEqual(d.doc('database-viewer-parts-meruhen.json').cloud_days.map(x => [x.day, x.hash]), before,
+    '分ける前と同じ中身なら、日別原本の並びも同じで書き直さない');
+  assert.deepEqual(get().map(r => r.store + ':' + r.rack).sort(), ['nagamachiminami:101', 'saiwaichou:537', 'saiwaichou:538']);
+  d.replace(saiwai, pcStore('saiwaichou', [record(537, '2026-10-02', {games: 999})])); d.sync();
+  const rows = get();
+  assert.deepEqual(rows.map(r => r.store + ':' + r.rack).sort(), ['nagamachiminami:101', 'saiwaichou:537'],
+    '幸町のファイルを読んでも長町南の台は残り、幸町で無くなった台は消える');
+  assert.equal(rows.find(r => r.rack === 537).games, 999);
+  assert.equal(d.status().result, 'ok');
+});
+
+test('店ごとの書き出し：削除の印はその店の台に効き、見出しのイベントは残る', () => {
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0], get = () => plain(d.context.vpGet(base, 'meruhen', {}));
+  const event = {store: 'saiwaichou', day: '2026-10-02', name: '試験の日', updated_at: '2026-10-01T12:00:00+09:00'};
+  d.replace(base, {...pcHeader(), date_events: [event]});
+  d.add('database-viewer-saiwaichou.json', pcStore('saiwaichou', [record(537), record(538)]));
+  d.add('database-viewer-nagamachiminami.json', pcStore('nagamachiminami', [naga(538)]));
+  d.sync();
+  const mark = {store: 'saiwaichou', machine: '試験 機種', rack: 538, day: '2026-10-02', deleted_at: '2026-10-15T12:00:00+09:00'};
+  d.replace(d.files.find(f => f.name === 'database-viewer-saiwaichou.json'),
+    pcStore('saiwaichou', [record(537), record(538)], {record_deletions: [mark]}));
+  d.sync();
+  assert.deepEqual(get().records.map(r => r.store + ':' + r.rack).sort(), ['nagamachiminami:538', 'saiwaichou:537'],
+    '幸町の538番の削除は、長町南の538番に効かない');
+  assert.deepEqual(get().date_events.map(e => e.name), ['試験の日']);
+});
+
+test('店ごとの書き出し：ほかの店の台が入った店のファイルは取り込まず、記録を保持する', () => {
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0], get = () => plain(d.context.vpGet(base, 'meruhen', {})).records;
+  d.replace(base, viewer([naga(101), record(537)])); d.sync();
+  d.replace(base, pcHeader());
+  d.add('database-viewer-saiwaichou.json', pcStore('saiwaichou', [record(537), naga(102)]));
+  assert.throws(() => d.sync(), /店ごとの閲覧用の形式が不正/);
+  assert.deepEqual(get().map(r => r.store + ':' + r.rack).sort(), ['nagamachiminami:101', 'saiwaichou:537']);
+  d.replace(base, {...pcHeader(), records: [naga(103)]});
+  assert.throws(() => d.sync(), /見出しの形式が不正/, '見出しのファイルに台があれば取り込まない');
+  assert.deepEqual(get().map(r => r.store + ':' + r.rack).sort(), ['nagamachiminami:101', 'saiwaichou:537']);
+});
+
+test('店ごとの書き出し：履歴方式でない古い方式は、見出しだけのファイルで閲覧用を0件にせず止まる', () => {
+  const d = drive(); d.setup();
+  const before = d.files[0].text;
+  d.replace(d.files[0], pcHeader());
+  const text = d.files[0].text;
+  assert.throws(() => d.sync(), /MERUHEN_HISTORY_VIEWER/);
+  assert.equal(d.files[0].text, text, '書き換えない');
+  assert.notEqual(before, text);
+});

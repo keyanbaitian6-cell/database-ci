@@ -100,7 +100,14 @@ function doGet(e) {
       name: fileName,
     }));
   }
-  return respond(latest.getBlob().getDataAsString('UTF-8'));
+  const text = latest.getBlob().getDataAsString('UTF-8');
+  // PCが店ごとに分けて書き出した見出しだけのファイル（2026-11-23 利用者「店ごとに分ける」）は台を持たない。
+  // 部品ができる前にそのまま渡すと台が0件に見えるので、部品の作り直しを待つよう返す（閲覧ページ・共有カレンダーは
+  // この文を出して止め、端末に保存した記録はそのまま使う）。台は Google が店ごとのファイルから日別の部品に作る。
+  if (key === '' && /"split_stores"\s*:/.test(text.slice(0, 4096))) {
+    return respond(JSON.stringify({error: 'Google側で閲覧用の日別の部品を作り直しているところです（PCの書き出しの直後）。少し待ってから更新してください。'}));
+  }
+  return respond(text);
 }
 
 // 閲覧ページからのイベントの書き込み：{file: 'events'|'pscube-events', events: [...]}。

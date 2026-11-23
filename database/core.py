@@ -91,6 +91,12 @@ STORE_NAMES = {
     'nagamachiminami': 'メルヘンワールド長町南店',
     'saiwaichou': 'スーパーメルヘンワールド幸町',
 }
+# 同期フォルダへの閲覧用の書き出しは、店ごとのファイル（その店の台と削除の印）と、見出しだけの VIEWER_FILE_NAME
+# （イベント・当時の翌日候補・日ごとの「何台中何台プラス」・分けた店の一覧）に分ける（2026-11-23 利用者「店ごとに
+# 分ける」）。Googleの同期は PC の閲覧用の入力を1ファイル48MiBまでしか読めず、両店60日の1ファイルが約49.6MB
+# （上限まで約0.69MB）になったため。Googleの同期スクリプトは、店のファイルを読むとき、その店の台だけを入れ替える。
+VIEWER_STORE_FILE_NAMES = {shop: f'database-viewer-{shop}.json' for shop in STORE_NAMES}
+VIEWER_GOOGLE_LIMIT = 48 * 1024 * 1024
 CONFIRMED_SETTING_OPTIONS = ('4以上', '5以上', '6')
 DATE_EVENT_OPTIONS = ('超探す楽しみ', '半列', '4台構成', 'バラエティ', '華の日')
 INITIAL_DATE_EVENTS = [
@@ -1399,7 +1405,7 @@ def saved_answer_candidates(store, first_day):
     return saved
 
 
-def export_viewer(store, path, days=VIEWER_DAYS):
+def export_viewer(store, path, days=VIEWER_DAYS, only_store=None, split_stores=None):
     """Write the light file the iPhone viewer reads: the latest ``days`` days
     (counted from the newest saved day), without graph images. The graph
     curve (the site's SVG line, about a sixth of the image's size) is kept so
@@ -1407,6 +1413,10 @@ def export_viewer(store, path, days=VIEWER_DAYS):
 
     Same one-record-per-line layout as a backup, so the viewer and
     ``read_backup_file`` read it the same way. Returns the number of racks.
+
+    ``only_store``: その店の台と削除の印だけを書き、``stores`` に店を入れる（同期フォルダの店ごとのファイル）。
+    イベント・答え合わせ・日ごとのまとめは入れない（見出しのファイルに入れる）。
+    ``split_stores``: 台を入れず、見出し（イベント・答え合わせ・日ごとのまとめ）と分けた店の一覧だけを書く。
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1422,21 +1432,29 @@ def export_viewer(store, path, days=VIEWER_DAYS):
     summaries = html_day_summary.load_days(Path(store.path).parent / html_day_summary.SUMMARY_NAME)
     # 当時の翌日候補（答え合わせ用、saved_answer_candidates）。前の日の候補で照らすので1日前から。
     answers = saved_answer_candidates(store, (date.fromisoformat(cutoff) - timedelta(days=1)).isoformat()) if cutoff else {}
-    header = json.dumps(dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
-                             exported_at=datetime.now().astimezone().isoformat(),
-                             source='pc-viewer', days=days, date_events=date_events,
-                             record_deletions=store.record_deletions(),
-                             **({'day_summaries': summaries} if summaries else {}),
-                             **({'answer_candidates': answers} if answers else {})), ensure_ascii=False)[:-1]
+    base = dict(format=BACKUP_FORMAT, version=BACKUP_VERSION,
+                exported_at=datetime.now().astimezone().isoformat(), source='pc-viewer', days=days)
+    if only_store:
+        fields = dict(base, stores=[only_store], record_deletions=store.record_deletions(only_store))
+    elif split_stores:
+        fields = dict(base, split_stores=list(split_stores), date_events=date_events,
+                      **({'day_summaries': summaries} if summaries else {}),
+                      **({'answer_candidates': answers} if answers else {}))
+    else:
+        fields = dict(base, date_events=date_events, record_deletions=store.record_deletions(),
+                      **({'day_summaries': summaries} if summaries else {}),
+                      **({'answer_candidates': answers} if answers else {}))
+    header = json.dumps(fields, ensure_ascii=False)[:-1]
     # 未取り込み日の🌈（pending_rainbow_marks）は入れない。閲覧ページは rainbow_marks を端末の印として表示・送信し、
     # 旧形式の同期GSは見出しをそのまま渡すため、取り込み前にWebへ出てしまう。Webへは数値の取り込み後（RAINBOW.md）。
     count = 0
     with atomic_writer(path) as out:
         out.write(f'{header}, "records": [')
-        if latest:
+        if latest and not split_stores:
             cutoff = (date.fromisoformat(latest) - timedelta(days=days - 1)).isoformat()
             for (row_store, row_machine, payload) in store.db.execute(
-                    'SELECT store, machine, payload FROM days WHERE day >= ? ORDER BY day,store,rack', (cutoff,)):
+                    'SELECT store, machine, payload FROM days WHERE day >= ? AND (? IS NULL OR store = ?) '
+                    'ORDER BY day,store,rack', (cutoff, only_store, only_store)):
                 if is_hidden_machine(row_store, row_machine):
                     continue  # 対象外の機種（稼働停止の台など）は閲覧用にも出さない
                 # 閲覧ページが使う項目だけ（台ページのURL・取り込み元などは省く）。
@@ -2103,9 +2121,21 @@ def _auto_backup(store, data_dir, *, strict, notices, import_shared, status):
         status.step = '閲覧用ファイルの共有フォルダへの書き出し'
         # 閲覧ページ用の軽いファイル。ローカルで書いてから同期フォルダへ複製する
         # （書きかけのファイルがDriveへ上がらないように）。
+        # 店ごとのファイルを先に、見出しのファイルを最後に書く（Googleは見出しのファイルが変わったことで、
+        # 新しい書き出しが届いたと知る）。
+        too_big = []
+        for shop, name in VIEWER_STORE_FILE_NAMES.items():
+            local = Path(data_dir) / name
+            export_viewer(store, local, only_store=shop)
+            if local.stat().st_size > VIEWER_GOOGLE_LIMIT:
+                too_big.append(f'{STORE_NAMES[shop]}（{local.stat().st_size / 1048576:.1f}MiB）')
+            atomic_copy(local, Path(folder) / name)
         local = Path(data_dir) / VIEWER_FILE_NAME
-        export_viewer(store, local)
+        export_viewer(store, local, split_stores=list(VIEWER_STORE_FILE_NAMES))
         atomic_copy(local, Path(folder) / VIEWER_FILE_NAME)
+        if too_big:
+            # Googleはこの店の分を読めず、閲覧ページのその店の更新が止まる。書き出し自体は続ける。
+            status.problems.append('閲覧用の書き出しが48MiBを超えました（Googleが読めません）：' + '、'.join(too_big))
         status.done('viewer')
     except (OSError, ValueError) as error:
         status.problems.append(f'{status.step}：{error}')
@@ -2807,7 +2837,7 @@ def _backup_candidates(folder):
                           'database-viewer-part-', 'database-viewer-parts-')
     candidates = [p for p in Path(folder).glob('*.json')
                   if p.name not in (AUTO_BACKUP_NAME, RECENT_BACKUP_NAME, VIEWER_FILE_NAME, 'database-android-cloud.json',
-                                    SHARED_RAINBOW_NAME, SHARED_EVENTS_NAME)
+                                    SHARED_RAINBOW_NAME, SHARED_EVENTS_NAME, *VIEWER_STORE_FILE_NAMES.values())
                   and not p.name.startswith(generated_prefixes)]
     found = []
     for path in candidates:

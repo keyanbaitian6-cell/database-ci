@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backup_status import BackupStatus, read_status, status_text
-from core import Store, auto_backup, save_settings, VIEWER_FILE_NAME
+from core import Store, auto_backup, save_settings, VIEWER_FILE_NAME, VIEWER_STORE_FILE_NAMES
 
 
 class BackupOutputStatusTests(unittest.TestCase):
@@ -71,7 +71,9 @@ class BackupOutputStatusTests(unittest.TestCase):
             self.assertFalse(missing.exists(), '未接続の同期先を勝手に作らない')
             missing.mkdir()
             auto_backup(store, self.data, strict=True)
-            records = json.loads((missing / VIEWER_FILE_NAME).read_text(encoding='utf-8'))['records']
+            # 閲覧用は店ごとのファイルに台がある（2026-11-23。見出しの VIEWER_FILE_NAME には台を入れない）。
+            records = [r for name in VIEWER_STORE_FILE_NAMES.values()
+                       for r in json.loads((missing / name).read_text(encoding='utf-8'))['records']]
             self.assertEqual({r['store'] for r in records}, {'saiwaichou', 'nagamachiminami'})
             self.assertEqual(read_status(self.data, 'meruhen')['state'], 'success')
 

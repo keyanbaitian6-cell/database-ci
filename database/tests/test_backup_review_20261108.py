@@ -17,7 +17,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backup_status import issue_ticket, output_lock, read_status  # noqa: E402
-from core import (AUTO_BACKUP_NAME, RECENT_BACKUP_NAME, RESCUE_BACKUP_NAME, VIEWER_FILE_NAME,  # noqa: E402
+from core import (AUTO_BACKUP_NAME, RECENT_BACKUP_NAME, RESCUE_BACKUP_NAME, VIEWER_FILE_NAME, VIEWER_STORE_FILE_NAMES,  # noqa: E402
                   Store, auto_backup, import_backup, save_settings, snapshot_backup, snapshot_dir,
                   snapshot_store)
 
@@ -56,11 +56,13 @@ class StaleSnapshotTests(ReviewCase):
             self.db.save([row(538)])
             with snapshot_store(self.db_path, order=order) as newer:
                 auto_backup(newer, self.data, strict=True)
+            # 閲覧用は見出しの VIEWER_FILE_NAME と店ごとのファイル（2026-11-23）。台は幸町のファイルにある。
             written = {name: (self.sync / name).read_bytes()
-                       for name in (AUTO_BACKUP_NAME, RECENT_BACKUP_NAME, VIEWER_FILE_NAME)}
+                       for name in (AUTO_BACKUP_NAME, RECENT_BACKUP_NAME, VIEWER_FILE_NAME, *VIEWER_STORE_FILE_NAMES.values())}
             auto_backup(older, self.data, strict=True)   # 書き終わりの順が入れ替わった
         for name, before in written.items():
             self.assertEqual((self.sync / name).read_bytes(), before, name)
+        for name in (AUTO_BACKUP_NAME, RECENT_BACKUP_NAME, VIEWER_STORE_FILE_NAMES['saiwaichou']):
             self.assertEqual(len(records_in(self.sync / name)), 2, name)
         self.assertEqual(read_status(self.data, 'meruhen')['state'], 'success')
 

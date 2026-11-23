@@ -1841,7 +1841,7 @@ class RobustnessTests(unittest.TestCase):
         self.assertIn('error', json.loads(bridge._checked(json.dumps(dict(valid, rack=508)))))
 
     def test_viewer_file_is_light_recent_and_written_to_the_sync_folder(self):
-        from core import VIEWER_FILE_NAME, export_viewer, read_backup_file
+        from core import VIEWER_FILE_NAME, VIEWER_STORE_FILE_NAMES, export_viewer, read_backup_file
         with tempfile.TemporaryDirectory(dir=Path(__file__).parents[1]) as folder:
             data_dir, sync = Path(folder) / 'data', Path(folder) / 'sync'
             data_dir.mkdir(); sync.mkdir()
@@ -1853,15 +1853,17 @@ class RobustnessTests(unittest.TestCase):
                      dict(row('2026-10-02', 2)),   # 60日目：入る
                      dict(row('2026-10-01', 3))])  # 61日前：入らない
             auto_backup(db, data_dir)
-            records, _ = read_backup_file(sync / VIEWER_FILE_NAME, allow_viewer=True)
+            # 台は店ごとのファイルにある（2026-11-23）。row() は長町南の台。
+            records, _ = read_backup_file(sync / VIEWER_STORE_FILE_NAMES['nagamachiminami'], allow_viewer=True)
             self.assertEqual(sorted(r['rack'] for r in records), [1, 2])
             g = next(r for r in records if r['rack'] == 1)['graph_measurement']
             self.assertNotIn('preview_image', g)
             self.assertEqual(g['curve'], [[1, 2]])  # 線は閲覧ページで描くので残す
             self.assertEqual(g['end_y'], 180)
             self.assertEqual(export_viewer(db, Path(folder) / 'v.json', days=1), 1)
-            with self.assertRaises(ValueError):  # 閲覧用ファイルはバックアップとして取り込まない
-                import_backup(db, sync / VIEWER_FILE_NAME)
+            for name in (VIEWER_FILE_NAME, *VIEWER_STORE_FILE_NAMES.values()):
+                with self.assertRaises(ValueError):  # 閲覧用ファイルはバックアップとして取り込まない
+                    import_backup(db, sync / name)
             db.close()
 
     def test_automatic_backup_runs_once_after_the_browser_closes(self):

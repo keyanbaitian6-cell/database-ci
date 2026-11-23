@@ -4632,3 +4632,32 @@
 - 利用者がpushを承認。依頼時の `4fcd91e` に固定した専用作業コピーで、合成の種データを使って `bash database_android/tool/check_before_build.sh` が `ALL PASSED`。PC全1,153件、UTCカレンダー試験、Flutter全895件・静的解析、閲覧ページの試験用ビルド、閲覧・共有のステージ、JavaScript全97ファイルが成功した。
 - 11/23の送信先は `keyanbaitian6-cell/database-ci` の `main`。`tools/push_ci.py` が並行作業で先に送られた後続コミットを検出して送信を止めた。GitHubの `main` は `a3c81cb` で、祖先に `4fcd91e` が含まれることを確認した。後続2件は共有記録のみ。重複pushは発生していない。
 - CIは確認時点で実行中。Web公開・Googleスクリプト貼り替え・APK作成はこの依頼の対象外。 [GitHub Actions 実行結果](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45158839302)
+
+## 2026-11-23 夜 Claude：メルヘンの PC の閲覧用の書き出しを店ごとに分けた（K1。ソースのみ・未push・貼り替え前）
+
+- 依頼：利用者「店ごとに分ける」「他のチームの作業終わったらやろうか」（設計は上の「K1（48MiB）の調べ直し」の節）。Codex の `a3c81cb` の送信（run 45158839302、full・Ubuntu・Windows とも success）のあとに着手。基準 `ebbdac1`。
+- **完了の条件**：①店ごとに分けても Google 側の日ごとの台が両店とも消えない ②閲覧ページ・共有カレンダーの日数・値が今と同じ（分ける前と同じ中身なら日別原本を書き直さない）③削除の印・イベント・答え合わせが今までどおり届く ④部品の作り直しの途中に台が0件に見えない ⑤分けていない古い形も読める ⑥1ファイルが48MiBを超えない ⑦全体ゲート ALL PASSED。
+- **変更**
+  - PC `database/core.py`：`VIEWER_STORE_FILE_NAMES`（`database-viewer-saiwaichou.json`・`database-viewer-nagamachiminami.json`）。`export_viewer(..., only_store=)` はその店の台とその店の削除の印だけ（`stores: [店]`）、`split_stores=` は台を入れず見出し（イベント・当時の翌日候補・日ごとのまとめ・`split_stores`）だけ。同期フォルダへは店のファイル2つを先に、見出しの `database-viewer.json` を最後に書く。店のファイルが48MiBを超えたら「閲覧用の書き出しが48MiBを超えました（Googleが読めません）：店名（〇MiB）」をバックアップの状態に出す（書き出しは続ける）。同期フォルダからバックアップを探す `_backup_candidates` は店のファイルを除く（除かないとPCがバックアップと間違えて取り込もうとする）。60日はそのまま。
+  - Google の同期（`tool/viewer_history_adapters.js` → `meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs` を再生成）：`vhMeruhen` は店のファイルも PC の入力として読む（見出しの後）。`vhMergeMeruhen` は `stores` のある入力では、その日の PC の台のうち**その店の台だけを入れ替え**、ほかの店の台は残す。並びは分ける前の1ファイル（PC の `ORDER BY day,store,rack`）と同じ店→台番の順にそろえる（そろえないと読む順で並びが変わり、毎回全日の原本を書き直す）。店のファイルにほかの店の台・削除の印、見出しのファイルに台があれば取り込まない。
+  - 履歴方式でない古い方式（`meruhen_cloud_sync.gs` の手書きの部分）：見出しだけのファイルを読んだら、閲覧用を0件にせず「MERUHEN_HISTORY_VIEWER を true（履歴方式）にしてください」で止める。
+  - 閲覧用スクリプト `viewer_drive_script.gs`・`viewer_drive_script_readonly.gs`（手書きの部分）：部品が無いときに見出しだけのファイル（`split_stores`）を丸ごと渡さず、C6 と同じ「Google側で閲覧用の日別の部品を作り直しているところです…」を返す。閲覧ページはこの文を出し、共有カレンダーは「更新失敗・保存済みデータ」で保存した表示を使う。
+- **実データでの大きさ**（保存済みの `database.sqlite3` の複製から書き出して測っただけ。複製は消した）：幸町 31,154,220バイト（32,368件、上限まで約19MB）、長町南 18,298,650バイト（21,438件）、見出し 194,115バイト。分ける前の1ファイルは 49,646,564バイト（53,806件）。
+- **確認の表**
+
+| 要件 | 結果 | 証拠 |
+| --- | --- | --- |
+| ① 片方の店のファイルを読んでも、もう片方の店の台が残る | 済 | `test_meruhen_cloud_sync.mjs`「店ごとに分けた書き出し：…その店の台だけ入れ替える」（修正前に失敗） |
+| ② 分ける前と同じ中身なら日別原本を書き直さない | 済 | 同じ試験で、分ける前と後の `cloud_days` の日と hash が一致 |
+| ③ 削除の印はその店の台だけに効き、見出しのイベントは残る | 済 | 「削除の印はその店の台に効き、見出しのイベントは残る」（修正前に失敗） |
+| ④ 作り直しの途中に見出しだけを渡さない | 済 | `test_viewer_drive_script.mjs`「見出しだけの閲覧用ファイル…」（両スクリプト、修正前に失敗） |
+| ⑤ 分けていない古い形を今までどおり読む | 済 | 既存の `test_meruhen_cloud_sync` 39件・`test_viewer_drive_script` 17件がそのまま通過 |
+| 不正な店のファイル・台のある見出しは取り込まない／古い方式は止まる | 済 | 「ほかの店の台が入った店のファイルは取り込まず…」「履歴方式でない古い方式は…止まる」（修正前に失敗） |
+| PC：店ごとのファイル・見出し・削除の印の振り分け・48MiBの知らせ・バックアップと間違えない | 済 | 新規 `database/tests/test_viewer_split_export.py` 4件（修正前は読み込みで失敗）。同期フォルダの台を読んでいた既存の3試験（`test_backup_output_status`・`test_backup_review_20261108`・`test_database`）を店のファイルを読む形に直した |
+| ⑥ 1ファイル48MiB以下 | 済（実データ） | 上の大きさ |
+| PC 全試験 | 済 | `TZ=JST-9 database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,157件 OK（457.8秒） |
+| JS の関係する試験 | 済 | `test_viewer_parts` 18・`test_meruhen_cloud_sync` 43・`test_pscube_cloud_sync` 49・`test_viewer_drive_script` 18・`test_pscube_data` 18・`test_pscube_sync` 16・`test_share_viewer` 36・`test_viewer_history_performance` 2 |
+| ⑦ 全体ゲート | 未 | このコミットで流す（結果はこの下に追記） |
+| 実際の Google・iPhone・共有カレンダーでの動き | 未確認 | 貼り替えと PC の起動し直しのあと |
+
+- **入れる順番（利用者の作業）**：①Google のスクリプト3本を貼り替える：メルヘンの同期 `meruhen_cloud_sync.gs`、閲覧ページ用 `viewer_drive_script.gs`（デプロイを管理→新しいバージョン）、共有カレンダー用 `viewer_drive_script_readonly.gs`（同じく新しいバージョン）。P’s CUBE の同期 `pscube_cloud_sync.gs` は K2（整理の時間の上限）の分があるので一緒に貼り替えてよい（今回の分割はメルヘンだけ）。②そのあと PC を `start.cmd` で起動し直す。逆の順にすると、古い同期は店のファイルを読まないので、Google のメルヘンの更新がしばらく止まる（データは消えない）。
