@@ -4477,3 +4477,24 @@
   - 送ったあとに確かめた結果：`addcd92` で足された試験 `test_site777_session` の `test_two_windows_concurrently_writing_same_model_job_stay_consistent` は、コミットされた版では存在しない `self.folder` を使っていて、毎回 `AttributeError` で落ちる。CI run 45140749183（`eb68744`）は full・Ubuntu・Windows とも、この1件だけで failure。手元で何度か通ったのは、Claude が流している間に別のAIが作業コピーのこの行を `self.root` に直していたため（Claude は最初「結果が揺れる試験」と書いたが誤り）。直すのは `addcd92` を作ったAI（作業コピーで直し中。Claude は触っていない）。
   - 作業フォルダに未追跡の `Pc Apply Site777 2win Patch.md`・`site777_2win.patch` がある（`addcd92` を当てたときのものと思われる。Claude は触っていない）。
 - **直し（2026-11-23 夜、Claude）**：作業コピーに残っていた `database/tests/test_site777_session.py` の1行（`self.folder` → `self.root`、17:49 の変更、未コミット）を、利用者「今なにもしてないかも」（直していたAIは作業していない）を受けて Claude が引き取ってコミットした。アプリのコードは変えていない。確認：`test_site777_session.py` 63件を3回とも OK、PC 全試験 1,131件 OK（332.8秒）。全体ゲートは流し直していない（試験1行だけの直しのため、AGENTS.md の「落ちた項目だけの流し直し」による）。送る範囲には、別のAIの文書のコミット `74a03c9`・`6831895`（.md だけ）も入る。
+
+## 2026-11-23 夜 Claude：残りの修正点の3つ目の分担（Claude・Codex・Gemini。担当のファイル）
+
+- 利用者「今回は3エージェントすべてに割り振って実行しよう」。基準：`database-ci` の main `2023b18`（CI run 45149247939）。同じファイルを2つのAIが同時に直さないよう、担当のファイルを先に決める。
+- **共通の決まり**：大きな作業は着手前に「完了の条件」と「確かめ方」を利用者に見せる。自分の変えたファイル・自分の行だけをコミット（`AI_COLLABORATION.md` に他のAIの未コミットの節があるときは、HEAD の版に自分の節だけを足して `git hash-object -w` → `git update-index --cacheinfo` でコミット）。**push は各AIでしない**。3つそろってから Claude が全体ゲートのあと1回で送る。対象サイト（メルヘン・P’s CUBE・サイトセブン・アナスロ）に接続しない。`outcomes`・`decisions`・評価日前の成績は開かない。サイトへのアクセスが増える変更はしない。
+- **利用者の決定（2026-11-23 夜）**
+  - Gemini H-10②（サイトセブンのグラフなしで進む上限）：**今のままでよい**（コードの「その機種でまだ保存していない台の数の半分、1台・2台は1台」のまま）。AGENTS.md の文言を今の動きに合わせる（Claude）。
+  - Gemini H-2③：**使える台が0台の店・日は、日次学習の予測を固定しない**（Gemini）。
+  - Gemini M-7③：**台番号のリンク（P-STATIONの台→サイトセブンのその台のページ）を、閲覧ページにも足す**。Androidアプリには足さない（Codex）。
+- **Gemini（PCのPython。担当ファイル：`database/daily_learning_runtime.py`・`database/site777_session.py`・`database/site777_browser.py`・`database/app.py`・`database/assets/site777_overlay.js`・`database/tests/` の関係する試験）**
+  - G12 日次学習：使える台が0台の店・日は固定しない（`daily_learning_runtime.py:363` 付近）。締切（8:00）までに取り込みが入れば作り直す。0台のまま締切を過ぎたときの扱いと、ログの文言も決めて記録する。
+  - G13 サイトセブン：窓を最小化したまま待っているとき（11/21 の「最小化中はグラフが出ないとは数えず、見えるまで待つ」）に、知らせが見えず上限なく止まる（Claude ⑤）。待っていることを PC アプリのログ欄などに出す。取り込みの間隔・回数・読み込み直しは変えない。
+- **Codex（共有カレンダーと閲覧ページの日次学習の画面。担当ファイル：`share_viewer/app.mjs`・`recommendations.mjs`・`data.mjs`・`daily_learning.mjs`・`event_history.mjs`・`offline.mjs`・`index.html`、`database_android/lib/daily_learning_page.dart`、`database_android/tool/test_share_*.mjs` と `test/` の関係する試験。生成物の `share_viewer/viewer_parts.mjs`・`capture_health.mjs` と `tool/build_viewer_parts.mjs`・`tool/viewer_parts_client.js`・`*.gs` は Claude の担当なので触らない）**
+  - X1 共有カレンダーが重い（Gemini M-6）：4大オススメ・回っていない台が描くたびに全日を広げ直す。同じ結果のまま、広げた結果を使い回す（前と同じ表示になる試験を付ける）。
+  - X2 共有カレンダーの長期データへの備え（Claude ②）：合成の長期データ（例：180日）でメモリを測る試験と、閲覧ページと同じ「更新が途中で落ちたら6時間は起動時の自動更新を止める」保険。
+  - X3 閲覧ページの日次学習の画面に、P-STATIONの台番号からサイトセブンのその台のページへのリンクを足す（共有カレンダー `share_viewer/daily_learning.mjs` の `dailyRackLinkDay` などと同じ規則。Web だけで、Android は今のまま。機種名は `displayMachineName` を通す）。試験でサイトセブンに接続しない。
+- **Claude（Google のスクリプト。担当ファイル：`database_android/web/pscube/data.mjs` の `buildCloudScript` と生成先 `tool/pscube_cloud_sync.gs`、`tool/build_viewer_parts.mjs` と生成先 `viewer_drive_script*.gs`・`meruhen_cloud_sync.gs`・`web/viewer_parts.mjs`・`share_viewer/viewer_parts.mjs`・`share_viewer/capture_health.mjs`、`tool/viewer_parts_client.js`、`tool/test_*cloud_sync*.mjs`・`test_viewer_drive_script.mjs`・`test_viewer_parts.mjs`、AGENTS.md）**
+  - K1 P’s CUBE の Google 側の全期間の控え `pscube-backup-cloud.json` が48MiBの上限に届く（Gemini H-6②、12月下旬の見込み）。設計を先に利用者に見せる。
+  - K2 Google の整理（`vhMaintain`・`vpMaintain`）に時間の上限が無い（Gemini M-5①）。
+  - K3 AGENTS.md のサイトセブンのグラフなしの上限の文言を、今の動きに合わせる（上の利用者の決定）。
+- 今回は割り振らない：閲覧ページの P’s CUBE 版の山（Claude ③、段階Bの日別保存と合わせる）、C5（保留）、様子見の項目（H-9①・H-10①・H-4・M-1②③・H-1・H-11①）、P’s CUBE の取り込みだけの項目。APK は3つの作業のあと、利用者が決める。
