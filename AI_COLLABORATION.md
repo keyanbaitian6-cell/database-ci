@@ -4554,3 +4554,4 @@
 | PCアプリの起動・終了・後回しを run.log に | 済（試験は配線のみ） | `AppWiringTest` 2件 |
 | PC全試験 | 済 | `TZ=JST-9 database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,147件 OK（460.7秒。1回目は1,144件中 `test_app_startup` の `test_startup_imports_each_new_store_backup_and_sync_tab_scrolls_to_the_import_button` が1件失敗。単独6回・ファイル全体6回はすべて通り、変更前（HEAD の別作業コピー）と変更後で10回ずつ流し比べてどちらも失敗0回。ほかのAIが並行して試験を流していた時間の揺れと見ている。原因は未確認）。作業コピーにほかのAIの site777 まわりの未コミットの変更がある状態で流した |
 | 実際のPCアプリの画面での見え方・次の晩の run.log | 未確認 | 利用者が `start.cmd` で起動し直してから |
+- **push**：保留（2026-11-23 19:15ごろ 利用者「そろってから送る」）。`20c6c25` は Codex の `0198524`（「ローカルコミットまで。push・公開は各担当がそろった後」）の上にあるため、Codex の分がそろってから `tools/push_ci.py` で一緒に1回で送る。送った AI は CI の URL をここに足す。PCアプリへの反映は push と関係なく、`start.cmd` で起動し直せば効く。
