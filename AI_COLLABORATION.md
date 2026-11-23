@@ -4710,4 +4710,8 @@
 | PC版の店舗選択・機種一覧・カレンダー・保存データ表示 | 済 | `4962c3b` の全体ゲート `pc-tests` 1157件 OK、`pc-event-timezone-utc` OK（`test_pscube_local_report.py` で実 `app.main()` の店舗欄 `'P-STATION'` を確認） |
 | Androidアプリ・iPhone閲覧ページの店舗表示・取得状況 | 済 | `4962c3b` の全体ゲート `flutter-test` 895件 OK、`flutter-analyze` OK、`viewer-build`・`viewer-stage` OK |
 | 共有カレンダーの取得状況・生成物整合性・全画面回帰 | 済 | `4962c3b` の全体ゲート `share-stage` OK、JS 97ファイル全件成功（`test_capture_health_browser`・`test_viewer_parts`・`test_daily_learning`・`test_release_info` 含む）。全体ゲート（`C:\w\cbw-pstation-label-2`）`ALL PASSED` |
-| GitHub push・Web公開・APK・実機 | 未確認 | ソースは手元 `main`（`4962c3b`）まで。`database-ci` への push、閲覧ページ（`database-viewer`）・共有カレンダー（`database-share`）の公開、APK 作成、PC実画面再起動・実機確認は未実施 |
+| GitHub push・Web公開 | 済（CI 実行中） | 利用者「APK以外おねがいします」。`tools/push_ci.py` で `database-ci/main` へ `48b64f8..df08325` を送信（[CI run 45194897369](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45194897369) 実行中）。閲覧ページ `database-viewer` `08efe2b..42526d7`（[Pages run 45195398741](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/45195398741) 成功）、共有カレンダー `database-share` `9b60406..7584833`・版 `bc008072ece8`（[Pages run 45195408524](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45195408524) 成功） |
+| APK・PC再起動・実機確認 | 未確認 | APK は今回対象外。PC実画面の再起動後表示・iPhone実機での表示確認は未確認 |
+
+- 公開の内訳：`C:\w\cbw-pstation-label-2` の `ALL PASSED` 済みステージから `../outputs/publish-c123-20261122/public-viewer`・`public-share`（公開前に最新 `origin/main` と一致を確認）へ反映し、改行だけの差を戻して非強制 push。閲覧ページは3ファイル（`capture_health.mjs`・`main.dart.js`・`pscube/index.html`、記録の文字列90種該当なし）、共有カレンダーは9ファイル（`capture_health.mjs` の変更＋版 `?v=bc008072ece8` 反映8ファイル、19ファイル・記録の文字列90種・スクリプトID該当なし）。
+- **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `42526d7` を `git revert` して push（戻り先は `08efe2b`）、共有カレンダーは `keyanbaitian6-cell/database-share` で `7584833` を `git revert` して push（戻り先は `9b60406`）。表示名の変更のみで、保存データ形式・内部キーは変わらないため安全に戻せる。
