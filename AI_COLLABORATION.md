@@ -4443,3 +4443,4 @@
   - 直し：`database/tests/test_pscube_local_report.py` の1行に `create=True` を付けた（試験だけ。アプリは変えていない）。
   - 確認：`os.startfile` を消した状態で流す小さな実行器で、直す前の版は CI と同じ `AttributeError` で失敗し、直した版は5件通過。PC 全試験 `database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,125件 OK（336.6秒）。全体ゲートは流し直していない（試験1行だけの直しのため、AGENTS.md の「落ちた項目だけの流し直し」による）。
 - **Google スクリプトの貼り替え（利用者の報告、2026-11-23 朝）**：利用者「スクリプト張り替え終わり」。対象は `meruhen_cloud_sync.gs`・`pscube_cloud_sync.gs`・`viewer_drive_script.gs` の3本（`viewer_drive_script.gs` は「デプロイを管理」から新しいバージョンでデプロイする案内をした）。AI は Google 側の動作を直接は確かめていない。
+- **CI の結果（`d921dcf`）**：成功（`full`・`pc (ubuntu-latest, UTC)`・`pc (windows-latest, UTC)` すべて success。https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45076707800）。これで C4〜C9・G7〜G11 を含む main は CI でも確認済み。閲覧ページ・共有カレンダーの公開と APK はまだ（利用者の決定待ち）。
