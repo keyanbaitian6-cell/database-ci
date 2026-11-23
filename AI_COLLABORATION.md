@@ -4694,3 +4694,20 @@
 
 - 利用者「問題ないか最終確認後push」「引継ぎいらないかな。そのままお願いします」。ソースは日本時間11月23日21:20に `tools/push_ci.py 684bce6` で `database-ci/main` へ送った。公開用ファイルは同コミットの `share_viewer/` を `stage_share_viewer.py` で生成し、実記録を検出する90種類の文字列と接続先IDのいずれも該当なし。公開差分は8ファイルで、機種別表示の4ファイルと、参照先の版番号だけを更新した4ファイル。
 - 公開を戻す場合は `keyanbaitian6-cell/database-share` で `9b60406` を `git revert` し、`762eabe` 相当の表示へ戻す。
+
+## 2026-11-23 夜 Gemini：4画面の店舗表示「P’s CUBE」を「P-STATION」に統一
+
+- 依頼：「この店舗のところP'SCUBEだとお店の名前みたいだからP-STATIONに変えてもらっていい？」（PC版「結果を見る」タブの写真付き）。着手前に画面の対象と表記を確認し、利用者が「PC版・iPhone閲覧ページ・Androidアプリ・共有カレンダーの取得状況に残る `P’s CUBE` 表記までまとめて揃える」「PC版の店舗選択欄の表示名は `P-STATION`」を選択。
+- 基準コミット：手元 `main` `0f9e214` から作業開始し、途中に加わった Codex の `684bce6`・`48b64f8` を含む最新 `main` 上で自分の変更ファイル23件のみを `4962c3b` としてコミット。
+- 変更内容（内部キー `pscube`・DBファイル名 `pscube.sqlite3`・サイト名としての取り込みボタン「P’s CUBE（スロット）を取り込む」・保存先の技術診断行は従来どおり保持）：
+  - **PC版**：`database/app.py`（`PSCUBE_LABEL = 'P-STATION'` と結果を見る・ローカル保存表示の案内3箇所）、`database/event_calendar.py`（`PscubeEvents` の `title`・既定 `label`）、`database/machine_list.py`（注記）、`database/pscube_report.py`（タイトル・見出し・エラー文。出典列の `'P’s CUBE'` はサイト名のため維持）。
+  - **Androidアプリ・iPhone閲覧ページ**：`database_android/lib/models.dart`（`storeDisplayName` → `P-STATION（20スロ）`）、`capture_health.dart`・`capture_health_ui.dart`（取得状況の店舗名）、`main.dart`（バックアップ書き出しの店舗選択肢と注記）、`viewer_main.dart`（読み込み元の表示）、`database_android/web/pscube/index.html`（`<title>`）、`database_android/web/capture_health.mjs`（`storeName`）。
+  - **共有カレンダー・生成物同期**：`node database_android/tool/build_viewer_parts.mjs` で `share_viewer/capture_health.mjs`・`database_android/tool/meruhen_cloud_sync.gs`・`database_android/tool/pscube_cloud_sync.gs` を同期（変更の無い `viewer_drive_script*.gs`・`viewer_parts.mjs` は元の改行コードのまま戻した。`APPLICATION_RELEASE` は変更していないため既存GASの再貼替は必須ではない）。
+  - **試験の更新・追加**：`database/tests/test_machine_list.py`・`test_event_calendar.py`・`test_pscube_local_report.py`、`database_android/test/pscube_viewer_test.dart`・`daily_net_test.dart`・`event_calendar_test.dart`・`capture_health_test.dart`・`capture_health_ui_test.dart`、`database_android/tool/test_capture_health_browser.mjs`。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| PC版の店舗選択・機種一覧・カレンダー・保存データ表示 | 済 | `4962c3b` の全体ゲート `pc-tests` 1157件 OK、`pc-event-timezone-utc` OK（`test_pscube_local_report.py` で実 `app.main()` の店舗欄 `'P-STATION'` を確認） |
+| Androidアプリ・iPhone閲覧ページの店舗表示・取得状況 | 済 | `4962c3b` の全体ゲート `flutter-test` 895件 OK、`flutter-analyze` OK、`viewer-build`・`viewer-stage` OK |
+| 共有カレンダーの取得状況・生成物整合性・全画面回帰 | 済 | `4962c3b` の全体ゲート `share-stage` OK、JS 97ファイル全件成功（`test_capture_health_browser`・`test_viewer_parts`・`test_daily_learning`・`test_release_info` 含む）。全体ゲート（`C:\w\cbw-pstation-label-2`）`ALL PASSED` |
+| GitHub push・Web公開・APK・実機 | 未確認 | ソースは手元 `main`（`4962c3b`）まで。`database-ci` への push、閲覧ページ（`database-viewer`）・共有カレンダー（`database-share`）の公開、APK 作成、PC実画面再起動・実機確認は未実施 |
