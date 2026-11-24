@@ -4781,3 +4781,12 @@
 | 完了の知らせが窓ごと（2窓のどちらの後処理が先でも混ざらない） | 済 | `TwoWindowNoticeTests` 3件（窓ごとの読み分け・おかしい窓IDは従来のファイル・app.py と起動の引数・`run_session` のつなぎ） |
 | PC試験に回帰なし | 済 | `TZ=JST-9 .venv/Scripts/python.exe -m unittest discover -s tests`：1169件 OK（`test_meruhen_close` は9件） |
 | 実機（PCアプリで2窓を開いて閉じる） | 未確認 | 次の2窓運用で、ログ欄の完了の行がそれぞれの窓に出るか・`database is locked` が `errors.log` に増えないかを見る。PCアプリは再起動するまで古いコードのまま |
+
+## 2026-11-24 夕方 Gemini（クラウド）：サイトセブンのログイン操作許可ルールを `AGENTS.md` に反映
+
+- 依頼：利用者「自動では人間認証を行わないといった趣旨の記述があるところを切り取ってもらっていいですか」→ 該当箇所一覧を提示後、「サイトセブンについては人間認証がないため、ログインをしてもいいようにルールを変えて。」。基準コミットは `database-ci/main` の `a1b1a44`（`imakurudev-eng/database` の `main` `1100513` を含む最新履歴であることを `git fetch --unshallow` と `git merge-base --is-ancestor` で確認済み）。
+- 変更ファイル（文書のみ）：
+  - `AGENTS.md`：「サイトセブンの自動取り込みは、止まっても3分後に自動で再開する」の節に、2026-11-24 の利用者決定として「サイトセブンには人間認証（CAPTCHA 等）がないため、ログイン操作をしてよい（AI の確認・操作時に保存済みのログインボタンを押すことや、アプリ側の自動取り込みでログイン操作を行うことを禁止しない。資格情報の読み出し・記録・変更はしない）」を追記し、44行目の `login_required` の記述にも参照注記を足した。2026-11-24 時点の PC 実装（`database/site777_session.py`）では `login_required` 時の自動ログイン・自動再開は未実装であることも明記した。
+  - 保持した仕様：メルヘン・P’s CUBE・アナスロ等の人間確認／CAPTCHA・利用規約同意を自動操作しない方針、および PC／Android の既存コード・設定はいずれも変更していない。
+- 試験・CI：`.md` だけの変更のため、既存の CI 除外を維持し試験・ビルドは未実行（不要）。実サイト・DB への接続なし。
+- 引き渡し：`imakurudev-eng/database` の一時ブランチ `cloud/20261124-site777-login-rule` へ push（`main` への直接 push・PR 作成はしていない）。次の手順：PC 側ローカル AI が `cloud/20261124-site777-login-rule` を最新 `main` へ取り込み、`python tools/push_ci.py` で期間内の `main`（11月後半のため `database-ci`）へ反映後、一時ブランチを削除する。
