@@ -85,6 +85,10 @@ class ViewerHome extends StatefulWidget {
 
 class _ViewerHomeState extends State<ViewerHome> {
   ViewerData? _data;
+
+  /// 表示中の本体の、端末に保存した本体の目印（2026-11-26 点検④。段階B1の差枚表を本体と対応させる。
+  /// [dayNetStamp]）。目印の無い古い本体・手元確認の ?load= は null（差枚表を使わない）。
+  String? _bodyId;
   var _loading = true;
 
   /// Driveの自動読み込みに使う、Googleのスクリプトのアドレス（未設定なら null）。
@@ -156,6 +160,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       final text = url != null
           ? await backupFromUrl(url)
           : await loadViewerData();
+      _bodyId = url != null ? null : loadedViewerDataId();
       if (text != null) _show(ViewerData.parse(text));
     } catch (error) {
       _error = '前に読み込んだ内容を開けませんでした。もう一度読み込んでください。\n$error';
@@ -232,16 +237,22 @@ class _ViewerHomeState extends State<ViewerHome> {
           merged = null;
         }
         if (merged == null) {
+          // 2026-11-26 点検②：端末の本文を読めない・壊れているときは、初回（本文が無い）と同じ扱いにしない。
+          // Driveの新着だけを保存すると、端末だけにあった古い日を失う。保存せずに見送り、次の更新でまた試す。
           try {
             stored = await loadViewerData();
-          } on Object {
-            stored = null;
+          } on Object catch (error) {
+            throw StoredBodyUnreadable('端末に保存した内容を読めませんでした（$error）。');
           }
           merged = ViewerData.prepareMerge(stored, text);
         }
         final data = merged.data;
         if (summarized || merged.text != stored) {
-          await saveViewerData(merged.text, meruhen: data.source != 'pscube');
+          final id = await saveViewerData(
+            merged.text,
+            meruhen: data.source != 'pscube',
+          );
+          _bodyId = data.source == 'pscube' ? null : id;
           saved = true;
         }
         if (!mounted) return;
@@ -257,6 +268,11 @@ class _ViewerHomeState extends State<ViewerHome> {
           );
         }
       }
+    } on StoredBodyUnreadable catch (error) {
+      _error =
+          '$error Googleドライブの最新は、端末の履歴を消さないよう保存せずに見送りました'
+          '（前に読み込んだ内容を表示しています）。もう一度更新してください。'
+          '続くときは「バックアップを読み込む」で全期間のバックアップを読み込んでください。';
     } catch (error) {
       _error = 'Googleドライブから読めませんでした（前に読み込んだ内容を表示しています）。\n$error';
     } finally {
@@ -348,7 +364,8 @@ class _ViewerHomeState extends State<ViewerHome> {
     final data = _data;
     if (data == null || data.source == 'pscube') return;
     final table = DayNetTable();
-    final stamp = dayNetStamp(data);
+    // 照合する本体の目印は、照合を始める前に決める（照合中に本体が替わったら、控えた表はその本体には使われない）。
+    final stamp = dayNetStamp(data, _bodyId);
     final status = await checkViewerCalendar(
       onDay: (rowsJson) => table.addDay(jsonDecode(rowsJson) as List),
       finish: () {
@@ -394,7 +411,8 @@ class _ViewerHomeState extends State<ViewerHome> {
         if (stored != null) {
           final text = ViewerData.withSharedEvents(stored, shared);
           if (text != null) {
-            await saveViewerData(text);
+            // イベントだけを足した保存は記録を変えないので、本体の目印はそのまま（差枚表を使い続ける）。
+            _bodyId = await saveViewerData(text, keepId: loadedViewerDataId());
             if (mounted) setState(() => _show(ViewerData.parse(text)));
           }
         }
@@ -647,7 +665,11 @@ class _ViewerHomeState extends State<ViewerHome> {
           events: pickedBackupEvents(),
         );
         final data = prepared.data;
-        await saveViewerData(prepared.text, meruhen: data.source != 'pscube');
+        final id = await saveViewerData(
+          prepared.text,
+          meruhen: data.source != 'pscube',
+        );
+        _bodyId = data.source == 'pscube' ? null : id;
         if (!mounted) return;
         _show(data);
         if (mounted) {
@@ -858,7 +880,7 @@ class _ViewerHomeState extends State<ViewerHome> {
         ? null
         : StoredDayNets.decode(
             loadViewerSetting(dayNetTableKey),
-            dayNetStamp(data),
+            dayNetStamp(data, _bodyId),
           );
     final stored = _storedNets;
     _netLookup = stored != null ? stored.lookup : dailyNetLookup(data.records);
@@ -906,7 +928,8 @@ class _ViewerHomeState extends State<ViewerHome> {
       DateTime.now(),
     );
     if (identical(text, stored)) return;
-    await saveViewerData(text);
+    // イベントだけを変えた保存は記録を変えないので、本体の目印はそのまま。
+    _bodyId = await saveViewerData(text, keepId: loadedViewerDataId());
     if (mounted) setState(() => _show(ViewerData.parse(text)));
     await _pushShared(pscube: false);
   }

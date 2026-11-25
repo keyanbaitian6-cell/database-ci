@@ -18,7 +18,14 @@ external JSString? _getRemote();
 external void _setRemote(JSString? url);
 
 @JS('databaseViewer.save')
-external JSPromise<JSAny?> _save(JSString text, JSBoolean meruhen);
+external JSPromise<JSString?> _save(
+  JSString text,
+  JSBoolean meruhen,
+  JSString? keepId,
+);
+
+@JS('databaseViewer.loadedId')
+external JSString? _loadedId();
 
 @JS('databaseViewer.load')
 external JSPromise<JSString?> _load();
@@ -46,11 +53,24 @@ String? pickedBackupEvents() => _pickedEvents()?.toDart;
 Future<String?> backupFromUrl(String url) async =>
     (await _fromUrl(url.toJS).toDart)?.toDart;
 
-Future<void> saveViewerData(String text, {bool meruhen = false}) async {
-  await _save(text.toJS, meruhen.toJS).toDart;
-}
+/// 本体を保存し、その本体の目印（2026-11-26 点検④。段階B1の差枚表を本体と対応させる）を返す。[keepId] を渡すと
+/// その目印のまま（記録を変えないイベントだけの保存）。P’s CUBE・目印を返さない古い橋渡しは null。
+Future<String?> saveViewerData(
+  String text, {
+  bool meruhen = false,
+  String? keepId,
+}) async => (await _save(text.toJS, meruhen.toJS, keepId?.toJS).toDart)?.toDart;
 
 Future<String?> loadViewerData() async => (await _load().toDart)?.toDart;
+
+/// 直前の [loadViewerData]（または [saveViewerData]）の本体の目印。目印の無い古い本体・P’s CUBEは null。
+String? loadedViewerDataId() {
+  try {
+    return _loadedId()?.toDart;
+  } on Object {
+    return null;
+  }
+}
 
 @JS('databaseViewer.loadSummary')
 external JSPromise<JSString?> _loadSummary();
