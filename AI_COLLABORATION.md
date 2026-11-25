@@ -4956,4 +4956,10 @@
 - Geminiの報告では専用作業ツリーでPC関連62件、UTCのイベント31件、Node 197件が成功。途中のPC全試験で報告された環境要因の失敗は、Codexの前の統合版 `8df16b4` のPC全体1,179件・UTC31件成功と区別する。
 - 最終版 `6c4f4fe` を `flutter analyze --no-pub --no-fatal-infos`（既存の情報34件、エラー・警告0件）、`flutter test --no-pub --reporter expanded`（915件）で確認。試験用に閲覧ページを `flutter build web --no-pub -t lib/viewer_main.dart --release --base-href /database-viewer/` でビルドし、`stage_viewer.py` と `stage_share_viewer.py` で隔離したフォルダーへ出力した。
 - 上記出力を使い、`node --test` で `test_viewer_history_guard_browser.mjs`、`test_viewer_calendar_check_browser.mjs`、`test_viewer_import_browser.mjs`、`test_viewer_storage_report.mjs`、`test_viewer_parts_browser.mjs`、`test_viewer_update_equivalence_browser.mjs`、`test_viewer_built_drive.mjs`、`test_share_viewer_browser.mjs` の8ファイルすべて成功。①②④の新しい画面試験は架空データと模擬Driveで3項目とも成功。ログは統合作業ツリーの `database_android/build/audit-final-6c4f4fe/` に保存。
-- PCとGASのソースは前の統合版から差分がないため、その試験結果を参照した。最終版での一括の全体ゲート、利用者のiPhone・Android、実Drive・GASでの動作は未確認。GitHub CI、push、公開、実環境への貼り替え、APK作成は利用者の指示待ち。
+- PCとGASのソースは前の統合版から差分がないため、その試験結果を参照した。最終版での一括の全体ゲート、利用者のiPhone・Android、実Drive・GASでの動作は未確認。
+
+### Google Apps Script 3本の貼り替え（利用者報告）
+
+- 2026-11-26 07:44ごろ（日本時間）、利用者はGeminiの修正 `c9fd6ae`（`fix/20261126-gemini-events`）の `viewer_drive_script.gs`、`meruhen_cloud_sync.gs`、`pscube_cloud_sync.gs` を貼り替えたと報告した。Codexは3本のソースがローカル統合版と一致することをGitの差分で確認した。
+- 実環境への貼り替えは利用者報告。Codexによる実環境の直接確認、`viewer_drive_script.gs` の新バージョンへのデプロイ完了、貼り替え後の次回同期結果は未確認。
+- 3担当の修正はローカルの統合ブランチに入っている。`main` への取り込み、最終版での一括の全体ゲート、GitHubへのpush、共有カレンダーのWeb公開は保留。今回の記録は統合ブランチに追記した。
