@@ -4836,3 +4836,17 @@
   - 手元に、正本では削除済みの一時ブランチの追跡参照 `origin/cloud/20261123-cloud-branch-rule` が残っている（`main` に取り込み済み。`git fetch --prune origin` で消える。手元だけの話）。
   - 期日：店舗別の候補比較（`NEXT_DAY_SHADOW_PLAN_20261025.md`）の評価が **2026-11-26以降に1回だけ**。その後に `input_versions` の扱いを利用者に聞く決まり（2026-11-13 の記録）。12/1 は段階Bの声かけ・`NEW_MACHINE_PLAN` の参考 `past`・9時以降の正本への送信（手元は正本より62コミット先）。段階B1・B2は未公開のまま（B0の一致を利用者のiPhoneで確かめてから）。
 - 次の手順：利用者の判断で、Android APK の作成（版上げ・全体ゲート込み）と PCアプリの再起動。古い言い回しは次のコード変更と一緒に。
+
+### 続き：点検で見つけた名残の整理（Claude、2026-11-25 午後）
+
+- 依頼：利用者「APKは指示あるまでいりません。それ以外を修正してください」。基準 `0c35f53`。
+- 変更（動きは変えない）：
+  - `database/app.py`：`check_after_pscube` の説明を「8:00・9:00の締切」→「前向き検証の9:00の締切（日次学習の8:00締切は撤廃）」。本体画面の1行の初期表示・読めなかったときの文言を「今夜の日次学習：」→「日次学習：」（`night_status` が 5cee375 から「日次学習（d/mの予測）：」を返すのに合わせた）。もう出ない段階 `idle` の色を `DAILY_STATUS_COLORS` から外した（未知の段階は今までどおり既定色）。
+  - `database/power.py`：説明の「8:00・9:00の締切」を同じく直した。
+  - `database/daily_learning_runtime.py` `checkup`：`prediction_target` はもう None を返さないので `latest = open_target or ...` を `open_target = latest = prediction_target(now)` にした（結果は同じ）。
+  - `database/tests/test_daily_status.py`：説明文の「今夜の」を外しただけ。
+  - `AGENTS.md`：「Android APKは、利用者が指示するまで作らない」を追記。
+  - 手元の古い追跡参照 `origin/cloud/20261123-cloud-branch-rule` は `git fetch --prune origin` で消した（手元だけ）。
+- 試験：`database/.venv/Scripts/python.exe -m unittest discover -s tests -q`（`TZ=JST-9`）**1,169件 OK**。変えたファイルの `py_compile` OK（pyflakes はこの環境に無く未実行）。全体ゲートはビルドしないので流していない（PCのPythonだけの変更）。閲覧ページ・共有カレンダー・Googleスクリプト・Android は変えていないので公開・貼り替えは不要。
+- 未確認：PCアプリの再起動（5cee375 と今回の変更を有効にするには利用者がPCアプリを開き直す）。APKは未更新（利用者の指示待ち）。
+- 段階B0の確かめ方を利用者に案内：iPhoneの閲覧ページ（メルヘン版）で Google の更新のあと「更新・差枚の取得状況」を開き、「日別キャッシュと本体：一致（n日・n件）」と出ているか、「日別キャッシュと本体の照合」の「途中で終わった」が増えていないかを見る（`VIEWER_DAY_STORE.md`「B0の合格条件」）。

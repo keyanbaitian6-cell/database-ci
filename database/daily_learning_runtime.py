@@ -764,8 +764,7 @@ def checkup(journal, now, nights=CHECKUP_NIGHTS):
     前日データの有効な台・符号が決まらない台の数を返す。予測（predictions）と固定した入力（inputs）だけを読み、
     成績（outcomes・decisions）は開かない。数えた結果は state に控え、同じ晩を何度も数えない。"""
     now = jst(now)
-    open_target = prediction_target(now)
-    latest = open_target or now.date().isoformat()
+    open_target = latest = prediction_target(now)
     start = journal.get('state', 'start')
     targets = [shift(latest, -n) for n in range(nights - 1, -1, -1)]
     stores = {}

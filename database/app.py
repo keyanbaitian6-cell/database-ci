@@ -411,9 +411,9 @@ def main():
              font=('Yu Gothic UI', 10, 'bold')).pack(side='left', fill='x', expand=True)
     sync_banner_button = ttk.Button(sync_banner)
     sync_banner_button.pack(side='right')
-    # 今夜の日次学習の様子（2026-11-23 利用者「普通に取り込んだあと学習し候補を出してるかどうかを肉眼的にわかるようにしたい」）。
+    # 日次学習の様子（2026-11-23 利用者「普通に取り込んだあと学習し候補を出してるかどうかを肉眼的にわかるようにしたい」）。
     # 5分ごとの確認（daily_tick）が書き換える。「最後の確認」の時刻が進んでいなければ、確認そのものが止まっている。
-    daily_status = tk.Label(frame, text='今夜の日次学習：起動の1分後に確かめます。', anchor='w', justify='left',
+    daily_status = tk.Label(frame, text='日次学習：起動の1分後に確かめます。', anchor='w', justify='left',
                             wraplength=820, padx=12, pady=6, font=('Yu Gothic UI', 10), background='#EEF2F5')
     daily_status.pack(fill='x', pady=(0, 10))
     notebook = ttk.Notebook(frame)
@@ -1193,7 +1193,8 @@ def main():
     def check_after_pscube(message, since):
         """P’s CUBEの自動取り込みが終わって窓が自分で閉じたら、結果を確かめてログ欄と記録に残す。
         2026-11-22 利用者「自動スリープは取り消そう」：11/6に入れた「5分後にPCをスリープ」はやめた。窓が閉じると
-        日次学習・前向き検証が裏で動き始めるので、その途中で眠ると8:00・9:00の締切を逃すため。"""
+        日次学習・前向き検証が裏で動き始めるので、その途中で眠ると前向き検証の9:00の締切を逃すため（日次学習の8:00締切は
+        2026-11-25に撤廃）。"""
         try:
             problems = pscube_import.capture_problems(DATA_DIR, message, since)
         except Exception as error:  # noqa: BLE001 - 確認に失敗しても結果の行は出す
@@ -2106,16 +2107,16 @@ def main():
 
     daily_tick_note = [None, None]   # 直前に run.log へ書いた判定・例外（同じ内容は5分ごとに書き直さない）
     daily_tick_at = [None]
-    DAILY_STATUS_COLORS = {'ok': '#E6F4EA', 'wait': '#FFF4DC', 'error': '#FDE2E1', 'idle': '#EEF2F5'}
+    DAILY_STATUS_COLORS = {'ok': '#E6F4EA', 'wait': '#FFF4DC', 'error': '#FDE2E1'}
 
     def refresh_daily_status(problem=None):
-        """本体画面の「今夜の日次学習」の1行を出し直す。失敗しても本体は止めない。"""
+        """本体画面の「日次学習」の1行を出し直す。失敗しても本体は止めない。"""
         from daily_learning import JST
         from daily_learning_runtime import night_status
         try:
             text, level = night_status(DATA_DIR, datetime.now(JST))
         except Exception as error:  # noqa: BLE001 - 表示の不具合で本体を止めない
-            text, level = f'今夜の日次学習：様子を読めませんでした（{type(error).__name__}）', 'error'
+            text, level = f'日次学習：様子を読めませんでした（{type(error).__name__}）', 'error'
         if daily_worker.running:
             text += '／計算中'
         if daily_tick_at[0]:

@@ -68,6 +68,7 @@ This directory is a local mirror of the ChatGPT project “LINE”.
 
 - **コミットは自分の変えたファイルだけ**（2026-10-13）。`git add <ファイル>` で指定し、`git commit -a`・`git add -A`・`git add .` は使わない。複数のAI（Codex・Claude・Gemini）が同じ作業コピーで並行して作業するため、相手の作業途中のファイルを巻き込む（10/13、Claudeが `-a` でCodexの作業中のファイルをpushし、取り消した）。見覚えのない変更があれば、触る前に利用者に別の作業中かを聞く。
 - **表示する値を変えたら、同じ作業で閲覧ページ・共有カレンダーを公開する**か、報告に「閲覧ページは未公開」とはっきり書く（2026-10-10、公開が古いままで利用者のiPhoneに差枚が出なかった）。公開は `tool/stage_viewer.py`・`tool/stage_share_viewer.py` を通す。
+- **Android APKは、利用者が指示するまで作らない**（2026-11-25 利用者「APKは指示あるまでいりません」。8時締切の撤廃 `5cee375` で `daily_learning_page.dart` を直したが、Android の APK は古いまま＝古いアプリの日次学習画面は 8:00〜23:29 に保存した予測を読めない、と伝えたうえでの決定）。Dart を直しても APK の作成・版上げを必要作業として扱わず、報告に「APKは未更新（利用者の指示待ち）」と書く。
 - **APKを作ったら、古いAPKはWindowsのごみ箱へ移す**（2026-10-11 利用者「古いapk見つけたらけしてね」）。`rm` ではなく元に戻せる方法で。報告に書く。
 - **adbのインストールのコマンドは、コマンドプロンプト用に書く**（2026-10-11、PowerShellの `& '...'` を貼って失敗）。例：`"C:\...\adb.exe" -s RFGL146LVVW install -r "C:\...\x.apk"`。1つのコードブロックに1コマンド。
 - **共有ページのアンケート**（2026-10-12、利用者が `database_android/tool/feedback_form_script.gs` で作成）：回答の一覧はGoogleスプレッドシート（ファイルID `1NxOY25SgL-G65DZqx8xshgQesLnFQMkDm_RBkpksyUs`）。利用者「アンケート見て」→ 読んで日本語でまとめ、直す順番を提案する。共有カレンダーからアンケートへのリンクは置かない（利用者の希望）。
