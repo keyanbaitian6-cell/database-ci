@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import {DIAG_KEY, DRIVE_HOLD_MS, CHECK_HOLD_MS, CALENDAR_HOLD_MS, driveHold, checkHold, calendarHold, recordCheck, recordCalendar, recordSaveFailure, recordScores, scoresHold, SCORES_HOLD_MS, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
+import {DIAG_KEY, DRIVE_HOLD_MS, CHECK_HOLD_MS, CALENDAR_HOLD_MS, driveHold, checkHold, calendarHold, recordCheck, recordCalendar, recordSaveFailure, recordScores, scoresHold, SCORES_HOLD_MS, recordTrend, trendHold, TREND_HOLD_MS, phaseStarted, phaseFinished, storageReportLines} from '../web/storage_report.mjs';
 
 function memoryStorage(initial = {}) {
   const items = new Map(Object.entries(initial));
@@ -266,4 +266,36 @@ test('段階B2の採点照合：B1とは別に止め・控え、画面に出す�
   assert.ok(lines().some(l => l.startsWith('日・機種一覧の日別採点：一致（幸町・11/17・10/02の2日・912台）')), lines().join(' | '));
   recordScores({status: 'mismatch', days: 108, racks: 78817, mismatched: 4, examples: [{store: 'saiwaichou', day: '2026-11-03', machine: 'ハナハナ', rack: '12', old: '合計50', next: '台無し'}]}, {storage});
   assert.ok(lines().some(l => l.startsWith('日・機種一覧の日別採点：一致しない台 4件（108日・78,817台。例：saiwaichou 11/03 ハナハナ 12番 今の計算［合計50］・日別［台無し］）')), lines().join(' | '));
+});
+
+test('段階B3の推移照合とB1の切り替えの表示：別に止め・控え、画面に出す（2026-11-25）', () => {
+  const storage = memoryStorage();
+  const lines = () => storageReportLines({log: JSON.parse(storage.getItem(DIAG_KEY) || '{"version":1,"phases":{}}'), databases: null});
+  assert.ok(!lines().some(l => l.includes('台の推移')), '記録が無いうちは行を出さない');
+  phaseStarted('trend', {storage, now: at('2026-11-25T07:00:00Z')});
+  phaseStarted('open', {storage, now: at('2026-11-25T07:10:00Z')});
+  assert.equal(trendHold({storage, now: at('2026-11-25T07:10:00Z')}), '2026-11-26T07:00:00.000Z');
+  assert.equal(scoresHold({storage, now: at('2026-11-25T07:10:00Z')}), null, 'B2は止めない');
+  assert.equal(calendarHold({storage, now: at('2026-11-25T07:10:00Z')}), null, 'B1は止めない');
+  assert.equal(TREND_HOLD_MS, 24 * 3600 * 1000);
+  phaseFinished('open', {storage});
+  phaseStarted('trend', {storage, now: at('2026-11-26T08:00:00Z')});
+  phaseFinished('trend', {storage, now: at('2026-11-26T08:00:02Z')});
+  assert.equal(trendHold({storage, now: at('2026-11-26T08:00:03Z')}), null);
+  recordTrend({status: 'match', days: 116, records: 85068, store: 'saiwaichou', day: '2026-11-24', racks: 30, entries: 205, mismatched: 0, examples: [], extra: 1}, {storage});
+  assert.equal(JSON.parse(storage.getItem(DIAG_KEY)).trend.extra, undefined);
+  assert.ok(lines().some(l => l.startsWith('台の推移の日別計算：一致（幸町・11/24・30台・205行）')), lines().join(' | '));
+  assert.ok(lines().some(l => l.startsWith('台の推移の日別計算と照合：最後まで終わった1回・前回2秒・最長2秒・途中で終わった1回')), lines().join(' | '));
+  recordTrend({status: 'mismatch', store: 'nagamachiminami', day: '2026-11-24', racks: 30, entries: 200, mismatched: 1,
+    examples: [{store: 'nagamachiminami', day: '2026-11-24', machine: 'ジャグラー', rack: '7', old: '7件', next: '6件'}]}, {storage});
+  assert.ok(lines().some(l => l.startsWith('台の推移の日別計算：一致しない台 1件（長町南・11/24・30台。例：nagamachiminami 11/24 ジャグラー 7番 今の計算［7件］・日別［6件］）')), lines().join(' | '));
+  recordTrend({status: 'no-cache'}, {storage});
+  assert.ok(lines().some(l => l.startsWith('台の推移の日別計算：日別キャッシュが無いので照合していません')), lines().join(' | '));
+  // B1の切り替え：一致して差枚表で表示しているときは、そのことを行に添える。
+  recordCalendar({status: 'match', days: 116, cells: 194, mismatched: 0, examples: [], switched: true}, {storage});
+  assert.equal(JSON.parse(storage.getItem(DIAG_KEY)).calendar.switched, true);
+  assert.ok(lines().some(l => l.startsWith('カレンダーの日別計算：一致（116日・194マス）・カレンダーはこの表で表示')), lines().join(' | '));
+  recordCalendar({status: 'match', days: 116, cells: 194, mismatched: 0, examples: [], switched: 'yes'}, {storage});
+  assert.equal(JSON.parse(storage.getItem(DIAG_KEY)).calendar.switched, undefined, 'true のときだけ控える');
+  assert.ok(lines().some(l => l.startsWith('カレンダーの日別計算：一致（116日・194マス）（')), lines().join(' | '));
 });

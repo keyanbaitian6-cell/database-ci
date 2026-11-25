@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'daily_net_page.dart' show DayNet, dailyNet;
 import 'models.dart';
 import 'viewer_data.dart';
@@ -69,4 +71,86 @@ Map<String, Object?> compareDayNets(
     'mismatched': mismatched,
     'examples': examples,
   };
+}
+
+/// 段階B1の切り替え（2026-11-25 利用者「切り替えとB3進めて」「それで進めて」）：日別キャッシュから作った差枚表は、
+/// 今の計算と全マス一致したときだけ端末（localStorage）に控え、カレンダー（イベントカレンダーの各日の差枚・
+/// 日別差枚の月表）はその表から出す。表が無い・本体と食い違う（[dayNetStamp] が違う）・読めないときは、今の計算
+/// （全記録から [dailyNet]）に戻る。表示する値は変えない（一致したときだけ使うので同じ値）。
+const dayNetTableKey = 'database-viewer-day-net';
+
+/// 本体の版の目印。書き出しの時刻と記録の件数。書き出しの時刻が無い本体は null（表を使わない）。
+/// 本体の記録が変わるのはGoogleの更新・ファイルの読み込みのときで、そのたびに書き出しの時刻が替わる。
+String? dayNetStamp(ViewerData data) {
+  final at = data.exportedAtText;
+  if (at == null || at.isEmpty) return null;
+  return '$at|${data.records.length}';
+}
+
+/// [table] を、本体の目印 [stamp] と一緒に控える形（小さなJSON）にする。1マスは
+/// `[合計, 分かる台, 台数, 要確認, 勝ち負けの分かる台, 勝ち]`（合計の無い日は null）。
+String encodeDayNetTable(DayNetTable table, String stamp) => jsonEncode({
+  'version': 1,
+  'stamp': stamp,
+  'cells': {
+    for (final e in table.cells.entries)
+      e.key: [
+        e.value.total,
+        e.value.captured,
+        e.value.racks,
+        e.value.needsCheck,
+        e.value.judged,
+        e.value.won,
+      ],
+  },
+});
+
+/// 控えた差枚表。店ごとに、日の新しい順の一覧（[dailyNet] と同じ並び）を持つ。
+class StoredDayNets {
+  StoredDayNets._(this._byStore);
+  final Map<String, List<DayNet>> _byStore;
+  late final Map<String, DayNet> _byKey = {
+    for (final e in _byStore.entries)
+      for (final d in e.value) '${e.key}|${d.day}': d,
+  };
+
+  /// [store] の [day] の差枚（[dailyNetLookup] と同じ。マスが無ければ null）。
+  DayNet? lookup(String store, String day) => _byKey['$store|$day'];
+
+  /// [store] の日ごとの差枚（新しい日が先。[dailyNet] と同じ）。
+  List<DayNet> days(String store) => _byStore[store] ?? const [];
+
+  int get cellCount => _byKey.length;
+
+  /// 控えた [text] を、本体の目印 [stamp] と同じときだけ読む。違う・壊れている・空なら null。
+  static StoredDayNets? decode(String? text, String? stamp) {
+    if (text == null || text.isEmpty || stamp == null) return null;
+    try {
+      final doc = jsonDecode(text) as Map<String, dynamic>;
+      if (doc['version'] != 1 || doc['stamp'] != stamp) return null;
+      final byStore = <String, List<DayNet>>{};
+      for (final e in (doc['cells'] as Map<String, dynamic>).entries) {
+        final at = e.key.indexOf('|');
+        final v = e.value as List<dynamic>;
+        if (at <= 0 || v.length != 6) return null;
+        (byStore[e.key.substring(0, at)] ??= []).add(
+          DayNet(
+            day: e.key.substring(at + 1),
+            total: v[0] as int?,
+            captured: v[1] as int,
+            racks: v[2] as int,
+            needsCheck: v[3] as int,
+            judged: v[4] as int,
+            won: v[5] as int,
+          ),
+        );
+      }
+      for (final list in byStore.values) {
+        list.sort((a, b) => b.day.compareTo(a.day));
+      }
+      return StoredDayNets._(byStore);
+    } on Object {
+      return null;
+    }
+  }
 }

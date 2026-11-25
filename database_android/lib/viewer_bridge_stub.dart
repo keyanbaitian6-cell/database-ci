@@ -34,6 +34,11 @@ Future<String?> checkViewerScores({
   String? from,
 }) async => null;
 
+Future<String?> checkViewerTrend({
+  required void Function(String rowsJson) onDay,
+  required String Function() finish,
+}) async => null;
+
 Future<String?> backupFromRemote(
   String url, {
   String? unlessExportedAt,

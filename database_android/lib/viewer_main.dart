@@ -25,6 +25,7 @@ import 'pscube_suffix.dart' show meruhenSuffixStores;
 import 'pscube_suffix_page.dart';
 import 'pscube_validation_page.dart';
 import 'rack_suffix.dart';
+import 'rack_trend_check.dart';
 import 'rainbow_marks.dart';
 import 'remote_curve.dart';
 import 'setting_estimate_presentation.dart';
@@ -271,6 +272,8 @@ class _ViewerHomeState extends State<ViewerHome> {
     if (saved) await _checkCalendarFromCache();
     // 段階B2：日・機種一覧の台の点数を、日別キャッシュの「その日と前30暦日」だけから計算して照合する（表示は変えない）。
     if (saved) await _checkScoresFromCache();
+    // 段階B3：台の推移（直近7記録と各日の点数）を、日別キャッシュから作って照合する（表示は変えない）。
+    if (saved) await _checkTrendFromCache();
     if (mounted) setState(() => _syncing = false);
   }
 
@@ -283,11 +286,15 @@ class _ViewerHomeState extends State<ViewerHome> {
     const storeKey = 'database-viewer-b2-store';
     final stores = {for (final r in data.records) r.store}.toList()..sort();
     if (stores.isEmpty) return;
-    final storeAt = (int.tryParse(loadViewerSetting(storeKey) ?? '') ?? 0) % stores.length;
+    final storeAt =
+        (int.tryParse(loadViewerSetting(storeKey) ?? '') ?? 0) % stores.length;
     final store = stores[storeAt];
     final key = 'database-viewer-b2-day:$store';
     final pick = pickScoreDays(
-      {for (final r in data.records) if (r.store == store) r.day},
+      {
+        for (final r in data.records)
+          if (r.store == store) r.day,
+      },
       loadViewerSetting(key),
       rotating: 1,
     );
@@ -304,14 +311,63 @@ class _ViewerHomeState extends State<ViewerHome> {
     }
   }
 
+  Future<void> _checkTrendFromCache() async {
+    final data = _data;
+    if (data == null || data.source == 'pscube') return;
+    // 1回の更新で比べるのは1店の、いちばん新しい日の30台だけ（推移は期間を区切らないので日別キャッシュは全日を読む。
+    // 台ごとに7日分を採点する）。店は更新のたびに交互にし、台は店ごとに「最後に比べた台番号」で覚えて一巡する。
+    const storeKey = 'database-viewer-b3-store';
+    final stores = {for (final r in data.records) r.store}.toList()..sort();
+    if (stores.isEmpty) return;
+    final storeAt =
+        (int.tryParse(loadViewerSetting(storeKey) ?? '') ?? 0) % stores.length;
+    final store = stores[storeAt];
+    final key = 'database-viewer-b3-rack:$store';
+    final pick = pickTrendRacks(
+      data.records,
+      store,
+      after: int.tryParse(loadViewerSetting(key) ?? ''),
+    );
+    if (pick.targets.isEmpty) return;
+    final check = RackTrendCheck(data.records, pick.targets);
+    final status = await checkViewerTrend(
+      onDay: (rowsJson) => check.addDay(jsonDecode(rowsJson) as List),
+      finish: () => jsonEncode({
+        ...check.finish(),
+        'store': store,
+        'day': pick.targets.first.day,
+      }),
+    );
+    if (status == 'match' || status == 'mismatch') {
+      saveViewerSetting(storeKey, '${(storeAt + 1) % stores.length}');
+      saveViewerSetting(key, pick.next == null ? '' : '${pick.next}');
+    }
+  }
+
   Future<void> _checkCalendarFromCache() async {
     final data = _data;
     if (data == null || data.source == 'pscube') return;
     final table = DayNetTable();
-    await checkViewerCalendar(
+    final stamp = dayNetStamp(data);
+    final status = await checkViewerCalendar(
       onDay: (rowsJson) => table.addDay(jsonDecode(rowsJson) as List),
-      finish: () => jsonEncode(compareDayNets(table, data.records)),
+      finish: () {
+        final result = compareDayNets(table, data.records);
+        // 一致した表だけをカレンダーに使う（2026-11-25 段階B1の切り替え）。診断にも、表で表示していることを出す。
+        if (result['status'] == 'match' && stamp != null) {
+          result['switched'] = true;
+        }
+        return jsonEncode(result);
+      },
     );
+    // 一致したら差枚表を控えて、カレンダーはその表から出す。一致しない・照合できなかったときは控えを消し、今の計算に戻す。
+    // 照合しなかった（止めている間・日別キャッシュの無い端末）ときは触らない（本体の目印が違えば表は使われない）。
+    if (status == 'match' && stamp != null) {
+      saveViewerSetting(dayNetTableKey, encodeDayNetTable(table, stamp));
+    } else if (status != null) {
+      saveViewerSetting(dayNetTableKey, '');
+    }
+    _netData = null; // 次にカレンダーを開くとき、控えを読み直す。
   }
 
   /// 共有カレンダー（EVENT_CALENDAR.md）：ほかの端末で入れたイベントを取り込む。共有ファイルが
@@ -791,15 +847,34 @@ class _ViewerHomeState extends State<ViewerHome> {
   ViewerData? _netData;
   DayNet? Function(String store, String day)? _netLookup;
   Map<String, List<SlotRecord>> _dayRecords = const {};
+
+  /// 段階B1の切り替え（2026-11-25）：日別キャッシュから作り、今の計算と一致した差枚表（メルヘンだけ）。
+  /// 本体の目印が違う・無いときは null で、今の計算（[dailyNetLookup]）を使う。
+  StoredDayNets? _storedNets;
   void _indexCalendar(ViewerData data) {
     if (identical(data, _netData)) return;
     _netData = data;
-    _netLookup = dailyNetLookup(data.records);
+    _storedNets = data.source == 'pscube'
+        ? null
+        : StoredDayNets.decode(
+            loadViewerSetting(dayNetTableKey),
+            dayNetStamp(data),
+          );
+    final stored = _storedNets;
+    _netLookup = stored != null ? stored.lookup : dailyNetLookup(data.records);
     final byDay = <String, List<SlotRecord>>{};
     for (final r in data.records) {
       (byDay['${r.store}|${r.day}'] ??= []).add(r);
     }
     _dayRecords = byDay;
+  }
+
+  /// 日別差枚の月表に渡す、控えた差枚表の [store] の日々（控えが使えないときは null で、月表が今の計算をする）。
+  List<DayNet>? _storedDaysFor(String store) {
+    final data = _data;
+    if (data == null) return null;
+    _indexCalendar(data);
+    return _storedNets?.days(store);
   }
 
   DayNet? _netFor(String store, String day) {
@@ -1068,6 +1143,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       MaterialPageRoute<void>(
         builder: (_) => DailyNetPage(
           records: all,
+          days: _storedDaysFor(store),
           store: store,
           day: day,
           onDayChanged: (changed) => setState(() => _day = changed),

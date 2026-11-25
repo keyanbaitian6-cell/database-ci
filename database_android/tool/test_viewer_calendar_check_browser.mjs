@@ -102,7 +102,8 @@ const helpers = () => {
   let log = null;
   // B0→B1→B2 は1つずつ動き、区切りの間は running が null になる。B1（calendar）だけで止めると、B2 の結果を
   // 確かめる前に読んでしまう（2026-11-22、Geminiの点検 H-12⑤）。最後の B2（scores）まで待つ。
-  for (let i = 0; i < 160 && !(log?.calendar && log?.scores && !log.running); i++) {
+  // 段階B3（2026-11-25）の台の推移の照合は、B2のあとに動く。
+  for (let i = 0; i < 160 && !(log?.calendar && log?.scores && log?.trend && !log.running); i++) {
     await page.waitForTimeout(250);
     log = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem('database-viewer-diag')); } catch { return null; } });
   }
@@ -135,7 +136,64 @@ const helpers = () => {
   assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-day:saiwaichou')), null);
   assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-cursor')), null, '古い位置の覚え方は使わない');
   assert.ok(lines.some(l => /^日・機種一覧の日別採点と照合：最後まで終わった1回/.test(l)), lines.join('\n'));
+  // 段階B1の切り替え（2026-11-25）：一致したので、差枚表を本体の目印（書き出しの時刻｜記録の件数）と一緒に控え、
+  // カレンダーはその表で表示する。診断にもそう出す。
+  assert.equal(log.calendar.switched, true);
+  assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算：一致（3日・6マス）・カレンダーはこの表で表示')), lines.join('\n'));
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('database-viewer-day-net')));
+  assert.equal(stored.version, 1);
+  assert.equal(stored.stamp, NEW_EXPORT + '|9');
+  assert.deepEqual(Object.keys(stored.cells).sort(), ['2026-11-08', '2026-11-09', '2026-11-10'].flatMap(d => ['nagamachiminami|' + d, 'saiwaichou|' + d]).sort());
+  // 長町南の11/10：100番（差枚100）と102番（差枚300）。[合計, 分かる台, 台数, 要確認, …]
+  assert.deepEqual(stored.cells['nagamachiminami|2026-11-10'].slice(0, 4), [400, 2, 2, 0]);
+  // 段階B3：台の推移（直近7記録と各日の点数）も、日別キャッシュ（全日）から作って一致する。初回は長町南の最新の日
+  // 11/10の全台（100番・102番。30台以下なので全部）で、それぞれ11/08〜11/10の3行。
+  assert.equal(log.trend?.status, 'match', JSON.stringify(log.trend));
+  assert.equal(log.trend.store, 'nagamachiminami'); assert.equal(log.trend.day, '2026-11-10');
+  assert.equal(log.trend.days, 3); assert.equal(log.trend.racks, 2); assert.equal(log.trend.entries, 6);
+  assert.equal(log.trend.mismatched, 0);
+  assert.equal(log.phases.trend.count, 1); assert.equal(log.phases.trend.unfinished, 0);
+  assert.ok(lines.some(l => l.startsWith('台の推移の日別計算：一致（長町南・11/10・2台・6行）')), lines.join('\n'));
+  assert.ok(lines.some(l => /^台の推移の日別計算と照合：最後まで終わった1回/.test(l)), lines.join('\n'));
+  assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b3-store')), '1', '次の更新では幸町');
   await context.close();
+}
+
+// 1b. 段階B1の切り替え（2026-11-25）：カレンダー（日別の差枚の月表）は、本体の目印が合う控えの差枚表から出し、
+// 目印が違う・控えが無いときは今の計算（全記録から）に戻る。控えの値をわざと変えて、どちらから出したかを見分ける。
+{
+  const records = ['2026-11-08', '2026-11-09'].flatMap(d => rows(d, 1));
+  const stamp = OLD_EXPORT + '|' + records.length;
+  // 本当の値：長町南の11/08・11/09は100番（+100）と102番（+300）で +400。控えの側だけ +777・+555 にする。
+  const table = s => JSON.stringify({version: 1, stamp: s, cells: {
+    'nagamachiminami|2026-11-09': [777, 2, 2, 0, 0, 0], 'nagamachiminami|2026-11-08': [555, 2, 2, 0, 0, 0],
+    'saiwaichou|2026-11-09': [200, 1, 1, 1, 0, 0], 'saiwaichou|2026-11-08': [200, 1, 1, 1, 0, 0]}});
+  for (const [label, saved, shown, hidden] of [
+    ['目印が合う控え', table(stamp), '+777', '+400'],
+    ['目印が違う控え（本体が新しくなった）', table(NEW_EXPORT + '|' + records.length), '+400', '+777'],
+    ['控えなし', null, '+400', '+777'],
+  ]) {
+    const context = await browser.newContext({viewport: {width: 393, height: 852}});
+    await context.route('https://script.google.com/**', route => route.abort());
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(origin + '/setup');
+    await page.evaluate(async ({body, saved}) => {
+      if (saved) localStorage.setItem('database-viewer-day-net', saved);
+      const db = await new Promise((res, rej) => { const q = indexedDB.open('database-viewer', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+      await new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(body, 'data'); tx.objectStore('kv').put('meruhen', 'active_source'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); db.close();
+    }, {body, saved});
+    await page.goto(origin + '/database-viewer/');
+    await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
+    const placeholder = page.locator('flt-semantics-placeholder');
+    if (await placeholder.count()) await placeholder.evaluate(e => e.click());
+    await page.getByRole('button', {name: '日別の差枚（推定）', exact: true}).click({timeout: 60000});
+    await page.getByText(/2026年11月のデータ/).first().waitFor();
+    await page.getByText(shown, {exact: true}).first().waitFor({timeout: 30000});
+    assert.equal(await page.getByText(hidden, {exact: true}).count(), 0, label);
+    assert.deepEqual(errors, [], label);
+    await context.close();
+  }
 }
 
 // 2. 橋渡しだけ（画面なし）：1日ずつ渡す・読むだけ・結果の控え・キャッシュ無し・止めている間・P’s CUBE。
@@ -243,7 +301,26 @@ const helpers = () => {
   await page.evaluate(() => { const log = window.__diag(); log.scores_halt = {at: new Date().toISOString()}; localStorage.setItem('database-viewer-diag', JSON.stringify(log)); });
   assert.equal(await page.evaluate(() => window.databaseViewer.checkScores(() => {}, () => '{}')), null, 'B2を止めている間はB2だけ動かない');
   assert.notEqual(await page.evaluate(() => window.databaseViewer.checkCalendar(() => {}, () => JSON.stringify({status: 'match', cells: 0, mismatched: 0, examples: []}))), null, 'B1は止まらない');
+  // 段階B3：同じ形で全日を1日ずつ渡し、結果を別の項目に控える。止めている間（trend_halt）はB3だけ止まる。P’s CUBEでは動かない。
+  const trend = await page.evaluate(async () => {
+    const days = [];
+    const status = await window.databaseViewer.checkTrend((day, json) => days.push(day), () => JSON.stringify({status: 'match', store: 'saiwaichou', day: '2026-11-09', racks: 1, entries: 2, mismatched: 0, examples: []}));
+    return {status, days, diag: window.__diag().trend};
+  });
+  assert.equal(trend.status, 'match');
+  assert.deepEqual(trend.days, ['2026-11-07', '2026-11-08', '2026-11-09'], '推移は期間を区切らないので全日を読む');
+  assert.deepEqual({status: trend.diag.status, days: trend.diag.days, racks: trend.diag.racks, entries: trend.diag.entries}, {status: 'match', days: 3, racks: 1, entries: 2});
+  await page.evaluate(() => { const log = window.__diag(); log.trend_halt = {at: new Date().toISOString()}; localStorage.setItem('database-viewer-diag', JSON.stringify(log)); });
+  assert.equal(await page.evaluate(() => window.databaseViewer.checkTrend(() => {}, () => '{}')), null, 'B3を止めている間はB3だけ動かない');
+  await page.evaluate(() => { const log = window.__diag(); delete log.scores_halt; localStorage.setItem('database-viewer-diag', JSON.stringify(log)); });
+  assert.notEqual(await page.evaluate(() => window.databaseViewer.checkScores(() => {}, () => JSON.stringify({status: 'match', racks: 0, mismatched: 0, examples: []}))), null, 'B2は止まらない');
+  await page.evaluate(async () => {
+    const log = window.__diag(); delete log.trend_halt; localStorage.setItem('database-viewer-diag', JSON.stringify(log));
+    const kv = await window.__open('database-viewer', 1, ['kv']);
+    await new Promise((res, rej) => { const tx = kv.transaction('kv', 'readwrite'); tx.objectStore('kv').put('pscube', 'active_source'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); kv.close();
+  });
+  assert.equal(await page.evaluate(() => window.databaseViewer.checkTrend(() => {}, () => '{}')), null, 'B3もP’s CUBEでは動かない');
   await context.close();
 }
 await browser.close(); server.close();
-console.log('PASS: 段階B1のカレンダー照合（更新のあとに一致・1日ずつ渡す・読むだけ・違いを出す・エラー・キャッシュ無し・止めている間・P’s CUBE）');
+console.log('PASS: 段階B1のカレンダー照合と切り替え・B2・B3の推移照合（更新のあとに一致・控えの差枚表で表示・目印違いは今の計算・1日ずつ渡す・読むだけ・違いを出す・エラー・キャッシュ無し・止めている間・P’s CUBE）');

@@ -97,8 +97,13 @@ class DailyNetPage extends StatefulWidget {
     required this.day,
     this.onDayChanged,
     this.eventFor,
+    this.days,
   });
   final List<SlotRecord> records;
+
+  /// 計算済みの日ごとの差枚（[dailyNet] と同じ並び）。閲覧ページは、日別キャッシュから作って今の計算と一致した
+  /// 表を渡す（段階B1の切り替え、2026-11-25）。null なら [records] から計算する。
+  final List<DayNet>? days;
   final String store, day;
   final ValueChanged<String>? onDayChanged;
 
@@ -110,7 +115,8 @@ class DailyNetPage extends StatefulWidget {
 
 class _DailyNetPageState extends State<DailyNetPage> {
   late final bool _estimated = !isPscubeStore(widget.store);
-  late final List<DayNet> _all = dailyNet(widget.records, widget.store);
+  late final List<DayNet> _all =
+      widget.days ?? dailyNet(widget.records, widget.store);
   late String _month = widget.day.substring(0, 7);
   int _sortColumn = 0;
   bool _ascending = true;
