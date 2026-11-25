@@ -136,13 +136,20 @@ const helpers = () => {
   assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-day:saiwaichou')), null);
   assert.equal(await page.evaluate(() => localStorage.getItem('database-viewer-b2-cursor')), null, '古い位置の覚え方は使わない');
   assert.ok(lines.some(l => /^日・機種一覧の日別採点と照合：最後まで終わった1回/.test(l)), lines.join('\n'));
-  // 段階B1の切り替え（2026-11-25）：一致したので、差枚表を本体の目印（書き出しの時刻｜記録の件数）と一緒に控え、
-  // カレンダーはその表で表示する。診断にもそう出す。
+  // 段階B1の切り替え（2026-11-25）：一致したので、差枚表を本体の目印（端末の本体の目印｜書き出しの時刻｜記録の件数。
+  // 本体の目印は 2026-11-26 点検④で追加）と一緒に控え、カレンダーはその表で表示する。診断にもそう出す。
   assert.equal(log.calendar.switched, true);
   assert.ok(lines.some(l => l.startsWith('カレンダーの日別計算：一致（3日・6マス）・カレンダーはこの表で表示')), lines.join('\n'));
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('database-viewer-day-net')));
   assert.equal(stored.version, 1);
-  assert.equal(stored.stamp, NEW_EXPORT + '|9');
+  const bodyId = await page.evaluate(async () => {
+    const db = await new Promise((res, rej) => { const q = indexedDB.open('database-viewer'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+    try { return await new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get('data_id'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+    finally { db.close(); }
+  });
+  assert.equal(typeof bodyId, 'string', '本体を保存したら、同じ書き込みで本体の目印も書く');
+  assert.ok(bodyId.length > 0);
+  assert.equal(stored.stamp, bodyId + '|' + NEW_EXPORT + '|9');
   assert.deepEqual(Object.keys(stored.cells).sort(), ['2026-11-08', '2026-11-09', '2026-11-10'].flatMap(d => ['nagamachiminami|' + d, 'saiwaichou|' + d]).sort());
   // 長町南の11/10：100番（差枚100）と102番（差枚300）。[合計, 分かる台, 台数, 要確認, …]
   assert.deepEqual(stored.cells['nagamachiminami|2026-11-10'].slice(0, 4), [400, 2, 2, 0]);
@@ -161,16 +168,20 @@ const helpers = () => {
 
 // 1b. 段階B1の切り替え（2026-11-25）：カレンダー（日別の差枚の月表）は、本体の目印が合う控えの差枚表から出し、
 // 目印が違う・控えが無いときは今の計算（全記録から）に戻る。控えの値をわざと変えて、どちらから出したかを見分ける。
+// 2026-11-26 点検④：書き出しの時刻と件数が同じでも、端末の本体の目印（'data_id'）が違う・無いなら使わない。
 {
   const records = ['2026-11-08', '2026-11-09'].flatMap(d => rows(d, 1));
-  const stamp = OLD_EXPORT + '|' + records.length;
+  const stamp = 'body-A|' + OLD_EXPORT + '|' + records.length;
   // 本当の値：長町南の11/08・11/09は100番（+100）と102番（+300）で +400。控えの側だけ +777・+555 にする。
   const table = s => JSON.stringify({version: 1, stamp: s, cells: {
     'nagamachiminami|2026-11-09': [777, 2, 2, 0, 0, 0], 'nagamachiminami|2026-11-08': [555, 2, 2, 0, 0, 0],
     'saiwaichou|2026-11-09': [200, 1, 1, 1, 0, 0], 'saiwaichou|2026-11-08': [200, 1, 1, 1, 0, 0]}});
-  for (const [label, saved, shown, hidden] of [
+  for (const [label, saved, shown, hidden, dataId = 'body-A'] of [
     ['目印が合う控え', table(stamp), '+777', '+400'],
-    ['目印が違う控え（本体が新しくなった）', table(NEW_EXPORT + '|' + records.length), '+400', '+777'],
+    ['目印が違う控え（本体が新しくなった）', table('body-A|' + NEW_EXPORT + '|' + records.length), '+400', '+777'],
+    ['時刻・件数が同じ別の本体（本体の目印が違う）', table(stamp), '+400', '+777', 'body-B'],
+    ['本体の目印の無い古い本体', table(stamp), '+400', '+777', null],
+    ['以前の形（時刻|件数）の控え', table(OLD_EXPORT + '|' + records.length), '+400', '+777'],
     ['控えなし', null, '+400', '+777'],
   ]) {
     const context = await browser.newContext({viewport: {width: 393, height: 852}});
@@ -178,11 +189,11 @@ const helpers = () => {
     const page = await context.newPage(), errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(origin + '/setup');
-    await page.evaluate(async ({body, saved}) => {
+    await page.evaluate(async ({body, saved, dataId}) => {
       if (saved) localStorage.setItem('database-viewer-day-net', saved);
       const db = await new Promise((res, rej) => { const q = indexedDB.open('database-viewer', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
-      await new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(body, 'data'); tx.objectStore('kv').put('meruhen', 'active_source'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); db.close();
-    }, {body, saved});
+      await new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(body, 'data'); if (dataId) tx.objectStore('kv').put(dataId, 'data_id'); tx.objectStore('kv').put('meruhen', 'active_source'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); db.close();
+    }, {body, saved, dataId});
     await page.goto(origin + '/database-viewer/');
     await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
     const placeholder = page.locator('flt-semantics-placeholder');

@@ -293,6 +293,9 @@ class ViewerData {
   }
 
   /// 手動読み込みは端末のイベントを引き継ぎ、古い台データを組み立て直さない。
+  ///
+  /// PCが閲覧用を店ごとに分けて書き出したうちの1つ（見出し・1店のファイル）は、端末の全履歴の代わりにならない
+  /// ので、保存の前に [PartialViewerFile] で止める（2026-11-26 点検①。中身で見分け、旧形式の完全な閲覧用は読む）。
   static ({String text, ViewerData data}) preparePicked(
     String incoming,
     ViewerData? previous, {
@@ -302,6 +305,8 @@ class ViewerData {
     if (fresh == null) {
       throw const FormatException('databaseのバックアップファイルではありません。');
     }
+    final partial = partialViewerFile(fresh);
+    if (partial != null) throw PartialViewerFile(partial);
     final cachedEvents = _decodeDocument(events);
     final doc =
         fresh['format'] == 'pscube-viewer' || previous?.source == 'pscube'
@@ -318,12 +323,43 @@ class ViewerData {
     );
   }
 
+  /// PCの分けた書き出しの1つなら、利用者への案内（なぜ読まないか・何を選ぶか）。完全なファイルなら null。
+  /// 見分けは中身だけ：見出しのファイルは `split_stores`、1店のファイルは `source: pc-viewer` と `stores` を持つ
+  /// （database/core.py の export_viewer）。閲覧ページのファイル選択は、外枠を `header` に入れて渡す。
+  static String? partialViewerFile(Map<String, dynamic> doc) {
+    final header = doc['header'] is Map ? doc['header'] as Map : const {};
+    Object? field(String name) => doc[name] ?? header[name];
+    const names = {'nagamachiminami': '長町南', 'saiwaichou': '幸町'};
+    const guide =
+        '読み込むと端末の履歴がこのファイルの分だけに置き換わるため、読み込みをやめました（端末の内容はそのままです）。'
+        '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、'
+        'Android版で「すべての日付」を選んで書き出したもの）を選んでください。'
+        'ふだんの最新は、Googleドライブの自動読み込みで届きます。';
+    if (field('split_stores') != null) {
+      return 'このファイルは、PCが閲覧用を店ごとに分けて書き出したうちの見出しのファイル'
+          '（database-viewer.json。台は入っていません）です。$guide';
+    }
+    final stores = field('stores');
+    if (field('source') == 'pc-viewer' && stores != null) {
+      final which = stores is List
+          ? stores.map((s) => names[s] ?? '$s').join('・')
+          : '';
+      return 'このファイルは、PCが閲覧用を店ごとに分けて書き出したうちの1店分のファイル'
+          '（${which.isEmpty ? '' : '$whichの台だけ'}）です。$guide';
+    }
+    return null;
+  }
+
   /// 統合と表示用モデルの組み立てで、同じ全文を繰り返し解析しない。
+  ///
+  /// 端末の本文 [stored] があるのに読めない（JSONでない・記録の一覧が無い）ときは [StoredBodyUnreadable] で止める
+  /// （2026-11-26 点検②。今までは初回と同じ扱いで、Driveの新着だけを保存して端末だけにあった古い日を失っていた）。
+  /// 本当に初回（null・空）のときだけ、Driveの内容をそのまま使う。
   static ({String text, String? note, ViewerData data}) prepareMerge(
     String? stored,
     String incoming,
   ) {
-    final result = _mergeDocument(stored, incoming);
+    final result = _mergeDocument(stored, incoming, strict: true);
     return (
       text: result.text,
       note: result.note,
@@ -507,8 +543,11 @@ class ViewerData {
   }
 
   static ({String text, String? note, Map<String, dynamic> document})
-  _mergeDocument(String? stored, String incoming) {
+  _mergeDocument(String? stored, String incoming, {bool strict = false}) {
     final old = _decodeDocument(stored);
+    if (strict && old == null && stored != null && stored.isNotEmpty) {
+      throw const StoredBodyUnreadable('端末に保存した内容が壊れていて読めません。');
+    }
     final fresh = _decodeDocument(incoming);
     if (fresh == null) {
       throw const FormatException('databaseのバックアップファイルではありません。');
@@ -571,10 +610,8 @@ class ViewerData {
   ///
   /// 旧本文の記録がDriveの内容に全部含まれる日だけのとき（古い日を足す必要がなく、旧本文のほうが新しい場合でもない）
   /// に使える。そうでなければ null（呼び出し側は旧本文を読んで [prepareMerge] を使う）。
-  static ({String text, String? note, ViewerData data})? prepareMergeFromSummary(
-    String summary,
-    String incoming,
-  ) {
+  static ({String text, String? note, ViewerData data})?
+  prepareMergeFromSummary(String summary, String incoming) {
     final Object? decoded;
     try {
       decoded = jsonDecode(summary);
@@ -590,7 +627,8 @@ class ViewerData {
     final fresh = _decodeDocument(incoming);
     if (old == null || fresh == null) return null;
     // この要約で足りるのは、[_mergeRecords] が「Driveの内容をそのまま使う」場合だけ（古い日が無い）。
-    if (fresh['format'] == 'pscube-viewer' || old['format'] == 'pscube-viewer') {
+    if (fresh['format'] == 'pscube-viewer' ||
+        old['format'] == 'pscube-viewer') {
       return null;
     }
     DateTime? exportedAt(Map<String, dynamic> doc) {
@@ -758,4 +796,22 @@ class ViewerData {
       return null;
     }
   }
+}
+
+/// 手動の読み込みで、PCの分けた書き出しの1つ（見出し・1店のファイル）を選んだ（2026-11-26 点検①）。
+/// [message] は利用者への案内。保存はしない。
+class PartialViewerFile implements Exception {
+  const PartialViewerFile(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
+/// Driveの更新で、端末の本文を読めなかった・本文が壊れていた（2026-11-26 点検②）。Driveの新着だけを保存すると
+/// 端末だけにあった古い日を失うので、更新を保存せずに見送る（次の更新でまた試す）。
+class StoredBodyUnreadable implements Exception {
+  const StoredBodyUnreadable(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }

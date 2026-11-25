@@ -45,7 +45,7 @@ void main() {
         table.addDay(viaJson(byDay[day]!));
       }
       expect(compareDayNets(table, data.records)['status'], 'match');
-      final stamp = dayNetStamp(data)!;
+      final stamp = dayNetStamp(data, 'body-1')!;
       final text = encodeDayNetTable(table, stamp);
       final stored = StoredDayNets.decode(text, stamp)!;
       expect(stored.cellCount, table.cells.length);
@@ -78,24 +78,36 @@ void main() {
     for (final day in byDay.keys.toList()..sort()) {
       table.addDay(viaJson(byDay[day]!));
     }
-    final stamp = dayNetStamp(data)!;
-    expect(stamp, '$exported|${data.records.length}');
+    final stamp = dayNetStamp(data, 'body-1')!;
+    expect(stamp, 'body-1|$exported|${data.records.length}');
     final text = encodeDayNetTable(table, stamp);
     expect(StoredDayNets.decode(text, stamp), isNotNull);
     // Googleの更新で本体が新しくなった（書き出しの時刻が替わった）・記録の件数が違う。
     expect(
       StoredDayNets.decode(
         text,
-        '2026-11-26T00:00:00+09:00|${data.records.length}',
+        'body-1|2026-11-26T00:00:00+09:00|${data.records.length}',
       ),
       isNull,
     );
     expect(
-      StoredDayNets.decode(text, '$exported|${data.records.length + 1}'),
+      StoredDayNets.decode(text, 'body-1|$exported|${data.records.length + 1}'),
+      isNull,
+    );
+    // 2026-11-26 点検④：書き出しの時刻と件数が同じでも、端末に保存し直した別の本体（目印が違う）には使わない。
+    // 目印の無い本体（目印を書く前の古い本体）・以前の形（時刻|件数）の控えも使わない。
+    expect(StoredDayNets.decode(text, dayNetStamp(data, 'body-2')), isNull);
+    expect(dayNetStamp(data, null), isNull);
+    expect(dayNetStamp(data, ''), isNull);
+    expect(
+      StoredDayNets.decode(
+        encodeDayNetTable(table, '$exported|${data.records.length}'),
+        stamp,
+      ),
       isNull,
     );
     // 書き出しの時刻の無い本体は目印を作らない（表を使わない）。
-    expect(dayNetStamp(parse(byDay, at: null)), isNull);
+    expect(dayNetStamp(parse(byDay, at: null), 'body-1'), isNull);
     expect(StoredDayNets.decode(text, null), isNull);
     // 消した控え（照合が一致しなかった）・壊れた控え・形の違う控え。
     expect(StoredDayNets.decode('', stamp), isNull);
