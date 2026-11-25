@@ -4870,3 +4870,23 @@
 - 試験は一時DB・一時Gitリポジトリ・共有カレンダーの架空応答で実施。長町南と幸町の区別、210日より古い未記録の対象日を再試行して結果が保存されること、P-STATIONの期間外の行が予測側に入らないこと、コードから Markdown への改名で月初の送信を止めることを確認。実DB、対象サイト、研究成績は開いていない。
 - 手元の修正差分を含む作業ツリーで PC 全試験 `python -B -m unittest discover -s tests` 相当（`TZ=JST-9`、プロセス内 `+09:00` を検証）1,171件成功。隔離環境では一時Gitリポジトリへの送信と子プロセスの試験が失敗したため、作業領域内に試験用一時フォルダーを指定し、制限外で再実行した。日次学習の JS 試験7件、共有カレンダーの Chromium 画面試験（320・393・1280px）も成功。
 - `7691de6` を取り込んだ後に `python -B -m unittest discover -s tests -p 'test_daily*.py'`（`TZ=JST-9`）117件成功。送信先は日本時間11月25日の `keyanbaitian6-cell/database-ci` の `main`。
+
+## 2026-11-25 Gemini：日次学習の過剰ルール①〜④撤廃と「今すぐ日次学習」ボタン追加
+
+- 依頼：余計・邪魔になりやすいルールの提案①〜④に対し、利用者「１，２，３，４撤廃して」「他のAIも更新してたかもしれないので、確認後、修正してpush反映までお願い」。
+- 基準コミット：着手時は `14ab027`（`database-ci/main` と一致・未コミット変更なしを確認）。全体ゲート実行中に他AIの `eddcd6a`・`5258c99` と段階B関連の未コミット変更が加わったため、`5258c99` との非競合を確認したうえで自分の変更ファイル16件のみを `5258c99` の上にコミット（他AIの未コミット変更は一切含めていない）。
+- 変更内容（①〜④）：
+  - **① 閲覧側の保存時刻時間帯チェック撤廃**：`database_android/tool/daily_learning_projection.js`（`viewer_drive_script.gs`・`viewer_drive_script_readonly.gs` 再生成）、`database_android/lib/daily_learning_page.dart`、`share_viewer/daily_learning.mjs` で `inWindow` 拒否を撤廃し、タイムゾーン付き日時形式のみ検査する形へ変更。対象日切替・過去日拒否・上書き拒否は PC 側（`daily_learning.py` の `Journal.freeze`）で引き続き一元管理する。
+  - **② 起動待ち・静穏待ち・確認間隔の短縮＋手動実行ボタン追加**：`database/daily_learning_runtime.py` の `QUIET_SECONDS` を `600`（10分）→ `120`（2分）へ短縮。`database/app.py` の起動後初回実行を `60_000`→`5_000`（5秒）、定期確認を `65_000`→`10_000`・以降 `300_000`（5分）→`60_000`（1分）へ短縮し、本体上部の日次学習バー右端に「**今すぐ日次学習**」ボタン（`run_daily_now`）を追加。実行開始直後に `refresh_daily_status()` を呼んで「／計算中」を即表示する。
+  - **③④ `ready()` の過剰な停止ルール撤廃**：`database/daily_learning_runtime.py` から「前日あった機種の丸ごと欠落1%超（`MISSING_RACK_LIMIT`）」「閉店前／確定前データの1台停止（`closed_capture`・`MERUHEN_FINAL_HOUR`）」「符号不明10%超（`UNKNOWN_LIMIT`）」による停止を撤廃。最低限の安全装置（前日データが直近7日中央値の90%未満・使える台0台）のみを維持。
+  - **ドキュメント・試験**：`DAILY_LEARNING.md`・`DAILY_LEARNING_OPERATION.md`、`database/tests/test_daily_learning.py`・`test_daily_learning_schedule.py`・`test_daily_status.py`・`test_forward_validation.py`、`database_android/test/daily_learning_page_test.dart`、`database_android/tool/test_daily_learning.mjs` を更新。
+  - 保持した仕様：入力は前日分（`target - 1`）までのみ使用、過去日・未来日への保存拒否、保存済み予測の上書き拒否、学習の方式の版（`VERSION`・`method_signature`）・採用判定・既存固定研究は未変更。Android APK は `AGENTS.md` の決まり（指示があるまで作らない）に従い未作成。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| ① 閲覧側（GAS 2本・Flutter・共有カレンダー）の時間帯拒否撤廃・日時形式検査 | 済 | `build_daily_learning.mjs --check` OK、`test_daily_learning.mjs` 7件 OK、`daily_learning_page_test.dart` 10件 OK、`flutter analyze` 変更2ファイル指摘0件 |
+| ② 起動5秒・定期確認1分・静穏2分・「今すぐ日次学習」ボタン配線 | 済 | `test_daily_learning_schedule.py`・`test_daily_status.py`・`test_forward_validation.py`・`test_undefined_names.py` 含む PC関連5ファイル 103件 OK |
+| ③④ `ready()` の過剰停止ルール撤廃（90%未満・使える台0台のみ維持） | 済 | `test_daily_learning.py` `test_ready_only_waits_for_count_and_usable_racks` 通過、全体ゲート `pc-tests` 1,171件 OK |
+| 全体ゲート（ビルド前再発確認） | 済 | `C:\w\cbw-daily-rules-20261125` で `check_before_build.sh`（`TZ=JST-9`・`CHECK_JS_JOBS=2`）**ALL PASSED**（`pc-tests` 1,171件・`pc-event-timezone-utc` 28件・`flutter-test` 895件・`flutter-analyze`・`viewer-build`・`viewer-stage`・`share-stage` 19ファイル／版 `e0212e8e4ac2`・JS 97ファイル全件成功） |
+| 貼り替え用GAS用意 | 済 | `../outputs/daily-rules-20261125/gs/` に `01_自分用閲覧_viewer_drive_script.gs`（945行・62,181B・SHA-256 `1cbbb63ac4fa…`）、`02_共有カレンダー用_viewer_drive_script_readonly.gs`（770行・51,401B・SHA-256 `6adc814b54df…`）、`copy_gas.html`・`copy_01_viewer.cmd`・`copy_02_readonly.cmd` を作成・バイト一致検証済み |
+| GitHub push・Web公開・GAS貼替・実機確認 | 進行中 | 次コミット送信・クリーン worktree からの `database-viewer` 公開・`database-share` 公開を実施後に確定記録を追記（GAS貼替・PC再起動・実機確認は利用者側） |

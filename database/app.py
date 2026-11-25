@@ -412,10 +412,14 @@ def main():
     sync_banner_button = ttk.Button(sync_banner)
     sync_banner_button.pack(side='right')
     # 日次学習の様子（2026-11-23 利用者「普通に取り込んだあと学習し候補を出してるかどうかを肉眼的にわかるようにしたい」）。
-    # 5分ごとの確認（daily_tick）が書き換える。「最後の確認」の時刻が進んでいなければ、確認そのものが止まっている。
-    daily_status = tk.Label(frame, text='日次学習：起動の1分後に確かめます。', anchor='w', justify='left',
-                            wraplength=820, padx=12, pady=6, font=('Yu Gothic UI', 10), background='#EEF2F5')
-    daily_status.pack(fill='x', pady=(0, 10))
+    # 1分ごとの確認（daily_tick）が書き換える。右端のボタンからいつでも手動で即時実行できる（2026-11-25）。
+    daily_bar = tk.Frame(frame, background='#EEF2F5')
+    daily_bar.pack(fill='x', pady=(0, 10))
+    daily_status = tk.Label(daily_bar, text='日次学習：起動のすぐ後に確かめます。', anchor='w', justify='left',
+                            wraplength=700, padx=12, pady=6, font=('Yu Gothic UI', 10), background='#EEF2F5')
+    daily_status.pack(side='left', fill='x', expand=True)
+    daily_run_button = ttk.Button(daily_bar, text='今すぐ日次学習')
+    daily_run_button.pack(side='right', padx=(6, 8), pady=4)
     notebook = ttk.Notebook(frame)
     notebook.pack(fill='both', expand=True)
     tab_home = ttk.Frame(notebook, padding=22)
@@ -2104,8 +2108,18 @@ def main():
         except Exception:  # noqa: BLE001 - 印を覚えられなくても動かす
             pass
         daily_worker.start(skip_sources=skip)
+        refresh_daily_status()
 
-    daily_tick_note = [None, None]   # 直前に run.log へ書いた判定・例外（同じ内容は5分ごとに書き直さない）
+    def run_daily_now():
+        """利用者が「今すぐ日次学習」ボタンを押したとき、静穏待ちなしで即座に日次学習を開始する（2026-11-25）。"""
+        if closing[0]:
+            return
+        tell('日次学習を手動で開始します。\n')
+        start_daily()
+
+    daily_run_button.configure(command=run_daily_now)
+
+    daily_tick_note = [None, None]   # 直前に run.log へ書いた判定・例外（同じ内容は1分ごとに書き直さない）
     daily_tick_at = [None]
     DAILY_STATUS_COLORS = {'ok': '#E6F4EA', 'wait': '#FFF4DC', 'error': '#FDE2E1'}
 
@@ -2125,7 +2139,10 @@ def main():
             text += f'　{problem}'
             level = 'error'
         try:
-            daily_status.configure(text=text, background=DAILY_STATUS_COLORS.get(level, '#EEF2F5'))
+            bg = DAILY_STATUS_COLORS.get(level, '#EEF2F5')
+            daily_status.configure(text=text, background=bg)
+            if 'daily_bar' in locals() or 'daily_bar' in globals():
+                daily_bar.configure(background=bg)
         except tk.TclError:
             pass
 
@@ -2163,15 +2180,15 @@ def main():
             problem = f'定期確認でエラー（{type(error).__name__}。errors.log）'
         finally:
             if not closing[0]:
-                root.after(300_000, daily_tick)
+                root.after(60_000, daily_tick)
         try:
             refresh_daily_status(problem)
         except Exception as error:  # noqa: BLE001
             error_log.record(DATA_DIR, 'daily.status', error)
 
     def daily_check():
-        # 5分ごとに、まだ保存していない店の原本DBが10分書かれていなければ動かす（2026-11-25に8時締切を完全撤廃し、
-        # 対象日の前日23:30〜当日23:30未満は終日保存できる。2026-11-14 利用者「取り込みが終了したら勝手にやってくれる
+        # 1分ごとに、まだ保存していない店の原本DBが2分書かれていなければ動かす（2026-11-25に8時締切撤廃・
+        # 静穏待ち10分→2分・確認間隔5分→1分へ短縮。2026-11-14 利用者「取り込みが終了したら勝手にやってくれる
         # はずなのになぜかうまくいってない」）。
         # 同じ原本で「取り込み待ち」になったら、原本が変わるまで読み直さない（daily_learning_runtime.run_due）。
         from daily_learning import JST
@@ -2221,20 +2238,20 @@ def main():
             if not capture_open('pscube'):
                 check_pending_forward()
             if capture_open():
-                root.after(300_000, daily_on_start)
+                root.after(60_000, daily_on_start)
                 return
             start_daily()
-        except Exception as error:  # noqa: BLE001 - 起動時の確認の失敗は残して、5分ごとの確認に任せる
+        except Exception as error:  # noqa: BLE001 - 起動時の確認の失敗は残して、1分ごとの確認に任せる
             error_log.record(DATA_DIR, 'daily.on_start', error)
 
     def forward_on_start():
-        # 翌朝9時前にPCアプリを開いてすぐ（日次学習の初回確認の60秒より前に）閉じても、前夜の印を取りこぼさない（2026-11-24）。
+        # 翌朝9時前にPCアプリを開いてすぐ閉じても、前夜の印を取りこぼさない（2026-11-24）。
         if closing[0]:
             return
         try:
             if not capture_open('pscube'):
                 check_pending_forward()
-        except Exception as error:  # noqa: BLE001 - 5分ごとの確認に任せる
+        except Exception as error:  # noqa: BLE001 - 1分ごとの確認に任せる
             error_log.record(DATA_DIR, 'forward.on_start', error)
 
     def note_app_start():
@@ -2243,8 +2260,8 @@ def main():
         trace(DATA_DIR, f'PCアプリを起動しました（版 {source_version()}）')
     note_app_start()
     root.after(5_000, forward_on_start)
-    root.after(60_000, daily_on_start)
-    root.after(65_000, daily_tick)
+    root.after(5_000, daily_on_start)
+    root.after(10_000, daily_tick)
     root.after(10_000, daily_results_poll)
     root.after(400, auto_sync_on_start)
     root.after(PSCUBE_SYNC_FIRST_MS, poll_pscube_from_sync)

@@ -50,26 +50,26 @@ void main() {
       '2027-01-01',
     );
   });
-  test('日次学習の形式と保存時間帯を検査する', () {
+  test('日次学習の形式と保存時刻形式を検査する', () {
     expect(parseDailyLearning(jsonEncode(fixture()))['days'], hasLength(1));
     final raw = fixture();
-    (raw['days'] as List).first['saved_at'] = '2026-11-11T23:30:00+09:00';
+    (raw['days'] as List).first['saved_at'] = '2026-11-11T07:30:00';
     expect(() => parseDailyLearning(jsonEncode(raw)), throwsFormatException);
     expect(() => parseDailyLearning('{}'), throwsFormatException);
   });
-  test('保存時刻は対象日の前日23:30〜当日23:30未満を受け付ける', () {
-    // 2026-11-25 利用者の決定で当日8時締切を完全撤廃。PC・Googleスクリプト・共有ページと同じ判定。
+  test('閲覧側はタイムゾーン付き日時形式のみ検査し、時間帯で拒否しない', () {
+    // 2026-11-25 利用者の決定で閲覧側の保存時間帯チェックを撤廃（対象日の保存時刻はPC側だけで管理）。
     for (final (stamp, ok) in [
       ('2026-11-10T23:30:00+09:00', true),
-      ('2026-11-10T23:29:59+09:00', false),
+      ('2026-11-10T23:29:59+09:00', true),
       ('2026-11-11T00:00:00+09:00', true),
-      ('2026-11-11T07:59:59+09:00', true),
       ('2026-11-11T08:00:00+09:00', true),
       ('2026-11-11T15:30:00+09:00', true),
-      ('2026-11-11T23:29:59+09:00', true),
-      ('2026-11-11T23:30:00+09:00', false),
-      ('2026-11-09T23:45:00+09:00', false),
+      ('2026-11-11T23:30:00+09:00', true),
       ('2026-11-10T14:30:00Z', true),
+      ('2026-11-11T07:30:00', false),
+      ('not-a-date', false),
+      ('', false),
     ]) {
       final raw = fixture();
       final day = (raw['days'] as List).first as Map;

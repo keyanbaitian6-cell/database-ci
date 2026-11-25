@@ -393,8 +393,9 @@ class LearningTests(unittest.TestCase):
             finally:
                 j.close()
 
-    def test_ready_waits_for_closed_complete_capture(self):
-        # 台数が90%以上でも、閉店前に取った台・前の日にあった機種の欠け・グラフの無い台が多いときは待つ。
+    def test_ready_only_waits_for_count_and_usable_racks(self):
+        # 2026-11-25 利用者の決定で、閉店前／確定前・前日機種の丸ごと欠落1%超・符号不明10%超の停止ルールを撤廃。
+        # 直近7日中央値の90%未満と使える台0台だけを取り込み待ちにする。
         def rows_for(day, cap, machines=range(10), graph=True):
             out = []
             for rack in range(1, 101):
@@ -410,24 +411,17 @@ class LearningTests(unittest.TestCase):
         good = rows_for('2026-11-11', '2026-11-11T23:20:00+09:00')
         target = '2026-11-12'
         self.assertEqual(runtime.ready(base + good, target, ('nagamachiminami',)), [])
+        # 閉店前時刻・前日機種の丸ごと欠落（90%以上残存）・グラフ無し多数でも止めずに保存へ進む。
         early = rows_for('2026-11-11', '2026-11-11T15:00:00+09:00')
-        self.assertIn('閉店前', ''.join(runtime.ready(base + early, target, ('nagamachiminami',))))
+        self.assertEqual(runtime.ready(base + early, target, ('nagamachiminami',)), [])
         partial = rows_for('2026-11-11', '2026-11-11T23:20:00+09:00', machines=range(9))
-        self.assertIn('機種9', ''.join(runtime.ready(base + partial, target, ('nagamachiminami',))))
-        # 1台だけの機種の取りこぼしくらいでは待たない（2026-11-17 利用者「1台の取りこぼしくらいで動かなくなるのやめてよね」）。
-        # 前の日の台数の1%（この試験は100台なので1台）を超えて欠けたときだけ待つ。
-        single = [r | {'machine': '1台の機種'} if r['rack'] == 9 else r for r in base]
-        one_lost = [r for r in good if r['rack'] != 9]
-        self.assertEqual(runtime.ready(single + one_lost, target, ('nagamachiminami',)), [])
-        two_lost = [r for r in good if r['rack'] not in (9, 19)]
-        two = [r | {'machine': '1台の機種'} if r['rack'] in (9, 19) else r for r in base]
-        self.assertIn('（2台）', ''.join(runtime.ready(two + two_lost, target, ('nagamachiminami',))))
-        # 入れ替え（同じ台番号に別の機種）は欠けと数えない。
-        replaced = [r | {'machine': '新台'} if r['rack'] % 10 == 9 else r for r in good]
-        self.assertEqual(runtime.ready(base + replaced, target, ('nagamachiminami',)), [])
+        self.assertEqual(runtime.ready(base + partial, target, ('nagamachiminami',)), [])
         nograph = good[:20] + [r for r in rows_for('2026-11-11', '2026-11-11T23:20:00+09:00', graph=False)][20:]
-        self.assertIn('グラフ', ''.join(runtime.ready(base + nograph, target, ('nagamachiminami',))))
-        # 取り込み時刻の無い行（アナスロの保存ページなど）は確定として扱う。
+        self.assertEqual(runtime.ready(base + nograph, target, ('nagamachiminami',)), [])
+        # 直近7日中央値の90%未満（100台→80台）は従来どおり取り込み待ち。
+        too_few = rows_for('2026-11-11', '2026-11-11T23:20:00+09:00', machines=range(8))
+        self.assertIn('前日データが不足しています', ''.join(runtime.ready(base + too_few, target, ('nagamachiminami',))))
+        # 取り込み時刻の無い行（アナスロの保存ページなど）も通る。
         stamped = [{k: v for k, v in r.items() if k != 'captured_at'} for r in good]
         self.assertEqual(runtime.ready(base + stamped, target, ('nagamachiminami',)), [])
 

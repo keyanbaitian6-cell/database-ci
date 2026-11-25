@@ -173,9 +173,9 @@ class ForwardValidationTests(unittest.TestCase):
         self.assertIn("after_auto=lambda message: after_pscube(message, since)", source)
         self.assertIn("save_forward_after('P’s CUBE', message)\n        check_after_pscube(message, since)", source)
         self.assertIn('why = forward_validation.start_pending(DATA_DIR, results.append)', source)
-        # 5分ごとの確認（daily_check）の最後で保留の前向き検証を見る。予約し直しは daily_tick の finally（2026-11-23）。
+        # 1分ごとの確認（daily_check）の最後で保留の前向き検証を見る。予約し直しは daily_tick の finally（2026-11-23、11/25に1分へ短縮）。
         self.assertIn('check_pending_forward()\n        return problem', source)
-        self.assertIn('        finally:\n            if not closing[0]:\n                root.after(300_000, daily_tick)', source)
+        self.assertIn('        finally:\n            if not closing[0]:\n                root.after(60_000, daily_tick)', source)
 
     def test_evening_completion_at_2345_leaves_mark_and_runs_once_at_0005_not_0010(self):
         reports, calls = [], []

@@ -30,14 +30,6 @@ STORES = ('nagamachiminami', 'saiwaichou', 'pscube:c740601:20')
 STORE_NAMES = {'nagamachiminami': '長町南', 'saiwaichou': '幸町', 'pscube:c740601:20': 'P-STATION'}
 SOURCES = {'nagamachiminami': 'meruhen', 'saiwaichou': 'meruhen', 'pscube:c740601:20': 'pscube'}
 SCORING_MJS = Path(__file__).parents[1] / 'database_android/web/pscube/scoring.mjs'
-# メルヘンの台は営業日の23:00以降に取ったものを閉店後の確定値とみなす（core.stale_capture_cutoff と同じ考え方）。
-MERUHEN_FINAL_HOUR = 23
-# 前日データのうち、符号が決まらない台（グラフ未取得など）がこれを超えたら取り込み待ち。
-UNKNOWN_LIMIT = .10
-# 前の日にあった機種が丸ごと無いとき、待つのは欠けた台が前の日の台数のこの割合を超えるときだけ（2026-11-17 利用者
-# 「1台の取りこぼしくらいで動かなくなるのやめてよね」。11/16 幸町の863番（1台だけの機種）を取りこぼし、11/17 の
-# 幸町の予測が保存されなかった）。幸町約530台なら5台まで、長町南約360台なら3台まで、P-STATION約280台なら2台までは保存する。
-MISSING_RACK_LIMIT = .01
 # 分析用JSON（daily_learning_archive）を使えずに保存した予測に付ける注意。「読めません」は各画面で重要な注意として出る。
 ARCHIVE_NOTE = '（過去の学習に足す分析用JSONを読めません。原本DBだけで学習しました）'
 
@@ -51,8 +43,8 @@ def store_of(key):
 # 「最後の窓が閉じたら」「窓が開いていなければ7:30に」のどちらも動かず、PC本体を閉じて予測が保存されなかった。
 DB_FILES = {'meruhen': 'database.sqlite3', 'pscube': 'pscube.sqlite3'}
 PREDICTION_INPUT_DAYS = 210
-# 原本DBにこの秒数だけ書き込みが無ければ、その店の取り込みは一区切りとみなす（途中の数値で固定しないため）。
-QUIET_SECONDS = 600
+# 原本DBにこの秒数だけ書き込みが無ければ、その店の取り込みは一区切りとみなす（2026-11-25 利用者の決定で10分→2分へ短縮）。
+QUIET_SECONDS = 120
 
 
 def unsaved_stores(data_dir, target):
@@ -458,42 +450,18 @@ def skipped_low_racks(data_dir, target):
     return out
 
 
-def _instant(value):
-    try:
-        moment = datetime.fromisoformat(str(value))
-        return moment.timestamp() if moment.tzinfo else None
-    except (TypeError, ValueError):
-        return None
-
-
-def closed_capture(row):
-    """閉店後に取った台か。時刻が読めない台（アナスロの保存ページなど）は確定として扱う。成績は見ない。"""
-    if str(row.get('store', '')).startswith('pscube:'):
-        if row.get('source_site') == 'site777':
-            from pscube_import import site777_final
-            return site777_final(row)
-        return True        # P’s CUBEは翌朝に前の日を取り込む運用（AGENTS.md）。時刻では見分けない
-    stamp = _instant(row.get('captured_at'))
-    if stamp is None:
-        return True
-    final = datetime.fromisoformat(f"{row['day']}T{MERUHEN_FINAL_HOUR:02d}:00:00+09:00").timestamp()
-    return stamp >= final
-
-
 def ready(rows, target, stores=STORES, low=None):
-    """部分取り込み・閉店前の数値を初回固定しない。保存行の数・時刻・グラフの有無（とP-STATIONの500G未満の控え）
-    だけで判断し、成績は見ない。2026-11-12：数が90%以上でも、閉店前に取った台・前の日にあった機種の欠け・
-    符号が決まらない台の多さで待つようにした（以前は台数だけで、昼の数値や1機種の欠けを見逃した）。"""
+    """途中取り込みや店休日の0台データで初回固定しないための最低限の確認（保存行の数と有効台の有無のみ）。成績は見ない。
+    2026-11-25 利用者の決定で、過剰な停止原因となっていた「閉店前／確定前データの1台停止」「前日機種の丸ごと欠落1%超」
+    「符号不明台10%超」による停止ルールを撤廃し、直近7日中央値の90%未満と使える台0台のみを残した。"""
     day, reasons = shift(target, -1), []
     for store in stores:
         name = STORE_NAMES.get(store, store)
         racks = defaultdict(set)
-        machines = defaultdict(lambda: defaultdict(set))
         current = []
         for r in rows:
             if r['store'] == store and shift(day, -7) <= r['day'] <= day:
                 racks[r['day']].add(r['rack'])
-                machines[r['day']][r['machine']].add(r['rack'])
                 if r['day'] == day:
                     current.append(r)
         if store.startswith('pscube:'):
@@ -505,28 +473,11 @@ def ready(rows, target, stores=STORES, low=None):
         if not current or (previous and counts[day] < .9 * statistics.median(previous)):
             reasons.append(f'{name}の前日データが不足しています')
             continue
-        early = sum(1 for r in current if not closed_capture(r))
-        if early and store.startswith('pscube:'):
-            reasons.append('P-STATIONの確定前データが残っています')
-        elif early:
-            reasons.append(f'{name}の前日データに閉店前（{MERUHEN_FINAL_HOUR}時より前）に取った台が{early}台あります')
-        # 前の日にあった機種の台が、別の機種名も含めて1台も無い（入れ替えは台番号が残るので数えない）。
-        earlier = sorted(d for d in machines if d < day)
-        if earlier:
-            before = machines[earlier[-1]]
-            missing = [m for m, numbers in before.items() if not numbers & racks[day]]
-            lost = sum(len(before[m]) for m in missing)
-            if missing and lost > MISSING_RACK_LIMIT * len(racks[earlier[-1]]):
-                reasons.append(f'{name}の前日データに「{missing[0]}」など{len(missing)}機種（{lost}台）がありません')
         usable = [r for r in current if valid(r)]
         # 2026-11-23 利用者の決定（G12）：使える台が0台の店・日は予測を固定せず取り込み待ちにする。
         # 当日23:30（対象日切替）までに有効な台の取り込みが入れば作り直す。0台のまま23:30を過ぎたら未保存（missed）。
         if not usable:
             reasons.append(f'{name}の前日データに使える台がありません（全{len(current)}台）')
-            continue
-        unknown = sum(1 for r in usable if outcome(r) is None)
-        if unknown > max(3, UNKNOWN_LIMIT * len(usable)):
-            reasons.append(f'{name}の前日データでグラフ・差枚の無い台が{unknown}台あります')
     return reasons
 
 

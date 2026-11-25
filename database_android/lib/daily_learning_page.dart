@@ -44,22 +44,11 @@ Map<String, dynamic> parseDailyLearning(String text) {
         throw const FormatException('候補の形式が違います');
       }
       final raw = g['saved_at'] ?? day['saved_at'];
-      if (raw is! String || !RegExp(r'(Z|[+-]\d\d:\d\d)$').hasMatch(raw)) {
+      // 2026-11-25 利用者の決定で閲覧側の保存時間帯チェックを撤廃（対象日の保存時刻はPC側だけで管理し、ここでは日時形式のみ検査）。
+      if (raw is! String ||
+          !RegExp(r'(Z|[+-]\d\d:\d\d)$').hasMatch(raw) ||
+          DateTime.tryParse(raw) == null) {
         throw const FormatException('保存時刻が不明です');
-      }
-      final saved = DateTime.parse(raw).toUtc().add(const Duration(hours: 9));
-      // 保存できるのは対象日の前日23:30〜当日23:30未満（日本時間。2026-11-25に8時締切を完全撤廃）。
-      final savedDay = saved.toIso8601String().substring(0, 10);
-      final before = DateTime.parse('${day['target']}T00:00:00Z')
-          .subtract(const Duration(days: 1))
-          .toIso8601String()
-          .substring(0, 10);
-      final minutes = saved.hour * 60 + saved.minute;
-      final inWindow =
-          (savedDay == day['target'] && minutes < 1410) ||
-          (savedDay == before && minutes >= 1410);
-      if (!inWindow) {
-        throw const FormatException('対象日の保存時間帯の予測ではありません');
       }
       for (final id in g['selected'] as List) {
         if (id is! List ||

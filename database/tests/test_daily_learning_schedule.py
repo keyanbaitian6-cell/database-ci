@@ -46,41 +46,41 @@ class RunDueTest(unittest.TestCase):
     def due(self, now=NIGHT, last=None, **kwargs):
         return runtime.run_due(self.root, now, last, **kwargs)
 
-    def test_runs_once_the_capture_has_been_quiet_for_ten_minutes_even_with_windows_open(self):
-        self.touch('meruhen', minutes_ago=3)                       # メルヘンを取り込み中
+    def test_runs_once_the_capture_has_been_quiet_for_two_minutes_even_with_windows_open(self):
+        self.touch('meruhen', minutes_ago=1)                       # メルヘンを取り込み中
+        self.touch('pscube', minutes_ago=1)
+        self.assertFalse(self.due()[0], '書き込みから2分たつまで待つ')
+        self.touch('meruhen', minutes_ago=3)
         self.touch('pscube', minutes_ago=3)
-        self.assertFalse(self.due()[0], '書き込みから10分たつまで待つ')
-        self.touch('meruhen', minutes_ago=11)
-        self.touch('pscube', minutes_ago=11)
         due, mark = self.due()
         self.assertTrue(due)
-        # 同じ原本でもう一度は動かさない（「取り込み待ち」の晩に5分ごとに読み直さない）。
+        # 同じ原本でもう一度は動かさない（「取り込み待ち」の日に1分ごとに読み直さない）。
         self.assertEqual(self.due(last=mark), (False, mark))
-        # 取り込みを足したら（原本が変わったら）、また10分待ってから動かす。
-        self.touch('meruhen', minutes_ago=2)
+        # 取り込みを足したら（原本が変わったら）、また2分待ってから動かす。
+        self.touch('meruhen', minutes_ago=1)
         self.assertFalse(self.due(last=mark)[0])
-        self.touch('meruhen', minutes_ago=10.5)
+        self.touch('meruhen', minutes_ago=2.5)
         self.assertTrue(self.due(last=mark)[0])
 
     def test_one_recently_written_database_does_not_make_the_other_database_wait(self):
-        # 1つの原本DBが10分以内に書かれていても、10分以上静穏な別の原本の店は先に動かす。
-        self.touch('meruhen', minutes_ago=15)
-        self.touch('pscube', minutes_ago=2)
+        # 1つの原本DBが2分以内に書かれていても、2分以上静穏な別の原本の店は先に動かす。
+        self.touch('meruhen', minutes_ago=5)
+        self.touch('pscube', minutes_ago=1)
         due, mark = self.due()
         self.assertTrue(due, '静穏なメルヘンを先に動かす')
         self.assertEqual(set(mark[1]), {'meruhen'}, '書き込み中のpscubeはまだ印に入れない')
         self.save('nagamachiminami', 'saiwaichou')
-        # pscube がまだ10分たっていない間は待つ。
+        # pscube がまだ2分たっていない間は待つ。
         self.assertFalse(self.due(last=mark)[0])
-        # pscube が最後の書き込みから10分たったら、追加の書き込みが無くても動く。
-        self.touch('pscube', minutes_ago=11)
+        # pscube が最後の書き込みから2分たったら、追加の書き込みが無くても動く。
+        self.touch('pscube', minutes_ago=3)
         due2, mark2 = self.due(last=mark)
         self.assertTrue(due2)
         self.assertEqual(set(mark2[1]), {'meruhen', 'pscube'})
 
     def test_adding_only_low_games_record_for_site777_triggers_rerun_after_quiet(self):
         # サイトセブンで500G未満の控え（site777-staging/日付-low.json）だけが追加・更新され、
-        # pscube.sqlite3 の更新時刻が変わらないときも、10分静穏後に再実行する。
+        # pscube.sqlite3 の更新時刻が変わらないときも、2分静穏後に再実行する。
         due, mark = self.due()
         self.assertTrue(due)
         self.save('nagamachiminami', 'saiwaichou')                 # P-STATION だけ90%未満で取り込み待ちだったとする
@@ -89,10 +89,10 @@ class RunDueTest(unittest.TestCase):
         staging.mkdir(exist_ok=True)
         low_file = staging / '2026-11-13-low.json'
         low_file.write_text('{"123": [101, 102]}', encoding='utf-8')
-        recent = NIGHT.timestamp() - 2 * 60
+        recent = NIGHT.timestamp() - 1 * 60
         os.utime(low_file, (recent, recent))
-        self.assertFalse(self.due(last=mark)[0], '控えの書き込みから10分たつまでは待つ')
-        quiet_stamp = NIGHT.timestamp() - 11 * 60
+        self.assertFalse(self.due(last=mark)[0], '控えの書き込みから2分たつまでは待つ')
+        quiet_stamp = NIGHT.timestamp() - 3 * 60
         os.utime(low_file, (quiet_stamp, quiet_stamp))
         due2, mark2 = self.due(last=mark)
         self.assertTrue(due2, 'pscube.sqlite3 が変わらなくても low.json の追加で再実行する')
@@ -187,11 +187,11 @@ class RunDueTest(unittest.TestCase):
         self.assertIn('daily_worker.start()', close)
 
     def test_run_with_quiet_skips_stores_whose_source_db_is_still_being_written(self):
-        # 1つの原本DB（meruhen）が静穏で、もう1つ（pscube）が書き込み中（10分未満）のとき、
+        # 1つの原本DB（meruhen）が静穏で、もう1つ（pscube）が書き込み中（2分未満）のとき、
         # quiet 指定の run は書き込み中の原本を開かず、その店の予測も判定・固定保存しない。
         from unittest.mock import patch
-        self.touch('meruhen', minutes_ago=15)
-        self.touch('pscube', minutes_ago=2)
+        self.touch('meruhen', minutes_ago=5)
+        self.touch('pscube', minutes_ago=1)
         loaded_sources = []
         built_stores = []
 

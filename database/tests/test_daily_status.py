@@ -64,10 +64,10 @@ class RunDueReasonTest(Folder):
         self.assertTrue(due)
         self.assertEqual(why, 'メルヘン（長町南・幸町）・P-STATIONの原本で動かす')
         self.assertIn('前回と同じ原本', self.reasons(last=mark)[2])
-        self.touch('pscube', minutes_ago=3)
+        self.touch('pscube', minutes_ago=1)
         due, _, why = self.reasons(last=mark)
         self.assertFalse(due)
-        self.assertIn('P-STATIONは書き込みから10分待ち', why)
+        self.assertIn('P-STATIONは書き込みから2分待ち', why)
         self.assertEqual(self.reasons(now=datetime(2026, 11, 14, 12, 0, tzinfo=JST))[2],
                          'メルヘン（長町南・幸町）・P-STATIONの原本で動かす')
         self.assertIn('取り込み画面が開いている間は待つ', self.reasons(skip_sources=('meruhen', 'pscube'))[2])
@@ -191,7 +191,7 @@ class DailyTickTest(Folder):
             raise RuntimeError('壊れた')
         env = tick_functions(self.root, check_pending_forward=broken)
         env['daily_tick']()
-        self.assertEqual([ms for ms, _ in env['root'].after_calls], [300_000], '例外でも次の5分を予約する')
+        self.assertEqual([ms for ms, _ in env['root'].after_calls], [60_000], '例外でも次の1分を予約する')
         self.assertIs(env['root'].after_calls[0][1], env['daily_tick'])
         self.assertIn(('daily.tick', 'RuntimeError'), env['error_log'].records)
         self.assertIn('定期確認でエラー（RuntimeError。errors.log）', env['daily_status'].text)
@@ -291,7 +291,10 @@ class AppWiringTest(unittest.TestCase):
         self.assertIn("trace(DATA_DIR, 'PCアプリを閉じます')", source)
         self.assertIn("trace(self.data_dir, '依頼を受けました（実行中のため、終わったあとにもう一度動かします）')", source)
         self.assertIn('root.after(10_000, daily_results_poll)', source)
-        self.assertIn("daily_status.pack(fill='x', pady=(0, 10))", source)
+        self.assertIn("daily_status.pack(side='left', fill='x', expand=True)", source)
+        self.assertIn("ttk.Button(daily_bar, text='今すぐ日次学習')", source)
+        self.assertIn('root.after(5_000, daily_on_start)', source)
+        self.assertIn('root.after(10_000, daily_tick)', source)
 
     def test_source_version_reads_the_branch_head_without_git(self):
         import app
