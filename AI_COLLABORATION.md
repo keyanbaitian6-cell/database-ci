@@ -4925,7 +4925,7 @@
 ## 2026-11-26 Codex：点検7件の統合とローカル回帰確認
 
 - 基準は `75b90756f3fad3eb5b14f3403051ff1670b19092`。着手時に `git ls-remote` で正本と database-ci の `main` を照会し、指定基準が両履歴を含むことを確認した。
-- 別作業ツリーで Codex ③⑦ `d20d8e6`（`fix/20261126-codex-storage`、4ファイル）、Claude ①②④ `6e5bc94`（`fix/20261126-claude-viewer`、11ファイル）、Gemini ⑤⑥ `c9fd6ae`（`fix/20261126-gemini-events`、14ファイル）が確定。3コミットの親はいずれも共通基準で、変更パス29件に重複なし。`fix/20261126-audit-integration` に履歴を残す2回のマージで統合し、製品試験の対象を `8df16b4` とした。元の `main` の調査メモは元の作業ツリーに保存されている。
+- 別作業ツリーで Codex ③⑦ `d20d8e6`（`fix/20261126-codex-storage`、4ファイル）、Claude ①②④ `6e5bc94` と追補 `3228013`（`fix/20261126-claude-viewer`、計11ファイル）、Gemini ⑤⑥ `c9fd6ae`（`fix/20261126-gemini-events`、14ファイル）が確定。各担当の最初のコミットの親は共通基準で、変更パス29件に重複なし。`fix/20261126-audit-integration` で `8df16b4` を最初に試験し、Claudeの追補を含む `6c4f4fe` で関連試験を再確認した。元の `main` の調査メモは元の作業ツリーに保存されている。
 - ③ `database/site777_session.py` は機種の途中記録で使っている窓間のファイルロックと、同じフォルダーで一時ファイルを確定名に置き換える `atomic_writer` を再利用した。既存のハッシュ名と内容の両方が一致する場合は再利用する。途中までの資料や同じ長さの破損資料は、書き込みと同期が成功した後で置き換える。試験は `database/tests/test_site777_session.py`。
 - ⑦ `database_android/lib/backup_service.dart` はファイル容量を先に調べる。上限超過時は、その上限まで分割して先頭の見出しを探し、判定に必要な行末の文字列だけを保持する。既定上限は64MiB。見出しが確認できた1台1行形式には総容量の上限を適用しない。従来の復元前の検証と書き込みトランザクションを使う。試験は `database_android/test/backup_integrity_test.dart`。
 
@@ -4948,3 +4948,12 @@
 - 統合版は `TZ=JST-9 CHECK_JS_JOBS=2 bash database_android/tool/check_before_build.sh`。Pythonの実測UTCオフセットは+09:00。固定済みのFlutter依存関係をオフラインで解決し、試験用のシードは同梱の例をコピーした。全体静的解析の情報レベル34件は既存ログと一致。エラー・警告は0件。
 - 初回ゲートの終了コードは1。オフライン依存解決用に子プロセスへ渡したシェル関数が自己試験の模擬Flutterより優先され、同ファイル内で2件失敗した。関数を外した最初の再実行では専用Pythonの指定が抜け、Windowsの既定の別名を引いた。関数を外し、専用Pythonのパスを `PYTHON` に指定して `node tool/test_check_before_build_logging.mjs` をGit Bashから再実行し、5件すべて成功。製品コードや試験の合格条件は変更していない。初回ゲートのログには失敗時の表示を残した。
 - 実行ログは統合作業ツリーの `database_android/build/check_before_build/`。初回の集計は `timings.tsv` と `js-results.json`、成功した自己試験の再実行は `test_check_before_build_logging-rerun-python.log`。
+
+### Claude・Geminiの引き渡し受領と最終版の再確認
+
+- 利用者からClaudeの①②④とGeminiの⑤⑥の引き渡しを受領した。Geminiの `c9fd6ae` とCodexの `d20d8e6` は前の統合版に含まれていた。Claudeの本体修正 `6e5bc94` に続く追補 `3228013` を、統合ブランチ `fix/20261126-audit-integration` に競合なしでマージした。最終試験の対象は `6c4f4fe`。3担当の修正がすべて入っていることをコミットの祖先関係で確認した。
+- 追補による製品・試験の差分は `viewer_main.dart` の旧本文を表示中かどうかに応じた案内と、`test_viewer_history_guard_browser.mjs` のFlutterセマンティクス待ち。独立した `main` 側の調査資料・作業中の記録は元の作業ツリーにある。
+- Geminiの報告では専用作業ツリーでPC関連62件、UTCのイベント31件、Node 197件が成功。途中のPC全試験で報告された環境要因の失敗は、Codexの前の統合版 `8df16b4` のPC全体1,179件・UTC31件成功と区別する。
+- 最終版 `6c4f4fe` を `flutter analyze --no-pub --no-fatal-infos`（既存の情報34件、エラー・警告0件）、`flutter test --no-pub --reporter expanded`（915件）で確認。試験用に閲覧ページを `flutter build web --no-pub -t lib/viewer_main.dart --release --base-href /database-viewer/` でビルドし、`stage_viewer.py` と `stage_share_viewer.py` で隔離したフォルダーへ出力した。
+- 上記出力を使い、`node --test` で `test_viewer_history_guard_browser.mjs`、`test_viewer_calendar_check_browser.mjs`、`test_viewer_import_browser.mjs`、`test_viewer_storage_report.mjs`、`test_viewer_parts_browser.mjs`、`test_viewer_update_equivalence_browser.mjs`、`test_viewer_built_drive.mjs`、`test_share_viewer_browser.mjs` の8ファイルすべて成功。①②④の新しい画面試験は架空データと模擬Driveで3項目とも成功。ログは統合作業ツリーの `database_android/build/audit-final-6c4f4fe/` に保存。
+- PCとGASのソースは前の統合版から差分がないため、その試験結果を参照した。最終版での一括の全体ゲート、利用者のiPhone・Android、実Drive・GASでの動作は未確認。GitHub CI、push、公開、実環境への貼り替え、APK作成は利用者の指示待ち。
