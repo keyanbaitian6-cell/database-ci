@@ -14,7 +14,9 @@ const now=Date.now(), stamp=new Date(now+9*3600000), hhmm=stamp.getUTCHours()*60
 const target=new Date(now+9*3600000+(hhmm>=1410?86400000:0)).toISOString().slice(0,10);
 const savedAt=`${target}T12:30:00+09:00`;
 const longName='とても長い機種名の表示を確かめるための試験機・スーパーロングネームエディションｻﾝﾌﾞﾚｲｸ';
-const prediction={format:'daily-learning',version:1,status:'幸町：処理失敗（原本DBを読めません）。従来方式を使用してください',updated_at:`${today}T07:30:00+09:00`,days:[{
+const prediction={format:'daily-learning',version:1,
+  status:'長町南：取り込み待ち：長町南の前日データに閉店前に取った台があります。長町南の前日データに使える台がありません／幸町：処理失敗（原本DBを読めません）。従来方式を使用してください',
+  updated_at:`${today}T07:30:00+09:00`,days:[{
   target,input_day:target,saved_at:savedAt,groups:[
     {store:'saiwaichou',name:'試験機',active:'current',status:'改善未確認',selected:[['saiwaichou','','試験機',101]],current:[],learned:[]},
     {store:'saiwaichou',name:longName,active:'learned',status:'改善を確認して採用中',
@@ -59,6 +61,7 @@ try{
     assert.ok(text.includes('処理失敗（原本DBを読めません）'),'重要な注意は折りたたまない');
     assert.ok(!text.includes('ｻﾝﾌﾞﾚｲｸ')&&text.includes('サンブレイク'),'半角カナは全角にそろえる');
     assert.ok(!text.includes('別店舗の機種'),'共有ページで見られない店舗の候補は出さない');
+    assert.ok(!(await dialog.textContent()).includes('長町南の前日データ'),'別店舗の取り込み待ち理由は出さない');
     assert.equal(await dialog.locator('select[data-learning-store] option').count(),1);
     // 横にはみ出さない（長い機種名・7台の候補）。
     const over=await dialog.evaluate(d=>d.scrollWidth-d.clientWidth);

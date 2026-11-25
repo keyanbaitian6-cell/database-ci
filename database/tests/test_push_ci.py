@@ -114,6 +114,15 @@ class PushTests(unittest.TestCase):
         self.assertEqual(self.run_push(utc(2026, 10, 31, 22, 0)), 0)
         self.assertEqual(self.main_of(self.canonical), notes)
 
+    def test_renaming_code_to_markdown_waits_for_quota_reset(self):
+        before = self.main_of(self.canonical)
+        git(self.work, 'mv', 'app.py', 'NOTES.md')
+        git(self.work, 'config', 'diff.renames', 'true')
+        git(self.work, 'commit', '-q', '-m', 'rename app.py to NOTES.md')
+        self.assertEqual(self.run_push(utc(2026, 10, 31, 22, 0)), 1)
+        self.assertEqual(self.main_of(self.canonical), before)
+        self.assertEqual(self.run_push(utc(2026, 11, 1, 1, 0)), 0)
+
     def test_nothing_to_send_when_the_target_already_has_it(self):
         self.assertEqual(self.run_push(utc(2026, 11, 2, 0, 0)), 0)
 

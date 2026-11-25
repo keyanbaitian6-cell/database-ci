@@ -1,5 +1,5 @@
 name: Regression checks
-# Minutes come from the free plan (2,000/month; Windows counts double). See AGENTS.md "GitHub Actions".
+# 無料枠の対象と単価はランナーやリポジトリの公開設定による。AGENTS.md「GitHub Actions の利用分数」を参照。
 # A push or PR that only changes Markdown docs (AI_COLLABORATION.md, plans, specs) runs nothing:
 # no test, build or stage script reads a .md from the repository, so the result would equal the
 # previous commit's. Any change that also touches another file runs everything as before.
@@ -15,15 +15,14 @@ permissions:
 jobs:
   pc:
     runs-on: ${{ matrix.os }}
-    # A hung test would otherwise run to GitHub's 360-minute default (Windows counts double) and use
-    # most of the month's free minutes. Recent runs: pc 1-5 minutes, full about 16 minutes (2026-11-05).
+    # 固まった試験の実行時間を制限する。2026-11-05時点の実績は pc 1〜5分、full 約16分。
     timeout-minutes: 45
     strategy:
       fail-fast: false
       # Asia/Tokyo is covered on Linux by the full job (same Python 3.12, requirements, xvfb, TZ and
       # both PC suites through check_before_build.sh). Windows Python ignores TZ=Asia/Tokyo (an IANA
       # name the C runtime cannot read) and keeps the runner's UTC, so the Windows Tokyo job was a
-      # second Windows UTC run at double cost (checked 2026-10-18: TZ=America/New_York changes nothing).
+      # second Windows UTC run (checked 2026-10-18: TZ=America/New_York changes nothing).
       matrix:
         include:
           - {os: ubuntu-latest, timezone: UTC}
@@ -52,7 +51,7 @@ jobs:
           # PCの試験はすべて tests/ にある（2026-11-01に database/ 直下の test_*.py を移した）。
           "${display[@]}" python -m unittest discover -s tests
       # 実行制御はWindowsのローカル確認にも使うため、追加の7件だけをこちらでも確認する。
-      # Ubuntu側ではfullが同じ制御を確認するので重複させない。Windowsは分数が2倍。
+      # Ubuntu側ではfullが同じ制御を確認するので重複させない。
       - uses: actions/setup-node@v4
         if: runner.os == 'Windows'
         with:

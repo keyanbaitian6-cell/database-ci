@@ -1,4 +1,5 @@
 import copy
+from contextlib import closing
 from datetime import datetime
 import json
 from pathlib import Path
@@ -526,6 +527,47 @@ class LearningTests(unittest.TestCase):
                 self.assertEqual(j.get('outcomes', '2026-11-11|nagamachiminami')['groups'][0], value)
             finally:
                 j.close()
+
+    def test_old_outcome_waits_for_its_day_then_uses_original_data(self):
+        from daily_learning_view import status_parts
+
+        day, target = '2024-01-01', '2024-09-01'
+        nagamachi, saiwai, pstation = runtime.STORES
+        old_row = row(day, store=nagamachi)
+        candidate = list(d.identity(old_row))
+        group = dict(key='group', store=nagamachi, name='試験機', active='current', status='試験',
+                     trained=True, pool=[{'id': candidate}], current=[candidate], learned=[], selected=[candidate])
+        yesterday = row(d.shift(target, -1), store=nagamachi) | {
+            'games': 0, 'captured_at': f'{d.shift(target, -1)}T12:00:00+09:00',
+        }
+        clock = lambda: datetime.fromisoformat(f'{target}T12:00:00+09:00')
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            journal_path = base / 'daily-learning' / 'journal.sqlite3'
+            journal = d.Journal(journal_path)
+            try:
+                journal.freeze(day, {'input_day': d.shift(day, -1), 'groups': [group]}, [],
+                               datetime.fromisoformat(f'{day}T07:00:00+09:00'), store=nagamachi)
+            finally:
+                journal.close()
+            with closing(sqlite3.connect(base / 'database.sqlite3')) as db:
+                with db:
+                    db.execute('CREATE TABLE days(payload TEXT)')
+                    db.executemany('INSERT INTO days VALUES (?)', [(json.dumps(r),) for r in
+                                   (yesterday, row(day, store=saiwai))])
+                first = runtime.run(base, clock=clock, sync=False, skip_sources=(runtime.SOURCES[pstation],))
+                self.assertIn('結果の記録で処理失敗', first['status'])
+                self.assertIn('使える台がありません', status_parts(first['status'], nagamachi)[0][0])
+                self.assertNotIn('長町南の前日データ', ' '.join(status_parts(first['status'], saiwai)[1]))
+                with db:
+                    db.execute('INSERT INTO days VALUES (?)', (json.dumps(old_row),))
+                rows, _ = runtime.load_inputs(base, target, ('meruhen',))
+                self.assertEqual(rows, [yesterday])
+                runtime.run(base, clock=clock, sync=False, skip_sources=(runtime.SOURCES[pstation],))
+            # 結果を見るのは上で作った架空の記録DBだけ。
+            with closing(d.Journal(journal_path, readonly=True)) as journal:
+                saved = journal.get('outcomes', f'{day}|{nagamachi}')['groups'][0]
+                self.assertEqual((saved['current'], saved['missing_current']), (1, 0))
 
     def test_same_day_per_store_and_reopen(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -98,9 +98,10 @@ This directory is a local mirror of the ChatGPT project “LINE”.
 
 ## GitHub Actions の利用分数（2026-10-18 利用者指定、無料枠の残りが少なくなった）
 
-- `imakurudev-eng/database` の CI（`.github/workflows/regression.yml`）は無料枠（月2,000分、**Windowsは2倍**で数える）を使う。2026-10-01〜18で約91回・約2,100分（1回あたり約23分。Windows 47%・full 44%）。
+- CI の利用量は、リポジトリ所有者の契約・公開設定・ランナー種別を確認し、ジョブごとに実行時間を分単位で切り上げる。対象ランナーの現行単価で無料枠への計上額と超過分の料金を見積もる。公開リポジトリの標準 GitHub ホストランナーは無料枠を消費しない。参照は [GitHub Actions の課金](https://docs.github.com/en/billing/concepts/product-billing/github-actions) と [ランナーの料金表](https://docs.github.com/en/billing/reference/actions-runner-pricing)。
+- 2026-10-01〜18の当時計算では、`imakurudev-eng/database` の CI は約91回・約2,100分（1回あたり約23分。Windows 47%・full 44%）。
 - **文書（`.md`）だけの変更では CI は動かない**（`paths-ignore`）。試験・ビルド・stageはリポジトリの `.md` を読まないため。`.md` を、アプリ・公開物・試験が読むファイルにしない。読むようにするときは、この除外を見直す。
-- 同じ条件の試験を2回流さない。Linux・日本時間のPC試験は `full`（`check_before_build.sh`）が流すので、`pc` は Ubuntu・UTC と Windows・UTC だけ。**WindowsのPythonは `TZ=Asia/Tokyo` のような地域名を読めず**（PC本来の時刻設定のまま）、Windowsで日本時間を試すなら `TZ=JST-9` の形が要る。マトリクスやジョブを足すときは、Windowsが2倍になることと、既存ジョブとの重複を先に確かめる。
+- 同じ条件の試験を2回流さない。Linux・日本時間のPC試験は `full`（`check_before_build.sh`）が流すので、`pc` は Ubuntu・UTC と Windows・UTC だけ。**WindowsのPythonは `TZ=Asia/Tokyo` のような地域名を読めず**（PC本来の時刻設定のまま）、Windowsで日本時間を試すなら `TZ=JST-9` をプロセス起動前に指定し、UTCオフセットが `+09:00` か実測する。マトリクスやジョブを足すときは、対象ランナーの無料枠消費・料金と、既存ジョブとの重複を先に確かめる。
 - コードをpushする前に、手元で関係する試験（閲覧ページ・共有ページの画面試験を含む）を流す。CIで落ちてから直すpushを繰り返さない（2026-10-18、誕生日の表示で閲覧ページの試験が落ち、直すpushを3回した）。同じ作業の複数のコミットは、できるだけ1回のpushにまとめる。
 - 試験を減らす・ジョブをやめるときは、何がどこで代わりに確かめられているかを示し、利用者に差分と分数への影響を見せてからpushする。
 - **APKの版番号（`pubspec.yaml`）だけのコミットを単独でpushしない**（2026-11-05）。版番号だけでもCIが1回（約23分）動き、11/1〜4の16回のうち3回がそれだった。APKを作る予定があるときは、版を上げてゲート・ビルドを済ませてから、コードの変更と一緒に1回で送る。コードを先に送ってしまったときは、版上げのコミットは次のコードの変更と一緒に送る。

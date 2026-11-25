@@ -116,7 +116,8 @@ def main(argv=None, now=None, clock=None) -> int:
     if current == commit:
         print('送り先の main は既にこのコミットです。送る物はありません。')
         return 0
-    files = git('-c', 'core.quotePath=false', 'diff', '--name-only', current, commit).splitlines() if current else ['(全体)']
+    # 改名は削除と追加に分け、元のファイル名も判定する。NUL区切りでファイル名をそのまま受け取る。
+    files = git('diff', '--no-renames', '--name-only', '-z', current, commit).split('\0')[:-1] if current else ['(全体)']
     doc = docs_only(files)
     if target == CANONICAL and before_quota_reset(started) and not doc:
         print('止めました：日本時間の1日9時ごろまでは正本の無料枠が前月のままで、CIが動かない恐れがあります。'

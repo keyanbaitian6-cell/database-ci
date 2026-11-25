@@ -50,6 +50,7 @@ def store_of(key):
 # 勝手にやってくれるはずなのになぜかうまくいってない」）。11/13夜は、メルヘンの取り込み窓が朝まで開いたままで
 # 「最後の窓が閉じたら」「窓が開いていなければ7:30に」のどちらも動かず、PC本体を閉じて予測が保存されなかった。
 DB_FILES = {'meruhen': 'database.sqlite3', 'pscube': 'pscube.sqlite3'}
+PREDICTION_INPUT_DAYS = 210
 # 原本DBにこの秒数だけ書き込みが無ければ、その店の取り込みは一区切りとみなす（途中の数値で固定しないため）。
 QUIET_SECONDS = 600
 
@@ -354,14 +355,15 @@ class MemoryStore:
                 (not machine or r['machine'] == machine) and (not store or r['store'] == store)]
 
 
-def load_inputs(data_dir, target, sources=('meruhen', 'pscube')):
-    """必要な原本だけを読む（'meruhen'＝database.sqlite3、'pscube'＝pscube.sqlite3）。"""
+def load_inputs(data_dir, target, sources=('meruhen', 'pscube'), *, outcome_days=()):
+    """予測の入力期間と、結果の記録に必要な期間外の日を同じ原本コピーから読む。"""
     data_dir = Path(data_dir)
-    first, last = shift(target, -210), shift(target, -1)
+    first, last = shift(target, -PREDICTION_INPUT_DAYS), shift(target, -1)
+    outcome_days = {day for day in outcome_days if day < first}
     rows, raw, machines = [], [], []
     if 'meruhen' in sources:
         rows += [r for r in read_database(data_dir / 'database.sqlite3', 'days')
-                 if first <= r['day'] <= last and r['store'] in STORES and
+                 if (first <= r['day'] <= last or r['day'] in outcome_days) and r['store'] in STORES and
                  not core.is_hidden_machine(r['store'], r['machine'])]
     if 'pscube' in sources:
         tables = read_tables(data_dir / 'pscube.sqlite3', ('records', 'machines'))
@@ -371,7 +373,9 @@ def load_inputs(data_dir, target, sources=('meruhen', 'pscube')):
                      key=lambda r: (r['day'], str(r.get('rack')), encoded(r)))
         machines = sorted((m for m in tables['machines'] if str(m['store']) == 'c740601' and str(m['rate']) == '20'),
                           key=encoded)
-        rows += [{**r, 'store': f"pscube:{r['store']}:{r['rate']}"} for r in raw]
+        older = (r for r in tables['records'] if r['day'] in outcome_days
+                 and str(r['store']) == 'c740601' and str(r['rate']) == '20')
+        rows += [{**r, 'store': f"pscube:{r['store']}:{r['rate']}"} for records in (raw, older) for r in records]
     rows.sort(key=lambda r: (r['day'], identity(r)))
     return rows, {'records': raw, 'machines': machines}
 
@@ -591,27 +595,42 @@ def due_outcomes(journal, today):
     return [k for (k,) in keys if k[:10] <= shift(today, -MATURITY)]
 
 
-def record_outcomes(journal, rows, today, stores=None):
+def record_outcomes(journal, rows, today, stores=None, *, prediction_start=None):
     """成熟した予測の結果を1回だけ記録する。stores を渡すと、その店舗の予測だけ（原本を読めた店舗だけ）。
 
     記録できなかった予測の（鍵, 例外）を返す（2026-11-12）。1件の失敗で、ほかの予測の記録やその晩の予測の保存を
-    止めない。失敗した分は未記録のまま残り、次の実行でやり直す。未記録がある期間は採用・切り戻しを判定しない（decisions）。"""
-    histories, failed = {}, []
+    止めない。予測の入力期間より古い日は、その日の行が原本にある店舗だけ記録する。
+    失敗した分は未記録のまま残り、未記録がある期間は採用・切り戻しを判定しない（decisions）。"""
+    histories, failed, older_rows = {}, [], defaultdict(list)
+    recent_rows = []
+    for row in rows:
+        if prediction_start is not None and row['day'] < prediction_start:
+            older_rows[row['day']].append(row)
+        else:
+            recent_rows.append(row)
     for key in due_outcomes(journal, today):
         store = store_of(key)
         if stores is not None and store not in stores:
             continue
         try:
-            if store not in histories:
+            day = key[:10]
+            older = prediction_start is not None and day < prediction_start
+            history_key = (store, day if older else None)
+            if history_key not in histories:
                 try:
-                    histories[store] = History(rows if store is None else [r for r in rows if r['store'] == store])
+                    source_rows = older_rows.get(day, []) if older else recent_rows
+                    histories[history_key] = History(source_rows if store is None else
+                                                     [r for r in source_rows if r['store'] == store])
                 except Exception as error:     # noqa: BLE001 - この店舗の行を読めない理由を、同じ店舗の鍵で使い回す
-                    histories[store] = error
-            history = histories[store]
+                    histories[history_key] = error
+            history = histories[history_key]
             if isinstance(history, Exception):
                 raise history
             prediction, results = journal.get('predictions', key), []
             target = prediction['target']
+            available_stores = {r['store'] for r in history.rows} if older else set()
+            if older and store is not None and store not in available_stores:
+                raise ValueError(f'{target}の原本データがありません')
             # 2026-11-12より前の予測は方式の版を持たない。新しい版と混ぜない。
             method = prediction.get('version', '') + '|legacy'
             for group in prediction['groups']:
@@ -619,6 +638,8 @@ def record_outcomes(journal, rows, today, stores=None):
                 # 母集団全体の正解も残す。候補だけを学習・評価資料にしない。
                 # 候補は母集団の中から選ぶが、万一外の台があっても落とさず同じように正解を引く。
                 ids = [p['id'] for p in group['pool']] + list(group['current']) + list(group['learned'])
+                if older and any(i[0] not in available_stores for i in ids):
+                    raise ValueError(f'{target}の原本データがありません')
                 found = {encoded(i): history.get(target, i) for i in ids}
                 labels = {k: outcome(r) for k, r in found.items()}
                 for name in ('current', 'learned'):
@@ -896,6 +917,13 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
                     writing.add(source)
         blocked = writing | open_skip
         due = due_outcomes(journal, today)
+        prediction_start = shift(target, -PREDICTION_INPUT_DAYS)
+        older_days = defaultdict(set)
+        for key in due:
+            if key[:10] < prediction_start:
+                source = SOURCES.get(store_of(key))
+                for needed in (source,) if source else DB_FILES:
+                    older_days[needed].add(key[:10])
         wanted = {s for s in STORES if s not in saved and SOURCES[s] not in blocked}
         wanted |= {store_of(k) for k in due if store_of(k) in STORES and SOURCES[store_of(k)] not in blocked}
         if any(store_of(k) not in STORES for k in due):
@@ -903,7 +931,8 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
         loaded, failed = {}, {}
         for source in sorted({SOURCES[s] for s in wanted}):
             try:
-                rows, pscube = load_inputs(data_dir, target, (source,))
+                extra = {'outcome_days': older_days[source]} if older_days[source] else {}
+                rows, pscube = load_inputs(data_dir, target, (source,), **extra)
                 loaded[source] = ([r for r in rows if SOURCES.get(r['store']) == source], pscube)
             except Exception as error:     # noqa: BLE001 - 店舗ごとに失敗を分ける
                 failed[source] = error
@@ -917,7 +946,8 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
         problems = []
         if due:
             readable = {s for s in STORES if SOURCES[s] in loaded}
-            unrecorded = record_outcomes(journal, rows, today, readable if len(readable) < len(STORES) else None)
+            unrecorded = record_outcomes(journal, rows, today, readable if len(readable) < len(STORES) else None,
+                                         prediction_start=prediction_start)
             for key, error in unrecorded:
                 error_log.note(data_dir, 'daily-learning', f'結果の記録 {key}: {type(error).__name__}: {error}')
             if unrecorded:
@@ -930,6 +960,7 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
             problems.append(f'採用判定で処理失敗（{explain(error)}）。採用の状態は変えていません')
         statuses = []
         low = None
+        rows = [r for r in rows if r['day'] >= prediction_start]
         for store in STORES:
             name = STORE_NAMES[store]
             if store in saved:
@@ -954,7 +985,7 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
                     low = skipped_low_racks(data_dir, target)
                 why = ready(rows, target, (store,), low)
                 if why:
-                    statuses.append(f'{name}：取り込み待ち：' + '／'.join(why))
+                    statuses.append(f'{name}：取り込み待ち：' + '。'.join(why))
                     trace(data_dir, statuses[-1])
                     continue
                 trace(data_dir, f'{name}：予測を計算します')
