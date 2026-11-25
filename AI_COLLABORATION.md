@@ -5062,3 +5062,24 @@
 - 閲覧ページ・共有カレンダー・Android・Google同期は変えていない（記録は PC だけの仕組み）。APK は作っていない。
 - 元に戻す手順：`input_versions.RECORDING = True` に戻せば、次に本体を開いたときに新しい出発点（reset と全行の baseline）から記録をやり直す（過去の分は戻らない）。消した記録ファイルは、ごみ箱を空にするまでは戻せる（ただし本体の `iv_control` を消したので、`as_of()` の完全性の照合には使えない）。
 - 追記（同日 08:15〜08:40、利用者「確かめていいよ」「起動してたしかめていいよ」）：Claude が `database/start.cmd` でPCアプリを起動し、約1分後に `database/data/` に `input_versions.sqlite3` が無いこと、`database.sqlite3`・`pscube.sqlite3` に `iv_` で始まる表が無いこと（読み取り専用）を確認した。日次学習は通常どおり（11/26 の予測は保存済み、定期確認で待機）。PCアプリは起動したまま。上の確認の表の「次に起動したとき、記録ファイルができない」は**済（AIの直接確認）**。CI：`4f0d593` の実行 [45719411836](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45719411836) は **success**（pc ubuntu・pc windows・full、Claude が `gh run view` で確認）。
+
+## 2026-11-26 朝 Claude（Opus 5.5）：11/26 の点検7件の統合版を main に取り込み、全体ゲート・push・公開
+
+- 依頼：利用者「codex利用上限達してるからとまってます。競合しないならやっていいよ」→ Gemini に確認（利用者が Gemini の答えを貼った：Gemini の追加の修正なし、database-main の未コミット分は Codex のもので片づけてよい、作業中のものは無く待機する）。
+- 取り込み：`fix/20261126-audit-integration`（`41a77f1`、Codex ③⑦ `d20d8e6`・Claude ①②④ `6e5bc94`＋`3228013`・Gemini ⑤⑥ `c9fd6ae`）を main（`a6e00b8`）へ `--no-ff` で取り込んだ（`4bc2ad8`）。両方が変えたのは `AI_COLLABORATION.md` と `database/core.py` だけで、競合は共有記録の末尾だけ。両側を時刻順に残して解いた（Codex の点検 → Claude の評価 → Codex の統合 → Codex の GAS 確認 → Claude の記録停止）。`core.py` は自動で合わさった（Claude のコメント1行と Gemini ⑥ の `export_viewer` は別の場所）。
+- Codex の未コミット分の扱い：database-main の作業コピーにあった `AI_COLLABORATION.md` 末尾12行と未追跡の `DATABASE_REVIEW_20261126.md` は、統合ブランチに同じ中身（12行すべて、ファイルは同一）があることを確かめてから片づけた。控えは `../outputs/audit-merge-20261126/backup/`。統合用の作業コピー（`work/scratch/codex-integration-20261126`）に Codex がコミットせずに残していた6行（「GASのデプロイと定期同期を確認」）は、中身を変えずに main の共有記録へ写した（その作業コピーの未コミット分は触っていない）。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 統合版と main（入力の版の記録の停止を含む）を合わせた最終版で全体ゲート | 済 | `bash database_android/tool/check_before_build.sh`（`TZ=JST-9`・`CHECK_JS_JOBS=2`・作業 `C:\w\cbw-merge1126`、08:28〜08:41）で **ALL PASSED**：PC 1,182件・UTC 31件・Flutter 915件・analyze（情報34件、エラー・警告0）・viewer-build・viewer-stage・share-stage・JS 98項目 |
+| GitHub への送信 | 済 | `py -3 tools/push_ci.py` で `database-ci` へ `a6e00b8..4bc2ad8`（CI が1回動く） |
+| 閲覧ページの公開 | 済 | `keyanbaitian6-cell/database-viewer` `771a467..f78c17e`。`stage_viewer.py` の出力がゲートの viewer-stage と全ファイル同じことを `diff -rq` で確認。中身が変わった3ファイル（`index.html`・`main.dart.js`・`pscube/data.mjs`）だけをコミット。Pages は `f78c17e` で built |
+| 共有カレンダーの公開 | 済（公開処理は開始） | `keyanbaitian6-cell/database-share` `0d3a692..e8db8a2`（版 `cf2777682571`、8ファイル）。ゲートの share-stage と全ファイル同じ。Actions [45723466675](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45723466675) は queued を確認 |
+| Google のスクリプト | 利用者・Codex の報告 | 利用者が 07:44 ごろ `c9fd6ae` の3本を貼り替え（Gemini の答え）。Codex が 08:00 に `viewer_drive_script.gs` をバージョン27へ更新し、定期同期の正常完了を確認（上の Codex の節）。Claude は直接見ていない |
+| PCアプリ | **未** | PCアプリは取り込みの前から起動中で、`core.py`（⑥）・`site777_session.py`（③）の直しは、次に起動し直したときから効く |
+| Android APK | **未更新（利用者の指示待ち）** | `backup_service.dart`（⑦）を直したが、APK は作っていない |
+| CI | **未確認** | `4bc2ad8` の実行 [45723352159](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45723352159) は in_progress |
+| iPhone の閲覧ページ | **未確認** | 次の取り込み・同期のあと、利用者の「更新・差枚の取得状況」に「カレンダーはこの表で表示」が戻るか |
+
+- 次の手順：CI の結果を確かめて書く。PCアプリを再起動する（利用者）。iPhone で閲覧ページを開き直して、診断を見る。Gemini・Codex は main（`4bc2ad8` 以降）を取り込んでから作業を再開する。
