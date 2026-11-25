@@ -78,17 +78,21 @@ async function open(context, seed = {}) {
     if (seed.id) await window.__idb('put', 'data_id', seed.id);
     if (seed.data != null) await window.__idb('put', 'meruhen', 'active_source');
   }, {seed});
-  await page.goto(origin + '/database-viewer/');
-  await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
-  const placeholder = page.locator('flt-semantics-placeholder');
-  if (await placeholder.count()) await placeholder.evaluate(e => e.click());
+  await reopen(page);
   return {page, errors};
 }
+// Flutterの読み上げ用の木（文字を探すのに使う）を有効にする。読み上げの入口（placeholder）が出る前に押そうとすると
+// 有効にならないことがある（ゲートの中で1回あった）ので、読み上げの木ができるまで押し直す。
 async function reopen(page) {
   await page.goto(origin + '/database-viewer/');
   await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
-  const placeholder = page.locator('flt-semantics-placeholder');
-  if (await placeholder.count()) await placeholder.evaluate(e => e.click());
+  for (let i = 0; i < 200; i++) {
+    if (await page.locator('flt-semantics').count()) return;
+    const placeholder = page.locator('flt-semantics-placeholder');
+    if (await placeholder.count()) await placeholder.evaluate(e => e.click()).catch(() => {});
+    await page.waitForTimeout(100);
+  }
+  throw new Error('読み上げ用の木が有効になりませんでした');
 }
 const idb = (page, key) => page.evaluate(async key => {
   const failing = window.__failGet; window.__failGet = false;
@@ -278,8 +282,7 @@ const pair = (day, n, s) => [rec('nagamachiminami', day, 100, n), rec('saiwaicho
     localStorage.setItem('database-viewer-remote', url);
     await window.__idb('put', 'data', body);
   }, {url, body: stored(OLD_EXPORT, rows('2026-11-08'))});
-  await page.goto(origin + '/database-viewer/');
-  await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
+  await reopen(page);
   let log = null;
   for (let i = 0; i < 160 && !(log?.calendar && log?.trend && !log.running); i++) {
     await page.waitForTimeout(250);

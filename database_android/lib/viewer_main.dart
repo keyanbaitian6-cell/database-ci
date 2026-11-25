@@ -271,7 +271,7 @@ class _ViewerHomeState extends State<ViewerHome> {
     } on StoredBodyUnreadable catch (error) {
       _error =
           '$error Googleドライブの最新は、端末の履歴を消さないよう保存せずに見送りました'
-          '（前に読み込んだ内容を表示しています）。もう一度更新してください。'
+          '${_data == null ? '' : '（前に読み込んだ内容を表示しています）'}。もう一度更新してください。'
           '続くときは「バックアップを読み込む」で全期間のバックアップを読み込んでください。';
     } catch (error) {
       _error = 'Googleドライブから読めませんでした（前に読み込んだ内容を表示しています）。\n$error';
