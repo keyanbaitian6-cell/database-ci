@@ -4894,3 +4894,29 @@
 
 - **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `a062c1a` を `git revert`（戻り先 `bb74539`）、共有カレンダーは `keyanbaitian6-cell/database-share` で `0d3a692` を `git revert`（戻り先 `bf17d6c`）。
 - 次の手順：起動中の PC アプリを再起動すると、起動5秒後の自動確認・静穏2分・本体上部の「今すぐ日次学習」ボタン・`ready()` の簡素化が有効になる。
+
+## 2026-11-25 午後 Claude（Opus 5.5）：段階B1の切り替え（カレンダーは差枚表で表示）と段階B3（台の推移の照合）
+
+- 依頼：利用者「切り替えとB3進めて」。Claude が範囲・完了の条件・確かめ方を示した（B2の画面だけ切り替えても、同じ日の画面の翌日候補・★（B4）が全履歴を使うのでメモリは減らない。B2の切り替えはB4と一緒に）→ 利用者「それで進めて」。そのあと「公開してスリープ」。基準：`1fc7c09`（作業中に別のセッションが `5258c99`・`e34f6b1`・`1fc7c09` をコミット・公開した。ファイルの重なりなし）。
+- 変更（詳細は `VIEWER_DAY_STORE.md`「段階B1の切り替え」「段階B3」）：
+  - B1の切り替え：Googleの更新のあとのB1の照合が一致したときだけ、差枚表を本体の目印（書き出しの時刻｜記録の件数）と一緒に localStorage `database-viewer-day-net` に控え、カレンダー（イベントカレンダーの各日の差枚・日別差枚の月表）はその表から出す。目印が違う・控えが無い・壊れた・一致しなかった（控えを消す）ときは今の計算。`lib/calendar_day_net.dart`（`dayNetStamp`・`encodeDayNetTable`・`StoredDayNets`）、`lib/viewer_main.dart`（`_checkCalendarFromCache`・`_indexCalendar`・`_storedDaysFor`）、`lib/daily_net_page.dart`（`days`）。診断の行に「・カレンダーはこの表で表示」（`web/storage_report.mjs` の `switched`）。
+  - B3：台の推移（`rackTrend`、直近7記録と各日の点数）を日別キャッシュ（全日）から作り、今の計算と記録・点数の全項目で照合して診断に出す（画面は変えない）。1回の更新で1店の最新の日の30台（店は交互、台は台番号で一巡）。`lib/rack_trend_check.dart`、`databaseViewer.checkTrend`（`web/index.html`）、`checkViewerTrend`（`lib/viewer_bridge_web.dart`・stub）、診断の区切り `trend`（`recordTrend`・`trendHold`）。
+  - P’s CUBE版・PC・Androidアプリ・共有カレンダーは変えていない。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 控えた差枚表が今の計算と全店・全日・全項目で同じ | 済 | `test/calendar_day_net_switch_test.dart`（合成108・180・365日、目印違い・目印なし・壊れた控えは使わない）4件 OK |
+| 月表が、目印が合えば控えの値、違う・無ければ今の計算の値を出す | 済 | `tool/test_viewer_calendar_check_browser.mjs` 1b（実ビルド。控えだけ +777 にした端末で、目印が合う→+777、違う・無し→+400） |
+| 更新のあとにB1が一致して控える・B3が一致する・通信を増やさない | 済 | 同上 1（3日・6マス、控えの目印 `NEW_EXPORT|9`、B3 長町南・11/10・2台・6行） |
+| B3が全項目で一致・ずれを見つける | 済 | `test/rack_trend_check_test.dart`（合成108・180日の9日ごと＋最後の日の全台、機種の入れ替え A→B→A、日の欠け・1台の数値の違い、台の一巡）5件 OK |
+| 診断の行・止める保険 | 済 | `tool/test_viewer_storage_report.mjs` 11件 OK（B3は24時間だけB3を止める、B1・B2は止めない） |
+| 全体ゲート | 済 | 私の変更だけを載せた別の作業コピー `C:\w\b3sw`（`1fc7c09`＋変更、`TZ=JST-9`・`CHECK_JS_JOBS=2`）で **ALL PASSED**：PC 1,171件・UTC 28件・Flutter 904件・analyze・viewer-build・viewer-stage・share-stage（版 `1c0bf41458ef`）・JS 97ファイル。最初は `5258c99` の上で流して ALL PASSED、その間に別のセッションのコミットが入ったので、決まりどおり最新の上で全体を流し直した |
+| 閲覧ページの公開 | 済 | `keyanbaitian6-cell/database-viewer` `a062c1a..771a467`（中身が変わった3ファイル `index.html`・`storage_report.mjs`・`main.dart.js`。`main.dart.js` はゲートのビルドと同じバイト列、ほか2つは公開版の改行（LF）に合わせた）。Pages の公開処理は開始（queued）を確認 |
+| 共有カレンダー | 対象外 | `share_viewer/` は変えていない（公開しない） |
+| iPhoneで「カレンダーはこの表で表示」・B3の一致・途中で終わった | **未確認** | 次の取り込み・同期のあと（部品で更新したとき）に利用者の診断で見る |
+| CI | **未確認** | この記録と一緒に `tools/push_ci.py` で `database-ci` へ送る（CIが1回動く）。PCはこのあとスリープにするので、結果は次に見る |
+
+- **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `git revert 771a467` して push（`a062c1a` の中身に戻る）。控えの差枚表（localStorage `database-viewer-day-net`）と B3 の覚え（`database-viewer-b3-store`・`database-viewer-b3-rack:<店>`）は戻した版では読まれないだけで、端末の本体・日別キャッシュには影響しない。
+- 作業中の注意：Claude が解析の比較のために一度 `git stash`／`git stash pop` をし、その十数秒の間、別のセッションの作業途中の変更（日次学習まわり）を作業コピーから一時的に外してしまった。pop は成功し、その後そのセッションは `e34f6b1` としてコミットしている。同じフォルダーで別のセッションが動いているときは、stash を使わない。
+- 次の手順：利用者のiPhoneで「カレンダーの日別計算：一致（…）・カレンダーはこの表で表示」「台の推移の日別計算：一致」と各「途中で終わった」を見る。一致が続いたらB3の画面の切り替えとB4。PCはこのあと利用者の指示でスリープにする（日次学習の保存は起きたあとに続く）。
