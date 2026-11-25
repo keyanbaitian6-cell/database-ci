@@ -118,7 +118,7 @@ def _low_file_lock(folder, timeout=DB_WAIT):
 
 @contextmanager
 def _job_file_lock(folder, timeout=DB_WAIT):
-    """機種ごとの途中記録（site777-staging/日付-機種.json）の読み書きを直列化する鍵（2窓が同じ機種で出会ったときの衝突防止）。"""
+    """2窓間で機種ごとの途中記録と保存資料の読み書きを直列化する鍵。"""
     with _file_lock(folder, 'site777-job.lock', _job_thread_lock, timeout=timeout):
         yield
 
@@ -720,14 +720,17 @@ class Session(Bridge):
     def _save_source(self, payload):
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False).encode('utf-8')
         digest = hashlib.sha256(body).hexdigest()
-        folder = self._folder / 'site777-staging' / 'sources'
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / (digest + '.json')
-        try:
-            with path.open('xb') as stream:
+        path = self._folder / 'site777-staging' / 'sources' / (digest + '.json')
+        with _job_file_lock(self._folder):
+            try:
+                with path.open('rb') as existing:
+                    if existing.read(len(body) + 1) == body:
+                        return digest
+            except FileNotFoundError:
+                pass
+            # 途中書きで残った同名資料も、一時ファイルへの書き込みが完了してから置き換える。
+            with atomic_writer(path, binary=True) as stream:
                 stream.write(body)
-        except FileExistsError:
-            pass
         return digest
 
     def _job_path(self, model):

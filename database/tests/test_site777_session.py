@@ -1,13 +1,19 @@
 """自動取り込みの順序・停止・再開・原子的な保存を一時DBで確認する。"""
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
 import sys
 import tempfile
+from threading import Event
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pscube_import import PscubeStore
+from file_io import atomic_writer
 from site777_browser import DiagnosticLog
 from site777_session import Session
 from site777_import import source_url
@@ -62,6 +68,93 @@ class SessionTest(unittest.TestCase):
         path=self.root/'logs'/'site777-browser.log'
         rows=[json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()] if path.exists() else []
         return [r for r in rows if kind is None or r['kind']==kind]
+
+    def source_fixture(self, payload):
+        body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode('utf-8')
+        digest = hashlib.sha256(body).hexdigest()
+        path = self.root / 'site777-staging' / 'sources' / f'{digest}.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return body, path
+
+    def assert_source(self, path, body, digest):
+        self.assertEqual(digest, path.stem)
+        saved = path.read_bytes()
+        self.assertEqual(saved, body)
+        self.assertEqual(hashlib.sha256(saved).hexdigest(), digest)
+        self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def test_source_repairs_truncated_and_same_length_corruption(self):
+        payload = table()
+        body, path = self.source_fixture(payload)
+        for corrupt in (body[:1], body[:-1] + b'!'):
+            with self.subTest(byte_count=len(corrupt)):
+                path.write_bytes(corrupt)
+                self.assert_source(path, body, self.session._save_source(payload))
+
+    def test_source_reuses_complete_file_without_writing(self):
+        payload = table()
+        body, path = self.source_fixture(payload)
+        path.write_bytes(body)
+        with patch('site777_session.atomic_writer') as writer:
+            self.assert_source(path, body, self.session._save_source(payload))
+        writer.assert_not_called()
+
+    def test_source_failed_write_is_not_published_and_can_be_retried(self):
+        payload = table()
+        body, path = self.source_fixture(payload)
+
+        @contextmanager
+        def fail_during_write(target, *, binary):
+            with atomic_writer(target, binary=binary) as out:
+                def fail(data):
+                    out.write(data[:1])
+                    out.flush()
+                    self.assertFalse(path.exists())
+                    raise OSError('試験用の書き込み失敗')
+
+                yield Mock(write=Mock(side_effect=fail))
+
+        with patch('site777_session.atomic_writer', fail_during_write):
+            with self.assertRaisesRegex(OSError, '試験用の書き込み失敗'):
+                self.session._save_source(payload)
+        self.assertEqual(list(path.parent.iterdir()), [])
+        self.assert_source(path, body, self.session._save_source(payload))
+
+    def test_source_two_windows_publish_only_one_complete_copy(self):
+        payload = table()
+        body, path = self.source_fixture(payload)
+        other_window = self.new_session()
+        opened = Event()
+        allow_finish = Event()
+        other_started = Event()
+
+        @contextmanager
+        def pause_before_publish(target, *, binary):
+            with atomic_writer(target, binary=binary) as out:
+                out.write(body[:1])
+                out.flush()
+                opened.set()
+                self.assertTrue(allow_finish.wait(5))
+                out.seek(0)
+                yield out
+
+        def save_in_other_window():
+            other_started.set()
+            return other_window._save_source(payload)
+
+        with (patch('site777_session.atomic_writer', side_effect=pause_before_publish) as writer,
+              ThreadPoolExecutor(max_workers=2) as windows):
+            first = windows.submit(self.session._save_source, payload)
+            try:
+                self.assertTrue(opened.wait(5))
+                second = windows.submit(save_in_other_window)
+                self.assertTrue(other_started.wait(5))
+                self.assertFalse(path.exists(), '書き込み途中は確定名で見えない')
+            finally:
+                allow_finish.set()
+            for result in (first, second):
+                self.assert_source(path, body, result.result(timeout=5))
+            writer.assert_called_once_with(path, binary=True)
 
     def test_no_new_capture_is_ready_until_the_requested_page_has_loaded(self):
         # 2026-11-08 Codexのレビュー：移動先の応答が遅いと、5〜7秒の間隔だけで旧画面を読み直していた。
