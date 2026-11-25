@@ -89,6 +89,34 @@ class ViewerSplitExportTests(unittest.TestCase):
         for name in (VIEWER_FILE_NAME, *VIEWER_STORE_FILE_NAMES.values()):
             self.assertNotIn(name, names)
 
+    def test_zero_racks_auto_backup_puts_events_and_removal_marks_in_header_only(self):
+        empty_root = Path(self.tmp.name) / 'empty'
+        data_dir, sync_dir = empty_root / 'data', empty_root / 'sync'
+        data_dir.mkdir(parents=True); sync_dir.mkdir(parents=True)
+        save_settings(data_dir, sync_dir=str(sync_dir))
+        empty_db = Store(data_dir / 'database.sqlite3')
+        try:
+            empty_db.set_date_event('nagamachiminami', '2026-12-12', '周年予定',
+                                    now=core.datetime.fromisoformat('2026-11-26T09:00:00+09:00'))
+            empty_db.set_date_event('saiwaichou', '2026-12-13', '消す予定',
+                                    now=core.datetime.fromisoformat('2026-11-26T09:00:00+09:00'))
+            empty_db.set_date_event('saiwaichou', '2026-12-13', None,
+                                    now=core.datetime.fromisoformat('2026-11-26T09:01:00+09:00'))
+            auto_backup(empty_db, data_dir, strict=True)
+        finally:
+            empty_db.close()
+        header = doc(sync_dir / VIEWER_FILE_NAME)
+        self.assertEqual(header['records'], [])
+        self.assertEqual(sorted(header['split_stores']), ['nagamachiminami', 'saiwaichou'])
+        by_key = {(e['store'], e['day']): e for e in header['date_events']}
+        self.assertEqual(by_key[('nagamachiminami', '2026-12-12')]['name'], '周年予定')
+        self.assertIsNone(by_key[('saiwaichou', '2026-12-13')]['name'])
+        self.assertIn('updated_at', by_key[('saiwaichou', '2026-12-13')])
+        for name in VIEWER_STORE_FILE_NAMES.values():
+            part = doc(sync_dir / name)
+            self.assertEqual(part['records'], [])
+            self.assertNotIn('date_events', part, '台0件でも店舗別ファイルにイベントは入れない')
+
 
 if __name__ == '__main__':
     unittest.main()

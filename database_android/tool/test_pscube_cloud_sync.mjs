@@ -796,3 +796,25 @@ test('古いPC入力が後から更新されても、新しい書き出しのDri
     assert.deepEqual(plain(health().writes.find(w=>w.source==='pc')),first);
   }
 });
+
+test('P-STATION履歴のイベント統合：小数秒6桁で同ミリ秒内の削除復活を防ぎ、時差表記違いの同一時刻は後着優先', () => {
+  const ev = (day, name, updated_at) => ({store: 'c740601', rate: '20', day, name, updated_at});
+  const d = drive({history: true}); d.setup();
+  const baseFile = d.files.find(f => f.name === 'pscube-viewer-drive.json');
+  const events = () => Object.fromEntries((plain(d.context.vpGet(baseFile, 'pscube', {})).date_events || []).map(e => [e.day, e]));
+  d.replace(baseFile, {...backup([record(1)], {date_events: [
+    ev('2026-12-12', null, '2026-11-26T00:00:00.123900Z'),
+    ev('2026-12-13', '旧名', '2026-11-26T09:00:00.123100+09:00'),
+    ev('2026-12-14', 'UTC側', '2026-11-26T03:00:00.123456Z'),
+  ]}), kind: 'viewer'});
+  d.sync();
+  d.add('pscube-backup-android-20261126-100000.json', backup([record(1)], {date_events: [
+    ev('2026-12-12', '旧名', '2026-11-26T00:00:00.123100Z'),
+    ev('2026-12-13', null, '2026-11-26T00:00:00.123900Z'),
+    ev('2026-12-14', 'JST側', '2026-11-26T12:00:00.123456+09:00'),
+  ]}));
+  d.sync();
+  assert.equal(events()['2026-12-12'].name, null, '.123900Zの削除は.123100Zの旧名で復活しない');
+  assert.equal(events()['2026-12-13'].name, null, '逆順では新しい削除が勝つ');
+  assert.equal(events()['2026-12-14'].name, 'JST側', '時差表記違いの同一時刻は後着が勝つ');
+});

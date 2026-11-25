@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import {meruhenRecords} from '../../share_viewer/data.mjs';
+import {eventLabel, meruhenRecords, mergeEvents} from '../../share_viewer/data.mjs';
 import {fetchViewerParts} from '../web/viewer_parts.mjs';
 
 const source = await fs.readFile(new URL('./meruhen_cloud_sync.gs', import.meta.url), 'utf8');
@@ -810,4 +810,92 @@ test('店ごとの書き出し：同期の状態の「PCの書き出し」に両
   assert.equal(pc().at, later.exported_at);
   assert.deepEqual(pc().stores.map(s => [s.store, s.day, s.count]).sort(),
     [['nagamachiminami', '2026-10-04', 1], ['saiwaichou', '2026-10-04', 1]]);
+});
+
+test('履歴方式のイベント統合：小数秒6桁で同ミリ秒内の削除復活を防ぎ、受信順反転・時差表記違い・旧形式を仕様どおり扱う', () => {
+  const d = drive({history: true}); d.setup();
+  const base = d.files[0];
+  const byKey = () => Object.fromEntries((plain(d.context.vpGet(base, 'meruhen', {})).date_events || []).map(e => [`${e.store}|${e.day}`, e]));
+  d.replace(base, {
+    ...pcHeader(),
+    date_events: [
+      {store: 'saiwaichou', day: '2026-12-12', name: null, updated_at: '2026-11-26T00:00:00.123900Z'},
+      {store: 'saiwaichou', day: '2026-12-13', name: '旧名', updated_at: '2026-11-26T09:00:00.123100+09:00'},
+      {store: 'saiwaichou', day: '2026-12-14', name: 'UTC側', updated_at: '2026-11-26T03:00:00.123456Z'},
+      {store: 'saiwaichou', day: '2026-12-15', name: '時刻あり', updated_at: '2026-11-26T00:00:00.000001Z'},
+      {store: 'saiwaichou', day: '2026-12-16', name: '旧形式1'},
+      {store: 'saiwaichou', day: '2026-12-17', name: '旧形式元'},
+    ],
+  });
+  d.sync();
+  d.add('database-backup-android-20261126-100000.json', backup([record(538)], {
+    date_events: [
+      {store: 'saiwaichou', day: '2026-12-12', name: '旧名', updated_at: '2026-11-26T00:00:00.123100Z'},
+      {store: 'saiwaichou', day: '2026-12-13', name: null, updated_at: '2026-11-26T00:00:00.123900Z'},
+      {store: 'saiwaichou', day: '2026-12-14', name: 'JST側', updated_at: '2026-11-26T12:00:00.123456+09:00'},
+      {store: 'saiwaichou', day: '2026-12-15', name: '旧形式で上書きしない'},
+      {store: 'saiwaichou', day: '2026-12-16', name: '旧形式2'},
+      {store: 'saiwaichou', day: '2026-12-17', name: '時刻ありで更新', updated_at: '2026-11-26T00:00:00.000001Z'},
+    ],
+  }));
+  d.sync();
+  const got = byKey();
+  assert.equal(got['saiwaichou|2026-12-12'].name, null, '.123900Zの削除は.123100Zの旧名で復活しない');
+  assert.equal(got['saiwaichou|2026-12-13'].name, null, '逆順（旧名先→削除後）では新しい削除が勝つ');
+  assert.equal(got['saiwaichou|2026-12-14'].name, 'JST側', '時差表記違いの同一時刻は後着が勝つ');
+  assert.equal(got['saiwaichou|2026-12-15'].name, '時刻あり', '時刻ありは時刻なし旧形式で上書きされない');
+  assert.equal(got['saiwaichou|2026-12-16'].name, '旧形式1', '時刻なし同士は手元を残す');
+  assert.equal(got['saiwaichou|2026-12-17'].name, '時刻ありで更新', '時刻ありが時刻なし旧形式に勝つ');
+});
+
+test('台データ0件の一時DBから書き出した見出しを模擬同期し、予定と削除印を受信できる', async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'meruhen-zero-racks-'));
+  try {
+    const py = process.env.PYTHON || String.raw`C:\Users\keyan\.codex\.chatgpt-projects\g-p-6a9e28549ca0819184c877c6b3b3749e\database\.runtime\Scripts\python.exe`;
+    const script = [
+      'import sys; from datetime import datetime; from pathlib import Path',
+      'from core import Store, auto_backup, save_settings',
+      'root = Path(sys.argv[1]); data, sync = root / "data", root / "sync"',
+      'data.mkdir(); sync.mkdir(); save_settings(data, sync_dir=str(sync))',
+      'db = Store(data / "database.sqlite3")',
+      'db.set_date_event("nagamachiminami", "2026-12-12", "周年予定", now=datetime.fromisoformat("2026-11-26T09:00:00+09:00"))',
+      'db.set_date_event("saiwaichou", "2026-12-13", "消す予定", now=datetime.fromisoformat("2026-11-26T09:00:00+09:00"))',
+      'db.set_date_event("saiwaichou", "2026-12-13", None, now=datetime.fromisoformat("2026-11-26T09:01:00+09:00"))',
+      'auto_backup(db, data, strict=True); db.close()',
+    ].join('\n');
+    const res = spawnSync(py, ['-c', script, temp], {cwd: fileURLToPath(new URL('../../database/', import.meta.url)), encoding: 'utf8'});
+    assert.equal(res.status, 0, res.stderr || res.error?.message);
+    const syncDir = path.join(temp, 'sync');
+    const headerDoc = JSON.parse(await fs.readFile(path.join(syncDir, 'database-viewer.json'), 'utf8'));
+    const saiwaiDoc = JSON.parse(await fs.readFile(path.join(syncDir, 'database-viewer-saiwaichou.json'), 'utf8'));
+    const nagaDoc = JSON.parse(await fs.readFile(path.join(syncDir, 'database-viewer-nagamachiminami.json'), 'utf8'));
+    assert.equal(headerDoc.records.length, 0);
+    assert.equal(saiwaiDoc.date_events, undefined);
+    assert.equal(nagaDoc.date_events, undefined);
+    // クラウド側に既存の台データと12/13の古い予定がある状態へ、台0件のPC書き出し3ファイルを模擬同期する。
+    const d = drive({history: true}); d.setup();
+    const base = d.files[0];
+    d.replace(base, {
+      ...viewer([record(537, '2026-10-02')]),
+      date_events: [{store: 'saiwaichou', day: '2026-12-13', name: '古い予定', updated_at: '2026-11-26T08:00:00+09:00'}],
+    });
+    d.sync();
+    d.replace(base, headerDoc);
+    d.add('database-viewer-saiwaichou.json', saiwaiDoc);
+    d.add('database-viewer-nagamachiminami.json', nagaDoc);
+    d.sync();
+    // 模擬同期後の受信結果（vpGet・fetchViewerParts）で予定と削除印の両方が届き、既存の台も保持される。
+    const get = params => plain(d.context.vpGet(base, 'meruhen', params));
+    const check = get({check: '1'}).parts;
+    const cache = new Map(), storage = {get: k => cache.get(k), set: (k, v) => cache.set(k, v)};
+    const received = await fetchViewerParts('https://example.test/exec', 'meruhen', check,
+      url => get(Object.fromEntries(new URL(url).searchParams)), storage);
+    assert.equal(received.records.length, 1, '台0件の書き出しでクラウド既存の台を消さない');
+    const events = mergeEvents(received.date_events);
+    assert.equal(eventLabel(events.get('nagamachiminami|2026-12-12')), '周年予定');
+    assert.equal(events.get('saiwaichou|2026-12-13')?.name, null, '12/13の削除印が受信されて古い予定を消す');
+    assert.equal(eventLabel(events.get('saiwaichou|2026-12-13')), '');
+  } finally {
+    await fs.rm(temp, {recursive: true, force: true});
+  }
 });
