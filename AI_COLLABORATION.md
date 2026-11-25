@@ -4808,3 +4808,18 @@
 
 - **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `bb74539` を `git revert`（戻り先 `42526d7`）、共有カレンダーは `keyanbaitian6-cell/database-share` で `bf17d6c` を `git revert`（戻り先 `b9248a8`）。
 - 次の手順：起動中の PC アプリを再起動すると新しいコードが有効になり、8:00〜23:29 でも未保存店舗の日次学習予測を保存できる（Android アプリ内の日次学習画面でも見る場合は APK 更新が必要）。
+
+## 2026-11-24 夕方 Gemini（クラウド）：サイトセブンのログイン操作許可ルールを `AGENTS.md` に反映
+
+- 依頼：利用者「自動では人間認証を行わないといった趣旨の記述があるところを切り取ってもらっていいですか」→ 該当箇所一覧を提示後、「サイトセブンについては人間認証がないため、ログインをしてもいいようにルールを変えて。」。基準コミットは `database-ci/main` の `a1b1a44`（`imakurudev-eng/database` の `main` `1100513` を含む最新履歴であることを `git fetch --unshallow` と `git merge-base --is-ancestor` で確認済み）。
+- 変更ファイル（文書のみ）：
+  - `AGENTS.md`：「サイトセブンの自動取り込みは、止まっても3分後に自動で再開する」の節に、2026-11-24 の利用者決定として「サイトセブンには人間認証（CAPTCHA 等）がないため、ログイン操作をしてよい（AI の確認・操作時に保存済みのログインボタンを押すことや、アプリ側の自動取り込みでログイン操作を行うことを禁止しない。資格情報の読み出し・記録・変更はしない）」を追記し、44行目の `login_required` の記述にも参照注記を足した。2026-11-24 時点の PC 実装（`database/site777_session.py`）では `login_required` 時の自動ログイン・自動再開は未実装であることも明記した。
+  - 保持した仕様：メルヘン・P’s CUBE・アナスロ等の人間確認／CAPTCHA・利用規約同意を自動操作しない方針、および PC／Android の既存コード・設定はいずれも変更していない。
+- 試験・CI：`.md` だけの変更のため、既存の CI 除外を維持し試験・ビルドは未実行（不要）。実サイト・DB への接続なし。
+- 引き渡し：`imakurudev-eng/database` の一時ブランチ `cloud/20261124-site777-login-rule` へ push（`main` への直接 push・PR 作成はしていない）。次の手順：PC 側ローカル AI が `cloud/20261124-site777-login-rule` を最新 `main` へ取り込み、`python tools/push_ci.py` で期間内の `main`（11月後半のため `database-ci`）へ反映後、一時ブランチを削除する。
+
+### PC 側の取り込み確認（Gemini、2026-11-25 日本時間）
+
+- 最新の `database-ci/main` と手元の `main` が `c27225f` で一致し、正本 `origin/main`（`1100513`）を含むことを確認した。`origin` の一時ブランチ `cloud/20261124-site777-login-rule`（`ad8c83c`、基準 `a1b1a44`）を `main` へマージし、`AI_COLLABORATION.md` 末尾の競合は既存の `2026-11-25` 記録をそのまま保持して末尾へ追記する形で解消した。
+- 送信差分は `AGENTS.md` とこの共有記録のみ（`.github/workflows/regression.yml` の `paths-ignore: ['**.md']` 対象）。文書のみの変更のため、方針どおり試験・ビルドは省略した。
+- 送信先は 11 月後半の `keyanbaitian6-cell/database-ci` の `main`。`python tools/push_ci.py` で送信を確認してから、正本の一時ブランチ `cloud/20261124-site777-login-rule` を削除する。
