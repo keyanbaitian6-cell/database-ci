@@ -4975,3 +4975,28 @@
 - 記録ファイル `database/data/input_versions.sqlite3`（今515MB）を続けるか消すか（計画6章）は、利用者に確認中（勝手に消さない）。このファイルはPCの取り込み窓の「締切前に版がある台」の1行（`forward_validation.meruhen_note`）も読む。評価用の複製（`../outputs/next-day-shadow-evaluation-20261126/db/` 1.1GB・`work/` 1.6GB）も残してある。
 - P-STATION の MY（最高出玉）が P’s CUBE の MY と同じ意味かは未確認のまま。機種名の表記替え（16機種）を名寄せする仕組みは無い（今回の評価では凍結版のまま扱った）。
 - 追記（同日、計画6章の後始末）：利用者「消してもいいなら消していいよ」。**評価用の複製は消した**：`../outputs/next-day-shadow-evaluation-20261126/db/`（DBの複製3つ、1.1GB）と `work/` の5MBを超える中間ファイル68個（特徴の pickle・長期アーカイブの写し・P-STATION の特徴 JSON、約1.6GB）を、Windowsのごみ箱へ移した（元に戻せる）。残したのは結果の表（`shadow_*`・`pstation_shadow_*` の CSV）・照合の JSON（`asof_check.json`・`baseline_check.json`・`snapshot_match.json`・`shadow_judge.json` など）・スクリプト（約6MB）。複製の SHA256 は `snapshot.json` に残っている。**記録ファイル `database/data/input_versions.sqlite3` は消していない。** 理由：ファイルだけを消すと、PCアプリの転送（`input_versions.flush`）が空のファイルを作り直す。そのうえで「検証先の確定済み履歴が見つかりません。復旧まで記録を休止します。」の誤りで記録を止め、状態表示に「休止中」「直近の転送エラー」を出し続ける。本体DBの `iv_outbox`・`iv_heads`・`iv_control` も残る。きれいに止めるには、PC（`core.py` の `Store`・`pscube_import.py` の `PscubeStore` の `attach`、`app.py` の `hold`、状態表示、`forward_validation.meruhen_note`）を直し、試験・全体ゲートを通す作業が要る。この記録を使うほかの研究は無い（`*PLAN*.md`・`../outputs/` を検索して確認）。今は約515MBで、10/25 の約172MBから1日あたり約11MB増えている。止めるかは利用者に確認中。
+
+## 2026-11-26 朝 Claude（Opus 5.5）：入力の版の記録をやめて、記録ファイルと本体の記録用の表を消した
+
+- 依頼：上の評価のあと、利用者「消してもいいなら消していいよ」→ ファイルだけを消すと休止の誤りが出ると説明 → 利用者「おねがい」。基準は `12ee8d1`。
+- 完了の条件：PCアプリが入力の版の記録を始めない・状態表示に「検証記録」を出さない・記録ファイルと本体DBの記録用の表を1回だけ片づける・保存/取り込み/バックアップは変えない。記録の仕組みと `as_of()` はコードに残す（評価のやり直し・試験のため）。
+- 変更：
+  - `database/input_versions.py`：`RECORDING = False` を足した。False の間、`attach()` は何もしない（本体を開いても `iv_control`・`iv_outbox`・`iv_heads` と一時トリガーを作らない）、`hold()` は何もしない（古い転送待ちが残っていても検証DBを作り直さない）、`recording_status_lines()` は空。
+  - `database/backup_status_ui.py`：検証記録の行が無いときは空行も足さない。`app.py`・`core.py`・`pscube_import.py`・`forward_validation.py` はコメントだけ（`forward_validation.meruhen_note` は記録が無いので今後は None＝取り込み窓の「締切前に版がある台」の1行は出ない）。
+  - 試験：`tests/test_input_versions.py` に `RecordingOn`（`run()` の間だけ `RECORDING=True`。`test_sqlite_fixture_cleanup` のように TestSuite で直接流しても効く）を足し、記録の仕組みの試験8クラスに付けた。別プロセスで保存する2件は、そのプロセスで `RECORDING=True` にする。新しく `RecordingStoppedTests` 3件：既定がOFF、メルヘン・P’s CUBE の本体を開いて保存しても記録の表・検証DB・転送のスレッドができない、記録していたころの転送待ちが残った本体を開いても検証DBを作り直さない。
+  - 文書：`AGENTS.md`（今後の予定・約束の行を「評価済み・記録停止」に）、`NEXT_DAY_SHADOW_PLAN_20261025.md` 6章、`RELIABILITY_HARDENING.md`。
+- 後片づけ（実データ、1回だけ）：PCアプリ（`app.py` などの Python）が動いていないことを確かめてから、`database/data/input_versions.sqlite3`（515,461,120バイト）を **Windowsのごみ箱へ移した**。続いて本体DB2つから記録用の表を消した（`../outputs/next-day-shadow-evaluation-20261126/retire_recording.py`、結果は同フォルダの `retire_recording.json`）。`database.sqlite3`：`iv_heads` 85,937行・`iv_control` 1行・`iv_outbox` 0行。`pscube.sqlite3`：`iv_heads` 41,093行・`iv_control` 1行・`iv_outbox` 0行。保存データの行数は前後で同じ（days 85,937、records 40,951・machines 111）で、`PRAGMA quick_check` は ok。VACUUM はしていない（空いたページは次の保存で使われる）。`database/data/` の古いDBの控え（`pscube.pre-*-202611*.sqlite3` など）の中の記録用の表は触っていない。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 本体を開いて保存しても記録しない | 済 | `RecordingStoppedTests` 3件 OK（`.venv` の Python） |
+| 記録の仕組み（as_of を含む）が今までどおり動く | 済 | `test_input_versions.py` 9件・`test_input_versions_outbox.py` 32件・`test_sqlite_fixture_cleanup.py` 1件 OK |
+| 状態表示・前向き検証 | 済 | `test_backup_output_status.py` 10件・`test_shared_output_ui.py` 1件・`test_forward_validation.py` 39件・`test_backup_integrity.py` 10件 OK |
+| 全体ゲート | 済 | `bash database_android/tool/check_before_build.sh`（`TZ=JST-9`・`CHECK_JS_JOBS=2`・作業 `C:\w\cbw-ivstop`）で **ALL PASSED**：PC 1,174件・UTC 28件・Flutter 904件・analyze・viewer-build・viewer-stage・share-stage・JS 97項目。ゲートのあとに足したのは `forward_validation.py` の説明文だけで、`test_forward_validation.py` 39件を流し直して OK |
+| 実データの後片づけ | 済 | 上の行数と `quick_check`（AIの直接確認） |
+| PCアプリを次に起動したとき、記録ファイルができない | **未確認** | 利用者が次に `start.cmd` で起動したあと、`database/data/` に `input_versions.sqlite3` が無いことを見る |
+| CI | **未確認** | この記録と一緒に `tools/push_ci.py` で `database-ci` へ送る（コードを含むので CI が1回動く） |
+
+- 閲覧ページ・共有カレンダー・Android・Google同期は変えていない（記録は PC だけの仕組み）。APK は作っていない。
+- 元に戻す手順：`input_versions.RECORDING = True` に戻せば、次に本体を開いたときに新しい出発点（reset と全行の baseline）から記録をやり直す（過去の分は戻らない）。消した記録ファイルは、ごみ箱を空にするまでは戻せる（ただし本体の `iv_control` を消したので、`as_of()` の完全性の照合には使えない）。

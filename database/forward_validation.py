@@ -492,6 +492,8 @@ def meruhen_note(data_dir, since: str, now: dt.datetime | None = None) -> str | 
     メルヘン（長町南・幸町）が入る前向き検証は、店舗別の候補比較（NEXT_DAY_SHADOW_PLAN_20261025.md）の入力の版の記録で、
     PCがDBを開いている間に自動でたまる（input_versions.py）。この窓で取り込んだ日（since 以降に版が記録された日）ごとに、
     締切（翌日の朝8時、日本時間）より前に版がある台の数を、その日の台数と並べて出す。成績は読まない。
+    2026-11-26 にその比較の評価が済み、記録をやめた（input_versions.RECORDING = False、記録ファイルと転送待ちの表も消した）ので、
+    今は記録が無く None を返す（行は出ない）。
     取り込んだ日が無ければ None。読めないときは理由の文。"""
     import contextlib
     import sqlite3

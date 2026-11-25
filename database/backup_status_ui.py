@@ -59,7 +59,8 @@ class BackupStatusPanel(ttk.Frame):
                 '\n\n'.join(('長町南・幸町' if source == 'meruhen' else 'P’s CUBE') + '\n' +
                             '\n'.join(sync_status_lines(synced_status(self.folder(), source)))
                             for source in ('meruhen', 'pscube')) +
-                '\n\n' + '\n'.join(recording_status_lines(self.data_dir)))
+                # 検証記録の行は、記録をやめた後（2026-11-26）は無いので、空行も足さない。
+                ''.join('\n\n' + '\n'.join(lines) for lines in [recording_status_lines(self.data_dir)] if lines))
 
     def show_details(self):
         window = tk.Toplevel(self)

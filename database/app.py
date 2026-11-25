@@ -2266,6 +2266,7 @@ def main():
     root.after(400, auto_sync_on_start)
     root.after(PSCUBE_SYNC_FIRST_MS, poll_pscube_from_sync)
     # 翌日候補の比較用の検証記録は、操作ごとに接続を閉じても起動中は送り続ける（input_versions.hold）。
+    # 2026-11-26 に記録をやめた（input_versions.RECORDING が False の間、hold は何もしない）。
     recording_paths = (DATA_DIR / 'database.sqlite3', DATA_DIR / 'pscube.sqlite3')
     for path in recording_paths:
         input_versions.hold(path)

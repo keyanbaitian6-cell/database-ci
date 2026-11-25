@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 import input_versions as iv
 from core import Store
-from test_input_versions import KEY, ROW
+from test_input_versions import KEY, ROW, RecordingOn
 
 
 def setUpModule():
@@ -17,7 +17,7 @@ def setUpModule():
     gc.collect()
 
 
-class OutboxTests(unittest.TestCase):
+class OutboxTests(RecordingOn, unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
@@ -124,7 +124,8 @@ class OutboxTests(unittest.TestCase):
     def test_process_exit_after_commit_keeps_transferable_pending(self):
         import os,subprocess,sys
         with tempfile.TemporaryDirectory() as directory:
-            code="from unittest.mock import patch;from pathlib import Path;from core import Store;import input_versions as iv,json,sys,os\nwith patch.object(iv,'_schedule'):\n s=Store(Path(sys.argv[1])/'data.sqlite3');s.save([json.loads(sys.argv[2])]);os._exit(0)"
+            # 別プロセスでも記録の仕組みを試す（2026-11-26 に既定はOFF。RecordingOn は別プロセスに届かない）。
+            code="from unittest.mock import patch;from pathlib import Path;from core import Store;import input_versions as iv,json,sys,os\niv.RECORDING=True\nwith patch.object(iv,'_schedule'):\n s=Store(Path(sys.argv[1])/'data.sqlite3');s.save([json.loads(sys.argv[2])]);os._exit(0)"
             subprocess.run([sys.executable,'-c',code,directory,json.dumps(ROW)],env={**os.environ,'PYTHONPATH':str(Path(iv.__file__).parent)},check=True)
             path=Path(directory)/'data.sqlite3'
             iv.flush(path)
@@ -177,7 +178,7 @@ class OutboxTests(unittest.TestCase):
         values=iv.as_of(self.root/iv.FILE_NAME,'meruhen',datetime.now().astimezone()+timedelta(seconds=1))
         self.assertEqual(next(iter(values.values()))['games'],4200)
 
-class CompletenessTests(unittest.TestCase):
+class CompletenessTests(RecordingOn, unittest.TestCase):
     """2026-10-29：as_of() が検証DB単体のコピーや、途中の受領・版が欠けた履歴を完全な入力として返していた。"""
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -243,7 +244,7 @@ class CompletenessTests(unittest.TestCase):
             iv.as_of(self.root/iv.FILE_NAME,'meruhen','2026-10-01T08:00:00+09:00')
 
 
-class HeldTransferTests(unittest.TestCase):
+class HeldTransferTests(RecordingOn, unittest.TestCase):
     """PC版は操作ごとに接続を閉じる。起動中は閉じた後も送り切る（2026-10-26、実DBで基準点5.7万件が残った）。"""
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -289,7 +290,7 @@ class HeldTransferTests(unittest.TestCase):
         (self.root/iv.FILE_NAME).unlink(missing_ok=True);self.path.unlink()
 
 
-class LargeHistoryTests(unittest.TestCase):
+class LargeHistoryTests(RecordingOn, unittest.TestCase):
     def test_as_of_reads_receipts_once_instead_of_per_version(self):
         # 受領と版をSQLで結合すると、版1件ごとに受領を全件読む（2026-10-26、実データの版16.7万件で終わらなかった）。
         import time
@@ -318,7 +319,7 @@ class LargeHistoryTests(unittest.TestCase):
             self.assertLess(time.monotonic()-started,5)
 
 
-class LeftoverTkTests(unittest.TestCase):
+class LeftoverTkTests(RecordingOn, unittest.TestCase):
     def test_module_setup_collects_leftover_tk_on_the_main_thread(self):
         import threading,tkinter as tk,weakref
         import test_input_versions
@@ -339,7 +340,7 @@ class LeftoverTkTests(unittest.TestCase):
             if enabled:gc.enable()
 
 
-class ThreadOnlyWhileHeldTests(unittest.TestCase):
+class ThreadOnlyWhileHeldTests(RecordingOn, unittest.TestCase):
     def test_saving_without_a_hold_never_starts_a_thread(self):
         # 試験・スクリプトなど保持していないプロセスでは転送のスレッドを起こさない（CI 40293353918 の再発防止）。
         import threading
@@ -361,7 +362,8 @@ class ThreadOnlyWhileHeldTests(unittest.TestCase):
             with patch.object(iv,'POLL_SECONDS',.1):
                 iv.hold(path)
                 try:
-                    code="from pathlib import Path;from core import Store;import json,sys\ns=Store(Path(sys.argv[1]));s.save([json.loads(sys.argv[2])]);s.close()"
+                    # 別プロセスでも記録の仕組みを試す（2026-11-26 に既定はOFF。RecordingOn は別プロセスに届かない）。
+                    code="from pathlib import Path;from core import Store;import input_versions,json,sys\ninput_versions.RECORDING=True\ns=Store(Path(sys.argv[1]));s.save([json.loads(sys.argv[2])]);s.close()"
                     subprocess.run([sys.executable,'-c',code,str(path),json.dumps(dict(ROW,games=4300))],env={**os.environ,'PYTHONPATH':str(Path(iv.__file__).parent)},check=True)
                     deadline=time.monotonic()+15
                     while time.monotonic()<deadline:

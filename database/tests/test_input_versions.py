@@ -7,6 +7,7 @@ import unittest
 from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import input_versions
 from core import Store
@@ -34,7 +35,63 @@ def later(seconds=1):
     return (datetime.now().astimezone() + timedelta(seconds=seconds)).isoformat()
 
 
-class MeruhenVersionTests(unittest.TestCase):
+class RecordingOn:
+    """記録は2026-11-26にやめた（input_versions.RECORDING が False）。記録の仕組みの試験だけ、setUp から後片づけまでを
+    記録ありで流す。run() を包むので、test_sqlite_fixture_cleanup のように TestSuite で直接流しても効く。"""
+    def run(self, result=None):
+        with patch.object(input_versions, 'RECORDING', True):
+            return super().run(result)
+
+
+class RecordingStoppedTests(unittest.TestCase):
+    """2026-11-26 利用者「消してもいいなら消していいよ」「おねがい」：記録をやめた後は、本体を開いて保存しても
+    記録の表・転送待ち・検証DBを作らず、転送のスレッドも起こさず、状態表示に「検証記録」を出さない。"""
+    def test_recording_is_stopped_by_default(self):
+        self.assertFalse(input_versions.RECORDING)
+
+    def test_saving_creates_no_recording_tables_file_or_thread(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with closing(Store(root / 'database.sqlite3')) as store:
+                store.save([ROW])
+                store.save([dict(ROW, games=3500)])
+            pscube = PscubeStore(root / 'pscube.sqlite3')
+            try:
+                with pscube.db:
+                    pscube.db.execute('INSERT OR REPLACE INTO records VALUES (?,?)', ('k1', json.dumps(dict(store='c740601', rate='20', day='2026-10-24', machine='試験', rack=101, games=2000, bb=3, rb=2, my=500))))
+            finally:
+                pscube.close()
+            for name in ('database.sqlite3', 'pscube.sqlite3'):
+                with closing(sqlite3.connect(root / name)) as db:
+                    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                self.assertFalse(tables & {'iv_control', 'iv_outbox', 'iv_heads'}, name)
+            input_versions.hold(root / 'database.sqlite3')
+            try:
+                self.assertNotIn(input_versions._key(root / 'database.sqlite3'), input_versions._workers)
+            finally:
+                input_versions.release(root / 'database.sqlite3')
+            input_versions.wait(root)
+            self.assertFalse((root / input_versions.FILE_NAME).exists())
+            self.assertEqual(input_versions.recording_status_lines(root), [])
+
+    def test_leftover_recording_tables_are_not_sent_again(self):
+        """記録していたころの本体（転送待ちが残っている）を開いても、検証DBを作り直さない。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(input_versions, 'RECORDING', True), patch.object(input_versions, '_schedule'):
+                with closing(Store(root / 'database.sqlite3')) as store:
+                    store.save([ROW])
+            with closing(sqlite3.connect(root / 'database.sqlite3')) as db:
+                self.assertGreater(db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0], 0)
+            with closing(Store(root / 'database.sqlite3')) as store:
+                store.save([dict(ROW, games=4000)])
+            input_versions.hold(root / 'database.sqlite3')
+            input_versions.release(root / 'database.sqlite3')
+            self.assertFalse((root / input_versions.FILE_NAME).exists())
+            self.assertEqual(input_versions.recording_status_lines(root), [])
+
+
+class MeruhenVersionTests(RecordingOn, unittest.TestCase):
     def test_only_changed_content_is_added_and_as_of_follows_the_cutoff(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -103,7 +160,7 @@ class MeruhenVersionTests(unittest.TestCase):
                 self.assertGreater(store.db.execute('SELECT count(*) FROM iv_outbox').fetchone()[0],0)
 
 
-class PscubeVersionTests(unittest.TestCase):
+class PscubeVersionTests(RecordingOn, unittest.TestCase):
     def test_records_are_versioned_with_their_day(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

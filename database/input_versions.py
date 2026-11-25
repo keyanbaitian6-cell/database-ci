@@ -11,6 +11,11 @@ from datetime import datetime
 from pathlib import Path
 
 FILE_NAME = 'input_versions.sqlite3'
+# 記録はやめた（2026-11-26 利用者「消してもいいなら消していいよ」「おねがい」）。店舗別の翌日候補の比較
+# （NEXT_DAY_SHADOW_PLAN_20261025.md）の評価が11/26に済み、この記録を使うほかの研究は無い。False の間は、
+# 本体DBを開いても記録の表・転送待ち・検証DBを作らず（attach）、転送のスレッドも起こさず（hold）、状態表示にも出さない。
+# 仕組みと as_of() は、評価のやり直しと試験のために残す（試験だけが True にして流す）。
+RECORDING = False
 VOLATILE_KEYS = ('captured_at', 'record_updated_at', 'observed_at', 'jo_captured_at')
 SOURCES = {
  'meruhen': ('days', "{t}.store || char(9) || {t}.day || char(9) || {t}.machine || char(9) || {t}.rack", '{t}.day'),
@@ -99,8 +104,8 @@ def connect(path, *, recording=True, timeout=5.0):
 
 
 def attach(db, data_dir, source):
-    """本体内だけに一時トリガーを設定する。出力用コピーでは呼び出しても開始しない。"""
-    if not getattr(db, 'recording_allowed', True): return True
+    """本体内だけに一時トリガーを設定する。出力用コピーでは呼び出しても開始しない。記録をやめた後（RECORDING が False）も何もしない。"""
+    if not RECORDING or not getattr(db, 'recording_allowed', True): return True
     table,key_sql,day_sql = SOURCES[source]
     try:
         db.create_function('iv_content', 1, content, deterministic=True)
@@ -165,7 +170,9 @@ def hold(path):
     GCが走り「Tcl_AsyncDelete: async handler deleted by the wrong thread」で落ちた（CI 40293353918）。
     保持していないプロセスの保存は本体の転送待ちに残り、保持しているPC版（30秒ごとに確認）か flush() が送る。
     取り込みブラウザなど別プロセスの保存も、この確認で送られる。
+    記録をやめた後（RECORDING が False）は、本体に古い転送待ちが残っていても送らない（検証DBを作り直さない）。
     """
+    if not RECORDING: return
     path = _key(path)
     with _guard: _holds[path] = _holds.get(path,0)+1
     _known_paths.add(path)
@@ -404,6 +411,7 @@ def as_of(path, source, cutoff):
 
 
 def recording_status_lines(directory):
+    if not RECORDING: return []  # 記録をやめた後は「検証記録」の行を出さない（2026-11-26）
     lines=[]
     lives, failed = _recordings(directory)
     for live in lives:

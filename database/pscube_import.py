@@ -848,6 +848,7 @@ class PscubeStore:
         self.db.execute('CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         self.db.commit()
         # 翌日候補の店舗別案を並べて比べるための版の記録（input_versions.py）。失敗しても開ける。
+        # 2026-11-26 に記録をやめた（input_versions.RECORDING が False の間、attach は何もしない）。
         if not input_versions.attach(self.db, self.path.parent, 'pscube'):
             try:
                 with self.db:
