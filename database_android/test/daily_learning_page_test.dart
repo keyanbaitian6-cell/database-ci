@@ -50,20 +50,23 @@ void main() {
       '2027-01-01',
     );
   });
-  test('日次学習の形式と締切を検査する', () {
+  test('日次学習の形式と保存時間帯を検査する', () {
     expect(parseDailyLearning(jsonEncode(fixture()))['days'], hasLength(1));
     final raw = fixture();
-    (raw['days'] as List).first['saved_at'] = '2026-11-11T08:00:00+09:00';
+    (raw['days'] as List).first['saved_at'] = '2026-11-11T23:30:00+09:00';
     expect(() => parseDailyLearning(jsonEncode(raw)), throwsFormatException);
     expect(() => parseDailyLearning('{}'), throwsFormatException);
   });
-  test('保存時刻は対象日の前日23:30〜当日08:00だけ受け付ける', () {
-    // 2026-11-11 利用者「23時半～8時でいいよ」。PC・Googleスクリプト・共有ページと同じ判定。
+  test('保存時刻は対象日の前日23:30〜当日23:30未満を受け付ける', () {
+    // 2026-11-25 利用者の決定で当日8時締切を完全撤廃。PC・Googleスクリプト・共有ページと同じ判定。
     for (final (stamp, ok) in [
       ('2026-11-10T23:30:00+09:00', true),
       ('2026-11-10T23:29:59+09:00', false),
       ('2026-11-11T00:00:00+09:00', true),
       ('2026-11-11T07:59:59+09:00', true),
+      ('2026-11-11T08:00:00+09:00', true),
+      ('2026-11-11T15:30:00+09:00', true),
+      ('2026-11-11T23:29:59+09:00', true),
       ('2026-11-11T23:30:00+09:00', false),
       ('2026-11-09T23:45:00+09:00', false),
       ('2026-11-10T14:30:00Z', true),

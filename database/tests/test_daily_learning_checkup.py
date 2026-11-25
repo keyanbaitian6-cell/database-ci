@@ -59,14 +59,16 @@ class CheckupTest(unittest.TestCase):
         self.assertEqual(cells['2026-11-11'], {'target': '2026-11-11', 'state': 'saved', 'racks': 5, 'unknown': 1})
         self.assertEqual(cells['2026-11-12']['state'], 'missed')
         self.assertEqual(cells['2026-11-13'], {'target': '2026-11-13', 'state': 'saved', 'racks': 7, 'unknown': 3})
-        # 予測の無いほかの店は、始めたあとの晩がすべて×。
-        self.assertEqual([c['state'] for c in result['stores']['saiwaichou']][-3:], ['missed'] * 3)
+        # 予測の無いほかの店は、過去2日が×で、当日は23:30まで保存できるため待ち（8時締切撤廃）。
+        self.assertEqual([c['state'] for c in result['stores']['saiwaichou']][-3:], ['missed', 'missed', 'pending'])
 
     def test_tonight_is_pending_while_the_save_window_is_open(self):
         result = runtime.checkup(self.journal, at('2026-11-13T23:45:00'))
         cells = result['stores'][STORE]
         self.assertEqual(cells[-1], {'target': '2026-11-14', 'state': 'pending'})
         self.assertEqual(cells[-2]['state'], 'saved')
+        # 23:30を過ぎると、未保存のままだった前日（11/13）は×（missed）になる。
+        self.assertEqual([c['state'] for c in result['stores']['saiwaichou']][-2:], ['missed', 'pending'])
 
     def test_never_opens_outcomes_or_decisions_and_counts_once(self):
         original = self.journal.get

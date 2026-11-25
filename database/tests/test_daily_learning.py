@@ -162,34 +162,38 @@ class LearningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             j = d.Journal(Path(temp) / 'journal.sqlite3')
             try:
-                now = datetime.fromisoformat('2026-11-11T07:59:59+09:00')
+                at = datetime.fromisoformat
+                now = at('2026-11-11T07:59:59+09:00')
                 self.assertTrue(j.freeze('2026-11-11', {'groups': []}, [row()], now))
                 self.assertFalse(j.freeze('2026-11-11', {'groups': ['changed']}, [], now))
                 self.assertEqual(j.get('predictions', '2026-11-11')['groups'], [])
                 with self.assertRaises(sqlite3.IntegrityError):
                     j.db.execute("UPDATE predictions SET body='{}'")
                 j.db.rollback()
-                with self.assertRaises(ValueError):
-                    j.freeze('2026-11-11', {}, [], datetime.fromisoformat('2026-11-11T08:00:00+09:00'))
+                # 8時締切は完全撤廃（2026-11-25）。当日08:00〜23:29も当日分を保存でき、既保存は上書きしない。
+                self.assertFalse(j.freeze('2026-11-11', {'groups': ['late']}, [], at('2026-11-11T08:00:00+09:00')))
+                self.assertTrue(j.freeze('2026-11-11', {'groups': ['daytime']}, [row()], at('2026-11-11T15:00:00+09:00'), store='saiwaichou'))
                 with self.assertRaises(ValueError):
                     j.freeze('2026-11-10', {}, [], now)
-                # 保存できるのは対象日の前日23:30〜当日08:00（2026-11-11 利用者「23時半～8時でいいよ」）。
-                at = datetime.fromisoformat
-                self.assertEqual(d.prediction_target(at('2026-11-11T23:29:59+09:00')), None)
+                # 保存できるのは対象日の前日23:30〜当日23:30未満（2026-11-25に8時締切を完全撤廃）。
+                self.assertEqual(d.prediction_target(at('2026-11-11T23:29:59+09:00')), '2026-11-11')
                 self.assertEqual(d.prediction_target(at('2026-11-11T23:30:00+09:00')), '2026-11-12')
                 self.assertEqual(d.prediction_target(at('2026-11-12T00:00:00+09:00')), '2026-11-12')
                 self.assertEqual(d.prediction_target(at('2026-11-12T07:59:59+09:00')), '2026-11-12')
-                self.assertEqual(d.prediction_target(at('2026-11-12T08:00:00+09:00')), None)
-                self.assertEqual(d.prediction_target(at('2026-11-12T12:00:00+09:00')), None)
+                self.assertEqual(d.prediction_target(at('2026-11-12T08:00:00+09:00')), '2026-11-12')
+                self.assertEqual(d.prediction_target(at('2026-11-12T12:00:00+09:00')), '2026-11-12')
+                self.assertEqual(d.prediction_target(at('2026-11-12T23:29:59+09:00')), '2026-11-12')
+                self.assertEqual(d.prediction_target(at('2026-11-12T23:30:00+09:00')), '2026-11-13')
                 # PCの時刻設定ではなく日本時間で決める（UTCの14:30は日本時間の23:30）。
                 self.assertEqual(d.prediction_target(at('2026-11-11T14:30:00+00:00')), '2026-11-12')
                 with self.assertRaises(ValueError):          # 23:30より前は、翌日の分をまだ保存しない
                     j.freeze('2026-11-12', {}, [], at('2026-11-11T23:29:59+09:00'))
-                with self.assertRaises(ValueError):          # 23:30以降は、今日の分は締切後
+                with self.assertRaises(ValueError):          # 23:30以降は、今日の分は対象日切替後
                     j.freeze('2026-11-11', {'late': True}, [], at('2026-11-11T23:30:00+09:00'))
                 self.assertTrue(j.freeze('2026-11-12', {'groups': ['night']}, [row()], at('2026-11-11T23:30:00+09:00')))
-                # 前の晩に保存した予測は、翌朝に動いても上書きしない。
+                # 前の晩に保存した予測は、翌朝・日中に動いても上書きしない。
                 self.assertFalse(j.freeze('2026-11-12', {'groups': ['morning']}, [], at('2026-11-12T07:00:00+09:00')))
+                self.assertFalse(j.freeze('2026-11-12', {'groups': ['noon']}, [], at('2026-11-12T12:00:00+09:00')))
                 self.assertEqual(j.get('predictions', '2026-11-12')['groups'], ['night'])
                 self.assertTrue(j.get('predictions', '2026-11-12')['saved_at'].startswith('2026-11-11T23:30:00'))
             finally:
@@ -475,21 +479,29 @@ class LearningTests(unittest.TestCase):
             self.assertIn('幸町：11/12の事前予測を固定保存しました', doc['status'])
             self.assertIn('P-STATION：処理失敗（pscube.sqlite3 がありません。データフォルダーを確認してください）', doc['status'])
 
-    def test_saved_or_late_does_not_open_originals(self):
+    def test_saved_does_not_open_originals(self):
         with tempfile.TemporaryDirectory() as temp:
-            _, calls = self.run_with(temp, '2026-11-11T12:00:00+09:00')       # 日中：保存も結果の記録も無い
-            self.assertEqual(calls, [])
             _, calls = self.run_with(temp, '2026-11-12T00:30:00+09:00')
             self.assertEqual(sorted(calls), [('meruhen',), ('pscube',)])
             _, calls = self.run_with(temp, '2026-11-12T07:50:00+09:00')       # 全店保存済み
             self.assertEqual(calls, [])
+            _, calls = self.run_with(temp, '2026-11-12T12:00:00+09:00')       # 日中でも全店保存済みなら原本を開かない
+            self.assertEqual(calls, [])
 
-    def test_crossing_0800_during_build_is_late_not_failure(self):
+    def test_crossing_0800_saves_normally_and_crossing_2330_is_not_failure(self):
         at = datetime.fromisoformat
-        ticks = iter([at('2026-11-12T07:58:00+09:00')] + [at('2026-11-12T08:00:30+09:00')] * 10)
+        # 8時締切撤廃により、計算中に08:00をまたいでもそのまま固定保存する。
+        morning_ticks = iter([at('2026-11-12T07:58:00+09:00')] + [at('2026-11-12T08:00:30+09:00')] * 10)
         with tempfile.TemporaryDirectory() as temp:
-            doc, _ = self.run_with(temp, lambda: next(ticks))
-            self.assertIn('計算中に8:00を過ぎたため', doc['status'])
+            doc, _ = self.run_with(temp, lambda: next(morning_ticks))
+            self.assertIn('11/12の事前予測を固定保存しました', doc['status'])
+            self.assertNotIn('処理失敗', doc['status'])
+            self.assertEqual([x['target'] for x in doc['days']], ['2026-11-12'])
+        # 23:30の対象日切替をまたいだ場合は保存せず、処理失敗にしない。
+        rollover_ticks = iter([at('2026-11-12T23:29:00+09:00')] + [at('2026-11-12T23:30:30+09:00')] * 10)
+        with tempfile.TemporaryDirectory() as temp:
+            doc, _ = self.run_with(temp, lambda: next(rollover_ticks))
+            self.assertIn('計算中に23:30（対象日の切替）を過ぎたため', doc['status'])
             self.assertNotIn('処理失敗', doc['status'])
             self.assertEqual(doc['days'], [])
 
@@ -532,8 +544,8 @@ class LearningTests(unittest.TestCase):
             finally:
                 j.close()
 
-    def test_run_saves_next_day_after_2330_and_nothing_in_daytime(self):
-        # 2026-11-11 利用者「23時半～8時でいいよ」。閉店後の取り込みが終わった時点（前日の夜）で翌日の分を保存する。
+    def test_run_saves_daytime_and_switches_to_next_day_at_2330(self):
+        # 2026-11-25 利用者の決定で当日8時締切を完全撤廃。前日23:30〜当日23:30未満は未保存ならいつでも保存でき、23:30で翌日に切り替わる。
         at = datetime.fromisoformat
         built, loaded = [], []
 
@@ -550,27 +562,30 @@ class LearningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(runtime, 'load_inputs', side_effect=fake_load), \
                 patch.object(runtime, 'ready', return_value=[]), patch.object(runtime, 'build_prediction', side_effect=fake_build):
             run = lambda stamp: runtime._run(Path(temp), clock=lambda: at(stamp), sync=False)
-            doc = run('2026-11-11T12:00:00+09:00')              # 日中：今日の分は締切後、明日の分はまだ早い
-            self.assertEqual(built, [])
-            self.assertIn('11/11は締切超過・事前予測なし', doc['status'])
-            self.assertEqual(doc['days'], [])
-            doc = run('2026-11-11T23:29:00+09:00')              # 23:30の直前もまだ保存しない
-            self.assertEqual(built, [])
+            doc = run('2026-11-11T12:00:00+09:00')              # 日中でも未保存なら当日分を固定保存する
+            self.assertEqual(built, [('2026-11-11', s, '2026-11-10') for s in runtime.STORES])
+            self.assertIn('11/11の事前予測を固定保存しました', doc['status'])
+            self.assertTrue(doc['days'][0]['saved_at'].startswith('2026-11-11T12:00:00'))
+            doc = run('2026-11-11T23:29:00+09:00')              # 23:30の直前は当日分が保存済み（翌日はまだ作らない）
+            self.assertEqual(len(built), 3)
+            self.assertIn('11/11の事前予測は保存済みです', doc['status'])
             doc = run('2026-11-11T23:35:00+09:00')              # 23:30以降：対象日は明日、前日データは今日
             self.assertEqual(loaded[-1], '2026-11-12')
-            self.assertEqual(built, [('2026-11-12', s, '2026-11-11') for s in runtime.STORES])
+            self.assertEqual(built[3:], [('2026-11-12', s, '2026-11-11') for s in runtime.STORES])
             self.assertIn('11/12の事前予測を固定保存しました', doc['status'])
-            self.assertEqual([(x['target'], x['input_day']) for x in doc['days']], [('2026-11-12', '2026-11-11')])
+            self.assertEqual([(x['target'], x['input_day']) for x in doc['days']],
+                             [('2026-11-12', '2026-11-11'), ('2026-11-11', '2026-11-10')])
             self.assertTrue(doc['days'][0]['saved_at'].startswith('2026-11-11T23:35:00'))
-            for stamp in ['2026-11-12T00:10:00+09:00', '2026-11-12T07:40:00+09:00', '2026-11-12T09:00:00+09:00']:
-                doc = run(stamp)                                # 翌朝に動いても作り直さない。9時でも「保存済み」と出す
-                self.assertEqual(len(built), 3, stamp)
+            for stamp in ['2026-11-12T00:10:00+09:00', '2026-11-12T07:40:00+09:00',
+                          '2026-11-12T09:00:00+09:00', '2026-11-12T20:00:00+09:00']:
+                doc = run(stamp)                                # 翌朝・日中に動いても作り直さない
+                self.assertEqual(len(built), 6, stamp)
                 self.assertIn('11/12の事前予測は保存済みです', doc['status'], stamp)
             self.assertTrue(doc['days'][0]['saved_at'].startswith('2026-11-11T23:35:00'))
 
-    def test_zero_usable_racks_is_not_frozen_rebuilds_before_cutoff_and_misses_after_cutoff(self):
+    def test_zero_usable_racks_is_not_frozen_rebuilds_in_daytime_and_misses_after_2330(self):
         # G12（2026-11-23 利用者の決定）：使える台が0台の店・日は予測を固定しない。
-        # 締切（8:00）までに有効な台の取り込みが入れば作り直す。0台のまま締切を過ぎたら未保存（締切超過・missed）。
+        # 当日23:30（対象日切替）までに有効な台の取り込みが入れば作り直す。0台のまま23:30を過ぎたら未保存（missed）。
         at = datetime.fromisoformat
         target, prev_day = '2026-11-12', '2026-11-11'
         base_naga = [row(d.shift(prev_day, -n), r, store='nagamachiminami') | {'captured_at': f'{d.shift(prev_day, -n)}T23:20:00+09:00'}
@@ -589,7 +604,7 @@ class LearningTests(unittest.TestCase):
         self.assertEqual(len(ps_reasons), 1)
         self.assertIn('使える台がありません', ps_reasons[0])
 
-        # _run()：0台の店は固定保存せず取り込み待ちにし、締切前（7:30）に有効データが入れば作り直して固定保存する
+        # _run()：0台の店は固定保存せず取り込み待ちにし、8時を過ぎた日中（12:00）でも有効データが入れば作り直して固定保存する
         valid_saiwai = [row(prev_day, r, store='saiwaichou') | {'games': 2000, 'captured_at': f'{prev_day}T23:20:00+09:00'}
                         for r in range(1, 11)]
         valid_ps = [row(prev_day, r, store=ps_store) | {'games': 2000} for r in range(1, 11)]
@@ -619,25 +634,23 @@ class LearningTests(unittest.TestCase):
             text_wait, level_wait = runtime.night_status(temp, at('2026-11-12T00:35:00+09:00'))
             self.assertEqual(level_wait, 'wait')
             self.assertIn('長町南 取り込み待ち', text_wait)
-            # 締切（8:00）までに有効な台の取り込みが入れば作り直して固定保存する
+            # 当日12:00（従来の8:00締切後）でも有効な台の取り込みが入れば作り直して固定保存する
             state_rows[0] = base_naga + valid_naga + valid_saiwai + valid_ps
-            doc2 = runtime._run(Path(temp), clock=lambda: at('2026-11-12T07:30:00+09:00'), sync=False)
+            doc2 = runtime._run(Path(temp), clock=lambda: at('2026-11-12T12:00:00+09:00'), sync=False)
             self.assertIn('長町南：11/12の事前予測を固定保存しました', doc2['status'])
             self.assertEqual(runtime.unsaved_stores(temp, target), [])
 
-        # 0台のまま締切（8:00）を過ぎたときは未保存（締切超過・checkup は missed・night_status は error）
+        # 0台のまま当日23:30（翌日の対象日切替）を過ぎたときは、11/12は未保存（checkup は missed）になる
         state_rows[0] = base_naga + zero_naga + valid_saiwai + valid_ps
         with tempfile.TemporaryDirectory() as temp, \
                 patch.object(runtime, 'load_inputs', side_effect=fake_load), \
                 patch.object(runtime, 'build_prediction', side_effect=fake_build):
             runtime._run(Path(temp), clock=lambda: at('2026-11-12T00:30:00+09:00'), sync=False)
-            doc_late = runtime._run(Path(temp), clock=lambda: at('2026-11-12T08:10:00+09:00'), sync=False)
-            self.assertIn('長町南：11/12は締切超過・事前予測なし', doc_late['status'])
+            doc_next = runtime._run(Path(temp), clock=lambda: at('2026-11-12T23:35:00+09:00'), sync=False)
             self.assertEqual(runtime.unsaved_stores(temp, target), ['nagamachiminami'])
-            self.assertEqual(doc_late['checkup']['stores']['nagamachiminami'][-1]['state'], 'missed')
-            text_late, level_late = runtime.night_status(temp, at('2026-11-12T08:15:00+09:00'))
-            self.assertEqual(level_late, 'error')
-            self.assertIn('長町南 未保存', text_late)
+            cells = {c['target']: c['state'] for c in doc_next['checkup']['stores']['nagamachiminami']}
+            self.assertEqual(cells['2026-11-12'], 'missed')
+            self.assertEqual(cells['2026-11-13'], 'pending')
 
 
 if __name__ == '__main__':

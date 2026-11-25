@@ -12,14 +12,15 @@ const fixture=()=>({format:'daily-learning',version:1,status:'比較中',updated
       status:'改善未確認',selected:[['nagamachiminami','','<試験>',101]],current:[],learned:[],private:'公開しない'}]}]});
 const source=readFileSync(new URL('./daily_learning_projection.js',import.meta.url),'utf8');
 const context=vm.createContext({});vm.runInContext(source,context);
-test('公開項目だけに限定し締切・形式を検査する',()=>{
+test('公開項目だけに限定し保存時間帯・形式を検査する',()=>{
   const out=context.projectDailyLearning(fixture());
   assert.ok(!JSON.stringify(out).includes('公開しない'));
-  const raw=fixture();raw.days[0].saved_at='2026-11-11T08:00:00+09:00';
+  const raw=fixture();raw.days[0].saved_at='2026-11-11T23:30:00+09:00';
   assert.throws(()=>context.projectDailyLearning(raw));
-  // 保存できるのは対象日の前日23:30〜当日08:00（2026-11-11）。Googleスクリプトと共有ページで同じ判定。
+  // 保存できるのは対象日の前日23:30〜当日23:30未満（2026-11-25に8時締切を完全撤廃）。Googleスクリプトと共有ページで同じ判定。
   for(const [stamp,ok] of [['2026-11-10T23:30:00+09:00',true],['2026-11-10T23:29:59+09:00',false],['2026-11-11T00:00:00+09:00',true],
-      ['2026-11-11T07:59:59+09:00',true],['2026-11-11T23:30:00+09:00',false],['2026-11-09T23:45:00+09:00',false],['2026-11-10T14:30:00Z',true]]) {
+      ['2026-11-11T07:59:59+09:00',true],['2026-11-11T08:00:00+09:00',true],['2026-11-11T15:30:00+09:00',true],
+      ['2026-11-11T23:29:59+09:00',true],['2026-11-11T23:30:00+09:00',false],['2026-11-09T23:45:00+09:00',false],['2026-11-10T14:30:00Z',true]]) {
     const night=fixture();night.days[0].saved_at=stamp;
     if(ok) assert.equal(context.projectDailyLearning(night).days[0].groups[0].saved_at,stamp);
     else assert.throws(()=>context.projectDailyLearning(night),undefined,stamp);

@@ -71,21 +71,19 @@ def jst(now):
 
 
 class LateError(ValueError):
-    """保存できる時間帯（前日23:30〜当日08:00）の外。処理の失敗ではなく締切超過として扱う。"""
+    """対象日の保存時間帯（前日23:30〜当日23:30未満）の外。処理の失敗ではなく対象日切替後として扱う。"""
 
 
 def prediction_target(now):
-    """今の時刻に固定保存できる事前予測の対象日。保存できない時間帯は None。
+    """今の時刻に固定保存できる事前予測の対象日（日本時間）。
 
-    対象日の前日23:30から、対象日の08:00より前まで（2026-11-11 利用者「23時半～8時でいいよ」。
-    朝7:30〜8:00にPCがついていない日があるので、閉店後の取り込みが終わった時点で保存できるようにした）。
-    08:00〜23:30は、その日の分は締切後、次の日の分はまだ早いので、どちらも保存しない。
+    対象日の前日23:30から、対象日の23:30より前まで保存できる（2026-11-25 利用者の決定で
+    従来の当日08:00締切を完全撤廃。営業中で当日のデータを取り込む前であり、入力も前日分までしか
+    読まないため影響がない。23:30で翌日の予測対象へ切り替わる）。
     """
     now = jst(now)
     today = now.date().isoformat()
-    if (now.hour, now.minute) >= (23, 30):
-        return shift(today, 1)
-    return today if now.hour < 8 else None
+    return shift(today, 1) if (now.hour, now.minute) >= (23, 30) else today
 
 
 def identity(row):
@@ -577,7 +575,7 @@ class Journal:
         210日分を毎晩まるごと保存し、1晩で約132MB増えていた）。予測には塊の指紋の一覧を持たせる。"""
         now = jst(now)
         if target != prediction_target(now):
-            raise LateError('保存できる時間（対象日の前日23:30〜当日08:00）の外なので、事前予測を保存しません')
+            raise LateError('対象日の保存時間帯（前日23:30〜当日23:30未満）の外なので、事前予測を保存しません')
         if not isinstance(inputs, dict):
             inputs = {'rows': inputs}
         key = target + ('|' + store if store else '')

@@ -34,7 +34,7 @@ def report_panel(data_dir, day, location, machine=None, *, now=None):
                 groups.append(g | {'racks': racks})
         alerts = [a for a in view['alerts'] if not a.startswith('この日の保存済み候補はありません')]
         if not groups:
-            alerts.append('この日の保存済み事前予測はありません。午前8時以降は作り直しません。')
+            alerts.append('この日の保存済み事前予測はありません。画面を開いても予測を作り直しません。')
         parts = [f'<div style="{ALERT}">' + ''.join(f'<p>{escape(a)}</p>' for a in alerts) + '</div>' if alerts else '']
         count = sum(len(g['racks']) for g in groups)
         if count:
@@ -54,7 +54,7 @@ def report_panel(data_dir, day, location, machine=None, *, now=None):
         status = [f'{s}' for s in view['mine'] + view['general']]
         parts.append('<details><summary>処理状況・日次学習について</summary>'
                      + ''.join(f'<p>{escape(s)}</p>' for s in status)
-                     + '<p>PCで前日23:30〜当日8:00の間に保存した候補を表示します。画面を開いても予測を作り直しません。</p></details>')
+                     + '<p>PCで対象日の前日23:30〜当日23:30に保存した候補を表示します。画面を開いても予測を作り直しません。</p></details>')
         return lead + ''.join(parts) + '</section>'
     except (OSError, ValueError, KeyError, TypeError, IndexError):
         return lead + '<p>日次学習の記録がまだ届いていません。PCの日次学習画面を確認してください。</p></section>'

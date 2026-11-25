@@ -10,9 +10,9 @@ assert.ok(['chromium','webkit'].includes(engineName));
 const root=path.resolve(process.env.SHARE_WEB_ROOT||fileURLToPath(new URL('../../share_viewer',import.meta.url)));
 const today=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
 const now=Date.now(), stamp=new Date(now+9*3600000), hhmm=stamp.getUTCHours()*60+stamp.getUTCMinutes();
-// 表示する対象日（23:30以降は翌日）と、その日に有効な保存時刻（対象日の前日23:30〜当日08:00）。
+// 表示する対象日（23:30以降は翌日）と、その日に有効な保存時刻（対象日の前日23:30〜当日23:30未満。8時締切撤廃後の日中時刻でも表示できる）。
 const target=new Date(now+9*3600000+(hhmm>=1410?86400000:0)).toISOString().slice(0,10);
-const savedAt=`${target}T00:30:00+09:00`;
+const savedAt=`${target}T12:30:00+09:00`;
 const longName='とても長い機種名の表示を確かめるための試験機・スーパーロングネームエディションｻﾝﾌﾞﾚｲｸ';
 const prediction={format:'daily-learning',version:1,status:'幸町：処理失敗（原本DBを読めません）。従来方式を使用してください',updated_at:`${today}T07:30:00+09:00`,days:[{
   target,input_day:target,saved_at:savedAt,groups:[

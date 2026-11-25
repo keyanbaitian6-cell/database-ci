@@ -48,7 +48,7 @@ Map<String, dynamic> parseDailyLearning(String text) {
         throw const FormatException('保存時刻が不明です');
       }
       final saved = DateTime.parse(raw).toUtc().add(const Duration(hours: 9));
-      // 保存できるのは対象日の前日23:30〜当日08:00（日本時間。2026-11-11）。
+      // 保存できるのは対象日の前日23:30〜当日23:30未満（日本時間。2026-11-25に8時締切を完全撤廃）。
       final savedDay = saved.toIso8601String().substring(0, 10);
       final before = DateTime.parse('${day['target']}T00:00:00Z')
           .subtract(const Duration(days: 1))
@@ -56,10 +56,10 @@ Map<String, dynamic> parseDailyLearning(String text) {
           .substring(0, 10);
       final minutes = saved.hour * 60 + saved.minute;
       final inWindow =
-          (savedDay == day['target'] && minutes < 480) ||
+          (savedDay == day['target'] && minutes < 1410) ||
           (savedDay == before && minutes >= 1410);
       if (!inWindow) {
-        throw const FormatException('締切前の予測ではありません');
+        throw const FormatException('対象日の保存時間帯の予測ではありません');
       }
       for (final id in g['selected'] as List) {
         if (id is! List ||
@@ -134,7 +134,7 @@ String dailyTime(String stamp) {
   return (mine: mine, general: general);
 }
 
-final _dailyImportant = RegExp(r'処理失敗|取り込み待ち|締切超過|同期先|書けません|読めません');
+final _dailyImportant = RegExp(r'処理失敗|取り込み待ち|同期先|書けません|読めません');
 
 class DailyRack {
   const DailyRack(this.rack, this.machine);
@@ -201,7 +201,7 @@ class DailyView {
       );
     }
     if (groups.isEmpty) {
-      alerts.add('この日の保存済み候補はありません。データ不足・締切超過・PC停止などを確認してください。');
+      alerts.add('この日の保存済み候補はありません。データ不足・取り込み待ち・PC停止などを確認してください。');
     }
     dates = {
       initial,
@@ -411,7 +411,7 @@ class _DailyLearningPageState extends State<DailyLearningPage> {
                 for (final s in view.mine) '${dailyStoreNames[_store]}：$s',
                 ...view.general,
                 if (view.mine.isEmpty && view.general.isEmpty) '処理状況の記録はありません。',
-                'PCで前日23:30〜当日8:00の間に保存した候補を表示します。画面を開いても予測を作り直しません。',
+                'PCで対象日の前日23:30〜当日23:30に保存した候補を表示します。画面を開いても予測を作り直しません。',
                 '採用は店舗ごとに、保存した予測の将来の成績で判定します。判定までは従来方式を採用します。',
               ],
             ),

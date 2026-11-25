@@ -99,7 +99,7 @@ class RunDueTest(unittest.TestCase):
         self.assertFalse(self.due(last=mark2)[0], '同じ控えでは繰り返さない')
 
     def test_transient_failure_is_retried_before_cutoff_while_waiting_for_capture_is_not(self):
-        # 一時的な失敗（DBの鍵など）は原本DBの更新時刻が変わらなくても8:00前に再試行し、
+        # 一時的な失敗（DBの鍵など）は原本DBの更新時刻が変わらなくても再試行し、
         # データ不足の「取り込み待ち」は5分ごとに読み直さない。
         import json
         due, mark = self.due()
@@ -123,11 +123,11 @@ class RunDueTest(unittest.TestCase):
             json.dumps({'updated_at': NIGHT.isoformat(), 'status': waiting_only}, ensure_ascii=False), encoding='utf-8')
         self.assertFalse(self.due(last=mark2)[0], '取り込み待ちでは5分ごとに読み直さない')
         self.assertEqual(runtime.clear_failed_mark(mark2, waiting_only), mark2)
-        # 3. 記録DBの鍵などで export の前に「失敗で終了」したときも、8:00前なら再試行し、8:00以降は動かさない。
+        # 3. 記録DBの鍵などで export の前に「失敗で終了」したときも、8:00を過ぎた日中も含め当日23:30未満なら再試行する。
         runtime.trace(self.root, '失敗で終了：OperationalError: database is locked', now=NIGHT)
         self.assertTrue(self.due(last=mark2)[0])
-        after_cutoff = datetime(2026, 11, 14, 8, 0, tzinfo=JST)
-        self.assertFalse(self.due(now=after_cutoff, last=mark2)[0], '8:00以降は再試行しない')
+        daytime = datetime(2026, 11, 14, 12, 0, tzinfo=JST)
+        self.assertTrue(self.due(now=daytime, last=mark2)[0], '8時締切撤廃により日中も再試行する')
 
     def test_only_unsaved_stores_and_their_own_database_count(self):
         self.save('nagamachiminami', 'saiwaichou')
@@ -144,15 +144,20 @@ class RunDueTest(unittest.TestCase):
         self.save('nagamachiminami', 'saiwaichou')                 # P-STATION だけ取り込み待ちで残った
         self.assertFalse(self.due(last=mark)[0])
 
-    def test_outside_the_saving_hours_it_never_runs(self):
-        for now in (datetime(2026, 11, 14, 8, 0, tzinfo=JST), datetime(2026, 11, 14, 23, 29, tzinfo=JST),
-                    datetime(2026, 11, 14, 12, 0, tzinfo=JST)):
+    def test_runs_throughout_the_day_for_unsaved_stores_and_switches_at_2330(self):
+        # 2026-11-25に8時締切を完全撤廃。未保存の店があれば08:00〜23:29でも動かし、23:30で翌日に切り替わる。
+        for now in (datetime(2026, 11, 14, 8, 0, tzinfo=JST), datetime(2026, 11, 14, 12, 0, tzinfo=JST),
+                    datetime(2026, 11, 14, 23, 29, tzinfo=JST)):
             with self.subTest(now=now):
-                self.assertFalse(self.due(now=now)[0])
+                due, mark = self.due(now=now)
+                self.assertTrue(due)
+                self.assertEqual(mark[0], '2026-11-14')
         start = datetime(2026, 11, 13, 23, 30, tzinfo=JST)
         self.touch('meruhen', minutes_ago=30, now=start)
         self.touch('pscube', minutes_ago=30, now=start)
-        self.assertTrue(self.due(now=start)[0], '23:30から（対象日は翌日）')
+        due, mark = self.due(now=start)
+        self.assertTrue(due, '23:30から（対象日は翌日）')
+        self.assertEqual(mark[0], '2026-11-14')
 
     def test_closing_the_app_does_not_wait_for_ten_minutes(self):
         self.touch('meruhen', minutes_ago=1)

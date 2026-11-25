@@ -68,7 +68,8 @@ class RunDueReasonTest(Folder):
         due, _, why = self.reasons(last=mark)
         self.assertFalse(due)
         self.assertIn('P-STATIONは書き込みから10分待ち', why)
-        self.assertEqual(self.reasons(now=datetime(2026, 11, 14, 12, 0, tzinfo=JST))[2], '保存できる時間帯の外（23:30〜8:00）')
+        self.assertEqual(self.reasons(now=datetime(2026, 11, 14, 12, 0, tzinfo=JST))[2],
+                         'メルヘン（長町南・幸町）・P-STATIONの原本で動かす')
         self.assertIn('取り込み画面が開いている間は待つ', self.reasons(skip_sources=('meruhen', 'pscube'))[2])
 
     def test_saved_everywhere_and_no_reasons_list_keeps_the_old_call(self):
@@ -84,7 +85,7 @@ class NightStatusTest(Folder):
         self.status_doc('長町南：取り込み待ち（前日のデータがそろっていません）／幸町：取り込み中のため待機（書き込み終了後10分で保存します）')
         text, level = runtime.night_status(self.root, NIGHT)
         self.assertEqual(level, 'wait')
-        self.assertTrue(text.startswith('今夜の日次学習（11/14の予測）：'), text)
+        self.assertTrue(text.startswith('日次学習（11/14の予測）：'), text)
         self.assertIn('長町南 取り込み待ち', text)
         self.assertIn('幸町 取り込み中のため待機', text)
         self.assertIn('P-STATION 保存済み 00:28（候補2台）', text)
@@ -101,15 +102,15 @@ class NightStatusTest(Folder):
         self.assertEqual(level, 'error')
         self.assertIn('長町南 処理失敗', text)
 
-    def test_after_eight_an_unsaved_store_is_an_error_and_a_full_save_is_idle(self):
+    def test_after_eight_unsaved_is_still_waiting_and_full_save_is_ok(self):
         noon = datetime(2026, 11, 14, 12, 0, tzinfo=JST)
         text, level = runtime.night_status(self.root, noon)
-        self.assertEqual(level, 'error', '8時までに保存されなかった')
-        self.assertIn('8時で締切', text)
-        self.assertIn('長町南 未保存', text)
+        self.assertEqual(level, 'wait', '8時締切撤廃により日中も保存待ち')
+        self.assertNotIn('8時で締切', text)
+        self.assertIn('長町南 まだ', text)
         for store in runtime.STORES:
             self.save(store)
-        self.assertEqual(runtime.night_status(self.root, noon)[1], 'idle')
+        self.assertEqual(runtime.night_status(self.root, noon)[1], 'ok')
 
     def test_an_old_status_from_another_night_is_not_reused(self):
         self.status_doc('長町南：処理失敗', at='2026-11-13T00:20:00+09:00')

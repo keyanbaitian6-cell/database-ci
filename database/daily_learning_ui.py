@@ -226,7 +226,7 @@ def show(root, data_dir, *, clock=None):
         more(body, '処理状況・日次学習について',
              [f'{name}：{s}' for s in view['mine']] + view['general'] +
              ([] if view['mine'] or view['general'] else ['処理状況の記録はありません。']) +
-             ['PCで前日23:30〜当日8:00の間に保存した候補を表示します。画面を開いても予測を作り直しません。',
+             ['PCで対象日の前日23:30〜当日23:30に保存した候補を表示します。画面を開いても予測を作り直しません。',
               '採用は店舗ごとに、保存した予測の将来の成績で判定します。判定までは従来方式を採用します。'], padx=16)
         wrapper = tk.Frame(body, background='#ffffff')
         wrapper.pack(fill='x', padx=16, pady=(4, 16))

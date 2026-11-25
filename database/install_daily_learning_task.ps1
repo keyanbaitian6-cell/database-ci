@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$PythonPath = (Join-Path $PSScriptRoot '.venv\Scripts\python.exe'),
     [string]$NodePath = '',
     [switch]$Preview
@@ -13,7 +13,7 @@ $taskNode = (Resolve-Path -LiteralPath $NodePath).Path
 $taskArgs = '-B -X utf8 "' + $taskScript + '" --data-dir "' + $taskData + '" --node "' + $taskNode + '"'
 $taskName = 'database 全店舗の日次学習'
 if ($Preview) {
-    [pscustomobject]@{名前=$taskName; 実行=$taskPython; 引数=$taskArgs; 時刻='毎日07:30・ログオン時。取り逃しは再開時に実行'; 締切='08:00 JST。締切後の事前予測は作成しない'}
+    [pscustomobject]@{名前=$taskName; 実行=$taskPython; 引数=$taskArgs; 時刻='毎日07:30・ログオン時。取り逃しは再開時に実行'; 対象日切替='23:30 JST（前日23:30〜当日23:30に当日分を保存。8時締切なし・過去日は作成しない）'}
     exit 0
 }
 $taskAction = New-ScheduledTaskAction -Execute $taskPython -Argument $taskArgs -WorkingDirectory $PSScriptRoot

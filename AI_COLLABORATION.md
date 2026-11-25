@@ -4781,3 +4781,27 @@
 | 完了の知らせが窓ごと（2窓のどちらの後処理が先でも混ざらない） | 済 | `TwoWindowNoticeTests` 3件（窓ごとの読み分け・おかしい窓IDは従来のファイル・app.py と起動の引数・`run_session` のつなぎ） |
 | PC試験に回帰なし | 済 | `TZ=JST-9 .venv/Scripts/python.exe -m unittest discover -s tests`：1169件 OK（`test_meruhen_close` は9件） |
 | 実機（PCアプリで2窓を開いて閉じる） | 未確認 | 次の2窓運用で、ログ欄の完了の行がそれぞれの窓に出るか・`database is locked` が `errors.log` に増えないかを見る。PCアプリは再起動するまで古いコードのまま |
+
+## 2026-11-25 Gemini：日次学習の予測保存「当日8時締切」ルールを完全撤廃
+
+- 依頼：「予測のための各日の締め切りが8時となっているがそのルールを完全撤廃して。理由は営業中で当日のデータ取り込む前だから何の影響もないから。」
+- 基準コミット：手元 `main` `a1b1a44`（着手前に未コミット変更なしを確認。`database-ci/main` の `0f9e214` と `origin/main` を含む最新履歴）。
+- 対象・方針：
+  - 対象は **全店舗の日次学習（`daily_learning`）**（長町南・幸町・P-STATION、PC・Google閲覧用スクリプト2本・Androidアプリ・iPhone閲覧ページ・共有カレンダー）。既存の固定済み研究（店舗別の候補比較 `NEXT_DAY_SHADOW_PLAN_20261025.md`・P-STATION前向き検証 `forward_validation.py`）は変更していない。
+  - 予測対象日 `T` の保存可能時間帯を、従来の「前日23:30〜当日08:00未満（JST）」から **「前日23:30〜当日23:30未満（JST）」** に変更（23:30で翌営業日 `T+1` へ切替）。8:00〜23:29 でも未保存の店舗があれば自動保存する。
+  - 保持した仕様：入力は従来どおり前日（`target - 1`）までのデータのみ読み込み、当日データは混入しない。過去日・未来日への保存と、すでに固定保存済みの予測の上書きは引き続き拒否する。学習の方式の版（`VERSION`・`method_signature`）・採用判定・切り戻し・係数固定対照は変更していない。既存の保存済み予測（前日23:30〜当日08:00未満）とも互換。
+- 変更ファイル（21ファイル＋この共有記録）：
+  - **PCコア・実行・本体表示**：`database/daily_learning.py`（`prediction_target` が常に当日または23:30以降は翌日を返すよう変更、`LateError` 文言更新）、`database/daily_learning_runtime.py`（`run_due`・`night_status`・`_run`・`export` から8時締切・`idle`・`締切超過`・`next_cutoff` を撤廃し、計算中の23:30切替またぎのみ非失敗で停止）、`database/daily_learning_view.py`・`database/daily_learning_ui.py`・`database/daily_learning_display.py`（4画面共通の注意・点検・説明文から8時締切・締切超過を削除）、`database/app.py`（終了時確認メッセージとコメント更新）、`database/install_daily_learning_task.ps1`（プレビュー表示の締切表記を更新）。
+  - **Google閲覧用スクリプト2本**：`database_android/tool/daily_learning_projection.js` の `inWindow` を `minutes < 1410`（当日23:30未満）へ変更し、`node database_android/tool/build_daily_learning.mjs` で `viewer_drive_script.gs`・`viewer_drive_script_readonly.gs` を再生成（`--check` 一致確認）。
+  - **Android・iPhone閲覧ページ・共有カレンダー**：`database_android/lib/daily_learning_page.dart`、`share_viewer/daily_learning.mjs` の `inWindow` を `minutes < 1410` にそろえ、説明文・候補なし注意文を4画面で統一。
+  - **ドキュメント・試験**：`DAILY_LEARNING.md`・`DAILY_LEARNING_OPERATION.md`、`database/tests/test_daily_learning.py`・`test_daily_learning_checkup.py`・`test_daily_learning_schedule.py`・`test_daily_status.py`、`database_android/test/daily_learning_page_test.dart`、`database_android/tool/test_daily_learning.mjs`・`test_daily_learning_browser.mjs`（8:00・12:00・15:30・23:29:59 の保存・表示受け入れ、23:30 切替・計算中 23:30 またぎ、08:00 またぎの正常保存を検証）。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| PC側の日次学習で8時締切が撤廃され、23:30切替・上書き拒否・過去日拒否を維持 | 済 | `test_daily_*.py` 116件 OK、`test_undefined_names.py` 2件 OK、全体ゲート `pc-tests` 1,169件 OK・`pc-event-timezone-utc` 28件 OK |
+| Google閲覧用スクリプト2本・共有カレンダーで前日23:30〜当日23:30未満を同一基準で検査 | 済 | `build_daily_learning.mjs --check` OK、`test_daily_learning.mjs` 7件 OK、`test_daily_learning_browser.mjs`（12:30保存データ、Chromium 320/393/1280px）OK |
+| Android・iPhone閲覧ページで前日23:30〜当日23:30未満の検査・表示文言を統一 | 済 | `flutter analyze --no-pub --no-fatal-infos lib/daily_learning_page.dart test/daily_learning_page_test.dart` 指摘0件、`daily_learning_page_test.dart` 10件 OK、全体ゲート `flutter-test` 895件 OK |
+| 全体ゲート（ビルド前再発確認） | 済 | `C:\w\cbw-daily-no-cutoff-2` で `check_before_build.sh`（`TZ=JST-9`・`CHECK_JS_JOBS=2`）**ALL PASSED**（`flutter-pub`・`pc-tests` 1,169件・`pc-event-timezone-utc` 28件・`flutter-test` 895件・`flutter-analyze`・`viewer-build`・`viewer-stage`・`share-stage` 19ファイル／版 `eb7c23be0df7`・JS 97ファイル全件成功） |
+| GitHub push・Web公開・GAS貼替・APK・実機確認 | 未確認 | ソースのみ手元 `main` にコミット済み。GitHub push（月後半のため `database-ci`）・閲覧ページ（`database-viewer`）・共有カレンダー（`database-share`）公開・Google閲覧用スクリプト2本（`viewer_drive_script.gs`・`viewer_drive_script_readonly.gs`）の手動貼替＆新バージョンデプロイ・Android APK ビルド・PC再起動後の実動作確認は未実施 |
+
+- 次の手順（重要）：PC で 8:00〜23:29 に保存された予測を iPhone・Android・共有カレンダーで読み込むには、**Google閲覧用スクリプト2本の手動貼替＋新バージョンデプロイ**と、**閲覧ページ・共有カレンダーの公開**（Androidアプリで日次学習画面を見る場合は APK 更新）が必要。利用者の指示があれば `tools/push_ci.py` による `database-ci/main` への push と Web 公開・APK 作成へ進む。PCアプリは再起動で新コードが有効になる。

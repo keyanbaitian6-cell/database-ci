@@ -141,8 +141,8 @@ SOURCE_NAMES = {'meruhen': 'メルヘン（長町南・幸町）', 'pscube': 'P-
 
 def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS, skip_sources=(), reasons=None):
     """今、日次学習を動かすか。(動かすか, 入力の印)。入力の印は、前に試したときと同じなら動かさないために使う
-    （データがそろわず「取り込み待ち」になった晩に、同じ原本で5分ごとに読み直さない）。
-    - 保存できる時間帯（前日23:30〜当日8:00）で、まだ保存していない店があるときだけ。
+    （データがそろわず「取り込み待ち」になった日に、同じ原本で5分ごとに読み直さない）。
+    - 対象日の保存時間帯（前日23:30〜当日23:30未満。2026-11-25に8:00締切を完全撤廃）で、まだ保存していない店があるときだけ。
     - 原本ごとに、前に試したときから変わっており（または前回が一時的な処理失敗で）、最後の書き込みから
       quiet 秒たっているものが1つでもあれば動かす（1つの原本が書き込み中でも、そろった別の原本の店は先に保存する）。
     - skip_sources に指定した原本（別店舗の取り込み窓が開いている間など）は対象外とし、印も更新しない。
@@ -155,9 +155,6 @@ def run_due(data_dir, now, last=None, *, on_close=False, quiet=QUIET_SECONDS, sk
             reasons.append(text)
 
     target = prediction_target(now)
-    if target is None:
-        because('保存できる時間帯の外（23:30〜8:00）')
-        return False, last
     stores = unsaved_stores(data_dir, target)
     if not stores:
         because('全店の予測は保存済み')
@@ -201,13 +198,11 @@ def _status_segment(status, name):
 
 def night_status(data_dir, now) -> tuple[str, str]:
     """PC本体画面の1行（2026-11-23 利用者「普通に取り込んだあと学習し候補を出してるかどうかを肉眼的にわかるようにしたい」）。
-    (文, 段階)。段階は ok（全店保存済み）・wait（まだの店がある）・error（処理失敗など）・idle（時間帯の外）。
+    (文, 段階)。段階は ok（全店保存済み）・wait（まだの店がある）・error（処理失敗など）。
+    2026-11-25に8時締切を完全撤廃したため、対象日（23:30切替）の保存は終日受け付ける。
     記録DBは予測（predictions）だけを読み取り専用で開く（成績の表は開かない）。原本DBは開かない。"""
     now = jst(now)
     target = prediction_target(now)
-    in_window = target is not None
-    if not in_window:
-        target = now.date().isoformat()
     saved = {}
     path = Path(data_dir) / 'daily-learning' / 'journal.sqlite3'
     if path.exists():
@@ -245,9 +240,6 @@ def night_status(data_dir, now) -> tuple[str, str]:
         if '処理失敗' in segment or (status.startswith('処理失敗') and not segment):
             parts.append(f'{name} 処理失敗')
             level = 'error'
-        elif '締切超過' in segment:
-            parts.append(f'{name} 締切超過・未保存')
-            level = 'error'
         elif '取り込み待ち' in segment:
             parts.append(f'{name} 取り込み待ち')
             level = 'wait' if level == 'ok' else level
@@ -255,13 +247,10 @@ def night_status(data_dir, now) -> tuple[str, str]:
             parts.append(f'{name} 取り込み中のため待機')
             level = 'wait' if level == 'ok' else level
         else:
-            parts.append(f'{name} まだ' if in_window else f'{name} 未保存')
-            level = ('wait' if in_window else 'error') if level == 'ok' else level
+            parts.append(f'{name} まだ')
+            level = 'wait' if level == 'ok' else level
     day = f'{int(target[5:7])}/{int(target[8:10])}'
-    head = f'今夜の日次学習（{day}の予測）' if in_window else f'日次学習（{day}の予測・8時で締切。次は23:30から）'
-    if not in_window and level == 'ok':
-        level = 'idle'
-    return f'{head}：' + '／'.join(parts), level
+    return f'日次学習（{day}の予測）：' + '／'.join(parts), level
 
 
 def method_signature(store):
@@ -527,7 +516,7 @@ def ready(rows, target, stores=STORES, low=None):
                 reasons.append(f'{name}の前日データに「{missing[0]}」など{len(missing)}機種（{lost}台）がありません')
         usable = [r for r in current if valid(r)]
         # 2026-11-23 利用者の決定（G12）：使える台が0台の店・日は予測を固定せず取り込み待ちにする。
-        # 締切（8:00）までに有効な台の取り込みが入れば作り直す。0台のまま8:00を過ぎたら未保存（締切超過）。
+        # 当日23:30（対象日切替）までに有効な台の取り込みが入れば作り直す。0台のまま23:30を過ぎたら未保存（missed）。
         if not usable:
             reasons.append(f'{name}の前日データに使える台がありません（全{len(current)}台）')
             continue
@@ -582,7 +571,7 @@ def build_prediction(rows, pscube, target, journal, node=None, history_rows=None
                SCORING_MJS.with_name('data.mjs')]
     study = {}
     if daily_learning_fixed.FIRST <= target <= daily_learning_fixed.LAST and groups:
-        # 通常の実行は1店舗ずつ。対照側だけ失敗しても従来の予測を締切内に保存する。
+        # 通常の実行は1店舗ずつ。対照側だけ失敗しても従来の予測を保存する。
         try:
             store, = methods
             control = daily_learning_fixed.prediction(target, store, methods[store], groups, projected,
@@ -812,7 +801,7 @@ def export(journal, data_dir, status, now, sync_dir=None):
                               {'saved_at': p['saved_at']} for g in p['groups']])
     days = [by_day[d] for d in sorted(by_day, reverse=True)[:31]]
     document = dict(format='daily-learning', version=1, updated_at=jst(now).isoformat(),
-                    status=status, days=days, next_cutoff='08:00 JST', improvement='将来成績で確認するまで改善未確認')
+                    status=status, days=days, improvement='将来成績で確認するまで改善未確認')
     # 点検はPCの窓だけで使う（GoogleのスクリプトはこれをiPhone・共有へ渡さない）。数えられなくても保存・表示は続ける。
     try:
         document['checkup'] = checkup(journal, now)
@@ -888,20 +877,19 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
     data_dir = Path(data_dir)
     now, journal = jst(clock()), Journal(data_dir / 'daily-learning' / 'journal.sqlite3')
     today = now.date().isoformat()
-    # 保存できるのは、対象日の前日23:30〜当日08:00（daily_learning.prediction_target）。
+    # 保存できるのは、対象日の前日23:30〜当日23:30未満（daily_learning.prediction_target。2026-11-25に8時締切を完全撤廃）。
     # 23:30以降は「明日」が対象日で、今日の取り込み済みの行が前日データになる。
     target = prediction_target(now)
-    shown = target or today
-    label = f'{int(shown[5:7])}/{int(shown[8:])}'
-    trace(data_dir, f'開始：対象 {shown}' + ('' if target else '（保存できる時間帯の外）'), now=now)
+    label = f'{int(target[5:7])}/{int(target[8:])}'
+    trace(data_dir, f'開始：対象 {target}', now=now)
     import error_log
     try:
-        # 2026-11-12：することがある店舗の原本だけを読む。保存済み・締切後で、記録すべき結果も無ければ原本を開かない
+        # 2026-11-12：することがある店舗の原本だけを読む。全店保存済みで、記録すべき結果も無ければ原本を開かない
         # （以前は毎回、原本2つ（509MB・67MB）を丸ごと一時コピーしていた）。読めない原本があっても、ほかの店は続ける。
-        saved = {s for s in STORES if journal.has('predictions', shown + '|' + s)}
-        open_skip = set(skip_sources or ()) if target is not None else set()
+        saved = {s for s in STORES if journal.has('predictions', target + '|' + s)}
+        open_skip = set(skip_sources or ())
         writing = set()
-        if target is not None and quiet > 0:
+        if quiet > 0:
             now_ts = now.timestamp()
             for source in sorted({SOURCES[s] for s in STORES if s not in saved and SOURCES[s] not in open_skip}):
                 _, latest = _source_stamp(data_dir, source, target)
@@ -909,14 +897,14 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
                     writing.add(source)
         blocked = writing | open_skip
         due = due_outcomes(journal, today)
-        wanted = {s for s in STORES if s not in saved and target is not None and SOURCES[s] not in blocked}
+        wanted = {s for s in STORES if s not in saved and SOURCES[s] not in blocked}
         wanted |= {store_of(k) for k in due if store_of(k) in STORES and SOURCES[store_of(k)] not in blocked}
         if any(store_of(k) not in STORES for k in due):
             wanted |= {s for s in STORES if SOURCES[s] not in blocked}
         loaded, failed = {}, {}
         for source in sorted({SOURCES[s] for s in wanted}):
             try:
-                rows, pscube = load_inputs(data_dir, shown, (source,))
+                rows, pscube = load_inputs(data_dir, target, (source,))
                 loaded[source] = ([r for r in rows if SOURCES.get(r['store']) == source], pscube)
             except Exception as error:     # noqa: BLE001 - 店舗ごとに失敗を分ける
                 failed[source] = error
@@ -947,12 +935,8 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
             name = STORE_NAMES[store]
             if store in saved:
                 # 分析用JSONを読めずに保存した晩は、あとの実行でも分かるように出し続ける。
-                note = (journal.get('predictions', shown + '|' + store) or {}).get('archive_error')
+                note = (journal.get('predictions', target + '|' + store) or {}).get('archive_error')
                 statuses.append(f'{name}：{label}の事前予測は保存済みです' + (ARCHIVE_NOTE if note else ''))
-                continue
-            if target is None:
-                statuses.append(f'{name}：{label}は締切超過・事前予測なし。従来方式を表示してください'
-                                '（次に保存できるのは23:30以降）')
                 continue
             if SOURCES[store] in open_skip:
                 statuses.append(f'{name}：取り込み中のため待機（取り込み画面が閉じたあとに保存します）')
@@ -968,8 +952,8 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
             try:
                 trace(data_dir, f'{name}：データを確かめます')
                 if low is None:
-                    low = skipped_low_racks(data_dir, shown)
-                why = ready(rows, shown, (store,), low)
+                    low = skipped_low_racks(data_dir, target)
+                why = ready(rows, target, (store,), low)
                 if why:
                     statuses.append(f'{name}：取り込み待ち：' + '／'.join(why))
                     trace(data_dir, statuses[-1])
@@ -1010,7 +994,7 @@ def _run(data_dir, *, clock=lambda: datetime.now(JST), node=None, sync=True, qui
                                 + (ARCHIVE_NOTE if 'archive_error' in archive_note else ''))
                 trace(data_dir, f'{name}：固定保存しました')
             except LateError:
-                statuses.append(f'{name}：計算中に8:00を過ぎたため、{label}の事前予測は保存していません（締切超過）')
+                statuses.append(f'{name}：計算中に23:30（対象日の切替）を過ぎたため、{label}の事前予測は保存していません')
                 trace(data_dir, statuses[-1])
             except Exception as error:     # noqa: BLE001 - 1店舗の失敗でほかの店の保存・表示を止めない
                 error_log.note(data_dir, 'daily-learning', f'{store}: {type(error).__name__}: {error}')

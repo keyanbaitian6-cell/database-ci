@@ -10,7 +10,7 @@ from daily_learning import JST
 
 NAMES = {'nagamachiminami': '長町南', 'saiwaichou': '幸町', 'pscube:c740601:20': 'P-STATION'}
 WEEK = '月火水木金土日'
-IMPORTANT = re.compile('処理失敗|取り込み待ち|締切超過|同期先|書けません|読めません')
+IMPORTANT = re.compile('処理失敗|取り込み待ち|同期先|書けません|読めません')
 METHOD_TEXT = {
     True: '日次学習版：店舗ごとの判定で、将来の成績による改善を確認したため採用している方式です。',
     False: '従来方式：これまでの翌日候補と同じ選び方です。日次学習版は、将来の成績で改善を確認するまで採用しません。'}
@@ -85,7 +85,7 @@ def daily_view(doc, store, target, now):
     if target < initial:
         alerts.append(f'{date_label(target)}は過去の対象日です。記録として表示しています。次の営業日の候補として使わないでください。')
     if not groups:
-        alerts.append('この日の保存済み候補はありません。データ不足・締切超過・PC停止などを確認してください。')
+        alerts.append('この日の保存済み候補はありません。データ不足・取り込み待ち・PC停止などを確認してください。')
     machines = sum(g['name'] != 'バラエティ' for g in groups)
     variety = any(g['name'] == 'バラエティ' for g in groups)
     scope = (f'{machines}機種とバラエティ' if machines and variety else 'バラエティ' if variety else f'{machines}機種')
@@ -96,7 +96,7 @@ def daily_view(doc, store, target, now):
 
 CHECKUP_MARKS = {'saved': '○', 'missed': '×', 'pending': '待ち', 'before': '—'}
 CHECKUP_NOTES = (
-    '○＝その晩に予測を保存できた。×＝保存できなかった（PCが止まっていた・取り込み待ちのまま8:00を過ぎた など）。'
+    '○＝その日に予測を保存できた。×＝保存できなかった（PCが止まっていた・取り込み待ちのまま23:30を過ぎた など）。'
     '待ち＝まだ保存できる時間内。—＝日次学習を始める前。',
     '判定不能＝その晩に使った前日データで、差枚もグラフも無く、プラスかどうか決まらない台（有効な台のうち）。'
     '学習の正解に使えない台です。取りこぼしが減るほど、学習に使えるデータが増えます。',
