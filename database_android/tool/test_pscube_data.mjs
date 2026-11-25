@@ -183,6 +183,15 @@ test('imports without events keep them; a newer removal survives an older named 
   const renamed = {...data(),date_events:[named('末尾イベ','2026-10-04T00:00:00Z')]};
   assert.deepEqual(mergeData(removed,renamed).date_events,renamed.date_events);
   assert.deepEqual(mergeData(removed,removed),validateData(removed));
+  // 同じミリ秒内の小数秒6桁比較：.123900Zの削除は.123100Zの旧名で復活せず、時差表記違いの同一時刻は後着が勝つ。
+  const usRemoved = {...data(),date_events:[named(null,'2026-11-26T00:00:00.123900Z')]};
+  const usOld = {...data(),date_events:[named('旧名','2026-11-26T00:00:00.123100Z')]};
+  assert.deepEqual(mergeData(usRemoved,usOld).date_events,usRemoved.date_events);
+  assert.deepEqual(mergeData(usOld,usRemoved).date_events,usRemoved.date_events);
+  const utcTie = {...data(),date_events:[named('UTC側','2026-11-26T03:00:00.123456Z')]};
+  const jstTie = {...data(),date_events:[named('JST側','2026-11-26T12:00:00.123456+09:00')]};
+  assert.deepEqual(mergeData(utcTie,jstTie).date_events,jstTie.date_events);
+  assert.deepEqual(mergeData(jstTie,utcTie).date_events,utcTie.date_events);
   // 古い末尾イベの印のバックアップを読んでも、新しく付けた名前は戻らない。
   assert.deepEqual(mergeData(renamed,{...data(),suffix_events:[mark()]}).date_events,renamed.date_events);
 });

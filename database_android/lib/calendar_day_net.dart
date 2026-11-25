@@ -79,12 +79,18 @@ Map<String, Object?> compareDayNets(
 /// （全記録から [dailyNet]）に戻る。表示する値は変えない（一致したときだけ使うので同じ値）。
 const dayNetTableKey = 'database-viewer-day-net';
 
-/// 本体の版の目印。書き出しの時刻と記録の件数。書き出しの時刻が無い本体は null（表を使わない）。
-/// 本体の記録が変わるのはGoogleの更新・ファイルの読み込みのときで、そのたびに書き出しの時刻が替わる。
-String? dayNetStamp(ViewerData data) {
+/// 本体の版の目印。端末に保存した本体の目印 [bodyId]（本体を保存するたびに同じ書き込みで新しくなる。
+/// web/index.html の save）と、書き出しの時刻・記録の件数。
+///
+/// 2026-11-26 点検④：以前は書き出しの時刻と件数だけで、時刻・件数が同じ別の本体（手で読み込んだ別のファイルなど）に
+/// 前の本体の表を使っていた。[bodyId] の無い本体（目印を書く前に保存した古い本体・手元確認の ?load=）と、書き出しの
+/// 時刻の無い本体は null（表を使わず、今の計算）。本文を解析し直さずに分かる。
+String? dayNetStamp(ViewerData data, String? bodyId) {
   final at = data.exportedAtText;
-  if (at == null || at.isEmpty) return null;
-  return '$at|${data.records.length}';
+  if (bodyId == null || bodyId.isEmpty || at == null || at.isEmpty) {
+    return null;
+  }
+  return '$bodyId|$at|${data.records.length}';
 }
 
 /// [table] を、本体の目印 [stamp] と一緒に控える形（小さなJSON）にする。1マスは

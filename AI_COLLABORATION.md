@@ -4922,6 +4922,18 @@
 - 次の手順：利用者のiPhoneで「カレンダーの日別計算：一致（…）・カレンダーはこの表で表示」「台の推移の日別計算：一致」と各「途中で終わった」を見る。一致が続いたらB3の画面の切り替えとB4。PCはこのあと利用者の指示でスリープにする（日次学習の保存は起きたあとに続く）。
 - CI（2026-11-26 確認）：`74ffed9`（`6e8171a` を含む）の実行 [45559765080](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45559765080) は **success**（Claude が `gh run list` で確認）。7691de6 の実行 45553193134 も success。利用者「結果はOKだね」（2026-11-26。iPhoneの診断の画面はまだ受け取っていないので、「カレンダーはこの表で表示」・B3の一致は未確認のまま）。
 
+## 2026-11-26 Codex：アプリ全体の問題点点検と他AIへの修正依頼（調査）
+
+- 対象は手元の `main` の `75b90756f3fad3eb5b14f3403051ff1670b19092`。利用者が指定した範囲は全体点検と他AI用の修正プロンプト。7件の発生条件、製品コード、担当範囲、修正後の回帰条件は [DATABASE_REVIEW_20261126.md](DATABASE_REVIEW_20261126.md)。
+- 優先は閲覧ページ2件。PCの分割見出し・店ファイルが単独で端末の全履歴を置き換え得る。Drive更新時の既存本文の読込失敗は初回と同じ合流処理に進む。ほかに、サイトセブンの途中書きファイルの再利用、差枚表の目印衝突、イベントのミリ秒内の順序、PCの台0件時のイベント出力、Androidの旧バックアップの容量判定を確認。
+- Pythonの一時SQLite・架空の保存資料、Nodeのファイル選択・イベント合流・模擬GAS、Flutterの一時試験3件で確認した。Flutterは通常起動が進まず、既存SDKの `flutter_tools.snapshot test --no-pub` から同じ一時試験を実行した。3件成功は修正前の挙動の確認。テスト用入力の読み取り量は上限256バイトに対して4,160バイト。実機での発生頻度・メモリ消費は未確認。
+- 製品コードの実装は引き継ぎ。実DB・対象サイト・研究成績・クラウドの実データへのアクセス、push・公開・GAS貼替・APK作成は行っていない。
+
+### 3つのAIの並行作業の分担（利用者指定）
+
+- Codexは③サイトセブンの資料保存・⑦Androidのバックアップ復元、Claudeは①②④個人用閲覧ページ、Geminiは⑤⑥イベント出力・共有側の同期を担当する。個人用閲覧ページの実装と試験はClaude、`core.py` のイベント関連とGAS生成元・生成物はGeminiが扱う。3者用の貼り付け文と担当範囲は [点検報告の分担](DATABASE_REVIEW_20261126.md#3つのaiに渡す並行作業用プロンプト)。
+- 調査基準は `75b9075`。実装を始める際は共通の基準を確認し、別作業ツリーと別ブランチで担当ごとの回帰試験を進める。Codexが3者の修正差分、統合後の試験と共同作業記録を取りまとめる。今回の作業は分担と引き渡し文の準備まで。
+
 ## 2026-11-26 Claude（Opus 5.5）：店舗別の翌日候補の案と現行の比較評価（`NEXT_DAY_SHADOW_PLAN_20261025.md`、1回だけ）
 
 - 依頼：利用者「NEXT_DAY_SHADOW_PLAN_20261025.md の計画どおりに…評価を1回だけ行ってください」。基準は手元の `main` `75b9075`（評価は 2026-11-26 01:17〜07:30 JST）。**本番の候補・画面・採点は変えていない。切り替えるかどうかは利用者が決める。**
@@ -4975,6 +4987,55 @@
 - 記録ファイル `database/data/input_versions.sqlite3`（今515MB）を続けるか消すか（計画6章）は、利用者に確認中（勝手に消さない）。このファイルはPCの取り込み窓の「締切前に版がある台」の1行（`forward_validation.meruhen_note`）も読む。評価用の複製（`../outputs/next-day-shadow-evaluation-20261126/db/` 1.1GB・`work/` 1.6GB）も残してある。
 - P-STATION の MY（最高出玉）が P’s CUBE の MY と同じ意味かは未確認のまま。機種名の表記替え（16機種）を名寄せする仕組みは無い（今回の評価では凍結版のまま扱った）。
 - 追記（同日、計画6章の後始末）：利用者「消してもいいなら消していいよ」。**評価用の複製は消した**：`../outputs/next-day-shadow-evaluation-20261126/db/`（DBの複製3つ、1.1GB）と `work/` の5MBを超える中間ファイル68個（特徴の pickle・長期アーカイブの写し・P-STATION の特徴 JSON、約1.6GB）を、Windowsのごみ箱へ移した（元に戻せる）。残したのは結果の表（`shadow_*`・`pstation_shadow_*` の CSV）・照合の JSON（`asof_check.json`・`baseline_check.json`・`snapshot_match.json`・`shadow_judge.json` など）・スクリプト（約6MB）。複製の SHA256 は `snapshot.json` に残っている。**記録ファイル `database/data/input_versions.sqlite3` は消していない。** 理由：ファイルだけを消すと、PCアプリの転送（`input_versions.flush`）が空のファイルを作り直す。そのうえで「検証先の確定済み履歴が見つかりません。復旧まで記録を休止します。」の誤りで記録を止め、状態表示に「休止中」「直近の転送エラー」を出し続ける。本体DBの `iv_outbox`・`iv_heads`・`iv_control` も残る。きれいに止めるには、PC（`core.py` の `Store`・`pscube_import.py` の `PscubeStore` の `attach`、`app.py` の `hold`、状態表示、`forward_validation.meruhen_note`）を直し、試験・全体ゲートを通す作業が要る。この記録を使うほかの研究は無い（`*PLAN*.md`・`../outputs/` を検索して確認）。今は約515MBで、10/25 の約172MBから1日あたり約11MB増えている。止めるかは利用者に確認中。
+
+## 2026-11-26 Codex：点検7件の統合とローカル回帰確認
+
+- 基準は `75b90756f3fad3eb5b14f3403051ff1670b19092`。着手時に `git ls-remote` で正本と database-ci の `main` を照会し、指定基準が両履歴を含むことを確認した。
+- 別作業ツリーで Codex ③⑦ `d20d8e6`（`fix/20261126-codex-storage`、4ファイル）、Claude ①②④ `6e5bc94` と追補 `3228013`（`fix/20261126-claude-viewer`、計11ファイル）、Gemini ⑤⑥ `c9fd6ae`（`fix/20261126-gemini-events`、14ファイル）が確定。各担当の最初のコミットの親は共通基準で、変更パス29件に重複なし。`fix/20261126-audit-integration` で `8df16b4` を最初に試験し、Claudeの追補を含む `6c4f4fe` で関連試験を再確認した。元の `main` の調査メモは元の作業ツリーに保存されている。
+- ③ `database/site777_session.py` は機種の途中記録で使っている窓間のファイルロックと、同じフォルダーで一時ファイルを確定名に置き換える `atomic_writer` を再利用した。既存のハッシュ名と内容の両方が一致する場合は再利用する。途中までの資料や同じ長さの破損資料は、書き込みと同期が成功した後で置き換える。試験は `database/tests/test_site777_session.py`。
+- ⑦ `database_android/lib/backup_service.dart` はファイル容量を先に調べる。上限超過時は、その上限まで分割して先頭の見出しを探し、判定に必要な行末の文字列だけを保持する。既定上限は64MiB。見出しが確認できた1台1行形式には総容量の上限を適用しない。従来の復元前の検証と書き込みトランザクションを使う。試験は `database_android/test/backup_integrity_test.dart`。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| ① 個人用閲覧ページでPCの見出し・1店舗ファイルの単独選択を拒否し、再起動後も両店を保持 | 済 | `test_viewer_history_guard_browser.mjs` の①。完全なファイルは読める |
+| ② Drive更新時に端末本文の読込失敗・壊れたJSONを検出し、正常な再試行後も端末にだけあった日を保持 | 済 | 同ブラウザー試験の②。初回の空は保存でき、再試行後も架空の7/1が残る |
+| ③ 既存資料の破損と書き込み失敗から回復し、2窓で同一資料を保存 | 済 | PCの新規4件。1バイトと同サイズの破損、内容一致時の再利用、部分書き込みからの再試行、2つのセッションでの同時保存を試し、確定名と内容のSHA-256を照合。独立したWindowsプロセス2本でも同時保存1件成功。ローカルWebView2で合成データ31台を取り込み、Chromiumの取り込み試験も成功 |
+| ④ 同じ時刻・同じ件数の別本文へ切り替えても、前の差枚表を採用しない | 済 | `test_viewer_history_guard_browser.mjs` の④、`test_viewer_calendar_check_browser.mjs`。切替直後・照合中の切替・再起動を確認 |
+| ⑤ イベントの時刻を小数秒6桁で比較し、連続したPC編集でも時刻を進める | 済 | `test_event_calendar.py`（UTC 31件を含む）、`test_share_viewer.mjs`、`test_viewer_drive_script.mjs`、`test_meruhen_cloud_sync.mjs`、`test_pscube_cloud_sync.mjs`、`test_pscube_data.mjs` |
+| ⑥ 台0件のPC出力にも予定と削除印が入り、模擬同期で受信できる | 済 | `test_viewer_split_export.py`、`test_meruhen_cloud_sync.mjs` ほか。店舗別ファイルと全体見出しも確認 |
+| ⑦ 小さい旧形式と長い正規見出し付きの64MiB超を読め、超過した旧形式の拒否時にDBを保持 | 済 | Flutterの新規4件。改行なしの旧形式12,555バイトに対し、試験上限256バイト以内で読み取りを停止。長い見出しの1,200イベントと正規の256台を確認。実際に64MiBを超える旧形式を `AppController.importBackup` に渡し、一時SQLiteの台の内容と保存状態を照合 |
+| 統合版 `8df16b4` のローカル回帰 | 済 | PC全体1,179件、UTCのイベント31件、Flutter全体915件、静的解析、試験用Webのビルドとステージ、共有ステージ19ファイル（版 `c0cb0e8636ae`）が成功。JSは初回97ファイル成功、ゲート自身の模擬試験1ファイルは適切な実行環境での再実行で5件成功。初回と再実行を合わせてJSの98ファイルを確認 |
+| 実機・実環境 | 未確認 | 実サイト、利用者のAndroid・iPhone、実DriveとGAS、実データを使った確認は行っていない。GitHub CI、push、公開、実環境への反映、APK作成は別途の利用者指示待ち |
+
+### 実行コマンドと試験環境
+
+- PCの個別確認は `TZ=JST-9` で `python -B -m unittest discover -s database/tests -p 'test_site777*.py'`（116件）、`python -B database/tests/smoke_site777_session.py --mixed-graphs`（WebView2・合成31台）、`node database_android/tool/test_site777_capture_browser.mjs`（Chromiumの1ファイル）。独立したWindowsプロセスの確認は `python -B database_android/build/codex-storage-process-check.py`。この補助スクリプトは③⑦の作業ツリーの試験出力用フォルダーに保存した。
+- Androidの関連試験は `database_android` で `flutter test --no-pub --reporter expanded test/backup*_test.dart test/database_service_test.dart test/recent_backup_test.dart test/record_deletions_test.dart test/scaling_test.dart test/robustness_test.dart test/pscube_backup_route_test.dart test/review_backup_test.dart` 相当（119件）。`flutter analyze --no-pub lib/backup_service.dart test/backup_integrity_test.dart` 相当は指摘0件。この2コマンドは既存SDKのDartから `flutter_tools.snapshot` を起動した。
+- 統合版は `TZ=JST-9 CHECK_JS_JOBS=2 bash database_android/tool/check_before_build.sh`。Pythonの実測UTCオフセットは+09:00。固定済みのFlutter依存関係をオフラインで解決し、試験用のシードは同梱の例をコピーした。全体静的解析の情報レベル34件は既存ログと一致。エラー・警告は0件。
+- 初回ゲートの終了コードは1。オフライン依存解決用に子プロセスへ渡したシェル関数が自己試験の模擬Flutterより優先され、同ファイル内で2件失敗した。関数を外した最初の再実行では専用Pythonの指定が抜け、Windowsの既定の別名を引いた。関数を外し、専用Pythonのパスを `PYTHON` に指定して `node tool/test_check_before_build_logging.mjs` をGit Bashから再実行し、5件すべて成功。製品コードや試験の合格条件は変更していない。初回ゲートのログには失敗時の表示を残した。
+- 実行ログは統合作業ツリーの `database_android/build/check_before_build/`。初回の集計は `timings.tsv` と `js-results.json`、成功した自己試験の再実行は `test_check_before_build_logging-rerun-python.log`。
+
+### Claude・Geminiの引き渡し受領と最終版の再確認
+
+- 利用者からClaudeの①②④とGeminiの⑤⑥の引き渡しを受領した。Geminiの `c9fd6ae` とCodexの `d20d8e6` は前の統合版に含まれていた。Claudeの本体修正 `6e5bc94` に続く追補 `3228013` を、統合ブランチ `fix/20261126-audit-integration` に競合なしでマージした。最終試験の対象は `6c4f4fe`。3担当の修正がすべて入っていることをコミットの祖先関係で確認した。
+- 追補による製品・試験の差分は `viewer_main.dart` の旧本文を表示中かどうかに応じた案内と、`test_viewer_history_guard_browser.mjs` のFlutterセマンティクス待ち。独立した `main` 側の調査資料・作業中の記録は元の作業ツリーにある。
+- Geminiの報告では専用作業ツリーでPC関連62件、UTCのイベント31件、Node 197件が成功。途中のPC全試験で報告された環境要因の失敗は、Codexの前の統合版 `8df16b4` のPC全体1,179件・UTC31件成功と区別する。
+- 最終版 `6c4f4fe` を `flutter analyze --no-pub --no-fatal-infos`（既存の情報34件、エラー・警告0件）、`flutter test --no-pub --reporter expanded`（915件）で確認。試験用に閲覧ページを `flutter build web --no-pub -t lib/viewer_main.dart --release --base-href /database-viewer/` でビルドし、`stage_viewer.py` と `stage_share_viewer.py` で隔離したフォルダーへ出力した。
+- 上記出力を使い、`node --test` で `test_viewer_history_guard_browser.mjs`、`test_viewer_calendar_check_browser.mjs`、`test_viewer_import_browser.mjs`、`test_viewer_storage_report.mjs`、`test_viewer_parts_browser.mjs`、`test_viewer_update_equivalence_browser.mjs`、`test_viewer_built_drive.mjs`、`test_share_viewer_browser.mjs` の8ファイルすべて成功。①②④の新しい画面試験は架空データと模擬Driveで3項目とも成功。ログは統合作業ツリーの `database_android/build/audit-final-6c4f4fe/` に保存。
+- PCとGASのソースは前の統合版から差分がないため、その試験結果を参照した。最終版での一括の全体ゲート、利用者のiPhone・Android、実Drive・GASでの動作は未確認。
+
+### Google Apps Script 3本の貼り替え（利用者報告）
+
+- 2026-11-26 07:44ごろ（日本時間）、利用者はGeminiの修正 `c9fd6ae`（`fix/20261126-gemini-events`）の `viewer_drive_script.gs`、`meruhen_cloud_sync.gs`、`pscube_cloud_sync.gs` を貼り替えたと報告した。Codexは3本のソースがローカル統合版と一致することをGitの差分で確認した。
+- 実環境への貼り替えは利用者報告。Codexによる実環境の直接確認、`viewer_drive_script.gs` の新バージョンへのデプロイ完了、貼り替え後の次回同期結果は未確認。
+- 3担当の修正はローカルの統合ブランチに入っている。`main` への取り込み、最終版での一括の全体ゲート、GitHubへのpush、共有カレンダーのWeb公開は保留。今回の記録は統合ブランチに追記した。
+
+### 2026-11-26 GASのデプロイと定期同期を確認（Codex）
+
+- 個人用閲覧のApps Scriptを管理画面で確認した時点では、公開版は11月25日14:56のバージョン26で、エディタにも旧版の時刻比較が残っていた。更新前のコードは `c9fd6ae` の親、入力・保存したコードは `c9fd6ae` の `viewer_drive_script.gs` と照合した。利用者がこのプロジェクトへの保存と既存デプロイの更新を明示承認した後、11月26日08:00に**バージョン27**へ更新した。既存のデプロイID・URLが一致し、アクセス権の設定を維持した。既存URLの読取専用の更新確認は `drive-check` を返した。
+- メルヘンとP-STATIONの同期コードは管理画面のエディタから読んで、改行を正規化した長さと内容の目印を `c9fd6ae` と照合した。貼り替え報告後の時間主導型実行は、P-STATION **07:59:22**、メルヘン **08:08:10** に開始し、両方ともApps Scriptの実行履歴とログで「正常に完了・0日更新」を直接確認した。時刻は日本時間。
+- 次の取込データで、利用者のiPhoneの「更新・差枚の取得状況」に「カレンダーはこの表で表示」が戻るかは未確認。既存端末で旧形式の差枚表を使わない間は、全記録から同じ差枚を計算する。
+- （Claude 注：この節は Codex が統合用の作業コピー `work/scratch/codex-integration-20261126` にコミットせずに残していた6行を、Gemini の確認（2026-11-26）を受けて Claude が main の取り込みのときに写したもの。中身は変えていない。）
 
 ## 2026-11-26 朝 Claude（Opus 5.5）：入力の版の記録をやめて、記録ファイルと本体の記録用の表を消した
 

@@ -5,9 +5,15 @@ String? pickedBackupEvents() => null;
 
 Future<String?> backupFromUrl(String url) async => null;
 
-Future<void> saveViewerData(String text, {bool meruhen = false}) async {}
+Future<String?> saveViewerData(
+  String text, {
+  bool meruhen = false,
+  String? keepId,
+}) async => null;
 
 Future<String?> loadViewerData() async => null;
+
+String? loadedViewerDataId() => null;
 
 Future<String?> loadViewerSummary() async => null;
 

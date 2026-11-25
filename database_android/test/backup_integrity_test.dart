@@ -27,6 +27,27 @@ class TempBackup extends BackupService {
   Future<File> newBackupFile({String source = 'android'}) async => tempFile();
 }
 
+class CountingBackupFile implements File {
+  CountingBackupFile(this.file);
+
+  final File file;
+  var bytesRead = 0;
+
+  @override
+  Future<int> length() => file.length();
+
+  @override
+  Stream<List<int>> openRead([int? start, int? end]) async* {
+    await for (final block in file.openRead(start, end)) {
+      bytesRead += block.length;
+      yield block;
+    }
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 Future<File> tempFile() async {
   final dir = await Directory.systemTemp.createTemp('backup_integrity_');
   addTearDown(() => dir.delete(recursive: true));
@@ -39,6 +60,140 @@ String lineFile(List<SlotRecord> records, {String ending = ']}'}) =>
 
 void main() {
   final service = BackupService();
+
+  group('復元前の形式・容量の判定', () {
+    test('上限以下の改行なし旧形式は従来どおり読める', () async {
+      final file = await tempFile();
+      await file.writeAsString(jsonEncode(service.backupPayload([rec(1)])));
+      final chunks = await service
+          .readBackupFile(file, wholeFileLimit: await file.length())
+          .toList();
+      expect(chunks.single.records.single, rec(1).toJson());
+    });
+
+    test('上限を超える改行なし旧形式は先頭の限られたバイトだけで拒否する', () async {
+      final file = await tempFile();
+      await file.writeAsString(
+        jsonEncode(
+          service.backupPayload([
+            rec(1).copyWith(extra: {'test_data': 'あ' * 4096}),
+          ]),
+        ),
+      );
+      final measured = CountingBackupFile(file);
+      const limit = 256;
+      expect(await file.length(), greaterThan(4096));
+      await expectLater(
+        service.readBackupFile(measured, wholeFileLimit: limit).toList(),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('メモリ不足'),
+          ),
+        ),
+      );
+      expect(measured.bytesRead, lessThanOrEqualTo(limit));
+    });
+
+    test('長いイベント見出しを含む64MiB超の1台1行形式は分割して読める', () async {
+      final file = await tempFile();
+      final originalEvents = [
+        for (var i = 0; i < 1200; i++)
+          DateEvent(
+            store: rec(1).store,
+            day: DateTime(2023, 1, i + 1).toIso8601String().substring(0, 10),
+            name: '試験' * 20,
+          ),
+      ];
+      final testData = 'x' * (256 * 1024);
+      final header = jsonEncode({
+        'format': backupFormat,
+        'version': backupVersion,
+        'source': 'pc',
+        'date_events': [for (final event in originalEvents) event.toJson()],
+      });
+      final sink = file.openWrite();
+      try {
+        sink.write(
+          '\ufeff\r\n${header.substring(0, header.length - 1)}, "records": [\r\n',
+        );
+        for (var rack = 1; rack <= 256; rack++) {
+          sink.write(
+            jsonEncode(
+              rec(rack).copyWith(extra: {'test_data': testData}).toJson(),
+            ),
+          );
+          sink.write(rack == 256 ? '\r\n]}' : ',\r\n');
+          if (rack % 8 == 0) await sink.flush();
+        }
+      } finally {
+        await sink.close();
+      }
+      expect(utf8.encode(header).length, greaterThan(128 * 1024));
+      expect(await file.length(), greaterThan(wholeBackupLimitBytes));
+      final racks = <int>[];
+      final events = <DateEvent>[];
+      await for (final chunk in service.readBackupFile(file, chunkSize: 8)) {
+        expect(chunk.records.length, lessThanOrEqualTo(8));
+        for (final row in chunk.records) {
+          racks.add(row['rack'] as int);
+          expect((row['test_data'] as String).length, testData.length);
+        }
+        events.addAll(chunk.events);
+      }
+      expect(racks, [for (var rack = 1; rack <= 256; rack++) rack]);
+      expect(
+        events.map((event) => event.toJson()),
+        originalEvents.map((event) => event.toJson()),
+      );
+    });
+
+    test('64MiB超の旧形式を復元画面の処理で拒否してDBを保持する', () async {
+      final file = await tempFile();
+      final dbPath = await newDatabasePath();
+      addTearDown(() => File(dbPath).parent.delete(recursive: true));
+      final db = realDatabase(dbPath);
+      addTearDown(db.close);
+      final app = AppController(database: db);
+      app.today = () => '2026-09-27';
+      await db.applyChanges(ChangeSet(upserts: [rec(999)]));
+      await app.initialize();
+      final before = await db.loadState();
+      final original = (await fullRows(db)).single.encode();
+      final payload = jsonEncode(
+        service.backupPayload([
+          rec(1).copyWith(extra: {'test_data': '@large-field@'}),
+        ]),
+      );
+      final parts = payload.split('@large-field@');
+      final sink = file.openWrite();
+      try {
+        sink.write(parts.first);
+        final megabyte = 'x' * (1024 * 1024);
+        for (var i = 0; i < 64; i++) {
+          sink.write(megabyte);
+          await sink.flush();
+        }
+        sink.write(parts.last);
+      } finally {
+        await sink.close();
+      }
+      expect(await file.length(), greaterThan(wholeBackupLimitBytes));
+      await expectLater(
+        app.importBackup(file),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('メモリ不足'),
+          ),
+        ),
+      );
+      expect((await fullRows(db)).map((r) => r.encode()), [original]);
+      expect(await db.loadState(), before);
+    });
+  });
 
   group('文書の完全性', () {
     for (final ending in ['', ']', ']}junk', ']}\n{}', ',]}']) {

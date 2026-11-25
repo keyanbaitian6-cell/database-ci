@@ -150,6 +150,12 @@ class BackupChunk {
 /// 読むしかない。その上限。これを超えると、メモリ不足で落ちる前に止める。
 const wholeBackupLimitBytes = 64 * 1024 * 1024;
 
+final _recordsStart = RegExp(r'"records"\s*:\s*\[$');
+const _oversizedWholeBackup = FormatException(
+  '以前の形式の大きなバックアップは、メモリ不足を避けるため読み込めません。'
+  '最新のアプリで書き出し直したファイルを使ってください。',
+);
+
 class BackupService {
   /// 書き出し先（一時フォルダ）。
   Future<File> newBackupFile({String source = 'android'}) async {
@@ -260,6 +266,40 @@ class BackupService {
     }
   }
 
+  /// 上限を超えるファイルでは、最初の空でない行が records の開始で終わるかを
+  /// 先に調べる。行全体を作らず、空白の連続を縮めた末尾だけを保持する。
+  static Future<bool> _hasStreamedBackupHeader(File file, int limit) async {
+    if (limit <= 0) return false;
+    final lineBreak = RegExp(r'[\r\n]');
+    final whitespace = RegExp(r'\s+');
+    const tailLength = '"records" : [ '.length;
+    var tail = '';
+
+    void keepTail(String part) {
+      final compact = (tail + part).replaceAll(whitespace, ' ');
+      tail = compact.length <= tailLength
+          ? compact
+          : compact.substring(compact.length - tailLength);
+    }
+
+    // 上限でUTF-8の途中まで読んだ場合も形式の判定を続ける。本読込では厳密に検証する。
+    await for (final block
+        in file
+            .openRead(0, limit)
+            .transform(const Utf8Decoder(allowMalformed: true))) {
+      var start = 0;
+      for (final separator in lineBreak.allMatches(block)) {
+        keepTail(block.substring(start, separator.start));
+        final endOfLine = tail.trimRight();
+        if (endOfLine.isNotEmpty) return _recordsStart.hasMatch(endOfLine);
+        tail = '';
+        start = separator.end;
+      }
+      keepTail(block.substring(start));
+    }
+    return false;
+  }
+
   /// バックアップを少しずつ読む。1行に1台の形（この版のAndroidとPC版の
   /// 書き出し）なら1行ずつ、そうでなければ上限までの大きさに限り丸ごと読む。
   Stream<BackupChunk> readBackupFile(
@@ -268,6 +308,10 @@ class BackupService {
     int wholeFileLimit = wholeBackupLimitBytes,
   }) async* {
     if (chunkSize <= 0) throw ArgumentError.value(chunkSize, 'chunkSize');
+    if (await file.length() > wholeFileLimit &&
+        !await _hasStreamedBackupHeader(file, wholeFileLimit)) {
+      throw _oversizedWholeBackup;
+    }
     final records = <dynamic>[];
     final candidates = <CandidateSnapshot>[];
     var events = <DateEvent>[];
@@ -279,7 +323,6 @@ class BackupService {
     // 各行の値はjsonDecodeで検証し、文書の外枠は値をnullに置換して検証する。
     // 画像の全文を保持せず、カンマ・閉じ括弧・末尾の余分な文字も検査できる。
     final structure = StringBuffer();
-    final recordsStart = RegExp(r'"records"\s*:\s*\[$');
     await for (final line
         in file
             .openRead()
@@ -288,7 +331,7 @@ class BackupService {
       final text = line.trim();
       if (text.isEmpty) continue;
       if (section == 'header') {
-        final match = recordsStart.firstMatch(text);
+        final match = _recordsStart.firstMatch(text);
         if (!text.startsWith('{') || match == null) break;
         var head = text.substring(0, match.start).trimRight();
         if (head.endsWith(',')) head = head.substring(0, head.length - 1);
@@ -383,10 +426,7 @@ class BackupService {
       return;
     }
     if (await file.length() > wholeFileLimit) {
-      throw const FormatException(
-        '以前の形式の大きなバックアップは、メモリ不足を避けるため読み込めません。'
-        '最新のアプリで書き出し直したファイルを使ってください。',
-      );
+      throw _oversizedWholeBackup;
     }
     final decoded = jsonDecode(await file.readAsString());
     _validateEnvelope(decoded);

@@ -301,3 +301,32 @@ test('両Googleスクリプトは保存保護の対応を診断で返す',async(
     assert.deepEqual(d.locks,[]);
   }
 });
+
+test('共有イベントの小数秒6桁比較：同ミリ秒内の削除復活防止・受信順反転・時差表記違いの同一時刻（メルヘン・P’s CUBE）', () => {
+  for (const kind of ['events', 'pscube-events']) {
+    const extra = kind === 'events' ? {} : {store: 'c740601', rate: '20'};
+    // 削除（.123900Z）が先、旧名（.123100Z）が後でも旧名へ戻らない。
+    const d1 = drive();
+    assert.equal(d1.post({file: kind, events: [ev('2026-12-12', null, '2026-11-26T00:00:00.123900Z', extra)]}).changed, 1);
+    const stale = d1.post({file: kind, events: [ev('2026-12-12', '旧名', '2026-11-26T00:00:00.123100Z', extra)]});
+    assert.deepEqual([stale.ok, stale.changed], [true, 0]);
+    assert.equal(d1.get(kind).events[0].name, null);
+    // 受信順を逆にしても（旧名先→削除後）、新しい削除が勝つ。
+    const d2 = drive();
+    d2.post({file: kind, events: [ev('2026-12-12', '旧名', '2026-11-26T09:00:00.123100+09:00', extra)]});
+    const newer = d2.post({file: kind, events: [ev('2026-12-12', null, '2026-11-26T00:00:00.123900Z', extra)]});
+    assert.deepEqual([newer.ok, newer.changed], [true, 1]);
+    assert.equal(d2.get(kind).events[0].name, null);
+    // 時差表記だけが異なる同一時刻（小数秒6桁一致）は、真に同時として後から送られた方が勝つ。
+    const d3 = drive();
+    d3.post({file: kind, events: [ev('2026-12-13', 'UTC側', '2026-11-26T03:00:00.123456Z', extra)]});
+    const sameJst = d3.post({file: kind, events: [ev('2026-12-13', 'JST側', '2026-11-26T12:00:00.123456+09:00', extra)]});
+    assert.deepEqual([sameJst.ok, sameJst.changed], [true, 1]);
+    assert.equal(d3.get(kind).events[0].name, 'JST側');
+    const sameCompact = d3.post({file: kind, events: [ev('2026-12-13', 'JST短縮', '2026-11-26T12:00:00.123456+0900', extra)]});
+    assert.deepEqual([sameCompact.ok, sameCompact.changed], [true, 1]);
+    assert.equal(d3.get(kind).events[0].name, 'JST短縮');
+    // 時刻なしの旧形式は共有書き込みでは引き続き拒否される。
+    assert.match(d3.post({file: kind, events: [{store: extra.store || 'nagamachiminami', ...(extra.rate ? {rate: extra.rate} : {}), day: '2026-12-14', name: '旧形式'}]}).error, /形式が不正/);
+  }
+});

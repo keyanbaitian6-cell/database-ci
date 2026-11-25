@@ -808,15 +808,17 @@ class Store:
         cleaned = name.strip() if isinstance(name, str) and name.strip() else None
         events = {(e['store'], e['day']): e for e in self.date_events(include_removed=True)}
         stamp = (now or datetime.now()).astimezone(EVENT_JST)
+        stamp_ms = stamp.replace(microsecond=(stamp.microsecond // 1000) * 1000)
         changed = False
         for day in days:
             previous = events.get((location, day))
             if (previous.get('name') if previous else None) == cleaned:
                 continue
-            at = stamp
+            at = stamp_ms
             previous_at = _event_time(previous.get('updated_at')) if previous else None
             if previous_at is not None and at <= previous_at:
-                at = previous_at + timedelta(milliseconds=1)
+                previous_jst = previous_at.astimezone(EVENT_JST)
+                at = previous_jst.replace(microsecond=(previous_jst.microsecond // 1000) * 1000) + timedelta(milliseconds=1)
             event = {'store': location, 'day': day, 'name': cleaned,
                      'updated_at': at.isoformat(timespec='milliseconds')}
             if not _valid_date_event(event):
@@ -1431,8 +1433,9 @@ def export_viewer(store, path, days=VIEWER_DAYS, only_store=None, split_stores=N
                 exported_at=exported_at or datetime.now().astimezone().isoformat(), source='pc-viewer', days=days)
     if not only_store:
         # 先の日に入力したイベントも渡す（イベントカレンダー）。消した印も含める。
+        # 台データが0件（cutoff が無い）でも、イベントは台データから独立して伝える。
         date_events = [event for event in store.date_events(include_removed=True)
-                       if cutoff and event['day'] >= cutoff]
+                       if cutoff is None or event['day'] >= cutoff]
         # 保存したアナスロのHTMLからの日ごとの「何台中何台プラス」（台の数値は無い。共有ページのカレンダーが
         # 台データの無い日にだけ使う。2026-10-18、html_day_summary.py）。DBの隣のファイルが無ければ載せない。
         import html_day_summary
