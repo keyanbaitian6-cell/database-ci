@@ -5000,3 +5000,4 @@
 
 - 閲覧ページ・共有カレンダー・Android・Google同期は変えていない（記録は PC だけの仕組み）。APK は作っていない。
 - 元に戻す手順：`input_versions.RECORDING = True` に戻せば、次に本体を開いたときに新しい出発点（reset と全行の baseline）から記録をやり直す（過去の分は戻らない）。消した記録ファイルは、ごみ箱を空にするまでは戻せる（ただし本体の `iv_control` を消したので、`as_of()` の完全性の照合には使えない）。
+- 追記（同日 08:15〜08:40、利用者「確かめていいよ」「起動してたしかめていいよ」）：Claude が `database/start.cmd` でPCアプリを起動し、約1分後に `database/data/` に `input_versions.sqlite3` が無いこと、`database.sqlite3`・`pscube.sqlite3` に `iv_` で始まる表が無いこと（読み取り専用）を確認した。日次学習は通常どおり（11/26 の予測は保存済み、定期確認で待機）。PCアプリは起動したまま。上の確認の表の「次に起動したとき、記録ファイルができない」は**済（AIの直接確認）**。CI：`4f0d593` の実行 [45719411836](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45719411836) は **success**（pc ubuntu・pc windows・full、Claude が `gh run view` で確認）。
