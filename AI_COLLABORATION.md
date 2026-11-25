@@ -4823,3 +4823,16 @@
 - 最新の `database-ci/main` と手元の `main` が `c27225f` で一致し、正本 `origin/main`（`1100513`）を含むことを確認した。`origin` の一時ブランチ `cloud/20261124-site777-login-rule`（`ad8c83c`、基準 `a1b1a44`）を `main` へマージし、`AI_COLLABORATION.md` 末尾の競合は既存の `2026-11-25` 記録をそのまま保持して末尾へ追記する形で解消した。
 - 送信差分は `AGENTS.md` とこの共有記録のみ（`.github/workflows/regression.yml` の `paths-ignore: ['**.md']` 対象）。文書のみの変更のため、方針どおり試験・ビルドは省略した。
 - 送信先は 11 月後半の `keyanbaitian6-cell/database-ci` の `main`。`python tools/push_ci.py` で送信を確認してから、正本の一時ブランチ `cloud/20261124-site777-login-rule` を削除する。
+
+## 2026-11-25 Claude（Opus 5.5）：直近の変更の点検（読むだけ・コード変更なし）
+
+- 依頼：利用者「何か改善点や修正した方がいいところないか確認してください」。基準は手元 `main` `45af635`（`database-ci/main` と一致、正本 `origin/main` `1100513` を含む）。サイト・DB（`outcomes`・`decisions`）は開いていない。
+- 見たもの：8時締切の撤廃 `5cee375`（PC・GAS・Flutter・共有カレンダー）、Gemini の `ad8c83c`・取り込み `45af635`、共有記録の未確認事項、AGENTS.md の期日。
+- 結果：
+  - 締切撤廃のコードは4画面で判定（`minutes < 1410`）がそろっており、入力は対象日の前日までだけ（`load_inputs` の `last = shift(target, -1)`）、P-STATIONの確定前データ・メルヘンの閉店前の台は `ready()` で止まるので、当日データの混入は見当たらない。
+  - **Androidアプリが古いまま**：`daily_learning_page.dart` の判定を 480→1410 に変えたが APK は未更新（共有記録「APK・PC再起動・実機確認｜未確認」）。古いAPKの日次学習画面は、8:00〜23:29 に保存された予測を「締切前の予測ではありません」として読めない。閲覧ページ（iPhone）・共有カレンダーは公開済みなので影響なし。
+  - PCアプリの再起動（新しいコードを有効にする）も未確認のまま。
+  - 古い言い回しの名残（動作には影響なし）：`database/app.py:1196`・`database/power.py:6` の「8:00・9:00の締切」（今は前向き検証の9時だけ）、`app.py` の `DAILY_STATUS_COLORS['idle']`（もう出ない段階）、`daily_learning_runtime.checkup` の `open_target or ...`（もう None にならない）。単独で直すとCIが1回動くので、次のコード変更と一緒に直すのがよい。
+  - 手元に、正本では削除済みの一時ブランチの追跡参照 `origin/cloud/20261123-cloud-branch-rule` が残っている（`main` に取り込み済み。`git fetch --prune origin` で消える。手元だけの話）。
+  - 期日：店舗別の候補比較（`NEXT_DAY_SHADOW_PLAN_20261025.md`）の評価が **2026-11-26以降に1回だけ**。その後に `input_versions` の扱いを利用者に聞く決まり（2026-11-13 の記録）。12/1 は段階Bの声かけ・`NEW_MACHINE_PLAN` の参考 `past`・9時以降の正本への送信（手元は正本より62コミット先）。段階B1・B2は未公開のまま（B0の一致を利用者のiPhoneで確かめてから）。
+- 次の手順：利用者の判断で、Android APK の作成（版上げ・全体ゲート込み）と PCアプリの再起動。古い言い回しは次のコード変更と一緒に。
