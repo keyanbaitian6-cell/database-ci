@@ -4920,3 +4920,4 @@
 - **元に戻す手順**：閲覧ページは `keyanbaitian6-cell/database-viewer` で `git revert 771a467` して push（`a062c1a` の中身に戻る）。控えの差枚表（localStorage `database-viewer-day-net`）と B3 の覚え（`database-viewer-b3-store`・`database-viewer-b3-rack:<店>`）は戻した版では読まれないだけで、端末の本体・日別キャッシュには影響しない。
 - 作業中の注意：Claude が解析の比較のために一度 `git stash`／`git stash pop` をし、その十数秒の間、別のセッションの作業途中の変更（日次学習まわり）を作業コピーから一時的に外してしまった。pop は成功し、その後そのセッションは `e34f6b1` としてコミットしている。同じフォルダーで別のセッションが動いているときは、stash を使わない。
 - 次の手順：利用者のiPhoneで「カレンダーの日別計算：一致（…）・カレンダーはこの表で表示」「台の推移の日別計算：一致」と各「途中で終わった」を見る。一致が続いたらB3の画面の切り替えとB4。PCはこのあと利用者の指示でスリープにする（日次学習の保存は起きたあとに続く）。
+- CI（2026-11-26 確認）：`74ffed9`（`6e8171a` を含む）の実行 [45559765080](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45559765080) は **success**（Claude が `gh run list` で確認）。7691de6 の実行 45553193134 も success。利用者「結果はOKだね」（2026-11-26。iPhoneの診断の画面はまだ受け取っていないので、「カレンダーはこの表で表示」・B3の一致は未確認のまま）。
