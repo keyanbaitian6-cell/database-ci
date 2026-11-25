@@ -18,6 +18,19 @@ function vhModeProblem(folder, site, props, history, setting, change) {
     '前回と同じ値にして貼り直してください（方式を本当に変えるときだけ、' + change + ' を実行してから同期します）。';
 }
 
+// イベントの入力時刻（ISO 8601・時差つき）を小数秒6桁（ミリ秒＋マイクロ秒）で読む。時差なし・読めない値は null。
+function vhEventTime(value) {
+  if (typeof value !== 'string') return null;
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})$/.exec(value);
+  if (!m) return null;
+  const frac = (m[2] || '').slice(0, 6).padEnd(6, '0');
+  const zone = m[3] === 'Z' ? 'Z' : m[3].replace(/^([+-]\d{2}):?(\d{2})$/, '$1:$2');
+  const ms = Date.parse(m[1] + '.' + frac.slice(0, 3) + zone);
+  return Number.isFinite(ms) ? {ms: ms, us: Number(frac.slice(3, 6))} : null;
+}
+function vhCompareEventTime(a, b) {
+  return a.ms !== b.ms ? a.ms - b.ms : a.us - b.us;
+}
 function vhInput(file, kind) {
   return {file, kind, id: kind + ':' + file.getId(), name: file.getName(), size: file.getSize(), version: vpVersion(file)};
 }
@@ -143,7 +156,9 @@ function vhMeruhen(folder, base, props, startedAt) {
       const events = new Map((old.date_events || []).map(e => [e.store + '|' + e.day, e]));
       for (const e of fresh.date_events || []) {
         const key = e.store + '|' + e.day, prior = events.get(key);
-        if (!prior || !prior.updated_at || Date.parse(e.updated_at) >= Date.parse(prior.updated_at)) events.set(key, e);
+        const incomingAt = vhEventTime(e.updated_at), priorAt = prior ? vhEventTime(prior.updated_at) : null;
+        if (e.name == null && !incomingAt) continue;
+        if (!prior || (incomingAt != null && (priorAt == null || vhCompareEventTime(incomingAt, priorAt) >= 0))) events.set(key, e);
       }
       // PCの閲覧用の日ごとの「何台中何台プラス」（day_summaries、2026-10-18 html_day_summary.py）は、
       // PCの最新の出力のものに置き換える。Androidのバックアップには無いので前のまま。

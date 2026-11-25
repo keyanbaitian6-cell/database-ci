@@ -40,6 +40,24 @@ class EventCalendarStoreTests(unittest.TestCase):
         self.db.set_date_event('nagamachiminami', '2026-10-10', '4台構成', now=at('2026-10-07T21:00:00+09:00'))
         self.assertEqual(self.event('2026-10-10')['updated_at'], '2026-10-07T22:00:00.001+09:00')
 
+    def test_consecutive_edits_within_the_same_millisecond_always_advance_saved_time(self):
+        # 同じミリ秒内の連続編集でも、保存時刻が同じ値で止まらず確実に進む。
+        self.db.set_date_event('nagamachiminami', '2026-12-12', '旧名', now=at('2026-11-26T10:00:00.123100+09:00'))
+        first = self.event('2026-12-12', removed=True)['updated_at']
+        self.db.set_date_event('nagamachiminami', '2026-12-12', None, now=at('2026-11-26T10:00:00.123900+09:00'))
+        second = self.event('2026-12-12', removed=True)['updated_at']
+        self.assertEqual(first, '2026-11-26T10:00:00.123+09:00')
+        self.assertEqual(second, '2026-11-26T10:00:00.124+09:00')
+        self.assertGreater(at(second), at(first))
+        # Android 等の小数秒6桁の直後に同じミリ秒内でPC編集しても、直前の時刻より後になる。
+        self.db.set_date_events([
+            dict(store='saiwaichou', day='2026-12-12', name='Android入力', updated_at='2026-11-26T01:00:00.123900Z'),
+        ])
+        self.db.set_date_event('saiwaichou', '2026-12-12', None, now=at('2026-11-26T10:00:00.123950+09:00'))
+        after_android = self.event('2026-12-12', 'saiwaichou', removed=True)['updated_at']
+        self.assertEqual(after_android, '2026-11-26T10:00:00.124+09:00')
+        self.assertGreater(at(after_android), at('2026-11-26T01:00:00.123900+00:00'))
+
     def test_removing_leaves_a_mark_that_screens_do_not_show(self):
         self.db.set_date_event('nagamachiminami', '2026-10-10', '半列', now=at('2026-10-07T22:00:00+09:00'))
         self.db.set_date_event('nagamachiminami', '2026-10-10', None, now=at('2026-10-08T09:00:00+09:00'))
@@ -100,6 +118,17 @@ class MergeTests(unittest.TestCase):
         merged, changed, _ = merge_date_events([mark], [self.ev('半列'), self.ev('半列', '2026-10-07T22:00:00+09:00')])
         self.assertEqual((merged[0]['name'], changed), (None, 0))
 
+    def test_microsecond_ordering_reverse_order_timezone_tie_and_untimed(self):
+        removed = self.ev(None, '2026-11-26T00:00:00.123900Z', day='2026-12-12')
+        old_named = self.ev('旧名', '2026-11-26T00:00:00.123100Z', day='2026-12-12')
+        self.assertEqual(merge_date_events([removed], [old_named])[0][0]['name'], None)
+        self.assertEqual(merge_date_events([old_named], [removed])[0][0]['name'], None)
+        # 時差表記だけが異なる同一時刻（小数秒6桁一致）は読み込んだ方が勝つ。
+        utc_same = self.ev('UTC側', '2026-11-26T03:00:00.123456Z', day='2026-12-13')
+        jst_same = self.ev('JST側', '2026-11-26T12:00:00.123456+09:00', day='2026-12-13')
+        self.assertEqual(merge_date_events([utc_same], [jst_same])[0][0]['name'], 'JST側')
+        self.assertEqual(merge_date_events([jst_same], [utc_same])[0][0]['name'], 'UTC側')
+
 
 class InAdvanceTests(unittest.TestCase):
     def test_entered_before_three_oclock_of_the_day_counts_as_in_advance(self):
@@ -109,9 +138,13 @@ class InAdvanceTests(unittest.TestCase):
         self.assertTrue(date_event_in_advance(ev('2026-10-09T23:00:00+09:00')))
         self.assertTrue(date_event_in_advance(ev('2026-10-10T02:30:00+09:00')))
         self.assertTrue(date_event_in_advance(ev('2026-10-10T02:59:59+09:00')))
+        self.assertTrue(date_event_in_advance(ev('2026-10-10T02:59:59.999999+09:00')))
         self.assertTrue(date_event_in_advance(ev('2026-10-09T17:59:59Z')))
+        self.assertTrue(date_event_in_advance(ev('2026-10-09T17:59:59.999999Z')))
         self.assertFalse(date_event_in_advance(ev('2026-10-10T03:00:00+09:00')))
+        self.assertFalse(date_event_in_advance(ev('2026-10-10T03:00:00.000001+09:00')))
         self.assertFalse(date_event_in_advance(ev('2026-10-09T18:00:00Z')))
+        self.assertFalse(date_event_in_advance(ev('2026-10-09T18:00:00.000001Z')))
         self.assertFalse(date_event_in_advance(ev('2026-10-11T10:00:00+09:00')))
         self.assertFalse(date_event_in_advance(dict(store='saiwaichou', day='2026-10-10', name='華の日')))
 
@@ -138,6 +171,35 @@ class BackupTests(unittest.TestCase):
         export_viewer(self.db, self.folder / 'v.json')
         viewer = json.loads((self.folder / 'v.json').read_text(encoding='utf-8'))['date_events']
         self.assertIn('2026-10-20', [e['day'] for e in viewer])
+
+    def test_export_viewer_with_zero_racks_keeps_events_and_removal_marks_and_preserves_window_when_racks_exist(self):
+        empty = Store(self.folder / 'empty.sqlite3')
+        self.addCleanup(empty.close)
+        empty.set_date_event('nagamachiminami', '2026-12-12', '周年予定', now=at('2026-11-26T09:00:00+09:00'))
+        empty.set_date_event('saiwaichou', '2026-12-13', '消す予定', now=at('2026-11-26T09:00:00+09:00'))
+        empty.set_date_event('saiwaichou', '2026-12-13', None, now=at('2026-11-26T09:01:00+09:00'))
+        for name, kwargs in (('single.json', {}), ('split.json', dict(split_stores=['nagamachiminami', 'saiwaichou']))):
+            out = self.folder / name
+            self.assertEqual(export_viewer(empty, out, **kwargs), 0)
+            doc = json.loads(out.read_text(encoding='utf-8'))
+            self.assertEqual(doc['records'], [])
+            by_key = {(e['store'], e['day']): e for e in doc['date_events']}
+            self.assertEqual(by_key[('nagamachiminami', '2026-12-12')]['name'], '周年予定')
+            self.assertIsNone(by_key[('saiwaichou', '2026-12-13')]['name'])
+            self.assertIn('updated_at', by_key[('saiwaichou', '2026-12-13')])
+        store_only = self.folder / 'store_only.json'
+        self.assertEqual(export_viewer(empty, store_only, only_store='saiwaichou'), 0)
+        self.assertNotIn('date_events', json.loads(store_only.read_text(encoding='utf-8')))
+        # 台データがあるときは従来どおり最新日から days 日の範囲外イベントを除外する。
+        empty.set_date_event('saiwaichou', '2026-08-01', '範囲外', now=at('2026-07-31T20:00:00+09:00'))
+        empty.save([dict(store='saiwaichou', kind_code=21, day='2026-11-20', machine='試験機種',
+                         rack=1, games=3000, bb=10, rb=5)])
+        with_racks = self.folder / 'with_racks.json'
+        export_viewer(empty, with_racks, days=60, split_stores=['nagamachiminami', 'saiwaichou'])
+        days = {(e['store'], e['day']) for e in json.loads(with_racks.read_text(encoding='utf-8'))['date_events']}
+        self.assertIn(('nagamachiminami', '2026-12-12'), days)
+        self.assertIn(('saiwaichou', '2026-12-13'), days)
+        self.assertNotIn(('saiwaichou', '2026-08-01'), days)
 
     def test_an_events_only_file_from_the_viewer_is_merged(self):
         self.db.set_date_event('saiwaichou', '2026-10-10', '仮', now=at('2026-10-07T20:00:00+09:00'))

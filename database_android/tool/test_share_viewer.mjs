@@ -155,6 +155,41 @@ test('イベント：入力時刻の新しい方、時刻のある方が勝つ�
   assert.equal(eventLabel(mergeEvents([{store: 'saiwaichou', day: '2026-10-04', name: '半列'}]).get('saiwaichou|2026-10-04')), '半列＊', '時刻不明は＊');
 });
 
+test('イベントの小数秒6桁比較：同ミリ秒内の削除復活防止・受信順反転・時差表記違いの同一時刻・旧形式・03時境界', () => {
+  const removed = {store: 'saiwaichou', day: '2026-12-12', name: null, updated_at: '2026-11-26T00:00:00.123900Z'};
+  const oldNamed = {store: 'saiwaichou', day: '2026-12-12', name: '旧名', updated_at: '2026-11-26T00:00:00.123100Z'};
+  // 削除先→旧名後、および旧名先→削除後のどちらでも削除が勝つ。
+  assert.equal(eventLabel(mergeEvents([removed], [oldNamed]).get('saiwaichou|2026-12-12')), '');
+  assert.equal(eventLabel(mergeEvents([oldNamed], [removed]).get('saiwaichou|2026-12-12')), '');
+  // 逆に新名が後なら、どちらの順でも新名が勝つ。
+  const newerNamed = {store: 'saiwaichou', day: '2026-12-12', name: '新名', updated_at: '2026-11-26T09:00:00.123900+09:00'};
+  const olderRemoved = {store: 'saiwaichou', day: '2026-12-12', name: null, updated_at: '2026-11-26T00:00:00.123100Z'};
+  assert.equal(eventLabel(mergeEvents([olderRemoved], [newerNamed]).get('saiwaichou|2026-12-12')), '新名');
+  assert.equal(eventLabel(mergeEvents([newerNamed], [olderRemoved]).get('saiwaichou|2026-12-12')), '新名');
+  // 時差表記だけが異なる同一時刻は、真に同時として後から読み込んだ方が勝つ。
+  const utcSame = {store: 'saiwaichou', day: '2026-12-13', name: 'UTC側', updated_at: '2026-11-26T03:00:00.123456Z'};
+  const jstSame = {store: 'saiwaichou', day: '2026-12-13', name: 'JST側', updated_at: '2026-11-26T12:00:00.123456+09:00'};
+  const jstCompact = {store: 'saiwaichou', day: '2026-12-13', name: 'JST短縮', updated_at: '2026-11-26T12:00:00.123456+0900'};
+  assert.equal(mergeEvents([utcSame], [jstSame]).get('saiwaichou|2026-12-13').name, 'JST側');
+  assert.equal(mergeEvents([jstSame], [utcSame]).get('saiwaichou|2026-12-13').name, 'UTC側');
+  assert.equal(mergeEvents([utcSame], [jstCompact]).get('saiwaichou|2026-12-13').name, 'JST短縮');
+  // 時刻なしの旧形式：時刻ありが常に勝ち、両方時刻なしは手元（先）を残す。
+  const untimedA = {store: 'saiwaichou', day: '2026-12-14', name: '旧形式A'};
+  const untimedB = {store: 'saiwaichou', day: '2026-12-14', name: '旧形式B'};
+  const timedRemove = {store: 'saiwaichou', day: '2026-12-14', name: null, updated_at: '2026-11-26T00:00:00.000001Z'};
+  assert.equal(mergeEvents([untimedA], [untimedB]).get('saiwaichou|2026-12-14').name, '旧形式A');
+  assert.equal(mergeEvents([untimedA], [timedRemove]).get('saiwaichou|2026-12-14').name, null);
+  assert.equal(mergeEvents([timedRemove], [untimedA]).get('saiwaichou|2026-12-14').name, null);
+  // 日本時間03時の境界（小数秒6桁、JST・UTC両表記）。
+  const at = (updated_at) => mergeEvents([{store: 'saiwaichou', day: '2026-10-10', name: '華の日', updated_at}]).get('saiwaichou|2026-10-10');
+  assert.equal(enteredInAdvance(at('2026-10-10T02:59:59.999999+09:00')), true);
+  assert.equal(eventLabel(at('2026-10-09T17:59:59.999999Z')), '華の日');
+  assert.equal(enteredInAdvance(at('2026-10-10T03:00:00.000000+09:00')), false);
+  assert.equal(eventLabel(at('2026-10-09T18:00:00.000000Z')), '華の日＊');
+  assert.equal(enteredInAdvance(at('2026-10-10T03:00:00.000001+09:00')), false);
+  assert.equal(eventLabel(at('2026-10-09T18:00:00.000001Z')), '華の日＊');
+});
+
 test('イベント比較：同じ店と貸玉の直近3回、月をまたぐ連続日、欠測と0枚、機種別の延べ台数', () => {
   const store = 'pscube:c740601:20';
   const event = (day, extra) => ({store: 'c740601', rate: '20', day, name: '取材', ...extra});

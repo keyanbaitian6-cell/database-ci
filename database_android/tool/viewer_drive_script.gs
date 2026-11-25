@@ -338,7 +338,21 @@ function folderBeside(name) {
   return parents && parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
 }
 
-const EVENT_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
+const EVENT_TIME = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})$/;
+
+function parseEventTime(value) {
+  if (typeof value !== 'string') return null;
+  const m = EVENT_TIME.exec(value);
+  if (!m) return null;
+  const frac = (m[2] || '').slice(0, 6).padEnd(6, '0');
+  const zone = m[3] === 'Z' ? 'Z' : m[3].replace(/^([+-]\d{2}):?(\d{2})$/, '$1:$2');
+  const ms = Date.parse(m[1] + '.' + frac.slice(0, 3) + zone);
+  return Number.isFinite(ms) ? { ms: ms, us: Number(frac.slice(3, 6)) } : null;
+}
+
+function compareEventTime(a, b) {
+  return a.ms !== b.ms ? a.ms - b.ms : a.us - b.us;
+}
 
 // 入力時刻のあるイベントだけを受け付ける（各端末の date_events と同じ形）。1つでも不正なら null。
 function validEvents(events, pscube, max = EVENT_MAX) {
@@ -348,7 +362,7 @@ function validEvents(events, pscube, max = EVENT_MAX) {
     if (!e || typeof e !== 'object') return null;
     if (typeof e.store !== 'string' || !/^[a-z0-9]{1,40}$/.test(e.store)) return null;
     if (typeof e.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.day)) return null;
-    if (typeof e.updated_at !== 'string' || !EVENT_TIME.test(e.updated_at) || isNaN(Date.parse(e.updated_at))) return null;
+    if (!parseEventTime(e.updated_at)) return null;
     if (pscube && (typeof e.rate !== 'string' || !/^\d+(\.\d+)?$/.test(e.rate))) return null;
     const name = e.name === null ? null : typeof e.name === 'string' ? e.name.trim() : undefined;
     // 文字数は PC（Python の len）と同じく1字ずつ数える（🌈 なども1字。2026-11-22、Codexの点検 #12）。
@@ -371,7 +385,9 @@ function mergeEvents(current, incoming) {
   let changed = 0;
   for (const e of incoming) {
     const old = events[eventKey(e)];
-    if (old && Date.parse(e.updated_at) < Date.parse(old.updated_at)) continue;
+    const newAt = parseEventTime(e.updated_at);
+    const oldAt = old ? parseEventTime(old.updated_at) : null;
+    if (old && oldAt && (!newAt || compareEventTime(newAt, oldAt) < 0)) continue;
     if (old && old.name === e.name && old.updated_at === e.updated_at) continue;
     events[eventKey(e)] = e;
     changed++;
