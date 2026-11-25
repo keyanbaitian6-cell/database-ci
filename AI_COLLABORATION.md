@@ -5083,3 +5083,4 @@
 | iPhone の閲覧ページ | **未確認** | 次の取り込み・同期のあと、利用者の「更新・差枚の取得状況」に「カレンダーはこの表で表示」が戻るか |
 
 - 次の手順：CI の結果を確かめて書く。PCアプリを再起動する（利用者）。iPhone で閲覧ページを開き直して、診断を見る。Gemini・Codex は main（`4bc2ad8` 以降）を取り込んでから作業を再開する。
+- 追記（同日）：CI `4bc2ad8` の実行 [45723352159](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45723352159) は **success**（pc ubuntu・pc windows・full）。共有カレンダーの公開処理 [45723466675](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45723466675) も **success**。どちらも Claude が `gh run view` で確認した。上の表の CI は済。残りは、PCアプリの再起動（利用者）と iPhone での診断の確認。
