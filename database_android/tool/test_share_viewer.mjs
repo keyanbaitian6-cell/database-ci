@@ -727,3 +727,109 @@ test('カレンダーのヒートマップ段階：1台平均差枚の境界・0
   assert.equal(dayHeatLevel({total: -2000, captured: 20, winRate: false}), 'minus-2');
 });
 
+test('台詳細の直近7日間の推移：基準日以前の最大7記録日・別機種の区別・イベントを返す', async () => {
+  const {rackRecentHistory, mergeEvents} = await import('../../share_viewer/data.mjs');
+  const recs = Array.from({length: 9}, (_, i) => ({
+    store: 'nagamachiminami',
+    day: `2026-11-${String(18 + i).padStart(2, '0')}`,
+    machine: i === 5 ? '旧機種A' : 'ｺﾞｰｺﾞｰｼﾞｬｸﾞﾗｰ3',
+    rack: 101,
+    games: 4000 + i * 200,
+    bb: 15,
+    rb: 10,
+    net: i % 2 === 0 ? 1000 : -500,
+    estimated: false,
+    rainbow: i === 7,
+  }));
+  const byDay = indexRecords(recs);
+  const events = mergeEvents([{store: 'nagamachiminami', day: '2026-11-25', name: '特日', updated_at: '2026-11-24T12:00:00+09:00'}]);
+  const history = rackRecentHistory(byDay, events, 'nagamachiminami', 101, '2026-11-25', 7);
+  assert.equal(history.length, 7);
+  assert.equal(history[0].day, '2026-11-25');
+  assert.equal(history[6].day, '2026-11-19');
+  assert.equal(history[0].event, '特日');
+  assert.equal(history[0].rainbow, true);
+  assert.equal(history[0].sameMachine, true);
+  const swapped = history.find(h => h.day === '2026-11-23');
+  assert.equal(swapped.machine, '旧機種A');
+  assert.equal(swapped.sameMachine, false);
+  assert.deepEqual(rackRecentHistory(byDay, events, 'nagamachiminami', 101, '2026-11-25', 0), []);
+});
+
+test('クイック検索：半角カナ・全角カナ・ひらがな・全角英数のゆらぎ吸収と機種統合・台番優先', async () => {
+  const {normalizeSearchText, searchStoreEntities, machineDayHistory, rackDayHistory, mergeEvents} = await import('../../share_viewer/data.mjs');
+  assert.equal(normalizeSearchText('ﾏｲｼﾞｬｸﾞﾗｰＶ　３'), 'まいじゃぐらーv 3');
+  const byDay = indexRecords([
+    {store: 'pscube:c740601:20', day: '2026-11-25', machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 55, games: 6000, bb: 25, rb: 20, net: 2000, estimated: false},
+    {store: 'pscube:c740601:20', day: '2026-11-24', machine: 'マイジャグラーV', rack: 55, games: 4000, bb: 10, rb: 10, net: -500, estimated: true},
+    {store: 'pscube:c740601:20', day: '2026-11-25', machine: '北斗の拳', rack: 155, games: 5000, bb: 20, rb: 5, net: 1200, estimated: false},
+    {store: 'pscube:c740601:20', day: '2026-11-25', machine: 'ハナハナ', rack: 550, games: 3000, bb: 8, rb: 6, net: -300, estimated: false},
+  ]);
+  const days = ['2026-11-25', '2026-11-24'];
+  const empty = searchStoreEntities(byDay, 'pscube:c740601:20', days, '');
+  assert.equal(empty.machines.length, 3, '半角カナと全角カナのマイジャグラーVを1機種に統合');
+  assert.equal(empty.racks.length, 0);
+  assert.equal(empty.featured[0].machine, 'マイジャグラーV');
+
+  for (const q of ['まいじゃぐ', 'ﾏｲｼﾞｬｸﾞ', 'マイジャグラーＶ']) {
+    const res = searchStoreEntities(byDay, 'pscube:c740601:20', days, q);
+    assert.equal(res.machines.length, 1);
+    assert.equal(res.machines[0].machine, 'マイジャグラーV');
+    assert.equal(res.machines[0].totalNet, 1500);
+    assert.equal(res.machines[0].daysCount, 2);
+    assert.equal(res.machines[0].plusDays, 1);
+  }
+
+  const byRack = searchStoreEntities(byDay, 'pscube:c740601:20', days, '５５番');
+  assert.equal(byRack.numericOnly, true);
+  assert.deepEqual(byRack.racks.map(r => r.rack), [55, 550, 155], '完全一致→前方一致→部分一致の順');
+
+  const events = mergeEvents([{store: 'c740601', rate: '20', day: '2026-11-25', name: '末尾イベ', updated_at: '2026-11-24T10:00:00+09:00'}]);
+  const mh = machineDayHistory(byDay, events, 'pscube:c740601:20', 'マイジャグラーV', days);
+  assert.equal(mh.entries.length, 2);
+  assert.equal(mh.entries[0].day, '2026-11-25');
+  assert.equal(mh.entries[0].rawMachine, 'ﾏｲｼﾞｬｸﾞﾗｰV');
+  assert.equal(mh.entries[0].event, '末尾イベ');
+  assert.equal(mh.summary.totalNet, 1500);
+  assert.equal(mh.summary.plusDays, 1);
+  assert.equal(mh.summary.estimated, true);
+
+  const rh = rackDayHistory(byDay, events, 'pscube:c740601:20', 55, days);
+  assert.equal(rh.entries.length, 2);
+  assert.equal(rh.summary.totalNet, 1500);
+  assert.equal(rh.summary.plusDays, 1);
+  assert.equal(rh.summary.averageGames, 5000);
+});
+
+test('最新営業日の3店舗比較：台データ・HTML勝率集計のみ・記録なしを正確に比較する', async () => {
+  const {latestStoreComparison, daySummaries, mergeEvents} = await import('../../share_viewer/data.mjs');
+  const byDay = indexRecords([
+    {store: 'nagamachiminami', day: '2026-11-26', machine: 'A', rack: 1, games: 5000, bb: 20, rb: 10, net: 1000, estimated: false},
+    {store: 'nagamachiminami', day: '2026-11-26', machine: 'A', rack: 2, games: 5000, bb: 10, rb: 10, net: -200, estimated: false},
+    {store: 'saiwaichou', day: '2026-11-25', machine: 'B', rack: 1, games: 4000, bb: 15, rb: 10, net: 500, estimated: true},
+  ]);
+  const summaries = daySummaries({day_summaries: [{store: 'saiwaichou', day: '2026-11-26', racks: 500, judged: 480, won: 200}]});
+  const events = mergeEvents([{store: 'nagamachiminami', day: '2026-11-26', name: '全6祭', updated_at: '2026-11-25T10:00:00+09:00'}]);
+  const rows = latestStoreComparison(byDay, summaries, events, ['nagamachiminami', 'saiwaichou', 'pscube:c740601:20']);
+  assert.equal(rows[0].day, '2026-11-26');
+  assert.equal(rows[0].total, 800);
+  assert.equal(rows[0].averageNet, 400);
+  assert.equal(rows[0].winRatePct, 50);
+  assert.equal(rows[0].heat, 'plus-3');
+  assert.equal(rows[0].event, '全6祭');
+  assert.equal(rows[0].hasRacks, true);
+
+  assert.equal(rows[1].day, '2026-11-26');
+  assert.equal(rows[1].winRate, true);
+  assert.equal(rows[1].winRatePct, 42);
+  assert.equal(rows[1].heat, 'rate');
+  assert.equal(rows[1].hasRacks, false);
+  assert.equal(rows[1].hasSummary, true);
+
+  assert.equal(rows[2].day, null);
+  assert.equal(rows[2].heat, 'empty');
+  assert.equal(rows[2].hasRacks, false);
+  assert.equal(rows[2].hasSummary, false);
+});
+
+

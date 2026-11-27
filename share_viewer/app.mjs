@@ -24,6 +24,7 @@ import {
   monthDayList, periodWinRate, winRateYears, yearWinRates, loadFailureText,
   characterBirthdayCellLabel, characterBirthdaysOn, parseCharacterBirthdays,
   ALL_RACKS_SORTS, allRacksOrder, nonVarietyRacks, storeDayComment, eventComparison, machinePickups,
+  rackRecentHistory, searchStoreEntities, machineDayHistory, rackDayHistory, latestStoreComparison,
 } from './data.mjs';
 
 const ID_KEY = 'database-share-script-id';
@@ -240,6 +241,45 @@ function exportedText(text) {
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} 時点のデータ`;
 }
 
+function storeComparisonSection(model) {
+  if (model.stores.length < 2) return '';
+  const rows = latestStoreComparison(model.byDay, model.summaries, model.events, model.stores);
+  return `
+    <section class="store-compare" aria-label="最新営業日の店舗比較">
+      <div class="store-compare-head">
+        <span class="store-compare-title">最新営業日の店舗比較</span>
+        <span class="store-compare-hint">押すと切替・選択中は詳細</span>
+      </div>
+      <div class="store-compare-grid">
+        ${rows.map((x, idx) => {
+          const active = x.store === state.store;
+          const mainTone = x.winRate ? 'zero' : x.total != null ? tone(x.total) : 'zero';
+          const mainText = x.winRate ? winRateText(x.won, x.judged)
+            : x.total != null ? compactSigned(x.total) : '—';
+          const metaParts = x.winRate
+            ? [`${x.won}/${x.judged}台`]
+            : x.total != null
+              ? [`平均${signed(x.averageNet)}`, x.winRatePct != null ? `${x.winRatePct}%` : ''].filter(Boolean)
+              : ['記録なし'];
+          const canOpen = x.hasRacks || x.hasSummary;
+          const mode = active ? (x.hasRacks ? 'day' : x.hasSummary ? 'summary' : 'none') : 'switch';
+          const ctaText = active ? (canOpen ? '詳細を見る ›' : '表示中') : '切替 ›';
+          const idBase = `compare-store-${idx}`;
+          return `<article class="store-compare-card heat-${x.heat}${active ? ' active' : ''}" data-compare-card="${esc(x.store)}">
+            <div class="store-compare-top" id="${idBase}">
+              <span class="store-compare-name">${esc(switchLabel(x.store, model.stores))}</span>
+              <span class="store-compare-day num">${x.day ? shortDate(x.day) : '—'}</span>
+            </div>
+            <span class="store-compare-event${x.event ? '' : ' empty'}"${x.event ? '' : ' aria-hidden="true"'}>${x.event ? esc(x.event) : '通常日'}</span>
+            <div class="store-compare-main num ${mainTone}">${esc(mainText)}</div>
+            <div class="store-compare-meta num">${metaParts.map(p => `<span>${esc(p)}</span>`).join('')}</div>
+            <button type="button" class="store-compare-cta" data-compare-store="${esc(x.store)}" data-compare-day="${esc(x.day ?? '')}" data-compare-mode="${mode}" aria-describedby="${idBase}"${mode === 'none' ? ' disabled' : ''}>${ctaText}</button>
+          </article>`;
+        }).join('')}
+      </div>
+    </section>`;
+}
+
 function render() {
   const {model} = state;
   if (!model) return;
@@ -314,7 +354,9 @@ function render() {
         ${model.stores.map(s => `<button type="button" class="anchor" data-store="${esc(s)}" aria-pressed="${s === state.store}">${esc(switchLabel(s, model.stores))}</button>`).join('')}
       </div>
     </div>
+    ${storeComparisonSection(model)}
     <div class="tools">
+      <button type="button" class="pill pill-outline tool-btn tool-btn-search" data-search-open>機種・台番を検索</button>
       <button type="button" class="pill pill-outline tool-btn" data-idle-open>バラエティの回っていない台</button>
       ${Object.hasOwn(MERUHEN_STORES, state.store) ? `<button type="button" class="pill pill-outline tool-btn" data-variety-open>バラエティ${RAINBOW}</button>` : ''}
       ${hasSuffixSummary(state.store) ? '<button type="button" class="pill pill-outline tool-btn" data-suffix-open>末尾別データまとめ</button>' : ''}
@@ -486,7 +528,61 @@ function eventCompareBody({report: {name, rounds, machines}, machine}) {
     ${machines.length ? '' : '<p class="note">比較できる機種別の記録がありません。</p>'}`;
 }
 
-/** 台のその日のデータ（差枚、回転数・合成確率・BB/BB確率・RB/RB確率、最大持玉／MY）。 */
+/** 台詳細画面の直近7日間の推移（差枚・G数・イベント・中央線付きミニ横バー、同機種日へのジャンプ）。 */
+function rackTrendSection(r) {
+  const history = rackRecentHistory(state.model.byDay, state.model.events, r.store, r.rack, r.day, 7);
+  if (!history.length) return '';
+  const withNet = history.filter(h => h.net != null);
+  const totalNet = withNet.length ? withNet.reduce((s, h) => s + h.net, 0) : null;
+  const judged = history.filter(h => h.won != null);
+  const won = judged.filter(h => h.won).length;
+  const avgGames = Math.round(history.reduce((s, h) => s + h.games, 0) / history.length);
+  const anyEst = withNet.some(h => h.estimated);
+  const maxAbs = Math.max(1000, ...withNet.map(h => Math.abs(h.net)));
+  const summaryParts = [
+    `記録 ${history.length}日`,
+    judged.length ? `プラス ${won}/${judged.length}日` : '',
+    totalNet != null ? `合計 ${signed(totalNet)}枚${anyEst ? '（推定含む）' : ''}` : '',
+    `平均 ${count(avgGames)}G`,
+  ].filter(Boolean);
+  const rows = history.map(h => {
+    const current = h.day === r.day;
+    const clickable = h.sameMachine && !current;
+    const pct = h.net == null || h.net === 0 ? 0 : Math.max(4, Math.min(100, Math.round(Math.abs(h.net) / maxAbs * 100)));
+    const bar = h.net == null
+      ? '<span class="rack-trend-bar empty" aria-hidden="true"><span class="rack-trend-axis"></span></span>'
+      : `<span class="rack-trend-bar" aria-hidden="true"><span class="rack-trend-axis"></span>${pct ? `<span class="rack-trend-fill ${h.net > 0 ? 'plus' : 'minus'}" style="width:${(pct / 2).toFixed(1)}%"></span>` : ''}</span>`;
+    const tags = [
+      current ? '<span class="rack-trend-badge current">表示中</span>' : '',
+      h.event ? `<span class="rack-trend-badge event">${esc(h.event)}</span>` : '',
+      !h.sameMachine ? `<span class="rack-trend-badge other">別機種：${esc(displayMachineName(h.machine))}</span>` : '',
+    ].filter(Boolean).join('');
+    const netHtml = h.net != null
+      ? `<span class="rack-trend-net num ${tone(h.net)}">${signed(h.net)}${h.needsCheck ? '※' : ''}</span>`
+      : '<span class="rack-trend-net num zero">—</span>';
+    const content = `
+      <span class="rack-trend-main">
+        <span class="rack-trend-top">
+          <span class="rack-trend-day num">${esc(shortDateWeek(h.day))}${h.rainbow ? ` ${RAINBOW}` : ''}</span>
+          <span class="rack-trend-nums">${netHtml}<span class="rack-trend-games num">${count(h.games)}G</span></span>
+        </span>
+        ${tags ? `<span class="rack-trend-tags">${tags}</span>` : ''}
+        ${bar}
+      </span>`;
+    return clickable
+      ? `<li><button type="button" class="rack-trend-item clickable" data-rack-history-day="${h.day}">${content}<span class="rack-trend-chev" aria-hidden="true">›</span></button></li>`
+      : `<li><div class="rack-trend-item${current ? ' current' : ''}${!h.sameMachine ? ' other-machine' : ''}">${content}</div></li>`;
+  }).join('');
+  return `
+      <section class="rack-trend" aria-labelledby="rack-trend-title">
+        <h3 id="rack-trend-title">${history.length > 1 ? `直近${history.length}日間の推移` : '直近の推移'}</h3>
+        <p class="rack-trend-summary num">${summaryParts.join(' ・ ')}</p>
+        <p class="caption">${history.length > 1 ? '同じ機種の別の日を押すと、その日の詳細へ移動します。' : 'この日以前の同じ台番号の記録はありません。'}</p>
+        <ol class="rack-trend-list">${rows}</ol>
+      </section>`;
+}
+
+/** 台のその日のデータ（差枚、回転数・合成確率・BB/BB確率・RB/RB確率、最大持玉／MY、直近7日推移）。 */
 function rackView({rack: r}) {
   const stats = [
     ['回転数', `${count(r.games)}G`], ['合成確率', odds(r.games, r.bb + r.rb)],
@@ -507,6 +603,7 @@ function rackView({rack: r}) {
         <span class="value num ${totalTone}">${r.net != null ? `${signed(r.net)}${r.needsCheck ? '※' : ''}` : '—'}</span>
         ${r.net == null ? `<span class="sub">${name}はわかりません。</span>` : ''}</p>
       <dl class="stats">${stats.map(([k, v]) => `<div><dt>${k}</dt><dd class="num">${v}</dd></div>`).join('')}</dl>
+      ${rackTrendSection(r)}
       ${netEstimateNote([r]) ? `<p class="note">${esc(netEstimateNote([r]))}</p>` : ''}`;
 }
 
@@ -542,6 +639,7 @@ function daysOfView(view) {
   if (view.kind === 'birthday') return [view.day];
   const all = storeDays(byDay, state.store);
   if (view.kind === 'historyMachine') return all.filter(d => has(state.store, d, x => x.machine === view.machine));
+  if (view.kind === 'searchMachineDay') return all.filter(d => has(state.store, d, x => displayMachineName(x.machine) === displayMachineName(view.machine)));
   if (view.kind === 'machine') return all.filter(d => has(state.store, d, x => machineKey(x.machine) === machineKey(view.machine)));
   return all;
 }
@@ -579,7 +677,9 @@ function rackNeighbor(view, dir) {
 /** 上に固定する見出し（下まで送っても、何の画面か分かるように）。 */
 function titleOfView(view) {
   if (view.kind === 'rack') return `${view.rack.rack}番台${view.rack.rainbow ? ` ${RAINBOW}` : ''}`;
-  if (view.kind === 'machine' || view.kind === 'historyMachine') return displayMachineName(view.machine);
+  if (view.kind === 'machine' || view.kind === 'historyMachine' || view.kind === 'searchMachine' || view.kind === 'searchMachineDay') return displayMachineName(view.machine);
+  if (view.kind === 'search') return '機種・台番を検索';
+  if (view.kind === 'searchRack') return `${view.rack}番台の推移`;
   if (view.kind === 'allRacks') return '全機種の台一覧';
   if (view.kind === 'idle') return 'バラエティの回っていない台';
   if (view.kind === 'variety' && view.mode === 'today') return 'バラエティ🌈 本日';
@@ -601,7 +701,7 @@ function titleOfView(view) {
  * 重ねた画面では「閉じる」を隠し、戻るだけにする（閉じると一覧ごと消えて「戻る」との違いが分かりにくいため、2026-10-22 利用者指摘）。
  * 台のデータの画面 {kind: 'rack', rack, list} は、開いた一覧の並び（list）で「前の台・次の台」へ送る（rackNeighbor）。
  */
-function openSheet({first, body, onRow, onChange, onAction, onSuffix}) {
+function openSheet({first, body, onRow, onChange, onAction, onSuffix, onInput}) {
   const views = [first];
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -618,7 +718,7 @@ function openSheet({first, body, onRow, onChange, onAction, onSuffix}) {
       </div>`;
   };
   const dateBar = (view) => {
-    if (view.kind === 'history' || view.kind === 'eventCompare') return '';
+    if (['history', 'eventCompare', 'search', 'searchMachine', 'searchRack'].includes(view.kind)) return '';
     if (view.kind === 'year') return yearBar(view);
     const days = daysOfView(view), day = dayOfView(view);
     const index = days.indexOf(day);
@@ -699,6 +799,11 @@ function openSheet({first, body, onRow, onChange, onAction, onSuffix}) {
     if(e.target.closest('[data-history-retry]')) { flushHistoryEdits(); return; }
     const view = views[views.length - 1];
     if (e.target.closest('[data-event-compare]')) return push(eventCompareView(view.day));
+    const rackHistory = e.target.closest('[data-rack-history-day]');
+    if (rackHistory && view.kind === 'rack') {
+      changeDay(view, rackHistory.dataset.rackHistoryDay);
+      return;
+    }
     const yearStep = e.target.closest('[data-year-step]');
     if (yearStep) {
       const years = winRateYears(state.model.byDay, state.model.summaries, state.store);
@@ -753,12 +858,14 @@ function openSheet({first, body, onRow, onChange, onAction, onSuffix}) {
       render();
       return;
     }
-    // 画面の中の切り替え（例：バラエティ🌈の表・空き順）。描き直す。
-    const action = e.target.closest('[data-variety-mode], [data-history-type], [data-history-week-step], [data-history-latest], [data-recommendation-retry]');
+    // 画面の中の切り替え（例：バラエティ🌈の表・空き順、検索の期間・並べ替え）。描き直す。
+    const action = e.target.closest('[data-variety-mode], [data-history-type], [data-history-week-step], [data-history-latest], [data-recommendation-retry], [data-search-period], [data-search-sort], [data-search-clear]');
     if (action && onAction) {
+      const focusSearch = action.matches('[data-search-clear]');
       view.scroll = 0;
       onAction(action, view);
       render();
+      if (focusSearch) sheet.querySelector('[data-search-input]')?.focus({preventScroll: true});
       return;
     }
     const row = e.target.closest('button.row, button.row-link');
@@ -788,6 +895,9 @@ function openSheet({first, body, onRow, onChange, onAction, onSuffix}) {
     onChange(e.target, view);
     redrawKeepingPosition();
     if (e.target.matches('[data-history-week]')) sheet.querySelector('[data-history-week]')?.focus({preventScroll:true});
+  });
+  backdrop.addEventListener('input', (e) => {
+    if (onInput) onInput(e.target, views[views.length - 1], sheet);
   });
   document.addEventListener('keydown', onKey);
   document.body.style.overflow = 'hidden';
@@ -1809,18 +1919,247 @@ function openYear() {
   });
 }
 
+/**
+ * 機種名・台番号のクイック検索（2026-11-27）。
+ * 読み込み済みの記録だけを使い、半角カナ・ひらがな・カタカナのゆらぎを吸収して機種や台番号を絞り込む。
+ * 機種を押すとその機種の日別推移 → その日の台一覧 → 台詳細へ、台番号を押すとその台の日別推移 → 台詳細へ進む。
+ */
+function openSearch() {
+  const allDays = storeDays(state.model.byDay, state.store);
+  const latestYm = allDays[0]?.slice(0, 7) ?? '';
+  const currentYm = `${state.year}-${String(state.month).padStart(2, '0')}`;
+  const initialPeriod = latestYm && currentYm !== latestYm && allDays.some(d => d.startsWith(`${currentYm}-`)) ? 'month' : 'recent30';
+  const periodLabels = {month: `${state.month}月`, recent30: '過去30日', all: '全期間'};
+  const searchDaysOf = (period) => {
+    if (period === 'month') return allDays.filter(d => d.startsWith(`${currentYm}-`));
+    if (period === 'recent30') {
+      if (!allDays.length) return [];
+      const start = windowDays(allDays[0], 30)[0];
+      return allDays.filter(d => d >= start);
+    }
+    return allDays;
+  };
+  const periodBar = (period) => `
+    <div class="segmented search-periods" role="group" aria-label="検索する期間">
+      ${Object.entries(periodLabels).map(([key, label]) =>
+        `<button type="button" class="pill ${period === key ? 'pill-blue' : 'pill-outline'}" data-search-period="${key}" aria-pressed="${period === key}">${esc(label)}</button>`).join('')}
+    </div>`;
+  const sortBar = (sort) => `
+    <div class="segmented search-sorts" role="group" aria-label="並べ替え">
+      <button type="button" class="pill ${sort === 'day' ? 'pill-blue' : 'pill-outline'}" data-search-sort="day" aria-pressed="${sort === 'day'}">新しい順</button>
+      <button type="button" class="pill ${sort === 'net' ? 'pill-blue' : 'pill-outline'}" data-search-sort="net" aria-pressed="${sort === 'net'}">差枚の高い順</button>
+    </div>`;
+  const machineRowItem = (m) => ({
+    lead: '', attrs: `data-search-machine="${esc(m.machine)}"`,
+    main: `<span class="machine" style="display:block">${esc(m.machine)}</span>`
+      + `<span class="rack num">記録${m.daysCount}日（＋${m.plusDays}日）・${m.racks}台・平均${count(m.averageGames)}G</span>`,
+    right: `<span class="value num ${m.totalNet == null ? 'zero' : tone(m.totalNet)}" style="display:block">${m.totalNet != null ? signed(m.totalNet) : '—'}</span>`
+      + `<span class="small num">${m.averageNet != null ? `平均${signed(m.averageNet)}` : m.winRatePct != null ? `勝率${m.winRatePct}%` : '差枚なし'}</span>`,
+  });
+  const rackRowItem = (k) => ({
+    lead: '', attrs: `data-search-rack="${k.rack}"`,
+    main: `<span class="machine num" style="display:block">${k.rack}番台${k.rainbowDays ? ` ${RAINBOW}×${k.rainbowDays}` : ''}</span>`
+      + `<span class="rack">${esc(k.latestMachine)}</span>`
+      + `<span class="rack num" style="display:block">記録${k.daysCount}日（＋${k.plusDays}日）・平均${count(k.averageGames)}G</span>`,
+    right: `<span class="value num ${k.totalNet == null ? 'zero' : tone(k.totalNet)}" style="display:block">${k.totalNet != null ? signed(k.totalNet) : '—'}</span>`
+      + `<span class="small num">最終 ${shortDate(k.latestDay)}</span>`,
+  });
+  const renderSearchResults = (view) => {
+    const days = searchDaysOf(view.period);
+    if (!days.length) {
+      return `<p class="note">${view.period === 'month'
+        ? `${state.year}年${state.month}月は台データがありません。「過去30日」や「全期間」に切り替えてお試しください。`
+        : 'この店舗には検索できる台データがありません。'}</p>`;
+    }
+    const res = searchStoreEntities(state.model.byDay, state.store, days, view.query);
+    if (!res.query) {
+      const topMachines = res.machines.slice(0, 50);
+      const restMachines = res.machines.slice(50);
+      return `
+        ${res.featured.length ? `<div class="search-section">
+          <h3 class="search-sub">主要機種から選ぶ</h3>
+          <div class="search-chips">${res.featured.map(m =>
+            `<button type="button" class="pill pill-outline row-link search-chip" data-search-machine="${esc(m.machine)}"><span class="search-chip-name">${esc(m.machine)}</span><span class="search-chip-count num">${m.racks}台</span></button>`).join('')}</div>
+        </div>` : ''}
+        <div class="search-section">
+          <h3 class="search-sub">期間内の機種一覧（${res.machines.length}機種・${days.length}日分）</h3>
+          <p class="caption">記録の多い順。機種を押すと日別の推移が見られます。</p>
+          ${tapList(topMachines.map(machineRowItem))}
+          ${restMachines.length ? `<details class="more"><summary>残り${restMachines.length}機種を見る</summary>${tapList(restMachines.map(machineRowItem))}</details>` : ''}
+        </div>`;
+    }
+    const rackSection = res.racks.length ? `<div class="search-section">
+      <h3 class="search-sub">台番号の一致（${res.totalRacks}台${res.totalRacks > res.racks.length ? `中 上位${res.racks.length}台` : ''}）</h3>
+      ${tapList(res.racks.map(rackRowItem))}
+    </div>` : '';
+    const machineSection = res.machines.length ? `<div class="search-section">
+      <h3 class="search-sub">機種の一致（${res.machines.length}機種）</h3>
+      ${tapList(res.machines.slice(0, 50).map(machineRowItem))}
+      ${res.machines.length > 50 ? `<p class="note">上位50機種を表示しています。さらに文字を足すと絞り込めます。</p>` : ''}
+    </div>` : '';
+    if (!rackSection && !machineSection) {
+      return `<p class="note">「${esc(view.query)}」に一致する機種・台番号が見つかりません。ひらがな・カタカナや台番号の数字、または「全期間」でお試しください。</p>`;
+    }
+    return res.numericOnly ? rackSection + machineSection : machineSection + rackSection;
+  };
+  const searchView = (view) => `
+    <p class="store">${esc(storeLabel(state.store))}</p>
+    <h2 id="sheet-title" class="sr-only">機種・台番を検索</h2>
+    ${periodBar(view.period)}
+    <div class="search-box">
+      <input type="search" class="search-input" data-search-input value="${esc(view.query)}" placeholder="機種名（ひらがなOK）または台番号" aria-label="機種名または台番号で検索" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button type="button" class="pill pill-outline search-clear" data-search-clear aria-label="検索文字を消す"${view.query ? '' : ' hidden'}>×</button>
+    </div>
+    <p class="caption">半角・全角・ひらがな・カタカナを区別せず検索します。数字を入れると台番号も探せます。</p>
+    <div data-search-results>${renderSearchResults(view)}</div>`;
+
+  const searchMachineView = (view) => {
+    const days = searchDaysOf(view.period);
+    const {entries, summary} = machineDayHistory(state.model.byDay, state.model.events, state.store, view.machine, days);
+    const ordered = view.sort === 'net'
+      ? [...entries].sort((a, b) => (b.total ?? -Infinity) - (a.total ?? -Infinity) || b.day.localeCompare(a.day))
+      : entries;
+    const totalTone = summary.totalNet != null ? tone(summary.totalNet) : 'zero';
+    const netLabel = summary.estimated ? '期間合計差枚（推定含む）' : '期間合計差枚';
+    return `
+      <p class="store">${esc(storeLabel(state.store))}</p>
+      <h2 id="sheet-title" class="long">${esc(view.machine)}</h2>
+      ${periodBar(view.period)}
+      ${entries.length ? `<p class="total total-card total-${totalTone}">
+        <span class="label">${netLabel}</span>
+        <span class="value num ${totalTone}">${summary.totalNet != null ? signed(summary.totalNet) : '—'}</span>
+        <span class="sub num">記録${summary.days}日（プラス${summary.plusDays}日）・延べ${count(summary.totalRecords)}台${summary.averageNet != null ? `・1台平均${signed(summary.averageNet)}枚` : ''}${summary.winRatePct != null ? `・勝率${summary.winRatePct}%` : ''}・平均${count(summary.averageGames)}G</span>
+      </p>
+      ${entries.length > 1 ? sortBar(view.sort) : ''}
+      <h3>日別の推移</h3>
+      <p class="caption">日付を押すと、その日の台一覧が見られます。</p>
+      ${tapList(ordered.map(e => ({
+        lead: '', attrs: `data-search-machine-day="${e.day}" data-search-machine-raw="${esc(e.rawMachine)}"`,
+        main: `<span class="machine num" style="display:block">${esc(shortDateWeek(e.day))}${e.rainbowCount ? ` ${RAINBOW}×${e.rainbowCount}` : ''}${e.event ? ` <span class="search-event-tag">${esc(e.event)}</span>` : ''}</span>`
+          + `<span class="rack num">${e.racks}台・平均${count(e.averageGames)}G${e.judged ? `・プラス${e.won}/${e.judged}台` : ''}</span>`,
+        right: `<span class="value num ${e.total == null ? 'zero' : tone(e.total)}" style="display:block">${e.total != null ? signed(e.total) : '—'}</span>`
+          + `<span class="small num">${e.averageNet != null ? `平均${signed(e.averageNet)}` : '差枚なし'}</span>`,
+      })))}` : '<p class="note">この期間に記録がありません。上のボタンで期間を切り替えてお試しください。</p>'}`;
+  };
+
+  const searchRackView = (view) => {
+    const days = searchDaysOf(view.period);
+    const {entries, summary} = rackDayHistory(state.model.byDay, state.model.events, state.store, view.rack, days);
+    const ordered = view.sort === 'net'
+      ? [...entries].sort((a, b) => (b.net ?? -Infinity) - (a.net ?? -Infinity) || b.day.localeCompare(a.day))
+      : entries;
+    view.entries = ordered;
+    const totalTone = summary.totalNet != null ? tone(summary.totalNet) : 'zero';
+    const netLabel = summary.estimated ? '期間合計差枚（推定含む）' : '期間合計差枚';
+    return `
+      <p class="store">${esc(storeLabel(state.store))}</p>
+      <h2 id="sheet-title">${view.rack}番台</h2>
+      ${summary.latestMachine ? `<p class="event-line">${esc(summary.latestMachine)}</p>` : ''}
+      ${periodBar(view.period)}
+      ${entries.length ? `<p class="total total-card total-${totalTone}">
+        <span class="label">${netLabel}</span>
+        <span class="value num ${totalTone}">${summary.totalNet != null ? signed(summary.totalNet) : '—'}</span>
+        <span class="sub num">記録${summary.days}日${summary.judged ? `（プラス${summary.plusDays}/${summary.judged}日）` : ''}・平均${count(summary.averageGames)}G${summary.rainbowDays ? `・${RAINBOW}${summary.rainbowDays}日` : ''}</span>
+      </p>
+      ${entries.length > 1 ? sortBar(view.sort) : ''}
+      <h3>日別の推移</h3>
+      <p class="caption">日付を押すと、その日の台詳細が見られます。</p>
+      ${tapList(ordered.map((e, i) => ({
+        lead: '', attrs: `data-search-rack-entry="${i}"`,
+        main: `<span class="machine num" style="display:block">${esc(shortDateWeek(e.day))}${e.rainbow ? ` ${RAINBOW}` : ''}${e.event ? ` <span class="search-event-tag">${esc(e.event)}</span>` : ''}</span>`
+          + `<span class="rack">${esc(displayMachineName(e.machine))} ・ BB ${e.bb}・RB ${e.rb}</span>`,
+        right: `${netCell(e)}<span class="small num">${count(e.games)}G</span>`,
+      })))}` : '<p class="note">この期間に記録がありません。上のボタンで期間を切り替えてお試しください。</p>'}`;
+  };
+
+  const machineDayView = (view) => {
+    const racks = state.model.byDay.get(`${state.store}|${view.day}`) ?? [];
+    const target = displayMachineName(view.machine);
+    const list = racks.filter(r => displayMachineName(r.machine) === target).sort((a, b) => a.rack - b.rack);
+    view.rackList = list;
+    const netName = racks.some(r => r.estimated) ? '推定差枚' : '差枚';
+    const nets = list.filter(r => r.net != null);
+    const total = nets.length ? nets.reduce((s, r) => s + r.net, 0) : null;
+    const average = list.length ? Math.round(list.reduce((s, r) => s + r.games, 0) / list.length) : 0;
+    return `
+      <p class="store">${esc(storeLabel(state.store))}　${dateLabel(view.day)}</p>
+      <h2 id="sheet-title" class="long">${esc(target)}</h2>
+      <p class="event-line num">${list.length}台・平均${count(average)}G</p>
+      ${total != null ? `<p class="total total-card total-${tone(total)}"><span class="label">この機種の総${netName}</span>
+        <span class="value num ${tone(total)}">${signed(total)}</span>
+        <span class="sub num">${netName}がわかった台 ${nets.length}/${list.length}台</span></p>` : ''}
+      <h3>台一覧</h3>
+      <p class="caption">台番号の順。台を押すと、その台のデータが見られます。</p>
+      ${list.length ? tapList(list.map((r, i) => ({
+        lead: '', attrs: `data-search-day-rack="${i}"`,
+        main: `<span class="machine num" style="display:block">${r.rack}番${rackMark(r)}</span><span class="rack num">BB ${r.bb}・RB ${r.rb}</span>`,
+        right: `${netCell(r)}<span class="small num">${count(r.games)}G</span>`,
+      }))) : '<p class="note">この日の記録はありません。</p>'}`;
+  };
+
+  openSheet({
+    first: {kind: 'search', query: '', period: initialPeriod},
+    body: (view) => (view.kind === 'search' ? searchView(view)
+      : view.kind === 'searchMachine' ? searchMachineView(view)
+      : view.kind === 'searchRack' ? searchRackView(view)
+      : view.kind === 'searchMachineDay' ? machineDayView(view) : rackView(view)),
+    onInput: (target, view, sheet) => {
+      if (view.kind !== 'search' || !target.matches('[data-search-input]')) return;
+      view.query = target.value;
+      const clear = sheet.querySelector('[data-search-clear]');
+      if (clear) clear.hidden = !view.query;
+      const results = sheet.querySelector('[data-search-results]');
+      if (results) results.innerHTML = renderSearchResults(view);
+    },
+    onAction: (action, view) => {
+      if (action.dataset.searchPeriod) view.period = action.dataset.searchPeriod;
+      if (action.dataset.searchSort) view.sort = action.dataset.searchSort;
+      if (action.dataset.searchClear != null) view.query = '';
+    },
+    onRow: (row, push, view) => {
+      if (row.dataset.searchMachine != null) {
+        push({kind: 'searchMachine', machine: row.dataset.searchMachine, period: view.period, sort: 'day'});
+      } else if (row.dataset.searchRack != null) {
+        push({kind: 'searchRack', rack: Number(row.dataset.searchRack), period: view.period, sort: 'day'});
+      } else if (row.dataset.searchMachineDay && row.dataset.searchMachineRaw) {
+        push({kind: 'searchMachineDay', machine: row.dataset.searchMachineRaw, day: row.dataset.searchMachineDay, picked: null});
+      } else if (row.dataset.searchRackEntry != null) {
+        const entry = view.entries?.[Number(row.dataset.searchRackEntry)];
+        if (entry?.record) push(rackPage(entry.record, []));
+      } else if (row.dataset.searchDayRack != null) {
+        const r = view.rackList?.[Number(row.dataset.searchDayRack)];
+        if (r) push(rackPage(r, view.rackList));
+      }
+    },
+  });
+}
+
 app.addEventListener('click', (e) => {
-  const target = e.target.closest('[data-open], [data-summary-open], [data-birthday-open], [data-event-open], [data-store], [data-month], [data-idle-open], [data-variety-open], [data-suffix-open], [data-year-open], [data-event-history-open]');
+  const target = e.target.closest('[data-open], [data-summary-open], [data-birthday-open], [data-event-open], [data-store], [data-compare-store], [data-month], [data-search-open], [data-idle-open], [data-variety-open], [data-suffix-open], [data-year-open], [data-event-history-open]');
   if (!target || !state.model) return;
   if (target.dataset.open) { openDay(target.dataset.open); return; }
   if (target.dataset.summaryOpen) { openSummary(target.dataset.summaryOpen); return; }
   if (target.dataset.birthdayOpen) { openBirthdays(target.dataset.birthdayOpen); return; }
   if (target.dataset.eventOpen) { openSheet({first: eventCompareView(target.dataset.eventOpen)}); return; }
+  if (target.dataset.searchOpen != null) { openSearch(); return; }
   if (target.dataset.idleOpen != null) { openIdle(); return; }
   if (target.dataset.varietyOpen != null) { openVariety(); return; }
   if (target.dataset.suffixOpen != null) { openSuffix(); return; }
   if (target.dataset.yearOpen != null) { openYear(); return; }
   if (target.dataset.eventHistoryOpen != null) { openEventHistory(); return; }
+  if (target.dataset.compareStore) {
+    const mode = target.dataset.compareMode;
+    if (mode === 'switch') {
+      state.store = target.dataset.compareStore;
+      store.set(STORE_KEY, state.store);
+      render();
+    } else if (mode === 'day' && target.dataset.compareDay) {
+      openDay(target.dataset.compareDay);
+    } else if (mode === 'summary' && target.dataset.compareDay) {
+      openSummary(target.dataset.compareDay);
+    }
+    return;
+  }
   if (target.dataset.store) {
     state.store = target.dataset.store;
     store.set(STORE_KEY, state.store);

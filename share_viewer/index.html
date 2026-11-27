@@ -743,6 +743,156 @@
     .suffix-pick .suffix-digit { min-height: 38px; }
   }
   .suffix-mark { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: var(--color-pricing-blue); color: #fff; font-size: 11px; line-height: 16px; vertical-align: 1px; font-weight: 700; }
+
+  /* 機能5：最新営業日の3店舗比較コンパクトカード（2026-11-27）。カレンダーと同じ青×橙ヒートマップ色調で統一。 */
+  .store-compare { max-width: 580px; margin: 10px auto 2px; padding: 0 var(--gutter); }
+  .store-compare-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 8px; margin: 0 2px 6px; }
+  .store-compare-title { font-size: 12px; font-weight: 700; color: #3a3a3f; letter-spacing: -0.1px; }
+  .store-compare-hint { font-size: 11px; color: var(--color-slate); }
+  .store-compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px; }
+  .store-compare-card {
+    position: relative; min-width: 0; padding: 8px 8px 7px; border-radius: 14px;
+    border: 1px solid #d8e0eb; background: #fff; text-align: left;
+    display: flex; flex-direction: column; gap: 3px;
+    box-shadow: 0 1px 2px rgba(29, 29, 31, 0.04);
+    transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+  }
+  .store-compare-card.heat-plus-3 { background: #d6e9ff; border-color: #88bcf7; }
+  .store-compare-card.heat-plus-2 { background: #e8f3ff; border-color: #bad7fb; }
+  .store-compare-card.heat-plus-1 { background: #f4f9ff; border-color: #d1e4fc; }
+  .store-compare-card.heat-minus-1 { background: #fff8f3; border-color: #f3dccb; }
+  .store-compare-card.heat-minus-2 { background: #ffede1; border-color: #efc4a7; }
+  .store-compare-card.heat-rate { background: #f4f7fb; border-color: #d4deec; }
+  .store-compare-card.heat-empty { background: #f7f7f9; border-color: #e2e5eb; }
+  .store-compare-card.active {
+    border-color: var(--color-pricing-blue);
+    box-shadow: 0 0 0 1px var(--color-pricing-blue), 0 2px 6px rgba(0, 113, 227, 0.14);
+  }
+  .store-compare-card:hover { filter: brightness(0.98); }
+  .store-compare-top { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; min-width: 0; }
+  .store-compare-name { font-size: 12px; font-weight: 700; color: var(--color-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .store-compare-day { font-size: 11px; font-weight: 600; color: #525c6b; flex: none; }
+  .store-compare-event {
+    display: block; width: 100%; padding: 1px 4px; border-radius: 4px;
+    background: #fef3c7; border: 1px solid #ebd07c; color: #5c3700;
+    font-size: 10.5px; font-weight: 600; line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .store-compare-event.empty {
+    background: rgba(255, 255, 255, 0.6); border-color: transparent; color: #7a8391; font-weight: 500;
+  }
+  .store-compare-main { font-family: var(--font-display); font-size: 16px; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; white-space: nowrap; margin-top: 1px; }
+  .store-compare-main.plus { color: #004ea8; }
+  .store-compare-main.minus { color: #9c3400; }
+  .store-compare-meta { display: flex; flex-wrap: wrap; gap: 0 5px; font-size: 10.5px; line-height: 1.3; color: #475569; min-width: 0; }
+  .store-compare-meta span { white-space: nowrap; }
+  .store-compare-cta {
+    margin-top: auto; padding: 2px 0 0; border: 0; background: transparent;
+    font-size: 10.5px; font-weight: 600; color: var(--color-apple-blue); text-align: right; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .store-compare-cta:disabled { color: var(--color-slate); cursor: default; }
+  .store-compare-cta::after { content: ''; position: absolute; inset: 0; border-radius: 14px; }
+  .store-compare-cta:focus-visible { outline: none; }
+  .store-compare-cta:focus-visible::after { outline: 2px solid var(--color-pricing-blue); outline-offset: 2px; }
+  @media (max-width: 420px) {
+    .store-compare { padding: 0 10px; }
+    .store-compare-card { padding: 7px 6px 6px; border-radius: 12px; }
+    .store-compare-name { font-size: 11.5px; }
+    .store-compare-day { font-size: 10px; }
+    .store-compare-main { font-size: 14.5px; }
+    .store-compare-meta { font-size: 10px; }
+  }
+  @media (max-width: 340px) {
+    .store-compare { padding: 0 6px; }
+    .store-compare-grid { gap: 4px; }
+    .store-compare-card { padding: 6px 5px 5px; }
+    .store-compare-name { font-size: 10.5px; }
+    .store-compare-day { font-size: 9.5px; }
+    .store-compare-event { font-size: 9.5px; padding: 1px 3px; }
+    .store-compare-main { font-size: 13px; }
+    .store-compare-meta { font-size: 9.5px; gap: 0 3px; }
+    .store-compare-cta { font-size: 9.5px; }
+  }
+
+  /* 機能4：クイック検索ボタン・検索シート（2026-11-27）。 */
+  .tool-btn-search { background: #eef5ff; border-color: #96bef2; color: #0058bd; font-weight: 600; }
+  .tool-btn-search:hover { background: #e0edff; border-color: #6ea5eb; }
+  .search-periods { margin: 10px 0 8px; }
+  .search-sorts { margin: 12px 0 4px; }
+  .search-box { display: flex; align-items: center; gap: 6px; margin: 10px 0 6px; }
+  .search-input {
+    flex: 1; min-width: 0; min-height: 44px; padding: 8px 14px;
+    border: 1.5px solid #9db0c8; border-radius: 12px; background: #fff; color: var(--color-ink);
+    font: 16px/1.3 var(--font-text);
+  }
+  .search-input:focus { outline: none; border-color: var(--color-pricing-blue); box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.16); }
+  .search-clear { min-width: 40px; min-height: 44px; padding: 0 12px; font-size: 18px; line-height: 1; flex: none; }
+  .search-clear[hidden] { display: none; }
+  .search-section { margin-top: 14px; }
+  .sheet .search-sub { font-size: 16px; font-weight: 700; margin: 0 0 8px; color: var(--color-ink); }
+  .search-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .search-chip {
+    max-width: 100%; min-height: 36px; padding: 6px 11px; font-size: 13px; font-weight: 500;
+    background: #f6f9fd; border-color: #c7d6ea; color: var(--color-ink);
+  }
+  .search-chip:hover { background: #e8f1fd; border-color: #8eb7ee; }
+  .search-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .search-chip-count { font-size: 11px; color: var(--color-slate); flex: none; }
+  .search-event-tag {
+    display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 4px;
+    background: #fef3c7; border: 1px solid #ebd07c; color: #5c3700;
+    font-size: 11px; font-weight: 600; vertical-align: 1px;
+  }
+
+  /* 機能1：台詳細画面の直近7日間の推移（2026-11-27）。中央0基準線から青（＋）／橙（−）へ伸びる相対ミニバー。 */
+  .rack-trend { margin-top: 22px; }
+  .rack-trend h3 { margin: 0 0 6px; }
+  .rack-trend-summary {
+    margin: 0 0 8px; padding: 8px 12px; border-radius: 10px;
+    background: #f4f7fb; border: 1px solid #dde5f0;
+    font-size: 12.5px; font-weight: 600; line-height: 1.5; color: #334155;
+  }
+  .rack-trend-list {
+    list-style: none; margin: 0; padding: 0 12px; overflow: hidden;
+    background: #fff; border: 1px solid #dde3ec; border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(29, 29, 31, 0.03);
+  }
+  .rack-trend-list li { border-top: 1px solid #edf1f6; }
+  .rack-trend-list li:first-child { border-top: 0; }
+  .rack-trend-item {
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 2px;
+    border: 0; background: transparent; text-align: left; color: inherit;
+  }
+  .rack-trend-item.clickable { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .rack-trend-item.clickable:hover { background: #f8fbff; }
+  .rack-trend-item.clickable:focus-visible { outline: 2px solid var(--color-pricing-blue); outline-offset: -2px; border-radius: 8px; }
+  .rack-trend-item.current {
+    margin: 0 -12px; width: calc(100% + 24px); padding: 10px 14px;
+    background: #edf5ff; box-shadow: inset 4px 0 0 var(--color-pricing-blue);
+  }
+  .rack-trend-item.other-machine { opacity: 0.78; }
+  .rack-trend-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .rack-trend-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+  .rack-trend-day { font-size: 14px; font-weight: 700; color: var(--color-ink); white-space: nowrap; }
+  .rack-trend-nums { display: inline-flex; align-items: baseline; gap: 8px; flex: none; }
+  .rack-trend-net { font-size: 15px; font-weight: 700; }
+  .rack-trend-games { font-size: 12px; color: var(--color-slate); }
+  .rack-trend-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .rack-trend-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 1.3; }
+  .rack-trend-badge.current { background: var(--color-pricing-blue); color: #fff; }
+  .rack-trend-badge.event { background: #fef3c7; border: 1px solid #ebd07c; color: #5c3700; }
+  .rack-trend-badge.other { background: #eef2f7; border: 1px solid #cbd5e1; color: #475569; }
+  .rack-trend-bar {
+    position: relative; display: block; width: 100%; height: 8px; border-radius: 9999px;
+    background: #eef2f7; overflow: hidden;
+  }
+  .rack-trend-bar.empty { background: #f4f6f9; }
+  .rack-trend-axis { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #94a3b8; }
+  .rack-trend-fill { position: absolute; top: 0; bottom: 0; }
+  .rack-trend-fill.plus { left: 50%; background: #0071e3; border-radius: 0 9999px 9999px 0; }
+  .rack-trend-fill.minus { right: 50%; background: #d45510; border-radius: 9999px 0 0 9999px; }
+  .rack-trend-chev { flex: none; font-size: 18px; line-height: 1; color: #94a3b8; }
 </style>
 </head>
 <body>

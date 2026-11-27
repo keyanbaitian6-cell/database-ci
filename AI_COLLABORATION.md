@@ -5121,3 +5121,50 @@
   3. `python tools/push_ci.py` で期間内の `main` へ送信し、承認があれば `database_android/tool/stage_share_viewer.py` で `database-share` へ公開・配信照合する。
   4. 取り込み・送信後に `git push origin --delete cloud/20261127-share-calendar-readability` で一時ブランチを削除する。
 
+## 2026-11-27 夜（続き） Gemini（Antigravity）：共有カレンダーへ機能1・4・5を追加実装（公開はPC側引き渡し）
+
+- 依頼：初回提案6件のうち「１，４，５を導入後、公開までお願いします」。
+- 対象画面：共有カレンダー（`share_viewer/`）のみ。PC・Androidアプリ・自分用Flutter閲覧ページ（`database-viewer`）・Google同期スクリプトは変更していない。APKは未更新（利用者の指示待ち）。
+- 基準コミット：`cloud/20261127-share-calendar-readability` の `4f0914b`（2026-11-27 push 前確認で、正本 `origin/main` `1100513`・`database-ci/main` `54df719` ともに変更なく `HEAD` の祖先であることを `git merge-base --is-ancestor` で確認）。
+- 引き渡しブランチ：`imakurudev-eng/database` の `cloud/20261127-share-calendar-readability`（`main` への直接 push・PR 作成は禁止のため行っていない）。
+- 変更ファイルと方針（既存の集計ロジック・通信ゼロ増・GETのみ・`localStorage` キー構成・`<i>` タグ0件・`P-STATION` 表記・既存店舗切替ボタン `getByRole('button', {name: '幸町'})` との非衝突をすべて維持）：
+  - `share_viewer/data.mjs`：純粋関数6つを追加。
+    1. `rackRecentHistory(byDay, events, store, rack, day, limit = 7)`：基準日以前で同じ台番号の記録がある直近最大7営業日（新しい順）。機種入れ替え前の日は `sameMachine: false` で区別し、イベント名・🌈・勝敗・推定フラグを返す。
+    2. `normalizeSearchText(text)`：NFKC正規化＋カタカナ→ひらがな統一＋小文字化＋連続空白圧縮。
+    3. `searchStoreEntities(byDay, store, days, query)`：対象日配列内の機種別・台番号別集計を1パスで構築。機種名は `displayMachineName` で半角・全角カナ表記ゆれを1機種に統合。空クエリ時は主要機種上位8件（`featured`）と機種一覧を返し、数字入力時は台番号一致（完全一致→前方一致→部分一致）を優先返却。
+    4. `machineDayHistory(byDay, events, store, machineName, days)`：指定機種の日別推移（新しい順）と期間サマリー（プラス日数・合計差枚・1台平均・平均G・勝率・推定含むか）。
+    5. `rackDayHistory(byDay, events, store, rack, days)`：指定台番号の日別推移（新しい順）と期間サマリー。
+    6. `latestStoreComparison(byDay, summaries, events, stores)`：各店舗の最新営業日（`byDay` と `summaries` の新しい方、同日は `byDay` 優先＝`calendarDay` と同規則）を集計し、総差枚または勝率・1台平均差枚・勝率・イベント・ヒートマップ段階を返す。
+  - `share_viewer/app.mjs`：
+    - **機能1（台詳細画面の直近7日間の推移）**：`rackTrendSection` を追加し、`rackView` の数値表 `.stats` 直下に配置。記録日数・プラス日数・合計差枚・平均Gのサマリーと、中央0基準線から青（＋）／橙（−）へ伸びる相対ミニ横バー・🌈・イベントタグ・表示中ハイライト・別機種注記を表示。同じ機種の別の日（`[data-rack-history-day]`）を押すと `openSheet` の `changeDay` でその日の詳細へ移動（別機種日は誤遷移防止のため非ボタン）。
+    - **機能4（機種名・台番号のクイック検索シート）**：`.tools` 先頭に「機種・台番を検索」ボタン（`[data-search-open]`）を追加し、`openSearch()` を実装。期間切替（表示中の月／過去30日／全期間）、検索欄（`openSheet` に `onInput` を追加し、入力中は `[data-search-results]` だけ部分更新してスマホキーボード・フォーカスを維持）、`×` クリアボタン（押下後に検索欄へフォーカス復帰）、空欄時の主要機種チップ、機種日別推移（`searchMachine` → `searchMachineDay` → `rackView`）、台番日別推移（`searchRack` → `rackView`）、新着順／差枚の高い順トグルを実装。読み込み済みデータのみ使用し、追加通信・`localStorage` 追加なし。
+    - **機能5（最新営業日の3店舗比較コンパクトカード）**：`storeComparisonSection` を追加し、`model.stores.length >= 2` のとき `.stores` の直下に表示。各店舗を `<article>` 構造＋全面クリック用 `.store-compare-cta::after`（`aria-describedby` で店舗見出しを関連付け、アクセシブル名は「詳細を見る ›」「切替 ›」にして既存試験の店舗名ボタン検索と非衝突）で構成。別店舗を押すと店舗切替、選択中店舗を押すと最新営業日の詳細（`openDay` または `openSummary`）を開く。
+  - `share_viewer/index.html`：機能1（`.rack-trend*`、角丸クリップ `overflow: hidden`・中央線付き発散ミニバー）・機能4（`.tool-btn-search`・`.search-*`・`.search-clear[hidden] { display: none; }`）・機能5（`.store-compare*`、青×橙ヒートマップ連動・320px極小幅対応）のスタイルを追加。
+  - `database_android/tool/test_share_viewer.mjs`：上記6関数の単体試験3ブロックを追加。
+  - `database_android/tool/test_share_viewer_insights_browser.mjs`（新規）：機能1・4・5の隔離ブラウザ結合試験（320/393/1280px 横はみ出し 0px、HTMLエスケープ、`<i>` 0件、`P-STATION` 表記、1文字入力時のフォーカス維持、クリアボタン表示切替、1店舗時の比較非表示、追加通信0・GETのみ、`localStorage` 余計なキーなし）。
+- クラウド環境からの公開・全体ゲート実行の事実確認：
+  - `git -C /home/antigravity/keyanbaitian6-cell/database-share push --dry-run origin HEAD:main` および `database-ci` の `--dry-run` はいずれも `Permission to keyanbaitian6-cell/... denied to imakurudev-eng (HTTP 403)` となることを直接確認（`AGENTS.md` 2026-11-23 規定どおり）。
+  - このVMには Flutter 3.50.0 と Node/Chrome はあるが、`database/setup_python.py --check` が要求するプロジェクト専用 Python 仮想環境（`selenium==4.49.0`, `rapidocr==3.9.2`, `onnxruntime==1.30.0`, `pillow==12.3.0`, `pywebview==6.2.1`）が無いため、`check_before_build.sh` の全体ゲートは未実行。
+  - したがって、Web公開（`database-share`）および月後半の `database-ci` への `main` 送信は未実施（PC側ローカルAIへ引き渡し）。
+
+### 確認の表
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 公開ステージ生成・非公開文字列検査 | 済 | `python3 database_android/tool/stage_share_viewer.py /tmp/share-stage-final-145`：19ファイル・版 `bff2c49b5eb6`、記録文字列・スクリプトID該当なし |
+| 共有カレンダー関連の全単体・ブラウザ試験（ステージ経由） | 済 | `TZ=Asia/Tokyo PYTHON=python3 SHARE_WEB_ROOT=/tmp/share-stage-final-145 PLAYWRIGHT_MODULE=file:///tmp/pw-node/node_modules/playwright-core/index.mjs CHROMIUM_PATH=/usr/bin/google-chrome node --test --test-concurrency=2 database_android/tool/test_share_*.mjs database_android/tool/test_event_history_shared.mjs database_android/tool/test_day_comment.mjs database_android/tool/test_daily_learning_browser.mjs database_android/tool/test_event_history_browser.mjs database_android/tool/test_variety_week.mjs`：**88件全件通過**（失敗0。新規 `test_share_viewer_insights_browser.mjs` と単体試験3ブロック追加分を含む。320/393/1280px 横はみ出し 0px） |
+| プレビュー描画確認（合成データ） | 済 | Chromium 393px・320px で3店舗比較カード・台詳細7日推移・クイック検索トップ・機種日別推移を撮影し目視確認（空欄時のクリアボタン表示と推移先頭行の角丸クリップを発見・修正後に再撮影して解消を確認） |
+| ソースのクラウド引き渡しブランチ push | 済（直後に実施・下の追記コミット） | `imakurudev-eng/database` の `cloud/20261127-share-calendar-readability` へ push |
+| 全体ゲート（`check_before_build.sh`）・`database-ci` 送信・CI | **未確認** | クラウド環境に専用 Python 仮想環境が無く、かつ `keyanbaitian6-cell/database-ci` への push 権限なし（HTTP 403）のため未実施 |
+| 共有カレンダーの Web 公開（`database-share`）・配信照合 | **未公開** | `keyanbaitian6-cell/database-share` への push 権限なし（HTTP 403）のため未実施 |
+| 実機（iPhone Safari・Android Chrome）・実データ確認 | **未確認** | 合成データ・Chromium 確認まで |
+| Android APK | **未更新（利用者の指示待ち）** | Dart/Android は無変更 |
+
+- 次の手順（PC側ローカルAIが実施）：
+  1. `git status` で別作業の混入が無いことを確認し、`git fetch origin cloud/20261127-share-calendar-readability` で取得して最新 `main`（`54df719` 以降）へ履歴を壊さず取り込む。
+  2. `bash database_android/tool/check_before_build.sh`（`TZ=JST-9`・`CHECK_JS_JOBS=2`）を実行し、**ALL PASSED** を確認して結果を `AI_COLLABORATION.md` に追記・コミットする。
+  3. `python tools/push_ci.py` で期間内（月後半は `keyanbaitian6-cell/database-ci`）の `main` へ送信する。
+  4. `python database_android/tool/stage_share_viewer.py <database-share クローン先>` でステージ生成（ゲートの `share-stage` と同一内容であることを確認）し、`keyanbaitian6-cell/database-share` の `main` へコミット・push して公開・配信照合する。
+  5. 送信後に `git push origin --delete cloud/20261127-share-calendar-readability` で一時ブランチを削除する。
+
+
