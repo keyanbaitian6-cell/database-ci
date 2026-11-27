@@ -5246,3 +5246,22 @@
      - `python tools/push_ci.py` で期間内（月後半は `keyanbaitian6-cell/database-ci`）の `main` へ送信する。
      - `python database_android/tool/stage_viewer.py <database-viewer クローン先>` でブラウザ版（メルヘン・P-STATION 両方）を公開し、共有カレンダーが未公開なら `stage_share_viewer.py` で `database-share` も公開してライブ配信照合を行う。
      - 送信後に一時ブランチ `cloud/20261127-viewer-share-store-fixes`（および統合済みの `cloud/20261127-share-calendar-readability`）を削除する。
+
+## 2026-11-28 未明 Claude（Sonnet 5.5）：クラウド環境（Gemini）の `cloud/20261127-viewer-share-store-fixes`（`7bba80d`）を main に取り込み、ゲート・公開・配信照合
+
+- 依頼：利用者がクラウド環境（Antigravity / Gemini）の引き渡しとして貼った手順（取り込み→全体ゲート→閲覧ページ公開→共有カレンダー公開→記録とpush→一時ブランチ削除）。基準は手元の `main` `54df719`（作業コピーは変更なし）。
+- 取り込み：`origin/cloud/20261127-viewer-share-store-fixes`（`7bba80d`）は main の直系の子孫（共通の祖先が `54df719`）で、`cloud/20261127-share-calendar-readability`（`bcd2c4b`）と、`database-ci` の main にあった `001afa2`（`.github/workflows/publish_share.yml`、手動実行だけの `workflow_dispatch`。定期実行ではない）を含む。`git merge --ff-only` で早送りした（履歴は変えていない）。Python の製品コードは変更なし（`database/*.py` の差分なし）。変更はビューア・共有カレンダー・Dart・JS・試験と、Gemini の記録。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 全体ゲート | 済（2回目） | 1回目（`C:\w\cbw-cloud1127`）は `pc-tests` が3件（失敗1・エラー2：`test_anaslo_download_ui` の `test_offline_scan_worker_download_and_handoff_only_selected_day` と `test_app_startup` の `test_sync_banner_warns_once_when_the_drive_is_missing_and_shows_a_switch`）で落ちた。原因は Windows の一時ファイル（`.download.lock`・`backup-output` など）を片づけるときの `PermissionError: [WinError 32]`（別のプロセスが使用中）で、全体で550秒（前回330秒）と負荷が高かった。この2ファイルを単独で流すと 18件・3件とも OK。`database/*.py` は変えていないので、直したコードはなく、ほかの変更を混ぜずに全体を1回だけ流し直した。2回目（`C:\w\cbw-cloud1127b`、`TZ=JST-9`・`CHECK_JS_JOBS=2`）は **ALL PASSED**：PC 1,182件・UTC 31件・Flutter 922件・analyze（情報34件、エラー・警告0）・viewer-build・viewer-stage・share-stage・JS 全項目（OK 107行） |
+| 閲覧ページの公開 | 済 | `keyanbaitian6-cell/database-viewer` `f78c17e..297d8f5`。`stage_viewer.py` の出力がゲートの viewer-stage と全ファイル同じ（`diff -rq`）。中身が変わった `index.html`・`main.dart.js` の2ファイルだけをコミット。Pages は `297d8f5` で built |
+| 閲覧ページの配信照合 | 済（Claude の直接確認） | `https://keyanbaitian6-cell.github.io/database-viewer/` の `index.html`・`main.dart.js` は HTTP 200 で、公開したコミットの中身と SHA-256 が一致。`.env`・`database.sqlite3`・`pscube.sqlite3`・`assets/database_seed.json`・`.git/config` は 404 |
+| 共有カレンダーの公開 | 済 | `keyanbaitian6-cell/database-share` `d0a1ba8..8d48cda`（版 `cfc0d4cd7e29`、8ファイル `android.html`・`app.mjs`・`daily_learning.mjs`・`data.mjs`・`index.html`・`manifest-android.json`・`manifest.json`・`sw.js`）。ゲートの share-stage と全ファイル同じ。Actions は 8d48cda で completed / success |
+| 共有カレンダーの配信照合 | 済（Claude の直接確認） | 上の8ファイルすべて HTTP 200 で SHA-256（改行を除いて）一致、`sw.js` の `VERSION` が `cfc0d4cd7e29`、非公開5パスは 404 |
+| ソースの push・CI | 下の追記のとおり | |
+| Android APK・Google Apps Script | 作成・変更なし | APK は指示待ち。`.gs` は変更なし |
+
+- 共有カレンダー側の「公開済み」の経緯：`d0a1ba8`（見やすさ改善）は Gemini の記録どおり、`publish_share.yml` の手動実行で公開済みだった。今回の `8d48cda` は手元のゲートの出力から Claude が直接公開した（上の差分は `7bba80d` 分）。
+- 見覚えのない点：`001afa2`（ワークフロー追加）は `keyanbaitian6-cell` 名義の 2026-11-27 11:41 UTC のコミット。手動実行だけで、秘密の名前（`SHARE_PUBLISH_TOKEN`・`SOURCE_READ_TOKEN`）を参照するだけで値は含まない。Claude は実行していない。
