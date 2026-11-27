@@ -5166,5 +5166,13 @@
   3. `python tools/push_ci.py` で期間内（月後半は `keyanbaitian6-cell/database-ci`）の `main` へ送信する。
   4. `python database_android/tool/stage_share_viewer.py <database-share クローン先>` でステージ生成（ゲートの `share-stage` と同一内容であることを確認）し、`keyanbaitian6-cell/database-share` の `main` へコミット・push して公開・配信照合する。
   5. 送信後に `git push origin --delete cloud/20261127-share-calendar-readability` で一時ブランチを削除する。
+- 追記（同日 20:41〜22:21 JST、利用者のスマホ操作＋Gemini直接確認）：
+  - 利用者がスマホから `keyanbaitian6-cell/database-ci` の `main` に手動公開ワークフロー `.github/workflows/publish_share.yml`（`001afa2`、`on: workflow_dispatch` 専用）を追加し、Secret `SHARE_PUBLISH_TOKEN` を登録して **`Publish share calendar #1`**（[45992522321](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45992522321)）を実行。
+  - **全体ゲート（`check_before_build.sh`）**：対象 `imakurudev-eng/database` の `cloud/20261127-share-calendar-readability`（`21add8f`）で **107項目すべて OK → `ALL PASSED`**（`pc-tests`・`pc-event-timezone-utc`・`flutter-test`・`flutter-analyze`・`viewer-build`・`viewer-stage`・`share-stage`・新規 `test_share_viewer_insights_browser` を含む全 JS 試験通過）。上の確認の表の全体ゲートは **済（AIの直接確認）**。
+  - **共有カレンダーの Web 公開（`database-share`）**：同ワークフローが `stage_share_viewer.py` で生成・ゲート出力と `diff -rq` 照合後に自動公開し、`keyanbaitian6-cell/database-share` の `main` が `e8db8a2..d0a1ba8`（版 `bff2c49b5eb6`、更新8ファイル：`index.html`・`android.html`・`app.mjs`・`data.mjs`・`daily_learning.mjs`・`manifest.json`・`manifest-android.json`・`sw.js`）へ更新。GitHub Pages デプロイ [45994276408](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45994276408) は **success**。上の確認の表の共有カレンダー Web 公開は **済（AIの直接確認）**。
+  - **ライブ配信照合（Gemini 直接確認）**：`https://keyanbaitian6-cell.github.io/database-share/` の更新 **8/8ファイルすべて HTTP 200・`d0a1ba8` と SHA-256 完全一致**、非公開5パス（`.env`・`database.sqlite3`・`pscube.sqlite3`・`database-viewer.json`・`secrets.json`）すべて **HTTP 404** を確認。
+  - **補足（`001afa2` の `Regression checks`）**：`publish_share.yml` 追加の push 時に自動実行された [45992500791](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45992500791) は `pc (ubuntu/windows)` が成功、`full` のみ Flutter 閲覧ページ側の既存試験 `test_viewer_history_guard_browser.mjs:193` が 30秒タイムアウトで1件失敗（同じ時刻に動いた `45992522321` では同試験も OK 通過）。
+  - **残りの手順（PC側ローカルAI）**：共有カレンダーの公開自体は完了済み。次回 PC 側で `keyanbaitian6-cell/database-ci` の `main`（`001afa2`）と `origin` の `cloud/20261127-share-calendar-readability` を1本に統合し、`python tools/push_ci.py` で期間内の `main` へ送信後、一時ブランチ `cloud/20261127-share-calendar-readability` を削除する。実機（iPhone Safari・Android Chrome）と実データでの表示確認は利用者の確認待ち。
+
 
 
