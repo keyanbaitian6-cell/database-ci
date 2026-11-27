@@ -5296,3 +5296,31 @@
 
 - 利用者が普段押すボタン：`database\start.cmd` で起動 →「取り込み」画面の「メルヘン2店舗を一括取り込み（長町南・幸町 × 上・下・10機種目からの6窓）」を1回。認証が出たら、タスクバーで点滅している窓（題名に「（幸町・下）」など）を選んで済ませる。
 - 追記（同日 08:40ごろ）：CI `d5c6901` の実行 [46080915287](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/46080915287) は **failure**（`pc (ubuntu)`・`pc (windows)` は success、`full` が失敗）。落ちたのは閲覧ページの画面試験 `test_viewer_history_guard_browser` の1件だけで、②b（壊れた本体を端末に入れて開く）で「壊れていて読めません」の文を30秒待つところの `TimeoutError`（同ファイル193行目）。同じ試験が、この変更より前の別のAIの `11eb404` の CI [46077896851](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/46077896851) と、11/27 11:41 の `001afa2` の実行 45992500791 でも同じ形で落ちており、その間の `dc18f6f` では通っている。手元の全体ゲートでは毎回通る（`C:\w\cbw-mbulk2` を含む）。今回の変更は PC だけで閲覧ページに触れていないので、原因ではないと判断した。CI 上で出たり出なかったりする失敗（試験は `6e5bc94`・`3228013` で足したもの）として、再実行はしていない。安定させる直しは未着手（利用者に確認中）。
+
+## 2026-11-28 朝 Gemini（Antigravity）：翌日候補の検証の計算式見直し・修正（カテゴリA＋B：日次学習 v5）と閲覧ページ公開
+
+- 依頼：利用者「deepsearchし、翌日候補の検証について今の計算式のままでいいか、改善点はないかを検討して下さい。あれば修正を。」→ 提案確認後「Bを今すぐ修正し、他の修正点もあれば修正し、Aの反映、公開」。
+- 基準コミット：`dc18f6f`（`imakurudev-eng/database`・`keyanbaitian6-cell/database-ci` の両 `main` 一致を確認）。実DB（`database.sqlite3`・`pscube.sqlite3`・`daily-learning/journal.sqlite3`）および対象サイトには一切アクセスしていない。必読資料（`../outputs/normal-reassessment-20261023/` の報告・計画・再現方法、`SCORING_POLICY.md`、`DAILY_LEARNING.md` 等）を参照。
+- 検討結論：
+  - 現行の翌日候補算出の主式（`next_day_evidence`・`provisional_next_day_candidates`・`scoring.mjs`）は数理的に整合しており、進行中前向き検証の対照基準として維持。
+  - 検証側（答え合わせ・オフライン検証・P-STATION 欠測／`at_art=null` 扱い・幸町ノーマルモデル異常値除外・日次学習 v5）の計算式欠陥を修正し、24ファイルをコミット `11eb404` として `keyanbaitian6-cell/database-ci` の `main` へ送信した（直後に Claude の `bb70798..f3a1794` へも統合済み）。
+- 主な変更（24ファイル、詳細はコミット `11eb404`）：
+  - **答え合わせ・保存候補**（`database/core.py`・`database_android/lib/answer_check.dart`）：`ANSWER_CUTOFF_HOUR` を旧 3 時から 2026-10-28 決定の朝 8 時に統一し、非表示機種（幸町 `聖闘士星矢海皇覚醒`）除外と同一店・日の重複 `rack` 最新1件集約を追加。答え合わせ画面では候補 0 台の日に目安も 0 にし、目安の母集団を「実際に候補選考の対象になった台（適格通常機種＋バラエティ適格台）」へ揃えてシンプソンのパラドックスを解消。稼働バイアス確認用に「記録上のプラス率（`answerCheckPlus`）」と判定可能率を追加表示。
+  - **P-STATION 欠測・`at_art=null` 誤判定修正**（`database_android/lib/scoring.dart`・`data_checks.dart`・`models.dart`・`web/pscube/scoring.mjs`・`web/pscube/data.mjs`）：サイトセブン補完の `my: null` 混在時の Dart クラッシュおよび JS での 0 枚比較・AT 機 `nextDayEvidence`／`varietyHitPercent` の 0 枚最下位扱いを修正。さらにサイトセブン補完の `at_art: null` が JS/Dart の足し算で `noHits`／`graphNotNeeded`（当たり0回省略＝0点・非プラス）と誤判定されていた欠陥を修正（通常データの採点結果・版定数は不変）。
+  - **幸町ノーマルモデル異常値除外**（`database/normal_next_day_model.py`・`database_android/lib/normal_next_day_model.dart`）：`_reg()` にのみあった `implausible_numbers`・負数除外を `_rank()` へ統合し `_hit()` の汚染を防止（共通フィクスチャ完全不変）。
+  - **オフライン検証の統計・バイアス対策**（`database/backtest_candidates.py`・`database_android/lib/next_day_backtest.dart`）：`_slim()` 項目欠落・`hit_rank()` 異常値漏れ・非表示機種除外・`--cutoff-hour` 締切フィルタを修正・追加。既存 API 互換のまま、日等重み平均＋7暦日/14暦日ブロック符号反転検定＆ブロックブートストラップ95%区間、500G未満含む全ゲーム当たり回数比（O/E）、記録上のプラス率と Manski 最悪/最良境界を追加。`runBacktest` の `nextDayEvidence` 3重呼び出しを解消。
+  - **日次学習 v5（カテゴリB）＋切り戻し1日ズレ修正**（`database/daily_learning.py`・`daily_learning_runtime.py`・`daily_learning_view.py`・`DAILY_LEARNING.md`）：`VERSION = 'daily-plus-ridge-20261128-v5'`、`RULE_VERSION = 'store-weekly-flip-20261128'`。①大当たり0回・グラフ省略台（メルヘン v12・P’s CUBE `at_art==0` 明示、サイトセブン `at_art=None` は除外）を `outcome=0`（由来 `'no_hits'`）として MNAR 欠測を解消。②`_fit()` を日等重み標準化リッジ回帰（罰則 `max(100, 20 * N / days)`、元空間へ厳密逆変換して `weights` 形式互換）へ改訂しスケール不変性と `mix_weight` 整合を確保。③`store_day()`・`comparison()` に Manski 最悪/最良境界（`manski_worst_difference`・`manski_best_difference`）と 14暦日ブロック符号反転（`weeks14`・`p_14d`）を追加し、`counts` を `paired` 日に統一。④切り戻し `blocks` 算出の `+ 1` 抜け（35日目ではなく36日目に判定されていたオフバイワン）を修正。
+  - **固定済み研究の保護**：`database/daily_learning_fixed.py`（`fixed-weights-20261122`）は既存コード未変更。日次学習の初回採用判定（2027-03-11 以降、〜2027-03-03）は 2026-11-29〜2027-03-03 の 95日・14週が残り v5 のみで下限（80日・14週）を満たす一方、`fixed-weights-20261122` は仕様どおり開始時と版が異なるため 11/29 以降は対象外となる（v5 用に新規期間で切り直すかは利用者判断待ち）。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 個別回帰試験（追加・更新9ファイル） | 済 | Python `test_answer_candidates`・`test_backtest_candidates`・`test_normal_next_day_model`・`test_daily_learning*`（13ファイル105件含む）・`test_scoring_parity` 等すべて PASS；Node `test_pscube_scoring.mjs` 14件 PASS；Flutter `answer_check_test`・`pscube_viewer_test`・`normal_next_day_model_test`・`next_day_backtest_test`・`scoring_parity_test`・`half_width_kana_screens_test` 等すべて PASS |
+| 全体ゲート（`check_before_build.sh`） | 済 | `TZ=JST-9`・`CHECK_JS_JOBS=2`・作業 `C:\w\cbw-nextday-20261128` で **ALL PASSED**：PC 1,189件・UTC 31件・Flutter 927件・analyze（既存情報34件、エラー・警告0）・viewer-build・viewer-stage・share-stage・JS 99項目すべて OK（直後の Claude 統合版 `bb70798` でも `C:\w\cbw-mbulk2` で ALL PASSED） |
+| ソースの push・CI（`database-ci`） | 済（既発間欠失敗あり） | `tools/push_ci.py` で `dc18f6f..11eb404` を送信。CI [46077896851](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/46077896851) は `pc (ubuntu)`・`pc (windows)` が success、`full` は 11/27 `001afa2` から既発の間欠的タイムアウト `test_viewer_history_guard_browser`（193行目）1件のみで failure（手元ゲート 2回とも通過） |
+| 閲覧ページの公開（`database-viewer`） | 済 | `keyanbaitian6-cell/database-viewer` `297d8f5..4e01043`。`stage_viewer.py` の出力がゲートの `viewer-stage` と全ファイル完全一致（`diff -rq`、記録文字列90種該当なし）。実質変更の3ファイル（`main.dart.js`・`pscube/data.mjs`・`pscube/scoring.mjs`）のみをコミット・push。Pages [46082926208](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/46082926208) が `completed / success` |
+| 閲覧ページの配信照合 | 済（Gemini の直接確認） | `https://keyanbaitian6-cell.github.io/database-viewer/` の更新3ファイル（`main.dart.js` `9afd0fe4210a…`・`pscube/data.mjs` `8d7c37cb2814…`・`pscube/scoring.mjs` `ee08f1514976…`）すべて HTTP 200・`4e01043` と SHA-256 完全一致。非公開5パス（`.env`・`database.sqlite3`・`pscube.sqlite3`・`assets/database_seed.json`・`.git/config`）すべて HTTP 404 |
+| 共有カレンダー・Google同期・APK | 対象外／未更新 | `share_viewer/`・`.gs` は変更なし。Android APK は未作成（利用者の指示待ち） |
+| 実機・ブラウザ目視確認 | **未確認** | 実機（iPhone / Android）・実DBでの表示目視は未実施 |
+
+- 並行作業の保全：元の作業コピー `work/database-main` に Codex の未コミット文書変更6件（`AGENTS.md`・`AI_COLLABORATION.md`・`README.md`・`database/PSCUBE_ACCESS_PLAN.md`・`database/PSCUBE_AUTO_CAPTURE.md`・`database/README.md`）が残っていたため、それらには一切触れず、本記録は隔離ワークツリーから `.md` のみコミットとして `database-ci` へ送信した。
