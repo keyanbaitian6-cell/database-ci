@@ -5086,3 +5086,38 @@
 - 追記（同日）：CI `4bc2ad8` の実行 [45723352159](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/45723352159) は **success**（pc ubuntu・pc windows・full）。共有カレンダーの公開処理 [45723466675](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45723466675) も **success**。どちらも Claude が `gh run view` で確認した。上の表の CI は済。残りは、PCアプリの再起動（利用者）と iPhone での診断の確認。
 - 追記（同日 08:52〜08:56、Gemini）：公開URLの配信照合を実施し、`database-viewer`（`f78c17e`、Pages [45723429733](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/45723429733)）の更新3/3ファイルと `database-share`（`e8db8a2`、Pages [45723466675](https://github.com/keyanbaitian6-cell/database-share/actions/runs/45723466675)）の更新8/8ファイルがいずれも公開コミットとSHA-256で一致、非公開5パスは両方とも404であることを直接確認した。取り込み済みのGemini作業ツリー（`work/scratch/gemini-events-20261126`）とブランチ `fix/20261126-gemini-events`（`c9fd6ae`）を片づけた。
 - 追記（同日 08:56）：利用者のiPhone（8:55の画面写真）で「更新・差枚の取得状況」が、日別キャッシュと本体：一致（116日・85,918件）、カレンダーの日別計算：一致（116日・195マス）・**カレンダーはこの表で表示**、日・機種一覧の日別採点：一致（幸町・11/20・11/25の2日・1,063台）、台の推移の日別計算：一致（長町南・11/25・30台・210行）、台の推移の照合の「途中で終わった」0回（利用者「問題なくありました」）。上の表の iPhone は済（利用者の報告）。PCアプリは 08:20 に利用者が閉じていた（`run.log`「PCアプリを閉じます」、取り込みより前）。利用者「再起動させていいよ」で Claude が 08:56 に `start.cmd` で起動し、日次学習は通常どおり（3店とも 11/26 の予測は保存済み）、`input_versions.sqlite3` は作られていないことを確認した。PC側の ③⑥ の直しはこの起動から効く。
+
+## 2026-11-27 夜 Gemini（Antigravity）：共有カレンダーの見やすさ改善（DeepSearch＋実画面監査＋実装）
+
+- 依頼：「deepsearchし、情報を仕入れ、共有カレンダーの見やすさについての改善に努めて頂き、その後あった方がいいと思ったものについて提案をお願いします。」
+- 対象画面：共有カレンダー（`share_viewer/`）のみ。PC・Androidアプリ・自分用Flutter閲覧ページ（`database-viewer`）・Google同期スクリプトは変更していない。APK作成・Web公開は未実施。
+- 基準コミット：`keyanbaitian6-cell/database-ci` の `main` `54df719`（着手時に `imakurudev-eng/database` の `main` `1100513` と両方を取得し、`54df719` が `1100513` を含む最新履歴であることを `git merge-base --is-ancestor` で確認）。
+- 引き渡しブランチ：`imakurudev-eng/database` の `cloud/20261127-share-calendar-readability`（`main` への直接 push および PR 作成は行っていない）。
+- 調査と現状監査で把握した主な課題（Web調査：出玉データサイト・損益カレンダーUI・色覚多様性ガイド・モバイルUX原則、および Chromium 320/393/1280px 合成データ実描画による目視監査）：
+  1. カレンダーの全マスが白地で、大プラス日・小プラス日・マイナス日・記録なし日の強弱が一目で分からず、週のリズム（土日色分け）も弱かった。
+  2. 毎日のキャラ誕生日（紫太字）がイベント名（黒細字）より目立ち、視覚階層が逆転していた。
+  3. スマホ393pxでカレンダーカード上端が約1,112pxまで押し下げられ、さらに月切替時に年月見出しが画面外にあって見えなかった。`日次学習・採用中の候補` ボタンの余白不足や、`更新・差枚の取得状況` カードのパディング欠落もあった。
+  4. 日別シートの総差枚・イベント比較リンク・誕生日・TOP50末尾ピッカー（8・9が孤立折り返し）・リスト順位（1〜3位）が、既存の機種別データピックアップ（`f020188`）のカードデザインと統一されていなかった。
+  5. 台別データ（`rackView`）の2列グリッドで `回転数|BB` / `RB|BB確率` / `RB確率|合成確率` と回数・確率のペアが1マスずれていた。
+- 変更ファイルと方針（既存の集計ロジック・保存形式・通信回数・localStorageキー・既存テスト契約はすべて保持）：
+  - `share_viewer/data.mjs`：`dayHeatLevel(net)` を追加。店舗ごとの設置台数差に左右されないよう、1台あたり平均差枚（`total / captured`）で `plus-3`（+250枚〜）・`plus-2`（+100枚〜）・`plus-1`（+1枚〜）・`zero`・`minus-1`・`minus-2`（〜-100枚）・`rate`・`empty` を判定。
+  - `share_viewer/app.mjs`：カレンダー各マスにヒートマップ段階・土日（`sun`/`sat`）・イベントあり（`has-event`）クラスを付与。カレンダーカード内に統合月ナビゲーション `.cal-bar`（年月＋前月／今月／次月）とミニ色凡例 `.cal-key`（色見本は既存の `i` タグ0件検証と両立する `<span>`）を配置。日次学習・ツールボタン・各シートの `.total` にカードクラスを付与、`tapList` の1〜3位に金銀銅バッジクラス、`suffixPicker` の 0〜9 ボタンに `.suffix-digits` ラッパー、イベント比較セルの正負背景クラス、月別勝率行の視覚バー（`aria-hidden="true"`）、末尾まとめの比較期間セレクト統一を実装。`rackView` の統計並びを `[回転数, 合成確率] / [BB, BB確率] / [RB, RB確率] / [最大持玉 or MY]` に整理。
+  - `share_viewer/index.html`：青×橙の色覚配慮ヒートマップ（WCAG AA 以上の文字コントラスト、強い日は全周の細い青枠）、土日色分け、今日の青枠強調、イベント名の淡琥珀タグ化、誕生日ウェイト調整、上部ファーストビューの余白圧縮（393pxでカレンダー上端 1112px→940px、1280pxで 1039px→834px）、`details.card[data-health]` のパディング修正、各シートのカード・リスト・5×2末尾グリッド・台詳細表・イベント比較表・勝率バーのスタイルを適用。
+  - `database_android/tool/test_share_viewer.mjs`：`dayHeatLevel` の全境界値テストを追加。
+  - `database_android/tool/test_share_viewer_browser.mjs`：ヒートマップクラス・イベントクラス・土日ヘッダー・統合月バー・色凡例・台詳細のペア順検証を追加。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 公開ステージ生成・非公開文字列検査 | 済 | `python3 database_android/tool/stage_share_viewer.py /tmp/share-stage-final`：19ファイル・版 `758a24968073`、記録文字列・スクリプトID該当なし |
+| 共有カレンダー単体＋画面試験（ステージ経由） | 済 | `SHARE_WEB_ROOT=/tmp/share-stage-final PLAYWRIGHT_MODULE=... CHROMIUM_PATH=/usr/bin/google-chrome node --test --test-concurrency=2 database_android/tool/test_share_*.mjs database_android/tool/test_event_history_shared.mjs`：**71件全件通過**（失敗0。320/393/1280px 横はみ出し 0px・文字拡大・重複/競合・補助失敗・オフライン・虹・末尾・全機種・イベント履歴・Android入口・版番号照合を含む） |
+| 共有関連の追加試験（日次学習・ひとこと・履歴・採点照合） | 済 | `PYTHON=python3 SHARE_WEB_ROOT=/tmp/share-stage-final ... node --test --test-concurrency=2 test_day_comment.mjs test_daily_learning_browser.mjs test_event_history_browser.mjs test_variety_week.mjs`：**13件全件通過**（失敗0） |
+| プレビュー描画確認（合成データ） | 済 | Chromium 320/393/1280px で改善前・改善後の全体・カレンダーグリッド・日別シート・機種一覧・台詳細を撮影・目視確認（横はみ出し 0px） |
+| PC側全体ゲート（`check_before_build.sh`）・CI・公開 | **未確認** | クラウド環境に Flutter SDK 無しのため未実行。`database-share` への Web 公開も未実施 |
+| 実機（iPhone Safari・Android Chrome）・実データ確認 | **未確認** | 合成データ・Chromium 確認まで |
+
+- 次の手順（利用者がプレビュー承認後、PC側ローカルAIが実施）：
+  1. `git fetch origin cloud/20261127-share-calendar-readability` で取得し、最新 `main` へ履歴を壊さず取り込む。
+  2. `bash database_android/tool/check_before_build.sh` で全体ゲート ALL PASSED を確認。
+  3. `python tools/push_ci.py` で期間内の `main` へ送信し、承認があれば `database_android/tool/stage_share_viewer.py` で `database-share` へ公開・配信照合する。
+  4. 取り込み・送信後に `git push origin --delete cloud/20261127-share-calendar-readability` で一時ブランチを削除する。
+

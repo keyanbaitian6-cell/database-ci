@@ -709,3 +709,21 @@ test('推定差枚の説明は取得元別・混在に対応し、確定値に�
  assert.equal(netEstimateNote([{...site,estimated:false}]),'');
  assert.equal(netEstimateNote([{...site,net:null}]),'');
 });
+
+test('カレンダーのヒートマップ段階：1台平均差枚の境界・0・勝率のみ・欠測を区別する', async () => {
+  const {dayHeatLevel} = await import('../../share_viewer/data.mjs');
+  assert.equal(dayHeatLevel(null), 'empty');
+  assert.equal(dayHeatLevel({total: null, captured: 0, winRate: false}), 'empty');
+  assert.equal(dayHeatLevel({total: 1000, captured: 0, winRate: false}), 'empty');
+  assert.equal(dayHeatLevel({total: null, captured: 0, winRate: true}), 'rate');
+  assert.equal(dayHeatLevel({total: 5000, captured: 20, winRate: false}), 'plus-3');
+  assert.equal(dayHeatLevel({total: 4999, captured: 20, winRate: false}), 'plus-2');
+  assert.equal(dayHeatLevel({total: 2000, captured: 20, winRate: false}), 'plus-2');
+  assert.equal(dayHeatLevel({total: 1999, captured: 20, winRate: false}), 'plus-1');
+  assert.equal(dayHeatLevel({total: 1, captured: 20, winRate: false}), 'plus-1');
+  assert.equal(dayHeatLevel({total: 0, captured: 20, winRate: false}), 'zero');
+  assert.equal(dayHeatLevel({total: -1, captured: 20, winRate: false}), 'minus-1');
+  assert.equal(dayHeatLevel({total: -1999, captured: 20, winRate: false}), 'minus-1');
+  assert.equal(dayHeatLevel({total: -2000, captured: 20, winRate: false}), 'minus-2');
+});
+

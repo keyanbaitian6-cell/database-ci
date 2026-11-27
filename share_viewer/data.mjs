@@ -298,6 +298,25 @@ export function calendarDay(racks, summary) {
 }
 
 /**
+ * カレンダーマスのヒートマップ強弱段階（色覚に配慮した青×橙の発散スケール用）。
+ * 店舗ごとの設置台数差に左右されないよう、1台あたりの平均差枚（total / captured）で判定する。
+ * 返り値：'plus-3'（+250枚〜）/'plus-2'（+100枚〜）/'plus-1'（+1枚〜）/'zero'（0枚）/
+ *         'minus-1'（-99〜-1枚）/'minus-2'（〜-100枚）/'rate'（勝率表示のみ）/'empty'（記録なし）。
+ */
+export function dayHeatLevel(net) {
+  if (!net) return 'empty';
+  if (net.winRate) return 'rate';
+  if (net.total == null || !(net.captured > 0)) return 'empty';
+  const avg = net.total / net.captured;
+  if (avg >= 250) return 'plus-3';
+  if (avg >= 100) return 'plus-2';
+  if (avg > 0) return 'plus-1';
+  if (avg === 0) return 'zero';
+  if (avg > -100) return 'minus-1';
+  return 'minus-2';
+}
+
+/**
  * 読み込みの失敗の理由（2026-10-18 利用者「最新を読み込んでも毎回一部の更新に失敗しましたと出る」。どの店が何で失敗したか
  * 分からなかった）。Promise.allSettled の1件 r から短い文。成功なら ''。
  */

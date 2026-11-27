@@ -124,6 +124,12 @@ try {
     const cell = page.locator(`[data-open="${d1}"]`);
     assert.match(await cell.innerText(), /半列<b>/);
     assert.match(await cell.innerText(), /\+295/);
+    assert.match(await cell.getAttribute('class'), /\bheat-plus-2\b/, '1台平均+147.5枚はheat-plus-2');
+    assert.match(await cell.getAttribute('class'), /\bhas-event\b/, 'イベント日はhas-event');
+    assert.equal(await page.locator('.weekdays span.sun').innerText(), '日');
+    assert.equal(await page.locator('.weekdays span.sat').innerText(), '土');
+    assert.equal(await page.locator('.cal-bar .cal-ym').innerText(), `${yy}年${mm}月`);
+    assert.ok(await page.locator('.cal-key').isVisible(), 'ヒートマップ色凡例を表示');
     assert.equal(await page.locator('b').count(), 0);
     // キャラ誕生日：マスはイベント名と別に「🎂 名前2人＋ほか○名」。台の無い日でも押せる（2026-10-18）。
     const birthdayOnly = page.locator(`[data-birthday-open="${ym}-05"]`);
@@ -205,6 +211,8 @@ try {
     assert.match(rack, /RB確率\s*1\/444\.4/);
     assert.match(rack, /合成確率\s*1\/173\.9/);
     assert.match(rack, /最大持玉\s*1,500/);
+    assert.deepEqual(await page.locator('.sheet .stats dt').allInnerTexts(),
+      ['回転数', '合成確率', 'BB', 'BB確率', 'RB', 'RB確率', '最大持玉'], '回転数・合成確率およびBB/RBと各確率を意味あるペアで並べる');
     // ボタンの連打でダブルタップ拡大しない（2本指の拡大は残す。2026-10-22）。
     assert.deepEqual(await page.evaluate(() => [document.documentElement, document.body].map(e => getComputedStyle(e).touchAction)),
       ['manipulation', 'manipulation'], 'ダブルタップ拡大を止める');
