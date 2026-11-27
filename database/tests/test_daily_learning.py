@@ -316,7 +316,10 @@ class LearningTests(unittest.TestCase):
                 runtime.decisions(j, now)
                 self.assertEqual(j.get('decisions', 'adoption:1'), first)
                 add(now, 28, .1)
-                later = d.shift(now, 36)
+                # 28日目の成熟日（27 + MATURITY = 35日後）の1日前ではまだ判定せず、35日目ちょうどで切り戻す。
+                runtime.decisions(j, d.shift(now, 34))
+                self.assertEqual(j.get('state', 'store:' + store)['active'], 'learned')
+                later = d.shift(now, 35)
                 runtime.decisions(j, later)
                 self.assertEqual(j.get('state', 'store:' + store), {'active': 'current', 'since': later})
                 runtime.decisions(j, later)
@@ -687,6 +690,58 @@ class LearningTests(unittest.TestCase):
             cells = {c['target']: c['state'] for c in doc_next['checkup']['stores']['nagamachiminami']}
             self.assertEqual(cells['2026-11-12'], 'missed')
             self.assertEqual(cells['2026-11-13'], 'pending')
+
+    def test_v5_no_hits_without_graph_and_site777_guard(self):
+        # メルヘン v12：大当たり0回・グラフ省略台は非プラス(0)として欠測バイアス（MNAR）を防ぐ。
+        meruhen_zero = dict(store='nagamachiminami', day='2026-11-28', machine='試験機', rack=1,
+                            games=900, bb=0, rb=0)
+        self.assertEqual((d.outcome(meruhen_zero), d.outcome_source(meruhen_zero)), (0, 'no_hits'))
+        # 0Gは未稼働なので判定不能のまま。
+        self.assertEqual((d.outcome(meruhen_zero | {'games': 0}), d.outcome_source(meruhen_zero | {'games': 0})), (None, None))
+        # P’s CUBE は at_art==0 も明示のときだけ no_hits。サイトセブン補完（at_art=None）はAT当たりの可能性があるため None。
+        ps_zero = dict(store='pscube:c740601:20', rate='20', day='2026-11-28', machine='AT機', rack=1,
+                       games=900, bb=0, rb=0, at_art=0)
+        self.assertEqual((d.outcome(ps_zero), d.outcome_source(ps_zero)), (0, 'no_hits'))
+        s777_zero = ps_zero | {'at_art': None, 'source_site': 'site777'}
+        self.assertEqual((d.outcome(s777_zero), d.outcome_source(s777_zero)), (None, None))
+
+    def test_v5_standardized_ridge_is_scale_invariant_and_picks_small_variance_signal(self):
+        # 特徴量1のスケールを100倍しても予測値が一致する（標準化リッジ回帰のスケール不変性）。
+        base_examples = []
+        scaled_examples = []
+        for day_i in range(25):
+            day = d.shift('2026-10-01', day_i)
+            for rack in range(1, 7):
+                signal = 0.02 if rack <= 3 else -0.02  # 分散が非常に小さい特徴（plus7 / dry_streak 相当）
+                y = 1 if (rack <= 3 and day_i % 5 != 0) or (rack > 3 and day_i % 5 == 0) else 0
+                base_examples.append(([1., signal, 0.], y, day))
+                scaled_examples.append(([1., signal * 100., 0.], y, day))
+        w_base, _ = d._fit(base_examples)
+        w_scaled, _ = d._fit(scaled_examples)
+        self.assertGreater(w_base[1], 1.0)
+        for (xb, _, _), (xs, _, _) in zip(base_examples[:6], scaled_examples[:6]):
+            pb = sum(a * b for a, b in zip(xb, w_base))
+            ps = sum(a * b for a, b in zip(xs, w_scaled))
+            self.assertAlmostEqual(pb, ps, places=9)
+
+    def test_v5_comparison_manski_bounds_14d_block_and_paired_counts(self):
+        # ペア比較可能な112日＋片側全欠測（diff is None）の日を混ぜても、counts は paired のみで数え、
+        # Manski 最悪/最良境界と 14暦日ブロック符号反転 p 値（p_14d）が正しく算出される。
+        days = [d.store_day(d.shift('2026-01-01', i), [self.group(d.shift('2026-01-01', i), .4, .6, k=10,
+                                                                  missing_current=.05, missing_learned=.05)])
+                for i in range(112)]
+        unpaired = d.store_day('2026-05-01', [self.group('2026-05-01', .5, None, k=10,
+                                                         missing_current=0., missing_learned=1.)])
+        self.assertIsNone(unpaired['diff'])
+        res_clean = d.comparison(days, .01)
+        res_with_unpaired = d.comparison(days + [unpaired], .01)
+        self.assertEqual(res_with_unpaired['counts'], res_clean['counts'])
+        self.assertEqual(res_clean['weeks14'], 8)
+        self.assertAlmostEqual(res_clean['p_14d'], 1 / 256)
+        self.assertLessEqual(res_clean['manski_worst_difference'], res_clean['nonplus_difference'] + 1e-12)
+        self.assertLessEqual(res_clean['manski_worst_difference'], res_clean['plus_difference'] + 1e-12)
+        self.assertLessEqual(res_clean['nonplus_difference'], res_clean['manski_best_difference'] + 1e-12)
+        self.assertLessEqual(res_clean['plus_difference'], res_clean['manski_best_difference'] + 1e-12)
 
 
 if __name__ == '__main__':

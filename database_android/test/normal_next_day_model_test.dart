@@ -222,4 +222,25 @@ void main() {
       expect(find.text(nextDayValidationNote), findsNothing);
     });
   });
+
+  test('異常値（bb=888等）の行が同日に混入しても _hit / _reg の計算が汚染されない', () {
+    const day = '2026-10-20';
+    final basePerRack = normalHistoryValues(rows, day);
+    final bogus = SlotRecord(
+      store: 'saiwaichou',
+      day: day,
+      machine: 'SマイジャグラーVKD',
+      rack: 999,
+      games: 5000,
+      bb: 888,
+      rb: 10,
+      maxHold: 88888888,
+    );
+    final polluted = normalHistoryValues([...rows, bogus], day);
+    final bogusToday = polluted[999]!.firstWhere((v) => v.day == day);
+    expect((bogusToday.s, bogusToday.r), (null, null));
+    for (final entry in basePerRack.entries) {
+      expect(polluted[entry.key], entry.value, reason: 'rack ${entry.key}');
+    }
+  });
 }

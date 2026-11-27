@@ -90,6 +90,17 @@ class NormalNextDayModelTests(unittest.TestCase):
         before = Path(report(self.db, '2026-10-10', MACHINE, self.folder.name, 'saiwaichou')[0]).read_text(encoding='utf-8')
         self.assertIn('過去に当たりが周りの台より軽かった台です', before)
 
+    def test_implausible_row_does_not_pollute_hit_rank_or_model_scores(self):
+        day = '2026-10-20'
+        base_per_rack = m.history_values(self.doc['rows'], day)
+        bogus = dict(self.doc['rows'][0], day=day, rack=999, games=5000, bb=888, rb=10, max_hold=88888888)
+        polluted_per_rack = m.history_values(self.doc['rows'] + [bogus], day)
+        # 異常値の台自身は s / r ともに None、正常台の値は完全に不変。
+        bogus_entry = next(v for v in polluted_per_rack[999] if v[0] == day)
+        self.assertEqual((bogus_entry[1], bogus_entry[2]), (None, None))
+        for rack in base_per_rack:
+            self.assertEqual(polluted_per_rack[rack], base_per_rack[rack], rack)
+
 
 if __name__ == '__main__':
     unittest.main()

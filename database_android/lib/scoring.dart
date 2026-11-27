@@ -336,20 +336,24 @@ ScoreResult _scorePscube(
   final endMax = outputOnly ? 25 : 10;
   final retentionMax = outputOnly ? 25 : 10;
   final (refs, peers) = _scoringPool(row, all, sameDayForNew);
-  final days = refs.map((r) => r.day).toSet().length;
+  final hitRefs = refs.where((r) => r.bb >= 0 && r.rb >= 0).toList();
+  final holdRefs = refs.where((r) => r.my != null && r.my! >= 0).toList();
+  final days = hitRefs.map((r) => r.day).toSet().length;
+  final holdDays = holdRefs.map((r) => r.day).toSet().length;
   double rateOf(SlotRecord r) => (r.bb + r.rb) / r.games;
   final hit = hitMax == 0
       ? null
-      : adjustedRank(rateOf(row), refs, rateOf, hitMax.toDouble(), row.games);
+      : adjustedRank(rateOf(row), hitRefs, rateOf, hitMax.toDouble(), row.games);
+  final rowMy = row.my != null && row.my! >= 0 ? row.my!.toDouble() : null;
   final ranked = adjustedRank(
-    row.my?.toDouble(),
-    refs,
+    rowMy,
+    holdRefs,
     (r) => r.my!.toDouble(),
     holdMax.toDouble(),
     row.games,
   );
-  final absolute = row.extra['rate'] == '20'
-      ? holdMax * min(1.0, (row.my ?? 0) / completeHold)
+  final absolute = row.extra['rate'] == '20' && rowMy != null
+      ? holdMax * min(1.0, rowMy / completeHold)
       : 0.0;
   final hold = ranked == null ? null : max(ranked, absolute).toDouble();
   final reasons = <String>[
@@ -388,13 +392,25 @@ ScoreResult _scorePscube(
       .fold<int>(0, (sum, p) => sum + p.$2);
   final observed = parts.fold<double>(0, (sum, p) => sum + (p.$1 ?? 0));
   double rounded(double v) => (v * 10).round() / 10;
+  final refCount = outputOnly
+      ? holdRefs.length
+      : min(hitRefs.length, holdRefs.length);
+  final refDays = outputOnly ? holdDays : min(days, holdDays);
   final provisional =
       missing > 0 ||
       row.games < shrinkGames ||
-      refs.length < minimumReferenceRows ||
-      days < shrinkDays;
+      refCount < minimumReferenceRows ||
+      refDays < shrinkDays;
   if (provisional) reasons.add('少数データ・欠測を含む評価');
-  reasons.add('比較${refs.length}件/$days日・観測${row.games}G');
+  if (holdRefs.length == hitRefs.length && holdRefs.length == refs.length) {
+    reasons.add('比較${refs.length}件/$days日・観測${row.games}G');
+  } else if (outputOnly) {
+    reasons.add('MY比較${holdRefs.length}件/$holdDays日・観測${row.games}G');
+  } else {
+    reasons.add(
+      '比較${hitRefs.length}件/$days日・MY比較${holdRefs.length}件・観測${row.games}G',
+    );
+  }
   if (missing > 0)
     reasons.add(
       '評価可能配点${100 - missing}/100・欠測による幅'
@@ -408,9 +424,9 @@ ScoreResult _scorePscube(
     retention: retention,
     total: rounded(observed + missing / 2),
     provisional: provisional,
-    referenceCount: refs.length,
-    referenceDays: days,
-    holdReferenceCount: refs.length,
+    referenceCount: outputOnly ? holdRefs.length : hitRefs.length,
+    referenceDays: outputOnly ? holdDays : days,
+    holdReferenceCount: holdRefs.length,
     coverage: 100 - missing,
     missingLow: rounded(observed),
     missingHigh: rounded(observed + missing),

@@ -1372,20 +1372,23 @@ def read_backup_events(path):
     return _read_backup_document(path).get('date_events', [])
 
 
-ANSWER_CUTOFF_HOUR = 3
+ANSWER_CUTOFF_HOUR = 8
 
 
 def saved_answer_candidates(store, first_day):
     """当時の翌日候補（2026-11-04、閲覧ページの答え合わせ用。利用者が選んだ「翌日候補の答え合わせ」）。
 
-    店・日ごとに、その翌日の午前3時（日本時間。営業日の切り替え・候補の締切 NEXT_DAY_SHADOW_PLAN と同じ）までに
+    店・日ごとに、その翌日の午前8時（日本時間。2026-10-28 利用者決定の候補締切と統一）までに
     記録した各機種とバラエティの最新の候補（candidate_snapshots）を合わせ、{"店|日": [[台番号, 平均より（指数）,
-    バラエティなら1]]} にする。後から計算し直した候補とは混ぜない（10/23の再検討で、保存候補と後日の再現候補は
-    一致しないことが多かった）。締切より後の記録・時差の無い時刻は使わない。
+    バラエティなら1]]} にする。非表示機種は除外し、同一店・日で通常機種とバラエティのスナップショットを
+    またいで同じ台番号が重複した場合は記録時刻が新しい方を1件だけ残す。後から計算し直した候補とは混ぜない
+    （10/23の再検討で、保存候補と後日の再現候補は一致しないことが多かった）。締切より後の記録・時差の無い時刻は使わない。
     """
     latest = {}
     for location, day, machine, taken_at, payload in store.db.execute(
             'SELECT store, day, machine, taken_at, payload FROM candidate_snapshots WHERE day>=?', (first_day,)):
+        if machine != VARIETY_GROUP_NAME and is_hidden_machine(location, machine):
+            continue
         try:
             taken = datetime.fromisoformat(taken_at)
             deadline = datetime.fromisoformat(f'{day}T{ANSWER_CUTOFF_HOUR:02d}:00:00+09:00') + timedelta(days=1)
@@ -1396,17 +1399,25 @@ def saved_answer_candidates(store, first_day):
         key = (location, day, machine)
         if key not in latest or taken > latest[key][0]:
             latest[key] = (taken, payload)
-    saved = {}
-    for (location, day, machine), (_taken, payload) in sorted(latest.items()):
+    by_day = {}
+    for (location, day, machine), (taken, payload) in sorted(latest.items()):
         try:
             candidates = json.loads(payload).get('candidates') or []
         except (TypeError, ValueError, AttributeError):
             continue
-        rows = saved.setdefault(f'{location}|{day}', [])
-        for c in candidates:
+        per_rack = by_day.setdefault(f'{location}|{day}', {})
+        for idx, c in enumerate(candidates):
             if isinstance(c, dict) and isinstance(c.get('rack'), int) and isinstance(c.get('index'), (int, float)):
-                rows.append([c['rack'], round(float(c['index']), 2), 1 if machine == VARIETY_GROUP_NAME else 0])
-    return saved
+                rack = c['rack']
+                item = [rack, round(float(c['index']), 2), 1 if machine == VARIETY_GROUP_NAME else 0]
+                prev = per_rack.get(rack)
+                if prev is None or taken > prev[0]:
+                    per_rack[rack] = (taken, (machine, idx), item)
+    return {
+        key: [entry[2] for entry in sorted(per_rack.values(), key=lambda e: e[1])]
+        for key, per_rack in by_day.items()
+        if per_rack
+    }
 
 
 def export_viewer(store, path, days=VIEWER_DAYS, only_store=None, split_stores=None, exported_at=None):

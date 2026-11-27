@@ -246,4 +246,72 @@ void main() {
     expect(loadViewerSetting(answerSortSetting), 'score-asc');
     expect(tester.takeException(), isNull);
   });
+
+  test('候補0台の日は目安も0にし、候補になれない新台機種を目安へ混ぜない（シンプソン対策）', () {
+    // 9/21は前日9/20しか履歴が無く候補0台。目安も0で合計を汚染しない。
+    final noCand = answerCheckFor(all, 'nagamachiminami', '2026-09-21')!;
+    expect(noCand.candidates, 0);
+    expect((noCand.baseCandidates, noCand.baseScored, noCand.baseHits), (0, 0, 0));
+
+    // 9/23と9/24の両方に履歴不足の新台機種C（8台）を追加しても、候補選考母集団外なので目安に入らない。
+    final withIneligibleMachine = [
+      ...all,
+      for (var rack = 101; rack <= 108; rack++) rec('2026-09-23', rack, bb: 2, machine: 'C'),
+      for (var rack = 101; rack <= 108; rack++) rec('2026-09-24', rack, bb: 40, machine: 'C'),
+    ];
+    final result = answerCheckFor(withIneligibleMachine, 'nagamachiminami', '2026-09-24')!;
+    expect(result.baseCandidates, 8, reason: '選考母集団の機種A 8台だけ');
+    expect(result.baseScored, 8);
+  });
+
+  test('記録上のプラス判定（差枚・グラフ±1px・大当たり0回省略）と重複rack排除', () {
+    final plusGraph = GraphMeasurement(
+      baselineY: 100,
+      peakY: 40,
+      troughY: 110,
+      endY: 80,
+    );
+    final flatGraph = GraphMeasurement(
+      baselineY: 100,
+      peakY: 95,
+      troughY: 105,
+      endY: 99.5,
+    );
+    final withOutcomes = [
+      ...history,
+      rec('2026-09-24', 1, bb: 40).copyWith(extra: {'jo_net': 1200}),
+      SlotRecord(
+        store: 'nagamachiminami',
+        day: '2026-09-24',
+        machine: 'A',
+        rack: 2,
+        games: 4000,
+        bb: 0,
+        rb: 0,
+      ), // 大当たり0回グラフ省略＝非プラス
+      rec('2026-09-24', 3, bb: 15).copyWith(graph: plusGraph),
+      rec('2026-09-24', 4, bb: 10).copyWith(graph: flatGraph), // ゼロ線付近＝判定不能
+      for (var rack = 5; rack <= 8; rack++) rec('2026-09-24', rack),
+    ];
+    expect(answerCheckPlus(withOutcomes[history.length]), isTrue);
+    expect(answerCheckPlus(withOutcomes[history.length + 1]), isFalse);
+    expect(answerCheckPlus(withOutcomes[history.length + 2]), isTrue);
+    expect(answerCheckPlus(withOutcomes[history.length + 3]), isNull);
+
+    final res = answerCheckFor(
+      withOutcomes,
+      'nagamachiminami',
+      '2026-09-24',
+      saved: {
+        'nagamachiminami|2026-09-23': [
+          (rack: 1, index: 65.0, variety: false),
+          (rack: 1, index: 65.0, variety: true), // 重複は1件にまとめる
+          (rack: 2, index: 61.0, variety: false),
+        ],
+      },
+    )!;
+    expect(res.candidates, 2);
+    expect((res.plusJudged, res.plusHits), (2, 1));
+    expect((res.basePlusJudged, res.basePlusHits), (3, 2));
+  });
 }

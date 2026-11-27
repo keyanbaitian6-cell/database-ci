@@ -153,3 +153,64 @@ test('no hit at all (0 spins included) and no graph: end/retention 0 like Meruhe
   const state = progress(data, data.machines[0], '2026-10-01');
   assert.deepEqual(state.pending.map(r => r.rack), [2], '当たり0回の台は台別7日分を待たない');
 });
+
+test('missing my (null from site777) is ignored in hold ranking and AT nextDayEvidence instead of treated as 0', () => {
+  const hash = 'a'.repeat(64);
+  const s777 = (rack, day, games = 3000, bb = 5, rb = 5, g = graph(20, 60)) => ({
+    store: 'c740601', rate: '20', machine: '試験機種', rack, day, games, bb, rb,
+    at_art: null, my: null, detail_url: null, observed_at: null, net_medals: null,
+    source_site: 'site777',
+    source_url: 'https://m.site777.jp/f/D3300.do?pmc=04034001&urt=2000&mdc=120001',
+    source_machine: '試験機種',
+    source_sha256: hash,
+    source_day_label: `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`,
+    source_captured_at: `${day}T23:30:00+09:00`,
+    source_graph: { format: 'site777-yellow-pixels-v1', width: 260, height: 226, image_sha256: hash },
+    graph: g,
+  });
+  const base7 = 'https://www.pscube.jp/dedamajyoho-P-townDMMpachi/c740601/cgi-bin/';
+  const pRec = (rack, day, games, bb, rb, my, g = null) => ({
+    store: 'c740601', rate: '20', machine: '試験機種', rack, day, bb, rb, at_art: 0, games, my,
+    observed_at: null, detail_url: `${base7}nc-v06-001.php?cd_dai=${rack}#${compact(day)}`, graph: g,
+  });
+  const make7 = (records, machinePatch = {}) => validateData({
+    ...emptyData(),
+    machines: [machine({ store: 'c740601', url: `${base7}nc-v05-011.php?cd_ps=2&bai=20`, ...machinePatch })],
+    records,
+  });
+  const pool = [1000, 2000, 3000].map((my, i) => pRec(10 + i, '2026-09-30', 3000, 5, 5, my));
+  const target = pRec(1, '2026-10-01', 3000, 5, 5, 1500, graph(20, 60));
+  const clean = make7([...pool, target]);
+  const withNull = make7([...pool, s777(20, '2026-09-30'), target]);
+  assert.equal(
+    scoreRecord(withNull.records.find(r => r.rack === 1), withNull).parts.hold,
+    scoreRecord(clean.records.find(r => r.rack === 1), clean).parts.hold,
+    'my=null の比較相手を0枚扱いせず除外する',
+  );
+  const nullTarget = s777(2, '2026-10-01');
+  const sNull = scoreRecord(nullTarget, make7([...pool, nullTarget]));
+  assert.equal(sNull.parts.hold, null);
+
+  // AT機（other）の翌日候補で my=null の台が0枚最下位として入らないこと。
+  const atRows = [];
+  for (const day of five) {
+    for (let rack = 1; rack <= 5; rack++) {
+      atRows.push(pRec(rack, day, 3000 + rack, 5, 5, 1000 + (rack === 1 ? 900 : rack * 10)));
+    }
+    atRows.push(s777(6, day, 3006));
+  }
+  const atData = make7(atRows, { machine_type: 'other' });
+  const eNull = nextDayEvidence(atData.records.find(r => r.rack === 6 && r.day === '2026-10-01'), atData);
+  assert.equal(eNull.rawIndex, null);
+  const eClean = nextDayEvidence(atData.records.find(r => r.rack === 1 && r.day === '2026-10-01'), atData);
+  assert.equal(eClean.contributions[0].peers, 5, 'my=nullの6番台は比較相手から除外される');
+
+  // サイトセブン補完（at_art=null）で bb=0, rb=0, graph=null のAT機は「当たり0回省略」扱いせず欠測補完にする。
+  const s777NoGraph = {
+    ...s777(30, '2026-10-01', 2000, 0, 0, null),
+    source_graph: { format: 'site777-yellow-pixels-v1', width: 260, height: 226, image_sha256: hash, error: 'curve_unknown' },
+  };
+  const sNoGraph = scoreRecord(s777NoGraph, make7([...pool, s777NoGraph]));
+  assert.equal(sNoGraph.parts.end, null);
+  assert.equal(sNoGraph.parts.retention, null);
+});

@@ -533,7 +533,11 @@ class SlotRecord {
   /// 表の大当たり（BB+RB）が0回。グラフは取らない（利用者の指定、2026-09-29。
   /// 実データの0回550台で、終点がプラスだったのは24Gの1台だけ）。表を取り
   /// 込み直して当たりが付けば、また取る対象に戻る。PC版 `graph_not_needed`。
-  bool get graphNotNeeded => graph == null && bb + rb + atArt == 0;
+  /// P-STATIONのサイトセブン補完は at_art=null でAT当たりの可能性があるため対象外。
+  bool get graphNotNeeded =>
+      graph == null &&
+      bb + rb + atArt == 0 &&
+      (!isPscube || extra['at_art'] != null);
 
   /// グラフが済んでいる（取り込み済み、または大当たり0回で不要）。
   bool get graphDone => graph != null || bb + rb + atArt == 0;

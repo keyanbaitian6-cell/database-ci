@@ -117,6 +117,9 @@ class BacktestMember {
     required this.nextScore,
     this.rawIndex,
     this.latestUsed = '',
+    this.nextGames,
+    this.nextHits,
+    this.nextPlus,
   });
   final int rack;
 
@@ -134,11 +137,36 @@ class BacktestMember {
   /// 翌日の合計点（正解）。翌日に同じ店舗・機種・台番号の記録が無い、
   /// または採点しない台は null（0点にはしない）。
   final double? nextScore;
+
+  /// 翌日の正常稼働（500G未満含む）のゲーム数と総当たり回数（O/E比用）。異常値・未稼働は null。
+  final int? nextGames;
+  final int? nextHits;
+
+  /// 翌日の記録上のプラス判定（取得差枚→グラフ終点±1px超→大当たり0回省略＝false、不明は null）。
+  final bool? nextPlus;
   bool current = false;
   bool previousScore = false;
 
   /// 探索中の選び方（[exploratoryCandidates]）で選ばれた方式。
   final Set<ExploratoryMethod> exploratory = {};
+}
+
+bool? _plusOutcome(SlotRecord record) {
+  if (record.games <= 0 ||
+      hasImplausibleNumbers(record) ||
+      isExcludedSupplement(record)) {
+    return null;
+  }
+  final net = record.isPscube ? record.netMedals : record.joNet;
+  if (net != null) return net > 0;
+  final g = record.graph;
+  if (g != null) {
+    final end = g.baselineY - g.endY;
+    if (!end.isFinite || end.abs() <= 1) return null;
+    return end > 1;
+  }
+  if (record.graphNotNeeded) return false;
+  return null;
 }
 
 /// 店舗・機種・予測日ごとの候補。[variety] なら、その日その店で1〜3台の
@@ -255,7 +283,13 @@ BacktestRun runBacktest(
         String name,
         List<SlotRecord> rows,
         ({int total, int eligible, List<ProvisionalCandidate> candidates}) app,
-        ({int days, double? index, String confidence}) Function(SlotRecord)
+        ({
+          int days,
+          double? index,
+          String confidence,
+          double? rawIndex,
+          String latestUsed,
+        }) Function(SlotRecord)
         tendencyOf, {
         bool isVariety = false,
       }) {
@@ -264,14 +298,21 @@ BacktestRun runBacktest(
         for (final row in rows) {
           final tendency = tendencyOf(row);
           if (tendency.index == null) continue;
+          final nextKey = '$store|${shiftDay(day, 1)}|${row.machine}|${row.rack}';
+          final nextRow = byKey[nextKey];
           final next = nextScore(store, day, row.machine, row.rack);
           if (next == null) {
-            final exists = byKey.containsKey(
-              '$store|${shiftDay(day, 1)}|${row.machine}|${row.rack}',
-            );
+            final exists = nextRow != null;
             unlabeled[exists ? 'not_scored' : 'no_record'] =
                 unlabeled[exists ? 'not_scored' : 'no_record']! + 1;
           }
+          final validNext =
+              nextRow != null &&
+              nextRow.games > 0 &&
+              nextRow.bb >= 0 &&
+              nextRow.rb >= 0 &&
+              !hasImplausibleNumbers(nextRow) &&
+              !isExcludedSupplement(nextRow);
           members.add(
             BacktestMember(
               rack: row.rack,
@@ -281,8 +322,11 @@ BacktestRun runBacktest(
               confidence: tendency.confidence,
               todayScore: scoreRecord(row, available).total,
               nextScore: next,
-              rawIndex: isVariety ? tendency.index : nextDayEvidence(row, available).rawIndex,
-              latestUsed: isVariety ? '' : nextDayEvidence(row, available).latestUsed,
+              rawIndex: tendency.rawIndex,
+              latestUsed: tendency.latestUsed,
+              nextGames: validNext ? nextRow.games : null,
+              nextHits: validNext ? nextRow.bb + nextRow.rb : null,
+              nextPlus: nextRow == null ? null : _plusOutcome(nextRow),
             ),
           );
         }
@@ -329,7 +373,16 @@ BacktestRun runBacktest(
           machine,
           rows,
           provisionalNextDayCandidates(rows, history),
-          (row) => nextDayIndex(row, history),
+          (row) {
+            final e = nextDayEvidence(row, history);
+            return (
+              days: e.usedDays,
+              index: e.index,
+              confidence: e.usedDays < 7 ? '少' : '中',
+              rawIndex: e.rawIndex,
+              latestUsed: e.latestUsed,
+            );
+          },
         );
         if (built == null) continue;
         groups.add(built);
@@ -346,10 +399,13 @@ BacktestRun runBacktest(
           varietyNextDayCandidates(rows, available),
           (row) {
             final hit = varietyHitPercent(row, available);
+            final idx = hit.percent ?? 50.0;
             return (
               days: hit.refs,
-              index: hit.percent ?? 50.0,
+              index: idx,
               confidence: hit.percent == null ? '比較なし' : (hit.refs < 7 ? '少' : '中'),
+              rawIndex: idx,
+              latestUsed: '',
             );
           },
           isVariety: true,
@@ -692,5 +748,281 @@ Map<String, Object?> evaluateSavedSnapshots(
     'chosen_evaluable': chosen.length,
     'chosen_mean': chosen.isEmpty ? null : _round(_mean(chosen)!),
     'gap_vs_pool': _daySummary(gapByDay),
+  };
+}
+
+List<List<double>> _calendarBlocks(
+  Map<String, double> byDay, {
+  int blockDays = 7,
+  String? anchor,
+}) {
+  if (byDay.isEmpty) return const [];
+  final days = byDay.keys.toList()..sort();
+  final base = DateTime.parse(anchor ?? days.first);
+  final grouped = <int, List<double>>{};
+  for (final day in days) {
+    final idx = DateTime.parse(day).difference(base).inDays ~/ blockDays;
+    grouped.putIfAbsent(idx, () => []).add(byDay[day]!);
+  }
+  return [for (final k in grouped.keys.toList()..sort()) grouped[k]!];
+}
+
+/// 暦日ブロック単位のブートストラップ95%区間（日列の自己相関を保つためブロックごと復元抽出）。
+(double, double)? blockBootstrap(
+  Map<String, double> byDay, {
+  int blockDays = 7,
+  int rounds = 5000,
+  int seed = 20260929,
+  String? anchor,
+}) {
+  final blocks = _calendarBlocks(byDay, blockDays: blockDays, anchor: anchor);
+  if (blocks.length < 2) return null;
+  final stats = [
+    for (final b in blocks) (b.reduce((a, c) => a + c), b.length),
+  ];
+  final rng = Random(seed);
+  final means = <double>[];
+  for (var i = 0; i < rounds; i++) {
+    var s = 0.0;
+    var n = 0;
+    for (var j = 0; j < stats.length; j++) {
+      final pick = stats[rng.nextInt(stats.length)];
+      s += pick.$1;
+      n += pick.$2;
+    }
+    means.add(s / n);
+  }
+  means.sort();
+  return (means[(rounds * 0.025).floor()], means[(rounds * 0.975).floor() - 1]);
+}
+
+/// 暦日ブロック単位の符号反転検定（片側 p 値）。ブロック数14以下は全通り正確計算。
+({double mean, double p, int blocks})? blockSignFlipP(
+  Map<String, double> byDay, {
+  int blockDays = 7,
+  int trials = 10000,
+  int seed = 20260929,
+  String? anchor,
+}) {
+  final blocks = _calendarBlocks(byDay, blockDays: blockDays, anchor: anchor);
+  if (blocks.isEmpty) return null;
+  final sums = [for (final b in blocks) b.reduce((a, c) => a + c)];
+  final totalDays = blocks.fold<int>(0, (n, b) => n + b.length);
+  final observed = sums.reduce((a, c) => a + c) / totalDays;
+  final k = sums.length;
+  if (k <= 14) {
+    final total = 1 << k;
+    var hits = 0;
+    for (var mask = 0; mask < total; mask++) {
+      var signed = 0.0;
+      for (var i = 0; i < k; i++) {
+        signed += ((mask >> i) & 1) == 1 ? sums[i] : -sums[i];
+      }
+      if (signed / totalDays >= observed - 1e-12) hits++;
+    }
+    return (mean: observed, p: hits / total, blocks: k);
+  }
+  final rng = Random(seed);
+  var hits = 0;
+  for (var t = 0; t < trials; t++) {
+    var signed = 0.0;
+    for (var i = 0; i < k; i++) {
+      signed += rng.nextBool() ? sums[i] : -sums[i];
+    }
+    if (signed / totalDays >= observed - 1e-12) hits++;
+  }
+  return (mean: observed, p: (hits + 1) / (trials + 1), blocks: k);
+}
+
+/// 自己相関・稼働バイアス・非無作為欠測を考慮した堅牢評価。
+/// 1) 合計点差の7日／14日ブロック区間・ブロック符号反転検定
+/// 2) 500G未満含む全稼働台の当たり回数比（O/E）
+/// 3) 記録上のプラス率と Manski 最悪／最良境界・共通置換の感度分析
+Map<String, Object?> evaluateRobustMetrics(
+  Iterable<BacktestGroup> groups,
+  bool Function(BacktestMember) picked,
+) {
+  final scoreByDay = <String, List<double>>{};
+  final plusByDay = <String, List<double>>{};
+  final worstByDay = <String, List<double>>{};
+  final bestByDay = <String, List<double>>{};
+  final both0ByDay = <String, List<double>>{};
+  final both1ByDay = <String, List<double>>{};
+  final oeByDay = <String, (double obs, double exp)>{};
+  var oeObs = 0.0, oeExp = 0.0;
+  var candTotal = 0, candPlusJudged = 0, candPlusHits = 0;
+  var poolTotal = 0, poolPlusJudged = 0, poolPlusHits = 0;
+
+  for (final g in groups) {
+    final picks = g.members.where(picked).toList();
+    if (picks.isEmpty || g.members.isEmpty) continue;
+    final poolScores = [for (final m in g.labeled) m.nextScore!];
+    final pickScores = [
+      for (final m in picks)
+        if (m.nextScore != null) m.nextScore!,
+    ];
+    if (poolScores.isNotEmpty && pickScores.isNotEmpty) {
+      scoreByDay
+          .putIfAbsent(g.day, () => [])
+          .add(_mean(pickScores)! - _mean(poolScores)!);
+    }
+
+    final validPool = [
+      for (final m in g.members)
+        if (m.nextGames != null && m.nextGames! > 0 && m.nextHits != null) m,
+    ];
+    final validPicks = [
+      for (final m in picks)
+        if (m.nextGames != null && m.nextGames! > 0 && m.nextHits != null) m,
+    ];
+    if (validPool.isNotEmpty && validPicks.isNotEmpty) {
+      final gPool = validPool.fold<int>(0, (s, m) => s + m.nextGames!);
+      final hPool = validPool.fold<int>(0, (s, m) => s + m.nextHits!);
+      if (gPool > 0) {
+        final rate = hPool / gPool;
+        final gCand = validPicks.fold<int>(0, (s, m) => s + m.nextGames!);
+        final hCand = validPicks.fold<int>(0, (s, m) => s + m.nextHits!);
+        final exp = gCand * rate;
+        oeObs += hCand;
+        oeExp += exp;
+        final prev = oeByDay[g.day] ?? (0.0, 0.0);
+        oeByDay[g.day] = (prev.$1 + hCand, prev.$2 + exp);
+      }
+    }
+
+    candTotal += picks.length;
+    poolTotal += g.members.length;
+    final cj = [
+      for (final m in picks)
+        if (m.nextPlus != null) m.nextPlus! ? 1.0 : 0.0,
+    ];
+    final pj = [
+      for (final m in g.members)
+        if (m.nextPlus != null) m.nextPlus! ? 1.0 : 0.0,
+    ];
+    candPlusJudged += cj.length;
+    candPlusHits += cj.where((v) => v > 0).length;
+    poolPlusJudged += pj.length;
+    poolPlusHits += pj.where((v) => v > 0).length;
+    if (cj.isNotEmpty && pj.isNotEmpty) {
+      plusByDay.putIfAbsent(g.day, () => []).add(_mean(cj)! - _mean(pj)!);
+    }
+    final wc = [
+      for (final m in picks) m.nextPlus == null ? 0.0 : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    final wp = [
+      for (final m in g.members)
+        m.nextPlus == null
+            ? (picked(m) ? 0.0 : 1.0)
+            : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    worstByDay.putIfAbsent(g.day, () => []).add(_mean(wc)! - _mean(wp)!);
+    final bc = [
+      for (final m in picks) m.nextPlus == null ? 1.0 : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    final bp = [
+      for (final m in g.members)
+        m.nextPlus == null
+            ? (picked(m) ? 1.0 : 0.0)
+            : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    bestByDay.putIfAbsent(g.day, () => []).add(_mean(bc)! - _mean(bp)!);
+    final z0c = [
+      for (final m in picks) m.nextPlus == null ? 0.0 : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    final z0p = [
+      for (final m in g.members)
+        m.nextPlus == null ? 0.0 : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    both0ByDay.putIfAbsent(g.day, () => []).add(_mean(z0c)! - _mean(z0p)!);
+    final z1c = [
+      for (final m in picks) m.nextPlus == null ? 1.0 : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    final z1p = [
+      for (final m in g.members)
+        m.nextPlus == null ? 1.0 : (m.nextPlus! ? 1.0 : 0.0),
+    ];
+    both1ByDay.putIfAbsent(g.day, () => []).add(_mean(z1c)! - _mean(z1p)!);
+  }
+
+  Map<String, double> dayMeans(Map<String, List<double>> src) => {
+    for (final day in src.keys.toList()..sort()) day: _mean(src[day]!)!,
+  };
+
+  Map<String, Object?> blockSummary(Map<String, double> dm, {int digits = 2}) {
+    final flip7 = blockSignFlipP(dm, blockDays: 7);
+    final ci7 = blockBootstrap(dm, blockDays: 7);
+    final flip14 = blockSignFlipP(dm, blockDays: 14);
+    final ci14 = blockBootstrap(dm, blockDays: 14);
+    return {
+      'days': dm.length,
+      'mean_of_days': dm.isEmpty ? null : _round(_mean(dm.values)!, digits),
+      'block7_p': flip7 == null ? null : _round(flip7.p, 4),
+      'block7_count': flip7?.blocks ?? 0,
+      'block7_ci95': ci7 == null
+          ? null
+          : [_round(ci7.$1, digits), _round(ci7.$2, digits)],
+      'block14_p': flip14 == null ? null : _round(flip14.p, 4),
+      'block14_count': flip14?.blocks ?? 0,
+      'block14_ci95': ci14 == null
+          ? null
+          : [_round(ci14.$1, digits), _round(ci14.$2, digits)],
+    };
+  }
+
+  final oeExcess = {
+    for (final e in oeByDay.entries)
+      if (e.value.$2 > 0) e.key: e.value.$1 / e.value.$2 - 1.0,
+  };
+  final oeCi7 = blockBootstrap(oeExcess, blockDays: 7);
+  final plusDays = dayMeans(plusByDay);
+  final worstDays = dayMeans(worstByDay);
+  final bestDays = dayMeans(bestByDay);
+  final both0Days = dayMeans(both0ByDay);
+  final both1Days = dayMeans(both1ByDay);
+
+  return {
+    'score_gap': blockSummary(dayMeans(scoreByDay)),
+    'oe_ratio': {
+      'observed': oeObs.round(),
+      'expected': _round(oeExp, 2),
+      'ratio': oeExp > 0 ? _round(oeObs / oeExp, 4) : null,
+      'block7_ratio_ci95': oeCi7 == null
+          ? null
+          : [_round(1.0 + oeCi7.$1, 4), _round(1.0 + oeCi7.$2, 4)],
+    },
+    'plus_rate': {
+      ...blockSummary(plusDays, digits: 4),
+      'cand_total': candTotal,
+      'cand_judged': candPlusJudged,
+      'cand_plus': candPlusHits,
+      'cand_rate': candPlusJudged == 0
+          ? null
+          : _round(candPlusHits / candPlusJudged, 4),
+      'cand_missing_rate': candTotal == 0
+          ? null
+          : _round((candTotal - candPlusJudged) / candTotal, 4),
+      'pool_total': poolTotal,
+      'pool_judged': poolPlusJudged,
+      'pool_plus': poolPlusHits,
+      'pool_rate': poolPlusJudged == 0
+          ? null
+          : _round(poolPlusHits / poolPlusJudged, 4),
+      'pool_missing_rate': poolTotal == 0
+          ? null
+          : _round((poolTotal - poolPlusJudged) / poolTotal, 4),
+      'manski_worst': worstDays.isEmpty
+          ? null
+          : _round(_mean(worstDays.values)!, 4),
+      'manski_best': bestDays.isEmpty
+          ? null
+          : _round(_mean(bestDays.values)!, 4),
+      'both_zero': both0Days.isEmpty
+          ? null
+          : _round(_mean(both0Days.values)!, 4),
+      'both_one': both1Days.isEmpty
+          ? null
+          : _round(_mean(both1Days.values)!, 4),
+    },
   };
 }
