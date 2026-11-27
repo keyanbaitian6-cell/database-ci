@@ -34,7 +34,17 @@ at(51, 'ハナハナ', 7000, {jo_net: -200});  // 幸町では2台の機種は�
 at(1201, '無職転生', 5000, {jo_net: 900}); // 1台だけの機種＝バラエティ🌈。入れない
 const responses = {
   '': {format: 'database-backup', version: 1, exported_at: '2026-10-10T23:00:00+09:00', records},
-  pscube: {format: 'pscube-viewer', version: 1, records: []},
+  pscube: {format: 'pscube-viewer', version: 1, records: [
+    {store: 'c740601', rate: '20', day, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 201, games: 4000, bb: 15, rb: 10, my: 1000, net_medals: 500},
+    {store: 'c740601', rate: '20', day, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 202, games: 3500, bb: 12, rb: 8, my: 800, net_medals: 200},
+    {store: 'c740601', rate: '20', day, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 203, games: 3000, bb: 10, rb: 8, my: 600, net_medals: -100},
+    {store: 'c740601', rate: '20', day, machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 204, games: 2800, bb: 9, rb: 7, my: 400, net_medals: -300},
+    {store: 'c740601', rate: '20', day, machine: 'アイムジャグラー', rack: 101, games: 4200, bb: 16, rb: 12, my: 1200, net_medals: 600},
+    {store: 'c740601', rate: '20', day, machine: 'アイムジャグラー', rack: 102, games: 3900, bb: 14, rb: 10, my: 900, net_medals: 300},
+    {store: 'c740601', rate: '20', day, machine: 'アイムジャグラー', rack: 103, games: 3200, bb: 11, rb: 8, my: 500, net_medals: -200},
+    {store: 'c740601', rate: '20', day, machine: 'アイムジャグラー', rack: 104, games: 2500, bb: 8, rb: 6, my: 300, net_medals: -400},
+    {store: 'c740601', rate: '20', day, machine: 'バラエティ1台', rack: 301, games: 2000, bb: 5, rb: 5, my: 200, net_medals: 0},
+  ]},
   events: {format: 'database-events', version: 1, kind: 'meruhen', events: []},
   'pscube-events': {format: 'database-events', version: 1, kind: 'pscube', events: []},
   rainbow: {format: 'database-rainbow', version: 1, marks: []},
@@ -101,6 +111,15 @@ try {
     await open();
     assert.equal(await sheet.getByLabel('並べ方', {exact: true}).inputValue(), 'net-asc');
     assert.equal(await sheet.getByLabel('機種', {exact: true}).inputValue(), '');
+    // P-STATION では存在しない「バラエティ🌈にあります」を出さず、半角カナ機種も表示名順で並ぶ。
+    await page.getByRole('button', {name: '‹ 戻る'}).click();
+    await page.locator('[data-close]').click();
+    await page.locator('[data-store="pscube:c740601:20"]').click();
+    await open();
+    assert.match(await text(), /バラエティ（1〜3台の機種）以外の台です。/);
+    assert.doesNotMatch(await text(), /バラエティ🌈にあります/);
+    const machineOpts = await sheet.locator('select[data-all-machine] option').allInnerTexts();
+    assert.deepEqual(machineOpts, ['すべての機種', 'アイムジャグラー', 'マイジャグラーV']);
     assert.deepEqual(errors, []);
     await context.close();
   }

@@ -832,4 +832,29 @@ test('最新営業日の3店舗比較：台データ・HTML勝率集計のみ・
   assert.equal(rows[2].hasSummary, false);
 });
 
+test('半角カナ・全角カナ・空白ゆれの同一機種判定：7日推移と機種順ソートで正しく扱う', async () => {
+  const {sameMachineName, rackRecentHistory, allRacksOrder} = await import('../../share_viewer/data.mjs');
+  assert.equal(sameMachineName('ﾏｲｼﾞｬｸﾞﾗｰV', 'マイジャグラーV'), true);
+  assert.equal(sameMachineName('L+北斗の拳', 'L 北斗の拳'), true);
+  assert.equal(sameMachineName('マイジャグラーV', 'ファンキージャグラー2'), false);
+  const byDay = indexRecords([
+    {store: 'pscube:c740601:20', day: '2026-11-22', machine: 'マイジャグラーV', rack: 55, games: 6000, bb: 25, rb: 20, net: 1500, estimated: true},
+    {store: 'pscube:c740601:20', day: '2026-11-21', machine: 'ﾏｲｼﾞｬｸﾞﾗｰV', rack: 55, games: 5500, bb: 20, rb: 18, net: 800, estimated: false},
+    {store: 'pscube:c740601:20', day: '2026-11-20', machine: '旧機種テスト', rack: 55, games: 4000, bb: 10, rb: 8, net: -600, estimated: false},
+  ]);
+  const history = rackRecentHistory(byDay, new Map(), 'pscube:c740601:20', 55, '2026-11-22', 7);
+  assert.equal(history.length, 3);
+  assert.equal(history[0].sameMachine, true);
+  assert.equal(history[1].sameMachine, true, '半角カナ→全角カナ跨ぎでも同一機種と判定する');
+  assert.equal(history[2].sameMachine, false);
+
+  const ordered = allRacksOrder([
+    {machine: 'ハナハナ', rack: 1},
+    {machine: 'ｱｲﾑｼﾞｬｸﾞﾗｰ', rack: 2},
+    {machine: 'マイジャグラー', rack: 3},
+  ], 'machine');
+  assert.deepEqual(ordered.map(r => r.rack), [2, 1, 3], '半角カナのアイムジャグラーが五十音順の先頭になる');
+});
+
+
 

@@ -122,6 +122,8 @@ try {
     assert.deepEqual(await sheet.locator('.rotation .who .num').allInnerTexts(), ['1202', '1203', '1201']);
     await sheet.locator('.rotation .who', {hasText: '1203'}).click();
     assert.equal(await page.locator('#sheet-title').innerText(), '1203番台');
+    assert.match(await page.locator('[data-rack-step="-1"]').innerText(), /前の台（1202番/);
+    assert.match(await page.locator('[data-rack-step="1"]').innerText(), /次の台（1201番/);
     await page.getByRole('button', {name: '‹ 戻る'}).click();
     assert.equal(await sheet.getByLabel('並べ方', {exact: true}).inputValue(), 'games-asc');
 

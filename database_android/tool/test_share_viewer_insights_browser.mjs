@@ -107,6 +107,7 @@ try {
     assert.equal(await page.locator('i').count(), 0, 'iタグは使わない');
     assert.equal(await page.getByText(/P’s CUBE/).count(), 0, 'P-STATION表記を守る');
     assert.match(await cards.nth(0).innerText(), /長町南\s*11\/26\s*特日<b>\s*\+3,600/);
+    assert.match(await cards.nth(0).innerText(), /勝率67%/, '3店舗比較カードに勝率ラベルを付ける');
     assert.match(await cards.nth(1).innerText(), /幸町\s*11\/26.*勝率37%\s*185\/500台/s);
     assert.match(await cards.nth(2).innerText(), /P-STATION\s*11\/25\s*末尾強化\s*\+1,900/);
     assert.ok(await cards.nth(0).evaluate(e => e.classList.contains('active')), '選択中の長町南がactive');
@@ -126,7 +127,7 @@ try {
     await trend.waitFor();
     assert.equal(await trend.locator('.rack-trend-list > li').count(), 7, '直近7営業日だけ表示（8日前の11/19は含めない）');
     assert.doesNotMatch(await trend.innerText(), /11\/19/);
-    assert.match(await trend.locator('.rack-trend-summary').innerText(), /記録 7日 ・ プラス 4\/7日 ・ 合計 \+2,850枚 ・ 平均 5,514G/);
+    assert.match(await trend.locator('.rack-trend-summary').innerText(), /同機種 6日 ・ プラス 4\/6日 ・ 合計 \+3,350枚 ・ 平均 5,917G ・ 別機種 1日（集計外）/);
     assert.match(await trend.locator('.rack-trend-item.current').innerText(), /11\/26.*表示中.*特日<b>/s);
     assert.match(await trend.innerText(), /並びイベ/);
     assert.match(await trend.locator('.rack-trend-item.other-machine').innerText(), /11\/21.*別機種：旧機種テスト/s);
@@ -178,6 +179,9 @@ try {
     await page.locator('[data-search-day-rack="0"]').click();
     assert.equal(await page.locator('#sheet-title').innerText(), '55番台');
     assert.equal(await page.locator('.rack-trend-list > li').count(), 2, '検索経由の台詳細にも直近推移が出る');
+    assert.equal(await page.locator('.rack-trend-item.other-machine').count(), 0, '半角カナと全角カナの同一機種を別機種扱いしない');
+    await page.locator('[data-rack-history-day="2026-11-24"]').click();
+    assert.equal(await page.getByRole('combobox', {name: '表示する日付'}).inputValue(), '2026-11-24', '半角→全角カナ跨ぎでも11/24へ移動できる');
     await page.getByRole('button', {name: '‹ 戻る'}).click();
     await page.getByRole('button', {name: '‹ 戻る'}).click();
     await page.getByRole('button', {name: '‹ 戻る'}).click();

@@ -66,7 +66,7 @@ List<(SlotRecord, ScoreResult)> sortMachineEntries(
   return [...entries]..sort((a, b) {
     var order = 0;
     if (sort == 'machine') {
-      order = a.$1.machine.compareTo(b.$1.machine);
+      order = compareMachineNames(a.$1.machine, b.$1.machine);
     } else if (sort != 'rack') {
       final x = value(a), y = value(b);
       if (x == null || y == null) {
@@ -77,6 +77,18 @@ List<(SlotRecord, ScoreResult)> sortMachineEntries(
     }
     return order != 0 ? order : a.$1.rack.compareTo(b.$1.rack);
   });
+}
+
+/// 一覧の差枚ラベル：有効な差枚に推定差枚が1台でも含まれれば「推定差枚」とする（先頭1台だけで決めない）。
+String _netLabelFor(List<(SlotRecord, ScoreResult)> entries) {
+  final hasEstimate = entries.any(
+    (e) =>
+        !hasImplausibleNumbers(e.$1) &&
+        e.$1.netValue != null &&
+        e.$1.netLabel == '推定差枚',
+  );
+  if (hasEstimate) return '推定差枚';
+  return entries.firstOrNull?.$1.netLabel ?? '差枚';
 }
 
 /// 機種の見出しと「データ表示／グラフ表示」のタブ、その中身。[machine] が
@@ -176,7 +188,7 @@ class _MachineSectionState extends State<MachineSection> {
     final all = widget.machine == allMachinesName;
     final names = [
       ...{for (final e in widget.entries) e.$1.machine},
-    ]..sort();
+    ]..sort(compareMachineNames);
     final only = all && names.contains(_only) ? _only : null;
     final entries = sortMachineEntries([
       for (final e in widget.entries)
@@ -187,7 +199,7 @@ class _MachineSectionState extends State<MachineSection> {
     final longTrendRacks = widget.longTrendRacks.intersection(shownRacks);
     final average = rackAverages(entries).score;
     final machines = {for (final e in entries) e.$1.machine};
-    final netLabel = widget.entries.firstOrNull?.$1.netLabel ?? '差枚';
+    final netLabel = _netLabelFor(entries);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -552,8 +564,8 @@ class MachineDataTable extends StatelessWidget {
     );
     final avg = rackAverages(entries);
     final pscube = entries.firstOrNull?.$1.isPscube == true;
-    // P’s CUBEは元グラフの確定差枚、メルヘンはグラフと最大持玉からの推定差枚。
-    final netLabel = entries.firstOrNull?.$1.netLabel ?? '差枚';
+    // P-STATION は元グラフの確定差枚またはサイトセブン・アナスロの推定差枚、メルヘンは推定差枚（ジャグラーオンラインがあれば確定）。
+    final netLabel = _netLabelFor(entries);
     final columns = <(String, double)>[
       ..._columns.take(7),
       (netLabel, 78.0),
@@ -564,6 +576,11 @@ class MachineDataTable extends StatelessWidget {
         if (!hasImplausibleNumbers(e.$1) && e.$1.netValue != null)
           e.$1.netValue!,
     ];
+    final pscubeEstimated = entries
+        .where(
+          (e) => !hasImplausibleNumbers(e.$1) && e.$1.pscubeNetEstimate != null,
+        )
+        .length;
     Color? stripe(int i) => i.isOdd ? _stripe : Colors.white;
 
     Widget row(int i, List<Widget> cells) {
@@ -649,11 +666,10 @@ class MachineDataTable extends StatelessWidget {
             if (showMachine) _machineCell(entries[i].$1.machine, stripe(i)),
             for (final (index, child)
                 in (hasImplausibleNumbers(entries[i].$1)
-                        // サイトの数値が異常な台（88888888など）は、数字を出さない。
+                        // サイトの数値が異常な台（88888888など）は、数字を出さない（差枚列も含め10列をそろえる）。
                         ? [
                             _text('異常'),
-                            for (var k = 0; k < 6; k++) _text('—'),
-                            if (pscube) _text('—'),
+                            for (var k = 0; k < 7; k++) _text('—'),
                             _setting(context, entries[i].$1),
                             _score(entries[i].$2),
                           ]
@@ -758,13 +774,19 @@ class MachineDataTable extends StatelessWidget {
         Text(
           [
             '表は横にスライドできます',
-            pscube
+            !pscube
+                ? '推定差枚はグラフと最大持玉からの計算（誤差あり・計算できた${netValues.length}/${entries.length}台）'
+                : pscubeEstimated == 0
                 ? '差枚は元グラフの取得済み${netValues.length}/${entries.length}台'
-                : '推定差枚はグラフと最大持玉からの計算（誤差あり・計算できた${netValues.length}/${entries.length}台）',
+                : pscubeEstimated == netValues.length
+                ? '推定差枚はグラフからの計算（確定値ではありません・${netValues.length}/${entries.length}台）'
+                : '差枚は${netValues.length}/${entries.length}台（うち推定$pscubeEstimated台・確定値ではありません）',
             if (entries.any(
               (e) => !hasImplausibleNumbers(e.$1) && e.$1.netNeedsCheck,
             ))
-              '※＝グラフだけでは縦軸の目盛りを決めきれず、回転数から選び直した推定（要確認）',
+              pscube
+                  ? '※＝グラフからの推定で不確かな値（要確認）'
+                  : '※＝グラフだけでは縦軸の目盛りを決めきれず、回転数から選び直した推定（要確認）',
             if (candidateRacks.isNotEmpty || longTrendRacks.isNotEmpty)
               '★＝$referenceCandidateLegend',
             if (markedRacks.isNotEmpty && markLegend != null) '◎＝$markLegend',
@@ -1152,7 +1174,10 @@ class _NextDayCandidatesCardState extends State<NextDayCandidatesCard> {
             OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => DailyLearningPage(store: widget.store),
+                  builder: (_) => DailyLearningPage(
+                    store: widget.store,
+                    records: widget.allRecords,
+                  ),
                 ),
               ),
               icon: const Icon(Icons.model_training),

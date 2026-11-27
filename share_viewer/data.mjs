@@ -29,6 +29,15 @@ export function displayMachineName(name) {
   return String(name ?? '').replace(/[｡-ﾟ]+/g, s => s.normalize('NFKC'));
 }
 
+/** 機種名の同一判定：半角カナ→全角カナ・`+` と連続空白をそろえて比べる（P-STATION の旧P’s CUBE⇔サイトセブン跨ぎなど）。 */
+export function machineIdentity(name) {
+  return displayMachineName(name).replaceAll('+', ' ').replace(/\s+/g, ' ').trim();
+}
+
+export function sameMachineName(a, b) {
+  return a != null && b != null && machineIdentity(a) === machineIdentity(b);
+}
+
 export function storeLabel(store, short = false) {
   if (MERUHEN_STORES[store]) return short ? MERUHEN_STORES[store].short : MERUHEN_STORES[store].name;
   const m = /^pscube:c\d+:(\d+(?:\.\d+)?)$/.exec(store);
@@ -777,7 +786,7 @@ export function allRacksOrder(rows, sort) {
   const field = sort.startsWith('games') ? 'games' : sort.startsWith('net') ? 'net' : null;
   const sign = sort.endsWith('-desc') ? -1 : 1;
   const value = x => (field && Number.isFinite(x[field]) ? x[field] : null);
-  return [...rows].sort((a, b) => (sort === 'machine' ? a.machine.localeCompare(b.machine, 'ja')
+  return [...rows].sort((a, b) => (sort === 'machine' ? displayMachineName(a.machine).localeCompare(displayMachineName(b.machine), 'ja')
     : field ? Number(value(a) == null) - Number(value(b) == null) || sign * ((value(a) ?? 0) - (value(b) ?? 0)) : 0)
     || a.rack - b.rack);
 }
@@ -1209,7 +1218,7 @@ export function rackRecentHistory(byDay, events, store, rack, day, limit = 7) {
   return found.map(r => ({
     day: r.day,
     machine: r.machine,
-    sameMachine: r.machine === currentMachine,
+    sameMachine: sameMachineName(r.machine, currentMachine),
     games: r.games,
     bb: r.bb,
     rb: r.rb,

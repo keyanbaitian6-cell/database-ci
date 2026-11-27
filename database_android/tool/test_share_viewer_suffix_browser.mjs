@@ -103,6 +103,7 @@ try {
     assert.match(ps, /P-STATION（20スロ）・末尾0・1・2・3・5・6・7・8とゾロ目（下2桁が00・11・22・33・55・66・77・88/);
     assert.match(ps, /平均差枚の首位：末尾8/);
     assert.match(ps, /サイトの差枚/);
+    assert.match(ps, /サイトセブンやアナスロからの推定差枚/);
     const overflow = await page.evaluate(() => {
       const s = document.querySelector('.sheet');
       return Math.max(document.documentElement.scrollWidth - window.innerWidth, s.scrollWidth - s.clientWidth);

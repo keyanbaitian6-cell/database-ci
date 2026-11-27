@@ -5176,3 +5176,73 @@
 
 
 
+## 2026-11-27 共有カレンダー・ブラウザ版（iPhone閲覧ページ）の各店舗仕様の横断監査と修正（Gemini／クラウド環境）
+
+- **依頼**：利用者「deepsearchし、今現在の共有カレンダー、ブラウザ版の各店舗分の仕様について改善点があれば修正をおねがいします。」→「続きをお願い」。
+- **対象画面・店舗**：
+  - 共有カレンダー（`share_viewer/` → 公開先 `keyanbaitian6-cell/database-share`）
+  - ブラウザ版・iPhone 閲覧ページ（`database_android/lib/`・`database_android/web/` → 公開先 `keyanbaitian6-cell/database-viewer`）
+  - 対象3店舗：スーパーメルヘンワールド長町南（`nagamachiminami`）・スーパーメルヘンワールド幸町（`saiwaichou`）・P-STATION（`pscube:c740601:20`、2026-11-22以降はサイトセブンから取り込み・保存形式は `pscube` のまま）
+- **基準コミット**：`1c8dd70`（`origin/cloud/20261127-share-calendar-readability` `bcd2c4b` に `keyanbaitian6-cell/database-ci` の `main` `001afa2` をマージした状態）。作業ブランチは `imakurudev-eng/database` の `cloud/20261127-viewer-share-store-fixes`。
+- **見つけた改善点・不具合と修正方針**：
+  - **共有カレンダー（`share_viewer/data.mjs`, `share_viewer/app.mjs`）**
+    1. **P-STATION の半角カナ⇔全角カナ機種名跨ぎによる分断修正**：11/21以前の旧 P’s CUBE 由来（半角カナ）と11/22以降のサイトセブン由来（全角カナ）や `+`・空白ゆれが厳密文字列一致（`===`）で別機種扱いされ、台詳細の7日推移・日付送り・機種別表示（0台化）・前後台移動が途切れていた。`data.mjs` に `machineIdentity` / `sameMachineName` を追加し、`rackRecentHistory`・`daysOfView`・`setViewDay`・`rackNeighbor`・`rackStepBar`・`machineView` で共通利用するように修正。
+    2. **機種名ソート順の正規化**：`allRacksOrder` の `'machine'` ソートおよび `allRacksView` の機種プルダウン並びを `displayMachineName` 基準の日本語 `localeCompare` に統一（半角カナ機種が末尾に飛ぶ問題を解消）。
+    3. **台詳細の直近7日推移で別機種混在時の集計分離**：入れ替え等で別機種の日が含まれる場合、サマリー（記録日数・プラス日数・合計差枚・平均G）を同機種の日だけで集計し、末尾に `別機種 N日（集計外）` を表示（別機種が無い通常時は従来どおり `記録 N日`）。
+    4. **3店舗比較カードのメタ情報充実**：`storeComparisonSection` に `勝率N%` と推定差枚時の `推定` 表示を追加。
+    5. **幸町・P-STATION 固有の表示・操作バグ修正**：
+       - `titleOfView` の履歴シート固定見出しが幸町でも「イベント履歴」になっていた問題を、`saiwaichou` では「バラエティ履歴」を返すよう修正。
+       - `openEventHistory` で不要な `if (!state.eventHistory && saiwaichou)` ガードにより、長町南履歴が欠損した場合に幸町のバラエティ履歴まで開けなくなるバグを削除。履歴セルの `aria-label` にも `displayMachineName` を適用。
+       - `allRacksView` で、バラエティ🌈ページが存在しない P-STATION にも「バラエティ🌈にあります。」と誤案内していた文言を、P-STATION では「バラエティ（1〜3台の機種）以外の台です。」に修正。
+       - `openVariety` の行クリック時（`onRow`）が `gap` 以外を一律 `view.rows`（台番号順）で渡していたため、回転数順ソート時に台詳細の「前の台・次の台」が台番号順のままだったバグを `rotationOrder(view.rows, view.sort)` に修正。
+       - `netNameOf` を店舗全体でなく表示対象 `list` の `r.net != null && r.estimated` 基準に統一（確定差枚のみの機種・一覧に「推定差枚」が出ないよう整理）。
+       - `openSuffix` の P-STATION 注記から二重括弧と旧表記を改め、「サイトの差枚・サイトセブンやアナスロからの推定差枚」に更新。
+  - **ブラウザ版・iPhone 閲覧ページ（`database_android/lib/`, `database_android/web/`）**
+    1. **P-STATION サイトセブン推定差枚の出典誤記と注記不足の解消**：
+       - `calendar_day_page.dart`：推定差枚の出典を `extra['source_site']`（`site777` / `anaslo`）で出し分け（従来はサイトセブン由来も「アナスロの集計時点の値」と誤表示）、推定差枚を含む日に「確定値ではありません（※は要確認）」注記を追加。
+       - `daily_net_page.dart`：`dailyNetNote` の P-STATION 文言へ「サイトセブン・アナスロからの推定差枚を含む場合があります」を追記し、下部注記に推定差枚と `（※N）` の説明を追加。
+       - `machine_sections.dart`：全行を見て差枚見出しを決める `_netLabelFor(entries)` を追加（先頭1台依存を解消）。フッター注記・`※` 説明を P-STATION の確定／推定／混在へ対応し、P-STATION でメルヘン用の「回転数から選び直した推定」が出る誤記を解消。
+       - `shared_widgets.dart`：`DaySummaryCard` に P-STATION 推定差枚（`pscubeNetEstimate != null`）のラベル・注記を追加。
+    2. **メルヘン異常数値行の列数ずれクラッシュ予防**：`machine_sections.dart` の `MachineDataTable` で異常数値行の `—` セル数がメルヘン時だけ6個（全体9列＝ヘッダ10列と不一致）になっていたバグを7個（10列一致）に修正。
+    3. **日次学習ページへの `allRecords` 渡し忘れ修正**：`machine_sections.dart` の `NextDayCandidatesCard` から `DailyLearningPage` を開く際に `records: widget.allRecords` を渡すよう修正（P-STATION 台番号のサイトセブンリンクが出なくなる欠落を解消）。
+    4. **機種名表示・ソート・確率計算の統一**：
+       - `machine_sections.dart` の `sortMachineEntries` と `MachineSection` の `names` ソートを `compareMachineNames` に統一。
+       - `shared_widgets.dart` の重複警告の機種名へ `displayMachineName` を適用、`RackTrend` と `RackStats` の合成確率表示を `hitRate(...)` に統一（`games == 0` の `1/0.0` 防止）。
+       - `store_pattern_page.dart` の `_chancePill` の不要な `displayMachineName` を除去し、`_unusableReason(r, short: ...)` を導入して上部カードと日ごとの履歴一覧（従来は一律「台が少ない・全部プラスかマイナス」）の判定除外理由を一致させた。
+    5. **利用者向け案内文の「P-STATION」表記統一**：`viewer_main.dart`（1127・1265行目）と `web/index.html`（88行目 `notBackup`）の「P’s CUBE」表記を「P-STATION」に更新。
+- **保持した仕様・設定**：
+  - P’s CUBE 取り込み機能（`pscube_import_page.dart`・`pscube_capture.js` 等）は無変更（2026-11-22 利用者決定）。
+  - 共有カレンダーに採点は追加しない（2026-11-01 利用者決定）。
+  - 日次学習画面の台番号リンクは既存仕様どおり P-STATION（Web）限定のまま（`daily_learning_page_test.dart` と整合）。
+  - Android APK は作成しない（2026-11-25 利用者「APKは指示あるまでいりません」）。
+  - `database/data/daily-learning/journal.sqlite3` の `outcomes`/`decisions` は開いていない。対象サイトへも一切接続していない。
+- **変更ファイル（全19ファイル）**：
+  - 共有カレンダー実装：`share_viewer/data.mjs`, `share_viewer/app.mjs`
+  - ブラウザ版実装：`database_android/lib/calendar_day_page.dart`, `database_android/lib/daily_net_page.dart`, `database_android/lib/machine_sections.dart`, `database_android/lib/shared_widgets.dart`, `database_android/lib/store_pattern_page.dart`, `database_android/lib/viewer_main.dart`, `database_android/web/index.html`
+  - テスト（新規1・更新9）：`database_android/test/viewer_store_specs_test.dart`（新規・7件）, `database_android/test/event_calendar_test.dart`, `database_android/test/store_pattern_test.dart`, `database_android/tool/test_share_viewer.mjs`, `database_android/tool/test_share_viewer_insights_browser.mjs`, `database_android/tool/test_share_viewer_all_racks_browser.mjs`, `database_android/tool/test_share_viewer_rainbow_browser.mjs`, `database_android/tool/test_share_viewer_suffix_browser.mjs`, `database_android/tool/test_event_history_browser.mjs`, `database_android/tool/test_viewer_backup_parser.mjs`
+
+### 確認の表
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 共有カレンダー公開ステージ生成・非公開文字列検査 | 済（AI直接確認） | `python3 database_android/tool/stage_share_viewer.py /tmp/share-stage`：19ファイル・版 `b1b443cd43dc`、記録文字列0種・スクリプトID該当なし |
+| Node 単体試験19本（共有カレンダー＋閲覧ページJS＋PC採点v12照合） | 済（AI直接確認） | `TZ=Asia/Tokyo PYTHON=python3 PLAYWRIGHT_MODULE=/tmp/pw/node_modules/playwright-core/index.mjs CHROMIUM_PATH=/usr/bin/google-chrome node --test tool/test_viewer_backup_parser.mjs tool/test_viewer_day_store.mjs tool/test_viewer_parts.mjs tool/test_viewer_storage_report.mjs tool/test_viewer_history_performance.mjs tool/test_viewer_drive_script.mjs tool/test_viewer_drive_script_readonly.mjs tool/test_recommendations.mjs tool/test_rainbow_today.mjs tool/test_variety_scope.mjs tool/test_variety_week.mjs tool/test_event_history.mjs tool/test_event_history_shared.mjs tool/test_day_comment.mjs tool/test_daily_learning.mjs tool/test_saiwaichou_history.mjs tool/test_share_viewer.mjs tool/test_share_android_entry.mjs tool/test_share_icon_assets.mjs`：**219/219 PASS（失敗0）** |
+| 共有カレンダー隔離ブラウザ結合試験（`/tmp/share-stage`、Chromium 320/393/1280px） | 済（AI直接確認） | `test_share_viewer_browser.mjs`・`test_share_viewer_insights_browser.mjs`・`test_share_viewer_all_racks_browser.mjs`・`test_share_viewer_rainbow_browser.mjs`・`test_share_viewer_suffix_browser.mjs`・`test_share_viewer_suffix_mark_browser.mjs`・`test_event_history_browser.mjs`・`test_event_history_recovery_browser.mjs`（17/17）・`test_share_calendar_review_browser.mjs`・`test_share_history_reread_browser.mjs`・`test_share_loading_browser.mjs`・`test_share_long_history_browser.mjs`（3/3）・`test_share_viewer_idle_browser.mjs`・`test_share_android_browser.mjs`・`test_daily_learning_browser.mjs`・`test_recommendations_browser.mjs` 共有側（3/3）**全件 PASS**（`test_recommendations_browser.mjs` の `viewer` 側3件と `test_variety_week_browser.mjs` は Flutter Web ビルド未生成のためクラウドでは未実行） |
+| Flutter 静的解析（変更・新規の Dart 9ファイル） | 済（AI直接確認） | `flutter analyze --no-pub --no-fatal-infos ...`：**エラー0・警告0**（Flutter 3.50.0 の `material.dart` 非推奨 info のみ） |
+| Flutter 全テスト（`test/` 全体） | 済（AI直接確認） | `flutter test --no-pub`（`assets/database_seed.json` は example から一時配置・`.gitignore` 対象）：**922/922 All tests passed!**（新規 `test/viewer_store_specs_test.dart` 7件を含む） |
+| ソースのクラウド引き渡しブランチ push | 済（直後に実施） | `imakurudev-eng/database` の `cloud/20261127-viewer-share-store-fixes` へ push（`main` 直接 push・PR 作成なし） |
+| 全体ゲート（`check_before_build.sh`）・閲覧ページ Web ビルド・`database-ci` 送信 | **未確認** | クラウド環境に専用 Python 仮想環境がなく、`keyanbaitian6-cell/database-ci` への push 権限なし（HTTP 403）のため未実施 |
+| 共有カレンダーの Web 公開（`database-share`） | **未公開** | クラウドから `database-share` への push 権限なし。`keyanbaitian6-cell/database-ci` の手動ワークフロー `publish_share.yml` で `source_repo=imakurudev-eng/database`, `source_ref=cloud/20261127-viewer-share-store-fixes` を指定すれば全体ゲート＋共有カレンダー公開まで実行可能 |
+| ブラウザ版・閲覧ページの Web 公開（`database-viewer`） | **未公開** | `stage_viewer.py` と `database-viewer` への push が必要（PC側ローカルAIへ引き渡し） |
+| Google スクリプト貼替・デプロイ／同期実行 | 不要（変更なし） | Apps Script（`.gs`）は無変更 |
+| 実機（iPhone Safari・Android Chrome）・実データ確認 | **未確認** | 合成データ・Chromium 確認まで |
+| Android APK | **未更新（利用者の指示待ち）** | Dart を更新したが 2026-11-25 の利用者決定どおり未作成 |
+
+- **次の手順（PC側ローカルAIまたは手動ワークフロー）**：
+  1. 共有カレンダーだけ先に公開する場合：利用者が GitHub Actions（`keyanbaitian6-cell/database-ci` の `Publish share calendar`）で `source_repo=imakurudev-eng/database`, `source_ref=cloud/20261127-viewer-share-store-fixes` を指定して実行すると、全体ゲート（`check_before_build.sh`）の通過確認と `database-share` への公開まで一括で完了する。
+  2. PC 側ローカルAIの統合・公開手順：
+     - `git status` で別作業の混入が無いことを確認し、`git fetch origin cloud/20261127-viewer-share-store-fixes` で取得して最新 `main` へ履歴を壊さず統合する（先に残っている `cloud/20261127-share-calendar-readability` と `001afa2` もこのブランチに含まれている）。
+     - `bash database_android/tool/check_before_build.sh`（`TZ=JST-9`・`CHECK_JS_JOBS=2`）を実行し、**ALL PASSED** を確認して結果を `AI_COLLABORATION.md` に追記・コミットする。
+     - `python tools/push_ci.py` で期間内（月後半は `keyanbaitian6-cell/database-ci`）の `main` へ送信する。
+     - `python database_android/tool/stage_viewer.py <database-viewer クローン先>` でブラウザ版（メルヘン・P-STATION 両方）を公開し、共有カレンダーが未公開なら `stage_share_viewer.py` で `database-share` も公開してライブ配信照合を行う。
+     - 送信後に一時ブランチ `cloud/20261127-viewer-share-store-fixes`（および統合済みの `cloud/20261127-share-calendar-readability`）を削除する。

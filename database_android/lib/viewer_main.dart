@@ -1124,7 +1124,7 @@ class _ViewerHomeState extends State<ViewerHome> {
         title: 'バックアップを読み込んでください',
         body:
             '「バックアップを読み込む」を押し、「ファイル」からGoogleドライブの'
-            '${Uri.base.path.contains('/pscube/') ? 'P’s CUBEのJSONまたはWebArchive' : 'バックアップJSON'} を選びます。読み込んだ内容はこの端末の中だけで'
+            '${Uri.base.path.contains('/pscube/') ? 'P-STATIONのバックアップJSONまたはWebArchive' : 'バックアップJSON'} を選びます。読み込んだ内容はこの端末の中だけで'
             '使い、どこにも送りません。次からは選び直さなくても開けます。',
       ),
       const SizedBox(height: 12),
@@ -1262,7 +1262,7 @@ class _ViewerHomeState extends State<ViewerHome> {
             text:
                 'このバックアップには、この日より前の記録が$history日分しかありません。'
                 '採点は前の30日分と比べるため、点数が中立（50〜60点前後）に寄っています。'
-                '${data.source == 'pscube' ? '以前の日付も含むP’s CUBEのバックアップを追加で読み込んでください。' : '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。'}',
+                '${data.source == 'pscube' ? '以前の日付も含むP-STATIONのバックアップを追加で読み込んでください。' : '全期間のバックアップ（PC版の「database共有」にある database-backup-auto.json か、Android版で「すべての日付」を選んで書き出したもの）を読み込んでください。'}',
           ),
         if (_loading) const LinearProgressIndicator(),
         // Driveの確認中は動く表示にしない（動いている間は画面を描き直し続け、

@@ -661,7 +661,8 @@ void main() {
         reason: 'マスには※を付けない',
       );
       expect(dailyNetNote('saiwaichou'), contains('推定'));
-      expect(dailyNetNote(scope), isNot(contains('推定')));
+      expect(dailyNetNote(scope), contains('元グラフの差枚がわかった台の合計'));
+      expect(dailyNetNote(scope), contains('サイトセブン・アナスロからの推定差枚'));
     });
 
     test('P’s CUBEのイベントは入力時刻を持ち、前日までの入力は＊が付かない', () {

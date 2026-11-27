@@ -187,9 +187,12 @@ void main() {
     ]);
     expect(find.textContaining('稼働した台の7割に届かない'), findsOneWidget);
     expect(find.textContaining('全部プラス、または全部マイナス'), findsNothing);
+    expect(find.text('判定しない日（プラスか分かる台が稼働台の7割未満）'), findsOneWidget);
+    expect(find.text('判定しない日（台が少ない・全部プラスかマイナス）'), findsNothing);
     // 全部プラスの日は今までどおり。
     await show([for (var i = 1; i <= 12; i++) rack(i, true)]);
     expect(find.textContaining('全部プラス、または全部マイナス'), findsOneWidget);
+    expect(find.text('判定しない日（全部プラスか全部マイナス）'), findsOneWidget);
   });
 
   test('同点の機種は、台番号の順に最初に出てきた順（PCの並べ替えと同じ、2026-11-22）', () {

@@ -43,6 +43,11 @@ class DaySummaryCard extends StatelessWidget {
         if (!hasImplausibleNumbers(e.$1) && e.$1.netValue != null)
           e.$1.netValue!,
     ];
+    final pscubeEstimated = entries
+        .where(
+          (e) => !hasImplausibleNumbers(e.$1) && e.$1.pscubeNetEstimate != null,
+        )
+        .length;
     final netChecks = entries
         .where((e) => !hasImplausibleNumbers(e.$1) && e.$1.netNeedsCheck)
         .length;
@@ -78,7 +83,9 @@ class DaySummaryCard extends StatelessWidget {
                     ? (pscube
                           ? '差枚はまだ取得していません（0/${entries.length}台）'
                           : '推定差枚を計算できる台がありません（0/${entries.length}台）')
-                    : '記録内の${pscube ? '差枚' : '推定差枚'}合計 ${signedMedals(nets.reduce((a, b) => a + b))}枚'
+                    : '記録内の${!pscube || pscubeEstimated == nets.length ? '推定差枚' : '差枚'}合計 '
+                          '${signedMedals(nets.reduce((a, b) => a + b))}枚'
+                          '${pscube && pscubeEstimated > 0 && pscubeEstimated < nets.length ? '（うち推定$pscubeEstimated台）' : ''}'
                           '（${nets.length}/${entries.length}台）'
                           '・平均 ${signedMedals((nets.reduce((a, b) => a + b) / nets.length).round())}枚'
                           '${netChecks > 0 ? '（※要確認$netChecks台を含む）' : ''}',
@@ -88,10 +95,13 @@ class DaySummaryCard extends StatelessWidget {
                 ),
               ),
               Text(
-                pscube
-                    ? '表示中の記録にある台だけの合計です。店舗全体の総差枚ではありません。'
-                    : '推定差枚はグラフと最大持玉からの計算で、確定値ではありません（誤差あり）。'
-                          '表示中の記録にある台だけの合計です。',
+                !pscube
+                    ? '推定差枚はグラフと最大持玉からの計算で、確定値ではありません（誤差あり）。'
+                          '表示中の記録にある台だけの合計です。'
+                    : pscubeEstimated > 0
+                    ? 'サイトセブンやアナスロからの推定差枚を含みます（確定値ではありません）。'
+                          '表示中の記録にある台だけの合計です。店舗全体の総差枚ではありません。'
+                    : '表示中の記録にある台だけの合計です。店舗全体の総差枚ではありません。',
                 style: const TextStyle(color: AppColors.ash, fontSize: 12),
               ),
             ],
@@ -106,7 +116,7 @@ class DaySummaryCard extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
                   '⚠ 要確認：数値（回転・BIG・REG）が完全に同じ台 — '
-                  '${odd.map((g) => '${g.$1} ${g.$2.join('・')}番台').join('、')}。'
+                  '${odd.map((g) => '${displayMachineName(g.$1)} ${g.$2.join('・')}番台').join('、')}。'
                   '台番号のずれで別の台のデータが保存された可能性があります。',
                   style: const TextStyle(fontSize: 13),
                 ),
@@ -610,9 +620,7 @@ class RackTrend extends StatelessWidget {
                             ),
                           ),
                     Text(
-                      r.bb + r.rb > 0
-                          ? '1/${(r.games / (r.bb + r.rb)).toStringAsFixed(1)}'
-                          : '—',
+                      hitRate(r.games, r.bb + r.rb),
                       textAlign: TextAlign.right,
                       style: const TextStyle(fontSize: 13),
                     ),
@@ -698,9 +706,7 @@ class RackStats extends StatelessWidget {
   Widget build(BuildContext context) {
     final hits = record.bb + record.rb;
     final estimate = estimateSetting(record);
-    final rate = hits > 0
-        ? '1/${(record.games / hits).toStringAsFixed(1)}'
-        : '—';
+    final rate = hitRate(record.games, hits);
     final total = score?.total;
     Widget chip(String label, double? value) => Chip(
       label: Text('$label　${value == null ? '—' : value.toStringAsFixed(1)}'),

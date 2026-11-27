@@ -354,11 +354,11 @@ test('Drive: time spent with the page hidden (iPhone app switch) is not counted'
   assert.equal(listeners.visibilitychange, undefined, '終わったら見張りを外す');
 });
 
-test('a P’s CUBE file points to the P’s CUBE page instead of a generic error', async () => {
+test('a P’s CUBE file points to the P-STATION page instead of a generic error', async () => {
   const pscube = JSON.stringify({format: 'pscube-viewer', version: 1, kind: 'backup', machines: [], records: []});
-  await assert.rejects(parse(pscube), /P’s CUBEのページ/);
+  await assert.rejects(parse(pscube), /P-STATIONのページ/);
   const spread = '{"format": "pscube-viewer", "version": 1, "records": [\n]}';
-  await assert.rejects(parse(spread), /P’s CUBEのページ/);
+  await assert.rejects(parse(spread), /P-STATIONのページ/);
   await assert.rejects(parse(JSON.stringify({format: 'other', records: []})), /databaseのバックアップファイルではありません/);
 });
 

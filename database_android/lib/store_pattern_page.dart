@@ -102,7 +102,7 @@ class _StorePatternPageState extends State<StorePatternPage> {
       borderRadius: BorderRadius.circular(999),
     ),
     child: Text(
-      displayMachineName(chance.label),
+      chance.label,
       style: TextStyle(
         fontSize: 12,
         color: _chanceColor(chance),
@@ -110,6 +110,23 @@ class _StorePatternPageState extends State<StorePatternPage> {
       ),
     ),
   );
+
+  /// 判定しない日の理由（PC `store_pattern_ui.py` と同じ順）。上部カードと履歴一覧でそろえる。
+  String _unusableReason(StorePatternDay r, {bool short = false}) {
+    if (r.total < patternMinRacks) {
+      return short
+          ? '判定しない日（台が少ない：$patternMinRacks台未満）'
+          : '台が少ない（$patternMinRacks台未満）ので、偏りは判定しません。';
+    }
+    if (r.total < patternKnownShare * r.played) {
+      return short
+          ? '判定しない日（プラスか分かる台が稼働台の7割未満）'
+          : 'プラスかどうか分かる台が、稼働した台の7割に届かない（アナスロで補った日など）ので、偏りは判定しません。';
+    }
+    return short
+        ? '判定しない日（全部プラスか全部マイナス）'
+        : '全部プラス、または全部マイナスの日なので、偏りは判定しません。';
+  }
 
   Widget _card(String key, String title, List<Widget> children) => Card(
     key: ValueKey(key),
@@ -181,15 +198,7 @@ class _StorePatternPageState extends State<StorePatternPage> {
       if (!r.usable && r.total > 0)
         Padding(
           padding: const EdgeInsets.only(top: 6),
-          // 理由はPC（store_pattern_ui.py）と同じ順に選ぶ。2026-11-22（Geminiの点検 M-7①）：以前は、分かる台が
-          // 7割に届かない日（アナスロで補った日など）にも「全部プラス、または全部マイナス」と出していた。
-          child: _note(
-            r.total < patternMinRacks
-                ? '台が少ない（$patternMinRacks台未満）ので、偏りは判定しません。'
-                : r.total < patternKnownShare * r.played
-                ? 'プラスかどうか分かる台が、稼働した台の7割に届かない（アナスロで補った日など）ので、偏りは判定しません。'
-                : '全部プラス、または全部マイナスの日なので、偏りは判定しません。',
-          ),
+          child: _note(_unusableReason(r)),
         ),
     ],
   );
@@ -273,7 +282,7 @@ class _StorePatternPageState extends State<StorePatternPage> {
             ),
             subtitle: Text(
               !h.usable
-                  ? '判定しない日（台が少ない・全部プラスかマイナス）'
+                  ? _unusableReason(h, short: true)
                   : h.highlights.isEmpty
                   ? '目立つ偏りなし（プラス ${_percent(h.rate)}）'
                   : h.highlights.join('\n'),

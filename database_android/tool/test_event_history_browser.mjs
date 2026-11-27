@@ -220,6 +220,7 @@ try{
   await page.locator('[data-close]').click();
   await page.locator('[data-store="saiwaichou"]').click();
   await page.locator('[data-event-history-open]').click();
+  assert.equal(await page.locator('.sheet-head .head-title').innerText(),'バラエティ履歴');
   assert.equal(await page.locator('#sheet-title').innerText(),'幸町のバラエティ履歴');
   assert.equal(await page.locator('.history-table select').count(),0,'優・良の編集はPCだけ');
   assert.equal(await page.locator('.history-table [data-history-edit]').count(),0);

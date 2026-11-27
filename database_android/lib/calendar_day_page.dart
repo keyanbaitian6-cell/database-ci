@@ -132,8 +132,25 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
       for (final r in usable)
         if (r.netValue != null) r.netValue!,
     ];
-    // P’s CUBE：アナスロで補った台の推定差枚も合計に入る（2026-11-06）。何台が推定かを添える。
-    final estimated = usable.where((r) => r.pscubeNetEstimate != null).length;
+    // P-STATION：サイトセブン・アナスロで補った台の推定差枚も合計に入る。出典ごとに正しく出し分ける。
+    final estimatedRows = [
+      for (final r in usable)
+        if (r.pscubeNetEstimate != null) r,
+    ];
+    final estimated = estimatedRows.length;
+    final hasSite777Estimate = estimatedRows.any(
+      (r) => r.extra['source_site'] == 'site777',
+    );
+    final hasAnasloEstimate = estimatedRows.any(
+      (r) => r.extra['source_site'] == 'anaslo',
+    );
+    final estimateSources = [
+      if (hasSite777Estimate) 'サイトセブンのグラフ画像から計算',
+      if (hasAnasloEstimate) 'アナスロの集計時点の値',
+    ];
+    final estimateSourceText = estimateSources.isEmpty
+        ? 'グラフ等から計算'
+        : estimateSources.join('・');
     final judged = [
       for (final r in usable)
         if (r.won != null) r.won!,
@@ -198,7 +215,7 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                     TextSpan(
                       text:
                           '（$netLabelがわかった台 ${nets.length}/${usable.length}台'
-                          '${estimated > 0 ? '・うち推定$estimated台（アナスロの集計時点の値）' : ''}'
+                          '${estimated > 0 ? '・うち推定$estimated台（$estimateSourceText）' : ''}'
                           '${lowGamesNote(usable)}）',
                     ),
                   ],
@@ -255,6 +272,14 @@ class _CalendarDayPageState extends State<CalendarDayPage> {
                 child: Text(
                   '推定差枚はグラフと最大持玉からの計算で、確定値ではありません（※は要確認）。',
                   style: TextStyle(fontSize: 12, color: AppColors.ash),
+                ),
+              )
+            else if (estimated > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '推定差枚は$estimateSourceTextで、確定値ではありません（※は要確認）。',
+                  style: const TextStyle(fontSize: 12, color: AppColors.ash),
                 ),
               ),
             const SizedBox(height: 20),
