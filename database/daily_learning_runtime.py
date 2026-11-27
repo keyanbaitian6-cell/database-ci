@@ -685,7 +685,7 @@ def decisions(journal, today):
         state = journal.get('state', 'store:' + store)
         if not state or state['active'] != 'learned':
             continue
-        blocks = (date.fromisoformat(shift(today, -MATURITY)) - date.fromisoformat(state['since'])).days // 28
+        blocks = ((date.fromisoformat(shift(today, -MATURITY)) - date.fromisoformat(state['since'])).days + 1) // 28
         for block in range(1, blocks + 1):
             decision_key = f'rollback:{store}:{state["since"]}:{block}'
             if journal.has('decisions', decision_key):

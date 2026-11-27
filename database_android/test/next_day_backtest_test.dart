@@ -186,4 +186,67 @@ void main() {
     expect((ci.$1, ci.$2), (2.0, 2.0));
     expect(dayBootstrap([1]), isNull);
   });
+
+  test('ブロック検定・O/E比・記録上のプラス率とManski境界が整合する', () {
+    BacktestMember mk(
+      int rack, {
+      required double? nextScore,
+      required int nextGames,
+      required int nextHits,
+      required bool? nextPlus,
+      bool current = false,
+    }) => BacktestMember(
+      rack: rack,
+      machine: 'A',
+      index: 50,
+      days: 5,
+      confidence: '少',
+      todayScore: 50,
+      nextScore: nextScore,
+      nextGames: nextGames,
+      nextHits: nextHits,
+      nextPlus: nextPlus,
+    )..current = current;
+
+    // 4週分（28日）の合成グループ：候補は毎回当たりが多く点数・プラス率も高い。
+    final groups = <BacktestGroup>[];
+    for (var i = 0; i < 28; i++) {
+      final day = shiftDay('2026-09-01', i);
+      groups.add(
+        BacktestGroup('nagamachiminami', 'A', day, [
+          mk(1, nextScore: 72, nextGames: 4000, nextHits: 30, nextPlus: true, current: true),
+          mk(2, nextScore: null, nextGames: 300, nextHits: 2, nextPlus: null, current: true),
+          mk(3, nextScore: 48, nextGames: 4000, nextHits: 16, nextPlus: false),
+          mk(4, nextScore: 45, nextGames: 4000, nextHits: 16, nextPlus: false),
+          mk(5, nextScore: 46, nextGames: 4000, nextHits: 16, nextPlus: null),
+          mk(6, nextScore: 47, nextGames: 4000, nextHits: 16, nextPlus: false),
+        ], 2),
+      );
+    }
+    final robust = evaluateRobustMetrics(groups, (m) => m.current);
+    final scoreGap = robust['score_gap'] as Map<String, Object?>;
+    expect(scoreGap['block7_count'], 4);
+    expect(scoreGap['block7_p'], closeTo(1 / 16, 1e-4));
+    expect(scoreGap['block14_count'], 2);
+    expect(scoreGap['block14_p'], closeTo(1 / 4, 1e-4));
+
+    final oe = robust['oe_ratio'] as Map<String, Object?>;
+    expect(oe['ratio'] as double, greaterThan(1.2));
+
+    final plus = robust['plus_rate'] as Map<String, Object?>;
+    final worst = plus['manski_worst'] as double;
+    final best = plus['manski_best'] as double;
+    final both0 = plus['both_zero'] as double;
+    final both1 = plus['both_one'] as double;
+    expect(worst, lessThanOrEqualTo(both0));
+    expect(worst, lessThanOrEqualTo(both1));
+    expect(both0, lessThanOrEqualTo(best));
+    expect(both1, lessThanOrEqualTo(best));
+
+    final flat = blockBootstrap({'2026-09-01': 3.0, '2026-09-08': 3.0})!;
+    expect(flat, (3.0, 3.0));
+    expect(blockBootstrap({'2026-09-01': 3.0}), isNull);
+    final flip = blockSignFlipP({'2026-09-01': 2.0, '2026-09-08': 4.0})!;
+    expect((flip.blocks, flip.p), (2, 0.25));
+  });
 }

@@ -88,10 +88,18 @@ double? _rank(
   List<SlotRecord> dayRows,
   num Function(SlotRecord) value,
 ) {
-  if (row.games < 500) return null;
+  if (row.games < 500 ||
+      row.bb < 0 ||
+      row.rb < 0 ||
+      hasImplausibleNumbers(row)) {
+    return null;
+  }
   final peers = [
     for (final r in dayRows)
       if (r.games >= 500 &&
+          r.bb >= 0 &&
+          r.rb >= 0 &&
+          !hasImplausibleNumbers(r) &&
           r.games >= row.games / 2 &&
           r.games <= row.games * 2)
         r,
@@ -106,13 +114,8 @@ double? _rank(
 double? _hit(SlotRecord row, List<SlotRecord> dayRows) =>
     _rank(row, dayRows, (r) => r.bb + r.rb);
 
-double? _reg(SlotRecord row, List<SlotRecord> dayRows) {
-  if (hasImplausibleNumbers(row)) return null;
-  return _rank(row, [
-    for (final r in dayRows)
-      if (!hasImplausibleNumbers(r)) r,
-  ], (r) => r.rb);
-}
+double? _reg(SlotRecord row, List<SlotRecord> dayRows) =>
+    _rank(row, dayRows, (r) => r.rb);
 
 int _dayNumber(String day) =>
     DateTime.utc(

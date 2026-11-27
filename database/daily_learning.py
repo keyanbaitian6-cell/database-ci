@@ -23,9 +23,15 @@ JST = timezone(timedelta(hours=9))
 # v4（2026-11-12 夜、最初の結果の記録（11/20）より前。利用者「すぐ本番」）：機種ごとの係数が無い組にも学習版の順位を付ける。
 # 4台以上の機種の組は「店舗共通の係数」（導入からの日数の印つき）、バラエティは「バラエティ専用の係数」（台ごとに独立。
 # プラスでない日が続いた数つき。利用者の見立て「ローテーションのように設定が入る」）。機種ごとの係数・特徴はv3と同じ。
-VERSION = 'daily-plus-ridge-20261112-v4'
-# 採用・切り戻しの決まりの版（2026-11-12、結果を見る前に店舗単位・週の符号反転へ変更。DAILY_LEARNING.md）。
-RULE_VERSION = 'store-weekly-flip-20261112'
+# v5（2026-11-28、利用者の指示で実施）：
+# 1) 大当たり0回でグラフを省略した台（v12／P’s CUBE仕様、ただしサイトセブン補完の at_art=None は除く）を欠測にせず非プラス(0)として扱う。
+# 2) _fit() で非定数特徴を日等重み標準化し、罰則を max(100, 20*N/days) でサンプル数・日数に整合（スケール不変＆mix_weightと整合）。
+# 3) store_day()/comparison() に Manski 最悪/最良境界と 14暦日ブロック符号反転 p 値を追加し、counts を paired 日に揃える。
+VERSION = 'daily-plus-ridge-20261128-v5'
+# 採用・切り戻しの決まりの版（2026-11-28：paired 集計整合・Manski 境界と14日ブロック参考出力を追加）。
+RULE_VERSION = 'store-weekly-flip-20261128'
+RIDGE_PRIOR_SAMPLES = 100.
+RIDGE_PRIOR_DAYS = 20.
 MATURITY = 8
 PERIOD = 112
 STORE_COUNT = 3        # 採用判定の比較群（店舗）の数。有意水準をこの数で分ける。
@@ -112,18 +118,37 @@ def measured_net(row):
     return None, None
 
 
+def _no_hits_without_graph(row):
+    """当たり0回でグラフを省略した台か（メルヘンv12・P’s CUBE仕様）。
+    P-STATIONのサイトセブン補完は at_art=None でAT当たりの可能性があるため、pscube系では at_art==0 の明示も要する。"""
+    bb, rb = row.get('bb'), row.get('rb')
+    if isinstance(bb, bool) or isinstance(rb, bool):
+        return False
+    if not isinstance(bb, (int, float)) or not isinstance(rb, (int, float)):
+        return False
+    if bb != 0 or rb != 0:
+        return False
+    at_art = row.get('at_art')
+    if str(row.get('store', '')).startswith('pscube:'):
+        return not isinstance(at_art, bool) and isinstance(at_art, (int, float)) and at_art == 0
+    return at_art is None or (not isinstance(at_art, bool) and isinstance(at_art, (int, float)) and at_art == 0)
+
+
 def outcome_source(row):
-    """outcome の符号を何から決めたか（'jo_net'・'net_medals'・'graph'・None）。結果の記録に残す。"""
+    """outcome の符号を何から決めたか（'jo_net'・'net_medals'・'graph'・'no_hits'・None）。結果の記録に残す。"""
     if not row or not valid(row):
         return None
     key, _ = measured_net(row)
     if key:
         return key
+    m, g = row.get('graph_measurement'), row.get('graph')
+    if not m and not g:
+        return 'no_hits' if _no_hits_without_graph(row) else None
     return 'graph' if outcome(row) is not None else None
 
 
 def outcome(row):
-    """記録上の符号。取得差枚・グラフの由来を保持し、欠測を0にしない。"""
+    """記録上の符号。取得差枚・グラフの由来を保持し、大当たり0回グラフ省略台は非プラス(0)、その他の欠測はNoneにする。"""
     if not row or not valid(row):
         return None
     _, net = measured_net(row)
@@ -139,6 +164,8 @@ def outcome(row):
             from core import graph_metrics
             metrics = graph_metrics(g['path'], g['baseline'])
             end = metrics['baseline'] - metrics['points'][-1][1]
+        elif _no_hits_without_graph(row):
+            return 0
         else:
             return None
         if not math.isfinite(end) or abs(end) <= 1:
@@ -247,7 +274,7 @@ class History:
 
     @staticmethod
     def _vector(row, day, past, label):
-        y = outcome(row)
+        y = label(row)
         x = [1., (y - .5) if y is not None else 0., float(y is None)]
         for n in (7, 28):
             first = shift(day, 1 - n)
@@ -282,21 +309,63 @@ def solve(matrix, vector):
 
 
 def _fit(examples):
-    """固定罰則100のリッジ回帰。1日を等重みにする（多数台の日の比重だけが増えるのを防ぐ）。"""
+    """日等重みの標準化リッジ回帰（v5）。
+
+    非定数特徴を日等重みの平均・標準偏差で標準化してから解くことで特徴間のスケール不変性を保ち、
+    分散の小さい特徴（plus7・plus28・games・dry_streak 等）の過剰縮約を防ぐ。
+    罰則は max(100, 20 * N / days) とし、下限（100件・20日）および mix_weight の事前構造と整合させる。
+    解いた係数は元特徴の空間へ厳密に逆変換して返す（既存 weights 形式・rank_blend と完全互換）。"""
     days = len({e[2] for e in examples})
     n = len(examples[0][0])
-    matrix = [[100. * (i == k) if i else 0. for k in range(n)] for i in range(n)]
-    vector = [0.] * n
+    total_examples = len(examples)
     counts = defaultdict(int)
     for _, _, d in examples:
         counts[d] += 1
-    for x, y, d in examples:
-        w = len(examples) / (days * counts[d])
+    weights_per_row = [total_examples / (days * counts[d]) for _, _, d in examples]
+    total_w = sum(weights_per_row)
+
+    means = [0.] * n
+    for (x, _, _), w in zip(examples, weights_per_row):
+        for i in range(1, n):
+            means[i] += w * x[i]
+    for i in range(1, n):
+        means[i] /= total_w
+
+    variances = [0.] * n
+    for (x, _, _), w in zip(examples, weights_per_row):
+        for i in range(1, n):
+            diff = x[i] - means[i]
+            variances[i] += w * diff * diff
+    stds = [1.] + [math.sqrt(max(0., variances[i] / total_w)) for i in range(1, n)]
+
+    active = [True] + [stds[i] >= 1e-8 for i in range(1, n)]
+    penalty = max(RIDGE_PRIOR_SAMPLES, RIDGE_PRIOR_DAYS * total_examples / days)
+    matrix = [[0. for _ in range(n)] for _ in range(n)]
+    vector = [0.] * n
+    for i in range(1, n):
+        matrix[i][i] = penalty if active[i] else 1.
+
+    for (x, y, _), w in zip(examples, weights_per_row):
+        z = [1.] + [((x[i] - means[i]) / stds[i]) if active[i] else 0. for i in range(1, n)]
+        target = y - .5
         for i in range(n):
-            vector[i] += w * x[i] * (y - .5)
+            if not active[i]:
+                continue
+            zi = z[i]
+            vector[i] += w * zi * target
             for k in range(n):
-                matrix[i][k] += w * x[i] * x[k]
-    return solve(matrix, vector), days
+                if active[k]:
+                    matrix[i][k] += w * zi * z[k]
+
+    gamma = solve(matrix, vector)
+    beta = [0.] * n
+    offset = 0.
+    for i in range(1, n):
+        if active[i]:
+            beta[i] = gamma[i] / stds[i]
+            offset += beta[i] * means[i]
+    beta[0] = gamma[0] - offset
+    return beta, days
 
 
 def variety_rows(rows):
@@ -438,15 +507,21 @@ def store_day(day, groups):
         values = [v for v in values if v is not None]
         return statistics.mean(values) if values else None
     sens = {}
-    for name, missing_as in (('nonplus', 0), ('plus', 1)):
+    for name, learned_as, current_as in (
+        ('nonplus', 0, 0),
+        ('plus', 1, 1),
+        ('manski_worst', 0, 1),
+        ('manski_best', 1, 0),
+    ):
         values = []
         for g in groups:
-            a, b = _share(g, 'learned', missing_as), _share(g, 'current', missing_as)
+            a, b = _share(g, 'learned', learned_as), _share(g, 'current', current_as)
             values.append(None if a is None or b is None else a - b)
         sens[name] = mean_of(values)
     return dict(day=day, groups=len(groups), paired=len(paired),
                 diff=mean_of(g['learned'] - g['current'] for g in paired),
                 diff_nonplus=sens['nonplus'], diff_plus=sens['plus'],
+                diff_manski_worst=sens['manski_worst'], diff_manski_best=sens['manski_best'],
                 missing=mean_of(g['missing_learned'] - g['missing_current'] for g in groups),
                 n_current=sum(g['n_current'] for g in groups), n_learned=sum(g['n_learned'] for g in groups))
 
@@ -475,30 +550,42 @@ def comparison(days, alpha, first=None):
     """固定期間に1回、店舗ごとに判定する。days は store_day の結果。
 
     効果量は判定できた日の等重み平均（学習版−従来のプラス率）。検定は暦週ごとの差の合計に対する
-    符号反転（日・台を独立試行にしない）。欠測を非プラス・プラスとみなした感度分析の両方が正であることも求める。"""
+    符号反転（日・台を独立試行にしない）。欠測を非プラス・プラスとみなした感度分析の両方が正であることも求める。
+    v5：counts を判定できた日（paired）に揃え、非対称欠測の Manski 最悪/最良境界と14暦日ブロック符号反転の
+    参考 p 値（p_14d）も記録する。"""
     paired = [d for d in days if d.get('diff') is not None]
     if not paired:
         return dict(adopt=False, reason='判定可能な日がありません', n=0, rule=RULE_VERSION)
     first = first or min(d['day'] for d in days)
     weeks = defaultdict(float)
+    weeks14 = defaultdict(float)
+    base = date.fromisoformat(first)
     for d in paired:
-        weeks[(date.fromisoformat(d['day']) - date.fromisoformat(first)).days // 7] += d['diff']
+        offset = (date.fromisoformat(d['day']) - base).days
+        weeks[offset // 7] += d['diff']
+        weeks14[offset // 14] += d['diff']
     blocks = [weeks[k] for k in sorted(weeks)]
+    blocks14 = [weeks14[k] for k in sorted(weeks14)]
     actual = sum(blocks) / len(paired)
     p = flip_p(blocks)
+    p_14d = flip_p(blocks14)
 
     def mean_key(key):
         values = [d[key] for d in days if d.get(key) is not None]
         return statistics.mean(values) if values else None
-    missing, nonplus, plus = mean_key('missing'), mean_key('diff_nonplus'), mean_key('diff_plus')
-    counts = [sum(d[k] for d in days) for k in ('n_current', 'n_learned')]
+    missing = mean_key('missing')
+    nonplus, plus = mean_key('diff_nonplus'), mean_key('diff_plus')
+    manski_worst, manski_best = mean_key('diff_manski_worst'), mean_key('diff_manski_best')
+    counts = [sum(d.get(k, 0) for d in paired) for k in ('n_current', 'n_learned')]
     enough = len(paired) >= 80 and len(blocks) >= 14 and min(counts) >= 80
     robust = nonplus is not None and plus is not None and nonplus > 0 and plus > 0
     adopt = (enough and actual >= .02 and missing is not None and missing <= .02 and robust and p <= alpha)
     return dict(adopt=adopt, reason='改善を確認' if adopt else '改善未確認', n=len(paired),
-                weeks=len(blocks), difference=actual, median=statistics.median(d['diff'] for d in paired),
+                weeks=len(blocks), weeks14=len(blocks14), difference=actual,
+                median=statistics.median(d['diff'] for d in paired),
                 missing_difference=missing, nonplus_difference=nonplus, plus_difference=plus,
-                p=p, alpha=alpha, counts=counts, rule=RULE_VERSION)
+                manski_worst_difference=manski_worst, manski_best_difference=manski_best,
+                p=p, p_14d=p_14d, alpha=alpha, counts=counts, rule=RULE_VERSION)
 
 
 def rollback_needed(days):

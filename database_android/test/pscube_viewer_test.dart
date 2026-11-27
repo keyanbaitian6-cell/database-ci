@@ -155,4 +155,96 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  test('P-STATIONで my=null（サイトセブン補完）が混在しても採点クラッシュせず0枚扱いもしない', () {
+    SlotRecord pscubeRec(String day, int rack, int? my, {int bb = 10, int rb = 10}) =>
+        SlotRecord(
+          store: 'pscube:c1:20',
+          day: day,
+          machine: '試験AT機',
+          rack: rack,
+          games: 3000,
+          bb: bb,
+          rb: rb,
+          extra: {
+            'source': 'pscube',
+            'source_store': 'c1',
+            'rate': '20',
+            'machine_type': 'other',
+            'my': my,
+            if (my == null) 'source_site': 'site777',
+          },
+        );
+    final basePool = [
+      pscubeRec('2026-09-30', 10, 1000),
+      pscubeRec('2026-09-30', 11, 2000),
+      pscubeRec('2026-09-30', 12, 3000),
+      pscubeRec('2026-10-01', 1, 1500),
+    ];
+    final withNullPool = [
+      ...basePool,
+      pscubeRec('2026-09-30', 13, null),
+    ];
+    final sClean = scoreRecord(basePool.last, basePool);
+    final sWithNull = scoreRecord(withNullPool[3], withNullPool);
+    expect(sWithNull.maxHold, sClean.maxHold);
+    expect(sWithNull.holdReferenceCount, 3);
+
+    final nullRow = pscubeRec('2026-10-01', 2, null);
+    final sNull = scoreRecord(nullRow, [...basePool, nullRow]);
+    expect(sNull.maxHold, isNull);
+
+    // AT機の nextDayEvidence / varietyHitPercent でも my=null を0枚扱いせず除外する。
+    final days = ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01'];
+    final atAll = [
+      for (final d in days) ...[
+        pscubeRec(d, 1, 3000),
+        pscubeRec(d, 2, 2000),
+        pscubeRec(d, 3, 1000),
+        pscubeRec(d, 4, null),
+      ],
+    ];
+    final evNull = nextDayEvidence(
+      atAll.firstWhere((r) => r.day == '2026-10-01' && r.rack == 4),
+      atAll,
+    );
+    expect(evNull.rawIndex, isNull);
+    expect(evNull.todayText, contains('MY未取得'));
+    final evOne = nextDayEvidence(
+      atAll.firstWhere((r) => r.day == '2026-10-01' && r.rack == 1),
+      atAll,
+    );
+    expect(evOne.today!.peers, 3);
+    expect(
+      varietyHitPercent(
+        atAll.firstWhere((r) => r.day == '2026-10-01' && r.rack == 4),
+        atAll,
+      ).percent,
+      isNull,
+    );
+
+    // サイトセブン補完（at_art=null）で bb=0, rb=0 かつグラフ無しのAT機は「当たり0回省略」扱いしない。
+    final s777NoGraph = SlotRecord(
+      store: 'pscube:c740601:20',
+      day: '2026-10-01',
+      machine: '試験AT機',
+      rack: 99,
+      games: 2000,
+      bb: 0,
+      rb: 0,
+      extra: const {
+        'source': 'pscube',
+        'source_site': 'site777',
+        'source_store': 'c740601',
+        'rate': '20',
+        'machine_type': 'other',
+        'my': null,
+        'at_art': null,
+      },
+    );
+    expect(s777NoGraph.graphNotNeeded, isFalse);
+    final sNoGraph = scoreRecord(s777NoGraph, [s777NoGraph]);
+    expect(sNoGraph.positive, isNull);
+    expect(sNoGraph.retention, isNull);
+  });
 }

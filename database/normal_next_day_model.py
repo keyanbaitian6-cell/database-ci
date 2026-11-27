@@ -76,9 +76,11 @@ def clearly_high(row):
 
 def _rank(row, day_rows, value):
     """同じ日・同じ機種で回転数が半分〜2倍（500回転以上）の台の中の順位（0〜100）。3台未満は None。"""
-    if row['games'] < 500 or row.get('bb') is None or row.get('rb') is None:
+    if (row['games'] < 500 or row.get('bb') is None or row.get('rb') is None
+            or row['bb'] < 0 or row['rb'] < 0 or implausible_numbers(row)):
         return None
     peers = [r for r in day_rows if r['games'] >= 500 and r.get('bb') is not None and r.get('rb') is not None
+             and r['bb'] >= 0 and r['rb'] >= 0 and not implausible_numbers(r)
              and row['games'] / 2 <= r['games'] <= row['games'] * 2]
     if len(peers) < 3:
         return None
@@ -90,10 +92,7 @@ def _hit(row, day_rows):
 
 
 def _reg(row, day_rows):
-    if implausible_numbers(row):
-        return None
-    clean = [r for r in day_rows if not implausible_numbers(r)]
-    return _rank(row, clean, lambda r: r['rb'])
+    return _rank(row, day_rows, lambda r: r['rb'])
 
 
 _DAY_CACHE = {}

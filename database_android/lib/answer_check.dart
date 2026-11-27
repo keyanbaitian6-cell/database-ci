@@ -16,6 +16,28 @@ import 'viewer_data.dart' show SavedCandidate;
 /// 答え合わせで「当たり」とする合計点。
 const answerCheckThreshold = 60.0;
 
+/// 答え合わせ用の「記録上のプラス判定」（稼働バイアス・推定誤差の影響を避ける補助物差し）。
+/// 確定／取得差枚があればその符号、無ければグラフ終点がゼロ線から1pxを超えて上か下かで決め、
+/// ゼロ線付近（±1px以内）・0G・異常値・アナスロ補完は判定不能（null）とする。
+/// 大当たり0回でグラフを省略した台（v12仕様）は非プラス（false）。
+bool? answerCheckPlus(SlotRecord record) {
+  if (record.games <= 0 ||
+      hasImplausibleNumbers(record) ||
+      isExcludedSupplement(record)) {
+    return null;
+  }
+  final net = record.isPscube ? record.netMedals : record.joNet;
+  if (net != null) return net > 0;
+  final g = record.graph;
+  if (g != null) {
+    final end = g.baselineY - g.endY;
+    if (!end.isFinite || end.abs() <= 1) return null;
+    return end > 1;
+  }
+  if (record.graphNotNeeded) return false;
+  return null;
+}
+
 /// 前の日の翌日候補に挙げた台が、その日に [answerCheckThreshold] 点以上だったもの。
 typedef AnswerCheckHit = ({
   ProvisionalCandidate candidate,
@@ -48,10 +70,18 @@ typedef AnswerCheckDay = ({
   /// 当時保存した候補で照らしたか（false なら、今の計算式で計算し直した候補）。
   bool saved,
 
-  /// くらべる目安：この日の全台のうち、前の日にも同じ機種で記録がある台で、点数が出た数と
-  /// [answerCheckThreshold] 点以上の数（2026-11-04）。
+  /// くらべる目安の母集団（同じ日に候補選考の対象になった台）の台数。候補0台の日は0。
+  int baseCandidates,
+
+  /// くらべる目安：同じ選考元の台のうち、点数が出た数と [answerCheckThreshold] 点以上の数。
   int baseScored,
   int baseHits,
+
+  /// 記録上のプラス判定（[answerCheckPlus]）：候補と目安それぞれで判定できた台数とプラス台数。
+  int plusJudged,
+  int plusHits,
+  int basePlusJudged,
+  int basePlusHits,
 });
 
 String _dayBefore(String day) =>
@@ -100,35 +130,102 @@ AnswerCheckDay? answerCheckFor(
     candidates = dayCandidates(previousRows, all).candidates;
   } else {
     final byRack = {for (final r in previousRows) r.rack: r};
+    final seenRacks = <int>{};
     candidates = [
       for (final c in kept)
-        if (byRack[c.rack] case final record?)
-          (
-            record: record,
-            index: c.index,
-            days: 0,
-            confidence: '',
-            variety: c.variety,
-          ),
+        if (seenRacks.add(c.rack))
+          if (byRack[c.rack] case final record?)
+            (
+              record: record,
+              index: c.index,
+              days: 0,
+              confidence: '',
+              variety: c.variety,
+            ),
     ];
   }
-  // くらべる目安：前の日にも同じ機種で記録がある台（候補を選ぶ元になった台）すべて。
-  final previousKeys = {for (final r in previousRows) (r.machine, r.rack)};
+  // くらべる目安：同じ日に実際に候補の選考母集団に入った台（シンプソンのパラドックスを防ぐため、
+  // 履歴不足の新台や3,000G未満の放置バラエティ台、候補が0台の日の全台を混ぜない）。
+  final baselineKeys = <(String, int)>{};
+  if (candidates.isNotEmpty) {
+    for (final c in candidates) {
+      baselineKeys.add((c.record.machine, c.record.rack));
+    }
+    final normalMachines = {
+      for (final c in candidates)
+        if (!c.variety) c.record.machine,
+    };
+    for (final machine in normalMachines) {
+      final rows = [
+        for (final r in previousRows)
+          if (r.machine == machine) r,
+      ];
+      final history = machineHistory(all, store, machine);
+      final eligible = [
+        for (final r in rows)
+          if (nextDayEvidence(r, history).rawIndex != null) r,
+      ];
+      final candidateRacks = {
+        for (final c in candidates)
+          if (!c.variety && c.record.machine == machine) c.record.rack,
+      };
+      final eligibleRacks = {for (final r in eligible) r.rack};
+      final useEligible =
+          kept == null ||
+          (eligible.length >= 4 && eligibleRacks.containsAll(candidateRacks));
+      final pool = useEligible
+          ? eligible
+          : [
+              for (final r in rows)
+                if (!hasImplausibleNumbers(r) && !isExcludedSupplement(r)) r,
+            ];
+      for (final r in pool) {
+        baselineKeys.add((r.machine, r.rack));
+      }
+    }
+    if (candidates.any((c) => c.variety)) {
+      final previousVariety = varietyMachines(previousRows);
+      final order = varietyOrder(store);
+      for (final r in previousRows) {
+        if (!previousVariety.contains(r.machine) || hasImplausibleNumbers(r)) {
+          continue;
+        }
+        if (order.contains(varietyState(r))) {
+          baselineKeys.add((r.machine, r.rack));
+        }
+      }
+    }
+  }
   var baseScored = 0;
   var baseHits = 0;
-  for (final entry in results.entries) {
-    if (!previousKeys.contains(entry.key)) continue;
-    final total = scoreRecord(entry.value, all).total;
+  var basePlusJudged = 0;
+  var basePlusHits = 0;
+  for (final key in baselineKeys) {
+    final result = results[key];
+    if (result == null) continue;
+    final plus = answerCheckPlus(result);
+    if (plus != null) {
+      basePlusJudged++;
+      if (plus) basePlusHits++;
+    }
+    final total = scoreRecord(result, all).total;
     if (total == null) continue;
     baseScored++;
     if (total >= answerCheckThreshold) baseHits++;
   }
   var scored = 0;
+  var plusJudged = 0;
+  var plusHits = 0;
   final hits = <AnswerCheckHit>[];
   final rows = <(SlotRecord, ScoreResult)>[];
   for (final c in candidates) {
     final result = results[(c.record.machine, c.record.rack)];
     if (result == null) continue;
+    final plus = answerCheckPlus(result);
+    if (plus != null) {
+      plusJudged++;
+      if (plus) plusHits++;
+    }
     final score = scoreRecord(result, all);
     rows.add((result, score));
     final total = score.total;
@@ -151,8 +248,13 @@ AnswerCheckDay? answerCheckFor(
     hits: hits,
     rows: rows,
     saved: kept != null,
+    baseCandidates: baselineKeys.length,
     baseScored: baseScored,
     baseHits: baseHits,
+    plusJudged: plusJudged,
+    plusHits: plusHits,
+    basePlusJudged: basePlusJudged,
+    basePlusHits: basePlusHits,
   );
 }
 
@@ -251,8 +353,13 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
     final candidates = _results.fold(0, (n, d) => n + d.candidates);
     final scored = _results.fold(0, (n, d) => n + d.scored);
     final hits = _results.fold(0, (n, d) => n + d.hits.length);
+    final baseCandidates = _results.fold(0, (n, d) => n + d.baseCandidates);
     final baseScored = _results.fold(0, (n, d) => n + d.baseScored);
     final baseHits = _results.fold(0, (n, d) => n + d.baseHits);
+    final plusJudged = _results.fold(0, (n, d) => n + d.plusJudged);
+    final plusHits = _results.fold(0, (n, d) => n + d.plusHits);
+    final basePlusJudged = _results.fold(0, (n, d) => n + d.basePlusJudged);
+    final basePlusHits = _results.fold(0, (n, d) => n + d.basePlusHits);
     final savedDays = _results.where((d) => d.saved).length;
     return Scaffold(
       appBar: AppBar(
@@ -293,9 +400,9 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
             ],
             const Text(
               '前の日の「参考候補（翌日向け）」（★注目・☆長期傾向・バラエティ）が、その日に合計点'
-              '${answerCheckThreshold ~/ 1}点以上だったかを照らし合わせます。点数は結果画面と同じです。'
-              '候補は、PCが当時（その翌日の午前3時まで）に保存したものを使います。保存の無い日は、'
-              '今の計算式で記録から計算し直した候補を使い、日ごとのカードにそう書きます。'
+              '${answerCheckThreshold ~/ 1}点以上だったか・記録上プラスだったかを、同じ選考元の台と照らし合わせます。'
+              '点数は結果画面と同じです。候補は、PCが当時（その翌日の午前8時まで）に保存したものを使います。'
+              '保存の無い日は、今の計算式で記録から計算し直した候補を使い、日ごとのカードにそう書きます。'
               '計算し直した候補は、あとから取り込んだ記録も使うので、当時画面に出ていた候補と違うことがあります。',
               style: TextStyle(
                 color: AppColors.ash,
@@ -322,8 +429,13 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
                 scored,
                 hits,
                 loading,
+                baseCandidates: baseCandidates,
                 baseScored: baseScored,
                 baseHits: baseHits,
+                plusJudged: plusJudged,
+                plusHits: plusHits,
+                basePlusJudged: basePlusJudged,
+                basePlusHits: basePlusHits,
                 savedDays: savedDays,
               ),
               const SizedBox(height: 14),
@@ -372,8 +484,13 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
     int scored,
     int hits,
     bool loading, {
+    required int baseCandidates,
     required int baseScored,
     required int baseHits,
+    required int plusJudged,
+    required int plusHits,
+    required int basePlusJudged,
+    required int basePlusHits,
     required int savedDays,
   }) {
     String percent(int part, int whole) =>
@@ -392,24 +509,34 @@ class _AnswerCheckPageState extends State<AnswerCheckPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              '参考候補$candidates台のうち、翌日に点数が出た台$scored台。'
+              '参考候補$candidates台のうち、翌日に点数が出た台$scored台（${percent(scored, candidates)}）。'
               'そのうち${answerCheckThreshold ~/ 1}点以上は$hits台（$rate）。',
               style: const TextStyle(fontSize: 14, height: 1.45),
             ),
             const SizedBox(height: 4),
             Text(
-              'くらべる目安：同じ日の全台（前の日にも同じ機種で記録がある台）では、点数が出た'
-              '$baseScored台のうち${answerCheckThreshold ~/ 1}点以上は$baseHits台'
-              '（${percent(baseHits, baseScored)}）。',
+              'くらべる目安（同じ選考元の台）：$baseCandidates台のうち点数が出た$baseScored台'
+              '（${percent(baseScored, baseCandidates)}）、'
+              '${answerCheckThreshold ~/ 1}点以上は$baseHits台（${percent(baseHits, baseScored)}）。',
               style: const TextStyle(fontSize: 14, height: 1.45),
             ),
+            if (plusJudged > 0 || basePlusJudged > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                '記録上のプラス率：参考候補$plusHits/$plusJudged台（${percent(plusHits, plusJudged)}、'
+                '判定可能${percent(plusJudged, candidates)}）／'
+                '目安$basePlusHits/$basePlusJudged台（${percent(basePlusHits, basePlusJudged)}、'
+                '判定可能${percent(basePlusJudged, baseCandidates)}）。',
+                style: const TextStyle(fontSize: 14, height: 1.45),
+              ),
+            ],
             const SizedBox(height: 4),
             Text(
               '当時の候補で照らした日$savedDays日・計算し直した候補の日$recomputed日。'
               '候補の割合が目安より高くても、設定や勝ちを約束するものではありません。'
               '日数が少ないうちは、たまたまの差が大きく出ます。'
               '取り込んでいない台・機種が入れ替わった台・採点しなかった台（500G以下など）は、'
-              '点数が出た台に数えていません。',
+              '点数が出た台に数えていません（点数が出た割合に差がある日は稼働の偏りにも注意）。',
               style: TextStyle(
                 color: AppColors.ash,
                 fontSize: 12,
@@ -453,7 +580,8 @@ class _DayCard extends StatelessWidget {
               '${dayWithWeekday(result.predictedOn)}の参考候補${result.candidates}台'
               '（${result.saved ? '当時の候補' : '計算し直した候補'}）'
               '・点数が出た${result.scored}台・'
-              '${answerCheckThreshold ~/ 1}点以上${hits.length}台',
+              '${answerCheckThreshold ~/ 1}点以上${hits.length}台'
+              '${result.plusJudged > 0 ? '・プラス${result.plusHits}/${result.plusJudged}台' : ''}',
               style: const TextStyle(color: AppColors.ash, fontSize: 13),
             ),
             const SizedBox(height: 6),

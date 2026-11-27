@@ -227,6 +227,8 @@ class NextDayEvidence {
         ? '500G未満'
         : hasImplausibleNumbers(record) || record.bb < 0 || record.rb < 0
         ? '数値異常'
+        : record.pscubeOutputProfile && (record.my == null || record.my! < 0)
+        ? 'MY未取得'
         : d != null
         ? '回転数が近い比較相手が3台未満'
         : '使用できる記録なし';
@@ -278,6 +280,7 @@ NextDayEvidence nextDayEvidence(
       .subtract(const Duration(days: 30))
       .toIso8601String()
       .substring(0, 10);
+  final outputProfile = record.pscubeOutputProfile;
   // 同じ店舗・機種の記録だけを見る（店舗・機種ごとの仕分けは一覧ごとに1回）。
   // 日ごとにまとめておき、1日ぶんを探すたびに全部を見直さない。
   final byDay = <String, List<SlotRecord>>{};
@@ -287,6 +290,7 @@ NextDayEvidence nextDayEvidence(
         r.games >= 500 &&
         r.bb >= 0 &&
         r.rb >= 0 &&
+        (!outputProfile || (r.my != null && r.my! >= 0)) &&
         !hasImplausibleNumbers(r) &&
         !isExcludedSupplement(r)) {
       byDay.putIfAbsent(r.day, () => []).add(r);
@@ -310,9 +314,8 @@ NextDayEvidence nextDayEvidence(
       );
       continue;
     }
-    double metric(SlotRecord r) => record.pscubeOutputProfile
-        ? (r.my ?? 0).toDouble()
-        : (r.bb + r.rb) / r.games;
+    double metric(SlotRecord r) =>
+        outputProfile ? r.my!.toDouble() : (r.bb + r.rb) / r.games;
     final ranks = peers.map(metric).toList();
     final rank = percentile(metric(mine), ranks);
     final gap = (100 * rank - 50) * mine.games / (mine.games + shrinkGames);
@@ -626,12 +629,18 @@ String varietyRuleText(String store) {
   SlotRecord record,
   List<SlotRecord> all,
 ) {
-  double metric(SlotRecord r) => record.pscubeOutputProfile
-      ? (r.my ?? 0).toDouble()
-      : (r.bb + r.rb) / r.games;
+  final outputProfile = record.pscubeOutputProfile;
+  if (outputProfile && (record.my == null || record.my! < 0)) {
+    return (percent: null, refs: 0);
+  }
+  double metric(SlotRecord r) =>
+      outputProfile ? r.my!.toDouble() : (r.bb + r.rb) / r.games;
   final rates = [
     for (final r in comparisonPool(record, all))
-      if (r.bb >= 0 && r.rb >= 0) metric(r),
+      if (r.bb >= 0 &&
+          r.rb >= 0 &&
+          (!outputProfile || (r.my != null && r.my! >= 0)))
+        metric(r),
   ];
   if (rates.length < 3 || record.games <= 0 || isExcludedSupplement(record)) {
     return (percent: null, refs: rates.length);
