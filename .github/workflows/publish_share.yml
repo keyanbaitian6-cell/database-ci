@@ -1,0 +1,134 @@
+name: Publish share calendar
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: '取得元リポジトリ（imakurudev-eng/database または keyanbaitian6-cell/database-ci）'
+        required: true
+        default: 'imakurudev-eng/database'
+      source_ref:
+        description: '公開するブランチ名またはコミット'
+        required: true
+        default: 'cloud/20261127-share-calendar-readability'
+      commit_summary:
+        description: '公開コミットの要約'
+        required: true
+        default: 'Improve share calendar readability and add 7d trend, quick search, 3-store compare'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-share-calendar
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TZ: Asia/Tokyo
+      DASH__SUPPRESS_ANALYTICS: 'true'
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      CHECK_JS_JOBS: '2'
+    steps:
+      - name: 入力とトークンを確認
+        env:
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          HAS_PUBLISH_TOKEN: ${{ secrets.SHARE_PUBLISH_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_PUBLISH_TOKEN" != "true" ]; then
+            echo 'エラー: Secret「SHARE_PUBLISH_TOKEN」が未登録です。' >&2
+            exit 1
+          fi
+          case "$SOURCE_REPO" in
+            imakurudev-eng/database|keyanbaitian6-cell/database-ci) ;;
+            *)
+              echo "エラー: 許可されていない取得元リポジトリです: $SOURCE_REPO" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: 対象ブランチを取得
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.SOURCE_READ_TOKEN || secrets.SHARE_PUBLISH_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: database/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 試験ツールを準備
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y xvfb xauth
+          fi
+          python -m venv database/.venv
+          database/.venv/bin/python -m pip install -r database/requirements.txt
+          git clone --depth 1 --branch 3.47.1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6655482ec06e547f90abf8ae7590466f4415978d
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          npm install --prefix "$RUNNER_TEMP/browser-tests" playwright@1.62.1
+          node "$RUNNER_TEMP/browser-tests/node_modules/playwright/cli.js" install --with-deps chromium
+          echo "PLAYWRIGHT_MODULE=file://$RUNNER_TEMP/browser-tests/node_modules/playwright/index.mjs" >> "$GITHUB_ENV"
+          cp database_android/assets/database_seed.example.json database_android/assets/database_seed.json
+
+      - name: 公開前全体ゲートを実行
+        run: xvfb-run -a bash database_android/tool/check_before_build.sh
+
+      - name: 公開先リポジトリを取得
+        uses: actions/checkout@v4
+        with:
+          repository: keyanbaitian6-cell/database-share
+          ref: main
+          path: _share_repo
+          token: ${{ secrets.SHARE_PUBLISH_TOKEN }}
+          persist-credentials: true
+
+      - name: 共有カレンダーを生成・照合して公開
+        env:
+          COMMIT_SUMMARY: ${{ inputs.commit_summary }}
+        run: |
+          set -euo pipefail
+          SRC_SHA=$(git rev-parse --short HEAD)
+          database/.venv/bin/python database_android/tool/stage_share_viewer.py _share_repo
+          diff -rq -x .git database_android/build/check_before_build/share _share_repo
+          VER=$(sed -n "s/^const VERSION = '\([0-9a-f]\{12\}\)';/\1/p" _share_repo/sw.js)
+          test -n "$VER"
+          if [ -z "$(git -C _share_repo status --porcelain)" ]; then
+            echo "## 共有カレンダーの公開結果" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 変更なし（対象コミット \`${SRC_SHA}\`・版 \`${VER}\`）" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git -C _share_repo config user.name "github-actions[bot]"
+          git -C _share_repo config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C _share_repo add -A
+          git -C _share_repo commit -m "${COMMIT_SUMMARY} (from ${SRC_SHA}, version ${VER})"
+          git -C _share_repo push origin main
+          PUB_SHA=$(git -C _share_repo rev-parse --short HEAD)
+          {
+            echo "## 共有カレンダーの公開完了"
+            echo "- 対象コミット：\`${SRC_SHA}\`"
+            echo "- 公開コミット：\`${PUB_SHA}\`（版 \`${VER}\`）"
+            echo "- 公開URL：https://keyanbaitian6-cell.github.io/database-share/"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 検証の所要時間を表示
+        if: always()
+        run: |
+          if [ -f database_android/build/check_before_build/timings.md ]; then
+            cat database_android/build/check_before_build/timings.md >> "$GITHUB_STEP_SUMMARY"
+          fi
