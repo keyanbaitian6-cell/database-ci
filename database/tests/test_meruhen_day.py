@@ -97,7 +97,10 @@ class DaySelectionTests(unittest.TestCase):
             self.bridge.set_target_day('')
         self.bridge.set_auto_capture(False, 3.5)
         self.assertEqual(self.bridge.get_auto_capture()['target_day'], yesterday, 'OFFにしても選んだ日は残る')
-        self.assertEqual(DIRECTIONS, ('top', 'bottom'))
+        # 2026-11-28 利用者「上から10機種目から取り込むを実装してほしい」で3つ目の向き（tenth）を足した
+        self.assertEqual(DIRECTIONS, ('top', 'bottom', 'tenth'))
+        state = self.bridge.set_target_day(None, 'tenth')
+        self.assertEqual(state['direction'], 'tenth')
 
     def test_next_machine_comes_from_the_chosen_end_with_the_chosen_day(self):
         yesterday = recent_days()[1]

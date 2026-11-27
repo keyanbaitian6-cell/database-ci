@@ -135,14 +135,18 @@ class TwoWindowNoticeTests(unittest.TestCase):
         app = (Path(browser_import.__file__).resolve().parent / 'app.py').read_text(encoding='utf-8')
         block = app[app.index('    def open_browser_import():'):app.index("watch_capture_window(process, 'メルヘン'")]
         self.assertIn('window_id = uuid.uuid4().hex[:12]', block)
-        self.assertEqual(block.count("str(ROOT / 'reports'), window_id]"), 2, 'ソース起動・exe起動の両方で渡す')
+        # 起動コマンドは個別・一括で共通の meruhen_browser_command に切り出した（2026-11-28）
+        self.assertIn('command = meruhen_browser_command(window_id)', block)
+        command = app[app.index('def meruhen_browser_command(window_id):'):app.index('def source_version(')]
+        self.assertEqual(command.count("str(ROOT / 'reports'), window_id]"), 2, 'ソース起動・exe起動の両方で渡す')
         self.assertIn('browser_import.take_finished_message(DATA_DIR, window_id)', block)
         source = Path(browser_import.__file__).read_text(encoding='utf-8')
         session = source[source.index('def run_session('):source.index('def backup_after_session(')]
         # 窓を開いたときに消すのは同じ窓IDの古い知らせだけ（2つ目の窓が1つ目の未読の知らせを消さない）
-        self.assertIn('take_finished_message(Path(db_path).parent, window_id)', session)
+        self.assertIn('data_dir = Path(db_path).parent', session)
+        self.assertIn('take_finished_message(data_dir, window_id)', session)
         self.assertIn('close_when_finished(bridge, window, Path(db_path).parent, window_id)', session)
-        self.assertIn('run_session(db_arg, reports_arg, args[2] if len(args) > 2 else None)', source)
+        self.assertIn('run_session(db_arg, reports_arg, positional[2] if len(positional) > 2 else None,', source)
 
 
 class MeruhenDbWaitTests(unittest.TestCase):

@@ -202,7 +202,8 @@ def window_source(label: str) -> str:
     """取り込み窓の表示名から、対象の原本DBの種別（pscube / meruhen / other）を返す。"""
     if label in ('サイトセブン', 'P’s CUBE'):
         return 'pscube'
-    if label == 'メルヘン':
+    # 一括取り込みの窓は「メルヘン（幸町・下）」のように店・向きを付ける（2026-11-28）。同じメルヘンの原本DBの窓。
+    if label == 'メルヘン' or label.startswith('メルヘン（'):
         return 'meruhen'
     return 'other'
 

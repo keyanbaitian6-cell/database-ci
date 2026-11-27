@@ -45,6 +45,22 @@ ROOT = runtime_root()
 DATA_DIR = ROOT / 'data'
 
 
+def meruhen_browser_command(window_id):
+    """メルヘンの取り込み窓1つの起動コマンド（個別の取り込みと一括取り込みで共通。一括は店・日・向きを後ろに足す）。"""
+    if getattr(sys, 'frozen', False):
+        executable_dir = Path(sys.executable).resolve().parent
+        browser_candidates = (
+            executable_dir / 'database-browser.exe',
+            executable_dir.parent / 'database-browser' / 'database-browser.exe',
+        )
+        browser = next((candidate for candidate in browser_candidates if candidate.exists()), None)
+        if browser is None:
+            raise OSError('database-browser.exe が見つかりません。database/bin の配布フォルダ一式をそろえてください。')
+        return [str(browser), str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports'), window_id]
+    return [sys.executable, str(ROOT / 'browser_import.py'),
+            str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports'), window_id]
+
+
 def source_version(root=None):
     """起動したソースの版（git のコミットの先頭7文字）。分からなければ「不明」。git コマンドは使わない（2026-11-23）。"""
     git = Path(root or ROOT).parent / '.git'
@@ -862,6 +878,12 @@ def main():
     ttk.Button(imports, text='アナスロから補う（P-STATION・幸町）',
                command=lambda: open_anaslo_converter()).grid(row=1, column=1, sticky='ew', ipadx=22, ipady=9,
                                                              padx=(14, 0), pady=(9, 0))
+    # メルヘン2店舗の一括取り込み（2026-11-28）。上の「メルヘンワールドを取り込む」は1窓ずつの操作用に残す。
+    ttk.Button(imports, text='メルヘン2店舗を一括取り込み（長町南・幸町 × 上・下・10機種目からの6窓）',
+               command=lambda: open_meruhen_bulk()).grid(row=2, column=0, columnspan=2, sticky='ew',
+                                                         ipadx=22, ipady=9, pady=(9, 0))
+    bulk_rows = ttk.Frame(tab_home)
+    bulk_rows.pack(anchor='w', fill='x', pady=(6, 0))
     # よく使うボタン（まとめ・記録・取り消し・パチンコ）を取り込みのすぐ下に。窓が小さいときに見切れても困らない
     # 説明の文は一番下（2026-11-07、最小の窓の大きさでまとめ・パチンコの段が隠れていた）。
     ttk.Separator(tab_home).pack(fill='x', pady=(12, 10))
@@ -1213,19 +1235,7 @@ def main():
         import uuid
         window_id = uuid.uuid4().hex[:12]
         try:
-            if getattr(sys, 'frozen', False):
-                executable_dir = Path(sys.executable).resolve().parent
-                browser_candidates = (
-                    executable_dir / 'database-browser.exe',
-                    executable_dir.parent / 'database-browser' / 'database-browser.exe',
-                )
-                browser = next((candidate for candidate in browser_candidates if candidate.exists()), None)
-                if browser is None:
-                    raise OSError('database-browser.exe が見つかりません。database/bin の配布フォルダ一式をそろえてください。')
-                command = [str(browser), str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports'), window_id]
-            else:
-                command = [sys.executable, str(ROOT / 'browser_import.py'),
-                           str(ROOT / 'data' / 'database.sqlite3'), str(ROOT / 'reports'), window_id]
+            command = meruhen_browser_command(window_id)
             since = datetime.now().astimezone().isoformat(timespec='seconds')
             process = subprocess.Popen(
                 command,
@@ -1256,6 +1266,62 @@ def main():
                 logbox.see('end')
 
         watch_capture_window(process, 'メルヘン', meruhen_message, after_close=meruhen_forward_note)
+
+    # メルヘン2店舗の一括取り込み（2026-11-28 利用者）。窓（1店舗3窓）の起動・二重起動の防止は meruhen_bulk.BulkLauncher、
+    # 窓の中の段取り（機種一覧→上から／下から取り込む、人間認証での待機と再開）は browser_import.BulkStart。
+    # 窓ごとの完了・バックアップ・日次学習の起動は、個別の取り込みと同じ watch_capture_window に任せる。
+    import meruhen_bulk
+    bulk_launcher = meruhen_bulk.BulkLauncher(
+        DATA_DIR, lambda window_id: meruhen_browser_command(window_id),
+        lambda command: subprocess.Popen(command, cwd=str(ROOT)))
+    bulk_shown = {}
+    bulk_timer = [None]  # 状態表示の更新の予約（1つだけ）
+
+    def open_meruhen_bulk():
+        try:
+            started, skipped, failed = bulk_launcher.launch()
+        except OSError as exc:
+            messagebox.showerror('起動できません', f'一括取り込みを開始できません：{exc}', parent=root)
+            return
+        for window in started:
+            def take(window=window):
+                import browser_import
+                message = browser_import.take_finished_message(DATA_DIR, window.window_id)
+                if message:
+                    window.finished = message
+                return message
+            watch_capture_window(window.process, f'メルヘン（{window.label}）', take)
+        if started:
+            logbox.insert('end', f'メルヘン2店舗の一括取り込みを始めました（{started[0].day}・'
+                          + '、'.join(w.label for w in started) + '）。窓ごとの状態はボタンの下に出ます。\n')
+        if skipped:
+            logbox.insert('end', '同じ店・日・向きの窓が動いているので開きませんでした：' + '、'.join(skipped) + '\n')
+        for label, error in failed:
+            logbox.insert('end', f'{label}の窓を開けませんでした：{error}\n')
+        logbox.see('end')
+        refresh_bulk_rows()
+
+    def refresh_bulk_rows():
+        if bulk_timer[0] is not None:
+            root.after_cancel(bulk_timer[0])
+            bulk_timer[0] = None
+        rows = bulk_launcher.rows()
+        for widget in bulk_rows.winfo_children():
+            widget.destroy()
+        active = False
+        for window in rows:
+            state, line = window.text(DATA_DIR)
+            color = {'auth': '#b54708', 'stopped': '#b42318', 'done': '#087d59'}.get(state)
+            ttk.Label(bulk_rows, text=line, style='Sub.TLabel',
+                      **({'foreground': color} if color else {})).pack(anchor='w')
+            previous = bulk_shown.get(window.window_id)
+            if previous != state and state in ('auth', 'done', 'stopped'):
+                logbox.insert('end', line + '\n')
+                logbox.see('end')
+            bulk_shown[window.window_id] = state
+            active = active or state not in ('done', 'stopped')
+        if active:
+            bulk_timer[0] = root.after(1000, refresh_bulk_rows)
 
     anaslo_process = [None]
 

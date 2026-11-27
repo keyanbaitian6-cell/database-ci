@@ -145,7 +145,10 @@ AUTO_CAPTURE_JS = r'''
   };
   const autoTop = makeStart('database-auto-top', '上から取り込む');
   const autoBottom = makeStart('database-auto-bottom', '下から取り込む');
-  autoStartRow.append(autoTop, autoBottom);
+  // 上から10機種目から（2026-11-28。10機種目から下へ進み、最後のあと一覧の先頭に戻って残りを拾う）。
+  const autoTenth = makeStart('database-auto-tenth', '10機種目から取り込む');
+  autoTenth.style.gridColumn = '1 / span 2';
+  autoStartRow.append(autoTop, autoBottom, autoTenth);
   card.insertBefore(autoButton, captureBtn);
   card.insertBefore(autoLabel, captureBtn);
   card.insertBefore(autoDayBox, captureBtn);
@@ -191,11 +194,11 @@ AUTO_CAPTURE_JS = r'''
     }
     autoDay.value = state.target_day || '';
     autoDay.disabled = autoEnabled || autoChanging;
-    for (const button of [autoTop, autoBottom]) {
+    for (const button of [autoTop, autoBottom, autoTenth]) {
       button.disabled = autoEnabled || autoChanging;
       button.style.opacity = button.disabled ? '.5' : '1';
       // いまの向きを、自動取り込みのOFFの間も示す（手動の「次へ」もこの向きで次の機種を選ぶ）。
-      const chosen = button === (state.direction === 'bottom' ? autoBottom : autoTop);
+      const chosen = button === (state.direction === 'bottom' ? autoBottom : state.direction === 'tenth' ? autoTenth : autoTop);
       button.style.outline = chosen ? '3px solid #087d59' : '';
       button.setAttribute('aria-pressed', String(chosen));
     }
@@ -213,7 +216,7 @@ AUTO_CAPTURE_JS = r'''
     autoCancelled = autoEnabled;
     autoChanging = true;
     autoButton.disabled = true;
-    autoTop.disabled = autoBottom.disabled = true;
+    autoTop.disabled = autoBottom.disabled = autoTenth.disabled = true;
     try {
       const state = await window.pywebview.api.set_auto_capture(enable, Number(autoSeconds.value), autoDay.value, direction);
       autoChanging = false;
@@ -223,13 +226,14 @@ AUTO_CAPTURE_JS = r'''
       autoChanging = false;
       autoCancelled = false;
       autoButton.disabled = false;
-      autoTop.disabled = autoBottom.disabled = autoEnabled;
+      autoTop.disabled = autoBottom.disabled = autoTenth.disabled = autoEnabled;
       autoStatus.textContent = '切り替えに失敗しました。必要ならブラウザを閉じて停止してください。';
     }
   };
   autoButton.onclick = () => toggleAuto(!autoEnabled, null);
   autoTop.onclick = () => { if (!autoEnabled) toggleAuto(true, 'top'); };
   autoBottom.onclick = () => { if (!autoEnabled) toggleAuto(true, 'bottom'); };
+  autoTenth.onclick = () => { if (!autoEnabled) toggleAuto(true, 'tenth'); };
   autoDay.onchange = async () => {
     try { window.__databaseRenderAuto(await window.pywebview.api.set_target_day(autoDay.value, null)); }
     catch (error) { autoStatus.textContent = '取り込み日を変えられませんでした：' + String(error && error.message || error); }
@@ -239,7 +243,7 @@ AUTO_CAPTURE_JS = r'''
     const enabled = tablesOnlyInput.checked;
     autoChanging = true;
     tablesOnlyInput.disabled = true;
-    autoButton.disabled = autoTop.disabled = autoBottom.disabled = true;
+    autoButton.disabled = autoTop.disabled = autoBottom.disabled = autoTenth.disabled = true;
     try {
       const state = await window.pywebview.api.set_tables_only(enabled);
       moveEpoch++;
@@ -252,7 +256,7 @@ AUTO_CAPTURE_JS = r'''
       autoChanging = false;
       tablesOnlyInput.checked = tablesOnly;
       try { window.__databaseRenderAuto(await window.pywebview.api.get_auto_capture()); }
-      catch (_) { autoButton.disabled = tablesOnlyInput.disabled = false; autoTop.disabled = autoBottom.disabled = false; }
+      catch (_) { autoButton.disabled = tablesOnlyInput.disabled = false; autoTop.disabled = autoBottom.disabled = autoTenth.disabled = false; }
       status.textContent = '取り込みモードを変えられませんでした：' + String(error && error.message || error);
     }
   };

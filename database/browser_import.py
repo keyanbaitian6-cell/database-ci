@@ -17,6 +17,7 @@ from __future__ import annotations
 from capture_card import CARD_JS
 
 import json
+import os
 import re
 import threading
 import unicodedata
@@ -27,7 +28,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from PIL import Image, ImageDraw
 from auto_capture import AUTO_CAPTURE_JS, AutoCapture
 import error_log
-from file_io import take_notice, write_notice
+from file_io import atomic_writer, take_notice, write_notice
 from pscube_connection import BrowserConnection, install_webview2_handlers, present_connection_failure, reopen_page, retry_target
 
 from collector import HEADERS, HEADERS_NO_MAX_HOLD, HOST, parse_table
@@ -1048,7 +1049,21 @@ def today_iso(now=None):
     return (now - timedelta(hours=BUSINESS_DAY_CUTOFF_HOUR)).date().isoformat()
 
 
-DIRECTIONS = ('top', 'bottom')
+# 機種一覧をたどる向き。top＝上から、bottom＝下から、tenth＝上から10機種目から（2026-11-28 利用者「上から10機種目から
+# 取り込むを実装してほしい。つまり一店舗3画面」。10機種目から下へ進み、最後まで行ったら一覧の先頭に戻って残りを拾う）。
+DIRECTIONS = ('top', 'bottom', 'tenth')
+TENTH_START = 10  # 「上から10機種目」（サイトの一覧の並びで数える）
+
+
+def order_for_direction(items, direction):
+    """サイトの一覧の並び（上から）を、取り込む向きの並びに直す。"""
+    items = list(items)
+    if direction == 'bottom':
+        return items[::-1]
+    if direction == 'tenth':
+        start = min(TENTH_START - 1, max(len(items) - 1, 0))
+        return items[start:] + items[:start]
+    return items
 
 
 def recent_days(now=None, count=7):
@@ -1086,6 +1101,261 @@ def machine_list_url(location, day, after=None):
 def machine_key(name):
     """機種の照合用の名前（正規化して空白を除く）。"""
     return re.sub(r'\s+', '', normalize_machine_name(name))
+
+
+# ---- メルヘン2店舗の一括取り込み（2026-11-28 利用者「メルヘン2店舗を一括取り込み」） ----
+# 1回押すと「長町南・上 → 長町南・下 → 長町南・10機種目から → 幸町の同じ3つ」の順に6窓（1店舗3窓）を開き、窓ごとに普段の手順
+# （店の入口 → 1000円46枚スロット〔幸町はハイスロ〕の機種一覧 → 取り込み日を選ぶ → 上から／下から取り込む）を
+# 画面の状態を確かめながら進める。どちらの店も、その機種一覧は rack_info_kt/?kind_code=21。
+# 1店舗3窓（上・下・10機種目から）。2026-11-28 利用者「上から10機種目から取り込むを実装してほしい。つまり一店舗3画面」。
+BULK_ORDER = (('nagamachiminami', 'top'), ('nagamachiminami', 'bottom'), ('nagamachiminami', 'tenth'),
+              ('saiwaichou', 'top'), ('saiwaichou', 'bottom'), ('saiwaichou', 'tenth'))
+BULK_STORE_LABELS = {'nagamachiminami': '長町南', 'saiwaichou': '幸町'}
+BULK_DIRECTION_LABELS = {'top': '上', 'bottom': '下', 'tenth': '10機種目から'}
+BULK_STATE_LABELS = {'preparing': '準備中', 'auth': '人間認証待ち', 'running': '取り込み中',
+                     'done': '完了', 'stopped': '中断'}
+BULK_FOLDER = 'meruhen-bulk'
+
+
+def bulk_label(store, direction):
+    """親画面・窓の題名に出す名前（例：幸町・下）。"""
+    return f'{BULK_STORE_LABELS[store]}・{BULK_DIRECTION_LABELS[direction]}'
+
+
+def bulk_status_path(data_dir, window_id):
+    """一括取り込みの窓が自分の状態を書くファイル（窓IDごと）。親画面が読む。"""
+    return Path(data_dir) / BULK_FOLDER / f'{window_id}.json'
+
+
+def read_bulk_status(data_dir, window_id):
+    try:
+        value = json.loads(bulk_status_path(data_dir, window_id).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def machine_list_page(store):
+    """その店の1000円46枚スロット（幸町はハイスロ）の機種一覧。普段の「種別を選ぶ」の行き先と同じページ。"""
+    return f'https://{HOST}/{store}/rack_info_kt/?kind_code=21'
+
+
+def page_kind(url, store):
+    """一括取り込みが見る、いまのページの種類。
+    outside：対象の2店舗の外（認証・同意の画面など）／other_store：もう片方の店／list：その店の機種一覧（kind_code=21）／
+    capture：その店の機種の表・台のグラフ（自動取り込みが読むページ）／store_page：その店のそれ以外のページ（入口など）。"""
+    if not url or not is_allowed_url(url):
+        return 'outside'
+    parsed = urlparse(url)
+    if parsed.path.strip('/').split('/')[0] != store:
+        return 'other_store'
+    path = parsed.path.rstrip('/') + '/'
+    kind = parse_qs(parsed.query).get('kind_code', [''])[0]
+    if path.endswith('/rack_info_kt/') and kind == '21':
+        return 'list'
+    if '/standlist_slot/' in path or '/standgraph/' in path:
+        return 'capture'
+    return 'store_page'
+
+
+def flash_taskbar(title, on, pid=None):
+    """この処理の窓（題名が title で始まるもの）のタスクバーのボタンを点滅させる／止める（2026-11-28 利用者
+    「タスクバー点滅させて」。人間認証待ちに気づけるように）。FlashWindowEx の FLASHW_TRAY|FLASHW_TIMERNOFG は、
+    利用者がその窓を選ぶまで点滅し続け、窓を前に出さない（操作中の窓からフォーカスを奪わない）。Windows 以外では何もしない。"""
+    import sys
+    if sys.platform != 'win32':
+        return False
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    pid = os.getpid() if pid is None else pid
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            length = user32.GetWindowTextLengthW(hwnd)
+            text = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, text, length + 1)
+            if text.value.startswith(title):
+                found.append(hwnd)
+        return True
+    user32.EnumWindows(each, 0)
+
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [('cbSize', wintypes.UINT), ('hwnd', wintypes.HWND), ('dwFlags', wintypes.DWORD),
+                    ('uCount', wintypes.UINT), ('dwTimeout', wintypes.DWORD)]
+    FLASHW_STOP, FLASHW_TRAY, FLASHW_TIMERNOFG = 0, 2, 12
+    for hwnd in found:
+        info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, (FLASHW_TRAY | FLASHW_TIMERNOFG) if on else FLASHW_STOP, 0, 0)
+        user32.FlashWindowEx(ctypes.byref(info))
+    return bool(found)
+
+
+class BulkStart:
+    """一括取り込みの窓の段取り（取り込み窓の見張りのスレッドから step() を呼ぶ）。
+
+    固定の座標・時間待ちのクリックはしない。毎回、店・ページの種類・確認画面の有無・自動取り込みの状態を
+    見て、必要な1手だけを行う。機種一覧が表示されたら、親画面が決めた営業日と向きで「上から／下から取り込む」と
+    同じ set_auto_capture を呼ぶ。確認画面（人間認証）ではその窓だけ待ち、利用者が済ませて店の画面に戻ったら、
+    押し直さずに続ける。窓は前面に出さない（操作中の窓からフォーカスを奪わない）。
+    """
+
+    def __init__(self, store, day, direction, status_path, seconds=3.5):
+        if store not in BULK_STORE_LABELS or direction not in DIRECTIONS:
+            raise ValueError('一括取り込みの店・向きが不正です。')
+        date.fromisoformat(day)
+        self.store, self.day, self.direction, self.seconds = store, day, direction, seconds
+        self.status_path = Path(status_path)
+        self.started = False
+        self.state = None
+        self.message = None
+        self._moved_on = None  # 移動を出したときのページの番号（同じページで2回出さない）
+        # 人間認証待ちになったらタスクバーを点滅させ、抜けたら止める（run_session が窓の題名で設定する）
+        self.flash = None
+
+    def report(self, state, message=''):
+        if (state, message) == (self.state, self.message):
+            return
+        previous = self.state
+        self.state, self.message = state, message
+        if self.flash is not None and (state == 'auth') != (previous == 'auth'):
+            try:
+                self.flash(state == 'auth')
+            except Exception as error:  # noqa: BLE001 - 点滅は知らせだけ。失敗しても取り込みは続ける
+                error_log.record(self.status_path.parent.parent, 'meruhen.bulk.flash', error)
+        try:
+            with atomic_writer(self.status_path) as out:
+                json.dump({'state': state, 'label': BULK_STATE_LABELS[state], 'message': message,
+                           'store': self.store, 'direction': self.direction, 'day': self.day, 'pid': os.getpid(),
+                           'at': datetime.now().astimezone().isoformat(timespec='seconds')}, out, ensure_ascii=False)
+        except OSError as error:
+            error_log.record(self.status_path.parent.parent, 'meruhen.bulk.status', error)
+
+    def _move(self, bridge, window, url):
+        if self._moved_on == bridge._documents:
+            return  # このページではもう移動を出した。読み込みが終わるのを待つ
+        self._moved_on = bridge._documents
+        window.load_url(url)
+
+    def _waiting_for_check(self, window):
+        """いまのページの待ちの理由（無ければ None）。取り込みカードの判定の部品がまだ入っていないページ
+        （読み込み直した直後など）は、確認画面かどうか分からないので 'unknown' を返す（2026-11-28、模擬ページの
+        試験で、自分で読み込み直す確認画面の直後に「待ちなし」と取り違えて機種一覧へ進んでいた）。"""
+        try:
+            reason = window.evaluate_js('window.__databaseAutoWaitReason ? '
+                                        '(window.__databaseAutoWaitReason() || {ok: true}) : {missing: true}')
+        except Exception:  # noqa: BLE001 - 読めないページは次の回に見直す
+            return 'unknown'
+        if not isinstance(reason, dict) or reason.get('missing'):
+            return 'unknown'
+        return reason.get('error') or None
+
+    def step(self, bridge, window):
+        if bridge._completed:
+            self.report('done', bridge._completed)
+            return
+        if self.started:
+            self._step_running(bridge, window)
+        else:
+            self._step_preparing(bridge, window)
+
+    def _step_preparing(self, bridge, window):
+        if bridge._connection.failure:
+            self.report('stopped', bridge._connection.failure['message'])
+            return
+        url = window.get_current_url() or ''
+        kind = page_kind(url, self.store)
+        if kind == 'outside':
+            self.report('auth', '認証・確認の画面です。窓を選んで済ませてください（済んだら続けます）。')
+            return
+        if not bridge._overlay_ready.is_set():
+            if self.state != 'auth':  # 確認画面が自分で読み込み直す間は「人間認証待ち」のまま（表示をちらつかせない）
+                self.report('preparing', 'ページの読み込み待ち')
+            return
+        waiting = self._waiting_for_check(window)
+        if waiting == 'unknown':
+            return  # 判定の部品がまだ無い。次の回に見直す（何もしない）
+        if waiting and '確認画面' in waiting:
+            self.report('auth', '人間認証の画面です。窓を選んで済ませてください（済んだら続けます）。')
+            return
+        if waiting:
+            if self.state != 'auth':  # 確認画面の読み込み待ちの間は「人間認証待ち」のまま
+                self.report('preparing', waiting.replace('ON・', ''))
+            return
+        if kind != 'list':
+            self.report('preparing', '機種一覧（1000円46枚スロット／ハイスロ）を開いています')
+            self._move(bridge, window, machine_list_page(self.store))
+            return
+        probe = window.evaluate_js('window.__databaseAutoProbe && window.__databaseAutoProbe()')
+        if not isinstance(probe, dict) or probe.get('kind') != 'machines':
+            self.report('preparing', '機種一覧の表示待ち')
+            return
+        try:
+            state = bridge.set_auto_capture(True, self.seconds, self.day, self.direction)
+        except ValueError as error:
+            self.report('stopped', str(error))
+            return
+        bridge._render_auto()
+        if not state['enabled']:
+            self.report('stopped', state.get('message') or '自動取り込みを始められませんでした。')
+            return
+        self.started = True
+        self.report('running', state['message'])
+
+    def _step_running(self, bridge, window):
+        state = bridge.get_auto_capture()
+        if not state['enabled']:
+            # 利用者の停止ボタン・通信の失敗。自動では戻さない（もう一度始めるときは窓の「上から／下から」で）。
+            self.report('stopped', (bridge._connection.failure or {}).get('message') or '自動取り込みが止まりました。')
+            return
+        url = window.get_current_url() or ''
+        kind = page_kind(url, self.store)
+        if kind == 'outside':
+            self.report('auth', '認証・確認の画面です。窓を選んで済ませてください（済んだら続けます）。')
+            return
+        if not bridge._overlay_ready.is_set() and self.state == 'auth':
+            return  # 確認画面が自分で読み込み直す間は「人間認証待ち」のまま
+        waiting = self._waiting_for_check(window) if bridge._overlay_ready.is_set() else 'unknown'
+        if waiting == 'unknown' and self.state == 'auth':
+            return  # 確認画面を読み込み直している途中。「人間認証待ち」のまま
+        if (waiting and '確認画面' in waiting) or '確認画面' in state['message']:
+            self.report('auth', '人間認証の画面です。窓を選んで済ませてください（済んだら続けます）。')
+            return
+        if bridge._overlay_ready.is_set() and not waiting and kind in ('store_page', 'other_store') \
+                and bridge._pending_advance is None and not any(c.poll() is None for c in bridge._children):
+            # 認証のあとに店の入口などへ戻ったときは、機種一覧へ戻して同じ日・同じ向きの未取得分から続ける。
+            self._move(bridge, window, machine_list_page(self.store))
+        self.report('running', state['message'])
+
+
+def parse_session_args(args):
+    """取り込み窓の引数：DB・レポート・窓ID（位置）と、一括取り込みの --store / --day / --direction / --slot。"""
+    positional, options = [], {}
+    names = {'--store', '--day', '--direction', '--slot'}
+    i = 0
+    while i < len(args):
+        if args[i] in names:
+            if i + 1 >= len(args):
+                raise ValueError(f'{args[i]} の値がありません。')
+            options[args[i][2:]] = args[i + 1]
+            i += 2
+        else:
+            positional.append(args[i])
+            i += 1
+    store = options.get('store')
+    if store is not None and store not in BROWSER_URLS:
+        raise ValueError('店の指定が不正です。')
+    bulk = None
+    if 'day' in options or 'direction' in options:
+        if store is None or 'day' not in options or options.get('direction') not in DIRECTIONS:
+            raise ValueError('一括取り込みには店・日・向きがすべて必要です。')
+        date.fromisoformat(options['day'])
+        bulk = {'day': options['day'], 'direction': options['direction']}
+    slot = int(options.get('slot', 0))
+    return positional, store, bulk, slot
 
 
 def no_racks_notice(day, machine):
@@ -1339,7 +1609,7 @@ class _Bridge:
     browser stays free to keep accepting the next click immediately.
     """
 
-    def __init__(self, db_path, reports_folder, script_path, layout=None):
+    def __init__(self, db_path, reports_folder, script_path, layout=None, start_url=DEFAULT_START):
         # pywebview recursively inspects public attributes to build its JS API.
         # A public Window reaches WinForms native properties and can deadlock
         # API injection. Keep all internal state out of that traversal.
@@ -1347,7 +1617,11 @@ class _Bridge:
         self._reports_folder = str(reports_folder)
         self._script_path = str(script_path)
         self._window = None  # set once the window exists (for the real URL)
-        self._connection = BrowserConnection(DEFAULT_START, page_allowed=is_allowed_url, same_response=lambda a, b: same_page_url(a.split('#')[0], b.split('#')[0]))
+        # 窓の最初の店の入口。一括取り込みの幸町の窓は幸町の入口から開く（2026-11-28）。対象外のページから戻る先にも使う。
+        self._start_url = start_url
+        # 読み込みを終えたページの数。一括取り込みが「同じページで移動を2回出さない」ために見る。
+        self._documents = 0
+        self._connection = BrowserConnection(start_url, page_allowed=is_allowed_url, same_response=lambda a, b: same_page_url(a.split('#')[0], b.split('#')[0]))
         self._children = []  # review windows still open when the browser closes
         self._submit_lock = threading.Lock()
         self._retrying = False
@@ -1444,7 +1718,7 @@ class _Bridge:
             self._advance_generation = None
             self._signal_path.unlink(missing_ok=True)
             self._loading()
-            target = retry_target(self._window, self._connection, DEFAULT_START)
+            target = retry_target(self._window, self._connection, self._start_url)
             self._connection.start(target)
             self._retrying = True
         # before_load is synchronous in pywebview: never hold AutoCapture's
@@ -1525,6 +1799,7 @@ class _Bridge:
         self._auto.loaded()  # Invalidate extraction from the previous document.
 
     def _loaded(self):
+        self._documents += 1
         self._auto.loaded()
         self._auto_display = None
         if self._connection.failure:
@@ -1804,7 +2079,8 @@ class _Bridge:
             return json.dumps({'url': None, 'message': '機種一覧を読み取れませんでした。'}, ensure_ascii=False)
         store_path = payload.get('store')
         day = self._target_day or payload.get('day')
-        raw_machines = payload.get('machines') or []
+        # 向きの並び（下から＝逆順、10機種目から＝10番目から下へ・最後のあと先頭へ）。サイトの一覧の並びで1回だけ直す。
+        raw_machines = order_for_direction(payload.get('machines') or [], self._direction)
         if store_path not in STORE_NAMES:
             return json.dumps({'url': None,
                                'message': '店舗・日付を特定できませんでした。1000円46枚スロット／ハイスロの機種一覧を表示してください。'},
@@ -1868,8 +2144,7 @@ class _Bridge:
                     candidates.append((url, name))
             # 「下から取り込む」なら、日付を確かめるために開く最初の機種も一覧の下から選ぶ
             # （以前はここだけ向きを見ず、最初の1機種が必ず一覧の上になっていた。2026-10-04）。
-            if self._direction == 'bottom':
-                candidates.reverse()
+            # 並びは raw_machines を向きに直した時点で済んでいる（2026-11-28、10機種目からも同じ並び）。
             skipped_today = {key for location, skipped_day, key in self._no_racks
                              if location == store_path and skipped_day == today_iso()}
             # 安定ソート：未済が先。台情報が無かった機種は後へ。
@@ -1898,8 +2173,7 @@ class _Bridge:
             machines.append(dict(name=name, url=url,
                                  count=int(count) if isinstance(count, (int, float)) else None,
                                  rack_scope=_clean_rack_scope(raw_machine.get('rack_scope'))))
-        if self._direction == 'bottom':
-            machines.reverse()
+        # 並びは raw_machines を向きに直した時点で済んでいる（下から・10機種目から）。
         # 取り込み日を指定しているときは、サイトの行を押さず、日付つきのURLで機種の表を開く
         # （行を押すと、サイトが選んでいる日付になってしまうため）。
         direct = bool(self._target_day)
@@ -2411,23 +2685,43 @@ def take_finished_message(data_dir, window_id=None) -> str | None:
     return take_notice(finished_path(data_dir, window_id))
 
 
-def run_session(db_path, reports_folder, window_id=None):
+def run_session(db_path, reports_folder, window_id=None, store=None, bulk=None, slot=0):
     """Open the embedded browser. Table/graph review happens in separate
     processes spawned by :class:`_Bridge`; this also runs one background
     thread that watches for the advance-signal file those processes write
     (see ``_write_advance_signal``), so a confirmed graph's own process can
     still nudge this window on to the next rack without either process
     reaching directly into the other's memory.
+
+    store：最初に開く店（None は今までどおり長町南）。bulk：一括取り込みの {'day', 'direction'}（窓IDが要る）。
+    slot：一括取り込みの何番目の窓か（0〜5。窓が重ならないよう少しずつずらす）。
     """
     import threading
     import webview
 
     window_id = clean_window_id(window_id)
-    take_finished_message(Path(db_path).parent, window_id)  # 同じ窓IDの古い知らせが残っていれば消す（ほかの窓の分は消さない）
-    layout = load_browser_layout(Path(db_path).parent, _desktop_rect())
-    bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()), layout=layout)
-    placement = layout['window']
-    window = webview.create_window('database ブラウザ取り込み', DEFAULT_START,
+    if bulk is not None and (window_id is None or store is None):
+        raise ValueError('一括取り込みの窓には、店と窓IDが要ります。')
+    start_url = BROWSER_URLS[store] if store else DEFAULT_START
+    data_dir = Path(db_path).parent
+    take_finished_message(data_dir, window_id)  # 同じ窓IDの古い知らせが残っていれば消す（ほかの窓の分は消さない）
+    starter = None
+    if bulk is not None:
+        starter = BulkStart(store, bulk['day'], bulk['direction'], bulk_status_path(data_dir, window_id))
+        starter.report('preparing', '取り込み窓を開いています')
+    layout = load_browser_layout(data_dir, _desktop_rect())
+    bridge = _Bridge(db_path, reports_folder, str(Path(__file__).resolve()), layout=layout, start_url=start_url)
+    placement = dict(layout['window'])
+    title = 'database ブラウザ取り込み'
+    if starter is not None:
+        title += f'（{bulk_label(store, bulk["direction"])}）'
+        starter.flash = lambda on, title=title: flash_taskbar(title, on)
+        # 6窓がちょうど重ならないよう、何番目かで少しずつずらす（タスクバーの題名でも選べる）。
+        offset = 32 * max(0, min(int(slot), 5))
+        if placement.get('x') is not None:
+            placement['x'] = placement['x'] - offset
+            placement['y'] = max(0, placement['y'] - offset)
+    window = webview.create_window(title, start_url,
                                     width=placement['width'], height=placement['height'],
                                     x=placement['x'], y=placement['y'], js_api=bridge)
     bridge._window = window
@@ -2445,7 +2739,7 @@ def run_session(db_path, reports_folder, window_id=None):
         if bridge._connection.showing_error:
             return
         if current and not current.startswith('data:') and not is_allowed_url(current):
-            window.load_url(DEFAULT_START)
+            window.load_url(start_url)  # この窓の店の入口へ（一括取り込みの幸町の窓は幸町へ）
             return
         try:
             window.evaluate_js('window.__databaseLayout = ' + json.dumps(bridge._layout['overlay'])
@@ -2470,6 +2764,11 @@ def run_session(db_path, reports_folder, window_id=None):
                 state = bridge.get_auto_capture()
                 if state['enabled']:
                     bridge._auto.pause('ON・待機：' + str(exc), state['revision'])
+            if starter is not None:
+                try:
+                    starter.step(bridge, window)
+                except Exception as error:  # noqa: BLE001 - 段取りの失敗は次の回に見直す。理由は残す
+                    error_log.record(data_dir, 'meruhen.bulk.step', error)
             try:
                 if close_when_finished(bridge, window, Path(db_path).parent, window_id):
                     return
@@ -2556,6 +2855,8 @@ if __name__ == '__main__':
         target = _confirm_table if args[0] == '--confirm-table' else _confirm_graph
         target(payload_arg, db_arg, reports_arg)
     else:
-        db_arg = Path(args[0]) if len(args) > 0 else root / 'data' / 'database.sqlite3'
-        reports_arg = Path(args[1]) if len(args) > 1 else root / 'reports'
-        run_session(db_arg, reports_arg, args[2] if len(args) > 2 else None)
+        positional, store_arg, bulk_arg, slot_arg = parse_session_args(args)
+        db_arg = Path(positional[0]) if len(positional) > 0 else root / 'data' / 'database.sqlite3'
+        reports_arg = Path(positional[1]) if len(positional) > 1 else root / 'reports'
+        run_session(db_arg, reports_arg, positional[2] if len(positional) > 2 else None,
+                    store=store_arg, bulk=bulk_arg, slot=slot_arg)
