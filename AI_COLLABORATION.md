@@ -5360,3 +5360,48 @@
 
 - 残り：共有カレンダーの `test_event_history_browser` も、ゲートの中で負荷がかかったときに1回落ちた（単独では通る）。今回は直していない。続くようなら同じやり方（負荷をかけて同時に流す）で調べる。
 - 追記（同日）：CI `d716bac` の実行 https://github.com/keyanbaitian6-cell/database-ci/actions/runs/46091107741 は **success**（pc ubuntu・pc windows・full。`full` で `test_viewer_history_guard_browser` も通過）。Claude が `gh run view` で確認した。
+
+## 2026-11-28 夜 Claude（Opus 5.5）：レビュー指摘②（日次学習v5の欠測境界）・③（共有カレンダーの機種検索・日別推移）
+
+- 依頼：利用者「database-main のレビュー指摘②と③を実装・回帰試験まで担当」。①（メルヘン一括取り込み・PCの窓管理）は Codex 担当。push・配布ビルド・公開は利用者の別指示まで行わない。
+- 基準：レビュー時の基準 `f3a1794`、対象差分 `11eb404`（日次学習 v5）・`7bba80d`（共有カレンダー）。作業の基準は `e289c8f`（`database-ci` の main。正本 `1100513` を含む）。作業ブランチ `fix/20261128-review-2-3`、worktree `C:\w\rev23`、コミット `bd743f5`（**未push**）。元の作業コピー `work/database-main` の Codex の未コミット文書6件には触れていない。
+- 並行作業：Gemini の `feat/blind-v6`（`6ee2aad`、日次学習 v6。`daily_learning_runtime.py` の `store_days` 等を変更）は手元だけで未push（11/28 夜時点、`database-ci` の main は `e289c8f` のまま）。一時 worktree で `6ee2aad` に今回の差分を当てると衝突なしで当たり、`test_daily_*.py` 142件 OK・`test_share_viewer.mjs` 44件 OK（一時 worktree は削除済み）。統合はどちらが先でもよい。
+
+### ② 日次学習v5の欠測の最悪・最良境界
+
+- 原因：`store_day()` が組ごとに「学習版の欠測は非プラス・従来の欠測はプラス」（最良は逆）と置いていた。両方式の候補に同じ判定不能の台があると、その台を方式ごとに逆の結果として数え、候補が同じ2台（片方プラス・片方判定不能）で差は必ず0なのに −50〜＋50 ポイントになった。
+- 直し（`database/daily_learning.py`）：`manski_bounds(groups)` を新設。台ごとに1つの結果を置く。日の差 ＝ Σ（台の結果 × 重み）、重みは組の数で等しく割った「学習版の候補での割合 − 従来の候補での割合」（`store_day` の組等重み・`_share` の分母＝候補数と同じ。候補数の違いも反映。両方式に同じ数だけ入る台は重み0）。判定不能の台は重みが負なら最悪で1・最良で0、正なら逆。同じ台が2つの組に入っても同じ結果を置く（組ごとに結果が食い違う記録は再計算不能）。`store_day` は `diff_manski_worst/best` に加えて `manski`（`ok`・`no_groups`・`unrecoverable`）を返す。`comparison` は1日でも `unrecoverable` なら期間の境界を `None` にし、`manski_unrecoverable_days` に日数を出す。
+- 記録（`database/daily_learning_runtime.py`）：`record_outcomes` が組ごとに `candidates`（両方式の候補の台、`labels` の鍵）を足す。旧形式（`candidates` が無い結果）は `store_days` → `with_candidates` が同じ鍵の予測（`predictions`）から候補を読み戻す（読むだけ。記録は追記専用のまま書き換えない）。予測が無い・組の鍵が合わない・台数（`k_`）が合わない・結果に無い台があるときは補わず、再計算不能。
+- 変えていないもの：候補の選び方・学習係数・`adopt`（採用）・`rollback_needed`（切り戻し）・判定日・`diff`・欠測を非プラス／プラスとみなす感度分析（`nonplus_difference`・`plus_difference`）・`p`・`p_14d`・`counts`・`RULE_VERSION`。境界は参考の値で、採用・切り戻しに使っていない。`daily_learning_fixed.py`（係数固定対照）は変更していない。組に候補の台を渡さないので、そちらの境界は再計算不能と出る（11/29 以降は版違いで対象外の研究）。
+- 文書：`DAILY_LEARNING.md` の v5 の節に追記。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 候補が完全に一致なら 0〜0（レビューの再現例） | 済 | `test_daily_learning_manski.py` `test_review_case_same_two_racks_is_zero`（旧式の置き方では −0.5 になることも同じ試験で確認）・`test_order_of_candidates_does_not_matter_for_identical_sets` |
+| 一部重複：共通の欠測台を矛盾なく扱う・候補数の違いの重み | 済 | `test_partial_overlap_shares_the_missing_rack`（従来2台・学習版1台）、`test_random_groups_match_brute_force`（300通り、複数の組・重なり・同じ台が2組。全通りの0/1の最小・最大と一致） |
+| 候補重複なし（旧式と同じ値）・欠測なし（境界＝差） | 済 | `test_no_overlap_matches_old_assignment`・`test_no_missing_bounds_equal_difference` |
+| 旧形式の読み込み（予測から復元／復元不能と分かる） | 済 | 一時ジャーナルで `test_new_record_keeps_candidates_and_old_record_is_restored_from_prediction`（新形式と同じ値・記録の body と sha が読んだ前後で同じ・予測なしは `unrecoverable`・鍵不一致も `unrecoverable`）、`test_old_record_partial_overlap_restored_from_prediction` |
+| 自動採用の判定が変わらない | 済 | `test_decisions_adopt_the_same_with_or_without_candidates`（一時ジャーナルで `decisions()`、境界あり／なしで結果・state 同じ、採用は learned）、`test_adoption_and_other_figures_unchanged_by_bounds`（`comparison` の境界以外の値すべて一致・`rollback_needed` 一致） |
+| 本番 `journal.sqlite3` の `outcomes`・`decisions` を開かない | 済 | 試験はすべて `tempfile` の一時ジャーナルと合成データ。本番DB・バックアップ・Cookie・設定・同期先は読んでいない |
+| 日次学習の試験一式 | 済 | `py -m unittest discover -s tests -p 'test_daily_learning*.py'`（TZ=JST-9）117件 OK（新しい試験ファイル 13件を含む）。既存 `test_v5_comparison_manski_bounds_14d_block_and_paired_counts` は、台IDの無い合成の組が「再計算不能」になることを確かめる形に更新 |
+
+### ③ 共有カレンダーの機種検索と日別推移
+
+- 原因：台の7日推移・日送り（`sameMachineName`）は `+` と空白のゆれを同じ機種とみなすのに、`searchStoreEntities`（検索結果の集計）・`machineDayHistory`（機種の日別推移）・`app.mjs` の機種の日別明細と前日・翌日の候補は `displayMachineName` の一致で比べていた。P-STATION の `L 北斗の拳`（P’s CUBE の表記）と `L+北斗の拳`（サイトセブンの表記）が検索で2件、日別推移が各1日になった。
+- 直し：`share_viewer/data.mjs` の `searchStoreEntities` は `machineIdentity` で機種をまとめ（見出しはいちばん新しい日の名前を `displayMachineName` で表示）、`machineDayHistory` は `sameMachineName` で日の台を選ぶ。`share_viewer/app.mjs` の `searchMachineDay` の日送りの候補と `machineDayView` の台一覧も `sameMachineName`。同一判定を検索用の緩い正規化（`normalizeSearchText`）には広げていない（`L北斗の拳` は別機種のまま）。台番号の集計は台番号ごとのまま。
+- 対象外（触っていない）：イベント履歴から開く機種（`historyMachine`、`x.machine === view.machine` の完全一致）。同じゆれがあり得るが、今回の指摘の経路ではないので未確認のまま残す。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 検索結果が1件・期間集計が2日分・見出しは新しい日の名前 | 済 | `test_share_viewer.mjs` 新しい試験「機種検索と日別推移：`L 北斗の拳` と `L+北斗の拳` を同じ機種に」 |
+| 別機種・別店舗・別の台番号を合算しない | 済 | 同じ試験（`L北斗の拳`・`北斗の拳`は別行、幸町の同名は足さない、70番の検索に71・80・90番を混ぜない、`racks`=2） |
+| 両日の明細と日付送り（ブラウザー） | 済 | `test_share_viewer_insights_browser.mjs`（320/393/1280px）：P-STATION で「北斗」→1件「記録2日」→日別推移2日・合計+200→11/24の明細（70番 -300）→「次の日」で11/25（70番 +500）→「前の日」→台詳細で別機種扱いなし。P-STATION の比較カードの合計を +1,900→+2,400 に更新（足した合成データの分） |
+| 直す前のコードで新しい試験が落ちる | 済 | `HEAD` の `share_viewer/` を一時フォルダに戻して実行：データ試験は新しい試験が失敗、ブラウザー試験は「検索結果で1件」で失敗（一時フォルダは削除済み） |
+| 共有カレンダーの試験 | 済 | `node --test tool/test_share_viewer.mjs` 44件 OK、`node tool/test_share_viewer_insights_browser.mjs` PASS |
+
+### 全体ゲート・未確認事項
+
+- 全体ゲート：`bash database_android/tool/check_before_build.sh`（`TZ=JST-9`・`CHECK_JS_JOBS=2`・`CHECK_BUILD_WORK=/c/w/cbw-rev23`、`bd743f5` と同じ作業ツリー）**ALL PASSED**：PC 1,220件・UTC 31件・Flutter 927件・analyze（既存の情報34件、エラー・警告0）・viewer-build・viewer-stage・share-stage・JS/ブラウザー 99項目すべて OK。
+- 未実施（利用者の別指示まで）：GitHub への push・CI、閲覧ページ・共有カレンダーの公開、APK。閲覧ページ（Flutter）は変えていない。共有カレンダーは公開しない限り利用者の画面は変わらない。
+- 未確認：実データ（本番の結果記録）での境界の値。11/28 以前の結果は旧形式なので、予測が残っていれば読み戻して計算され、残っていなければ「再計算不能」と出る（本番の `outcomes` は評価の決まりで開いていない）。
+- 統合のとき：この節は末尾に足しただけ。Codex 側の追記（作業コピーの未コミット分など）と並べて両方残す。
