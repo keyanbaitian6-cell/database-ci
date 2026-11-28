@@ -801,6 +801,47 @@ test('クイック検索：半角カナ・全角カナ・ひらがな・全角�
   assert.equal(rh.summary.averageGames, 5000);
 });
 
+test('機種検索と日別推移：`L 北斗の拳` と `L+北斗の拳` を同じ機種に（別機種・別店舗・別の台番号は混ぜない）', async () => {
+  // 2026-11-28 レビュー③。台の7日推移（sameMachineName）では同じ機種なのに、検索では2件・日別推移は各1日だった。
+  const {searchStoreEntities, machineDayHistory} = await import('../../share_viewer/data.mjs');
+  const ps = 'pscube:c740601:20';
+  const byDay = indexRecords([
+    {store: ps, day: '2026-11-25', machine: 'L+北斗の拳', rack: 70, games: 5000, bb: 10, rb: 5, net: 1000, estimated: false},
+    {store: ps, day: '2026-11-25', machine: 'L+北斗の拳', rack: 71, games: 3000, bb: 5, rb: 3, net: -200, estimated: false},
+    {store: ps, day: '2026-11-24', machine: 'L 北斗の拳', rack: 70, games: 4000, bb: 6, rb: 4, net: -400, estimated: false},
+    // 別機種（`+`・空白の違いではない）。検索の文字の正規化では一致するが、同じ機種にはしない。
+    {store: ps, day: '2026-11-25', machine: 'L北斗の拳', rack: 80, games: 4500, bb: 8, rb: 4, net: 300, estimated: false},
+    {store: ps, day: '2026-11-24', machine: '北斗の拳', rack: 90, games: 4500, bb: 8, rb: 4, net: 700, estimated: false},
+    // 別店舗の同じ名前
+    {store: 'saiwaichou', day: '2026-11-24', machine: 'L 北斗の拳', rack: 70, games: 6000, bb: 20, rb: 10, net: 5000, estimated: false},
+  ]);
+  const days = ['2026-11-25', '2026-11-24'];
+  const res = searchStoreEntities(byDay, ps, days, '北斗');
+  const hokuto = res.machines.filter(m => m.machine === 'L+北斗の拳' || m.machine === 'L 北斗の拳');
+  assert.equal(hokuto.length, 1, '`L 北斗の拳` と `L+北斗の拳` は検索結果で1件');
+  assert.equal(hokuto[0].machine, 'L+北斗の拳', '見出しはいちばん新しい日の名前');
+  assert.equal(hokuto[0].daysCount, 2);
+  assert.equal(hokuto[0].records, 3);
+  assert.equal(hokuto[0].racks, 2, '台番号は70・71の2台（合算しない）');
+  assert.equal(hokuto[0].totalNet, 400, '別店舗の5,000枚を足さない');
+  assert.deepEqual(res.machines.map(m => m.machine).sort(), ['L+北斗の拳', 'L北斗の拳', '北斗の拳'].sort(), '別機種は別の行');
+  assert.equal(res.machines.find(m => m.machine === 'L北斗の拳').daysCount, 1);
+  assert.equal(searchStoreEntities(byDay, ps, days, '').machines.length, 3);
+
+  for (const name of ['L+北斗の拳', 'L 北斗の拳', 'L  北斗の拳']) {
+    const mh = machineDayHistory(byDay, new Map(), ps, name, days);
+    assert.deepEqual(mh.entries.map(e => e.day), ['2026-11-25', '2026-11-24'], `${name}：日別推移は2日分`);
+    assert.deepEqual(mh.entries.map(e => [e.rawMachine, e.racks, e.total]), [['L+北斗の拳', 2, 800], ['L 北斗の拳', 1, -400]]);
+    assert.equal(mh.summary.days, 2);
+    assert.equal(mh.summary.totalNet, 400);
+    assert.equal(mh.summary.totalRecords, 3);
+  }
+  assert.deepEqual(machineDayHistory(byDay, new Map(), ps, 'L北斗の拳', days).entries.map(e => e.day), ['2026-11-25']);
+  assert.deepEqual(machineDayHistory(byDay, new Map(), 'saiwaichou', 'L+北斗の拳', days).entries.map(e => e.total), [5000]);
+  const rack70 = searchStoreEntities(byDay, ps, days, '70番').racks;
+  assert.deepEqual(rack70.map(r => [r.rack, r.daysCount, r.totalNet]), [[70, 2, 600]], '台番号の検索は70番だけ（71・80・90番を混ぜない）');
+});
+
 test('最新営業日の3店舗比較：台データ・HTML勝率集計のみ・記録なしを正確に比較する', async () => {
   const {latestStoreComparison, daySummaries, mergeEvents} = await import('../../share_viewer/data.mjs');
   const byDay = indexRecords([

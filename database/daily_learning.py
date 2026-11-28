@@ -27,6 +27,7 @@ JST = timezone(timedelta(hours=9))
 # 1) 大当たり0回でグラフを省略した台（v12／P’s CUBE仕様、ただしサイトセブン補完の at_art=None は除く）を欠測にせず非プラス(0)として扱う。
 # 2) _fit() で非定数特徴を日等重み標準化し、罰則を max(100, 20*N/days) でサンプル数・日数に整合（スケール不変＆mix_weightと整合）。
 # 3) store_day()/comparison() に Manski 最悪/最良境界と 14暦日ブロック符号反転 p 値を追加し、counts を paired 日に揃える。
+#    （2026-11-28 レビュー②：境界は台ごとに1つの結果を置く manski_bounds に直した。採用の判定は変えていない。）
 VERSION = 'daily-plus-ridge-20261128-v5'
 # 採用・切り戻しの決まりの版（2026-11-28：paired 集計整合・Manski 境界と14日ブロック参考出力を追加）。
 RULE_VERSION = 'store-weekly-flip-20261128'
@@ -499,6 +500,45 @@ def _share(group, method, missing_as):
     return (plus + (k - group['n_' + method]) * missing_as) / k
 
 
+MANSKI_OK, MANSKI_NO_GROUPS, MANSKI_UNRECOVERABLE = 'ok', 'no_groups', 'unrecoverable'
+
+
+def manski_bounds(groups):
+    """判定不能の台の結果を0〜1のどちらにも置いたときの、プラス率差の最悪・最良（参考指標）。(最悪, 最良, 状態) を返す。
+
+    2026-11-28 レビュー②：v5 の初版は組ごとに「学習版の欠測は非プラス・従来の欠測はプラス」と置いたため、両方式の候補に
+    同じ判定不能の台があると、その台を方式ごとに逆の結果として数え、差が必ず0の日でも −50〜＋50 ポイントになった。
+    ここでは台ごとに1つの結果を置く。日の差は Σ（台の結果 × 重み）で、重みは組の数で等しく割った
+    「学習版の候補での割合 − 従来の候補での割合」（store_day の組等重み・_share の分母＝候補数と同じ）。判定不能の台は
+    重みが負なら最悪で1・最良で0、正なら逆。両方式の候補に同じ数だけ入る台は重みが0で、境界に効かない。
+    組に候補の台ID（candidates）と結果（labels）が無い、または数が合わないときは再計算不能（MANSKI_UNRECOVERABLE）。"""
+    used = [g for g in groups if g.get('k_current') and g.get('k_learned')]
+    if not used:
+        return None, None, MANSKI_NO_GROUPS
+    for g in used:
+        ids, found = g.get('candidates'), g.get('labels')
+        if not isinstance(ids, dict) or not isinstance(found, dict):
+            return None, None, MANSKI_UNRECOVERABLE
+        current, learned = ids.get('current'), ids.get('learned')
+        if (not isinstance(current, list) or not isinstance(learned, list) or len(current) != g['k_current']
+                or len(learned) != g['k_learned'] or any(k not in found for k in current + learned)):
+            return None, None, MANSKI_UNRECOVERABLE
+    weights, labels = defaultdict(float), {}
+    for g in used:
+        ids = g['candidates']
+        for name, sign in (('learned', 1.), ('current', -1.)):
+            for k in ids[name]:
+                weights[k] += sign / len(ids[name]) / len(used)
+                value = g['labels'][k]
+                if k in labels and labels[k] != value:
+                    return None, None, MANSKI_UNRECOVERABLE   # 同じ台に組ごとに違う結果がある（記録の矛盾）
+                labels[k] = value
+    base = sum(w * labels[k] for k, w in weights.items() if labels[k] is not None)
+    worst = base + sum(min(0., w) for k, w in weights.items() if labels[k] is None)
+    best = base + sum(max(0., w) for k, w in weights.items() if labels[k] is None)
+    return worst, best, MANSKI_OK
+
+
 def store_day(day, groups):
     """1店舗・1日の比較。学習済みの組を等しく重み付けして平均する（候補の多い組だけが効かないように）。"""
     groups = [g for g in groups if g.get('trained')]
@@ -510,18 +550,17 @@ def store_day(day, groups):
     for name, learned_as, current_as in (
         ('nonplus', 0, 0),
         ('plus', 1, 1),
-        ('manski_worst', 0, 1),
-        ('manski_best', 1, 0),
     ):
         values = []
         for g in groups:
             a, b = _share(g, 'learned', learned_as), _share(g, 'current', current_as)
             values.append(None if a is None or b is None else a - b)
         sens[name] = mean_of(values)
+    worst, best, manski = manski_bounds(groups)
     return dict(day=day, groups=len(groups), paired=len(paired),
                 diff=mean_of(g['learned'] - g['current'] for g in paired),
                 diff_nonplus=sens['nonplus'], diff_plus=sens['plus'],
-                diff_manski_worst=sens['manski_worst'], diff_manski_best=sens['manski_best'],
+                diff_manski_worst=worst, diff_manski_best=best, manski=manski,
                 missing=mean_of(g['missing_learned'] - g['missing_current'] for g in groups),
                 n_current=sum(g['n_current'] for g in groups), n_learned=sum(g['n_learned'] for g in groups))
 
@@ -575,7 +614,11 @@ def comparison(days, alpha, first=None):
         return statistics.mean(values) if values else None
     missing = mean_key('missing')
     nonplus, plus = mean_key('diff_nonplus'), mean_key('diff_plus')
-    manski_worst, manski_best = mean_key('diff_manski_worst'), mean_key('diff_manski_best')
+    # 参考の境界。1日でも再計算不能なら期間の値を出さない（一部の日だけの平均を期間の境界と取り違えないように）。
+    # 採用（adopt）には使わない。
+    unrecoverable = sum(d.get('manski') == MANSKI_UNRECOVERABLE for d in days)
+    manski_worst, manski_best = ((None, None) if unrecoverable
+                                 else (mean_key('diff_manski_worst'), mean_key('diff_manski_best')))
     counts = [sum(d.get(k, 0) for d in paired) for k in ('n_current', 'n_learned')]
     enough = len(paired) >= 80 and len(blocks) >= 14 and min(counts) >= 80
     robust = nonplus is not None and plus is not None and nonplus > 0 and plus > 0
@@ -585,6 +628,7 @@ def comparison(days, alpha, first=None):
                 median=statistics.median(d['diff'] for d in paired),
                 missing_difference=missing, nonplus_difference=nonplus, plus_difference=plus,
                 manski_worst_difference=manski_worst, manski_best_difference=manski_best,
+                manski_unrecoverable_days=unrecoverable,
                 p=p, p_14d=p_14d, alpha=alpha, counts=counts, rule=RULE_VERSION)
 
 

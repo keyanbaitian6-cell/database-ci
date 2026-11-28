@@ -642,7 +642,7 @@ function daysOfView(view) {
   if (view.kind === 'birthday') return [view.day];
   const all = storeDays(byDay, state.store);
   if (view.kind === 'historyMachine') return all.filter(d => has(state.store, d, x => x.machine === view.machine));
-  if (view.kind === 'searchMachineDay') return all.filter(d => has(state.store, d, x => displayMachineName(x.machine) === displayMachineName(view.machine)));
+  if (view.kind === 'searchMachineDay') return all.filter(d => has(state.store, d, x => sameMachineName(x.machine, view.machine)));
   if (view.kind === 'machine') return all.filter(d => has(state.store, d, x => sameMachineName(x.machine, view.machine)));
   return all;
 }
@@ -2078,7 +2078,7 @@ function openSearch() {
   const machineDayView = (view) => {
     const racks = state.model.byDay.get(`${state.store}|${view.day}`) ?? [];
     const target = displayMachineName(view.machine);
-    const list = racks.filter(r => displayMachineName(r.machine) === target).sort((a, b) => a.rack - b.rack);
+    const list = racks.filter(r => sameMachineName(r.machine, view.machine)).sort((a, b) => a.rack - b.rack);
     view.rackList = list;
     const netName = list.some(r => r.net != null && r.estimated) ? '推定差枚' : '差枚';
     const nets = list.filter(r => r.net != null);

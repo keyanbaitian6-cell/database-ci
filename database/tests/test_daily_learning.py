@@ -738,10 +738,12 @@ class LearningTests(unittest.TestCase):
         self.assertEqual(res_with_unpaired['counts'], res_clean['counts'])
         self.assertEqual(res_clean['weeks14'], 8)
         self.assertAlmostEqual(res_clean['p_14d'], 1 / 256)
-        self.assertLessEqual(res_clean['manski_worst_difference'], res_clean['nonplus_difference'] + 1e-12)
-        self.assertLessEqual(res_clean['manski_worst_difference'], res_clean['plus_difference'] + 1e-12)
-        self.assertLessEqual(res_clean['nonplus_difference'], res_clean['manski_best_difference'] + 1e-12)
-        self.assertLessEqual(res_clean['plus_difference'], res_clean['manski_best_difference'] + 1e-12)
+        # この合成の組は候補の台ID（candidates）を持たないので、欠測の最悪・最良は再計算不能（2026-11-28 レビュー②）。
+        # 境界の値そのものは test_daily_learning_manski.py で確かめる。
+        self.assertEqual(days[0]['manski'], d.MANSKI_UNRECOVERABLE)
+        self.assertIsNone(res_clean['manski_worst_difference'])
+        self.assertIsNone(res_clean['manski_best_difference'])
+        self.assertEqual(res_clean['manski_unrecoverable_days'], 112)
 
 
 if __name__ == '__main__':

@@ -596,6 +596,8 @@ def record_outcomes(journal, rows, today, stores=None, *, prediction_start=None)
                 for name in ('current', 'learned'):
                     stats.update(candidate_rates(name, group[name], labels))
                 stats['labels'] = labels
+                # 両方式の候補の台（labels の鍵）。欠測の最悪・最良を、同じ台に同じ結果を置いて計算するため（2026-11-28）。
+                stats['candidates'] = {name: [encoded(i) for i in group[name]] for name in ('current', 'learned')}
                 # 符号の根拠（ゲーム数・何から決めたか・取り込んだ時刻）。後の訂正・遅い取り込みと見分けるため。
                 stats['evidence'] = {k: None if r is None else [r.get('games'), outcome_source(r),
                                                                 r.get('captured_at') or r.get('source_captured_at')
@@ -625,10 +627,33 @@ def store_days(journal, store, first, last):
         body = journal.get('outcomes', key)
         groups = body['groups']
         versions = {g.get('method') for g in groups if g.get('trained')}
-        day = store_day(body['target'], groups)
+        day = store_day(body['target'], with_candidates(journal, key, groups))
         day['method'] = versions.pop() if len(versions) == 1 else ('混在' if versions else None)
         days.append(day)
     return days
+
+
+def with_candidates(journal, key, groups):
+    """結果の組に、両方式の候補の台（candidates）が無ければ、同じ鍵の予測から補う（読むだけ。記録は書き換えない）。
+
+    2026-11-28 より前の結果は候補の台を持たない。予測が無い・組が見つからない・台が結果に無いときは補わず、
+    欠測の最悪・最良は再計算不能になる（daily_learning.manski_bounds）。"""
+    if all('candidates' in g for g in groups):
+        return groups
+    prediction = journal.get('predictions', key)
+    saved = {g.get('key'): g for g in (prediction or {}).get('groups') or [] if isinstance(g, dict)}
+    out = []
+    for g in groups:
+        source = saved.get(g.get('key'))
+        if 'candidates' not in g and source is not None:
+            try:
+                ids = {name: [encoded(i) for i in source[name]] for name in ('current', 'learned')}
+            except (KeyError, TypeError, ValueError):
+                ids = None
+            if ids is not None:
+                g = {**g, 'candidates': ids}
+        out.append(g)
+    return out
 
 
 def latest_method(days):
