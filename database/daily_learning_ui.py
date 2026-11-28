@@ -227,7 +227,7 @@ def show(root, data_dir, *, clock=None):
              [f'{name}：{s}' for s in view['mine']] + view['general'] +
              ([] if view['mine'] or view['general'] else ['処理状況の記録はありません。']) +
              ['PCで対象日の前日23:30〜当日23:30に保存した候補を表示します。画面を開いても予測を作り直しません。',
-              '採用は店舗ごとに、保存した予測の将来の成績で判定します。判定までは従来方式を採用します。'], padx=16)
+              '幸町（通常機種）・P-STATIONは完全盲検の過去検証に基づき日次学習版を採用し、28日ごとの自動切り戻しで監視しています。幸町バラエティと長町南は将来の成績で改善を確認するまで従来方式を維持します。'], padx=16)
         wrapper = tk.Frame(body, background='#ffffff')
         wrapper.pack(fill='x', padx=16, pady=(4, 16))
         label(wrapper, '毎日学習しても、毎日の改善を保証しません。設定確率・勝率・期待収支を示すものではありません。', 10, muted)

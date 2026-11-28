@@ -78,7 +78,7 @@ class WeightTests(unittest.TestCase):
 class RuntimeTests(unittest.TestCase):
     def build(self, rows, store=SAI, models=None):
         groups = groups_of(rows, store)
-        with patch.object(runtime, 'baseline_groups', return_value=groups):
+        with patch.object(runtime, 'baseline_groups', return_value=groups), patch.object(runtime, 'BLIND_STORES', {}):
             if models is None:
                 return runtime.build_prediction(rows, {'records': [], 'machines': []}, TARGET, NoState()), groups
             with patch.object(runtime, 'train', return_value=models):
@@ -114,12 +114,17 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all('mix' not in g for g in prediction['groups']))
         self.assertNotIn(d.BLEND_VERSION, prediction['methods'][NAGA])
         self.assertEqual(runtime.method_signature(NAGA).split('|')[0], d.VERSION)
-        # P-STATIONも同日に混合へ（利用者「入れて」）。版の印は混合とゼロ線の修正の2つ。
+        # 2026-11-28（v6）：幸町・P-STATION は盲検モデルへ移行。BLIND_STORES を空にしたフォールバック時は混合の版。
         self.assertEqual(runtime.method_signature('pscube:c740601:20').split('|')[0],
-                         d.VERSION + '+pstation-blend-20261121+' + runtime.daily_learning_archive.ZERO_FIX)
-        self.assertEqual(runtime.method_signature(SAI).split('|')[0], d.VERSION + '+' + d.BLEND_VERSION)
+                         d.VERSION + '+' + runtime.daily_learning_blind.VERSION + '+' + runtime.daily_learning_archive.ZERO_FIX)
+        self.assertEqual(runtime.method_signature(SAI).split('|')[0],
+                         d.VERSION + '+' + runtime.daily_learning_blind.VERSION)
+        with patch.object(runtime, 'BLIND_STORES', {}):
+            self.assertEqual(runtime.method_signature('pscube:c740601:20').split('|')[0],
+                             d.VERSION + '+pstation-blend-20261121+' + runtime.daily_learning_archive.ZERO_FIX)
+            self.assertEqual(runtime.method_signature(SAI).split('|')[0], d.VERSION + '+' + d.BLEND_VERSION)
         # 従来候補の版の部分（「|」より後ろ）は今までと同じ
-        with patch.object(d, 'BLEND_STORES', ()), patch.object(runtime, 'BLEND_STORES', ()):
+        with patch.object(runtime, 'BLIND_STORES', {}), patch.object(d, 'BLEND_STORES', ()), patch.object(runtime, 'BLEND_STORES', ()):
             before = runtime.method_signature(SAI)
         self.assertEqual(runtime.method_signature(SAI).split('|')[1:], before.split('|')[1:])
         self.assertEqual(before.split('|')[0], d.VERSION)
@@ -131,7 +136,7 @@ class RuntimeTests(unittest.TestCase):
         pick = lambda name: [r for r in daily if r['machine'] == name]
         groups = [dict(store=ps, rate='20', name=n, pool=pick(n), current=[d.identity(r) for r in pick(n)][:k])
                   for n, k in (('A', 2), ('N', 1))]
-        with patch.object(runtime, 'baseline_groups', return_value=groups):
+        with patch.object(runtime, 'baseline_groups', return_value=groups), patch.object(runtime, 'BLIND_STORES', {}):
             prediction = runtime.build_prediction(rows, {'records': [], 'machines': []}, TARGET, NoState())
         history = d.History(rows)
         models = d.train(history, TARGET)
@@ -187,6 +192,7 @@ class FixedControlTests(unittest.TestCase):
         groups = [dict(store=SAI, rate='', name='A', pool=rows[:3], current=[d.identity(rows[0])]),
                   dict(store=SAI, rate='', name='新', pool=rows[3:], current=[d.identity(rows[3])])]
         with (patch.object(runtime, 'baseline_groups', return_value=groups),
+              patch.object(runtime, 'BLIND_STORES', {}),
               patch.object(runtime, 'train', return_value=models),
               patch.object(runtime, 'method_signature', return_value=method)):
             p = runtime.build_prediction(rows, {}, target, self.j)

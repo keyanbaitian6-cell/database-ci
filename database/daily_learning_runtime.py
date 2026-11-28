@@ -18,11 +18,13 @@ import time
 
 import core
 import daily_learning_archive
+import daily_learning_blind
 import daily_learning_fixed
 from daily_learning import (JST, VERSION, RULE_VERSION, MATURITY, PERIOD, STORE_COUNT, STORE_MODEL, VARIETY_MODEL, History,
                             BLEND_STORES, BLEND_VERSION, Journal, LateError, blend_weights, candidate_rates, comparison, digest,
                             encoded, identity, jst, outcome, outcome_source, period_days,
                             prediction_target, rank_blend, rank_by, rank_pool, rollback_needed, shift, store_day, train, valid)
+from daily_learning_names import learning_machine
 from file_io import atomic_writer
 
 FILE_NAME = 'daily-learning.json'
@@ -32,6 +34,16 @@ SOURCES = {'nagamachiminami': 'meruhen', 'saiwaichou': 'meruhen', 'pscube:c74060
 SCORING_MJS = Path(__file__).parents[1] / 'database_android/web/pscube/scoring.mjs'
 # 分析用JSON（daily_learning_archive）を使えずに保存した予測に付ける注意。「読めません」は各画面で重要な注意として出る。
 ARCHIVE_NOTE = '（過去の学習に足す分析用JSONを読めません。原本DBだけで学習しました）'
+# 2026-11-28（v6）：完全盲検モデル（blind-hbma-condrank-v1）を幸町（通常機種）と P-STATION に導入し、
+# 完全盲検の過去データ前向き検証（../outputs/blind-formula-20261128/）に基づき 2026-11-29 分から先行採用する。
+# 幸町のバラエティと長町南は現行 v5 のまま学習継続・従来方式維持で保護し、28暦日ごとの自動切り戻しで監視する。
+BLIND_STORES = {
+    'saiwaichou': daily_learning_blind.VERSION,
+    'pscube:c740601:20': daily_learning_blind.VERSION,
+}
+BLIND_ADOPT_SINCE = '2026-11-29'
+BLIND_ADOPT_BASIS = 'blind-walkforward-20261128'
+BLIND_STATUS = '完全盲検の過去検証で採用中（28日ごとに自動監視）'
 
 
 def store_of(key):
@@ -258,13 +270,49 @@ def method_signature(store):
         import normal_next_day_model
         base = (f'score={core.VERSION},next={core.NEXT_DAY_METHOD_VERSION},normal={normal_next_day_model.METHOD_VERSION},'
                 f'variety={core.candidate_method_version(store, core.VARIETY_GROUP_NAME)}')
-    # 2026-11-21：幸町・P-STATIONの学習版の並べ方（混合）を変えた。長町南の版は変えない（比較期間をやり直さない）。
-    learned = f'{VERSION}+{BLEND_STORES[store]}' if store in BLEND_STORES else VERSION
+    # 2026-11-28（v6）：幸町・P-STATION は完全盲検モデル（blind-hbma-condrank-v1）へ切替。長町南の版は変えない。
+    if store in BLIND_STORES:
+        learned = f'{VERSION}+{BLIND_STORES[store]}'
+    elif store in BLEND_STORES:
+        learned = f'{VERSION}+{BLEND_STORES[store]}'
+    else:
+        learned = VERSION
     if store == 'pscube:c740601:20':
         # 2026-11-21：分析用JSONの古い形式のゼロ線を直した（daily_learning_archive.start_at_zero）。学習の正解が変わるので、
         # 直す前の日とは別の方式として数える（採用判定で直す前の日と混ぜない）。
         learned += '+' + daily_learning_archive.ZERO_FIX
     return f'{learned}|{base}'
+
+
+def _blind_row(row):
+    """BlindModel へ渡す前に P-STATION の機種名変更（daily_learning_names）をそろえる。"""
+    name = learning_machine(row['store'], row['machine'])
+    return row if name == row['machine'] else {**row, 'machine': name}
+
+
+def _group_name_from_key(key):
+    """encoded([store, rate, name]) から組名を取り出す。読めなければ None。"""
+    try:
+        decoded = json.loads(key)
+        return decoded[2] if isinstance(decoded, list) and len(decoded) >= 3 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def effective_state(journal, store, method, *, as_of):
+    """店舗の有効な採用状態。盲検先行採用の対象店舗は、2026-11-29 以降で切り戻し済みでなければ採用中として扱う。
+
+    記録DBの outcomes / decisions は開かず、state 表と事前承認規則だけで決定する。
+    切り戻し後は state={'active':'current','since':today}（>= BLIND_ADOPT_SINCE）が書かれるため自動再採用しない。"""
+    stored = journal.get('state', 'store:' + store)
+    if store in BLIND_STORES and as_of >= BLIND_ADOPT_SINCE and method == method_signature(store):
+        if stored is not None:
+            if stored.get('active') == 'current' and str(stored.get('since') or '') >= BLIND_ADOPT_SINCE:
+                return stored
+            if stored.get('active') == 'learned' and stored.get('method') == method:
+                return stored
+        return {'active': 'learned', 'since': BLIND_ADOPT_SINCE, 'method': method, 'basis': BLIND_ADOPT_BASIS}
+    return stored or {'active': 'current'}
 
 
 def explain(error):
@@ -483,44 +531,79 @@ def ready(rows, target, stores=STORES, low=None):
 
 def build_prediction(rows, pscube, target, journal, node=None, history_rows=None):
     """history_rows：学習・特徴に使う行（分析用JSONを足したもの）。従来候補（baseline）は原本DBの rows だけで作る。"""
-    history, groups = History(history_rows or rows), baseline_groups(rows, pscube, shift(target, -1), node)
-    models = train(history, target)
+    all_history_rows = history_rows or rows
+    groups = baseline_groups(rows, pscube, shift(target, -1), node)
+    needs_ridge = any(g['store'] not in BLIND_STORES or g['name'] == core.VARIETY_GROUP_NAME for g in groups)
+    history = History(all_history_rows) if needs_ridge else History([])
+    models = train(history, target) if needs_ridge else {}
+    blind_models = {}
+
+    def blind_model_for(store):
+        bm = blind_models.get(store)
+        if bm is None:
+            bm = daily_learning_blind.BlindModel(store)
+            by_day = defaultdict(list)
+            cutoff = shift(target, -1)
+            for r in all_history_rows:
+                if r.get('store') == store and r.get('day', '') <= cutoff:
+                    by_day[r['day']].append(_blind_row(r))
+            for day in sorted(by_day):
+                bm.ingest_day(day, by_day[day])
+            blind_models[store] = bm
+        return bm
+
     projected, methods = [], {}
     for group in groups:
         key = group_key(group)
-        method = methods.setdefault(group['store'], method_signature(group['store']))
-        # 採用は店舗単位（2026-11-12）。採用したときと方式が違えば、採用の根拠が無いので従来方式。
-        state = journal.get('state', 'store:' + group['store']) or {'active': 'current'}
-        adopted = state.get('active') == 'learned' and state.get('method') == method
-        # v4：バラエティは台ごとに独立に見る（機種ごとの係数で機種どうしを比べない）ので、バラエティ専用の係数だけで並べる。
-        # それ以外は機種ごとの係数（v3と同じ）、無い機種（新台など）は店舗共通の係数。
+        store = group['store']
+        method = methods.setdefault(store, method_signature(store))
+        # 採用は店舗単位（2026-11-12）。盲検先行採用の対象店舗は 2026-11-29 以降で切り戻し済みでなければ採用中。
+        # ただし幸町のバラエティは v5 のまま学習を続け、画面は従来方式を維持して保護する。
+        state = effective_state(journal, store, method, as_of=target)
+        is_variety = group['name'] == core.VARIETY_GROUP_NAME
+        blind_basis = state.get('basis') == BLIND_ADOPT_BASIS
+        adopted = (state.get('active') == 'learned' and state.get('method') == method
+                   and not (is_variety and blind_basis))
         mix = None
-        if group['name'] == core.VARIETY_GROUP_NAME:
+        if is_variety:
             kind = 'variety'
-            ordered = rank_by(group['pool'], history, models.get((group['store'], group.get('rate', ''), VARIETY_MODEL)), kind)
-        elif group['store'] in BLEND_STORES and (group['store'], group.get('rate', ''), STORE_MODEL) in models:
+            ordered = rank_by(group['pool'], history, models.get((store, group.get('rate', ''), VARIETY_MODEL)), kind)
+        elif store in BLIND_STORES:
+            kind = 'blind'
+            bm = blind_model_for(store)
+            mapped = [(_blind_row(r), r) for r in group['pool']]
+            by_id = {id(b): orig for b, orig in mapped}
+            ranked = bm.rank(target, learning_machine(store, group['name']), [b for b, _ in mapped], is_variety=False)
+            ordered = [by_id[id(b)] for b in ranked] if ranked is not None else None
+        elif store in BLEND_STORES and (store, group.get('rate', ''), STORE_MODEL) in models:
             # 2026-11-21 幸町・P-STATION：店舗共通の点と機種専用の点を、専用係数の学習量で混ぜる（専用係数の無い機種は共通だけ）。
             kind = 'blend'
-            ordered = rank_blend(group['pool'], history, models, group['store'], group.get('rate', ''))
-            mix = blend_weights(group['pool'], models, group['store'], group.get('rate', ''))
+            ordered = rank_blend(group['pool'], history, models, store, group.get('rate', ''))
+            mix = blend_weights(group['pool'], models, store, group.get('rate', ''))
         else:
             kind, ordered = 'machine', rank_pool(group['pool'], history, models)
             if ordered is None:
                 kind = 'store'
-                ordered = rank_by(group['pool'], history, models.get((group['store'], group.get('rate', ''), STORE_MODEL)), kind)
+                ordered = rank_by(group['pool'], history, models.get((store, group.get('rate', ''), STORE_MODEL)), kind)
         current = [list(k) for k in group['current']]
         learned = [list(identity(r)) for r in ordered[:len(current)]] if ordered is not None else current
         active = 'learned' if adopted and ordered is not None else 'current'
-        projected.append(dict(key=key, store=group['store'], name=group['name'], current=current,
+        status = (BLIND_STATUS if active == 'learned' and blind_basis else
+                  '改善を確認して採用中' if active == 'learned' else
+                  '学習済み・将来成績を比較中' if ordered is not None else '学習データ不足・従来方式')
+        pool_items = ([{'id': list(identity(r)), 'features': []} for r in group['pool']]
+                      if kind == 'blind' else
+                      [{'id': list(identity(r)), 'features': history.model_features(r, kind if ordered is not None else 'machine')}
+                       for r in group['pool']])
+        projected.append(dict(key=key, store=store, name=group['name'], current=current,
                               learned=learned, selected=learned if active == 'learned' else current,
                               active=active, trained=ordered is not None, method=method,
                               model=kind if ordered is not None else None,
                               **({'mix': mix} if mix is not None else {}),
-                              status=('改善を確認して採用中' if active == 'learned' else
-                                      '学習済み・将来成績を比較中' if ordered is not None else '学習データ不足・従来方式'),
-                              pool=[{'id': list(identity(r)), 'features': history.model_features(r, kind if ordered is not None else 'machine')}
-                                    for r in group['pool']]))
-    sources = [Path(__file__), Path(__file__).with_name('daily_learning.py'), Path(core.__file__),
+                              status=status,
+                              pool=pool_items))
+    sources = [Path(__file__), Path(__file__).with_name('daily_learning.py'),
+               Path(daily_learning_blind.__file__), Path(core.__file__),
                Path(__file__).with_name('normal_next_day_model.py'),
                Path(__file__).with_name('daily_learning_pscube.mjs'), SCORING_MJS,
                SCORING_MJS.with_name('data.mjs')]
@@ -535,7 +618,18 @@ def build_prediction(rows, pscube, target, journal, node=None, history_rows=None
             control = {'reason': f'固定係数の比較記録に失敗：{type(error).__name__}: {error}'}
         study[daily_learning_fixed.STUDY] = control
         sources.append(Path(daily_learning_fixed.__file__))
-    return dict(input_day=shift(target, -1), groups=projected, methods=methods, **study,
+    extra = {}
+    if blind_models:
+        extra['blind'] = {
+            s: {
+                'version': daily_learning_blind.VERSION,
+                'trained_days': bm._trained_days,
+                'trained_obs': bm._trained_obs,
+                'bma_probs': [round(p, 6) for p in bm._cached_bma_probs] if bm._cached_bma_probs is not None else None,
+            }
+            for s, bm in blind_models.items()
+        }
+    return dict(input_day=shift(target, -1), groups=projected, methods=methods, **study, **extra,
                 models={encoded(k): v for k, v in models.items()},
                 source_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources if p.is_file()})
 
@@ -616,14 +710,17 @@ def pending_outcomes(journal, first, last, store=None):
     return any(store is None or store_of(k) == store for (k,) in keys)
 
 
-def store_days(journal, store, first, last):
+def store_days(journal, store, first, last, *, exclude_groups=()):
     """期間内のその店舗の日ごとの比較（daily_learning.store_day）。方式の版も付ける。"""
+    excluded = set(exclude_groups)
     days = []
     for (key,) in journal.db.execute('SELECT key FROM outcomes WHERE key>=? AND key<=? ORDER BY key', (first, last + '~')):
         if store_of(key) != store:
             continue
         body = journal.get('outcomes', key)
         groups = body['groups']
+        if excluded:
+            groups = [g for g in groups if _group_name_from_key(g.get('key')) not in excluded]
         versions = {g.get('method') for g in groups if g.get('trained')}
         day = store_day(body['target'], groups)
         day['method'] = versions.pop() if len(versions) == 1 else ('混在' if versions else None)
@@ -671,7 +768,9 @@ def decisions(journal, today):
                 method, used = latest_method(days)
                 result = comparison(used, alpha, first) | dict(method=method, days=len(days),
                                                                other_method_days=len(days) - len(used))
-                state = journal.get('state', 'store:' + store) or {'active': 'current', 'since': start}
+                state = effective_state(journal, store, method, as_of=today)
+                if state.get('active') == 'current' and 'since' not in state:
+                    state = {'active': 'current', 'since': start}
                 # 切り戻した期間の成績を再採用に使わない（切り戻しのあとに始まった期間だけ）。
                 # 採用中でも方式の版が変わっていれば、その採用は今の方式の根拠にならないので判定し直す。
                 open_to = state['active'] == 'current' or state.get('method') != method
@@ -682,9 +781,14 @@ def decisions(journal, today):
             journal.append('decisions', key, dict(first=first, last=last, at=today, rule=RULE_VERSION,
                                                   results=results))
     for store in STORES:
-        state = journal.get('state', 'store:' + store)
+        stored = journal.get('state', 'store:' + store)
+        method = method_signature(store)
+        state = effective_state(journal, store, method, as_of=today)
         if not state or state['active'] != 'learned':
             continue
+        blind_basis = state.get('basis') == BLIND_ADOPT_BASIS
+        # 幸町の盲検先行採用は通常機種のみのため、切り戻し判定にバラエティ（v5・従来表示維持）を混ぜない。
+        exclude = (core.VARIETY_GROUP_NAME,) if blind_basis and store == 'saiwaichou' else ()
         blocks = ((date.fromisoformat(shift(today, -MATURITY)) - date.fromisoformat(state['since'])).days + 1) // 28
         for block in range(1, blocks + 1):
             decision_key = f'rollback:{store}:{state["since"]}:{block}'
@@ -693,11 +797,15 @@ def decisions(journal, today):
             first, last = shift(state['since'], 28 * (block - 1)), shift(state['since'], 28 * block - 1)
             if pending_outcomes(journal, first, last, store):
                 break                                  # この店舗の結果がそろってから判定する
-            days =[d for d in store_days(journal, store, first, last) if d['method'] == state.get('method')]
+            days = [d for d in store_days(journal, store, first, last, exclude_groups=exclude)
+                    if d['method'] == state.get('method')]
+            if not days and stored is None:
+                continue                               # 事前承認の版による結果が1日も無い期間は判定記録を作らない
             rollback = rollback_needed(days)
             with journal.db:
                 journal.append('decisions', decision_key, dict(at=today, first=first, last=last, rollback=rollback,
-                                                               days=len(days), rule=RULE_VERSION))
+                                                               days=len(days), rule=RULE_VERSION,
+                                                               **({'basis': BLIND_ADOPT_BASIS} if blind_basis else {})))
                 if rollback:
                     journal.state('store:' + store, {'active': 'current', 'since': today})
             if rollback:
@@ -772,7 +880,8 @@ def export(journal, data_dir, status, now, sync_dir=None):
                               {'saved_at': p['saved_at']} for g in p['groups']])
     days = [by_day[d] for d in sorted(by_day, reverse=True)[:31]]
     document = dict(format='daily-learning', version=1, updated_at=jst(now).isoformat(),
-                    status=status, days=days, improvement='将来成績で確認するまで改善未確認')
+                    status=status, days=days,
+                    improvement='幸町（通常機種）・P-STATIONは完全盲検の過去検証に基づき先行採用（28日自動切り戻し監視中）。幸町バラエティと長町南は将来成績で確認するまで改善未確認')
     # 点検はPCの窓だけで使う（GoogleのスクリプトはこれをiPhone・共有へ渡さない）。数えられなくても保存・表示は続ける。
     try:
         document['checkup'] = checkup(journal, now)
