@@ -5361,6 +5361,53 @@
 - 残り：共有カレンダーの `test_event_history_browser` も、ゲートの中で負荷がかかったときに1回落ちた（単独では通る）。今回は直していない。続くようなら同じやり方（負荷をかけて同時に流す）で調べる。
 - 追記（同日）：CI `d716bac` の実行 https://github.com/keyanbaitian6-cell/database-ci/actions/runs/46091107741 は **success**（pc ubuntu・pc windows・full。`full` で `test_viewer_history_guard_browser` も通過）。Claude が `gh run view` で確認した。
 
+## 2026-11-28 昼 Gemini（Antigravity）：完全盲検モデル `blind-hbma-condrank-v1` の一発前向き検証と日次学習 v6 導入・先行採用・4画面文言更新・閲覧／共有公開
+
+- 依頼：
+  1. 利用者「せっかく今まで貯めたデータを使いたいから日数としてカウントさせるべきだ。計算式を作らせよう」→ 実データも進行中研究結果も見ない独立セッションで新計算式を設計・封印し、別セッションで過去データ全期間の一発ウォークフォワード検証を実施（出力先：`../outputs/blind-formula-20261128/`）。
+  2. 検証結果の報告後、利用者「明確に敗北したもの以外差し替えっていうのはどう？」「とりあえず2にして、日次学習も継続っていうのは？」「進んでいいです。Bで。」→ 幸町（通常機種）と P-STATION へ盲検モデルを導入して 2026-11-29 分から先行採用＋28日自動切り戻し監視、幸町バラエティと長町南は v5 学習継続・従来方式維持、4画面の説明文（案B）も実態に揃えて更新・公開。
+- 基準コミット：`e289c8f`（`keyanbaitian6-cell/database-ci` の `main`）。元の作業コピー `work/database-main` に別AI（Codex）の未コミット文書変更6件（`AGENTS.md`・`AI_COLLABORATION.md`・`README.md`・`database/PSCUBE_ACCESS_PLAN.md`・`database/PSCUBE_AUTO_CAPTURE.md`・`database/README.md`）が残っていたため、これらには一切触れず隔離ワークツリー `work/wt-blind-v6`（ブランチ `feat/blind-v6`）で実装・検証・コミット・送信を実施した。実DB（`database.sqlite3`・`pscube.sqlite3`・`daily-learning/journal.sqlite3` の `outcomes`/`decisions`）および対象サイトには一切アクセスしていない。
+- 完全盲検・一発前向き検証の根拠（`../outputs/blind-formula-20261128/報告.md`、`blind_model.py` SHA-256 `fc3f40cfd4b87951966ec9867c3453493371e1158afeef8fbd4501d60b767523`、事前検算〔封印照合・v5本番一致誤差 `7.961e-12`・未来改変不変 8/8・成熟遅延8日不変 8/8 重み差 `0.0`〕すべて PASS）：
+  - **P-STATION ノーマル（247日・36週・2,189組）**：対従来 `+2.30pt`（40.75% vs 38.45%、7日 `p=0.0087`・14日 `p=0.0112`、前後半 `+4.17 / +0.44pt`、欠測 `-0.04pt`、O/E `1.0186 vs 0.9933`）→ 全要件 PASS。対 v5 `+0.31pt`（`p=0.3223`）。
+  - **幸町 ノーマル（258日・38週・1,734組）**：対 v5 `+1.52pt`（34.73% vs 33.22%、7日 `p=0.0020`・14日 `p=0.0040`、前後半 `+0.66 / +2.37pt`、欠測 `-0.18pt`）→ 全要件 PASS。
+  - **幸町 全機種（50日・8週）**：非ノーマル通常＋バラ（1,793組）対従来 `+2.38pt`（通常のみ `+2.48pt`、7日 `p=0.0078`、前後半 `+2.43 / +2.34pt`、期間長80日のみ未達）。一方、**幸町バラエティ単体（48組）**は対従来 `-0.42pt` で不安定。
+  - **長町南 全機種（10日・390組；全成立24日参考）**：対従来 `-1.58pt`（24日 `-2.27pt`）、対 v5 `-3.93pt` → 明確に敗北。
+  - 限界：過去データ主軸はノーマル10機種（247〜258日）と幸町全機種 50日であり、AT機・スマスロを含む冬場・通年の実運用はこれからとなる。従来の翌日候補画面をそのまま残し、28暦日ごとの自動切り戻しで安全網を張る。
+- 変更ファイル（10ファイル）と方針：
+  - `database/daily_learning_blind.py`（新規）：封印済み `blind_model.py` を1バイトも改変せず配置（SHA-256 `fc3f40cf…` 一致）。毎晩の予測の `source_sha256` に含める。
+  - `database/daily_learning_runtime.py`：`BLIND_STORES`（`saiwaichou`・`pscube:c740601:20`）、`BLIND_ADOPT_SINCE = '2026-11-29'`、`BLIND_ADOPT_BASIS = 'blind-walkforward-20261128'`、`BLIND_STATUS = '完全盲検の過去検証で採用中（28日ごとに自動監視）'` と `effective_state` を追加。
+    - 幸町（通常機種）と P-STATION は `BlindModel` で毎晩日次学習を継続し、`2026-11-29` 分から `active='learned'` で先行採用（P-STATION は `daily_learning_names.learning_machine` で機種名変更をそろえ、不要な v5 リッジ学習を省略）。
+    - 幸町バラエティは v5（`VARIETY_MODEL`）学習継続・`active='current'` 維持で保護し、`decisions` の盲検切り戻し判定でも `exclude_groups=('バラエティ',)` により通常機種の成績と混ぜない。
+    - 長町南は差し替えず `method_signature('nagamachiminami')` も v5 のまま不変（2027-03-11 の初回判定へ）。
+    - 28暦日切り戻し発動時は既存どおり `state={'active':'current','since':today}` を記録し、`since >= '2026-11-29'` により自動再採用しない。記録DBの `outcomes`/`decisions` は一切手動操作しない。`daily_learning_fixed.py` は未変更。
+  - `database/daily_learning_view.py`・`database/daily_learning_ui.py`・`database_android/lib/daily_learning_page.dart`・`share_viewer/daily_learning.mjs`：4画面共通の採用方式説明（`METHOD_TEXT` / `_dailyMethodText`）と下部説明文を実態（完全盲検の過去検証による先行採用＋28日自動切り戻し監視、幸町バラエティ・長町南は従来方式維持）へ統一。
+  - `DAILY_LEARNING.md`：v6 の仕様・検証根拠・限界・運用ルールを追記。
+  - `database/tests/test_daily_learning_blind.py`（新規・10件）・`database/tests/test_daily_learning_blend.py`（v6 の版検証と混合フォールバック検証の整合更新）。
+- 確認の表：
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 封印モデル無改変・盲検予測一致・日次継続学習・切り戻し・4画面文言一致 | 済 | `database/tests/test_daily_learning_blind.py` 10件・日次学習関連計116件 OK（`daily_learning_blind.py` SHA-256 `fc3f40cf…` 一致） |
+| ビルド前全体ゲート | 済 | 1回目（`C:\w\cbw-blind-v6`）で `daily_learning_runtime.py` の関数配置順により `test_daily_status.py` のソース切り出し検査が1件失敗。`effective_state` 等を `method_signature` の後ろへ移動し、2回目（`C:\w\cbw-blind-v6-2`、`TZ=JST-9`・`CHECK_JS_JOBS=2`）は **ALL PASSED**：PC 1,218件・UTC 31件・Flutter 927件・analyze（既存情報34件のみ・エラー警告0）・viewer-build・viewer-stage・share-stage・JS/ブラウザ 99項目すべて通過 |
+| iPhone閲覧ページの公開・配信照合 | 済 | `keyanbaitian6-cell/database-viewer` `be826b6..d043010`（`main.dart.js` のみ変更、`C:\w\cbw-blind-v6-2\viewer` と全ファイル一致）。Pages [46106291914](https://github.com/keyanbaitian6-cell/database-viewer/actions/runs/46106291914) `completed / success`。配信 `main.dart.js` HTTP 200・SHA-256 `57dc019b6f60…` 一致（3,296,766B）、非公開5パスすべて HTTP 404 |
+| 共有カレンダーの公開・配信照合 | 済 | `keyanbaitian6-cell/database-share` `8d48cda..b0c84c6`（版 `ab4efe3c08f3`、8ファイル変更、`C:\w\cbw-blind-v6-2\share` と全ファイル一致）。Pages [46106295646](https://github.com/keyanbaitian6-cell/database-share/actions/runs/46106295646) `completed / success`。配信 `daily_learning.mjs` HTTP 200・SHA-256 `4d5b6a488a4e…` 一致、`sw.js` HTTP 200・SHA-256 `d3c7406eaa92…` 一致、非公開3パスすべて HTTP 404 |
+| Android APK・Google同期スクリプト | 対象外 | APK は利用者の指示待ち（未作成）。Google同期スクリプトは未変更 |
+| PC作業コピー（`work/database-main`）への反映 | **未反映（確認待ち）** | Codex の未コミット文書6件が残っているため触っていない。2026-11-28 23:30 の実行前に `work/database-main` へ最新 `database-ci/main` を取り込む必要あり |
+| CI（`keyanbaitian6-cell/database-ci`） | **未確認** | この記録と一緒に `tools/push_ci.py` で送信 |
+
+
+## 2026-11-28 昼 Claude（Opus 5.5）：PCの取り込みタブが見切れる → 縦スクロールを付けた
+
+- 依頼：利用者の画面写真「機能加えたら見切れてる」。PC版の「取り込み」タブで、朝に足した「メルヘン2店舗を一括取り込み」の段（`11bef9b`）の分だけ下が押し出され、いちばん下の説明「メルヘンワールドの取り込み ①〜③」が途中で切れていた。一括取り込みの最中は窓ごとの状態の行（最大6行）がボタンの下に増えるので、まとめ・パチンコの段まで隠れうる。
+- 直し：`database/app.py` に `scroll_page(notebook)`（縦にスクロールできるタブ。同期タブの作りをそのまま関数にした）を足し、取り込みタブと同期タブの両方をこれで作る。中身が収まるときはスクロールしない。ホイールはそのタブの上にあるときだけ受け取る（記録欄のスクロールを奪わない）。ボタンの並び・文言・窓の大きさ（920×780、最小 780×620）は変えていない。
+- 再発の試験：`database/tests/test_home_tab_scroll.py`（2件。取り込み・同期タブが `scroll_page` で作られていること、中身が窓より高いとき最後までスクロールできること）。
+
+| 要件 | 結果 | 証拠 |
+|---|---|---|
+| 取り込みタブの下の段・説明が見られる | 済（AIの確認） | 小さな窓（920×400）に40行を入れ、`yview` が (0, 0.85)→ 最後まで動かすと (…, 1.0)。足した試験 2件 OK |
+| PC全試験 | 済（AIの確認） | `database/.venv/Scripts/python.exe -m unittest discover -s tests` 1,218件 OK（足した試験の前に開始。足した2件は別に流して OK）。全体ゲートは流していない（PC版の画面の小さな変更で、閲覧・共有ページ・Dartは触っていない） |
+| 実際のPC版での見た目 | 未確認 | 利用者が `start.cmd` で開き直して確かめる |
+| 閲覧ページ・共有カレンダー・APK | 対象外 | PC版の画面だけの変更 |
 ## 2026-11-28 夜 Claude（Opus 5.5）：レビュー指摘②（日次学習v5の欠測境界）・③（共有カレンダーの機種検索・日別推移）
 
 - 依頼：利用者「database-main のレビュー指摘②と③を実装・回帰試験まで担当」。①（メルヘン一括取り込み・PCの窓管理）は Codex 担当。push・配布ビルド・公開は利用者の別指示まで行わない。
