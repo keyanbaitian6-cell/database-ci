@@ -5458,3 +5458,9 @@
 - 送信前に `database-ci` の main が `0463778`（Gemini の v6 `6ee2aad`＋Claude 別作業の PC 取り込みタブのスクロール）へ進んでいたので、`e17fefe` で取り込んだ（衝突は共有記録の末尾だけ。両方の追記を残した）。
 - 取り込み後の全体ゲート（`CHECK_BUILD_WORK=/c/w/cbw-rev23b`、`TZ=JST-9`・`CHECK_JS_JOBS=2`）**ALL PASSED**：PC 1,232件・UTC 31件・Flutter 927件・analyze（既存の情報34件、エラー・警告0）・viewer-build・viewer-stage・share-stage・JS/ブラウザー 99項目すべて OK。日次学習の試験は v6 込みで 142件 OK。
 - 送信・CI・公開の結果は、このあとの追記に書く。
+- 追記（送信・公開の結果）：
+  - ソースの push：`tools/push_ci.py` で `keyanbaitian6-cell/database-ci` の main へ `0463778..288cf27`（日本時間 11/28 17:02）。CI [46123989650](https://github.com/keyanbaitian6-cell/database-ci/actions/runs/46123989650) は `full`・`pc (ubuntu-latest, UTC)`・`pc (windows-latest, UTC)` すべて **success**（Claude が `gh run view` で確認）。
+  - 共有カレンダーの公開：`keyanbaitian6-cell/database-share` `b0c84c6..2225f96`（版 `2921d0a18ab5`）。`stage_share_viewer.py` の出力はゲートの `share` と全ファイル一致（`diff -rq`）。改行コードだけの差を除き、中身が変わった8ファイル（`app.mjs`・`data.mjs` と、版番号だけの `android.html`・`index.html`・`daily_learning.mjs`・`manifest.json`・`manifest-android.json`・`sw.js`）だけをコミット。Pages [46124049829](https://github.com/keyanbaitian6-cell/database-share/actions/runs/46124049829) success。配信の `app.mjs`・`data.mjs`・`daily_learning.mjs`・`sw.js`・`index.html` は HTTP 200・SHA-256 が `2225f96` と一致、`.env`・`database.sqlite3`・`.git/config` は 404。
+  - 閲覧ページ（`database-viewer`）：`stage_viewer.py` の出力は公開中の `d043010` とバイト単位で同じ（Flutter は変えていない）ため、公開するものなし。
+  - APK：作っていない（利用者の指示待ち）。実機・利用者の画面での目視は未確認。
+  - 元の作業コピー `work/database-main` の main は `0463778` のまま（Codex の未コミット文書があるため触っていない）。作業ブランチ `fix/20261128-review-2-3` と worktree `C:\w\rev23` は main に取り込み済み。
