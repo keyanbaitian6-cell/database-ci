@@ -403,6 +403,29 @@ def apply_style(root):
                     bordercolor=page)
 
 
+def scroll_page(notebook):
+    """縦にスクロールできるタブ（外枠, 中身の枠）。中身が窓に収まるときはスクロールしない。"""
+    page = ttk.Frame(notebook)
+    canvas = tk.Canvas(page, highlightthickness=0, borderwidth=0,
+                       background=ttk.Style().lookup('TFrame', 'background') or None)
+    bar = ttk.Scrollbar(page, orient='vertical', command=canvas.yview)
+    inner = ttk.Frame(canvas, padding=22)
+    window = canvas.create_window((0, 0), window=inner, anchor='nw')
+    canvas.configure(yscrollcommand=bar.set)
+    canvas.pack(side='left', fill='both', expand=True)
+    bar.pack(side='right', fill='y')
+    inner.bind('<Configure>', lambda _e: canvas.configure(scrollregion=canvas.bbox('all')))
+    canvas.bind('<Configure>', lambda e: canvas.itemconfigure(window, width=e.width))
+
+    def scroll(event):
+        if canvas.yview() != (0.0, 1.0):
+            canvas.yview_scroll(-1 if event.delta > 0 else 1, 'units')
+    # ホイールはこのタブの上にあるときだけ受け取る（記録欄など他の部分のスクロールを奪わない）。
+    page.bind('<Enter>', lambda _e: canvas.bind_all('<MouseWheel>', scroll))
+    page.bind('<Leave>', lambda _e: canvas.unbind_all('<MouseWheel>'))
+    return page, inner
+
+
 def main():
     # Collect old Tk interpreters on their owner thread before starting workers
     # (also relevant when an embedded caller opens and closes this UI repeatedly).
@@ -438,34 +461,19 @@ def main():
     daily_run_button.pack(side='right', padx=(6, 8), pady=4)
     notebook = ttk.Notebook(frame)
     notebook.pack(fill='both', expand=True)
-    tab_home = ttk.Frame(notebook, padding=22)
+    # 取り込みタブも縦にスクロールできるようにする（2026-11-28 利用者「機能加えたら見切れてる」。
+    # 一括取り込みのボタンと窓ごとの状態の行が増え、下の段・説明が窓の外に隠れた）。
+    home_page, tab_home = scroll_page(notebook)
     tab_results = ttk.Frame(notebook, padding=22)
     # 同期タブは縦にスクロールできるようにする。共有用ファイルの状況パネルが増え、窓の高さが足りないと
     # 下の「バックアップを読み込む」が窓の外に隠れて押せなかった（2026-10-25 利用者報告）。
-    sync_page = ttk.Frame(notebook)
-    sync_canvas = tk.Canvas(sync_page, highlightthickness=0, borderwidth=0,
-                            background=ttk.Style().lookup('TFrame', 'background') or None)
-    sync_bar = ttk.Scrollbar(sync_page, orient='vertical', command=sync_canvas.yview)
-    tab_sync = ttk.Frame(sync_canvas, padding=22)
-    sync_window = sync_canvas.create_window((0, 0), window=tab_sync, anchor='nw')
-    sync_canvas.configure(yscrollcommand=sync_bar.set)
-    sync_canvas.pack(side='left', fill='both', expand=True)
-    sync_bar.pack(side='right', fill='y')
-    tab_sync.bind('<Configure>', lambda _e: sync_canvas.configure(scrollregion=sync_canvas.bbox('all')))
-    sync_canvas.bind('<Configure>', lambda e: sync_canvas.itemconfigure(sync_window, width=e.width))
-
-    def scroll_sync(event):
-        if sync_canvas.yview() != (0.0, 1.0):
-            sync_canvas.yview_scroll(-1 if event.delta > 0 else 1, 'units')
-    # ホイールはこのタブの上にあるときだけ受け取る（記録欄など他の部分のスクロールを奪わない）。
-    sync_page.bind('<Enter>', lambda _e: sync_canvas.bind_all('<MouseWheel>', scroll_sync))
-    sync_page.bind('<Leave>', lambda _e: sync_canvas.unbind_all('<MouseWheel>'))
+    sync_page, tab_sync = scroll_page(notebook)
     # バラエティの🌈（確定が出た台の印、RAINBOW.md「バラエティのタブ」、2026-10-11）。
     tab_variety = ttk.Frame(notebook, padding=22)
     # 機種一覧（machine_list.py、2026-11-01 利用者「今バラエティを表示しているような作りで見たい」）。
     # 「結果を見る」（ブラウザで開くHTML）は「ブラウザでHTML開くことはないから端っこにおいておいて」で右端へ。
     tab_machines = ttk.Frame(notebook, padding=22)
-    notebook.add(tab_home, text='  取り込み  ')
+    notebook.add(home_page, text='  取り込み  ')
     notebook.add(tab_machines, text='  機種一覧  ')
     notebook.add(tab_variety, text='  バラエティ🌈  ')
     notebook.add(sync_page, text='  バックアップ・同期  ')
