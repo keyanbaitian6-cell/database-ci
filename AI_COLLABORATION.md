@@ -5359,3 +5359,4 @@
 | CI | **未確認** | この記録と一緒に送る |
 
 - 残り：共有カレンダーの `test_event_history_browser` も、ゲートの中で負荷がかかったときに1回落ちた（単独では通る）。今回は直していない。続くようなら同じやり方（負荷をかけて同時に流す）で調べる。
+- 追記（同日）：CI `d716bac` の実行 https://github.com/keyanbaitian6-cell/database-ci/actions/runs/46091107741 は **success**（pc ubuntu・pc windows・full。`full` で `test_viewer_history_guard_browser` も通過）。Claude が `gh run view` で確認した。
