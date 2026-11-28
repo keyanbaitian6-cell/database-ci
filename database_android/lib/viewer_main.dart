@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'capture_health_ui.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import 'answer_check.dart';
 import 'calendar_day_net.dart';
@@ -43,7 +44,21 @@ import 'viewer_pages.dart';
 /// `flutter build web -t lib/viewer_main.dart` で作る。取り込み・保存はしない。
 /// DriveなどにあるバックアップJSONを端末の中だけで読み、Android版と同じ
 /// 採点・翌日候補・表とグラフ（画像は使わず、保存したグラフの線から描く）で見せる。
-void main() => runApp(const ViewerApp());
+void main() {
+  // 画面試験（tool/test_*_browser.mjs）が `?semantics` を付けて開いたときだけ、読み上げ用の木（文字を探すのに
+  // 使う）を起動の最初から有効にする（2026-11-28）。試験が途中で入口を押して有効にすると、自動更新の描き直しと
+  // 重なった回に、その後の画面の変化が木に届かなくなり、CI の試験が時々落ちた（画面そのものは正しく出ている）。
+  // 利用者の端末は `?semantics` を付けないので、今までどおり。
+  if (Uri.base.queryParameters.containsKey('semantics')) {
+    WidgetsFlutterBinding.ensureInitialized();
+    _semantics = SemanticsBinding.instance.ensureSemantics();
+  }
+  runApp(const ViewerApp());
+}
+
+/// 試験のときに有効にした読み上げ用の木を保つ（手放すと無効に戻る）。
+// ignore: unused_element
+SemanticsHandle? _semantics;
 
 class ViewerApp extends StatelessWidget {
   const ViewerApp({super.key});
@@ -1118,7 +1133,10 @@ class _ViewerHomeState extends State<ViewerHome> {
   Widget _welcome() => ListView(
     padding: const EdgeInsets.all(16),
     children: [
-      if (_error != null) Notice(text: _error!),
+      // 知らせは文ごとに別の部品にする（2026-11-28）。目印が無いと、一度消えて出し直した知らせ（開くときの知らせ →
+      // 更新の始まりで消す → 更新の知らせ）が、Web の読み上げ用の木に入らなかった（画面には出る。試験で再現、
+      // tool/test_viewer_history_guard_browser.mjs の②b）。結果の一覧の知らせも同じ。
+      if (_error != null) Notice(key: ValueKey(_error), text: _error!),
       EmptyState(
         icon: Icons.cloud_download_outlined,
         title: 'バックアップを読み込んでください',
@@ -1228,7 +1246,7 @@ class _ViewerHomeState extends State<ViewerHome> {
       // 下は、最後の行が「一番上へ」ボタンに隠れないだけ空ける。
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
       children: [
-        if (_error != null) Notice(text: _error!),
+        if (_error != null) Notice(key: ValueKey(_error), text: _error!),
         Notice(text: _sourceText(data)),
         Align(
           alignment: Alignment.centerLeft,

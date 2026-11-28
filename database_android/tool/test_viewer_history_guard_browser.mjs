@@ -66,8 +66,11 @@ const helpers = () => {
   };
 };
 
-async function open(context, seed = {}) {
+// onPage：ページを作った直後に受け取る（模擬のGoogle応答が、閲覧ページの起動時の自動更新より前にページを使えるように。
+// 2026-11-28、開くのが遅いと current がまだ空のまま応答が呼ばれ、②a が TypeError で落ちていた）。
+async function open(context, seed = {}, onPage = null) {
   const page = await context.newPage(), errors = [];
+  if (onPage) onPage(page);
   page.on('pageerror', e => errors.push(e.message));
   await page.addInitScript(helpers);
   await page.goto(origin + '/setup');
@@ -76,15 +79,18 @@ async function open(context, seed = {}) {
     if (seed.table) localStorage.setItem('database-viewer-day-net', seed.table);
     if (seed.data != null) await window.__idb('put', 'data', seed.data);
     if (seed.id) await window.__idb('put', 'data_id', seed.id);
-    if (seed.data != null) await window.__idb('put', 'meruhen', 'active_source');
+    // 表示中の店（web/index.html と同じく鍵 active_source に meruhen。2026-11-28 まで鍵と値が逆だった）
+    if (seed.data != null) await window.__idb('put', 'active_source', 'meruhen');
   }, {seed});
   await reopen(page);
   return {page, errors};
 }
-// Flutterの読み上げ用の木（文字を探すのに使う）を有効にする。読み上げの入口（placeholder）が出る前に押そうとすると
-// 有効にならないことがある（ゲートの中で1回あった）ので、読み上げの木ができるまで押し直す。
+// Flutterの読み上げ用の木（文字を探すのに使う）を有効にする。`?semantics` で起動の最初から有効にする
+// （2026-11-28、viewer_main.dart の main。途中で入口を押して有効にすると、押した時刻と描き直しの重なり方で結果が変わり、
+// 一度消えて出し直した知らせが木に入らない不具合〔Notice に key を付けて直した〕を見逃したり、CIで時々落ちたりした）。
+// 入口を押す処理は、有効にならなかったときの予備として残す。
 async function reopen(page) {
-  await page.goto(origin + '/database-viewer/');
+  await page.goto(origin + '/database-viewer/?semantics');
   await page.waitForSelector('flt-glass-pane', {state: 'attached', timeout: 60000});
   for (let i = 0; i < 200; i++) {
     if (await page.locator('flt-semantics').count()) return;
@@ -165,8 +171,7 @@ const FRESH = pcFile(pcHeader(NEW_EXPORT, {date_events: [], record_deletions: []
   let current = null;
   await driveRoutes(context, () => current, FRESH, {failFirst: true});
   const body = stored(OLD_EXPORT, TWO);
-  const {page, errors} = await open(context, {data: body, id: 'body-A', remote: url});
-  current = page;
+  const {page, errors} = await open(context, {data: body, id: 'body-A', remote: url}, p => { current = p; });
   await page.getByText(/保存せずに見送りました/).first().waitFor({timeout: 30000});
   await page.getByText(/端末に保存した内容を読めませんでした/).first().waitFor();
   assert.equal(await idb(page, 'data'), body, '読み出しに失敗したら、端末の本体を新着だけで置き換えない');
@@ -188,8 +193,7 @@ const FRESH = pcFile(pcHeader(NEW_EXPORT, {date_events: [], record_deletions: []
   let current = null;
   await driveRoutes(context, () => current, FRESH);
   const broken = stored(OLD_EXPORT, TWO).slice(0, 80);
-  const {page} = await open(context, {data: broken, id: 'body-A', remote: url});
-  current = page;
+  const {page} = await open(context, {data: broken, id: 'body-A', remote: url}, p => { current = p; });
   await page.getByText(/壊れていて読めません/).first().waitFor({timeout: 30000});
   assert.equal(await idb(page, 'data'), broken, '壊れた本体を新着だけで置き換えない');
   await context.close();
@@ -199,8 +203,7 @@ const FRESH = pcFile(pcHeader(NEW_EXPORT, {date_events: [], record_deletions: []
   const context = await browser.newContext({viewport: {width: 393, height: 852}});
   let current = null;
   await driveRoutes(context, () => current, FRESH);
-  const {page, errors} = await open(context, {remote: url});
-  current = page;
+  const {page, errors} = await open(context, {remote: url}, p => { current = p; });
   await page.getByText(/Googleドライブの最新（1台）を読み込みました/).first().waitFor({timeout: 30000});
   assert.deepEqual(daysOf(await idb(page, 'data')), ['saiwaichou|2026-11-26']);
   assert.equal(typeof await idb(page, 'data_id'), 'string');
